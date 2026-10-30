@@ -16,10 +16,31 @@ const PIP_VALUE_FLAGS = new Set(['-r', '--requirement', '-c', '--constraint', '-
 const JS_ADD = new Set(['add', 'install', 'i']);
 const PY_ADD = new Set(['add', 'install']);
 const REDIRECTION = /\d*[<>]+&?\d*\s*[^\s;&|]*/g;
-// Allowlist: with harness in the command, `tdd` may only be followed by on or status.
-const TDD_NOT_SAFE = /\btdd\b(?!\s+(on|status)\b)/;
-const HARNESS_CLI = /harness|(^|\/)cli\.m?js\b/;
+const RUNNERS = new Set(['npx', 'pnpm', 'exec', 'yarn', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh']);
+const HARNESS_CMD = /(^|\/)harness(@\S+)?$|(^|\/)cli\.m?js$/;
 const TDD_OFF_WHY = 'Only a person can pause TDD: run "harness tdd off" in your own terminal.';
+// Allowlist: a harness invocation (in command position) may only run `tdd on` or `tdd status`.
+// ponytail: runner flag values (pnpm --filter x) are not understood; `harness` after one is missed.
+function tddInvocationDenied(command: string): boolean {
+  const plain = command.replace(/['"\\]/g, ''); // quotes and escapes must not hide the words
+  const parts = plain.split(/(&&|\|\||\$\(|[;|\n(`])/);
+  for (let i = 0; i < parts.length; i += 2) {
+    const toks = parts[i].trim().split(/\s+/).filter(Boolean);
+    let k = 0;
+    while (k < toks.length && (RUNNERS.has(toks[k]) || toks[k].startsWith('-') || /^\w+=/.test(toks[k]))) k += 1;
+    if (!toks[k] || !HARNESS_CMD.test(toks[k])) continue;
+    const sub = toks.slice(k + 1).find((t) => !t.startsWith('-'));
+    if (sub === undefined) {
+      if (/^(\$\(|\(|`)$/.test(parts[i + 1] ?? '')) return true; // subcommand comes from a substitution
+      continue;
+    }
+    if (/[$`]/.test(sub)) return true;
+    if (sub !== 'tdd') continue;
+    const arg = toks.slice(k + 1).filter((t) => !t.startsWith('-'))[1];
+    if (arg !== 'on' && arg !== 'status') return true;
+  }
+  return false;
+}
 const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');
 
 const sensitivePath = (p: string): boolean => {
@@ -178,8 +199,7 @@ export function decideCommand(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const tokens = command.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');
-  const plain = command.replace(/['"\\]/g, ''); // quotes and escapes must not hide the words
-  if (HARNESS_CLI.test(plain) && /\btdd\b/.test(plain) && (TDD_NOT_SAFE.test(plain) || /[$`]|\beval\b/.test(command))) return { kind: 'deny', reason: TDD_OFF_WHY, check: 'guard' };
+  if (tddInvocationDenied(command)) return { kind: 'deny', reason: TDD_OFF_WHY, check: 'guard' };
   const tddPaths = ctx.config?.checks.tdd ? ctx.config.tdd.paths : [];
   const inTdd = (t: string) => {
     const rel = tddPaths.length > 0 ? toRepoPath(ctx.root, t) : null;

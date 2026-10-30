@@ -102,6 +102,16 @@ test.each([
   'node node_modules/@khubaibqaiser/harness/dist/cli.mjs tdd off',
   "harness tdd o$'ff'", 'harness tdd $(echo off)', 'harness tdd `echo off`', 'eval "harness tdd off"', 'harness tdd x',
 ])('non-allowlisted tdd invocation %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
+test.each([
+  'npx vitest run /Users/x/harness/test/checks/tdd.test.ts',
+  'pnpm vitest run test/checks/tdd/red-first.test.ts',
+  'pnpm harness tdd status && echo $?',
+  'git commit -m "fix tdd gate"',
+  'cd /Users/x/harness && git commit -m "fix tdd gate"',
+])('tdd as a filename or prose is not an invocation: %s', (cmd) => expect(kind(cmd)).toBe('allow'));
+test.each([
+  "harness $'tdd' off", 'ls && harness tdd', 'harness $(echo tdd) off', 'bash -c "harness tdd off"', 'pnpm exec harness tdd off || true', 'FOO=1 npx @khubaibqaiser/harness@1.0.0 tdd off',
+])('tdd invocation bypass %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
 test.each(['harness tdd on', 'harness tdd status', 'npx @khubaibqaiser/harness tdd status', 'pnpm harness tdd status'])('%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 
 const tdd = { tddPaths: ['packages/core/src/**'] };

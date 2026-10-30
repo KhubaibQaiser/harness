@@ -29,6 +29,7 @@ Everything is repo-level, so every developer who clones the repo gets the same w
 | PR reviewer browser | Headless Playwright for screenshots and axe, Chrome DevTools MCP for traces and runtime errors |
 | Screenshots | After-only (no base-branch comparison), pushed to orphan branch `harness-assets` |
 | Multi-file changes | `multi-file-gate` own hook: when an agent is about to edit a second source file in a turn, it asks the user once, showing files touched and the next file. Unattended behaviour (cloud, CI, headless, background) is set per repo in `config.yaml` (section 9b) |
+| TDD | Enforced by layers, not advice (section 9c): own deterministic red-first gate (no model calls), anti-tampering, test lock (ask to change), spec gate, Stop gate with diff coverage, CI diff coverage + proof of red, mutation testing on labelled PRs. Logic paths only, set at init. Human-only `harness tdd off` for spikes. File-writing shell commands into TDD paths ask first |
 | Unattended runs | Everything must work in cloud and CI runs. Behaviour that needs a human is configured in `config.yaml` under `unattended`, chosen by the user during init |
 | App login | During init, ask where test login credentials live: a file path + key names (e.g. `.env.local`: `E2E_EMAIL`, `E2E_PASSWORD`) or environment variable names (for cloud and CI secrets). If given, a Playwright script uses them; values never enter the model's context. If missing or failing, show a clear error and offer the interactive login. If not given, interactive login on each run |
 | SEO | Public-facing sites get SEO checks in the reviewer, flagged like accessibility, plus SEO catalog items |
@@ -142,7 +143,7 @@ Schema valid; every `requires` and `conflicts_with` target exists; own items hav
 
 ### 7.3 Seed catalog for v1
 
-Own items (shipped in this repo): `agent-guard` (hook), `stop-gate` (hook), `post-edit-format` (hook), `gitleaks-commit` (hook), `config-change-guard` (hook), `multi-file-gate` (hook), `session-context` (hook), `pr-create-trigger` (hook), `staff-reviewer` (agent), `review-rubric` (skill), `researcher` (agent), `ui-verifier` (agent), `ui-verify` (skill), `seo-audit` (skill + script), `webgl-landing` (skill), `rn-a11y` (skill), `perf-budget` (skill), `adr` (skill), `pr-ship` (skill), `agents-md` (rule template), `lefthook-baseline` (ci), `claude-code-action` (ci), `harness-devdep` (pins this package as a devDependency so the whole team runs the same version; offered as a choice because adding a dependency is something agent-guard blocks by default).
+Own items (shipped in this repo): `agent-guard` (hook), `stop-gate` (hook), `post-edit-format` (hook), `gitleaks-commit` (hook), `config-change-guard` (hook), `multi-file-gate` (hook), `tdd-gate` (hook: red-first, anti-tampering, test lock, spec gate), `ci-tdd` (ci: diff coverage, tamper scan, proof of red, labelled mutation run), `session-context` (hook), `pr-create-trigger` (hook), `staff-reviewer` (agent), `review-rubric` (skill), `researcher` (agent), `ui-verifier` (agent), `ui-verify` (skill), `seo-audit` (skill + script), `webgl-landing` (skill), `rn-a11y` (skill), `perf-budget` (skill), `adr` (skill), `pr-ship` (skill), `agents-md` (rule template), `lefthook-baseline` (ci), `claude-code-action` (ci), `harness-devdep` (pins this package as a devDependency so the whole team runs the same version; offered as a choice because adding a dependency is something agent-guard blocks by default).
 
 Referenced plugins, MCPs and skills, taken from the audit: frontend-design, modern-web-guidance, chrome-devtools-mcp, typescript-lsp, security-guidance, skill-creator, claude-md-management, superpowers, impeccable, web-design-guidelines, react-best-practices, shadcn, web-quality-skills, figma, playwright, gsap-skills, threejs-skills, emilkowalski-skills, spline-mcp, expo, react-native-best-practices, maestro-mcp, mobile-mcp, aws-serverless, aws-core, pulumi, terraform, render, vercel, cloudflare, supabase, prisma, neon, sentry, posthog, claude-security, semgrep, evals-skills, langfuse, deepeval, agent-sdk-dev, mcp-server-dev, marketingskills, mergify, claude-code-setup, session-report.
 
@@ -220,7 +221,7 @@ Requires a clean tree (or offers to stash). Creates `chore/ai-workflow-<catalog-
 - `PostToolUse` on the same tools marks the turn approved. That event only fires if the user allowed the edit, so a denial leaves the gate closed.
 - An `AGENTS.md` guide tells the agent to list every file it plans to change before editing the second one, so the prompt shows the whole plan.
 
-**What is not counted** (defaults, shown and editable in `config.yaml` during init): test files whose base name matches a source file already touched this turn; snapshot files; lockfiles; paths listed under `multi_file_gate.generated` (codegen output, migration output). Docs and config files count.
+**What is not counted** (defaults, shown and editable in `config.yaml` during init): a source file and its matching test file count as one file, in either order (TDD touches the test first, so "test after source" alone would trigger the gate on every cycle); snapshot files; lockfiles; paths listed under `multi_file_gate.generated` (codegen output, migration output). Docs and config files count.
 
 **Known limit, stated in the report:** edits made through shell commands (`sed`, codemods, `git mv`) don't go through Edit/Write, so the gate can't see them. agent-guard can be configured to ask before file-writing shell commands, but full coverage isn't possible from hooks.
 
@@ -240,6 +241,48 @@ The spec deliberately sets no default for these. Init asks, and the user's answe
 
 Detecting "unattended" reliably is listed in section 14 to verify.
 
+## 9c. TDD harness
+
+Goal: the agent cannot ship logic without a test that failed first, cannot weaken tests to pass, and cannot claim "done" against a spec without proof. Each layer is a guide or a sensor; only the CI layer applies to everyone.
+
+| # | Layer | Mechanism | Blocks |
+|---|---|---|---|
+| 1 | Guide | `AGENTS.md` TDD block + superpowers TDD skill | Nothing; sets intent |
+| 2 | Red-first gate | `PreToolUse` on edit tools for files in `tdd.paths` | Editing an implementation file unless a related test has failed since the last all-green run |
+| 3 | Anti-tampering | `PreToolUse` content check on test and config files | Adding `.skip`, `.only`, `xit`, `xdescribe`, `todo` on existing tests; removing `expect`/`assert` calls without replacing them; `expect(true)`-style no-op assertions; lowering coverage thresholds; deleting test files |
+| 4 | Test lock | Tests written in the red step are recorded; edits to them during green return `ask` with the diff (blocked when unattended) | Changing the test to fit the code |
+| 5 | Stop gate | Runs typecheck, lint, tests related to changed files, and diff coverage | Finishing with failures or with changed lines below `tdd.diff_coverage` |
+| 6 | Spec gate | `PreToolUse` on writes to `features.json` | Setting `passes: true` unless each acceptance criterion lists a test name that exists and passed in the latest run |
+| 7 | CI | `ci-tdd` workflow: diff coverage, tamper scan, **proof of red** (PR's new or changed tests run against base must fail, against head must pass) | Merging untested or tampered changes (required check + branch protection) |
+| 8 | Mutation | Stryker on changed files, only for PRs labelled `mutation` | Tests that execute code without checking it |
+| 9 | Reviewer | Rubric item: new logic without a test that would have failed before | Judgment cases the rules miss |
+
+**Red evidence (layer 2).** Apply adds a JSON reporter output (Vitest or Jest) writing to `.harness/state/test-results.json`, shown in the apply diff. A `PostToolUse` hook on `Bash` records each run: which tests failed or passed, and when. "Related test" means the matching test file by base name (`foo.ts` ↔ `foo.test.ts`, `__tests__/foo.test.ts`), or the runner's own related-files lookup where it has one (`vitest related`). If no related test exists, the gate says so and tells the agent to write one first. No model calls.
+
+**Scope.** `tdd.paths` and `tdd.exempt` are proposed at init from the scan (logic: domain, services, API handlers, hooks, utils; exempt: styles, config, stories, presentational components, generated code) and edited by the user. Exempt paths skip layers 2–4 but stay under layers 5–9.
+
+**Spikes.** `harness tdd off` pauses layers 2–4 for one session. It is meant to be typed by a person in their own terminal; when an agent runs it through Bash, agent-guard denies it. The pause is logged in `.harness/logs/` and listed in the PR by `pr-ship`. Layers 5–9 still apply, so spike code can't merge untested.
+
+**Shell bypass.** agent-guard returns `ask` before shell commands that write into `tdd.paths` (`sed -i`, `awk` redirects, `perl -i`, `echo`/`printf` redirects, `tee`), and blocks them when unattended. Read-only commands are unaffected.
+
+**Related hallucination checks:**
+- Non-existent APIs or imports: typecheck in the Stop gate.
+- Non-existent or lookalike packages: agent-guard blocks new dependencies. When the user allows one, `dep-verify` checks that it exists on the registry, was first published at least 14 days ago, and isn't a near-duplicate name of a popular package.
+- "Tests pass" claimed without running them: the Stop gate runs them itself and ignores the claim.
+- Agent edits its own guardrails: `config-change-guard`, plus a deny rule on `.harness/state/` and `.harness/hooks/`.
+
+**Config (set at init):**
+```yaml
+tdd:
+  paths: [...]            # proposed from scan, edited by user
+  exempt: [...]
+  diff_coverage: <user sets during init>
+  test_lock: true
+  mutation_label: mutation
+```
+
+**Stated limit.** Hooks can prove a test failed first and wasn't weakened. They can't prove it tests the right thing. Diff coverage, mutation testing and the reviewer are proxies for that.
+
 ## 10. Failure handling
 
 | Failure | Behaviour |
@@ -250,6 +293,7 @@ Detecting "unattended" reliably is listed in section 14 to verify.
 | App fails to install or start during review | Show the install or start output; offer code-only review |
 | Review port already in use | Stop with the port and the process using it; never review against the developer's running server |
 | Orphan-branch push rejected (no write access, fork PR) | Keep screenshots local, post the review without images, say why |
+| No test runner detected in a TDD path | TDD gate reports that layers 2–6 can't run and recommends adding one; Stop gate and CI still run what exists |
 | Hook script throws | Fail open with a visible warning (except agent-guard deny rules), so a broken hook never bricks a session |
 | `gh` not authenticated | Keep results local; print the command to run later |
 | Interrupted apply | Temp-dir write then move; repo unchanged |
@@ -267,7 +311,9 @@ Detecting "unattended" reliably is listed in section 14 to verify.
 
 - Detector unit tests against fixture repos: Next/TanStack app, Astro landing, Expo app, Hono + CDK backend, a monorepo combining them.
 - Catalog CI checks (section 7.2).
-- Hook tests feeding recorded hook JSON to each script: the multi-file gate (ignored files, approval carried through the turn, reset on a new prompt, each unattended mode), agent-guard, stop gate, pr-create trigger.
+- Hook tests feeding recorded hook JSON to each script: the multi-file gate (ignored files, source+test counted once in either order, approval carried through the turn, reset on a new prompt, each unattended mode), agent-guard (including shell-write ask and `harness tdd off` denial), stop gate, pr-create trigger.
+- TDD gate tests: implementation edit blocked with no red run, allowed after a related failing run, blocked again after all-green; each anti-tampering pattern; test-lock ask and unattended block; spec gate with missing, failing and passing tests.
+- `ci-tdd` tested on a fixture repo: proof of red fails a PR whose new tests already pass on base.
 - Golden-file tests for apply: fixed facts + picks → exact file tree.
 - Agent SDK steps tested against recorded responses; one live smoke test run on demand.
 - Acceptance: `init` on a copy of fitness-app produces a report the owner agrees with; `review` on one real fitness-app PR produces a useful pending review with screenshots.
@@ -297,6 +343,9 @@ These are assumptions to confirm against current docs before relying on them:
 - Whether hook input lets subagent edits be told apart from main-session edits, for counting files per turn.
 - Whether the Agent SDK can use the developer's existing Claude Code login or needs `ANTHROPIC_API_KEY`. This affects onboarding and cost, and the README must say which.
 - How teammates install the `/harness` plugin while this repo is private (they need read access to `khubaibqaiser/harness`).
+- Vitest and Jest JSON reporter options for writing results to a fixed file without replacing the developer's own reporters, and `vitest related` behaviour in monorepos.
+- Proof of red when a PR changes both tests and the code they import in ways that don't compile on base: define "fails" as test failure *or* compile/import error only for newly added test files, and report it separately.
+- Diff-coverage tooling for Vitest/Jest (istanbul output + a diff filter) without adding a Python dependency.
 
 ## 15. Roadmap after v1
 

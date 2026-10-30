@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { guard } from '../checks/guard.js';
 import { type HarnessConfig, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, writeState } from '../core/state.js';
@@ -26,7 +27,7 @@ export interface Check {
 }
 
 // Later tasks register here, in the order guard, protect, depVerify, multiFile, redFirst, tamper, testLock, specGate, stopGate.
-export const registry: Check[] = [];
+export const registry: Check[] = [guard];
 
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 const CURSOR_KEYS = ['conversation_id', 'generation_id', 'model_id', 'workspace_roots'];

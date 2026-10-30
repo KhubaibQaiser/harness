@@ -1,4 +1,5 @@
 // Agent guard, ported from fitness-app scripts/agent-hooks/guard.mjs. A seatbelt, not a sandbox.
+import { defaultLookup, verifyPackages } from './dep-verify.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
@@ -144,15 +145,14 @@ const addedPackages = (args: string, subcommands: Set<string>, valueFlags: Set<s
   return names;
 };
 
-const checkInstall = (cmd: string, env: NodeJS.ProcessEnv): Verdict | undefined => {
+const checkInstall = (cmd: string, ctx: GuardCtx): Decision | undefined => {
   const found: string[] = [];
   for (const m of cmd.matchAll(/\b(?:npm|pnpm|yarn|bun)\s+([^;&|\n]*)/g)) found.push(...addedPackages(m[1], JS_ADD, VALUE_FLAGS));
   for (const m of cmd.matchAll(/\b(?:pip3?|uv)\s+([^;&|\n]*)/g)) found.push(...addedPackages(m[1], PY_ADD, PIP_VALUE_FLAGS));
   if (found.length === 0) return undefined;
   const what = `adding dependency ${found.slice(0, 3).join(', ')}`;
-  // Task 7: verifyPackages
-  if (env.AGENT_GUARD_ALLOW_INSTALL === '1') return ['ask', `${what}: confirm it exists and is intended`];
-  return ['deny', `${what}. Dependencies are added by a human: ask the user to run it`];
+  if (ctx.env.AGENT_GUARD_ALLOW_INSTALL === '1') return verifyPackages(found, { root: ctx.root, now: new Date(), lookup: defaultLookup });
+  return toDecision(['deny', `${what}. Dependencies are added by a human: ask the user to run it`]);
 };
 
 // Tokens after "git" and its global options (-C dir, -c k=v, --no-pager, --git-dir=…): [subcommand, ...args].
@@ -257,8 +257,8 @@ export function decideCommand(command: string, ctx: GuardCtx): Decision {
   if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {
     return { kind: 'ask', reason: msg('ask', 'shell write into a TDD path; use the Edit or Write tool so the TDD gates see it'), check: 'guard' };
   }
-  const install = checkInstall(command, ctx.env);
-  if (install) return toDecision(install);
+  const install = checkInstall(command, ctx);
+  if (install) return install;
   for (const [re, why] of ASK) if (re.test(command)) return toDecision(['ask', why]);
   return { kind: 'allow' };
 }

@@ -46,10 +46,11 @@ test('dependency adds are denied for agents; plain installs pass', () => {
   all(['pnpm --filter web add zod', 'pnpm -F web add zod', 'pnpm add -w zod', 'pnpm install lodash 2>&1', 'npm install lodash > out.log', 'yarn add left-pad', 'pip install requests', 'uv pip install requests'], 'deny');
 });
 
-test('AGENT_GUARD_ALLOW_INSTALL=1 turns the dependency deny into a confirmation', () => {
-  const d = decideCommand('pnpm add lodash', ctx({ env: { AGENT_GUARD_ALLOW_INSTALL: '1' } }));
+test('AGENT_GUARD_ALLOW_INSTALL=1 hands the added names to dep-verify', () => {
+  // github: specs are never looked up, so this stays offline.
+  const d = decideCommand('pnpm add github:o/r', ctx({ env: { AGENT_GUARD_ALLOW_INSTALL: '1' } }));
   expect(d.kind).toBe('ask');
-  expect(reason(d)).toBe('Confirm: adding dependency lodash: confirm it exists and is intended');
+  expect(reason(d)).toBe('"github:o/r": could not verify on the registry');
 });
 
 test('ordinary commands pass', () => {

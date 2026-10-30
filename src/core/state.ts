@@ -10,13 +10,23 @@ export interface SessionState {
   stopAttempts: number;
 }
 
-const file = (root: string, session: string) => join(root, '.harness/state', `${session}.json`);
+export const isSafeSessionId = (id: string): boolean => /^[A-Za-z0-9._-]+$/.test(id) && id !== '.' && id !== '..';
+
+function file(root: string, session: string): string {
+  if (!isSafeSessionId(session)) throw new Error(`unsafe session id: ${session}`);
+  return join(root, '.harness/state', `${session}.json`);
+}
 
 export function readState(root: string, session: string): SessionState {
   const fresh: SessionState = { startedAt: Date.now(), files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 };
   const f = file(root, session);
   if (!existsSync(f)) return fresh;
-  return { ...fresh, ...(JSON.parse(readFileSync(f, 'utf8')) as Partial<SessionState>) };
+  try {
+    const v: unknown = JSON.parse(readFileSync(f, 'utf8'));
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? { ...fresh, ...(v as Partial<SessionState>) } : fresh;
+  } catch {
+    return fresh;
+  }
 }
 
 export function writeState(root: string, session: string, s: SessionState): void {

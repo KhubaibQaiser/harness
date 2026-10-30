@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { clearTurn, readState, writeState } from '../../src/core/state.js';
+import { clearTurn, isSafeSessionId, readState, writeState } from '../../src/core/state.js';
 
 const stateTs = join(process.cwd(), 'src/core/state.ts');
 const root = mkdtempSync(join(tmpdir(), 'h-st-'));
@@ -44,3 +44,17 @@ test('concurrent writeState never leaves partial JSON', async () => {
   expect(readState(root, 's').files).toHaveLength(2000);
   expect(readdirSync(join(root, '.harness/state')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
 }, 60000);
+
+test('corrupt or non-object state file yields fresh state', () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-st-'));
+  mkdirSync(join(r, '.harness/state'), { recursive: true });
+  for (const body of ['{oops', '[1]', '7', 'null']) {
+    writeFileSync(join(r, '.harness/state/x.json'), body);
+    expect(readState(r, 'x')).toMatchObject({ files: [], approved: false, stopAttempts: 0 });
+  }
+});
+
+test('isSafeSessionId rejects traversal and odd characters', () => {
+  for (const id of ['', '.', '..', 'a/b', 'a b', '../x']) expect(isSafeSessionId(id)).toBe(false);
+  for (const id of ['abc-1_2.3', '.hidden', '...']) expect(isSafeSessionId(id)).toBe(true);
+});

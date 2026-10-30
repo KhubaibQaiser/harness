@@ -23,12 +23,27 @@ const TDD_OFF_WHY = 'Only a person can pause TDD: run "harness tdd off" in your 
 // ponytail: runner flag values (pnpm --filter x) are not understood; `harness` after one is missed.
 function tddInvocationDenied(command: string): boolean {
   const plain = command.replace(/['"\\]/g, ''); // quotes and escapes must not hide the words
-  const parts = plain.split(/(&&|\|\||\$\(|[;|\n(`])/);
+  const words = plain.split(/\s+/);
+  // eval re-parses its input, so any eval near a harness token and tdd is denied.
+  if (words.includes('eval') && words.includes('tdd') && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, '')))) return true;
+  // A lone & separates commands; 2>&1, >&2 and &> are redirections.
+  const parts = plain.split(/(&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`])/);
   for (let i = 0; i < parts.length; i += 2) {
     const toks = parts[i].trim().split(/\s+/).filter(Boolean);
     let k = 0;
-    while (k < toks.length && (RUNNERS.has(toks[k]) || toks[k].startsWith('-') || /^\w+=/.test(toks[k]))) k += 1;
+    while (k < toks.length && (RUNNERS.has(toks[k]) || toks[k].startsWith('-') || /^\w+=/.test(toks[k]))) {
+      const val = toks[k].replace(/^\w+=/, '');
+      if (val !== toks[k] && HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
+      k += 1;
+    }
+    // $X tdd …, `…` tdd … or $(…) tdd …: the command name is hidden in a variable or substitution.
+    if ((toks[k]?.startsWith('$') && toks[k + 1] === 'tdd') || (k === 0 && toks[0] === 'tdd' && /^[`)]$/.test(parts[i - 1] ?? ''))) return true;
     if (!toks[k] || !HARNESS_CMD.test(toks[k])) continue;
+    const rest = toks.slice(k + 1);
+    if (rest[0]?.startsWith('-')) { // no global flags in M1, so flag values cannot be told apart from subcommands
+      const t = rest.indexOf('tdd');
+      if (t >= 0 && rest[t + 1] !== 'on' && rest[t + 1] !== 'status') return true;
+    }
     const sub = toks.slice(k + 1).find((t) => !t.startsWith('-'));
     if (sub === undefined) {
       if (/^(\$\(|\(|`)$/.test(parts[i + 1] ?? '')) return true; // subcommand comes from a substitution

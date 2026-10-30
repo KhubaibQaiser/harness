@@ -108,9 +108,12 @@ test.each([
   'pnpm harness tdd status && echo $?',
   'git commit -m "fix tdd gate"',
   'cd /Users/x/harness && git commit -m "fix tdd gate"',
+  'harness tdd status 2>&1',
+  'cd /Users/x/harness & pnpm vitest run test/checks/tdd/a.test.ts',
 ])('tdd as a filename or prose is not an invocation: %s', (cmd) => expect(kind(cmd)).toBe('allow'));
 test.each([
   "harness $'tdd' off", 'ls && harness tdd', 'harness $(echo tdd) off', 'bash -c "harness tdd off"', 'pnpm exec harness tdd off || true', 'FOO=1 npx @khubaibqaiser/harness@1.0.0 tdd off',
+  'ls & harness tdd off', 'CMD="harness tdd off"; eval $CMD', 'X=harness; $X tdd off', 'harness --cwd /x tdd off',
 ])('tdd invocation bypass %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
 test.each(['harness tdd on', 'harness tdd status', 'npx @khubaibqaiser/harness tdd status', 'pnpm harness tdd status'])('%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 

@@ -203,7 +203,7 @@ Referenced items: **everything discussed in the audit is in the allowlist.** The
 | AI features and evals | evals-skills, langfuse, deepeval, agent-sdk-dev, mcp-server-dev |
 | Marketing and SEO | marketingskills |
 
-Impeccable carries `side_effects: [installs-hook, downloads-binary, telemetry-on-by-default]`, shown in the select checklist. Design-direction items conflict with each other except frontend-design, so a repo has one lead design skill (section 5a).
+Impeccable carries `side_effects: [installs-hook, downloads-binary, telemetry-on-by-default]`, shown in the select checklist. impeccable, ui-ux-pro-max, taste-skill and superdesign conflict with each other, so a repo has one lead design skill; frontend-design is lightweight and may sit alongside the lead, which takes precedence. The repo's design tokens or design-system doc stay the source of truth.
 
 ## 8. Flows
 

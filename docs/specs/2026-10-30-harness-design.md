@@ -16,7 +16,7 @@ Everything is repo-level, so every developer who clones the repo gets the same w
 
 | Topic | Decision |
 |---|---|
-| Shape | **Plugin-first.** A Claude Code plugin (`/harness init|update|review|doctor`) runs the judgment steps inside the developer's own Claude Code session. A TypeScript npm CLI (`npx @khubaibqaiser/harness …`) is the rule-based engine the skills call: scan, validate, apply, git, hook runtime, CI checks, stats |
+| Shape | **Plugin-first.** A Claude Code plugin (`/harness:init`, `/harness:update`, `/harness:review`, `/harness:doctor`, `/harness:status`; plugin skills are namespaced `/<plugin>:<skill>`) runs the judgment steps inside the developer's own Claude Code session. A TypeScript npm CLI (`npx @khubaibqaiser/harness …`) is the rule-based engine the skills call: scan, validate, apply, git, hook runtime, CI checks, stats |
 | Why not the Agent SDK | Anthropic does not allow third-party products built on the Agent SDK to use claude.ai login unless approved; they must use API keys. Plugin-first needs no extra auth or cost. Headless runs (CI, routines) use `claude -p` with whatever auth that environment already has |
 | Model output | Never trusted directly: the skill writes JSON, the CLI validates it against a schema, one retry, then stop |
 | Catalog | Closed. Lives in this repo. Changes only through a new release |
@@ -74,7 +74,7 @@ catalog/
 evals/        reviewer and recommend eval sets and results
 ```
 
-Init flow: `/harness init` → CLI `scan` → skill interviews (Claude Code's native question prompts) → CLI `validate answers` → skill recommends → CLI `validate picks` → CLI `select` (checklist, also usable inside the session) → CLI `apply` (diff shown, confirm) → CLI `git` (each outward step confirmed).
+Init flow: `/harness:init` → CLI `scan` → skill interviews (Claude Code's native question prompts) → CLI `validate answers` → skill recommends → CLI `validate picks` → CLI `select` (checklist, also usable inside the session) → CLI `apply` (diff shown, confirm) → CLI `git` (each outward step confirmed).
 
 `scan`, `report`, `doctor`, `stats`, `uninstall` and every check run from the CLI alone, without Claude.
 
@@ -84,17 +84,25 @@ The seam for future agents is `apply/<agent>.ts` plus a plugin for that agent. N
 
 | Command | Where | Does |
 |---|---|---|
-| `/harness init` | plugin | Full pipeline on a repo without `.harness/` |
-| `/harness update` | plugin | Compare the running catalog version with `config.yaml`, re-scan, re-recommend, show diff (new / changed / retired / now-conflicting), apply approved changes. A newer catalog arrives by upgrading the plugin and package |
-| `/harness review <pr>` | plugin (copied into repo as a skill, so teammates have it) | PR reviewer (section 9) |
+| `/harness:init` | plugin | Full pipeline on a repo without `.harness/` |
+| `/harness:update` | plugin | Compare the running catalog version with `config.yaml`, re-scan, re-recommend, show diff (new / changed / retired / now-conflicting), apply approved changes. A newer catalog arrives by upgrading the plugin and package |
+| `/harness:review <pr>` (plugin) and `/harness-review <pr>` (repo skill copied by init, so every developer has it) | plugin / repo | PR reviewer (section 9) |
 | `harness scan` / `report` | CLI | Facts; re-render `report.md` |
 | `harness sync` | CLI | One-time setup per developer after cloning: runs `claude plugin install <name>@harness-pins --scope project` for each declared outside plugin (after showing the list and asking) and installs pinned outside non-plugin skills into gitignored `.claude/skills/`. The session-start hook and `doctor` warn when something declared isn't installed |
 | `harness doctor` | CLI | Manifest hashes, hooks wired, MCP servers declared, outside skills synced, Claude Code version ≥ each item's `min_claude_code` |
 | `harness stats` | CLI | Summarise `.harness/logs/events.jsonl` (section 9e) |
-| `harness tdd off` | CLI, human-only | Pause TDD layers 2–4 for one session (section 9c) |
+| `harness status` / `/harness:status` | CLI / plugin | Installed items, gate states, TDD pause, sync gaps, catalog version, last review |
+| `harness add <item>` / `remove <item>` | CLI | Change one catalog item without a full update: checks `requires` and `conflicts_with`, shows the diff, updates the manifest, offers a commit |
+| `harness why <item>` | CLI | Why the item was picked (reason, findings it addresses, `applies_when` matches), or why it wasn't |
+| `harness explain` | CLI | The last gate block: which gate, which rule, the files involved, and the allowed next step |
+| `harness tdd off` / `on` / `status` | CLI; `off` is human-only | Pause TDD layers 2–4 for this session, resume them, or show the current state (section 9c) |
 | `harness assets prune` | CLI | Delete screenshot folders for closed PRs |
 | `harness uninstall` | CLI | Remove only manifest-listed files and blocks |
 | `harness update --check` | CLI | Report whether npm has a newer version |
+
+**Running the CLI.** `harness` is the command name of the npm package. Without installing it: `npx @khubaibqaiser/harness <command>`. With `harness-devdep` selected: `pnpm harness <command>` (or the repo's package manager), so the whole team runs the pinned version. Docs never show a bare global `harness`, because nothing is installed globally.
+
+**After init.** `/harness:init` runs `sync` for the person who ran it, so everything works immediately. Teammates run `sync` once after cloning.
 
 ## 5a. Design principle: minimal tokens, maximum impact
 
@@ -153,6 +161,9 @@ applies_when:            # hints for recommend, not hard rules
 conflicts_with: [motion-ai-kit]
 requires: [playwright-mcp]
 cost: { context: low, setup: none }
+stance: optional         # default | optional | discouraged
+stance_reason: ""        # required for discouraged, e.g. "duplicates /goal"
+side_effects: []         # e.g. [installs-hook, downloads-binary, telemetry-on-by-default]
 why: Correct ScrollTrigger and timeline usage.
 evidence: [https://github.com/greensock/gsap-skills]
 ```
@@ -172,7 +183,27 @@ Own items:
 - CI: `ci-tdd`, `harness-integrity` (manifest hashes + CODEOWNERS required for harness paths), `lefthook-baseline`, `claude-code-action`
 - Other: `harness-devdep` (pins the CLI as a devDependency; offered as a choice because agent-guard blocks new dependencies by default)
 
-Referenced (from the audit): frontend-design, modern-web-guidance, chrome-devtools-mcp, typescript-lsp, security-guidance, skill-creator, claude-md-management, superpowers, impeccable, web-design-guidelines, react-best-practices, shadcn, web-quality-skills, figma, playwright, gsap-skills, threejs-skills, emilkowalski-skills, spline-mcp, expo, react-native-best-practices, maestro-mcp, mobile-mcp, aws-serverless, aws-core, pulumi, terraform, render, vercel, cloudflare, supabase, prisma, neon, sentry, posthog, claude-security, semgrep, evals-skills, langfuse, deepeval, agent-sdk-dev, mcp-server-dev, marketingskills, mergify, claude-code-setup, session-report.
+Referenced items: **everything discussed in the audit is in the allowlist.** The catalog is only the set of items the tool may recommend; a repo gets only what recommend proposes and the user ticks during init, update or `add`. `stance` tells recommend how to treat each one, and `discouraged` items are proposed only when the user asks for them by name or no alternative fits, always with the reason shown.
+
+| Area | Items (stance in brackets where not `optional`) |
+|---|---|
+| Design direction | frontend-design [default], impeccable, ui-ux-pro-max, taste-skill, superdesign [discouraged: duplicates Figma], design (Anthropic knowledge-work plugin: accessibility review, critique, UX copy) |
+| UI quality and performance | web-design-guidelines, react-best-practices, vercel-react-native-skills, modern-web-guidance, emilkowalski-skills, web-quality-skills, shadcn (skill + MCP), figma |
+| 3D and motion | gsap-skills, threejs-skills, motion-ai-kit, spline-mcp, mcp-for-blender (`side_effects: runs-arbitrary-python`) |
+| Process | superpowers [default], mattpocock-skills, addyosmani-agent-skills, ponytail, caveman [discouraged: overlaps ponytail], spec-kit [discouraged: overlaps superpowers], feature-dev [discouraged], pr-review-toolkit [discouraged], code-review [discouraged: built-in /code-review], code-simplifier, ralph-loop [discouraged: use /goal], remember [discouraged: built-in memory], wshobson-agents [discouraged: instruction overload] |
+| Workflow upkeep | claude-code-setup, claude-md-management, skill-creator, hookify, session-report, dash0 |
+| Code intelligence and docs | typescript-lsp [default], swift-lsp, kotlin-lsp, context7, graphify, serena [discouraged: duplicates LSP], sourcegraph [discouraged], mintlify, engineering (Anthropic knowledge-work plugin: architecture, system design, testing strategy, documentation, incident response, deploy checklist) |
+| Verification | playwright, chrome-devtools-mcp, webapp-testing (anthropics/skills) |
+| Mobile | expo, react-native-best-practices (Callstack), maestro-mcp, mobile-mcp, revenuecat |
+| Backend, API, data | postman, 42crunch-api-security-testing, supabase, supabase-agent-skills, prisma, neon, databases-on-aws, auth0, workos, stripe |
+| Cloud and IaC | aws-core, aws-serverless, deploy-on-aws, pulumi, terraform, vercel, cloudflare, render, railway |
+| CI and repo flow | mergify |
+| Security | security-guidance [default], claude-security, semgrep, trailofbits-insecure-defaults, trailofbits-supply-chain-risk-auditor, stackhawk-hawkscan, aikido [discouraged: duplicates semgrep], sonarqube [discouraged], jfrog [discouraged], sonatype-guide [discouraged], probity (alternative TDD engine to own `tdd-gate`), tdd-guard [discouraged: superseded by probity] |
+| Observability and product | sentry, getsentry-skills, posthog, growthbook, datadog |
+| AI features and evals | evals-skills, langfuse, deepeval, agent-sdk-dev, mcp-server-dev |
+| Marketing and SEO | marketingskills |
+
+Impeccable carries `side_effects: [installs-hook, downloads-binary, telemetry-on-by-default]`, shown in the select checklist. Design-direction items conflict with each other except frontend-design, so a repo has one lead design skill (section 5a).
 
 ## 8. Flows
 
@@ -198,7 +229,7 @@ Clean tree required (or offer stash). Branch `chore/ai-workflow-<catalog-version
 
 ## 9. PR reviewer
 
-1. **Trigger.** `/harness review <pr>`, or a `PostToolUse` hook on `Bash` matching `gh pr create` that asks Claude to run it in the same session (`review.auto_after_pr_create`). Headless: `claude -p "/harness review <pr>"`, governed by `unattended.review`.
+1. **Trigger.** `/harness-review <pr>` (or `/harness:review` where the plugin is installed), or a `PostToolUse` hook on `Bash` matching `gh pr create` that asks Claude to run it in the same session (`review.auto_after_pr_create`). Headless: `claude -p "/harness-review <pr>"`, governed by `unattended.review`.
 2. **Trust boundary.** Harness config, hooks and agent definitions are read from the **base branch**, never the PR. The tool **always asks before running any PR's code** (install or start), showing the author, whether they are a collaborator, and whether the PR changes install scripts, CI files or harness paths. Declining gives a code-only review.
 3. **Gather.** `gh pr view`, `gh pr diff`, changed files, linked issue, `AGENTS.md`, `.harness/context/product.md`, referenced spec.
 4. **Select apps and routes.** Changed paths pick the affected apps. Rules find route files (Next app router, TanStack file routes, Expo Router); a small-model subagent traces shared components to routes. The user confirms or edits the list.
@@ -351,8 +382,8 @@ Goal: no logic ships without a test that failed first; tests can't be weakened t
 | Milestone | Delivers | Proven when |
 |---|---|---|
 | M1 Core harness | Hook dispatcher, agent-guard + permissions baseline, stop gate, multi-file gate, TDD gate, `staff-reviewer` + `review-rubric`, hand-installed into fitness-app | A week of real fitness-app work with gates firing correctly; `harness stats` shows blocks and overrides; no false block left unfixed |
-| M2 PR reviewer | `/harness review` end to end: trust prompt, worktree, login, capture, SEO, axe, traces, pending review, orphan-branch screenshots | Useful pending reviews on 3 real fitness-app PRs; reviewer eval set baseline recorded |
-| M3 Installer | Catalog + checks, scan, `/harness init` interview + recommend, select, apply, git, update, doctor, uninstall, sync, CI items | `init` on a fresh copy of fitness-app reproduces the M1/M2 setup plus a report the owner agrees with; this repo initialised by itself |
+| M2 PR reviewer | `/harness-review` end to end: trust prompt, worktree, login, capture, SEO, axe, traces, pending review, orphan-branch screenshots | Useful pending reviews on 3 real fitness-app PRs; reviewer eval set baseline recorded |
+| M3 Installer | Catalog + checks, scan, `/harness:init` interview + recommend, select, apply, git, update, doctor, status, add/remove, why, explain, uninstall, sync, CI items | `init` on a fresh copy of fitness-app reproduces the M1/M2 setup plus a report the owner agrees with; this repo initialised by itself |
 | M4 Coverage | Remaining project types and referenced catalog items: backend/infra → mobile → landing | Each fixture repo gets a report and install the owner agrees with |
 
 The owner may reorder.

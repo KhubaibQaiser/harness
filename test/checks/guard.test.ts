@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { decideCommand, decidePaths, fileWriteTargets, guard } from '../../src/checks/guard.js';
 import { loadConfig } from '../../src/core/config.js';
 import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
@@ -46,8 +46,10 @@ test('dependency adds are denied for agents; plain installs pass', () => {
   all(['pnpm --filter web add zod', 'pnpm -F web add zod', 'pnpm add -w zod', 'pnpm install lodash 2>&1', 'npm install lodash > out.log', 'yarn add left-pad', 'pip install requests', 'uv pip install requests'], 'deny');
 });
 
-test('AGENT_GUARD_ALLOW_INSTALL=1 lets the dependency add through (Task 7 verifies packages)', () => {
-  expect(kind('pnpm add lodash', { env: { AGENT_GUARD_ALLOW_INSTALL: '1' } })).toBe('allow');
+test('AGENT_GUARD_ALLOW_INSTALL=1 turns the dependency deny into a confirmation', () => {
+  const d = decideCommand('pnpm add lodash', ctx({ env: { AGENT_GUARD_ALLOW_INSTALL: '1' } }));
+  expect(d.kind).toBe('ask');
+  expect(reason(d)).toBe('Confirm: adding dependency lodash: confirm it exists and is intended');
 });
 
 test('ordinary commands pass', () => {
@@ -95,10 +97,14 @@ test.each(['harness tdd off', 'npx @khubaibqaiser/harness tdd off', 'pnpm harnes
     expect(d.kind).toBe('deny');
     expect(reason(d)).toBe('Only a person can pause TDD: run "harness tdd off" in your own terminal.');
   });
+test.each([
+  'harness tdd "off"', 'harness "tdd" off', 'harness tdd o\\ff', 'harness tdd o""ff',
+  'node node_modules/@khubaibqaiser/harness/dist/cli.mjs tdd off',
+])('quoted or escaped tdd off %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
 test.each(['harness tdd on', 'harness tdd status', 'npx @khubaibqaiser/harness tdd status'])('%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 
 const tdd = { tddPaths: ['packages/core/src/**'] };
-test('shell write into a tdd path asks; unattended denies via dispatcher', () => {
+test('shell write into a tdd path asks', () => {
   expect(kind("sed -i 's/a/b/' packages/core/src/x.ts", tdd)).toBe('ask');
   expect(kind('echo hi >> packages/core/src/x.ts', tdd)).toBe('ask');
   expect(kind('echo hi | tee packages/core/src/x.ts', tdd)).toBe('ask');
@@ -115,6 +121,40 @@ test('deleting a test file in a tdd path is denied', () => {
   expect(kind('rm packages/core/src/x.test.ts', tdd)).toBe('deny');
   expect(kind('rm packages/core/src/x.ts', tdd)).toBe('allow');
   expect(kind('rm other/x.test.ts', tdd)).toBe('allow');
+});
+
+test('rm -rf of a test file in a tdd path is denied', () => {
+  expect(kind('rm -rf packages/core/src/x.test.ts', tdd)).toBe('deny');
+});
+
+test('shell write into a tdd path is denied when unattended (through the dispatcher)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  tdd: true\ntdd:\n  paths:\n    - "packages/core/src/**"\n');
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: "sed -i 's/a/b/' packages/core/src/x.ts" } });
+  expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision).toBe('ask');
+  const r = JSON.parse(await dispatch(raw, registry, { CI: 'true' }));
+  expect(r.hookSpecificOutput.permissionDecision).toBe('deny');
+  expect(r.hookSpecificOutput.permissionDecisionReason).toMatch(/^Unattended run:/);
+});
+
+test('a throwing guard is denied by the dispatcher (fail closed)', async () => {
+  const spy = vi.spyOn(guard, 'run').mockImplementation(() => { throw new Error('boom'); });
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: '/nonexistent-harness-root', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  const r = JSON.parse(await dispatch(raw, registry, {}));
+  spy.mockRestore();
+  expect(r.hookSpecificOutput.permissionDecision).toBe('deny');
+  expect(r.hookSpecificOutput.permissionDecisionReason).toBe('harness check guard failed: boom');
+});
+
+test('fileWriteTargets sees through prefixes, tight redirects and awk junk', () => {
+  expect(fileWriteTargets('echo hi>file')).toEqual(['file']);
+  expect(fileWriteTargets('echo hi>>file')).toEqual(['file']);
+  expect(fileWriteTargets("sudo sed -i 's/a/b/' a.ts")).toEqual(['a.ts']);
+  expect(fileWriteTargets("FOO=1 env perl -pi -e 's/a/b/' a.ts")).toEqual(['a.ts']);
+  expect(fileWriteTargets("ls | xargs sed -i 's/a/b/' a.ts")).toEqual(['a.ts']);
+  expect(fileWriteTargets(`awk '{print > "out.txt"}' in.txt`)).toEqual(['out.txt']);
+  expect(fileWriteTargets(`awk '{print 1}' in > 'out.txt'`)).toEqual(['out.txt']);
 });
 
 test('fileWriteTargets', () => {

@@ -16,7 +16,8 @@ const PIP_VALUE_FLAGS = new Set(['-r', '--requirement', '-c', '--constraint', '-
 const JS_ADD = new Set(['add', 'install', 'i']);
 const PY_ADD = new Set(['add', 'install']);
 const REDIRECTION = /\d*[<>]+&?\d*\s*[^\s;&|]*/g;
-const TDD_OFF = /\bharness\s+tdd\s+off\b/;
+const TDD_OFF = /\btdd\s+off\b/;
+const HARNESS_CLI = /harness|(^|\/)cli\.m?js\b/;
 const TDD_OFF_WHY = 'Only a person can pause TDD: run "harness tdd off" in your own terminal.';
 const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');
 
@@ -111,8 +112,10 @@ const checkInstall = (cmd: string, env: NodeJS.ProcessEnv): Verdict | undefined 
   for (const m of cmd.matchAll(/\b(?:npm|pnpm|yarn|bun)\s+([^;&|\n]*)/g)) found.push(...addedPackages(m[1], JS_ADD, VALUE_FLAGS));
   for (const m of cmd.matchAll(/\b(?:pip3?|uv)\s+([^;&|\n]*)/g)) found.push(...addedPackages(m[1], PY_ADD, PIP_VALUE_FLAGS));
   if (found.length === 0) return undefined;
-  if (env.AGENT_GUARD_ALLOW_INSTALL === '1') return ['allow']; // Task 7: verifyPackages
-  return ['deny', `adding dependency ${found.slice(0, 3).join(', ')}. Dependencies are added by a human: ask the user to run it`];
+  const what = `adding dependency ${found.slice(0, 3).join(', ')}`;
+  // Task 7: verifyPackages
+  if (env.AGENT_GUARD_ALLOW_INSTALL === '1') return ['ask', `${what}: confirm it exists and is intended`];
+  return ['deny', `${what}. Dependencies are added by a human: ask the user to run it`];
 };
 
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
@@ -121,7 +124,10 @@ export function fileWriteTargets(cmd: string): string[] {
   const out: string[] = [];
   const SCRIPT_FLAG = /^-[a-zA-Z]*[ef]$/; // value follows: sed -e SCRIPT, perl -pi -e SCRIPT
   for (const seg of cmd.split(/[;&|\n]+/)) {
-    const toks = seg.match(/'[^']*'|"[^"]*"|\S+/g) ?? [];
+    const toks = [...(seg.match(/'[^']*'|"[^"]*"|\S+/g) ?? [])];
+    let k = 0;
+    while (k < toks.length - 1 && /^(sudo|env|xargs)$|^\w+=/.test(toks[k])) k += 1;
+    toks.splice(0, k); // look past sudo, env, VAR=value and xargs
     const name = toks[0];
     if (name === 'sed' || name === 'perl') {
       const flags = toks.slice(1).filter((t) => t.startsWith('-'));
@@ -136,8 +142,8 @@ export function fileWriteTargets(cmd: string): string[] {
     } else if (name === 'tee') {
       out.push(...toks.slice(1).filter((t) => !t.startsWith('-')).map(unquote));
     } else if (name === 'echo' || name === 'printf' || name === 'awk') {
-      for (const m of seg.matchAll(/(?:^|\s)\d*>>?\s*([^\s;&|>]+)/g)) {
-        const t = unquote(m[1]);
+      for (const m of seg.matchAll(/\d*>>?\s*([^\s;&|>]+)/g)) {
+        const t = m[1].replace(/^['"]+/, '').replace(/['"}]+$/, '');
         if (!t.startsWith('&') && t !== '/dev/null') out.push(t);
       }
     }
@@ -160,22 +166,21 @@ export function decideCommand(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const tokens = command.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');
-  if (TDD_OFF.test(command)) return { kind: 'deny', reason: TDD_OFF_WHY, check: 'guard' };
+  const plain = command.replace(/['"\\]/g, ''); // quotes and escapes must not hide the words
+  if (TDD_OFF.test(plain) && HARNESS_CLI.test(plain)) return { kind: 'deny', reason: TDD_OFF_WHY, check: 'guard' };
+  const tddPaths = ctx.config?.checks.tdd ? ctx.config.tdd.paths : [];
+  const inTdd = (t: string) => {
+    const rel = tddPaths.length > 0 ? toRepoPath(ctx.root, t) : null;
+    return rel !== null && matches(rel, tddPaths) ? rel : null;
+  };
+  for (const { targets } of rmTargets(command)) {
+    if (targets.some((t) => { const rel = inTdd(t); return rel !== null && isTestFile(rel); })) return deny('deleting a test file in a TDD path');
+  }
   const early = checkRm(command) ?? checkPushToMain(command);
   if (early) return toDecision(early);
   for (const [re, why] of DENY) if (re.test(command)) return deny(why);
-  const tddPaths = ctx.config?.checks.tdd ? ctx.config.tdd.paths : [];
-  if (tddPaths.length > 0) {
-    const inTdd = (t: string) => {
-      const rel = toRepoPath(ctx.root, t);
-      return rel !== null && matches(rel, tddPaths) ? rel : null;
-    };
-    for (const { targets } of rmTargets(command)) {
-      if (targets.some((t) => { const rel = inTdd(t); return rel !== null && isTestFile(rel); })) return deny('deleting a test file in a TDD path');
-    }
-    if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {
-      return { kind: 'ask', reason: msg('ask', 'shell write into a TDD path; use the Edit or Write tool so the TDD gates see it'), check: 'guard' };
-    }
+  if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {
+    return { kind: 'ask', reason: msg('ask', 'shell write into a TDD path; use the Edit or Write tool so the TDD gates see it'), check: 'guard' };
   }
   const install = checkInstall(command, ctx.env);
   if (install) return toDecision(install);

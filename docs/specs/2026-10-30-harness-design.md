@@ -20,7 +20,8 @@ Everything is repo-level, so every developer who clones the repo gets the same w
 | Why not the Agent SDK | Anthropic does not allow third-party products built on the Agent SDK to use claude.ai login unless approved; they must use API keys. Plugin-first needs no extra auth or cost. Headless runs (CI, routines) use `claude -p` with whatever auth that environment already has |
 | Model output | Never trusted directly: the skill writes JSON, the CLI validates it against a schema, one retry, then stop |
 | Catalog | Closed. Lives in this repo. Changes only through a new release |
-| Third-party items | Referenced, never copied. Outside plugins are pinned to an exact commit through an inline `settings` marketplace in `.claude/settings.json` |
+| Third-party items | Referenced, never copied. Outside plugins are pinned to an exact commit through an inline `settings` marketplace in `.claude/settings.json`. Committing that only *enables* them; each developer installs them once with `harness sync` (Claude Code doesn't download project-enabled plugins by itself). They are stored in Claude Code's plugin cache in the user's home folder, which is how Claude Code works; enablement stays repo-scoped. **Cloud sessions don't load repo-enabled plugins**, so outside plugins don't apply there; own items (copied files) do |
+| Product context | The interview's first question collects project scope: pointed files (README, PRD, spec) or a short description, summarised into `.harness/context/product.md` and approved by the user |
 | Own items | Copied as real files into the repo (`.claude/`, `.harness/`), listed in a manifest with hashes. Changes to them need CODEOWNERS review and pass a CI integrity check |
 | Target agent | Claude Code only in v1. Cursor, Codex, OpenCode on the roadmap |
 | v1 project types | React/Next web app, landing/marketing (incl. 3D/motion), RN/Expo mobile, Node backend/infra. Monorepos with several apps are first-class |
@@ -87,7 +88,7 @@ The seam for future agents is `apply/<agent>.ts` plus a plugin for that agent. N
 | `/harness update` | plugin | Compare the running catalog version with `config.yaml`, re-scan, re-recommend, show diff (new / changed / retired / now-conflicting), apply approved changes. A newer catalog arrives by upgrading the plugin and package |
 | `/harness review <pr>` | plugin (copied into repo as a skill, so teammates have it) | PR reviewer (section 9) |
 | `harness scan` / `report` | CLI | Facts; re-render `report.md` |
-| `harness sync` | CLI | Install pinned outside non-plugin skills |
+| `harness sync` | CLI | One-time setup per developer after cloning: runs `claude plugin install <name>@harness-pins --scope project` for each declared outside plugin (after showing the list and asking) and installs pinned outside non-plugin skills into gitignored `.claude/skills/`. The session-start hook and `doctor` warn when something declared isn't installed |
 | `harness doctor` | CLI | Manifest hashes, hooks wired, MCP servers declared, outside skills synced, Claude Code version ≥ each item's `min_claude_code` |
 | `harness stats` | CLI | Summarise `.harness/logs/events.jsonl` (section 9e) |
 | `harness tdd off` | CLI, human-only | Pause TDD layers 2–4 for one session (section 9c) |
@@ -113,6 +114,7 @@ The seam for future agents is `apply/<agent>.ts` plus a plugin for that agent. N
   config.yaml      answers, apps, selections, catalog version, review, tdd, unattended settings
   manifest.json    every file and merged block written, with content hash
   report.md        findings, roadmap, deliberate exclusions
+  context/product.md  approved product scope summary (from pointed files or the user's own words)
   hooks/           dispatcher + check modules (Node, cross-platform)
   state/           per-session hook state (gitignored)
   logs/            events.jsonl, multi-file and tdd-off logs (gitignored)
@@ -178,7 +180,9 @@ Referenced (from the audit): frontend-design, modern-web-guidance, chrome-devtoo
 Reads file names and an allowlist of config files only (never `.env*`, never `.harnessignore` paths). Produces `facts.json`: package manager, workspaces and **apps** (each workspace with a runnable entry: web, mobile, api), frameworks, router types, test runners, CI files, Docker, IaC markers, DB clients, auth SDKs, Expo markers, deploy markers, existing `AGENTS.md`/`CLAUDE.md`/`.claude/`, lefthook or husky. Deterministic.
 
 ### 8.2 interview
-Runs in the user's Claude Code session through the `harness-init` skill, using native question prompts, one question at a time with options. Asks only about gaps in the facts: product type and domain, compliance (e.g. HIPAA, PCI) and data handling, team size, open-source plans, CODEOWNERS owner(s), deploy target, run budget, and **per app**: run recipe (install, start, ready URL, port), public-facing or not, login needed and where test credentials live (file + keys or environment variable names, stored as names only), login URL and post-login URL or selector. Also `unattended` settings, `tdd` paths and diff-coverage threshold. Answers are validated by the CLI and saved to `config.yaml`. `update` re-asks only when facts contradict stored answers.
+Runs in the user's Claude Code session through the `harness-init` skill, using native question prompts, one question at a time with options. **First question: project scope.** The user either points to the files that describe the product (README, PRD, spec, requirements; one or more paths) or writes a short scope in a few sentences. For pointed files, the skill reads only those files, writes a summary of at most 40 lines to `.harness/context/product.md` (purpose, users, core features, constraints, non-goals, source paths), and shows it for the user to edit and approve. Files outside the repo are summarised but not linked, because teammates can't open them; the summary says where they came from, and the tool offers to copy the original into `docs/` only if the user agrees. Paths in `.harnessignore` are never read. `product.md` is the product context for recommend, for the `staff-reviewer` in every PR review (checking changes against stated scope and non-goals), and for the `AGENTS.md` block, which links to it instead of repeating it.
+
+Then it asks only about gaps in the facts and the product context: product type and domain, compliance (e.g. HIPAA, PCI) and data handling, team size, open-source plans, CODEOWNERS owner(s), deploy target, run budget, and **per app**: run recipe (install, start, ready URL, port), public-facing or not, login needed and where test credentials live (file + keys or environment variable names, stored as names only), login URL and post-login URL or selector. Also `unattended` settings, `tdd` paths and diff-coverage threshold. Answers are validated by the CLI and saved to `config.yaml`. `update` re-asks only when facts contradict stored answers.
 
 ### 8.3 recommend
 Runs as the `staff-reviewer` subagent with the `review-rubric` skill, so repo audit and PR review apply the same standards. Input: facts, answers, compact catalog. Output: `picks.json` (per item `include: recommended | optional`, `reason`, `addresses: [finding ids]`) and `report.md` (findings by severity, 30/60/90-day roadmap, deliberate exclusions, the reviewer's stated limits, and the statement that only CI and branch protection enforce rules for everyone). CLI validates; unknown ids fail; one retry; then stop with raw output in `.harness/debug/`.
@@ -196,7 +200,7 @@ Clean tree required (or offer stash). Branch `chore/ai-workflow-<catalog-version
 
 1. **Trigger.** `/harness review <pr>`, or a `PostToolUse` hook on `Bash` matching `gh pr create` that asks Claude to run it in the same session (`review.auto_after_pr_create`). Headless: `claude -p "/harness review <pr>"`, governed by `unattended.review`.
 2. **Trust boundary.** Harness config, hooks and agent definitions are read from the **base branch**, never the PR. The tool **always asks before running any PR's code** (install or start), showing the author, whether they are a collaborator, and whether the PR changes install scripts, CI files or harness paths. Declining gives a code-only review.
-3. **Gather.** `gh pr view`, `gh pr diff`, changed files, linked issue, `AGENTS.md`, referenced spec.
+3. **Gather.** `gh pr view`, `gh pr diff`, changed files, linked issue, `AGENTS.md`, `.harness/context/product.md`, referenced spec.
 4. **Select apps and routes.** Changed paths pick the affected apps. Rules find route files (Next app router, TanStack file routes, Expo Router); a small-model subagent traces shared components to routes. The user confirms or edits the list.
 5. **Run.** Per affected app, the PR branch in a separate worktree with that app's run recipe. `PORT` is passed when supported; a taken port stops the run with a clear error.
 6. **Log in** (per app, when needed).
@@ -224,7 +228,9 @@ Clean tree required (or offer stash). Branch `chore/ai-workflow-<catalog-version
 
 **Can do well:** apply a consistent checklist; catch bugs, security issues, anti-patterns and missing tests in a diff; back findings with runtime evidence; judge trade-offs visible in code and docs.
 
-**Cannot do, stated in every report:** know unwritten product or organisation context; weigh business priorities; see production data without an observability tool. It can be wrong; evidence, verification and the user's final say are the safeguards.
+**Product context:** `.harness/context/product.md` is its source for scope and non-goals. A change that contradicts a stated non-goal is a `medium` finding.
+
+**Cannot do, stated in every report:** know product or organisation context beyond `product.md`, `AGENTS.md` and ADRs; weigh business priorities; see production data without an observability tool. It can be wrong; evidence, verification and the user's final say are the safeguards.
 
 **Measured, not claimed.** `evals/` in this repo holds (a) past PRs with known issues (starting with fitness-app) scored for issues found and false alarms, and (b) fixture repos with expected picks for the recommend step. Re-run on every rubric, prompt or model change.
 
@@ -252,6 +258,8 @@ unattended:
   multi_file_gate: block      # block | allow-log | off
   review: code-only           # skip | code-only
 ```
+**Cloud sessions run with own items only.** Repo-enabled outside plugins are not loaded there (per the plugin docs), so nothing in the unattended path may depend on them; `report.md` lists which selected items won't apply in cloud runs.
+
 `block` refuses and reports the wanted files; `allow-log` allows, logs, and `pr-ship` lists the files in the PR; `off` disables. `review: code-only` never runs PR code, never logs in, never publishes without a human. No defaults: init asks.
 
 ## 9c. TDD harness
@@ -356,6 +364,7 @@ The owner may reorder.
 - Plugin sources (`github`, `url`, `git-subdir`) accept `ref` and full `sha`; marketplace sources in `extraKnownMarketplaces` accept only `ref`; inline `settings` marketplaces are supported → pinned plugins via `harness-pins`.
 - Hook input includes `session_id`, `permission_mode`, and `agent_id` / `agent_type` inside subagents; `CLAUDE_CODE_REMOTE=true` in remote sessions; no marker for `-p` mode.
 - Subagent frontmatter hooks require workspace trust; a `-p` run does not count as accepting trust.
+- Project-scope plugins enabled in `.claude/settings.json` are not downloaded to collaborators' machines; each runs `claude plugin install … --scope project` once. `claude -p` loads already-installed plugins. Cloud sessions load neither user-installed nor repo-enabled plugins.
 
 **Still to verify:**
 - What `permissionDecision: "ask"` does in each mode where nobody can answer (expected: treated as deny; the dispatcher won't return it there anyway).
@@ -366,6 +375,8 @@ The owner may reorder.
 - Proof of red when new tests don't compile on base: count a compile or import error as "fails" only for newly added test files, and report it separately.
 - Diff-coverage from istanbul output without a Python dependency.
 - How teammates install the `/harness` plugin while this repo is private.
+- Whether a cloud environment's setup script can install plugins (`claude plugin install`), which would let outside plugins apply in cloud runs.
+- Whether plugins installed from an inline `settings` marketplace install cleanly with `claude plugin install <name>@harness-pins --scope project`.
 
 ## 15. Roadmap after v1
 

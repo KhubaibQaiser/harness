@@ -97,7 +97,7 @@ const ASK: [RegExp, string][] = [
   [/\bdrop\s+(table|database|schema)\b/i, 'SQL DROP'],
 ];
 
-const rmTargets = (cmd: string): { recursive: boolean; targets: string[] }[] =>
+export const rmTargets =(cmd: string): { recursive: boolean; targets: string[] }[] =>
   [...cmd.matchAll(/(?:^|[;&|(]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => {
     const toks = m[1].trim().split(/\s+/).filter(Boolean);
     const flags = toks.filter((t) => t.startsWith('-')).join('');

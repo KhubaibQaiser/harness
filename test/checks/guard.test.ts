@@ -100,8 +100,9 @@ test.each(['harness tdd off', 'npx @khubaibqaiser/harness tdd off', 'pnpm harnes
 test.each([
   'harness tdd "off"', 'harness "tdd" off', 'harness tdd o\\ff', 'harness tdd o""ff',
   'node node_modules/@khubaibqaiser/harness/dist/cli.mjs tdd off',
-])('quoted or escaped tdd off %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
-test.each(['harness tdd on', 'harness tdd status', 'npx @khubaibqaiser/harness tdd status'])('%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+  "harness tdd o$'ff'", 'harness tdd $(echo off)', 'harness tdd `echo off`', 'eval "harness tdd off"', 'harness tdd x',
+])('non-allowlisted tdd invocation %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
+test.each(['harness tdd on', 'harness tdd status', 'npx @khubaibqaiser/harness tdd status', 'pnpm harness tdd status'])('%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 
 const tdd = { tddPaths: ['packages/core/src/**'] };
 test('shell write into a tdd path asks', () => {
@@ -141,8 +142,12 @@ test('shell write into a tdd path is denied when unattended (through the dispatc
 test('a throwing guard is denied by the dispatcher (fail closed)', async () => {
   const spy = vi.spyOn(guard, 'run').mockImplementation(() => { throw new Error('boom'); });
   const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: '/nonexistent-harness-root', tool_name: 'Bash', tool_input: { command: 'ls' } });
-  const r = JSON.parse(await dispatch(raw, registry, {}));
-  spy.mockRestore();
+  let r;
+  try {
+    r = JSON.parse(await dispatch(raw, registry, {}));
+  } finally {
+    spy.mockRestore();
+  }
   expect(r.hookSpecificOutput.permissionDecision).toBe('deny');
   expect(r.hookSpecificOutput.permissionDecisionReason).toBe('harness check guard failed: boom');
 });
@@ -155,6 +160,16 @@ test('fileWriteTargets sees through prefixes, tight redirects and awk junk', () 
   expect(fileWriteTargets("ls | xargs sed -i 's/a/b/' a.ts")).toEqual(['a.ts']);
   expect(fileWriteTargets(`awk '{print > "out.txt"}' in.txt`)).toEqual(['out.txt']);
   expect(fileWriteTargets(`awk '{print 1}' in > 'out.txt'`)).toEqual(['out.txt']);
+});
+
+test('fileWriteTargets follows sudo, env, xargs flags and shell -c', () => {
+  const t = ['packages/core/src/x.ts'];
+  expect(fileWriteTargets("sudo -u root sed -i 's/a/b/' packages/core/src/x.ts")).toEqual(t);
+  expect(fileWriteTargets("env -i sed -i 's/a/b/' packages/core/src/x.ts")).toEqual(t);
+  expect(fileWriteTargets("ls | xargs -I{} sed -i 's/a/b/' packages/core/src/x.ts")).toEqual(t);
+  expect(fileWriteTargets("xargs -n 1 sed -i 's/a/b/' packages/core/src/x.ts")).toEqual(t);
+  expect(fileWriteTargets(`bash -c "sed -i 's/a/b/' packages/core/src/x.ts"`)).toEqual(t);
+  expect(fileWriteTargets(`sh -c 'echo hi > packages/core/src/x.ts'`)).toEqual(t);
 });
 
 test('fileWriteTargets', () => {

@@ -1,10 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { type HarnessConfig, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
-import { type SessionState, isSafeSessionId, readState, writeState } from '../core/state.js';
+import { type SessionState, isSafeSessionId, readState, stateExists, writeState } from '../core/state.js';
 import { isUnattended } from '../core/unattended.js';
 import { emit, parseInput } from './io.js';
 import type { Decision, HookEvent, HookInput } from './types.js';
@@ -32,7 +31,8 @@ export const registry: Check[] = [];
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 const CURSOR_KEYS = ['conversation_id', 'generation_id', 'model_id', 'workspace_roots'];
 const rootCache = new Map<string, string>();
-const warned = new Set<string>();
+const NO_ROOT = '/nonexistent-harness-root'; // loadConfig/readState on it yield defaults and a fresh state without touching disk
+const warn = (what: string, e: unknown) => process.stderr.write(`harness: ${what} failed: ${String((e as Error)?.message ?? e)}\n`);
 
 function repoRoot(cwd: string): string {
   let r = rootCache.get(cwd);
@@ -54,34 +54,63 @@ export async function dispatch(raw: string, checks: Check[], env: NodeJS.Process
   if (CURSOR_KEYS.some((k) => k in rec) || input.tool_name === 'Shell') return '';
 
   const event = input.hook_event_name as HookEvent;
-  const root = repoRoot(input.cwd);
-  const { config, warnings } = loadConfig(root);
-  if (!warned.has(root)) {
-    warned.add(root);
-    for (const w of warnings) process.stderr.write(`harness: ${w}\n`);
+  let root = input.cwd;
+  let config: HarnessConfig | undefined;
+  let state: SessionState | undefined;
+  let unattended = false;
+  try {
+    root = repoRoot(input.cwd);
+    const loaded = loadConfig(root);
+    config = loaded.config;
+    if (event === 'UserPromptSubmit') for (const w of loaded.warnings) process.stderr.write(`harness: ${w}\n`);
+    state = readState(root, input.session_id);
+    unattended = isUnattended(input, env);
+  } catch (e) {
+    warn('setup', e);
+    root = input.cwd;
+    try {
+      config = loadConfig(NO_ROOT).config;
+      state = readState(NO_ROOT, input.session_id);
+      unattended = isUnattended(input, env);
+    } catch (e2) {
+      warn('fallback setup', e2);
+      config = undefined; // degraded: only failClosed checks run
+    }
   }
-  const state = readState(root, input.session_id);
-  // Fix startedAt at the session's first hook.
-  if (!existsSync(join(root, '.harness/state', `${input.session_id}.json`))) writeState(root, input.session_id, state);
+  const degraded = !config || !state;
+  if (state) {
+    // Fix startedAt at the session's first hook.
+    try {
+      if (!stateExists(root, input.session_id)) writeState(root, input.session_id, state);
+    } catch (e) {
+      warn('state write', e);
+    }
+  }
 
-  const unattended = isUnattended(input, env);
-  const ctx: Ctx = {
+  const ctx = {
     input, root, config, state, unattended, env,
-    save(s) {
+    save(s: SessionState) {
       writeState(root, input.session_id, s);
       ctx.state = s;
     },
+  } as Ctx;
+  const log = (check: string, decision: string, reason?: string) => {
+    try {
+      appendEvent(root, { ts: new Date().toISOString(), session: input.session_id, check, decision, ...(reason ? { reason } : {}) });
+    } catch (e) {
+      warn('event log', e);
+    }
   };
-  const log = (check: string, decision: string, reason?: string) =>
-    appendEvent(root, { ts: new Date().toISOString(), session: input.session_id, check, decision, ...(reason ? { reason } : {}) });
 
   const decisions: Decision[] = [];
-  for (const c of checks.filter((c) => c.events.includes(event))) {
+  for (const c of checks.filter((c) => c.events.includes(event) && (!degraded || c.failClosed))) {
     let d: Decision;
     try {
-      d = await c.run(ctx);
+      const r = await c.run(ctx);
+      if (!r || typeof r !== 'object' || typeof r.kind !== 'string') throw new Error('invalid check result');
+      d = r;
     } catch (e) {
-      const msg = (e as Error).message;
+      const msg = String((e as Error)?.message ?? e);
       if (!c.failClosed) {
         process.stderr.write(`harness: check ${c.name} failed: ${msg}\n`);
         continue;
@@ -120,4 +149,8 @@ async function main(): Promise<void> {
 
 // Run only as the process entry (also true for the bundled dist file), so tests can import `dispatch`.
 const entry = process.argv[1];
-if (entry && import.meta.url === pathToFileURL(realpathSync(entry)).href) void main();
+try {
+  if (entry && import.meta.url === pathToFileURL(realpathSync(entry)).href) void main();
+} catch {
+  // unresolvable entry path: stay silent, exit 0
+}

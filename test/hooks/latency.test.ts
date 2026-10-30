@@ -16,6 +16,7 @@ test('PreToolUse median wall time is under 150 ms', () => {
     const r = spawnSync(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs')], { input, encoding: 'utf8' });
     times.push(performance.now() - t);
     expect(r.status).toBe(0);
+    expect(r.stdout).toBe('');
   }
   times.sort((a, b) => a - b);
   expect(times[10]).toBeLessThan(150);

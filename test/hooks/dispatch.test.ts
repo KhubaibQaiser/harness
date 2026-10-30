@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { readEvents } from '../../src/core/events.js';
-import { isSafeSessionId, readState } from '../../src/core/state.js';
+import { isSafeSessionId, readState, statePath } from '../../src/core/state.js';
 import { type Check, dispatch } from '../../src/hooks/dispatch.js';
 import type { Decision, HookEvent } from '../../src/hooks/types.js';
 
@@ -80,13 +81,54 @@ test('session state is written on first hook and ctx.save persists', async () =>
   await dispatch(pre({ cwd: r }), [saver], {});
   expect(readState(r, 's')).toMatchObject({ startedAt: t, files: ['a'] });
 });
-test('config warnings go to stderr once per process', async () => {
+const tmpRoot = () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  return r;
+};
+test('config warnings go to stderr on UserPromptSubmit only', async () => {
   const r = mkdtempSync(join(tmpdir(), 'h-dp-'));
   mkdirSync(join(r, '.harness'));
   writeFileSync(join(r, '.harness/config.yaml'), 'bogus: 1\n');
   const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   await dispatch(pre({ cwd: r }), [], {});
-  await dispatch(pre({ cwd: r }), [], {});
-  expect(err.mock.calls.filter((c) => String(c[0]).includes('bogus'))).toHaveLength(1);
+  expect(err.mock.calls.filter((c) => String(c[0]).includes('bogus'))).toHaveLength(0);
+  await dispatch(payload({ cwd: r, hook_event_name: 'UserPromptSubmit' }), [], {});
+  await dispatch(payload({ cwd: r, hook_event_name: 'UserPromptSubmit' }), [], {});
+  expect(err.mock.calls.filter((c) => String(c[0]).includes('bogus'))).toHaveLength(2);
   err.mockRestore();
+});
+test('fail-closed deny survives unwritable .harness', async () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-'));
+  writeFileSync(join(r, '.harness'), 'not a dir');
+  const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  const guard: Check = { ...denyAll, failClosed: true };
+  expect(decisionOf(await dispatch(pre({ cwd: r }), [guard], {}))).toBe('deny');
+  expect(err).toHaveBeenCalledWith(expect.stringMatching(/^harness: .* failed: /));
+  err.mockRestore();
+});
+test('malformed check results and non-Error throws are treated as throws', async () => {
+  const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  const bad = (extra: Partial<Check> = {}): Check => ({ name: 'bad', events: ['PreToolUse'], run: () => undefined as unknown as Decision, ...extra });
+  expect(await dispatch(pre(), [bad()], {})).toBe('');
+  expect(decisionOf(await dispatch(pre(), [bad({ failClosed: true })], {}))).toBe('deny');
+  const thrower = (v: unknown, extra: Partial<Check> = {}): Check => ({ name: 't', events: ['PreToolUse'], run: () => { throw v; }, ...extra });
+  expect(await dispatch(pre(), [thrower(null)], {})).toBe('');
+  expect(out(await dispatch(pre(), [thrower(undefined, { failClosed: true })], {})).hookSpecificOutput?.permissionDecisionReason).toBe('harness check t failed: undefined');
+  err.mockRestore();
+});
+test('corrupt state file is rewritten on first hook', async () => {
+  const r = tmpRoot();
+  mkdirSync(join(r, '.harness/state'));
+  writeFileSync(statePath(r, 's'), '{oops');
+  await dispatch(pre({ cwd: r }), [], {});
+  expect(() => JSON.parse(readFileSync(statePath(r, 's'), 'utf8'))).not.toThrow();
+});
+test('bundle exits 0 with empty stdout for empty and garbage stdin', () => {
+  for (const input of ['', 'garbage{']) {
+    const r = spawnSync(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs')], { input, encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('');
+  }
 });

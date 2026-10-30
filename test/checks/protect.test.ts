@@ -76,3 +76,17 @@ test('whole-tree and protected-path git restores are denied; branch switches are
     expect(bash(c), c).toBe('deny');
   for (const c of ['git checkout feature/x', 'git restore src/a.ts', 'git checkout -b new', 'git checkout HEAD src/a.ts']) expect(bash(c), c).toBe('allow');
 });
+
+test('globs are matched against concrete protected paths', () => {
+  for (const c of ['rm .harness/config.y?ml', 'rm -f .harness/co*', 'rm -f .claude/settings.j?on', 'rm -rf .*', 'rm .[!.]*', 'rm -rf .harness/{hooks,state}', "git restore '.harness/*'", 'mv .harness/{hooks,x} /tmp', 'cp a .claude/settings.j*'])
+    expect(bash(c), c).toBe('deny');
+  for (const c of ['rm -rf dist/*', 'rm src/*.tmp', 'rm -rf node_modules/{a,b}']) expect(bash(c), c).toBe('allow');
+});
+test('git global options do not hide restore and checkout', () => {
+  for (const c of ['git -C . restore .', 'git -C . checkout -- .', 'git --no-pager restore .', 'git -c core.x=1 restore .claude/settings.json', 'git --git-dir=.git checkout HEAD .harness/config.yaml'])
+    expect(bash(c), c).toBe('deny');
+  expect(bash('git -C . restore src/a.ts')).toBe('allow');
+});
+test(':/ pathspecs and bash -c are seen', () => {
+  for (const c of ["git restore ':/.'", 'git restore :/', 'bash -c "git restore ."', 'sh -c "mv a .harness/hooks/dispatch.mjs"']) expect(bash(c), c).toBe('deny');
+});

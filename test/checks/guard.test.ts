@@ -218,3 +218,10 @@ test('fileWriteTargets sees generic redirects, truncate, ln, install, cp -t, dd 
 test('a generic shell redirect into a TDD path asks', () => {
   expect(kind('cat x > packages/core/src/a.ts', { tddPaths: ['packages/core/src/**'] })).toBe('ask');
 });
+
+test('git global options do not hide checkout, restore or the discard-all ask', () => {
+  expect(fileWriteTargets('git -C . checkout -- a.ts')).toEqual(['a.ts']);
+  expect(fileWriteTargets('git --no-pager -c x=1 restore a.ts')).toEqual(['a.ts']);
+  expect(kind('git -C . checkout .')).toBe('ask');
+  expect(kind('git --no-pager restore .')).toBe('ask');
+});

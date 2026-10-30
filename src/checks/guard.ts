@@ -82,7 +82,7 @@ const DENY: [RegExp, string][] = [
 const ASK: [RegExp, string][] = [
   [/\bgit\s+reset\s+--hard\b/, 'git reset --hard discards local changes'],
   [/\bgit\s+clean\s+-[a-zA-Z]*f/, 'git clean deletes untracked files'],
-  [/\bgit\s+(checkout|restore)\s+(--\s+)?\.(\s|$)/, 'discarding all working-tree changes'],
+  [/\bgit\s+(?:(?:-[Cc]\s+\S+|--\S+)\s+)*(checkout|restore)\s+(--\s+)?\.(\s|$)/, 'discarding all working-tree changes'],
   [/\bgit\s+branch\s+-D\b/, 'force-deleting a branch'],
   [/(^|[;&|]\s*)sudo\b/, 'sudo'],
   [/\b(npm|pnpm|yarn)\s+(publish|unpublish)\b/, 'publishing a package'],
@@ -155,6 +155,14 @@ const checkInstall = (cmd: string, env: NodeJS.ProcessEnv): Verdict | undefined 
   return ['deny', `${what}. Dependencies are added by a human: ask the user to run it`];
 };
 
+// Tokens after "git" and its global options (-C dir, -c k=v, --no-pager, --git-dir=…): [subcommand, ...args].
+// ponytail: a space-separated --git-dir X / --work-tree X value is read as the subcommand.
+export function gitArgs(toks: string[]): string[] {
+  let i = toks.indexOf('git') + 1;
+  while (i > 0 && i < toks.length && toks[i].startsWith('-')) i += /^-[Cc]$/.test(toks[i]) ? 2 : 1;
+  return i > 0 ? toks.slice(i) : [];
+}
+
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
 // ponytail: splits on ; & | even inside quotes, and ignores here-docs and subshells; upgrade to a real shell parser if bypasses matter.
 export function fileWriteTargets(cmd: string): string[] {
@@ -208,11 +216,12 @@ export function fileWriteTargets(cmd: string): string[] {
       if (tf > 0 && toks[tf + 1]) out.push(unquote(toks[tf + 1]));
     } else if (name === 'dd') {
       out.push(...toks.filter((t) => t.startsWith('of=')).map((t) => unquote(t.slice(3))));
-    } else if (name === 'git' && toks[1] === 'checkout') {
-      const d = toks.indexOf('--');
-      if (d > 0) out.push(...toks.slice(d + 1).map(unquote));
-    } else if (name === 'git' && toks[1] === 'restore') {
-      out.push(...toks.slice(2).filter((t) => !t.startsWith('-')).map(unquote));
+    } else if (name === 'git') {
+      const [sub, ...rest] = gitArgs(toks);
+      if (sub === 'checkout') {
+        const d = rest.indexOf('--');
+        if (d >= 0) out.push(...rest.slice(d + 1).map(unquote));
+      } else if (sub === 'restore') out.push(...rest.filter((t) => !t.startsWith('-')).map(unquote));
     }
   }
   return [...new Set(out)];

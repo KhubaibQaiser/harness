@@ -1,0 +1,29 @@
+# .harness/config.yaml - every key shown with its default.
+checks:
+  guard: true       # block dangerous commands
+  protect: true     # protect sensitive paths
+  depVerify: true   # verify new dependencies
+  multiFile: false  # needs config: multi-file edit gate
+  tdd: false        # needs config: red-first TDD enforcement
+  stop: true        # run verification steps before stopping
+
+tdd:
+  paths: []         # globs of source files under TDD
+  exempt: []        # globs exempt from TDD
+  diff_coverage: 80 # minimum % coverage on changed lines
+  test_lock: true   # lock tests once they are red
+  results_dir: .harness/state/test-results
+
+multi_file_gate:
+  generated: []     # globs of generated files to ignore
+
+unattended:
+  multi_file_gate: block   # block | allow-log | off
+
+stop:
+  steps: [format:check, lint, typecheck, test]
+  package_manager: pnpm
+  max_attempts: 3
+  timeout_s: 540
+  base_ref: origin/main
+  coverage_globs: ['**/coverage/coverage-final.json']

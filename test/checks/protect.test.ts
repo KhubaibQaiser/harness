@@ -66,3 +66,13 @@ test('generic shell writes to protected paths are denied', () => {
   for (const c of ['cat x > .harness/config.yaml', 'truncate -s 0 .harness/config.yaml', 'ln -sf /tmp/x .harness/hooks/dispatch.mjs', 'git checkout -- .harness/config.yaml', 'git restore .claude/settings.json'])
     expect(bash(c), c).toBe('deny');
 });
+
+test('glob targets whose literal prefix is protected are denied', () => {
+  for (const c of ['rm -rf .harness/*', 'rm .harness/hooks/*.mjs', 'rm -rf .claude/*', 'git rm .harness/hooks/d?spatch.mjs', 'mv .harness/[hs]* /tmp']) expect(bash(c), c).toBe('deny');
+  expect(bash('rm -rf dist/*')).toBe('allow');
+});
+test('whole-tree and protected-path git restores are denied; branch switches are not', () => {
+  for (const c of ['git restore .', 'git checkout -- .', 'git checkout .', 'git restore :/', 'git restore ./', 'git checkout HEAD .harness/config.yaml', 'git restore --source=HEAD~1 .claude'])
+    expect(bash(c), c).toBe('deny');
+  for (const c of ['git checkout feature/x', 'git restore src/a.ts', 'git checkout -b new', 'git checkout HEAD src/a.ts']) expect(bash(c), c).toBe('allow');
+});

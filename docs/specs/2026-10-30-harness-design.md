@@ -1,6 +1,6 @@
 # Harness: design spec
 
-- Status: draft, awaiting review
+- Status: draft v2 (after staff review), awaiting owner approval
 - Date: 2026-10-30
 - Owner: khubaibqaiser
 - Package: `@khubaibqaiser/harness` (npm, unclaimed as of 2026-10-30)
@@ -8,114 +8,131 @@
 
 ## 1. Goal
 
-One tool that sets up a curated AI-native workflow inside a repository. It scans the repo, interviews the user about what the scan cannot tell, recommends items from its own closed catalog, lets the user choose, writes the chosen items into the repo, and asks before committing, pushing and opening a PR. The user makes every decision. The tool ships a local PR reviewer as one of its own items.
+One tool that sets up a curated AI-native workflow inside a repository. It scans the repo, interviews the user about what the scan cannot tell, recommends items from its own closed catalog, lets the user choose, writes the chosen items into the repo, and asks before committing, pushing and opening a PR. The user makes every decision. The tool ships a local PR reviewer and a TDD harness as its own items.
 
-Everything is repo-level, so every developer who clones the repo gets the same workflow. Nothing is installed globally.
+Everything is repo-level, so every developer who clones the repo gets the same workflow. Nothing is installed globally except the `/harness` plugin used by whoever runs init or update.
 
-## 2. Decisions (agreed in brainstorming)
+## 2. Decisions
 
 | Topic | Decision |
 |---|---|
-| Shape | TypeScript npm CLI plus a thin Claude Code plugin exposing `/harness init|update|review|doctor` |
-| Engine | Rule-based pipeline. In `init` and `update`, Claude (headless, Agent SDK) is used only for interview and recommend, and returns schema-validated JSON. `review` uses the `staff-reviewer` agent |
+| Shape | **Plugin-first.** A Claude Code plugin (`/harness init|update|review|doctor`) runs the judgment steps inside the developer's own Claude Code session. A TypeScript npm CLI (`npx @khubaibqaiser/harness …`) is the rule-based engine the skills call: scan, validate, apply, git, hook runtime, CI checks, stats |
+| Why not the Agent SDK | Anthropic does not allow third-party products built on the Agent SDK to use claude.ai login unless approved; they must use API keys. Plugin-first needs no extra auth or cost. Headless runs (CI, routines) use `claude -p` with whatever auth that environment already has |
+| Model output | Never trusted directly: the skill writes JSON, the CLI validates it against a schema, one retry, then stop |
 | Catalog | Closed. Lives in this repo. Changes only through a new release |
-| Third-party items | Referenced, never copied into this tool or committed into target repos |
+| Third-party items | Referenced, never copied. Outside plugins are pinned to an exact commit through an inline `settings` marketplace in `.claude/settings.json` |
+| Own items | Copied as real files into the repo (`.claude/`, `.harness/`), listed in a manifest with hashes. Changes to them need CODEOWNERS review and pass a CI integrity check |
 | Target agent | Claude Code only in v1. Cursor, Codex, OpenCode on the roadmap |
-| v1 project types | React/Next web app, landing/marketing (incl. 3D/motion), RN/Expo mobile, Node backend/infra |
-| Install location | `.harness/` for config, manifest, report, hook scripts. Real files in `.claude/agents/` and `.claude/skills/`. Merged blocks in `.claude/settings.json`, `.mcp.json`, `AGENTS.md` |
+| v1 project types | React/Next web app, landing/marketing (incl. 3D/motion), RN/Expo mobile, Node backend/infra. Monorepos with several apps are first-class |
 | Outside non-plugin skills | `harness sync` installs them locally into `.claude/skills/`, gitignored, pinned to a commit |
 | Git | Branch `chore/ai-workflow-<catalog-version>`, commit as the user's git identity, ask before push, ask before PR |
-| PR reviewer trigger | On demand and after an agent runs `gh pr create` (hook, can be disabled) |
-| PR reviewer browser | Headless Playwright for screenshots and axe, Chrome DevTools MCP for traces and runtime errors |
-| Screenshots | After-only (no base-branch comparison), pushed to orphan branch `harness-assets` |
-| Multi-file changes | `multi-file-gate` own hook: when an agent is about to edit a second source file in a turn, it asks the user once, showing files touched and the next file. Unattended behaviour (cloud, CI, headless, background) is set per repo in `config.yaml` (section 9b) |
-| TDD | Enforced by layers, not advice (section 9c): own deterministic red-first gate (no model calls), anti-tampering, test lock (ask to change), spec gate, Stop gate with diff coverage, CI diff coverage + proof of red, mutation testing on labelled PRs. Logic paths only, set at init. Human-only `harness tdd off` for spikes. File-writing shell commands into TDD paths ask first |
-| Unattended runs | Everything must work in cloud and CI runs. Behaviour that needs a human is configured in `config.yaml` under `unattended`, chosen by the user during init |
-| App login | During init, ask where test login credentials live: a file path + key names (e.g. `.env.local`: `E2E_EMAIL`, `E2E_PASSWORD`) or environment variable names (for cloud and CI secrets). If given, a Playwright script uses them; values never enter the model's context. If missing or failing, show a clear error and offer the interactive login. If not given, interactive login on each run |
-| SEO | Public-facing sites get SEO checks in the reviewer, flagged like accessibility, plus SEO catalog items |
-| Token use | Minimal tokens, maximum impact: deterministic checks first, the model sees only their failures and the diff (section 5a) |
-| Persona | A staff-level reviewer used for both the repo audit (init/update) and PR review (section 9a) |
-| Review output | Pending (draft) GitHub review via `gh api`. Each comment tagged `[nit]`, `[medium]` or `[critical]`. Suggested verdict follows the worst finding. User submits |
-| Repo home | `~/Documents/khubaib-personal/harness`, private GitHub repo `khubaibqaiser/harness` later (ask before creating) |
+| PR reviewer | On demand and after an agent runs `gh pr create` (can be disabled). Always asks before running any PR's code. Config and hooks are loaded from the base branch |
+| Reviewer browser | Headless Playwright for screenshots, axe and SEO checks; Chrome DevTools MCP for traces and runtime errors; browser restricted to localhost |
+| Screenshots | After-only, pushed to orphan branch `harness-assets` |
+| App login | Per app: credentials from a named file + keys or named environment variables, never stored or shown to the model; on failure a specific error then interactive login; if not configured, interactive login |
+| Review output | Pending GitHub review via `gh api`, comments tagged `[nit]`, `[medium]`, `[critical]`, suggested verdict from the worst finding. User submits |
+| SEO | Public-facing apps get SEO checks in the reviewer, flagged like accessibility |
+| Multi-file changes | `multi-file-gate` asks once per turn before a second source file is edited (section 9b) |
+| TDD | Enforced in layers (section 9c), logic paths only, human-only spike toggle |
+| Unattended runs | Must work in cloud and CI. Human-dependent behaviour set in `config.yaml` under `unattended`, chosen at init |
+| Token use | Deterministic first; the model sees only failures, the diff and compact inputs (section 5a) |
+| Persona | `staff-reviewer` agent + `review-rubric` skill for repo audit and PR review, measured by evals (section 9a) |
+| Build approach | Walking skeleton in milestones (section 13) |
+| Repo home | `~/Documents/khubaib-personal/harness`; private GitHub repo `khubaibqaiser/harness` later (ask before creating) |
 
 ## 3. Non-goals for v1
 
 - Cursor, Codex, OpenCode adapters
-- Web UI, telemetry, multi-repo dashboards, auto-update
+- Web UI, remote telemetry, multi-repo dashboards, auto-update
 - Copying or vendoring any third-party skill or plugin
 - Before/after screenshot comparison
-- Storing credential values anywhere (only the file path and key names are stored)
-- Global (user-level) installation of anything
+- Storing credential values anywhere
+- Global installation of anything except the `/harness` plugin
+- Agent SDK / API-key mode
 
 ## 4. Architecture
 
-Pipeline: `scan → interview → recommend → select → apply → git`. Claude never writes files. Any install can be reproduced from `facts.json`, the user's answers and the user's selections.
-
 ```
-src/
-  scan/        rule-based detectors → facts.json
-  interview/   Agent SDK session, read-only tools → answers in config.yaml
-  recommend/   Agent SDK session, read-only tools → picks.json + report.md
-  select/      terminal checklist
-  apply/       template renderer, merge logic, manifest; apply/claude.ts holds all Claude-specific output
-  git/         branch, commit, push, gh pr create (each outward step confirmed)
-  review/      PR reviewer
+plugin/                       Claude Code plugin (installed by whoever runs init/update)
+  skills/harness-init/        interview + recommend in the user's session
+  skills/harness-update/
+  skills/harness-review/      orchestrates the PR review
+  skills/harness-doctor/
+src/ (CLI, deterministic)
+  scan/       detectors → facts.json
+  validate/   JSON schemas for answers, picks, findings; validation commands the skills call
+  apply/      template renderer, merge logic, manifest; apply/claude.ts holds all Claude-specific output
+  git/        branch, commit, push, gh pr create, gh review payloads
+  hooks/      single dispatcher per hook event (section 9d)
+  checks/     stop gate, TDD checks, SEO script, axe runner, diff coverage, proof of red, integrity check
+  review/     worktree, run recipe, login script, capture, publish
+  stats/      events log reader
 catalog/
-  items/*.yaml one file per item
-  templates/   files for the tool's own items
-plugin/        Claude Code plugin; slash commands call the CLI
+  items/*.yaml
+  templates/  files for own items
+evals/        reviewer and recommend eval sets and results
 ```
 
-The only seam for future agents is `apply/<agent>.ts` reading the same `picks.json`. No plugin framework until a second agent exists.
+Init flow: `/harness init` → CLI `scan` → skill interviews (Claude Code's native question prompts) → CLI `validate answers` → skill recommends → CLI `validate picks` → CLI `select` (checklist, also usable inside the session) → CLI `apply` (diff shown, confirm) → CLI `git` (each outward step confirmed).
+
+`scan`, `report`, `doctor`, `stats`, `uninstall` and every check run from the CLI alone, without Claude.
+
+The seam for future agents is `apply/<agent>.ts` plus a plugin for that agent. No plugin framework until a second agent exists.
 
 ## 5. Commands
 
-| Command | Does |
-|---|---|
-| `harness init` | Full pipeline on a repo without `.harness/` |
-| `harness update` | Compare the running package's catalog version with the one in `config.yaml`, re-scan, re-recommend, show diff (new / changed / retired / now-conflicting), apply approved changes. A newer catalog arrives by upgrading the package (`npx @khubaibqaiser/harness@latest update`, or bumping the devDependency). `update --check` only reports whether npm has a newer version |
-| `harness sync` | Install pinned outside non-plugin skills into gitignored `.claude/skills/` |
-| `harness review <pr>` | Run the PR reviewer |
-| `harness doctor` | Check installed files against the manifest, hooks wired, MCP servers declared, outside skills synced |
-| `harness report` | Re-render `report.md` from stored facts, answers and picks |
-| `harness assets prune` | Delete screenshot folders for closed PRs from `harness-assets` |
-| `harness uninstall` | Remove only files and blocks listed in the manifest |
-
-`scan` and `report` work without Claude Code. All other Claude-dependent steps stop with a clear message if Claude Code is missing or signed out.
+| Command | Where | Does |
+|---|---|---|
+| `/harness init` | plugin | Full pipeline on a repo without `.harness/` |
+| `/harness update` | plugin | Compare the running catalog version with `config.yaml`, re-scan, re-recommend, show diff (new / changed / retired / now-conflicting), apply approved changes. A newer catalog arrives by upgrading the plugin and package |
+| `/harness review <pr>` | plugin (copied into repo as a skill, so teammates have it) | PR reviewer (section 9) |
+| `harness scan` / `report` | CLI | Facts; re-render `report.md` |
+| `harness sync` | CLI | Install pinned outside non-plugin skills |
+| `harness doctor` | CLI | Manifest hashes, hooks wired, MCP servers declared, outside skills synced, Claude Code version ≥ each item's `min_claude_code` |
+| `harness stats` | CLI | Summarise `.harness/logs/events.jsonl` (section 9e) |
+| `harness tdd off` | CLI, human-only | Pause TDD layers 2–4 for one session (section 9c) |
+| `harness assets prune` | CLI | Delete screenshot folders for closed PRs |
+| `harness uninstall` | CLI | Remove only manifest-listed files and blocks |
+| `harness update --check` | CLI | Report whether npm has a newer version |
 
 ## 5a. Design principle: minimal tokens, maximum impact
 
-Every step follows this order: deterministic first, model last, and the model sees only what a script cannot judge.
-
-- **Scripts do the measuring.** Stack detection, lint, typecheck, axe, SEO checks, console/network errors and performance numbers are produced by scripts. Only their failures, not their full output, go to the model.
-- **Diff-scoped review.** The reviewer gets changed hunks plus a small window of surrounding code, `AGENTS.md`, and the failure list. It reads more files only through tool calls when it needs them.
-- **Right model per step.** Route mapping and the verification pass use a small model (Haiku). The review and the recommend step use the configured main model. Models are set in `config.yaml`.
-- **Compact catalog.** The recommend step receives each item's `id`, `applies_when`, `why` and `cost`, not template contents.
-- **Images sparingly.** Screenshots are captured at all sizes for the PR body, but only the 1280 px light screenshot of each changed route is sent to the model for design review, downscaled.
-- **No repeated work.** `facts.json` and interview answers are cached; `update` re-asks nothing that hasn't changed. Stable prompt prefixes (rubric, `AGENTS.md`) are ordered first to benefit from prompt caching.
-- **Budgets.** Each Claude step runs with a turn cap and an optional `--max-budget-usd`. The run summary prints tokens and cost per step.
-- **Output caps.** The reviewer reports at most 15 findings, ordered by severity. Extra nits are collapsed into one summary line.
+- **Scripts measure.** Stack detection, lint, typecheck, axe, SEO, console/network errors, performance numbers, coverage. Only failures reach the model.
+- **Diff-scoped review.** Changed hunks plus a small surrounding window, `AGENTS.md`, and the failure list. More files only through tool calls.
+- **Right model per step.** Route mapping and the verification pass run in a subagent on a small model; review and recommend use the main model. Set in `config.yaml`.
+- **Compact inputs.** Catalog items as `id`, `applies_when`, `why`, `cost`. Facts as JSON, not file dumps.
+- **Images sparingly.** Only the 1280 px light screenshot of each changed route goes to the model, downscaled (`review.model_screenshots`).
+- **No repeated work.** Cached facts and answers; stable prompt prefixes first for prompt caching.
+- **Budgets and caps.** Turn caps per step; `review.max_findings` (default 15) with extra nits collapsed; headless runs use `--max-turns` and `--max-budget-usd`; each run prints tokens and cost per step.
+- **Context isolation.** Review and recommend run as subagents so their working context does not stay in the developer's main session.
 
 ## 6. Target repo layout
 
 ```
 .harness/
-  config.yaml      answers, selections, run recipe, catalog version, review settings
+  config.yaml      answers, apps, selections, catalog version, review, tdd, unattended settings
   manifest.json    every file and merged block written, with content hash
   report.md        findings, roadmap, deliberate exclusions
-  hooks/           hook scripts, written in Node (no shell), so they run on macOS, Linux and Windows
-  state/           per-session hook state, e.g. files touched this turn (gitignored)
-  logs/            multi-file changes made in unattended runs (gitignored)
+  hooks/           dispatcher + check modules (Node, cross-platform)
+  state/           per-session hook state (gitignored)
+  logs/            events.jsonl, multi-file and tdd-off logs (gitignored)
   reviews/         <pr>.json findings history (gitignored by default)
-  debug/           raw model output on schema failure (gitignored)
-AGENTS.md          harness block between <!-- harness:start --> and <!-- harness:end --> (repo root only in v1; nested per-package files are not touched)
-CLAUDE.md          created with @AGENTS.md if absent; if it exists without that import, the apply diff proposes adding it
-.claude/settings.json   harness keys merged: hooks, enabledPlugins, extraKnownMarketplaces, permissions
-.claude/agents/         real agent files (staff-reviewer, researcher, ui-verifier)
-.claude/skills/         own skills committed; synced outside skills gitignored
-.mcp.json               harness servers merged, pinned versions
+  debug/           raw model output on validation failure (gitignored)
+.harnessignore     paths never sent to the model (regulated data, fixtures)
+AGENTS.md          harness block between markers (repo root only in v1)
+CLAUDE.md          created with @AGENTS.md if absent; otherwise the diff proposes adding the import
+.claude/settings.json   merged: hooks, permissions baseline, sandbox, enabledPlugins, inline pinned marketplace
+.claude/agents/         staff-reviewer, researcher, ui-verifier
+.claude/skills/         own skills incl. harness-review (committed); synced outside skills (gitignored)
+.mcp.json               harness servers, pinned versions
+.github/CODEOWNERS      harness paths owned by the user(s) chosen at init
+.github/workflows/      selected CI items (ci-tdd, harness-integrity, claude-code-action)
 .gitignore              harness entries
 ```
+
+**`AGENTS.md` block rules:** only what the agent can't infer from the code (commands, conventions decided by people, denied actions, where specs and ADRs live), generated from interview answers and facts, kept under 60 lines. Architecture descriptions are not written there.
+
+**Pinned outside plugins** (verified against the marketplace reference): `extraKnownMarketplaces` can pin a marketplace only to a branch or tag, so the tool writes an inline marketplace of type `settings` named `harness-pins`, whose `plugins` entries use `github` or `git-subdir` sources with a full commit `sha`. Plugins from marketplaces that use relative paths (e.g. the official marketplace) are referenced through `git-subdir` with the same `sha`.
 
 ## 7. Catalog
 
@@ -123,11 +140,12 @@ CLAUDE.md          created with @AGENTS.md if absent; if it exists without that 
 
 ```yaml
 id: gsap-skills
-kind: plugin   # own-skill | own-agent | own-hook | plugin | mcp | external-skill | rule | ci
+kind: plugin   # own-skill | own-agent | own-hook | plugin | mcp | external-skill | rule | ci | settings
 title: GSAP official skills
-source: { marketplace: greensock/gsap-skills, plugin: gsap-skills, ref: <tag-or-sha> }
+source: { type: github, repo: greensock/gsap-skills, sha: <40-char sha> }
 license: MIT
-applies_when:            # hints for the recommend step, not hard rules
+min_claude_code: 2.1.0
+applies_when:            # hints for recommend, not hard rules
   any_dep: [gsap]
   project_types: [landing]
 conflicts_with: [motion-ai-kit]
@@ -139,218 +157,221 @@ evidence: [https://github.com/greensock/gsap-skills]
 
 ### 7.2 Catalog checks (CI)
 
-Schema valid; every `requires` and `conflicts_with` target exists; own items have templates; outside items have `ref` and `license`; no duplicate ids.
+Schema valid; `requires` and `conflicts_with` targets exist; own items have templates; outside items have a `sha` (or `unpinned` with a reason) and `license`; no duplicate ids; `min_claude_code` present.
 
 ### 7.3 Seed catalog for v1
 
-Own items (shipped in this repo): `agent-guard` (hook), `stop-gate` (hook), `post-edit-format` (hook), `gitleaks-commit` (hook), `config-change-guard` (hook), `multi-file-gate` (hook), `tdd-gate` (hook: red-first, anti-tampering, test lock, spec gate), `ci-tdd` (ci: diff coverage, tamper scan, proof of red, labelled mutation run), `session-context` (hook), `pr-create-trigger` (hook), `staff-reviewer` (agent), `review-rubric` (skill), `researcher` (agent), `ui-verifier` (agent), `ui-verify` (skill), `seo-audit` (skill + script), `webgl-landing` (skill), `rn-a11y` (skill), `perf-budget` (skill), `adr` (skill), `pr-ship` (skill), `agents-md` (rule template), `lefthook-baseline` (ci), `claude-code-action` (ci), `harness-devdep` (pins this package as a devDependency so the whole team runs the same version; offered as a choice because adding a dependency is something agent-guard blocks by default).
+Own items:
+- Hooks: `agent-guard` (incl. permissions baseline, `dep-verify`, shell-write ask), `stop-gate`, `post-edit-format`, `gitleaks-commit`, `config-change-guard`, `multi-file-gate`, `tdd-gate`, `session-context`, `pr-create-trigger`
+- Agents: `staff-reviewer`, `researcher`, `ui-verifier`
+- Skills: `review-rubric`, `harness-review`, `ui-verify`, `seo-audit`, `webgl-landing`, `rn-a11y`, `perf-budget`, `adr`, `pr-ship`, `session-structure` (creates and maintains `features.json`, `progress.md`, `init.sh`; `session-context` reads them at session start)
+- Settings: `sandbox-settings` (required when any unattended mode is enabled), `permissions-baseline`
+- Rules: `agents-md`
+- CI: `ci-tdd`, `harness-integrity` (manifest hashes + CODEOWNERS required for harness paths), `lefthook-baseline`, `claude-code-action`
+- Other: `harness-devdep` (pins the CLI as a devDependency; offered as a choice because agent-guard blocks new dependencies by default)
 
-Referenced plugins, MCPs and skills, taken from the audit: frontend-design, modern-web-guidance, chrome-devtools-mcp, typescript-lsp, security-guidance, skill-creator, claude-md-management, superpowers, impeccable, web-design-guidelines, react-best-practices, shadcn, web-quality-skills, figma, playwright, gsap-skills, threejs-skills, emilkowalski-skills, spline-mcp, expo, react-native-best-practices, maestro-mcp, mobile-mcp, aws-serverless, aws-core, pulumi, terraform, render, vercel, cloudflare, supabase, prisma, neon, sentry, posthog, claude-security, semgrep, evals-skills, langfuse, deepeval, agent-sdk-dev, mcp-server-dev, marketingskills, mergify, claude-code-setup, session-report.
-
-Each referenced item's `ref` and `license` are filled from its source at implementation time. Items whose source cannot be pinned are marked `ref: unpinned` and flagged in the report.
+Referenced (from the audit): frontend-design, modern-web-guidance, chrome-devtools-mcp, typescript-lsp, security-guidance, skill-creator, claude-md-management, superpowers, impeccable, web-design-guidelines, react-best-practices, shadcn, web-quality-skills, figma, playwright, gsap-skills, threejs-skills, emilkowalski-skills, spline-mcp, expo, react-native-best-practices, maestro-mcp, mobile-mcp, aws-serverless, aws-core, pulumi, terraform, render, vercel, cloudflare, supabase, prisma, neon, sentry, posthog, claude-security, semgrep, evals-skills, langfuse, deepeval, agent-sdk-dev, mcp-server-dev, marketingskills, mergify, claude-code-setup, session-report.
 
 ## 8. Flows
 
 ### 8.1 scan
-
-Reads file names and an allowlist of config files only (never `.env*`). Produces `facts.json`: package manager, workspaces, frameworks from dependencies, router type, test runners, CI files, `Dockerfile`, IaC markers (`*.tf`, `cdk.json`, `Pulumi.yaml`), DB clients, auth SDKs, Expo markers (`app.json`, `eas.json`), deploy markers (`render.yaml`, `vercel.json`, `wrangler.toml`), existing `AGENTS.md`, `CLAUDE.md`, `.claude/`, lefthook or husky. Same repo state always gives the same facts.
+Reads file names and an allowlist of config files only (never `.env*`, never `.harnessignore` paths). Produces `facts.json`: package manager, workspaces and **apps** (each workspace with a runnable entry: web, mobile, api), frameworks, router types, test runners, CI files, Docker, IaC markers, DB clients, auth SDKs, Expo markers, deploy markers, existing `AGENTS.md`/`CLAUDE.md`/`.claude/`, lefthook or husky. Deterministic.
 
 ### 8.2 interview
-
-Claude gets `facts.json` and the README. It asks about gaps only, one question at a time with options: product type and domain, compliance needs (e.g. HIPAA, PCI), team size, open-source plans, deploy target if unclear, budget for agent runs, run recipe for the app (command, port, ready URL) if not detectable, whether the site is public-facing (enables SEO checks), and whether the app needs login. If it does: which file and keys, or which environment variable names, hold test credentials (stored as names only), plus the login URL and the post-login URL or selector that proves success. Also the `unattended` settings (section 9b): multi-file gate mode and what the reviewer does when no human is present. Claude proposes the login form selectors from the login page's markup, and the user confirms them. Answers are saved to `config.yaml`. `update` re-asks only when new facts contradict stored answers.
+Runs in the user's Claude Code session through the `harness-init` skill, using native question prompts, one question at a time with options. Asks only about gaps in the facts: product type and domain, compliance (e.g. HIPAA, PCI) and data handling, team size, open-source plans, CODEOWNERS owner(s), deploy target, run budget, and **per app**: run recipe (install, start, ready URL, port), public-facing or not, login needed and where test credentials live (file + keys or environment variable names, stored as names only), login URL and post-login URL or selector. Also `unattended` settings, `tdd` paths and diff-coverage threshold. Answers are validated by the CLI and saved to `config.yaml`. `update` re-asks only when facts contradict stored answers.
 
 ### 8.3 recommend
-
-Claude runs with the `staff-reviewer` agent definition and `review-rubric` skill, so the repo audit and PR reviews apply the same standards. It gets facts, answers and the compact catalog. It must return `picks.json` matching the schema: per item `include: recommended | optional`, `reason`, `addresses: [finding ids]`. It also writes `report.md`: findings ranked by severity, a 30/60/90-day roadmap, items deliberately left out and why. Unknown ids fail validation; one automatic retry; second failure stops and saves raw output to `.harness/debug/`.
+Runs as the `staff-reviewer` subagent with the `review-rubric` skill, so repo audit and PR review apply the same standards. Input: facts, answers, compact catalog. Output: `picks.json` (per item `include: recommended | optional`, `reason`, `addresses: [finding ids]`) and `report.md` (findings by severity, 30/60/90-day roadmap, deliberate exclusions, the reviewer's stated limits, and the statement that only CI and branch protection enforce rules for everyone). CLI validates; unknown ids fail; one retry; then stop with raw output in `.harness/debug/`.
 
 ### 8.4 select
-
-Terminal checklist. Recommended items pre-ticked, optional unticked. A key shows reason and cost. `requires` auto-selects dependencies with a notice; `conflicts_with` blocks selecting both. Final selection saved to `config.yaml`.
+Checklist: recommended pre-ticked, optional unticked, key shows reason and cost; `requires` auto-selects with a notice; `conflicts_with` blocks both. Saved to `config.yaml`.
 
 ### 8.5 apply
-
-Order: `.harness/` → `.claude/` files → `settings.json` merge → `.mcp.json` merge → `AGENTS.md` block → `.gitignore` → manifest. Full diff shown first; nothing written until confirmed. Writes go to a temp directory and are moved into place, so an interrupted run leaves the repo unchanged. Idempotent. If a manifest file's hash differs from what was written, `update` asks: keep mine / take new / show diff.
+Order: `.harness/` → `.claude/` files → `settings.json` merge → `.mcp.json` merge → `AGENTS.md` block → CODEOWNERS and workflows → `.gitignore` → manifest. Full diff first; nothing written until confirmed. Temp directory then move. Idempotent. If a manifest file's hash differs, ask keep / take new / show diff.
 
 ### 8.6 git
-
-Requires a clean tree (or offers to stash). Creates `chore/ai-workflow-<catalog-version>`, commits with the user's git identity and a conventional message, no AI trailer unless the repo's config asks for one. Then asks, separately: push? open PR with `report.md` as body? Never pushes to the default branch.
+Clean tree required (or offer stash). Branch `chore/ai-workflow-<catalog-version>`, commit as the user, conventional message, no AI trailer unless the repo's config asks. Then ask separately: push? open PR with `report.md` as body? Never pushes to the default branch.
 
 ## 9. PR reviewer
 
-1. **Trigger.** `harness review <pr>` (runs the agent through the Agent SDK), `/harness review` (runs it as a subagent in the current session), or a `PostToolUse` hook on `Bash` matching `gh pr create` that tells Claude to run the review in the same session. Both paths load the same agent definition. Disable the hook via `review.auto_after_pr_create: false`. In unattended runs the `unattended.review` setting applies (section 9b).
-2. **Gather.** `gh pr view`, `gh pr diff`, changed files, linked issue, `AGENTS.md`, referenced spec.
-3. **Map to features.** Rules find route files (Next app router, TanStack file routes, Expo Router). Claude traces shared components to their routes. The user confirms or edits the route list.
-4. **Run.** PR branch checked out in a separate git worktree. The run recipe in config has an install command, a start command, a ready URL and a port. The port is passed through `PORT` when the app supports it; otherwise, if the port is already taken, the review stops with a clear error instead of hitting your running dev server.
-5. **Log in (if the app needs it).**
-   - **Credentials configured:** a Playwright script reads the named keys from the named file (resolved in the main checkout, since `.env.local` is not copied into worktrees) or from the named environment variables, and fills the login form. Values never pass through the model, logs or the PR. Success is confirmed by reaching a post-login URL or selector stored in config.
-   - **File missing, key missing or login rejected:** stop with a specific error (which file, which key, or "login page returned an error / did not reach the post-login URL"), then offer the interactive login.
-   - **Not configured:** headed Playwright window opens and the developer logs in. In unattended runs there is no one to log in, so protected routes are skipped and listed in the review.
-   - Storage state is saved to a gitignored temp file for this run only.
-6. **Capture.** Each route at 375 and 1280 px, light and dark when supported, plus an axe scan. For public-facing sites, also the SEO script: title and meta description (present, length), canonical, Open Graph and Twitter tags, one `h1` and heading order, `lang`, image `alt`, JSON-LD validity, `robots` meta, `robots.txt` and `sitemap.xml` reachable, `hreflang` when i18n is detected. Expo: Expo web if supported, otherwise iOS Simulator or Maestro screenshots.
-7. **Runtime evidence.** Chrome DevTools MCP performance trace on key routes; console errors; failed network requests.
-8. **Review.** The `staff-reviewer` agent, fresh context, Read, Grep, Glob and browser tools only. It receives the diff, the failure lists from steps 6–7 and the downscaled screenshots (section 5a). Rubric (from the `review-rubric` skill): bugs and breaking changes, security (OWASP), performance, accessibility, SEO (public sites), design principles (DRY, coupling, single responsibility), anti-patterns, missing tests, `AGENTS.md` rules, design quality against tokens. Each finding needs file, line, evidence, severity, suggested fix. A verification pass drops findings without evidence.
+1. **Trigger.** `/harness review <pr>`, or a `PostToolUse` hook on `Bash` matching `gh pr create` that asks Claude to run it in the same session (`review.auto_after_pr_create`). Headless: `claude -p "/harness review <pr>"`, governed by `unattended.review`.
+2. **Trust boundary.** Harness config, hooks and agent definitions are read from the **base branch**, never the PR. The tool **always asks before running any PR's code** (install or start), showing the author, whether they are a collaborator, and whether the PR changes install scripts, CI files or harness paths. Declining gives a code-only review.
+3. **Gather.** `gh pr view`, `gh pr diff`, changed files, linked issue, `AGENTS.md`, referenced spec.
+4. **Select apps and routes.** Changed paths pick the affected apps. Rules find route files (Next app router, TanStack file routes, Expo Router); a small-model subagent traces shared components to routes. The user confirms or edits the list.
+5. **Run.** Per affected app, the PR branch in a separate worktree with that app's run recipe. `PORT` is passed when supported; a taken port stops the run with a clear error.
+6. **Log in** (per app, when needed).
+   - Credentials configured: a Playwright script reads the named keys from the named file (resolved in the main checkout, since env files aren't copied into worktrees) or the named environment variables, fills the form, and confirms success by the post-login URL or selector. Values never reach the model, logs or the PR.
+   - Missing file, missing key or rejected login: specific error, then offer interactive login.
+   - Not configured: headed browser, the developer logs in. Unattended: protected routes skipped and listed.
+   - Storage state in a gitignored temp file for this run only.
+7. **Capture.** Each route at 375 and 1280 px, light and dark when supported, axe scan; for public-facing apps the SEO script (title and meta description, canonical, Open Graph and Twitter tags, single `h1` and heading order, `lang`, image `alt`, JSON-LD validity, `robots` meta, `robots.txt`, `sitemap.xml`, `hreflang` when i18n is detected). Expo: Expo web if supported, otherwise iOS Simulator or Maestro.
+8. **Runtime evidence.** Chrome DevTools MCP performance trace on key routes, console errors, failed requests.
+9. **Review.** `staff-reviewer` subagent: Read, Grep, Glob and browser tools only; `Read(.env*)` and `.harnessignore` paths denied; browser navigation limited to `localhost`. Input: diff, failure lists, downscaled screenshots. Rubric: bugs and breaking changes, security (OWASP), performance, accessibility, SEO, design principles (DRY, coupling, single responsibility), anti-patterns, missing tests, `AGENTS.md` rules, design quality against tokens. PR text and code comments are treated as data, never instructions. Each finding: file, line, evidence, severity, suggested fix. A small-model verification pass drops findings without evidence.
    - `critical`: bug, breaking change, security issue, data loss
    - `medium`: performance, accessibility, SEO, maintainability
    - `nit`: style, naming
-9. **Preview.** Screenshots, PR body section and all comments shown locally first.
-10. **Publish (after explicit yes).** Push PNGs to orphan branch `harness-assets` at `pr-<n>/<sha>/`. Replace only the `<!-- harness:screenshots -->` block of the PR body. Create a pending review via `gh api` with summary counts and suggested verdict (any critical → Request changes, else Comment). The user submits in GitHub.
-11. **Cleanup.** Stop server, remove worktree, delete storage state. Save findings to `.harness/reviews/<pr>.json`; `update` suggests a lint rule or test for findings that repeat.
+10. **Preview.** Screenshots, PR body section and comments shown locally first.
+11. **Publish (after explicit yes).**
+    - PNGs to orphan branch `harness-assets` at `pr-<n>/<sha>/`.
+    - Replace only the `<!-- harness:screenshots -->` block of the PR body.
+    - Pending review via `gh api`: if the user already has a pending review on the PR, ask whether to add to it or discard it. Inline comments only on lines in the diff; findings on other lines go in the summary. Summary has counts and suggested verdict (any critical → Request changes, else Comment). The user submits.
+12. **Cleanup.** Stop servers, remove worktrees, delete storage state. Findings to `.harness/reviews/<pr>.json`; events to `.harness/logs/events.jsonl`.
 
 ## 9a. The staff-level persona
 
-**Shape.** One agent plus one skill, used in two places:
+- `staff-reviewer` (agent): fresh context, restricted tools, can't edit. Runs PR review and the repo audit behind init and update.
+- `review-rubric` (skill): staff-level questions (correctness, failure modes, security, performance, accessibility, SEO, operability, design principles, simplicity), the evidence rule, severity rules, plus the repo's `AGENTS.md` and ADRs. Usable by the main session too.
 
-- `staff-reviewer` (agent): fresh context and restricted tools, so it reviews work it didn't write and can't edit. It runs the PR review (section 9) and the repo audit behind `init` and `update` (the findings in `report.md`).
-- `review-rubric` (skill): the standards it applies. These are staff-level questions (correctness, failure modes, security, performance, accessibility, SEO, operability, design principles, simplicity), the evidence rule (no finding without file, line and proof), severity rules, and the repo's own `AGENTS.md` and ADRs. As a skill, the main session can use the same rubric outside reviews.
+**Can do well:** apply a consistent checklist; catch bugs, security issues, anti-patterns and missing tests in a diff; back findings with runtime evidence; judge trade-offs visible in code and docs.
 
-**What it can do well:** apply a consistent checklist every time; catch bugs, security issues, anti-patterns and missing tests in the diff; back findings with runtime evidence (axe, SEO, traces, console errors); judge trade-offs it can see in the code and docs.
+**Cannot do, stated in every report:** know unwritten product or organisation context; weigh business priorities; see production data without an observability tool. It can be wrong; evidence, verification and the user's final say are the safeguards.
 
-**What it cannot do, stated in every report:** know product or organisation context that isn't written down (the interview and `AGENTS.md` are its only sources); weigh business priorities; see production data unless an observability tool is connected. It can also be wrong, which is why every finding needs evidence, a verification pass removes unproven ones, and the user decides what is posted.
+**Measured, not claimed.** `evals/` in this repo holds (a) past PRs with known issues (starting with fitness-app) scored for issues found and false alarms, and (b) fixture repos with expected picks for the recommend step. Re-run on every rubric, prompt or model change.
 
-**Proving it is staff-level.** An eval set of past PRs with known issues (starting with fitness-app PRs) measures how many real issues it finds and how many findings are false alarms. Each change to the rubric or model is re-run against the set. The eval set and results live in this tool's repo under `evals/`, not in target repos. Without this, "staff-level" is a claim, not a measurement.
-
-**Review settings** in `config.yaml`: `review.max_findings` (default 15), `review.model_screenshots` (default: 1280 px light only), `review.models` (main and small).
+**Settings:** `review.max_findings` (15), `review.model_screenshots` (1280 light), `review.models` (main, small).
 
 ## 9b. Multi-file gate and unattended runs
 
-**Rule.** When an agent is about to edit a second *source* file in one turn, the user is asked once. Approval covers the rest of that turn; the count resets on the user's next message.
+**Rule.** Before an agent edits a second source file in one turn, the user is asked once; approval covers the rest of the turn; the count resets on the next user message.
 
-**How it works (deterministic, a hook, not a prompt):**
-- `UserPromptSubmit` clears this session's state in `.harness/state/`.
-- `PreToolUse` on `Edit|Write|MultiEdit|NotebookEdit` records the target file. If it would be the second counted file and the turn is not yet approved, the hook returns `permissionDecision: "ask"` with a reason listing the files touched so far and the next file.
-- `PostToolUse` on the same tools marks the turn approved. That event only fires if the user allowed the edit, so a denial leaves the gate closed.
-- An `AGENTS.md` guide tells the agent to list every file it plans to change before editing the second one, so the prompt shows the whole plan.
+**Mechanism.**
+- `UserPromptSubmit` clears this session's state.
+- `PreToolUse` on `Edit|Write|MultiEdit|NotebookEdit` records the file; on the second counted file without approval it returns `permissionDecision: "ask"` listing files touched and the next file.
+- `PostToolUse` on the same tools marks the turn approved (it only fires if the edit was allowed).
+- Files are counted per main session; edits from subagents are attributed by `agent_id` in the hook input and counted toward the turn that spawned them.
+- `AGENTS.md` tells the agent to list all planned files before editing the second one.
 
-**What is not counted** (defaults, shown and editable in `config.yaml` during init): a source file and its matching test file count as one file, in either order (TDD touches the test first, so "test after source" alone would trigger the gate on every cycle); snapshot files; lockfiles; paths listed under `multi_file_gate.generated` (codegen output, migration output). Docs and config files count.
+**Not counted** (editable at init): a source file and its matching test count as one, in either order; snapshots; lockfiles; `multi_file_gate.generated` paths. Docs and config count.
 
-**Known limit, stated in the report:** edits made through shell commands (`sed`, codemods, `git mv`) don't go through Edit/Write, so the gate can't see them. agent-guard can be configured to ask before file-writing shell commands, but full coverage isn't possible from hooks.
+**Known limit:** shell-command edits bypass Edit/Write; agent-guard asks before file-writing shell commands into TDD paths, but full coverage isn't possible from hooks.
 
-**Unattended runs** (GitHub Action, routines, cloud sessions with nobody answering, headless `-p`, background subagents). A hook can't ask anyone there, so it never returns "ask". It follows `config.yaml`, which the user sets during init:
+**Unattended detection** (verified hook inputs): `CLAUDE_CODE_REMOTE=true` (cloud sessions), `permission_mode` of `dontAsk` or `bypassPermissions`, background subagents (`agent_id`), `CI=true`, and `HARNESS_UNATTENDED=1`, which every harness-installed workflow and routine sets because `-p` runs have no other marker. In unattended runs no hook returns `ask`; behaviour follows config set at init:
 
 ```yaml
 unattended:
   multi_file_gate: block      # block | allow-log | off
   review: code-only           # skip | code-only
 ```
-- `block`: refuse the second-file edit. The agent finishes with the list of files it wanted to change.
-- `allow-log`: allow it, append the files to `.harness/logs/multi-file.jsonl`, and have the `pr-ship` skill list them in the PR description so the human gate moves to PR review.
-- `off`: no gate when unattended.
-- `review: code-only` runs the review without login (public routes only) and saves it as a local file or a PR artifact, never publishing without a human. `skip` does nothing.
-
-The spec deliberately sets no default for these. Init asks, and the user's answer is written to config.
-
-Detecting "unattended" reliably is listed in section 14 to verify.
+`block` refuses and reports the wanted files; `allow-log` allows, logs, and `pr-ship` lists the files in the PR; `off` disables. `review: code-only` never runs PR code, never logs in, never publishes without a human. No defaults: init asks.
 
 ## 9c. TDD harness
 
-Goal: the agent cannot ship logic without a test that failed first, cannot weaken tests to pass, and cannot claim "done" against a spec without proof. Each layer is a guide or a sensor; only the CI layer applies to everyone.
+Goal: no logic ships without a test that failed first; tests can't be weakened to pass; "done" against a spec needs proof. Only CI applies to everyone.
 
 | # | Layer | Mechanism | Blocks |
 |---|---|---|---|
 | 1 | Guide | `AGENTS.md` TDD block + superpowers TDD skill | Nothing; sets intent |
-| 2 | Red-first gate | `PreToolUse` on edit tools for files in `tdd.paths` | Editing an implementation file unless a related test has failed since the last all-green run |
-| 3 | Anti-tampering | `PreToolUse` content check on test and config files | Adding `.skip`, `.only`, `xit`, `xdescribe`, `todo` on existing tests; removing `expect`/`assert` calls without replacing them; `expect(true)`-style no-op assertions; lowering coverage thresholds; deleting test files |
-| 4 | Test lock | Tests written in the red step are recorded; edits to them during green return `ask` with the diff (blocked when unattended) | Changing the test to fit the code |
-| 5 | Stop gate | Runs typecheck, lint, tests related to changed files, and diff coverage | Finishing with failures or with changed lines below `tdd.diff_coverage` |
-| 6 | Spec gate | `PreToolUse` on writes to `features.json` | Setting `passes: true` unless each acceptance criterion lists a test name that exists and passed in the latest run |
-| 7 | CI | `ci-tdd` workflow: diff coverage, tamper scan, **proof of red** (PR's new or changed tests run against base must fail, against head must pass) | Merging untested or tampered changes (required check + branch protection) |
-| 8 | Mutation | Stryker on changed files, only for PRs labelled `mutation` | Tests that execute code without checking it |
-| 9 | Reviewer | Rubric item: new logic without a test that would have failed before | Judgment cases the rules miss |
+| 2 | Red-first gate | `PreToolUse` on edits in `tdd.paths` | Editing implementation unless a related test failed since the last all-green run |
+| 3 | Anti-tampering | `PreToolUse` content check on test and config files | `.skip`, `.only`, `xit`, `xdescribe`, `todo` on existing tests; removed assertions; no-op assertions; lowered coverage thresholds; deleted test files |
+| 4 | Test lock | Red-step tests recorded; edits during green return `ask` with diff (blocked unattended) | Changing tests to fit code |
+| 5 | Stop gate | typecheck, lint, related tests, diff coverage | Finishing with failures or coverage below `tdd.diff_coverage` |
+| 6 | Spec gate | `PreToolUse` on `features.json` writes | `passes: true` unless each acceptance criterion names a test that exists and passed in the latest run |
+| 7 | CI | `ci-tdd`: diff coverage, tamper scan, proof of red (new or changed tests fail on base, pass on head) | Merging untested or tampered changes |
+| 8 | Mutation | Stryker on changed files for PRs labelled `mutation` | Tests that don't check anything |
+| 9 | Reviewer | Rubric item: new logic without a test that would have failed before | Judgment cases |
 
-**Red evidence (layer 2).** Apply adds a JSON reporter output (Vitest or Jest) writing to `.harness/state/test-results.json`, shown in the apply diff. A `PostToolUse` hook on `Bash` records each run: which tests failed or passed, and when. "Related test" means the matching test file by base name (`foo.ts` ↔ `foo.test.ts`, `__tests__/foo.test.ts`), or the runner's own related-files lookup where it has one (`vitest related`). If no related test exists, the gate says so and tells the agent to write one first. No model calls.
+**Red evidence.** Apply adds a JSON reporter output (Vitest or Jest) to `.harness/state/test-results.json` alongside existing reporters, shown in the diff. A `PostToolUse` hook on `Bash` records runs. "Related test" = matching base name or the runner's related-files lookup. No model calls.
 
-**Scope.** `tdd.paths` and `tdd.exempt` are proposed at init from the scan (logic: domain, services, API handlers, hooks, utils; exempt: styles, config, stories, presentational components, generated code) and edited by the user. Exempt paths skip layers 2–4 but stay under layers 5–9.
+**Scope.** `tdd.paths` / `tdd.exempt` per app, proposed from the scan and edited at init. Exempt paths skip layers 2–4 only.
 
-**Spikes.** `harness tdd off` pauses layers 2–4 for one session. It is meant to be typed by a person in their own terminal; when an agent runs it through Bash, agent-guard denies it. The pause is logged in `.harness/logs/` and listed in the PR by `pr-ship`. Layers 5–9 still apply, so spike code can't merge untested.
+**Spikes.** `harness tdd off` pauses layers 2–4 for one session; agent-guard denies it when run by an agent; logged and listed in the PR; layers 5–9 still apply.
 
-**Shell bypass.** agent-guard returns `ask` before shell commands that write into `tdd.paths` (`sed -i`, `awk` redirects, `perl -i`, `echo`/`printf` redirects, `tee`), and blocks them when unattended. Read-only commands are unaffected.
+**Shell bypass.** agent-guard asks before file-writing shell commands into `tdd.paths`; blocks them unattended.
 
-**Related hallucination checks:**
-- Non-existent APIs or imports: typecheck in the Stop gate.
-- Non-existent or lookalike packages: agent-guard blocks new dependencies. When the user allows one, `dep-verify` checks that it exists on the registry, was first published at least 14 days ago, and isn't a near-duplicate name of a popular package.
-- "Tests pass" claimed without running them: the Stop gate runs them itself and ignores the claim.
-- Agent edits its own guardrails: `config-change-guard`, plus a deny rule on `.harness/state/` and `.harness/hooks/`.
+**Hallucination checks.** Typecheck for invented APIs; `dep-verify` (exists on registry, first published ≥14 days ago, not a near-duplicate of a popular name) when the user allows a new dependency; Stop gate ignores claims and runs the checks; deny rules on `.harness/state/` and `.harness/hooks/`.
 
-**Config (set at init):**
-```yaml
-tdd:
-  paths: [...]            # proposed from scan, edited by user
-  exempt: [...]
-  diff_coverage: <user sets during init>
-  test_lock: true
-  mutation_label: mutation
-```
+**Stop-gate speed.** Skips when only docs changed; incremental typecheck (`tsc -b` / workspace tool cache); tests and coverage scoped to changed files; configurable timeout after which it reports instead of blocking forever; retry cap so a broken environment can't trap the agent.
 
-**Stated limit.** Hooks can prove a test failed first and wasn't weakened. They can't prove it tests the right thing. Diff coverage, mutation testing and the reviewer are proxies for that.
+**Stated limit.** Hooks prove a test failed first and wasn't weakened, not that it tests the right thing. Coverage, mutation and the reviewer are proxies.
+
+## 9d. Hook runtime
+
+- One dispatcher script per event (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`, `SessionStart`, `ConfigChange`) runs all enabled checks in-process, so an edit costs one Node start, not one per check.
+- Target: under 150 ms per `PreToolUse` on a typical laptop, measured in CI.
+- A throwing check fails open with a visible warning, except agent-guard deny rules and `config-change-guard`, which fail closed.
+- Each item declares `min_claude_code`; a weekly CI job in this repo runs all hook tests against the latest Claude Code release to catch schema drift.
+
+## 9e. Measuring the harness
+
+`.harness/logs/events.jsonl` records gate blocks and approvals, overrides (`tdd off`, multi-file approvals), Stop-gate failures by check, review findings with their later outcome (posted, edited, dropped), and token and cost per run. `harness stats` summarises them. `update` uses repeat findings and frequent overrides to suggest a new lint rule, test, or a loosened gate. Nothing leaves the machine.
 
 ## 10. Failure handling
 
 | Failure | Behaviour |
 |---|---|
-| Claude Code missing or signed out | `scan` and `report` run; other steps stop with instructions |
-| Schema validation fails twice | Stop; raw output in `.harness/debug/` |
-| Credential file or key missing, or login rejected | Specific error naming the file, key or failed check; offer interactive login |
-| App fails to install or start during review | Show the install or start output; offer code-only review |
-| Review port already in use | Stop with the port and the process using it; never review against the developer's running server |
-| Orphan-branch push rejected (no write access, fork PR) | Keep screenshots local, post the review without images, say why |
-| No test runner detected in a TDD path | TDD gate reports that layers 2–6 can't run and recommends adding one; Stop gate and CI still run what exists |
-| Hook script throws | Fail open with a visible warning (except agent-guard deny rules), so a broken hook never bricks a session |
+| Claude Code missing | CLI-only commands work; plugin steps explain how to install |
+| Validation fails twice | Stop; raw output in `.harness/debug/` |
+| Credential file or key missing, or login rejected | Specific error naming file, key or failed check; offer interactive login |
+| App fails to install or start | Show output; offer code-only review |
+| Review port in use | Stop with port and process; never use the developer's running server |
+| User declines running PR code | Code-only review |
+| Orphan-branch push rejected | Keep screenshots local; review without images, say why |
+| Existing pending review | Ask: add to it or discard it |
+| Comment line not in diff | Move finding to the summary |
+| No test runner in a TDD path | Report that layers 2–6 can't run; recommend one; Stop gate and CI run what exists |
+| Hook check throws | Fail open with warning, except guard deny rules and config-change-guard |
+| Claude Code older than an item's `min_claude_code` | `doctor` and `apply` warn and skip that item |
 | `gh` not authenticated | Keep results local; print the command to run later |
 | Interrupted apply | Temp-dir write then move; repo unchanged |
-| User edited a managed file | Ask keep / take new / diff; never overwrite silently |
+| User edited a managed file | Ask keep / take new / diff |
+| Manifest hash mismatch in CI | `harness-integrity` fails the check and names the file |
 
 ## 11. Safety
 
-- Scan and Claude never read `.env*`. The only exception is the review's login script, which reads only the file and keys the user named during init. Values go straight to the browser form and never reach the model, logs, `config.yaml` or the PR.
-- Interview and recommend sessions run with read-only tools.
-- Reviewer agent has no Edit or Write tools.
+- Scan and Claude never read `.env*` or `.harnessignore` paths. Only the login script reads the named file and keys; values go straight to the browser form.
+- PR review trust boundary: base-branch config and hooks; ask before running any PR code; reviewer denied `.env*`; browser limited to localhost; PR content treated as data.
+- Interview and recommend have read-only tools; the reviewer can't edit.
 - Every outward action (push, PR, PR body edit, pending review, orphan-branch push) needs an explicit yes.
-- The tool states in `report.md` that only CI and branch protection enforce rules for everyone; repo hooks apply to developers who use Claude Code and trust the folder.
+- `permissions-baseline` denies reading secrets and writing harness state and hooks; `sandbox-settings` is required for unattended modes.
+- Harness paths are covered by CODEOWNERS and the `harness-integrity` CI check, because copied hooks run code on every developer's machine.
+- This package is published with npm provenance, minimal dependencies, and 2FA on the npm account, because its hooks run on every developer's machine.
+- `report.md` states that only CI and branch protection enforce rules for everyone.
 
 ## 12. Testing
 
-- Detector unit tests against fixture repos: Next/TanStack app, Astro landing, Expo app, Hono + CDK backend, a monorepo combining them.
-- Catalog CI checks (section 7.2).
-- Hook tests feeding recorded hook JSON to each script: the multi-file gate (ignored files, source+test counted once in either order, approval carried through the turn, reset on a new prompt, each unattended mode), agent-guard (including shell-write ask and `harness tdd off` denial), stop gate, pr-create trigger.
-- TDD gate tests: implementation edit blocked with no red run, allowed after a related failing run, blocked again after all-green; each anti-tampering pattern; test-lock ask and unattended block; spec gate with missing, failing and passing tests.
-- `ci-tdd` tested on a fixture repo: proof of red fails a PR whose new tests already pass on base.
-- Golden-file tests for apply: fixed facts + picks → exact file tree.
-- Agent SDK steps tested against recorded responses; one live smoke test run on demand.
-- Acceptance: `init` on a copy of fitness-app produces a report the owner agrees with; `review` on one real fitness-app PR produces a useful pending review with screenshots.
+- Detector unit tests on fixture repos: Next/TanStack app, Astro landing, Expo app, Hono + CDK backend, a monorepo with web, mobile and api apps.
+- Catalog CI checks (7.2) and a pin check that every `sha` still resolves.
+- Hook tests with recorded hook JSON: multi-file gate (counting rules, approval through the turn, reset, subagent attribution, each unattended mode), agent-guard (deny rules, shell-write ask, `tdd off` denial, dep-verify), TDD gate (blocked without red, allowed after related red, blocked after green, each tamper pattern, test lock, spec gate), stop gate, config-change guard. Latency budget checked.
+- `ci-tdd` on a fixture repo: proof of red fails a PR whose new tests already pass on base.
+- Golden-file tests for apply, including the inline pinned marketplace and monorepo config.
+- Skill steps tested by running the plugin headless (`claude -p`) against fixture repos with recorded expectations; evals in `evals/`.
+- Acceptance per milestone (section 13).
 - Dogfooding: this repo is the first repo the tool initializes.
 
-## 13. Build order within v1
+## 13. Milestones (walking skeleton)
 
-1. Catalog format + checks, scan, apply, git (rule-based core, no Claude)
-2. Interview + recommend (Agent SDK)
-3. Select UI, update, doctor, uninstall, sync
-4. PR reviewer
-5. Claude Code plugin wrapper
-6. Project-type coverage in order: web app → backend/infra → mobile → landing
+| Milestone | Delivers | Proven when |
+|---|---|---|
+| M1 Core harness | Hook dispatcher, agent-guard + permissions baseline, stop gate, multi-file gate, TDD gate, `staff-reviewer` + `review-rubric`, hand-installed into fitness-app | A week of real fitness-app work with gates firing correctly; `harness stats` shows blocks and overrides; no false block left unfixed |
+| M2 PR reviewer | `/harness review` end to end: trust prompt, worktree, login, capture, SEO, axe, traces, pending review, orphan-branch screenshots | Useful pending reviews on 3 real fitness-app PRs; reviewer eval set baseline recorded |
+| M3 Installer | Catalog + checks, scan, `/harness init` interview + recommend, select, apply, git, update, doctor, uninstall, sync, CI items | `init` on a fresh copy of fitness-app reproduces the M1/M2 setup plus a report the owner agrees with; this repo initialised by itself |
+| M4 Coverage | Remaining project types and referenced catalog items: backend/infra → mobile → landing | Each fixture repo gets a report and install the owner agrees with |
 
 The owner may reorder.
 
-## 14. To verify during implementation
+## 14. Verified and still to verify
 
-These are assumptions to confirm against current docs before relying on them:
+**Verified on 2026-10-30 against current docs:**
+- Agent SDK: third-party products must use API keys, not claude.ai login, unless approved → plugin-first design.
+- Plugin sources (`github`, `url`, `git-subdir`) accept `ref` and full `sha`; marketplace sources in `extraKnownMarketplaces` accept only `ref`; inline `settings` marketplaces are supported → pinned plugins via `harness-pins`.
+- Hook input includes `session_id`, `permission_mode`, and `agent_id` / `agent_type` inside subagents; `CLAUDE_CODE_REMOTE=true` in remote sessions; no marker for `-p` mode.
+- Subagent frontmatter hooks require workspace trust; a `-p` run does not count as accepting trust.
 
-- Whether `extraKnownMarketplaces` entries in project settings can pin a git ref or tag.
-- Agent SDK (TypeScript) support for structured JSON output and per-session tool allowlists.
-- How images from an orphan branch render in private-repo PR bodies (expected: visible only to viewers with repo access).
-- Claude Code hook input fields for `PostToolUse` on `Bash` (to match `gh pr create` reliably).
-- The exact `gh api` payload for creating a pending review with inline comments.
-- How a hook can tell an unattended run from an interactive one (`CI` env var, `-p` mode, cloud session markers, subagent fields in hook input), and what a `permissionDecision: "ask"` does in each case. If detection isn't reliable, unattended settings fall back to an explicit `HARNESS_UNATTENDED=1` set by the CI workflow and routines that harness installs.
-- Whether hook input lets subagent edits be told apart from main-session edits, for counting files per turn.
-- Whether the Agent SDK can use the developer's existing Claude Code login or needs `ANTHROPIC_API_KEY`. This affects onboarding and cost, and the README must say which.
-- How teammates install the `/harness` plugin while this repo is private (they need read access to `khubaibqaiser/harness`).
-- Vitest and Jest JSON reporter options for writing results to a fixed file without replacing the developer's own reporters, and `vitest related` behaviour in monorepos.
-- Proof of red when a PR changes both tests and the code they import in ways that don't compile on base: define "fails" as test failure *or* compile/import error only for newly added test files, and report it separately.
-- Diff-coverage tooling for Vitest/Jest (istanbul output + a diff filter) without adding a Python dependency.
+**Still to verify:**
+- What `permissionDecision: "ask"` does in each mode where nobody can answer (expected: treated as deny; the dispatcher won't return it there anyway).
+- Settings-file hook behaviour before workspace trust in a fresh clone.
+- `gh api` payload for a pending review with inline comments, and the error when one already exists.
+- How orphan-branch image links render in private-repo PR bodies.
+- Vitest and Jest options to add a JSON reporter without replacing existing ones; `vitest related` in monorepos.
+- Proof of red when new tests don't compile on base: count a compile or import error as "fails" only for newly added test files, and report it separately.
+- Diff-coverage from istanbul output without a Python dependency.
+- How teammates install the `/harness` plugin while this repo is private.
 
 ## 15. Roadmap after v1
 
-- `apply/cursor.ts`, then Codex and OpenCode adapters
+- Cursor adapter (`apply/cursor.ts` + Cursor rules and hooks), then Codex and OpenCode
 - Optional before/after screenshots (`--compare`)
-- CI mode for the reviewer (GitHub Action)
+- Reviewer in CI via `claude-code-action`
+- Container mode for running untrusted PRs
 - Turning repeated recommend choices into deterministic rules
-- Open-source release (license, contribution guide, catalog submission process)
+- Open-source release: license, contribution guide, catalog submission process

@@ -159,3 +159,29 @@ test('end to end through the real registry: two edits, a prompt, then the third 
   expect(await pre('c.ts')).toBe('');
   expect(await pre('d.ts')).not.toBe('');
 });
+
+test('PreToolUse records an allowed edit, so a parallel second Pre asks', async () => {
+  const t = setup();
+  expect(kind(await t.edit('a.ts'))).toBe('allow');
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+  expect(kind(await t.edit('b.ts'))).toBe('ask');
+});
+
+test('an asked edit is not recorded: retrying a allows, b asks again', async () => {
+  const t = setup();
+  await t.edit('a.ts');
+  expect(kind(await t.edit('b.ts'))).toBe('ask');
+  expect(kind(await t.edit('a.ts'))).toBe('allow');
+  expect(kind(await t.edit('b.ts'))).toBe('ask');
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+});
+
+test('allow-log appends only when a unit is newly recorded, not on repeated Pre', async () => {
+  const t = setup('allow-log');
+  const env = { CI: 'true' };
+  await t.edit('a.ts', 'Edit', env);
+  await t.edit('b.ts', 'Edit', env);
+  await t.edit('b.ts', 'Edit', env);
+  await t.edit('b.test.ts', 'Edit', env);
+  expect(readEvents(t.root).filter((e) => e.check === 'multi-file').map((e) => e.files)).toEqual([['a.ts', 'b.ts']]);
+});

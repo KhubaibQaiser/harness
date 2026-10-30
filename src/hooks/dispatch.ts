@@ -6,7 +6,7 @@ import { multiFile } from '../checks/multi-file.js';
 import { protect } from '../checks/protect.js';
 import { type HarnessConfig, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
-import { type SessionState, isSafeSessionId, readState, stateExists, writeState } from '../core/state.js';
+import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { isUnattended } from '../core/unattended.js';
 import { emit, parseInput } from './io.js';
 import type { Decision, HookEvent, HookInput } from './types.js';
@@ -53,6 +53,14 @@ function repoRoot(cwd: string): string {
 export async function dispatch(raw: string, checks: Check[], env: NodeJS.ProcessEnv): Promise<string> {
   const input = parseInput(raw);
   if (!input || !EVENTS.includes(input.hook_event_name) || !isSafeSessionId(input.session_id)) return '';
+  if (!input.cwd) return dispatchLocked(raw, checks, env);
+  // One hook at a time per session, so parallel tool calls cannot race on the state file.
+  return withSessionLock(repoRoot(input.cwd), input.session_id, () => dispatchLocked(raw, checks, env));
+}
+
+async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessEnv): Promise<string> {
+  const input = parseInput(raw);
+  if (!input) return '';
   const rec = input as unknown as Record<string, unknown>;
   if (CURSOR_KEYS.some((k) => k in rec) || input.tool_name === 'Shell') return '';
 

@@ -38,15 +38,26 @@ export const multiFile: Check = {
       ctx.save({ ...ctx.state, files: files.includes(rel) ? files : [...files, rel], approved: approved || units.size >= 2 });
       return { kind: 'allow' };
     }
-    if (units.size === 0 || units.has(pairKey(rel))) return { kind: 'allow' };
+    // Record whenever allowed, so a parallel second PreToolUse sees this file.
+    const record = () => {
+      if (!files.includes(rel)) ctx.save({ ...ctx.state, files: [...files, rel] });
+    };
+    if (units.size === 0 || units.has(pairKey(rel))) {
+      record();
+      return { kind: 'allow' };
+    }
     const list = files.join(', ');
     if (ctx.unattended) {
       const mode = ctx.config.unattended.multi_file_gate;
       if (mode === 'block') return { kind: 'deny', reason: `Unattended multi-file change blocked. Wanted: ${[...files, rel].join(', ')}.`, check: 'multi-file' };
       if (mode === 'allow-log') appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'allow-log', files: [...files, rel] });
+      record();
       return { kind: 'allow' };
     }
-    if (approved) return { kind: 'allow' };
+    if (approved) {
+      record();
+      return { kind: 'allow' };
+    }
     return { kind: 'ask', reason: `This change now spans more than one file. Touched: ${list}. Next: ${rel}. Approve to continue this turn.`, check: 'multi-file' };
   },
 };

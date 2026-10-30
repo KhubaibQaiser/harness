@@ -1,10 +1,10 @@
 // Agent guard, ported from fitness-app scripts/agent-hooks/guard.mjs. A seatbelt, not a sandbox.
-import { defaultLookup, verifyPackages } from './dep-verify.js';
+import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
-type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'>;
+type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { lookup?: VerifyOpts['lookup'] }; // lookup: test seam
 type Verdict = ['allow'] | ['deny' | 'ask', string];
 
 const SAFE_EXAMPLE = /\.(example|sample|template|dist)$/i;
@@ -146,12 +146,20 @@ const addedPackages = (args: string, subcommands: Set<string>, valueFlags: Set<s
 };
 
 const checkInstall = (cmd: string, ctx: GuardCtx): Decision | undefined => {
-  const found: string[] = [];
-  for (const m of cmd.matchAll(/\b(?:npm|pnpm|yarn|bun)\s+([^;&|\n]*)/g)) found.push(...addedPackages(m[1], JS_ADD, VALUE_FLAGS));
-  for (const m of cmd.matchAll(/\b(?:pip3?|uv)\s+([^;&|\n]*)/g)) found.push(...addedPackages(m[1], PY_ADD, PIP_VALUE_FLAGS));
+  const js: string[] = [];
+  const py: string[] = [];
+  for (const m of cmd.matchAll(/\b(?:npm|pnpm|yarn|bun)\s+([^;&|\n]*)/g)) js.push(...addedPackages(m[1], JS_ADD, VALUE_FLAGS));
+  for (const m of cmd.matchAll(/\b(?:pip3?|uv)\s+([^;&|\n]*)/g)) py.push(...addedPackages(m[1], PY_ADD, PIP_VALUE_FLAGS));
+  const found = [...js, ...py];
   if (found.length === 0) return undefined;
   const what = `adding dependency ${found.slice(0, 3).join(', ')}`;
-  if (ctx.env.AGENT_GUARD_ALLOW_INSTALL === '1') return verifyPackages(found, { root: ctx.root, now: new Date(), lookup: defaultLookup });
+  if (ctx.env.AGENT_GUARD_ALLOW_INSTALL === '1') {
+    // The npm registry knows nothing of PyPI, so only JS names are verified.
+    const jsDecision = js.length ? verifyPackages(js, { root: ctx.root, now: new Date(), lookup: ctx.lookup ?? defaultLookup }) : undefined;
+    if (jsDecision?.kind === 'deny') return jsDecision;
+    const reasons = [jsDecision && 'reason' in jsDecision ? jsDecision.reason : '', py.length ? `Confirm adding ${py.join(', ')}.` : ''];
+    return { kind: 'ask', reason: reasons.filter(Boolean).join('; '), check: 'dep-verify' };
+  }
   return toDecision(['deny', `${what}. Dependencies are added by a human: ask the user to run it`]);
 };
 

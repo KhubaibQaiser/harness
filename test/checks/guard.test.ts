@@ -53,6 +53,17 @@ test('AGENT_GUARD_ALLOW_INSTALL=1 hands the added names to dep-verify', () => {
   expect(reason(d)).toBe('"github:o/r": could not verify on the registry');
 });
 
+test('python installs are not looked up on the npm registry', () => {
+  const lookup = vi.fn(() => 'error' as const);
+  const env = { AGENT_GUARD_ALLOW_INSTALL: '1' };
+  const d = decideCommand('uv add requests', { ...ctx({ env }), lookup });
+  expect(d.kind).toBe('ask');
+  expect(reason(d)).toBe('Confirm adding requests.');
+  expect(lookup).not.toHaveBeenCalled();
+  const both = decideCommand('pnpm add github:o/r && pip install flask', { ...ctx({ env }), lookup });
+  expect(reason(both)).toBe('"github:o/r": could not verify on the registry; Confirm adding flask.');
+});
+
 test('ordinary commands pass', () => {
   all(['ls -la', 'git status', 'git diff', 'pnpm lint', 'pnpm typecheck', 'node scripts/eval-agent-diff.sh', 'grep -rn "env" src'], 'allow');
 });

@@ -8,7 +8,9 @@ type Lookup = { exists: boolean; created?: string } | 'error';
 export interface VerifyOpts {
   root: string;
   now: Date;
-  lookup: (name: string) => Lookup;
+  lookup: (name: string, timeoutMs?: number) => Lookup;
+  deadlineMs?: number; // total lookup budget; must fit inside the hook timeout (10 s)
+  clock?: () => number;
 }
 
 const DAY = 86400000;
@@ -28,9 +30,9 @@ export function parseNpmView(stdout: string, stderr: string): Lookup {
   }
 }
 
-export function defaultLookup(name: string): Lookup {
+export function defaultLookup(name: string, timeoutMs = 5000): Lookup {
   try {
-    return parseNpmView(String(execFileSync('npm', ['view', name, 'time.created', '--json'], { timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] })), '');
+    return parseNpmView(String(execFileSync('npm', ['view', name, 'time.created', '--json'], { timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] })), '');
   } catch (e) {
     const err = e as { stdout?: unknown; stderr?: unknown };
     return parseNpmView(String(err.stdout ?? ''), String(err.stderr ?? ''));
@@ -81,10 +83,18 @@ export function verifyPackages(specs: string[], opts: VerifyOpts): Decision {
   const known = repoDependencies(opts.root);
   const denies: string[] = [];
   const asks: string[] = [];
+  const clock = opts.clock ?? Date.now;
+  const start = clock();
+  const budget = opts.deadlineMs ?? 7000;
+  const names: string[] = [];
   for (const spec of specs) {
+    const name = UNRESOLVABLE.test(spec) ? spec : stripVersion(spec);
+    if (names.includes(name)) continue;
+    names.push(name);
     if (UNRESOLVABLE.test(spec)) { asks.push(UNVERIFIED(spec)); continue; }
-    const name = stripVersion(spec);
-    const found = opts.lookup(name);
+    const remaining = budget - (clock() - start);
+    if (remaining <= 0) { asks.push(UNVERIFIED(name)); continue; }
+    const found = opts.lookup(name, Math.min(5000, remaining));
     if (found === 'error') { asks.push(UNVERIFIED(name)); continue; }
     if (!found.exists) { denies.push(`"${name}" is not on the npm registry (possibly a hallucinated name).`); continue; }
     const created = Date.parse(found.created ?? '');
@@ -97,6 +107,5 @@ export function verifyPackages(specs: string[], opts: VerifyOpts): Decision {
     if (near) asks.push(`"${name}" looks like "${near}" already in this repo. Confirm it isn't a typo.`);
   }
   if (denies.length) return { kind: 'deny', reason: denies.join('; '), check: 'dep-verify' };
-  const names = specs.join(', ');
-  return { kind: 'ask', reason: asks.length ? asks.join('; ') : `Confirm adding ${names}.`, check: 'dep-verify' };
+  return { kind: 'ask', reason: asks.length ? asks.join('; ') : `Confirm adding ${names.join(', ')}.`, check: 'dep-verify' };
 }

@@ -114,3 +114,24 @@ test('parseNpmView reads npm output', () => {
   expect(parseNpmView('', 'npm error code ETIMEDOUT')).toBe('error');
   expect(parseNpmView('garbage', '')).toBe('error');
 });
+
+test('duplicate names are looked up once', () => {
+  const seen: string[] = [];
+  const d = run(['zod', 'zod@3', 'zod'], (n) => (seen.push(n), OLD));
+  expect(seen).toEqual(['zod']);
+  expect(reason(d)).toBe('Confirm adding zod.');
+});
+
+test('lookups stop when the time budget is spent', () => {
+  let now = 0;
+  const timeouts: (number | undefined)[] = [];
+  const lookup: Look = (_n, t) => {
+    timeouts.push(t);
+    now += 4000;
+    return OLD;
+  };
+  const d = verifyPackages(['a1', 'b2', 'c3'], { root: repo(), now: NOW, lookup, deadlineMs: 7000, clock: () => now });
+  expect(timeouts).toEqual([5000, 3000]);
+  expect(d.kind).toBe('ask');
+  expect(reason(d)).toBe('"c3": could not verify on the registry');
+});

@@ -36,3 +36,24 @@ test('emit context on PreToolUse uses additionalContext', () => {
 test('emit context on Stop uses systemMessage', () => {
   expect(JSON.parse(emit('Stop', { kind: 'context', text: 't', check: 'c' }))).toEqual({ systemMessage: 't' });
 });
+test('emit PreToolUse block maps to permissionDecision deny', () => {
+  const out = JSON.parse(emit('PreToolUse', { kind: 'block', reason: 'r', check: 'c' }));
+  expect(out.hookSpecificOutput).toEqual({ hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'r' });
+});
+test('emit context on SessionEnd uses systemMessage', () => {
+  expect(JSON.parse(emit('SessionEnd', { kind: 'context', text: 't', check: 'c' }))).toEqual({ systemMessage: 't' });
+});
+test.each(['PostToolUse', 'UserPromptSubmit', 'SessionStart'])('emit context on %s uses additionalContext', (event) => {
+  expect(JSON.parse(emit(event, { kind: 'context', text: 't', check: 'c' }))).toEqual({
+    hookSpecificOutput: { hookEventName: event, additionalContext: 't' },
+  });
+});
+test('emit ask on a non-PreToolUse event blocks', () => {
+  expect(JSON.parse(emit('Stop', { kind: 'ask', reason: 'r', check: 'c' }))).toEqual({ decision: 'block', reason: 'r' });
+});
+test('parseInput returns null when session_id or cwd is not a string', () => {
+  expect(parseInput('{"hook_event_name":"Stop","cwd":"/r"}')).toBeNull();
+  expect(parseInput('{"hook_event_name":"Stop","session_id":"s"}')).toBeNull();
+  expect(parseInput('{"hook_event_name":"Stop","session_id":1,"cwd":"/r"}')).toBeNull();
+  expect(parseInput('{"hook_event_name":"Stop","session_id":"s","cwd":null}')).toBeNull();
+});

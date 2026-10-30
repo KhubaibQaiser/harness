@@ -4,7 +4,8 @@ export function parseInput(raw: string): HookInput | null {
   try {
     const v: unknown = JSON.parse(raw);
     if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
-    return typeof (v as { hook_event_name?: unknown }).hook_event_name === 'string' ? (v as HookInput) : null;
+    const o = v as Record<string, unknown>;
+    return ['hook_event_name', 'session_id', 'cwd'].every((k) => typeof o[k] === 'string') ? (v as HookInput) : null;
   } catch {
     return null;
   }

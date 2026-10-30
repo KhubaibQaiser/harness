@@ -4,8 +4,8 @@ import type { HookInput } from '../hooks/types.js';
 export function isUnattended(input: HookInput, env: NodeJS.ProcessEnv): boolean {
   return (
     env.CLAUDE_CODE_REMOTE === 'true' ||
-    env.CI === 'true' ||
-    env.HARNESS_UNATTENDED === '1' ||
+    (env.CI === 'true' || env.CI === '1') ||
+    (env.HARNESS_UNATTENDED === '1' || env.HARNESS_UNATTENDED === 'true') ||
     input.permission_mode === 'dontAsk' ||
     input.permission_mode === 'bypassPermissions'
   );

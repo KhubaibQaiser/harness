@@ -1,6 +1,6 @@
 # Harness: design spec
 
-- Status: draft v2 (after staff review), awaiting owner approval
+- Status: approved by owner on 2026-10-30
 - Date: 2026-10-30
 - Owner: khubaibqaiser
 - Package: `@khubaibqaiser/harness` (npm, unclaimed as of 2026-10-30)

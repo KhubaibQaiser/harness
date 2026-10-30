@@ -21,8 +21,8 @@ function moveCopyTargets(cmd: string): string[] {
 
 // A bare directory (rm -rf .harness/hooks) counts as inside its own glob.
 const isProtected = (root: string, p: string): boolean => {
-  const rel = toRepoPath(root, p);
-  return rel !== null && (matches(rel, PROTECTED) || matches(`${rel}/x`, PROTECTED));
+  const rel = toRepoPath(root, p)?.toLowerCase() ?? null; // macOS is case-insensitive
+  return rel !== null && (rel === '.harness' || rel === '.claude' || matches(rel, PROTECTED) || matches(`${rel}/x`, PROTECTED));
 };
 
 export const protect: Check = {

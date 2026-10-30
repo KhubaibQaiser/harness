@@ -52,3 +52,17 @@ test('shell writes, rm, mv and cp touching protected paths are denied', () => {
 test('harmless shell commands are allowed', () => {
   for (const c of ['ls .harness/hooks', 'cat .harness/config.yaml', 'echo hi > out.txt', 'rm -rf dist', 'cp .harness/config.yaml /tmp/c.yaml', 'mv a.ts b.ts', 'pnpm test']) expect(bash(c), c).toBe('allow');
 });
+
+test('parent directories .harness and .claude are protected from rm, git rm and mv', () => {
+  for (const c of ['rm -rf .harness', 'rm -r .harness/', 'rm -rf ./.harness', 'rm -rf .claude', 'git rm -r .harness', 'mv .harness .h2']) expect(bash(c), c).toBe('deny');
+});
+test('other .claude files stay writable', () => expect(edit('.claude/agents/x.md', 'Write').kind).toBe('allow'));
+test('matching is case-insensitive', () => {
+  expect(edit('.HARNESS/config.yaml', 'Write').kind).toBe('deny');
+  expect(edit('.claude/Settings.json', 'Write').kind).toBe('deny');
+  expect(bash('echo x > .HARNESS/config.yaml')).toBe('deny');
+});
+test('generic shell writes to protected paths are denied', () => {
+  for (const c of ['cat x > .harness/config.yaml', 'truncate -s 0 .harness/config.yaml', 'ln -sf /tmp/x .harness/hooks/dispatch.mjs', 'git checkout -- .harness/config.yaml', 'git restore .claude/settings.json'])
+    expect(bash(c), c).toBe('deny');
+});

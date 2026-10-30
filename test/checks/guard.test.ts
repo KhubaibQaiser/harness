@@ -155,12 +155,17 @@ test('shell write into a tdd path is denied when unattended (through the dispatc
 test('a throwing guard is denied by the dispatcher (fail closed)', async () => {
   const spy = vi.spyOn(guard, 'run').mockImplementation(() => { throw new Error('boom'); });
   const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: '/nonexistent-harness-root', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   let r;
+  let printed = '';
   try {
     r = JSON.parse(await dispatch(raw, registry, {}));
   } finally {
     spy.mockRestore();
+    printed = err.mock.calls.map((c) => String(c[0])).join('');
+    err.mockRestore();
   }
+  expect(printed).toMatch(/harness: state write failed/);
   expect(r.hookSpecificOutput.permissionDecision).toBe('deny');
   expect(r.hookSpecificOutput.permissionDecisionReason).toBe('harness check guard failed: boom');
 });
@@ -195,4 +200,21 @@ test('fileWriteTargets', () => {
   expect(fileWriteTargets('cat x | tee -a one two')).toEqual(['one', 'two']);
   expect(fileWriteTargets('ls -la; echo hi > /dev/null')).toEqual([]);
   expect(fileWriteTargets('sed -n 1p a.ts')).toEqual([]);
+});
+
+test('fileWriteTargets sees generic redirects, truncate, ln, install, cp -t, dd of= and git checkout/restore paths', () => {
+  const t = fileWriteTargets;
+  expect(t('cat x > a.ts')).toEqual(['a.ts']);
+  expect(t('cat x 2>err.log >> b.ts')).toEqual(['err.log', 'b.ts']);
+  expect(t('cat x > /dev/null 2>&1')).toEqual([]);
+  expect(t('truncate -s 0 a.ts')).toEqual(['a.ts']);
+  expect(t('ln -sf /tmp/x link')).toEqual(['link']);
+  expect(t('install -m 644 a dest/a')).toEqual(['dest/a']);
+  expect(t('cp -t dir a b')).toEqual(['dir']);
+  expect(t('dd if=a of=out.bin')).toEqual(['out.bin']);
+  expect(t('git checkout -- a.ts b.ts')).toEqual(['a.ts', 'b.ts']);
+  expect(t('git restore --staged a.ts')).toEqual(['a.ts']);
+});
+test('a generic shell redirect into a TDD path asks', () => {
+  expect(kind('cat x > packages/core/src/a.ts', { tddPaths: ['packages/core/src/**'] })).toBe('ask');
 });

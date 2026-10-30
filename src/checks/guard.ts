@@ -97,7 +97,7 @@ const ASK: [RegExp, string][] = [
   [/\bdrop\s+(table|database|schema)\b/i, 'SQL DROP'],
 ];
 
-export const rmTargets =(cmd: string): { recursive: boolean; targets: string[] }[] =>
+export const rmTargets = (cmd: string): { recursive: boolean; targets: string[] }[] =>
   [...cmd.matchAll(/(?:^|[;&|(]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => {
     const toks = m[1].trim().split(/\s+/).filter(Boolean);
     const flags = toks.filter((t) => t.startsWith('-')).join('');
@@ -172,6 +172,10 @@ export function fileWriteTargets(cmd: string): string[] {
     }
     toks.splice(0, k); // look past sudo, env, VAR=value and xargs, with their flags
     const name = toks[0];
+    for (const m of seg.matchAll(/\d*>>?\s*([^\s;&|>]+)/g)) {
+      const t = m[1].replace(/^['"]+/, '').replace(/['"}]+$/, '');
+      if (!t.startsWith('&') && t !== '/dev/null') out.push(t);
+    }
     const c = toks.findIndex((t) => /^-[a-z]*c$/.test(t));
     if ((name === 'bash' || name === 'sh' || name === 'zsh') && c > 0 && toks[c + 1]) {
       out.push(...fileWriteTargets(unquote(toks[c + 1])));
@@ -189,14 +193,29 @@ export function fileWriteTargets(cmd: string): string[] {
       out.push(...rest.map(unquote));
     } else if (name === 'tee') {
       out.push(...toks.slice(1).filter((t) => !t.startsWith('-')).map(unquote));
-    } else if (name === 'echo' || name === 'printf' || name === 'awk') {
-      for (const m of seg.matchAll(/\d*>>?\s*([^\s;&|>]+)/g)) {
-        const t = m[1].replace(/^['"]+/, '').replace(/['"}]+$/, '');
-        if (!t.startsWith('&') && t !== '/dev/null') out.push(t);
+    } else if (name === 'truncate') {
+      for (let i = 1; i < toks.length; i += 1) {
+        if (/^(-s|-r|--size|--reference)$/.test(toks[i])) i += 1;
+        else if (!toks[i].startsWith('-')) out.push(unquote(toks[i]));
       }
+    } else if (name === 'ln' || name === 'install') {
+      const args = toks.slice(1).filter((t) => !t.startsWith('-'));
+      const tf = toks.indexOf('-t');
+      if (name === 'install' && tf > 0 && toks[tf + 1]) out.push(unquote(toks[tf + 1]));
+      else if (args.length) out.push(unquote(args[args.length - 1]));
+    } else if (name === 'cp') {
+      const tf = toks.indexOf('-t');
+      if (tf > 0 && toks[tf + 1]) out.push(unquote(toks[tf + 1]));
+    } else if (name === 'dd') {
+      out.push(...toks.filter((t) => t.startsWith('of=')).map((t) => unquote(t.slice(3))));
+    } else if (name === 'git' && toks[1] === 'checkout') {
+      const d = toks.indexOf('--');
+      if (d > 0) out.push(...toks.slice(d + 1).map(unquote));
+    } else if (name === 'git' && toks[1] === 'restore') {
+      out.push(...toks.slice(2).filter((t) => !t.startsWith('-')).map(unquote));
     }
   }
-  return out;
+  return [...new Set(out)];
 }
 
 const msg = (v: 'deny' | 'ask', why: string) => (v === 'deny' ? `Blocked by guard: ${why}. If this is intended, ask the user to run it manually.` : `Confirm: ${why}`);

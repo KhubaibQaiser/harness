@@ -203,3 +203,34 @@ test('coverage hook point: no-op allow now; called after steps pass only when ch
   const s = setup({ yaml: 'checks:\n  tdd: true\n' });
   expect(runStop(s.ctx, s.exec(SRC))).toEqual({ kind: 'allow' });
 });
+
+test('diff failure or timeout fails closed: steps run and stop-diff-failed is logged', () => {
+  for (const bad of [{ status: 128, output: 'fatal', timedOut: false }, { status: null, output: '', timedOut: true }]) {
+    const s = setup({ baseHead: 'abc' });
+    const base = s.exec('');
+    runStop(s.ctx, (cmd, args, ms) => (args[0] === 'diff' ? bad : base(cmd, args, ms)));
+    expect(s.steps()).toEqual(ALL);
+    expect(readEvents(s.root)).toMatchObject([{ check: 'stop', decision: 'stop-diff-failed' }]);
+  }
+});
+
+test('unborn HEAD: baseHead is the empty tree, and the first commit is diffed', async () => {
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const s = setup();
+  const git = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: s.root, encoding: 'utf8' });
+  git('init', '-q');
+  await dispatch(JSON.stringify({ ...s.ctx.input, hook_event_name: 'UserPromptSubmit', prompt: 'x' }), [], {});
+  const state = readState(s.root, 's');
+  expect(state.baseHead).toBe('4b825dc642cb6eb9a060e54bf8d69288fbee4904');
+  writeFileSync(join(s.root, 'a.ts'), 'export {};\n');
+  git('add', 'a.ts');
+  git('commit', '-q', '-m', 'first');
+  const ran: string[] = [];
+  const exec: Exec = (cmd, args, ms) => {
+    if (cmd !== 'git') return ran.push(args[1]), { status: 0, output: '', timedOut: false };
+    const r = spawnSync(cmd, args, { cwd: s.root, encoding: 'utf8', timeout: ms });
+    return { status: r.status, output: r.stdout ?? '', timedOut: false };
+  };
+  runStop({ ...s.ctx, state } as Ctx, exec);
+  expect(ran).toEqual(ALL);
+});

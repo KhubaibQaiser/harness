@@ -61,6 +61,10 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
     // The agent may have committed its work, leaving a clean tree.
     const d = exec('git', ['diff', '--name-only', base, 'HEAD'], timeout_s * 1000);
     if (d.status === 0 && !d.timedOut) changed.push(...paths(d.output, false));
+    else {
+      log('stop-diff-failed');
+      changed.push('(unknown)'); // fail closed: treat as code changed
+    }
   }
   if (changed.every((f) => DOCS_ONLY.test(f))) {
     setAttempts(0);
@@ -72,7 +76,7 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
     const remaining = timeout_s * 1000 - (now() - start);
     const r = remaining > 0 ? exec(pm, ['run', step], remaining) : null;
     if (!r || r.timedOut) {
-        return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };
+      return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };
     }
     if (r.status === 0) continue;
     const attempts = ctx.state.stopAttempts + 1;

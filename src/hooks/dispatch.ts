@@ -99,7 +99,8 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     try {
       if (!stateExists(root, input.session_id)) {
         const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 2000 });
-        if (head.status === 0 && head.stdout.trim()) state.baseHead = head.stdout.trim();
+        // Unborn HEAD: fall back to git's empty tree so the first commit is still diffed.
+        state.baseHead = head.status === 0 && head.stdout.trim() ? head.stdout.trim() : '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
         writeState(root, input.session_id, state);
       }
     } catch (e) {

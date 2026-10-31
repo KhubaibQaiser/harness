@@ -55,6 +55,16 @@ function repoRoot(cwd: string): string {
   return r;
 }
 
+type GitRun = (args: string[]) => { status: number | null; stdout: string };
+
+// HEAD at the session's first hook. The empty tree stands in only when the repo has no commits at all; any other failure leaves it undefined.
+export function detectBaseHead(root: string, run: GitRun = (args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: 2000 })): string | undefined {
+  const head = run(['rev-parse', 'HEAD']);
+  if (head.status === 0 && head.stdout.trim()) return head.stdout.trim();
+  const any = run(['rev-list', '-n', '1', '--all']);
+  return any.status === 0 && !any.stdout.trim() ? '4b825dc642cb6eb9a060e54bf8d69288fbee4904' : undefined;
+}
+
 export async function dispatch(raw: string, checks: Check[], env: NodeJS.ProcessEnv): Promise<string> {
   const input = parseInput(raw);
   if (!input || !EVENTS.includes(input.hook_event_name) || !isSafeSessionId(input.session_id)) return '';
@@ -98,9 +108,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     // Fix startedAt at the session's first hook.
     try {
       if (!stateExists(root, input.session_id)) {
-        const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 2000 });
-        // Unborn HEAD: fall back to git's empty tree so the first commit is still diffed.
-        state.baseHead = head.status === 0 && head.stdout.trim() ? head.stdout.trim() : '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+        state.baseHead = detectBaseHead(root);
         writeState(root, input.session_id, state);
       }
     } catch (e) {

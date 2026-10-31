@@ -7,7 +7,7 @@ import { type Exec, runStop, stopGate } from '../../../src/checks/stop/gate.js';
 import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
 import { readState, writeState } from '../../../src/core/state.js';
-import { type Ctx, dispatch, registry } from '../../../src/hooks/dispatch.js';
+import { type Ctx, detectBaseHead, dispatch, registry } from '../../../src/hooks/dispatch.js';
 
 const ALL = ['format:check', 'lint', 'typecheck', 'test'];
 type Opts = { baseHead?: string; scripts?: string[]; yaml?: string; attempts?: number; hookActive?: boolean };
@@ -214,23 +214,61 @@ test('diff failure or timeout fails closed: steps run and stop-diff-failed is lo
   }
 });
 
-test('unborn HEAD: baseHead is the empty tree, and the first commit is diffed', async () => {
-  const { execFileSync, spawnSync } = await import('node:child_process');
-  const s = setup();
-  const git = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: s.root, encoding: 'utf8' });
-  git('init', '-q');
-  await dispatch(JSON.stringify({ ...s.ctx.input, hook_event_name: 'UserPromptSubmit', prompt: 'x' }), [], {});
-  const state = readState(s.root, 's');
-  expect(state.baseHead).toBe('4b825dc642cb6eb9a060e54bf8d69288fbee4904');
-  writeFileSync(join(s.root, 'a.ts'), 'export {};\n');
-  git('add', 'a.ts');
-  git('commit', '-q', '-m', 'first');
-  const ran: string[] = [];
+test('git calls get a fixed 5 s timeout and do not eat the step budget', () => {
+  const s = setup({ baseHead: 'abc', yaml: 'stop:\n  timeout_s: 4\n' });
+  let t = 0;
+  const base = s.exec('');
   const exec: Exec = (cmd, args, ms) => {
-    if (cmd !== 'git') return ran.push(args[1]), { status: 0, output: '', timedOut: false };
-    const r = spawnSync(cmd, args, { cwd: s.root, encoding: 'utf8', timeout: ms });
-    return { status: r.status, output: r.stdout ?? '', timedOut: false };
+    if (args[0] === 'diff') {
+      s.calls.push({ cmd, args, ms });
+      t += 5000;
+      return { status: null, output: '', timedOut: true };
+    }
+    return base(cmd, args, ms);
   };
-  runStop({ ...s.ctx, state } as Ctx, exec);
-  expect(ran).toEqual(ALL);
+  runStop(s.ctx, exec, () => t);
+  expect(s.calls.filter((c) => c.cmd === 'git').map((c) => c.ms)).toEqual([5000, 5000]);
+  expect(s.steps()).toEqual(ALL);
+  expect(s.calls.find((c) => c.args[1] === 'lint')?.ms).toBe(4000);
+  expect(readEvents(s.root)).toMatchObject([{ check: 'stop', decision: 'stop-diff-failed' }]);
+});
+
+test('detectBaseHead: HEAD, empty tree only when there are no commits, else undefined', () => {
+  const run = (map: Record<string, { status: number | null; stdout: string }>) => (args: string[]) => map[args[0]] ?? { status: 1, stdout: '' };
+  expect(detectBaseHead('/x', run({ 'rev-parse': { status: 0, stdout: 'abc\n' } }))).toBe('abc');
+  expect(detectBaseHead('/x', run({ 'rev-list': { status: 0, stdout: '' } }))).toBe('4b825dc642cb6eb9a060e54bf8d69288fbee4904');
+  expect(detectBaseHead('/x', run({ 'rev-list': { status: 0, stdout: 'deadbeef\n' } }))).toBeUndefined();
+  expect(detectBaseHead('/x', run({ 'rev-list': { status: 128, stdout: '' } }))).toBeUndefined();
+  expect(detectBaseHead('/x', run({ 'rev-list': { status: null, stdout: '' } }))).toBeUndefined();
+});
+
+test('unborn HEAD: baseHead is the empty tree, and the first commit is diffed (clean porcelain)', async () => {
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const { appendFileSync } = await import('node:fs');
+  const first = async (files: string[], ignore: string) => {
+    const s = setup();
+    const git = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: s.root, encoding: 'utf8' });
+    git('init', '-q');
+    appendFileSync(join(s.root, '.git/info/exclude'), ignore);
+    await dispatch(JSON.stringify({ ...s.ctx.input, hook_event_name: 'UserPromptSubmit', prompt: 'x' }), [], {});
+    const state = readState(s.root, 's');
+    expect(state.baseHead).toBe('4b825dc642cb6eb9a060e54bf8d69288fbee4904');
+    for (const f of files) if (f !== 'package.json') writeFileSync(join(s.root, f), 'export {};\n');
+    git('add', ...files);
+    git('commit', '-q', '-m', 'first');
+    expect(git('status', '--porcelain')).toBe('');
+    const ran: string[] = [];
+    const exec: Exec = (cmd, args, ms) => {
+      if (cmd !== 'git') {
+        ran.push(args[1]);
+        return { status: 0, output: '', timedOut: false };
+      }
+      const r = spawnSync(cmd, args, { cwd: s.root, encoding: 'utf8', timeout: ms });
+      return { status: r.status, output: r.stdout ?? '', timedOut: false };
+    };
+    runStop({ ...s.ctx, state } as Ctx, exec);
+    return ran;
+  };
+  expect(await first(['package.json', 'a.ts'], '.harness/\n')).toEqual(ALL);
+  expect(await first(['README.md'], '.harness/\npackage.json\n')).toEqual([]);
 });

@@ -11,6 +11,7 @@ export type Exec = (cmd: string, args: string[], timeoutMs: number) => { status:
 
 const DOCS_ONLY = /\.(md|mdx|txt)$|^docs\/|^LICENSE$/;
 const MAX_LOG = 3500;
+const GIT_MS = 5000;
 const allow: Decision = { kind: 'allow' };
 
 export const defaultExec = (root: string): Exec => (cmd, args, timeout) => {
@@ -36,7 +37,6 @@ const scriptsOf = (root: string): Record<string, unknown> => {
 export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Decision {
   const { root, config, input } = ctx;
   const { steps, package_manager: pm, max_attempts: max, timeout_s } = config.stop;
-  const start = now();
   const log = (decision: string, reason?: string) => {
     try {
       appendEvent(root, { ts: new Date().toISOString(), session: input.session_id, check: 'stop', decision, ...(reason ? { reason } : {}) });
@@ -50,7 +50,7 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
 
   const paths = (out: string, porcelain: boolean) =>
     out.split('\n').filter(Boolean).map((l) => (porcelain ? (l.slice(3).split(' -> ').pop() as string) : l).replace(/^"|"$/g, ''));
-  const git = exec('git', ['status', '--porcelain'], timeout_s * 1000);
+  const git = exec('git', ['status', '--porcelain'], GIT_MS);
   if (git.status !== 0 || git.timedOut) {
     log('stop-skipped', 'git status failed');
     return allow;
@@ -59,7 +59,7 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
   const base = ctx.state.baseHead;
   if (base) {
     // The agent may have committed its work, leaving a clean tree.
-    const d = exec('git', ['diff', '--name-only', base, 'HEAD'], timeout_s * 1000);
+    const d = exec('git', ['diff', '--name-only', base, 'HEAD'], GIT_MS);
     if (d.status === 0 && !d.timedOut) changed.push(...paths(d.output, false));
     else {
       log('stop-diff-failed');
@@ -72,8 +72,9 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
   }
 
   const scripts = scriptsOf(root);
+  const stepsStart = now(); // the step budget starts after the git calls
   for (const step of steps.filter((s) => s in scripts)) {
-    const remaining = timeout_s * 1000 - (now() - start);
+    const remaining = timeout_s * 1000 - (now() - stepsStart);
     const r = remaining > 0 ? exec(pm, ['run', step], remaining) : null;
     if (!r || r.timedOut) {
       return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };

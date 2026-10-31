@@ -41,3 +41,14 @@ export function readResults(root: string, dir: string): TestFileResult[] {
 
 export const relatedTests = (_root: string, implRel: string, results: TestFileResult[]): TestFileResult[] =>
   results.filter((r) => pairKey(r.file) === pairKey(implRel));
+
+// Newest result per test file (key = repo path), keeping only results written since the session started.
+export function newestFresh(results: TestFileResult[], startedAt: number): Map<string, TestFileResult> {
+  const newest = new Map<string, TestFileResult>();
+  for (const r of results) {
+    const cur = newest.get(r.file);
+    if (!cur || r.writtenAt > cur.writtenAt) newest.set(r.file, r);
+  }
+  for (const [k, r] of newest) if (r.writtenAt < startedAt) newest.delete(k);
+  return newest;
+}

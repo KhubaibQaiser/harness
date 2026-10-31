@@ -1,0 +1,16 @@
+{
+  "numFailedTests": 1,
+  "numPassedTests": 1,
+  "numTotalTests": 2,
+  "success": false,
+  "testResults": [
+    {
+      "name": "/ROOT/src/a.test.ts",
+      "status": "failed",
+      "assertionResults": [
+        { "fullName": "adds", "status": "passed", "title": "adds", "failureMessages": [] },
+        { "fullName": "fails", "status": "failed", "title": "fails", "failureMessages": ["AssertionError: expected 1 to be 2"] }
+      ]
+    }
+  ]
+}

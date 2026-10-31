@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { guard } from '../checks/guard.js';
@@ -97,7 +97,11 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   if (state) {
     // Fix startedAt at the session's first hook.
     try {
-      if (!stateExists(root, input.session_id)) writeState(root, input.session_id, state);
+      if (!stateExists(root, input.session_id)) {
+        const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 2000 });
+        if (head.status === 0 && head.stdout.trim()) state.baseHead = head.stdout.trim();
+        writeState(root, input.session_id, state);
+      }
     } catch (e) {
       warn('state write', e);
     }

@@ -132,3 +132,23 @@ test('bundle exits 0 with empty stdout for empty and garbage stdin', () => {
     expect(r.stdout).toBe('');
   }
 });
+
+test('records baseHead (git HEAD) when the session state is first created', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { mkdtempSync, existsSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { readState } = await import('../../src/core/state.js');
+  const root = mkdtempSync(join(tmpdir(), 'h-bh-'));
+  const git = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: root, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('commit', '-q', '--allow-empty', '-m', 'one');
+  const input = JSON.stringify({ session_id: 'bh', cwd: root, hook_event_name: 'UserPromptSubmit', prompt: 'x' });
+  await dispatch(input, [], {});
+  expect(existsSync(join(root, '.harness/state/bh.json'))).toBe(true);
+  const head = git('rev-parse', 'HEAD');
+  expect(readState(root, 'bh').baseHead).toBe(head);
+  git('commit', '-q', '--allow-empty', '-m', 'two');
+  await dispatch(input, [], {});
+  expect(readState(root, 'bh').baseHead).toBe(head);
+});

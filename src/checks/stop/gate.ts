@@ -48,8 +48,20 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
     if (ctx.state.stopAttempts !== n) ctx.save({ ...ctx.state, stopAttempts: n });
   };
 
+  const paths = (out: string, porcelain: boolean) =>
+    out.split('\n').filter(Boolean).map((l) => (porcelain ? (l.slice(3).split(' -> ').pop() as string) : l).replace(/^"|"$/g, ''));
   const git = exec('git', ['status', '--porcelain'], timeout_s * 1000);
-  const changed = git.status === 0 ? git.output.split('\n').filter(Boolean).map((l) => (l.slice(3).split(' -> ').pop() as string).replace(/^"|"$/g, '')) : [];
+  if (git.status !== 0 || git.timedOut) {
+    log('stop-skipped', 'git status failed');
+    return allow;
+  }
+  const changed = paths(git.output, true);
+  const base = ctx.state.baseHead;
+  if (base) {
+    // The agent may have committed its work, leaving a clean tree.
+    const d = exec('git', ['diff', '--name-only', base, 'HEAD'], timeout_s * 1000);
+    if (d.status === 0 && !d.timedOut) changed.push(...paths(d.output, false));
+  }
   if (changed.every((f) => DOCS_ONLY.test(f))) {
     setAttempts(0);
     return allow;
@@ -60,8 +72,7 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
     const remaining = timeout_s * 1000 - (now() - start);
     const r = remaining > 0 ? exec(pm, ['run', step], remaining) : null;
     if (!r || r.timedOut) {
-      log('stop-timeout');
-      return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };
+        return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };
     }
     if (r.status === 0) continue;
     const attempts = ctx.state.stopAttempts + 1;
@@ -71,7 +82,6 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
       return allow;
     }
     setAttempts(attempts);
-    log('stop-block', `${step} attempt ${attempts} of ${max}; stop_hook_active=${input.stop_hook_active === true}`);
     return { kind: 'block', reason: `${step} failed (attempt ${attempts} of ${max}). Fix it, then finish again.\n${tail(r.output)}`, check: 'stop' };
   }
 

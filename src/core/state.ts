@@ -9,6 +9,7 @@ export interface SessionState {
   redTests: string[];
   lockedTests: string[];
   stopAttempts: number;
+  baseHead?: string; // git HEAD at the session's first hook
 }
 
 export const isSafeSessionId = (id: string): boolean => /^[A-Za-z0-9._-]+$/.test(id) && id !== '.' && id !== '..';

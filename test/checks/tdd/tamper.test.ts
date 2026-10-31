@@ -181,3 +181,29 @@ test('expect.any / anything / objectContaining / extend do not count as assertio
   expect(tamperFindings('expect(a).toBe(1);', 'expect.any(Number); expect.anything(); expect.objectContaining({})', T)).toEqual(['1 assertion removed']);
   expect(tamperFindings('expect.hasAssertions(); expect.soft(1)', 'expect.hasAssertions(); expect.soft(1)', T)).toEqual([]);
 });
+
+// Fix round 2
+test('a glob in a string does not start a comment: later rules still see the text', () => {
+  const cfg = (lines: number, ex: string) => `include: ["src/*.ts"],\nexclude: [${ex}],\nlines: ${lines}`;
+  const f = 'vitest.config.ts';
+  expect(tamperFindings(cfg(80, '"**/x"'), cfg(70, '"**/x"'), f)).toEqual(['coverage threshold lines lowered 80→70']);
+  expect(tamperFindings(cfg(80, '"**/x"'), cfg(80, '"**/x", "y"'), f)).toEqual(['test selection changed (exclude)']);
+  expect(tamperFindings('const p = "a/*b";\n', 'const p = "a/*b";\nit.skip("a"); // c */\n', T)).toEqual(['.skip( added']);
+  expect(tamperFindings('', 'const u = "https://x";\nit.only("a");\n', T)).toEqual(['.only( added']);
+  expect(tamperFindings('const q = "it\\"//";\nexpect(1)', 'const q = "it\\"//";\n', T)).toEqual(['1 assertion removed']);
+  expect(tamperFindings('x', '/* expect(a) */ x', T)).toEqual([]);
+  expect(tamperFindings('expect(a)', '/* expect(a) */', T)).toEqual(['1 assertion removed']);
+});
+
+test('package.json thresholds are compared from parsed JSON, even on one line with a URL', () => {
+  const pkg = (g: number, p: number) => `{"homepage":"https://x/*y","jest":{"coverageThreshold":{"global":{"lines":${g}},"./src/":{"branches":${p}}}}}`;
+  expect(tamperFindings(pkg(80, 70), pkg(70, 70), 'package.json')).toEqual(['coverage threshold lines lowered 80→70']);
+  expect(tamperFindings(pkg(80, 70), pkg(80, 60), 'package.json')).toEqual(['coverage threshold branches lowered 70→60']);
+  expect(tamperFindings(pkg(80, 70), '{"homepage":"https://x/*y","jest":{}}', 'package.json').sort()).toEqual(['coverage threshold branches removed', 'coverage threshold lines removed']);
+  expect(tamperFindings(pkg(80, 70), pkg(90, 70), 'package.json')).toEqual([]);
+  expect(tamperFindings('{"a":1}', '{"jest":{"coverageThreshold":{"global":{"lines":1}}}}', 'package.json')).toEqual([]);
+});
+
+test('a selection value that starts on the next line is compared', () => {
+  expect(tamperFindings('include:\n  ["src/**"]', 'include:\n  ["src/a/**"]', 'vitest.config.ts')).toEqual(['test selection changed (include)']);
+});

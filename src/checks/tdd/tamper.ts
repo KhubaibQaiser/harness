@@ -20,8 +20,28 @@ export function afterContent(input: Pick<HookInput, 'tool_name' | 'tool_input'>,
   return text;
 }
 
-// ponytail: regex strip, so `//` or `/*` inside a string literal (e.g. a URL) hides the rest of that text; upgrade to a tokenizer if that gets abused.
-const strip = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+// ponytail: string-aware scanner. Template `${}` nesting is treated as part of the string, and regex literals are not recognised (a `/*` or quote inside one can confuse it).
+function strip(s: string): string {
+  let out = '';
+  let q = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]!;
+    if (q) {
+      out += c;
+      if (c === '\\') out += s[++i] ?? '';
+      else if (c === q || (c === '\n' && q !== '`')) q = '';
+    } else if (c === '"' || c === "'" || c === '`') {
+      q = c;
+      out += c;
+    } else if (c === '/' && s[i + 1] === '/') {
+      while (i + 1 < s.length && s[i + 1] !== '\n') i++;
+    } else if (c === '/' && s[i + 1] === '*') {
+      const e = s.indexOf('*/', i + 2);
+      i = e < 0 ? s.length : e + 1;
+    } else out += c;
+  }
+  return out;
+}
 
 const MARKERS: [string, RegExp][] = [
   ['.skip(', /\.skip(?=[.(])/g],
@@ -43,7 +63,7 @@ const SELECTION = ['include', 'exclude', 'testMatch', 'testPathIgnorePatterns', 
 const count = (s: string, re: RegExp): number => s.match(re)?.length ?? 0;
 // Each key with its value up to the end of the line, or through a following [...] array (may span lines), whitespace-normalised, sorted.
 const selection = (s: string, key: string): string =>
-  [...s.matchAll(new RegExp(`${key}[^\\[\\n]*(?:\\[[^\\]]*\\])?[^\\n]*`, 'g'))].map((m) => m[0].replace(/\s+/g, ' ').trim()).sort().join('\n');
+  [...s.matchAll(new RegExp(`${key}(?:[^\\[\\n]*:[ \\t]*\\n\\s*)?[^\\[\\n]*(?:\\[[^\\]]*\\])?[^\\n]*`, 'g'))].map((m) => m[0].replace(/\s+/g, ' ').trim()).sort().join('\n');
 
 function thresholds(b: string, a: string): string[] {
   const out: string[] = [];
@@ -61,10 +81,42 @@ function thresholds(b: string, a: string): string[] {
   return out;
 }
 
+const KEYS = ['branches', 'functions', 'lines', 'statements'];
+// jest.coverageThreshold flattened to path -> value (global and per-path); null when either side is not valid JSON.
+function pkgThresholds(before: string, after: string): string[] | null {
+  const flat = (text: string): Map<string, number> | null => {
+    const m = new Map<string, number>();
+    const walk = (o: unknown, path: string) => {
+      if (!o || typeof o !== 'object') return;
+      for (const [k, v] of Object.entries(o)) {
+        if (typeof v === 'number' && KEYS.includes(k)) m.set(`${path}/${k}`, v);
+        else walk(v, `${path}/${k}`);
+      }
+    };
+    try {
+      walk((JSON.parse(text) as { jest?: { coverageThreshold?: unknown } })?.jest?.coverageThreshold, '');
+    } catch {
+      return null;
+    }
+    return m;
+  };
+  const was = flat(before);
+  const now = flat(after);
+  if (!was || !now) return null;
+  const out: string[] = [];
+  for (const [path, w] of was) {
+    const key = path.slice(path.lastIndexOf('/') + 1);
+    const n = now.get(path);
+    if (n === undefined) out.push(`coverage threshold ${key} removed`);
+    else if (n < w) out.push(`coverage threshold ${key} lowered ${w}→${n}`);
+  }
+  return out;
+}
+
 export function tamperFindings(before: string, after: string, file: string): string[] {
   const b = strip(before);
   const a = strip(after);
-  if (PKG.test(file)) return thresholds(b, a);
+  if (PKG.test(file)) return pkgThresholds(before, after) ?? thresholds(b, a);
   const out: string[] = [];
   for (const [label, re] of MARKERS) if (count(a, re) > count(b, re)) out.push(`${label} added`);
   const removed = count(b, ASSERT) - count(a, ASSERT);

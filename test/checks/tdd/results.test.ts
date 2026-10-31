@@ -42,3 +42,17 @@ test('relatedTests finds colocated and __tests__ tests', () => {
   const all = [t('src/foo.test.ts'), t('src/__tests__/foo.test.ts'), t('src/bar.test.ts')];
   expect(relatedTests(root, 'src/foo.ts', all).map((x) => x.file)).toEqual(['src/foo.test.ts', 'src/__tests__/foo.test.ts']);
 });
+
+const one = (name: string) => readResults(root, dir({ 'r.json': fx(name) }));
+
+test('red mapping: only real failures or load errors are failed', () => {
+  expect(one('vitest-skip.json')[0]).toMatchObject({ status: 'passed', tests: [{ status: 'skipped' }] });
+  expect(one('vitest-todo.json')[0]).toMatchObject({ status: 'passed', tests: [{ status: 'todo' }] });
+  expect(one('vitest-missing.json')[0]).toMatchObject({ status: 'failed', tests: [] });
+  expect(one('vitest-mixed.json')[0]).toMatchObject({ status: 'passed', tests: [{ status: 'passed' }, { status: 'skipped' }] });
+});
+
+test('file status failed with only pending assertions is passed', () => {
+  const j = JSON.stringify({ testResults: [{ name: `${root}/a.test.ts`, status: 'failed', assertionResults: [{ fullName: 'x', status: 'pending' }] }] });
+  expect(readResults(root, dir({ 'j.json': j }))[0]!.status).toBe('passed');
+});

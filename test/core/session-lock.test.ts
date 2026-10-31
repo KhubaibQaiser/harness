@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { withSessionLock } from '../../src/core/state.js';
+import { dispatch } from '../../src/hooks/dispatch.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'h-lock-'));
 
@@ -14,15 +15,65 @@ test('lock is released after fn, even when it throws', async () => {
   expect(await withSessionLock(root, 's', () => 7)).toBe(7);
 });
 
-test('a stale lock (older than 5 s) is recovered', async () => {
+const lockDir = (root: string) => join(root, '.harness/state/s.lock');
+const mkLock = (root: string, owner?: { pid: number; nonce: string }, ageMs = 0) => {
+  mkdirSync(lockDir(root), { recursive: true });
+  if (owner) writeFileSync(join(lockDir(root), 'owner'), JSON.stringify(owner));
+  const t = new Date(Date.now() - ageMs);
+  utimesSync(lockDir(root), t, t);
+};
+const deadPid = () =>
+  new Promise<number>((res) => {
+    const c = spawn(process.execPath, ['-e', '']);
+    c.on('close', () => res(c.pid as number));
+  });
+const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
+  const orig = process.stderr.write;
+  process.stderr.write = (() => true) as typeof process.stderr.write;
+  try {
+    return await f();
+  } finally {
+    process.stderr.write = orig;
+  }
+};
+
+test('a live holder\'s lock is never removed by a waiter, however old', async () => {
   const root = tmp();
-  const lock = join(root, '.harness/state/s.lock');
-  mkdirSync(lock, { recursive: true });
-  const old = new Date(Date.now() - 6000);
-  utimesSync(lock, old, old);
+  mkLock(root, { pid: process.pid, nonce: 'live' }, 60000);
+  expect(await quiet(() => withSessionLock(root, 's', () => 'ran'))).toBe('ran');
+  expect(existsSync(lockDir(root))).toBe(true);
+  expect(readFileSync(join(lockDir(root), 'owner'), 'utf8')).toContain('live');
+}, 10000);
+
+test('release by a non-owner is a no-op', async () => {
+  const root = tmp();
+  await withSessionLock(root, 's', () => writeFileSync(join(lockDir(root), 'owner'), JSON.stringify({ pid: process.pid, nonce: 'thief' })));
+  expect(readFileSync(join(lockDir(root), 'owner'), 'utf8')).toContain('thief');
+});
+
+test('a dead-pid lock is recovered quickly', async () => {
+  const root = tmp();
+  mkLock(root, { pid: await deadPid(), nonce: 'dead' });
   const t = Date.now();
   expect(await withSessionLock(root, 's', () => 'ok')).toBe('ok');
   expect(Date.now() - t).toBeLessThan(1000);
+  expect(existsSync(lockDir(root))).toBe(false);
+});
+
+test('an owner-less lock is stale only after 30 s', async () => {
+  const root = tmp();
+  mkLock(root, undefined, 31000);
+  const t = Date.now();
+  expect(await withSessionLock(root, 's', () => 'ok')).toBe('ok');
+  expect(Date.now() - t).toBeLessThan(1000);
+});
+
+test('Stop dispatch does not wait on a held lock', async () => {
+  const root = tmp();
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  const t = Date.now();
+  await dispatch(JSON.stringify({ hook_event_name: 'Stop', session_id: 's', cwd: root }), [], {});
+  expect(Date.now() - t).toBeLessThan(500);
 });
 
 test('a fresh held lock times out after ~2 s, runs fn anyway and warns', async () => {

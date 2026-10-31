@@ -53,7 +53,7 @@ function repoRoot(cwd: string): string {
 export async function dispatch(raw: string, checks: Check[], env: NodeJS.ProcessEnv): Promise<string> {
   const input = parseInput(raw);
   if (!input || !EVENTS.includes(input.hook_event_name) || !isSafeSessionId(input.session_id)) return '';
-  if (!input.cwd) return dispatchLocked(raw, checks, env);
+  if (!input.cwd || input.hook_event_name === 'Stop') return dispatchLocked(raw, checks, env);
   // One hook at a time per session, so parallel tool calls cannot race on the state file.
   return withSessionLock(repoRoot(input.cwd), input.session_id, () => dispatchLocked(raw, checks, env));
 }

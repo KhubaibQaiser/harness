@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 export interface SessionState {
@@ -51,10 +52,33 @@ export function clearTurn(root: string, session: string): void {
   writeState(root, session, { ...readState(root, session), files: [], approved: false });
 }
 
-// Serialises read-modify-write of a session's state across hook processes via an exclusive lock directory.
-// Waits up to 2 s (10 ms steps); a lock older than 5 s is stale. On timeout runs fn unlocked.
+const readOwner = (lock: string): { pid?: number; nonce?: string } | null => {
+  try {
+    return JSON.parse(readFileSync(join(lock, 'owner'), 'utf8'));
+  } catch {
+    return null;
+  }
+};
+
+// Stale: the owner process is dead, or there is no readable owner file and the dir is older than 30 s.
+function isStale(lock: string): boolean {
+  const o = readOwner(lock);
+  if (typeof o?.pid === 'number') {
+    try {
+      process.kill(o.pid, 0);
+      return false;
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code === 'ESRCH';
+    }
+  }
+  return Date.now() - statSync(lock).mtimeMs > 30000;
+}
+
+// Serialises read-modify-write of a session's state across hook processes via an exclusive, owner-tagged lock directory.
+// Waits up to 2 s (10 ms steps), then runs fn unlocked with a warning. Stop events skip the lock (long-running, only touch stopAttempts).
 export async function withSessionLock<T>(root: string, session: string, fn: () => T | Promise<T>): Promise<T> {
   const lock = `${statePath(root, session).slice(0, -'.json'.length)}.lock`;
+  const nonce = randomBytes(8).toString('hex');
   let held = false;
   let usable = true;
   try {
@@ -67,23 +91,31 @@ export async function withSessionLock<T>(root: string, session: string, fn: () =
       try {
         mkdirSync(lock);
         held = true;
+        try {
+          writeFileSync(join(lock, 'owner'), JSON.stringify({ pid: process.pid, nonce }));
+        } catch {
+          // an owner-less lock still expires after 30 s
+        }
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'EEXIST') {
           usable = false;
           break;
         }
         try {
-          if (Date.now() - statSync(lock).mtimeMs > 5000) rmSync(lock, { recursive: true, force: true });
-          else if (Date.now() >= deadline) break;
+          if (isStale(lock)) {
+            const gone = `${lock}.stale.${nonce}`;
+            renameSync(lock, gone); // only the waiter whose rename succeeds proceeds
+            rmSync(gone, { recursive: true, force: true });
+          } else if (Date.now() >= deadline) break;
           else await new Promise((r) => setTimeout(r, 10));
         } catch {
-          // lock vanished between checks: retry
+          // lock vanished or another waiter won the rename: retry
         }
       }
     }
     if (usable && !held) process.stderr.write('harness: state lock timeout\n');
     return await fn();
   } finally {
-    if (held) rmSync(lock, { recursive: true, force: true });
+    if (held && readOwner(lock)?.nonce === nonce) rmSync(lock, { recursive: true, force: true });
   }
 }

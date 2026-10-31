@@ -1,7 +1,11 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { protect } from '../../src/checks/protect.js';
 import { loadConfig } from '../../src/core/config.js';
-import { type Ctx, registry } from '../../src/hooks/dispatch.js';
+import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
 
 const ROOT = '/p';
 const run = (tool_name: string, tool_input: Record<string, unknown>, checks?: Record<string, boolean>) => {
@@ -94,4 +98,14 @@ test(':/ pathspecs and bash -c are seen', () => {
 test('test-results dir is protected from Write and from shell redirects', () => {
   expect(edit('.harness/state/test-results/x.json', 'Write').kind).toBe('deny');
   expect(bash('echo {} > .harness/state/test-results/x.json')).toBe('deny');
+});
+
+test('a repo reached through a symlinked path is still protected (dispatch, real registry)', async () => {
+  const real = realpathSync(mkdtempSync(join(tmpdir(), 'h-symp-')));
+  mkdirSync(join(real, 'repo'));
+  spawnSync('git', ['init', '-q'], { cwd: join(real, 'repo') });
+  symlinkSync(join(real, 'repo'), join(real, 'link'));
+  const link = join(real, 'link');
+  const out = await dispatch(JSON.stringify({ session_id: 's', cwd: link, hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: join(link, '.harness/config.yaml') } }), registry, {});
+  expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny');
 });

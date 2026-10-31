@@ -38,6 +38,7 @@ test('gated PreToolUse with 40 result files stays under 150 ms median', () => {
   }
   const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'lat', cwd: repo, tool_name: 'Edit', tool_input: { file_path: join(repo, 'packages/core/src/a.ts'), old_string: 'a', new_string: 'b' } });
   const times: number[] = [];
+  // tmpdir is used as is (/var on macOS, /private/var for git): the code must handle the symlink.
   for (let i = 0; i < 20; i++) {
     const t = performance.now();
     const r = spawnSync(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs')], { input, encoding: 'utf8' });
@@ -46,6 +47,11 @@ test('gated PreToolUse with 40 result files stays under 150 ms median', () => {
     expect(r.stdout).toBe(''); // allowed: fresh failing related result
   }
   times.sort((a, b) => a - b);
-  console.log(`gated median ms: ${times[10]!.toFixed(1)}`);
-  expect(times[10]).toBeLessThan(150);
+  expect(times[10], `gated median ${times[10]!.toFixed(1)} ms`).toBeLessThan(150);
+  // Control: a passing related result must deny, proving the gate ran on this path.
+  const failing = join(repo, '.harness/state/test-results/r7.json');
+  writeFileSync(failing, readFileSync(failing, 'utf8').replaceAll('"failed"', '"passed"'));
+  const c = spawnSync(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs')], { input, encoding: 'utf8' });
+  expect(c.stdout).not.toBe('');
+  expect(JSON.parse(c.stdout).hookSpecificOutput.permissionDecision).toBe('deny');
 }, 30000);

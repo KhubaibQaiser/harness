@@ -1,8 +1,26 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import picomatch from 'picomatch';
 
+// Realpath of the deepest existing ancestor, with the not-yet-existing remainder re-appended (new files don't exist yet).
+function realish(p: string): string {
+  const rest: string[] = [];
+  for (let cur = resolve(p); ; cur = dirname(cur)) {
+    try {
+      return join(realpathSync(cur), ...rest.reverse());
+    } catch {
+      if (dirname(cur) === cur) return resolve(p);
+      rest.push(basename(cur));
+    }
+  }
+}
+
+const rootCache = new Map<string, string>();
+
 export function toRepoPath(root: string, p: string): string | null {
-  const rel = relative(resolve(root), resolve(root, p));
+  let r = rootCache.get(root);
+  if (r === undefined) rootCache.set(root, (r = realish(root)));
+  const rel = relative(r, realish(resolve(root, p)));
   if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) return null;
   return rel.split(sep).join('/');
 }

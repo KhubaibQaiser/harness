@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { isTestFile, matches, pairKey, toRepoPath } from '../../src/core/paths.js';
 
@@ -24,4 +27,17 @@ test('source and test share a pair key', () => {
   expect(pairKey('src/a/foo.ts')).toBe(pairKey('src/a/foo.test.ts'));
   expect(pairKey('src/a/foo.ts')).toBe(pairKey('src/a/__tests__/foo.test.ts'));
   expect(pairKey('src/a/foo.ts')).not.toBe(pairKey('src/a/bar.ts'));
+});
+
+test('toRepoPath resolves symlinks in root and target', () => {
+  const real = realpathSync(mkdtempSync(join(tmpdir(), 'h-sym-')));
+  mkdirSync(join(real, 'repo/src'), { recursive: true });
+  const link = join(real, 'link');
+  symlinkSync(join(real, 'repo'), link);
+  expect(toRepoPath(link, join(link, 'src/a.ts'))).toBe('src/a.ts'); // root symlink, file symlink form
+  expect(toRepoPath(join(real, 'repo'), join(link, 'src/a.ts'))).toBe('src/a.ts'); // root real, file symlink form
+  expect(toRepoPath(link, join(real, 'repo/src/a.ts'))).toBe('src/a.ts'); // root symlink, file real form
+  expect(toRepoPath(link, join(link, 'src/new/deeper/b.ts'))).toBe('src/new/deeper/b.ts'); // not yet existing
+  symlinkSync(tmpdir(), join(real, 'repo/out'));
+  expect(toRepoPath(join(real, 'repo'), join(real, 'repo/out/x.ts'))).toBeNull(); // in-repo symlink pointing outside
 });

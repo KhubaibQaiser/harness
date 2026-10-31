@@ -60,3 +60,12 @@ test('wrongly typed or unknown values warn and fall back to the default', () => 
   expect(warnings.join('\n')).toMatch(/checks\.guard/);
   expect(warnings.join('\n')).toMatch(/bogus/);
 });
+
+test('warns when tdd.results_dir is outside .harness/state', () => {
+  const msg = 'tdd.results_dir is outside .harness/state; the agent could forge test results there';
+  const w = (dir: string) => loadConfig(dirWith('.harness/config.yaml', `tdd:\n  results_dir: ${dir}\n`)).warnings;
+  expect(w('coverage/results')).toContain(msg);
+  expect(w('../x')).toContain(msg);
+  expect(w('.harness/state/other')).not.toContain(msg);
+  expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: true\n')).warnings).not.toContain(msg);
+});

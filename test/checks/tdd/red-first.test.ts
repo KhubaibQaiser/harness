@@ -11,7 +11,7 @@ const setup = (cfg = CFG) => {
   const root = mkdtempSync(join(tmpdir(), 'h-rf-'));
   mkdirSync(join(root, '.harness/state/test-results'), { recursive: true });
   writeFileSync(join(root, '.harness/config.yaml'), cfg);
-  const startedAt = Date.now() - 10000;
+  const startedAt = Math.floor((Date.now() - 10000) / 1000) * 1000; // whole seconds so utimes round-trips exactly
   writeState(root, 's', { startedAt, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 });
   let n = 0;
   const result = (file: string, status: 'passed' | 'failed', at = Date.now()) => {
@@ -109,4 +109,10 @@ test('end to end through the real registry', async () => {
   expect((await t.edit(A, registry)).permissionDecision).toBe('deny');
   t.result(T, 'failed');
   expect((await t.edit(A, registry)).permissionDecision).toBe('allow');
+});
+
+test('writtenAt equal to startedAt counts as fresh', async () => {
+  const t = setup();
+  t.result(T, 'failed', t.startedAt);
+  expect((await t.edit(A)).permissionDecision).toBe('allow');
 });

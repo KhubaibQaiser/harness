@@ -90,3 +90,8 @@ test('git global options do not hide restore and checkout', () => {
 test(':/ pathspecs and bash -c are seen', () => {
   for (const c of ["git restore ':/.'", 'git restore :/', 'bash -c "git restore ."', 'sh -c "mv a .harness/hooks/dispatch.mjs"']) expect(bash(c), c).toBe('deny');
 });
+
+test('test-results dir is protected from Write and from shell redirects', () => {
+  expect(edit('.harness/state/test-results/x.json', 'Write').kind).toBe('deny');
+  expect(bash('echo {} > .harness/state/test-results/x.json')).toBe('deny');
+});

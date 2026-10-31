@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 
 export interface HarnessConfig {
@@ -57,5 +57,7 @@ export function loadConfig(root: string): { config: HarnessConfig; warnings: str
   if (user == null) return { config, warnings };
   if (!isObj(user)) return { config, warnings: ['config.yaml is invalid: top level must be a mapping; using defaults'] };
   merge(config as unknown as Record<string, unknown>, user, '', warnings);
+  const rel = relative(join(root, '.harness/state'), resolve(root, config.tdd.results_dir));
+  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) warnings.push('tdd.results_dir is outside .harness/state; the agent could forge test results there');
   return { config, warnings };
 }

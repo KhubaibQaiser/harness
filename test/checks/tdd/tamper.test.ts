@@ -132,3 +132,52 @@ test('a TDD pause does not disable it', async () => {
   writeFileSync(join(t.root, '.harness/state/tdd-pause.json'), JSON.stringify({ createdAt: Date.now() }));
   expect((await t.run('Write', { file_path: T, content: '' })).permissionDecision).toBe('deny');
 });
+
+// Fix round 1
+test.each([
+  ["it.skipIf(true)('a', f)", '.skipIf( added'],
+  ["it.runIf(false)('a', f)", '.runIf( added'],
+  ["describe.skip.each([1])('x', f)", '.skip( added'],
+  ["test.only.each([1])('x', f)", '.only( added'],
+  ["it.fails('a', f)", '.fails( added'],
+])('skip variant %s is a finding', (src, finding) => {
+  expect(tamperFindings('', src, T)).toContain(finding);
+});
+
+test('quoted and decimal thresholds are compared as numbers', () => {
+  expect(tamperFindings('{"lines": 80}', '{"lines": 70}', 'jest.config.json')).toEqual(['coverage threshold lines lowered 80→70']);
+  expect(tamperFindings('lines: 80.5', 'lines: 80.1', 'vitest.config.ts')).toEqual(['coverage threshold lines lowered 80.5→80.1']);
+  expect(tamperFindings("'lines': 80", "'lines': 90", 'vitest.config.ts')).toEqual([]);
+});
+
+test('package.json at any depth is checked for thresholds only', async () => {
+  const pkg = (n: number) => `{"jest":{"coverageThreshold":{"global":{"lines":${n}}}}}`;
+  expect(tamperFindings(pkg(80), pkg(70), 'pkg/a/package.json')).toEqual(['coverage threshold lines lowered 80→70']);
+  expect(tamperFindings(pkg(80), '{"jest":{}}', 'package.json')).toEqual(['coverage threshold lines removed']);
+  expect(tamperFindings('{"scripts":{"t":"x"}}', '{"scripts":{"t":"x.skip(1)"}}', 'package.json')).toEqual([]);
+  const t = setup(undefined, { 'pkg/a/package.json': pkg(80) });
+  expect((await t.run('Write', { file_path: 'pkg/a/package.json', content: pkg(10) })).permissionDecision).toBe('deny');
+});
+
+test('config weakening: passWithNoTests, disabled coverage, test selection', () => {
+  const f = 'vitest.config.ts';
+  expect(tamperFindings('passWithNoTests: false', 'passWithNoTests: true', f)).toEqual(['passWithNoTests enabled']);
+  expect(tamperFindings('passWithNoTests: true', 'passWithNoTests: true', f)).toEqual([]);
+  expect(tamperFindings('coverage: { enabled: true }', 'coverage: { enabled: false }', f)).toEqual(['coverage disabled']);
+  expect(tamperFindings('coverage: { thresholds: {lines: 1} }', 'coverage: { thresholds: false }', f).sort()).toEqual(['coverage disabled', 'coverage threshold lines removed']);
+  expect(tamperFindings("include: ['src/**']", "include: ['src/a/**']", f)).toEqual(['test selection changed (include)']);
+  expect(tamperFindings("exclude: ['x']", "exclude: ['x', 'y']", f)).toEqual(['test selection changed (exclude)']);
+  expect(tamperFindings('include: [\n  "a",\n  "b",\n]', 'include: [\n  "a",\n]', f)).toEqual(['test selection changed (include)']);
+  expect(tamperFindings('testMatch: ["a"]', 'testMatch: []', 'jest.config.js')).toEqual(['test selection changed (testMatch)']);
+  expect(tamperFindings('testPathIgnorePatterns: []', 'testPathIgnorePatterns: ["a"]', 'jest.config.js')).toEqual(['test selection changed (testPathIgnorePatterns)']);
+  expect(tamperFindings('coveragePathIgnorePatterns: []', 'coveragePathIgnorePatterns: ["a"]', 'jest.config.js')).toEqual(['test selection changed (coveragePathIgnorePatterns)']);
+  expect(tamperFindings("include: ['a']", "include: ['a']\n", f)).toEqual([]);
+  expect(tamperFindings('', 'passWithNoTests: true', T)).toEqual([]); // config-only rules
+});
+
+test('expect.any / anything / objectContaining / extend do not count as assertions', () => {
+  const before = 'expect(a).toBe(1);\nexpect(b).toEqual(expect.any(Number));';
+  expect(tamperFindings(before, 'expect(b).toEqual(expect.any(Number));\nexpect.extend({});', T)).toEqual(['1 assertion removed']);
+  expect(tamperFindings('expect(a).toBe(1);', 'expect.any(Number); expect.anything(); expect.objectContaining({})', T)).toEqual(['1 assertion removed']);
+  expect(tamperFindings('expect.hasAssertions(); expect.soft(1)', 'expect.hasAssertions(); expect.soft(1)', T)).toEqual([]);
+});

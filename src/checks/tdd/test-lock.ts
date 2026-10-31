@@ -1,9 +1,8 @@
 // A test seen failing is locked until a fresh passing run: changing it mid-green needs approval.
-import { join } from 'node:path';
 import { isPaused } from '../../core/pause.js';
 import { isTestFile, toRepoPath } from '../../core/paths.js';
 import type { Check } from '../../hooks/dispatch.js';
-import { newestFresh, readResults } from './results.js';
+import { newestFresh, readResults, resultsDir } from './results.js';
 
 export const testLock: Check = {
   name: 'testLock',
@@ -19,7 +18,7 @@ export const testLock: Check = {
       if (isTestFile(rel) && !s.redTests.includes(rel)) ctx.save({ ...s, redTests: [...s.redTests, rel] });
       return { kind: 'allow' };
     }
-    const latest = newestFresh(readResults(ctx.root, join(ctx.root, ctx.config.tdd.results_dir)), s.startedAt);
+    const latest = newestFresh(readResults(ctx.root, resultsDir(ctx.root, ctx.config)), s.startedAt);
     const red = s.redTests.filter((f) => latest.get(f)?.status === 'failed');
     const locked = [...new Set([...s.lockedTests, ...red])].filter((f) => latest.get(f)?.status !== 'passed');
     if (red.length || locked.length !== s.lockedTests.length) ctx.save({ ...s, lockedTests: locked });

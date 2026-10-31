@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pairKey, toRepoPath } from '../../core/paths.js';
 
 export interface TestFileResult {
@@ -52,3 +52,6 @@ export function newestFresh(results: TestFileResult[], startedAt: number): Map<s
   for (const [k, r] of newest) if (r.writtenAt < startedAt) newest.delete(k);
   return newest;
 }
+
+// results_dir may be relative to the repo root or absolute.
+export const resultsDir = (root: string, config: { tdd: { results_dir: string } }): string => resolve(root, config.tdd.results_dir);

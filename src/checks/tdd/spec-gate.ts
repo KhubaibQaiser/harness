@@ -1,10 +1,10 @@
 // A feature in features.json may only become `passes: true` when each criterion names a test that just passed.
 import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { toRepoPath } from '../../core/paths.js';
 import type { Check } from '../../hooks/dispatch.js';
 import { fileWriteTargets } from '../guard.js';
-import { newestFresh, readResults } from './results.js';
+import { newestFresh, readResults, resultsDir } from './results.js';
 import { afterContent } from './tamper.js';
 
 type Feature = { id?: unknown; passes?: unknown; criteria?: unknown };
@@ -50,8 +50,14 @@ export const specGate: Check = {
       }
       return { kind: 'allow' };
     }
+    const seen = new Set<unknown>();
+    for (const f of after) {
+      if (typeof f?.id !== 'string' || !f.id || seen.has(f.id)) return deny(`features.json has a missing or duplicate feature id: ${typeof f?.id === 'string' && f.id ? f.id : '(missing)'}.`);
+      seen.add(f.id);
+    }
+    for (const f of after) if (f.passes !== undefined && typeof f.passes !== 'boolean') return deny(`${String(f.id)} has a non-boolean passes value.`);
     const wasPassing = new Set((features(current) ?? []).filter((f) => f.passes === true).map((f) => f.id));
-    const fresh = newestFresh(readResults(ctx.root, join(ctx.root, ctx.config.tdd.results_dir)), ctx.state.startedAt);
+    const fresh = newestFresh(readResults(ctx.root, resultsDir(ctx.root, ctx.config)), ctx.state.startedAt);
 
     const reasons: string[] = [];
     for (const f of after) {
@@ -64,7 +70,7 @@ export const specGate: Check = {
             const t = typeof c?.test === 'string' ? c.test : '';
             const i = t.indexOf('::');
             if (i < 0) return 'no test named';
-            const hit = fresh.get(t.slice(0, i))?.tests.find((x) => x.fullName === t.slice(i + 2));
+            const hit = fresh.get(toRepoPath(ctx.root, t.slice(0, i)) ?? '')?.tests.find((x) => x.fullName === t.slice(i + 2));
             return !hit ? 'test not found' : hit.status !== 'passed' ? 'test not passing' : '';
           })();
           if (r) return `${String(c?.text)} → ${r}.`;

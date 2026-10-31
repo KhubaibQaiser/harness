@@ -12,21 +12,22 @@ const doc = (...f: unknown[]) => JSON.stringify({ features: f });
 const setup = (cfg = 'checks:\n  tdd: true\n') => {
   const root = mkdtempSync(join(tmpdir(), 'h-sg-'));
   mkdirSync(join(root, '.harness/state/test-results'), { recursive: true });
-  writeFileSync(join(root, '.harness/config.yaml'), cfg);
+  writeFileSync(join(root, '.harness/config.yaml'), cfg.replaceAll('ROOT', root));
   const startedAt = Math.floor((Date.now() - 10000) / 1000) * 1000;
   writeState(root, 's', { startedAt, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 });
   let n = 0;
-  const result = (file: string, tests: [string, string][]) => {
-    const p = join(root, '.harness/state/test-results', `r${n++}.json`);
+  const result = (file: string, tests: [string, string][], at = Date.now(), dir = '.harness/state/test-results') => {
+    mkdirSync(join(root, dir), { recursive: true });
+    const p = join(root, dir, `r${n++}.json`);
     writeFileSync(p, JSON.stringify({ testResults: [{ name: join(root, file), status: 'passed', assertionResults: tests.map(([fullName, status]) => ({ fullName, status })) }] }));
-    utimesSync(p, Date.now() / 1000, Date.now() / 1000);
+    utimesSync(p, at / 1000, at / 1000);
   };
   const call = async (tool: string, input: Record<string, unknown>) => {
     const out = await dispatch(JSON.stringify({ session_id: 's', cwd: root, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input }), [specGate], {});
     return out ? (JSON.parse(out).hookSpecificOutput as { permissionDecision: string; permissionDecisionReason: string }) : { permissionDecision: 'allow', permissionDecisionReason: '' };
   };
   const write = (content: string) => call('Write', { file_path: join(root, 'features.json'), content });
-  return { root, result, call, write };
+  return { root, startedAt, result, call, write };
 };
 const crit = (test?: string) => [{ text: 'does x', ...(test ? { test } : {}) }];
 
@@ -123,4 +124,53 @@ test('real Vitest fixture fullName format', async () => {
   writeFileSync(join(s.root, '.harness/state/test-results/fx.json'), fx);
   expect((await s.write(doc(feat('f1', true, crit(`${T}::adds`))))).permissionDecision).toBe('allow');
   expect((await s.write(doc(feat('f1', true, crit(`${T}::fails`))))).permissionDecisionReason).toContain('test not passing');
+});
+
+test('stale result (mtime before startedAt) is test not found', async () => {
+  const s = setup();
+  s.result(T, [['adds', 'passed']], s.startedAt - 5000);
+  expect((await s.write(doc(feat('f1', true, crit(`${T}::adds`))))).permissionDecisionReason).toBe("f1 can't be marked passing: does x → test not found.");
+});
+
+test('a newer fresh failure beats an older fresh pass', async () => {
+  const s = setup();
+  s.result(T, [['adds', 'passed']], Date.now() - 4000);
+  s.result(T, [['adds', 'failed']], Date.now() - 1000);
+  expect((await s.write(doc(feat('f1', true, crit(`${T}::adds`))))).permissionDecisionReason).toContain('test not passing');
+});
+
+test('ids must be unique non-empty strings', async () => {
+  const s = setup();
+  s.result(T, [['adds', 'passed']]);
+  const ok = feat('f1', true, crit(`${T}::adds`));
+  writeFileSync(join(s.root, 'features.json'), doc(ok));
+  expect((await s.write(doc(ok, feat('f1', true, crit())))).permissionDecisionReason).toBe('features.json has a missing or duplicate feature id: f1.');
+  expect((await s.write(doc({ title: 'x', passes: false, criteria: [] }))).permissionDecisionReason).toBe('features.json has a missing or duplicate feature id: (missing).');
+  expect((await s.write(doc({ id: '', passes: false }))).permissionDecisionReason).toBe('features.json has a missing or duplicate feature id: (missing).');
+});
+
+test('passes must be a boolean', async () => {
+  const s = setup();
+  for (const v of ['true', 1]) {
+    expect((await s.write(doc({ id: 'f1', title: 'f1', passes: v, criteria: [] }))).permissionDecisionReason).toBe('f1 has a non-boolean passes value.');
+  }
+});
+
+test('criterion file part is normalised (./ and absolute)', async () => {
+  const s = setup();
+  s.result(T, [['adds', 'passed']]);
+  expect((await s.write(doc(feat('f1', true, crit(`./${T}::adds`))))).permissionDecision).toBe('allow');
+  expect((await s.write(doc(feat('f1', true, crit(`${join(s.root, T)}::adds`))))).permissionDecision).toBe('allow');
+});
+
+test('absolute results_dir works', async () => {
+  const s = setup('checks:\n  tdd: true\ntdd:\n  results_dir: ROOT/abs-results\n');
+  s.result(T, [['adds', 'passed']], Date.now(), 'abs-results');
+  expect((await s.write(doc(feat('f1', true, crit(`${T}::adds`))))).permissionDecision).toBe('allow');
+});
+
+test('features.json missing on disk: Write creating a passing, evidenced feature is allowed', async () => {
+  const s = setup();
+  s.result(T, [['adds', 'passed']]);
+  expect((await s.write(doc(feat('f1', true, crit(`${T}::adds`))))).permissionDecision).toBe('allow');
 });

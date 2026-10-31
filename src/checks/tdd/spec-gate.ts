@@ -1,0 +1,78 @@
+// A feature in features.json may only become `passes: true` when each criterion names a test that just passed.
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { toRepoPath } from '../../core/paths.js';
+import type { Check } from '../../hooks/dispatch.js';
+import { fileWriteTargets } from '../guard.js';
+import { newestFresh, readResults } from './results.js';
+import { afterContent } from './tamper.js';
+
+type Feature = { id?: unknown; passes?: unknown; criteria?: unknown };
+const FILE = 'features.json';
+
+const features = (text: string): Feature[] | null => {
+  try {
+    const f = (JSON.parse(text) as { features?: unknown })?.features;
+    return Array.isArray(f) ? f : null;
+  } catch {
+    return null;
+  }
+};
+
+export const specGate: Check = {
+  name: 'specGate',
+  events: ['PreToolUse'],
+  run(ctx) {
+    if (!ctx.config.checks.tdd) return { kind: 'allow' };
+    const { tool_name, tool_input = {} } = ctx.input;
+    const deny = (reason: string) => ({ kind: 'deny' as const, reason, check: 'specGate' });
+    if (tool_name === 'Bash') {
+      const cmd = tool_input.command;
+      const hit = typeof cmd === 'string' && fileWriteTargets(cmd).some((t) => toRepoPath(ctx.root, t) === FILE);
+      return hit ? deny('Edit features.json with the Edit or Write tool so the spec gate can check it.') : { kind: 'allow' };
+    }
+    const p = tool_input.file_path;
+    if ((tool_name !== 'Edit' && tool_name !== 'Write' && tool_name !== 'MultiEdit') || typeof p !== 'string' || toRepoPath(ctx.root, p) !== FILE) return { kind: 'allow' };
+
+    let current = '';
+    try {
+      current = readFileSync(resolve(ctx.root, p), 'utf8');
+    } catch {
+      // missing file: nothing passing yet
+    }
+    const afterText = afterContent(ctx.input, current);
+    const after = features(afterText);
+    if (!after) {
+      try {
+        JSON.parse(afterText);
+      } catch {
+        return deny('features.json would be invalid JSON.');
+      }
+      return { kind: 'allow' };
+    }
+    const wasPassing = new Set((features(current) ?? []).filter((f) => f.passes === true).map((f) => f.id));
+    const fresh = newestFresh(readResults(ctx.root, join(ctx.root, ctx.config.tdd.results_dir)), ctx.state.startedAt);
+
+    const reasons: string[] = [];
+    for (const f of after) {
+      if (f.passes !== true || wasPassing.has(f.id)) continue;
+      const criteria = Array.isArray(f.criteria) ? (f.criteria as { text?: unknown; test?: unknown }[]) : [];
+      const why = (() => {
+        if (!criteria.length) return 'no criteria.';
+        for (const c of criteria) {
+          const r = (() => {
+            const t = typeof c?.test === 'string' ? c.test : '';
+            const i = t.indexOf('::');
+            if (i < 0) return 'no test named';
+            const hit = fresh.get(t.slice(0, i))?.tests.find((x) => x.fullName === t.slice(i + 2));
+            return !hit ? 'test not found' : hit.status !== 'passed' ? 'test not passing' : '';
+          })();
+          if (r) return `${String(c?.text)} → ${r}.`;
+        }
+        return '';
+      })();
+      if (why) reasons.push(`${String(f.id)} can't be marked passing: ${why}`);
+    }
+    return reasons.length ? deny(reasons.join('; ')) : { kind: 'allow' };
+  },
+};

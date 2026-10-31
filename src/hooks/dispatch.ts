@@ -6,6 +6,7 @@ import { multiFile } from '../checks/multi-file.js';
 import { protect } from '../checks/protect.js';
 import { redFirst } from '../checks/tdd/red-first.js';
 import { tamper } from '../checks/tdd/tamper.js';
+import { specGate } from '../checks/tdd/spec-gate.js';
 import { testLock } from '../checks/tdd/test-lock.js';
 import { type HarnessConfig, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
@@ -32,7 +33,7 @@ export interface Check {
 }
 
 // Later tasks register here, in the order guard, protect, depVerify, multiFile, redFirst, tamper, testLock, specGate, stopGate.
-export const registry: Check[] = [guard, protect, multiFile, redFirst, tamper, testLock];
+export const registry: Check[] = [guard, protect, multiFile, redFirst, tamper, testLock, specGate];
 
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 const CURSOR_KEYS = ['conversation_id', 'generation_id', 'model_id', 'workspace_roots'];

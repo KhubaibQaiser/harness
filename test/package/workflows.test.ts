@@ -29,6 +29,15 @@ test('release checks tag equals package.json version, calls ci, then publishes',
   expect(rel.jobs.publish.needs).toBe('ci');
 });
 
+test('publish waits for a manual run on a tag; a tag push alone only checks', () => {
+  const rel = load('release.yml');
+  expect(rel.on).toHaveProperty('workflow_dispatch');
+  expect(rel.on.push.tags).toEqual(['v*']);
+  expect(rel.jobs.publish.if).toBe("github.event_name == 'workflow_dispatch' && github.ref_type == 'tag'");
+  expect(rel.jobs['check-tag'].if).toBeUndefined();
+  expect(rel.jobs.ci.if).toBeUndefined();
+});
+
 test('release has no --provenance flag', () => {
   const lines = raw('release.yml').split('\n').filter((l) => !l.trim().startsWith('#'));
   expect(lines.join('\n')).not.toContain('--provenance');

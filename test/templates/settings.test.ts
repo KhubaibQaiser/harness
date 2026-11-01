@@ -20,7 +20,7 @@ test('permissions.deny has every required entry', () => {
   expect(s.permissions.deny).toEqual(
     expect.arrayContaining([
       'Read(./.env)', 'Read(./.env.*)', 'Read(./**/.env)', 'Read(./**/.env.*)',
-      'Edit(./.harness/hooks/**)', 'Edit(./.harness/state/**)', 'Edit(./.claude/settings.json)',
+      'Edit(./.harness/hooks/**)', 'Edit(./.harness/state/**)', 'Edit(./.harness/logs/**)', 'Edit(./.claude/settings.json)',
     ]),
   );
 });

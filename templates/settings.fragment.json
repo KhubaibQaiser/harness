@@ -24,6 +24,7 @@
       "Read(./**/.env.*)",
       "Edit(./.harness/hooks/**)",
       "Edit(./.harness/state/**)",
+      "Edit(./.harness/logs/**)",
       "Edit(./.claude/settings.json)"
     ]
   }

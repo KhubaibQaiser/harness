@@ -2,7 +2,6 @@
 
 ## Harness workflow
 
-
 Hooks enforce these rules. When a hook blocks or asks, its message names the next step; do that step.
 
 ### TDD
@@ -28,4 +27,5 @@ Do not weaken or delete a test to make it pass; fix the code.
 ### Finishing
 
 - The Stop gate runs the configured checks. If it blocks, fix the failure and finish again.
+
 <!-- harness:end -->

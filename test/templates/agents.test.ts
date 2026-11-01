@@ -51,5 +51,7 @@ test('agents-block: blank line after the start marker and every heading (prettie
   const lines = read('templates/agents-block.md').split('\n');
   lines.forEach((l, i) => {
     if (l === '<!-- harness:start -->' || l.startsWith('#')) expect(lines[i + 1], `after "${l}"`).toBe('');
+    if (l === '<!-- harness:end -->') expect(lines[i - 1], 'before end marker').toBe('');
+    if (l === '' && i < lines.length - 1) expect(lines[i + 1], `double blank at line ${i + 1}`).not.toBe('');
   });
 });

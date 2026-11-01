@@ -30,8 +30,8 @@ const setup = (cfg = CFG) => {
 const A = 'packages/core/src/a.ts';
 const T = 'packages/core/src/a.test.ts';
 
-test('registered after multiFile, not fail-closed, PreToolUse', () => {
-  expect(registry.map((c) => c.name).slice(0, 4)).toEqual(['guard', 'protect', 'multiFile', 'redFirst']);
+test('registered after protect, not fail-closed, PreToolUse', () => {
+  expect(registry.map((c) => c.name).slice(0, 3)).toEqual(['guard', 'protect', 'redFirst']);
   expect(redFirst.failClosed).toBeFalsy();
   expect(redFirst.events).toEqual(['PreToolUse']);
 });

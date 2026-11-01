@@ -30,6 +30,14 @@ test('Cursor-imported calls exit silently', async () => {
 test('deny beats ask', async () => {
   expect(decisionOf(await dispatch(pre(), [askAll, denyAll], {}))).toBe('deny');
 });
+test('PreToolUse stops running checks at the first deny', async () => {
+  let ran = false;
+  const later: Check = { name: 'later', events: ['PreToolUse', 'PostToolUse'], run: () => ((ran = true), { kind: 'allow' }) };
+  expect(decisionOf(await dispatch(pre(), [denyAll, later], {}))).toBe('deny');
+  expect(ran).toBe(false);
+  await dispatch(pre({ hook_event_name: 'PostToolUse' }), [denyAll, later], {});
+  expect(ran).toBe(true);
+});
 test('unattended turns ask into deny with prefix', async () => {
   const r = await dispatch(pre(), [askAll], { CI: 'true' });
   expect(decisionOf(r)).toBe('deny');

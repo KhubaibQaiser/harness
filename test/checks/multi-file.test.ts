@@ -23,8 +23,8 @@ const setup = (mode = 'block', extra = '') => {
 };
 const kind = (d: { permissionDecision: string }) => d.permissionDecision;
 
-test('registered third, not fail-closed, right events', () => {
-  expect(registry.map((c) => c.name).slice(0, 3)).toEqual(['guard', 'protect', 'multiFile']);
+test('registered after specGate, not fail-closed, right events', () => {
+  expect(registry.map((c) => c.name)).toEqual(['guard', 'protect', 'redFirst', 'tamper', 'testLock', 'specGate', 'multiFile', 'stopGate']);
   expect(multiFile.failClosed).toBeFalsy();
   expect(multiFile.events).toEqual(['UserPromptSubmit', 'PreToolUse', 'PostToolUse']);
 });
@@ -309,4 +309,18 @@ test('require_reason: a reason deny leaves files and approved unchanged', async 
   const after = readState(t.root, 's');
   expect(after.files).toEqual(before.files);
   expect(after.approved).toBe(before.approved);
+});
+
+test.each([[{}], [{ CI: 'true' }]])('a red-first deny is not counted: the first real edit gets no multi-file ask (env %j)', async (env) => {
+  const t = setup('block');
+  writeFileSync(join(t.root, '.harness/config.yaml'), 'checks:\n  multiFile: true\n  tdd: true\ntdd:\n  paths: ["src/**"]\nunattended:\n  multi_file_gate: block\n');
+  const pre = (p: string) => t.send({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: p } }, env, registry);
+  expect(JSON.parse(await pre('src/a.ts')).hookSpecificOutput.permissionDecision).toBe('deny');
+  expect(readState(t.root, 's').files).toEqual([]);
+  expect(await pre('docs/n.md')).toBe('');
+});
+
+test('multiFile runs after every other PreToolUse check', () => {
+  const pre = registry.filter((c) => c.events.includes('PreToolUse')).map((c) => c.name);
+  expect(pre.at(-1)).toBe('multiFile');
 });

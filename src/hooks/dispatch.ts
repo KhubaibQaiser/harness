@@ -35,8 +35,8 @@ export interface Check {
   run(ctx: Ctx): Decision | Promise<Decision>;
 }
 
-// Later tasks register here, in the order guard, protect, depVerify, multiFile, redFirst, tamper, testLock, specGate, stopGate.
-export const registry: Check[] = [guard, protect, multiFile, redFirst, tamper, testLock, specGate, stopGate];
+// multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
+export const registry: Check[] = [guard, protect, redFirst, tamper, testLock, specGate, multiFile, stopGate];
 
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 const CURSOR_KEYS = ['conversation_id', 'generation_id', 'model_id', 'workspace_roots'];
@@ -151,6 +151,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     }
     log(d.check, d.kind, d.kind === 'context' ? d.text : d.reason);
     decisions.push(d);
+    if (event === 'PreToolUse' && d.kind === 'deny') break; // later checks (multiFile records) must not see a denied call
   }
 
   const win =

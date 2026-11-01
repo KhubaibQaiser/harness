@@ -23,7 +23,7 @@ const setup = (cfg = 'checks:\n  tdd: true\n', files: Record<string, string> = {
 const SUITE = "it('a', () => {\n  expect(add(1, 2)).toBe(3);\n  expect(add(2, 2)).toBe(4);\n});\n";
 
 test('registered after redFirst, PreToolUse, not fail-closed', () => {
-  expect(registry.map((c) => c.name).slice(0, 5)).toEqual(['guard', 'protect', 'multiFile', 'redFirst', 'tamper']);
+  expect(registry.map((c) => c.name).slice(0, 4)).toEqual(['guard', 'protect', 'redFirst', 'tamper']);
   expect(tamper.failClosed).toBeFalsy();
   expect(tamper.events).toEqual(['PreToolUse']);
 });

@@ -35,6 +35,7 @@ export interface Check {
   failClosed?: boolean;
   pure?: boolean; // never calls ctx.save or writes files other than the event log
   run(ctx: Ctx): Decision | Promise<Decision>;
+  afterAllow?(ctx: Ctx): void; // PreToolUse only: called when the final outcome is a plain allow (no deny or ask from any check)
 }
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
@@ -157,6 +158,17 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     log(d.check, d.kind, d.kind === 'context' ? d.text : d.reason, denied ? true : undefined);
     if (!denied) decisions.push(d);
     if (event === 'PreToolUse' && d.kind === 'deny') denied = true;
+  }
+
+  if (event === 'PreToolUse' && !decisions.some((d) => d.kind === 'deny' || d.kind === 'ask')) {
+    for (const c of checks) {
+      if (!c.afterAllow || !c.events.includes(event) || (degraded && !c.failClosed)) continue;
+      try {
+        c.afterAllow(ctx);
+      } catch (e) {
+        warn(`check ${c.name} afterAllow`, e);
+      }
+    }
   }
 
   const win =

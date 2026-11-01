@@ -66,6 +66,12 @@ function findReason(path: unknown, rel: string): string | null | undefined {
 export const multiFile: Check = {
   name: 'multiFile',
   events: ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'],
+  // Record at Pre so a parallel second Pre sees this file; an ask or deny records nothing.
+  afterAllow(ctx) {
+    if (!ctx.config.checks.multiFile) return;
+    const rel = target(ctx);
+    if (rel !== null && !ctx.state.files.includes(rel)) ctx.save({ ...ctx.state, files: [...ctx.state.files, rel] });
+  },
   run(ctx) {
     const { hook_event_name: event, session_id: session } = ctx.input;
     if (event === 'UserPromptSubmit') {
@@ -85,7 +91,7 @@ export const multiFile: Check = {
       if (!approved && units.size >= 2 && !ctx.unattended) appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'approved', files: next });
       return { kind: 'allow' };
     }
-    // PreToolUse only decides; PostToolUse records, so a declined ask leaves no trace.
+    // PreToolUse only decides; afterAllow records once the whole call is allowed, PostToolUse otherwise.
     if (units.size === 0 || units.has(pairKey(rel))) return { kind: 'allow' };
     const list = files.join(', ');
     if (ctx.unattended) {

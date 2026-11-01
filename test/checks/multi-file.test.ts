@@ -344,19 +344,31 @@ test('a new prompt resets the turn (stop attempts too) even with checks.multiFil
   expect(readState(t.root, 's').stopAttempts).toBe(0);
 });
 
+test('allowed Pre records the file before Post', async () => {
+  const t = setup();
+  expect(kind(await t.edit('a.ts'))).toBe('allow');
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+});
+
+test('parallel edits: two PreToolUse for different files before any PostToolUse, the second asks', async () => {
+  const t = setup();
+  expect(kind(await t.edit('a.ts'))).toBe('allow');
+  expect(kind(await t.edit('b.ts'))).toBe('ask');
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+});
+
 test('a declined ask does not record the file', async () => {
   const t = setup();
   await t.edit('a.ts');
-  await t.post('a.ts');
   expect(kind(await t.edit('b.ts'))).toBe('ask'); // declined: no PostToolUse follows
   expect(readState(t.root, 's').files).toEqual(['a.ts']);
-  expect(kind(await t.edit('c.ts'))).toBe('ask'); // still asks about the second unit only
+  expect(kind(await t.edit('c.ts'))).toBe('ask');
 });
 
-test('PreToolUse never records; PostToolUse records the file', async () => {
+test('PostToolUse records the file after an accepted ask', async () => {
   const t = setup();
-  expect(kind(await t.edit('a.ts'))).toBe('allow');
-  expect(readState(t.root, 's').files).toEqual([]);
-  await t.post('a.ts');
-  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+  await t.edit('a.ts');
+  expect(kind(await t.edit('b.ts'))).toBe('ask');
+  await t.post('b.ts');
+  expect(readState(t.root, 's').files).toEqual(['a.ts', 'b.ts']);
 });

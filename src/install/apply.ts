@@ -1,9 +1,9 @@
 import * as nodeFs from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { MANIFEST_REL, readManifest, type Manifest } from './manifest.js';
+import { MANIFEST_REL, ManifestError, readManifest, type Manifest } from './manifest.js';
 import { sha256 } from './text.js';
 
-export { readManifest, type Manifest };
+export { readManifest, ManifestError, type Manifest };
 
 export type Change =
   | { kind: 'create'; rel: string; content: string; mode?: number }
@@ -49,11 +49,20 @@ export function applyChanges(
     }
   };
   for (const c of changes) {
+    const base = c.rel.split('/').pop()!;
+    if (base === '.env' || base.startsWith('.env.')) throw new ApplyError(`Harness never writes \`${c.rel}\`. Remove it from the plan.`);
     checkPath(c.rel);
     checkPath(`${backupRel}/${c.rel}`);
     if (c.kind === 'create' && fs.existsSync(abs(c.rel)))
       throw new ApplyError(`\`${c.rel}\` already exists. Run the command again.`);
-    if (c.kind !== 'create' && fs.readFileSync(abs(c.rel), 'utf8') !== c.before)
+    if (c.kind === 'create') continue;
+    let current: string;
+    try {
+      current = fs.readFileSync(abs(c.rel), 'utf8');
+    } catch (cause) {
+      throw new ApplyError(`Could not read \`${c.rel}\`. Check it exists and is readable, then run the command again.`, { cause });
+    }
+    if (current !== c.before)
       throw new ApplyError(`\`${c.rel}\` changed since the plan was made. Run the command again.`);
   }
   if (writeManifest) checkPath(MANIFEST_REL);
@@ -113,25 +122,36 @@ export function applyChanges(
       fs.renameSync(target + TMP, target);
     }
   } catch (cause) {
-    let restoreFailed = false;
+    const failed: string[] = [];
     for (const rel of touched.reverse()) {
       try {
         const b = backedUp.get(rel);
         if (b) {
-          fs.copyFileSync(b, abs(rel));
-          if (process.platform !== 'win32') fs.chmodSync(abs(rel), modes.get(rel)!);
-        }
-        else fs.rmSync(abs(rel), { force: true });
+          // temp + rename so a read-only target does not block the restore
+          fs.copyFileSync(b, abs(rel) + TMP);
+          if (process.platform !== 'win32') fs.chmodSync(abs(rel) + TMP, modes.get(rel)!);
+          fs.renameSync(abs(rel) + TMP, abs(rel));
+        } else fs.rmSync(abs(rel), { force: true });
       } catch {
-        restoreFailed = true;
+        failed.push(rel);
       }
     }
+    const restoreFailed = failed.length > 0;
     for (const s of steps) fs.rmSync(abs(s.rel) + TMP, { force: true });
     if (!restoreFailed) fs.rmSync(abs(backupRel), { recursive: true, force: true });
     for (const d of madeDirs.reverse()) {
       try {
         fs.rmdirSync(d); // throws if not empty, which is what we want
       } catch {}
+    }
+    const why = cause instanceof Error ? cause.message : String(cause);
+    if (restoreFailed) {
+      const notes = failed.map((r) =>
+        backedUp.has(r)
+          ? `Rollback failed for \`${r}\`; its original is in \`${backupRel}/${r}\`. Restore it by hand.`
+          : `Rollback failed for \`${r}\`; it was created by this run. Delete it by hand.`,
+      );
+      throw new ApplyError(`${notes.join(' ')} Cause: ${why}`, { cause });
     }
     throw new ApplyError(`apply failed and was rolled back: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
   }

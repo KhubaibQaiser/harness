@@ -9,7 +9,21 @@ export interface Manifest {
 
 export const MANIFEST_REL = '.harness/manifest.json';
 
+export class ManifestError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super('`.harness/manifest.json` is unreadable. Restore it from git or delete `.harness/` and run harness init again.', options);
+    this.name = 'ManifestError';
+  }
+}
+
 export function readManifest(root: string): Manifest | null {
   const p = join(root, MANIFEST_REL);
-  return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf8')) as Manifest) : null;
+  if (!existsSync(p)) return null;
+  try {
+    const m = JSON.parse(readFileSync(p, 'utf8'));
+    if (m === null || typeof m !== 'object' || Array.isArray(m) || !Array.isArray(m.files)) throw new Error('bad shape');
+    return m as Manifest;
+  } catch (cause) {
+    throw new ManifestError({ cause });
+  }
 }

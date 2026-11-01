@@ -2,7 +2,7 @@ import * as realFs from 'node:fs';
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ApplyError, applyChanges, readManifest, type Change, type FsLike } from '../../src/install/apply.js';
+import { ApplyError, ManifestError, applyChanges, readManifest, type Change, type FsLike } from '../../src/install/apply.js';
 import { sha256 } from '../../src/install/text.js';
 import { makeRepo } from './helpers.js';
 
@@ -158,5 +158,65 @@ describe('applyChanges', () => {
     expect(() => applyChanges(root, changes, '1', NOW, failingRename(4))).toThrow(ApplyError);
     for (const d of ['.claude', 'n', '.harness']) expect(existsSync(join(root, d))).toBe(false);
     expect(readdirSync(join(root, 'keep'))).toEqual(['x.txt']);
+  });
+
+  it('rollback restores a read-only file', () => {
+    if (process.platform === 'win32') return;
+    const root = makeRepo({ 'ro.txt': 'R', 'z.txt': 'z' }, { git: false });
+    realFs.chmodSync(join(root, 'ro.txt'), 0o444);
+    const changes: Change[] = [
+      { kind: 'update', rel: 'ro.txt', before: 'R', after: 'R2', blocks: [] },
+      { kind: 'update', rel: 'z.txt', before: 'z', after: 'z2', blocks: [] },
+    ];
+    expect(() => applyChanges(root, changes, '1', NOW, failingRename(2))).toThrow(ApplyError);
+    expect(readFileSync(join(root, 'ro.txt'), 'utf8')).toBe('R');
+    expect(realFs.statSync(join(root, 'ro.txt')).mode & 0o777).toBe(0o444);
+  });
+
+  it('failed restore names the backup', () => {
+    const root = makeRepo({ 'a.json': 'A', 'b.json': 'B' }, { git: false });
+    let c = 0;
+    // rename #1 is a no-op, every later rename throws, so the restores fail too
+    const fs2 = { ...realFs, renameSync: () => { if (++c >= 2) throw new Error('boom'); } } as unknown as FsLike;
+    const changes: Change[] = [
+      { kind: 'update', rel: 'a.json', before: 'A', after: 'A2', blocks: [] },
+      { kind: 'update', rel: 'b.json', before: 'B', after: 'B2', blocks: [] },
+    ];
+    const bk = '.harness/backup/2026-11-01T10-20-30.000Z';
+    expect(() => applyChanges(root, changes, '1', NOW, fs2)).toThrow(
+      `Rollback failed for \`b.json\`; its original is in \`${bk}/b.json\`. Restore it by hand.`,
+    );
+    expect(readFileSync(join(root, bk, 'b.json'), 'utf8')).toBe('B');
+  });
+
+  it('wraps unreadable files in ApplyError', () => {
+    const root = makeRepo({ 'd/x': 'x' }, { git: false });
+    for (const rel of ['missing.txt', 'd']) {
+      expect(() => applyChanges(root, [{ kind: 'update', rel, before: 'x', after: 'y', blocks: [] }], '1', NOW)).toThrow(
+        `Could not read \`${rel}\`. Check it exists and is readable, then run the command again.`,
+      );
+    }
+    expect(() => applyChanges(root, [{ kind: 'delete', rel: 'missing.txt', before: 'x' }], '1', NOW)).toThrow(ApplyError);
+  });
+
+  it('never writes dotenv files', () => {
+    const root = makeRepo({}, { git: false });
+    for (const rel of ['.env', 'sub/.env.local']) {
+      expect(() => applyChanges(root, [{ kind: 'create', rel, content: 'x' }], '1', NOW)).toThrow(
+        `Harness never writes \`${rel}\`. Remove it from the plan.`,
+      );
+    }
+    expect(existsSync(join(root, '.harness'))).toBe(false);
+  });
+
+  it('readManifest throws ManifestError on corrupt manifests', () => {
+    for (const body of ['{nope', '[]', '"x"', 'null', '{}']) {
+      const root = makeRepo({ '.harness/manifest.json': body }, { git: false });
+      expect(() => readManifest(root)).toThrow(ManifestError);
+    }
+    const root = makeRepo({ '.harness/manifest.json': '{nope' }, { git: false });
+    expect(() => readManifest(root)).toThrow(
+      '`.harness/manifest.json` is unreadable. Restore it from git or delete `.harness/` and run harness init again.',
+    );
   });
 });

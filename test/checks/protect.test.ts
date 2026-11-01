@@ -146,3 +146,9 @@ describe('branch switch to a ref without the harness hooks (real repo)', () => {
     expect(JSON.parse(out).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: `Unattended run: ${SW('old')}` });
   });
 });
+
+test('the event log is protected like the state dir', () => {
+  for (const tool of ['Write', 'Edit']) expect(edit('.harness/logs/events.jsonl', tool).kind).toBe('deny');
+  for (const c of ['rm .harness/logs/events.jsonl', 'rm -rf .harness/logs', 'rm .harness/logs/*', 'echo {} >> .harness/logs/events.jsonl', 'truncate -s 0 .harness/logs/events.jsonl', 'mv .harness/logs/events.jsonl /tmp'])
+    expect(bash(c), c).toBe('deny');
+});

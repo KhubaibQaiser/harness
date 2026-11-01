@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { multiFile } from '../../src/checks/multi-file.js';
 import { readEvents } from '../../src/core/events.js';
-import { readState } from '../../src/core/state.js';
+import { readState, writeState } from '../../src/core/state.js';
 import { dispatch, registry } from '../../src/hooks/dispatch.js';
 
 const setup = (mode = 'block', extra = '') => {
@@ -337,4 +337,13 @@ test('an attended approval is logged once per turn', async () => {
   await t.post('a.ts');
   await t.post('b.ts');
   expect(approved()).toHaveLength(2);
+});
+
+test('a new prompt resets the turn (stop attempts too) even with checks.multiFile off', async () => {
+  const t = setup();
+  writeFileSync(join(t.root, '.harness/config.yaml'), 'checks:\n  multiFile: false\n');
+  await t.post('a.ts');
+  writeState(t.root, 's', { ...readState(t.root, 's'), stopAttempts: 2 });
+  await t.prompt();
+  expect(readState(t.root, 's').stopAttempts).toBe(0);
 });

@@ -30,12 +30,12 @@ test('missing state is fresh, not persisted until written', () => {
   expect(readState(r, 'x').startedAt).toBe(s.startedAt);
 });
 
-test('clearTurn resets files and approved only', () => {
+test('clearTurn resets the per-turn fields (files, approved, stopAttempts) and keeps redTests', () => {
   const r = mkdtempSync(join(tmpdir(), 'h-st-'));
   const s = readState(r, 'x');
   writeState(r, 'x', { ...s, files: ['a'], approved: true, redTests: ['t'], stopAttempts: 2 });
   clearTurn(r, 'x');
-  expect(readState(r, 'x')).toMatchObject({ files: [], approved: false, redTests: ['t'], stopAttempts: 2 });
+  expect(readState(r, 'x')).toMatchObject({ files: [], approved: false, redTests: ['t'], stopAttempts: 0 });
 });
 
 test('concurrent writeState never leaves partial JSON', async () => {

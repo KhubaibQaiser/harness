@@ -51,7 +51,7 @@ export function writeState(root: string, session: string, s: SessionState): void
 }
 
 export function clearTurn(root: string, session: string): void {
-  writeState(root, session, { ...readState(root, session), files: [], approved: false, reasonDenied: [] });
+  writeState(root, session, { ...readState(root, session), files: [], approved: false, reasonDenied: [], stopAttempts: 0 });
 }
 
 const readOwner = (lock: string): { pid?: number; nonce?: string } | null => {

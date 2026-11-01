@@ -68,12 +68,12 @@ export const multiFile: Check = {
   name: 'multiFile',
   events: ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'],
   run(ctx) {
-    if (!ctx.config.checks.multiFile) return { kind: 'allow' };
     const { hook_event_name: event, session_id: session } = ctx.input;
     if (event === 'UserPromptSubmit') {
-      clearTurn(ctx.root, session);
+      clearTurn(ctx.root, session); // also resets stopAttempts, so it runs with the gate off too
       return { kind: 'allow' };
     }
+    if (!ctx.config.checks.multiFile) return { kind: 'allow' };
     const rel = target(ctx);
     if (rel === null) return { kind: 'allow' };
     const { files, approved } = ctx.state;

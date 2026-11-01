@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import picomatch from 'picomatch';
 import { parse as parseYaml } from 'yaml';
 
@@ -21,30 +21,41 @@ const MAX_DIRS = 5000;
 const PY_TOOLS = ['pytest', 'ruff', 'mypy', 'black'] as const;
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
 
-const read = (p: string): string | null => {
+// Every fs read goes through these so detect never throws; a missing file is silent, any other failure becomes a warning.
+function read(root: string, rel: string, warnings: string[], skipped: string): string | null {
   try {
-    return readFileSync(p, 'utf8');
-  } catch {
+    return readFileSync(join(root, rel), 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') warnings.push(`Could not read \`${rel}\`; ${skipped}. Check its permissions and run init again.`);
     return null;
   }
-};
+}
 
-function readJson(p: string, warnings: string[]): Record<string, any> | null {
-  const text = read(p);
+function list(root: string, rel: string, warnings: string[], skipped: string): import('node:fs').Dirent[] {
+  try {
+    return readdirSync(join(root, rel), { withFileTypes: true });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') warnings.push(`Could not list \`${rel || '.'}\`; ${skipped}. Check its permissions and run init again.`);
+    return [];
+  }
+}
+
+function readJson(root: string, rel: string, warnings: string[], skipped: string): Record<string, any> | null {
+  const text = read(root, rel, warnings, skipped);
   if (text === null) return null;
   try {
     const v = JSON.parse(text);
     if (v && typeof v === 'object' && !Array.isArray(v)) return v;
-    warnings.push(`${p}: expected a JSON object`);
-  } catch (e) {
-    warnings.push(`${p}: could not parse (${(e as Error).message})`);
+    warnings.push(`\`${rel}\` is not a JSON object; ${skipped}. Fix the file and run init again.`);
+  } catch {
+    warnings.push(`Could not parse \`${rel}\`; ${skipped}. Fix the JSON and run init again.`);
   }
   return null;
 }
 
 const git = (root: string, ...args: string[]): string | null => {
   try {
-    return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).trim();
   } catch {
     return null;
   }
@@ -58,8 +69,13 @@ function defaultBranch(root: string): string {
 }
 
 // Expands workspace globs by walking only below each glob's static prefix; bounded, never follows symlinks (Dirent.isDirectory is false for them).
-function workspaceDirs(root: string, globs: string[]): string[] {
+function workspaceDirs(root: string, allGlobs: string[], warnings: string[]): string[] {
   const clean = (g: string) => g.replace(/^\.\//, '').replace(/\/+$/, '');
+  const globs = allGlobs.filter((g) => {
+    if (!g.replace(/^!/, '').split('/').includes('..') && !isAbsolute(g.replace(/^!/, ''))) return true;
+    warnings.push(`Skipped workspace glob \`${g}\` because it points outside the repo. Remove it or use a path inside the repo, then run init again.`);
+    return false;
+  });
   const neg = globs.filter((g) => g.startsWith('!')).map((g) => clean(g.slice(1)));
   const isNeg = neg.length ? picomatch(neg) : () => false;
   const found = new Set<string>();
@@ -74,13 +90,7 @@ function workspaceDirs(root: string, globs: string[]): string[] {
       if (seen++ > MAX_DIRS) return;
       if (rel && isMatch(rel) && !isNeg(rel) && existsSync(join(root, rel, 'package.json'))) found.add(rel);
       if (depth >= maxDepth) return;
-      let ents;
-      try {
-        ents = readdirSync(join(root, rel), { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const e of ents) if (e.isDirectory() && !SKIP.has(e.name)) walk(rel ? `${rel}/${e.name}` : e.name, depth + 1);
+      for (const e of list(root, rel, warnings, 'workspace packages below it are skipped')) if (e.isDirectory() && !SKIP.has(e.name)) walk(rel ? `${rel}/${e.name}` : e.name, depth + 1);
     };
     walk(prefix, prefix ? prefix.split('/').length : 0);
   }
@@ -88,14 +98,12 @@ function workspaceDirs(root: string, globs: string[]): string[] {
 }
 
 function packageFacts(root: string, dir: string, warnings: string[]): PackageFacts {
-  const abs = join(root, dir);
-  const pkg = readJson(join(abs, 'package.json'), warnings) ?? {};
+  const pkgRel = dir === '.' ? 'package.json' : `${dir}/package.json`;
+  const pkg = readJson(root, pkgRel, warnings, 'its scripts and test framework are skipped') ?? {};
   const deps = new Set(DEP_FIELDS.flatMap((f) => Object.keys(pkg[f] ?? {})));
-  let files: string[] = [];
-  try {
-    files = readdirSync(abs);
-  } catch {}
-  const vitestCfg = files.find((f) => /^vitest\.config\./.test(f)) ?? files.find((f) => /^vite\.config\./.test(f) && /\btest\s*:/.test(read(join(abs, f)) ?? ''));
+  const files = list(root, dir === '.' ? '' : dir, warnings, 'its test config is not detected').filter((e) => e.isFile()).map((e) => e.name);
+  const cfgText = (f: string) => read(root, dir === '.' ? f : `${dir}/${f}`, warnings, 'its test config is not detected') ?? '';
+  const vitestCfg = files.find((f) => /^vitest\.config\./.test(f)) ?? files.find((f) => /^vite\.config\./.test(f) && /\btest\s*:/.test(cfgText(f)));
   const jestCfg = files.find((f) => /^jest\.config\./.test(f));
   const out: PackageFacts = { dir, scripts: typeof pkg.scripts === 'object' && pkg.scripts ? pkg.scripts : {}, test: 'none' };
   if (typeof pkg.name === 'string') out.name = pkg.name;
@@ -106,11 +114,12 @@ function packageFacts(root: string, dir: string, warnings: string[]): PackageFac
   return out;
 }
 
-function pythonFacts(root: string): Facts['python'] {
+function pythonFacts(root: string, warnings: string[]): Facts['python'] {
   const texts: { text: string; toml: boolean }[] = [];
-  const py = read(join(root, 'pyproject.toml'));
+  const skipped = 'Python tools are not detected from it';
+  const py = read(root, 'pyproject.toml', warnings, skipped);
   if (py !== null) texts.push({ text: py, toml: true });
-  for (const f of readdirSync(root)) if (/^requirements.*\.txt$/.test(f)) texts.push({ text: read(join(root, f)) ?? '', toml: false });
+  for (const e of list(root, '', warnings, skipped)) if (e.isFile() && /^requirements.*\.txt$/.test(e.name)) texts.push({ text: read(root, e.name, warnings, skipped) ?? '', toml: false });
   const tools = PY_TOOLS.filter((t) =>
     texts.some(({ text, toml }) =>
       text.split('\n').some((l) => {
@@ -137,7 +146,7 @@ function collectCommands(node: unknown, out: string[]): void {
 export function detect(root: string): Facts {
   const warnings: string[] = [];
   const has = (f: string) => existsSync(join(root, f));
-  const rootPkg = readJson(join(root, 'package.json'), warnings);
+  const rootPkg = readJson(root, 'package.json', warnings, 'its scripts and test framework are skipped');
   const hasPkg = has('package.json');
 
   const fieldPm = typeof rootPkg?.packageManager === 'string' ? rootPkg.packageManager.split('@')[0] : '';
@@ -149,25 +158,25 @@ export function detect(root: string): Facts {
   else if (has('package-lock.json') || hasPkg) packageManager = 'npm';
 
   const globs: string[] = [];
-  const wsYaml = read(join(root, 'pnpm-workspace.yaml'));
+  const wsYaml = read(root, 'pnpm-workspace.yaml', warnings, 'its workspace packages are skipped');
   if (wsYaml !== null) {
     try {
       const p = parseYaml(wsYaml)?.packages;
       if (Array.isArray(p)) globs.push(...p.filter((g) => typeof g === 'string'));
-    } catch (e) {
-      warnings.push(`pnpm-workspace.yaml: could not parse (${(e as Error).message})`);
+    } catch {
+      warnings.push('Could not parse `pnpm-workspace.yaml`; its workspace packages are skipped. Fix the YAML and run init again.');
     }
   }
   const ws = rootPkg?.workspaces;
   const wsList = Array.isArray(ws) ? ws : Array.isArray(ws?.packages) ? ws.packages : [];
   globs.push(...wsList.filter((g: unknown): g is string => typeof g === 'string'));
 
-  const dirs = globs.length ? workspaceDirs(root, globs) : [];
+  const dirs = globs.length ? workspaceDirs(root, globs, warnings) : [];
   const packages = [...(hasPkg ? ['.'] : []), ...dirs].map((d) => packageFacts(root, d, warnings));
 
   const otherHooks: string[] = [];
   for (const f of ['settings.json', 'settings.local.json']) {
-    const s = readJson(join(root, '.claude', f), warnings);
+    const s = readJson(root, `.claude/${f}`, warnings, 'its hooks are not reported');
     if (s) collectCommands(s.hooks, otherHooks);
   }
 
@@ -176,7 +185,7 @@ export function detect(root: string): Facts {
     packageManager,
     yarnBerry: has('.yarnrc.yml'),
     packages,
-    python: pythonFacts(root),
+    python: pythonFacts(root, warnings),
     existing: {
       claudeMd: has('CLAUDE.md'),
       agentsMd: has('AGENTS.md'),
@@ -185,6 +194,6 @@ export function detect(root: string): Facts {
       otherHooks: [...new Set(otherHooks)].filter((c) => !c.includes('.harness/hooks/dispatch.mjs')),
     },
     defaultBranch: defaultBranch(root),
-    warnings,
+    warnings: [...new Set(warnings)],
   };
 }

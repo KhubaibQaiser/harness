@@ -12,7 +12,7 @@ afterAll(() => {
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'ignore' });
 
 /** Writes `files` into a fresh temp dir; with git (default) inits and makes one commit. `remoteHead` fakes origin/HEAD -> origin/<name>. */
-export function makeRepo(files: Record<string, string>, opts: { git?: boolean; remoteHead?: string } = {}): string {
+export function makeRepo(files: Record<string, string>, opts: { git?: boolean; remoteHead?: string; branch?: string } = {}): string {
   const root = mkdtempSync(join(tmpdir(), 'harness-repo-'));
   made.push(root);
   for (const [rel, content] of Object.entries(files)) {
@@ -21,7 +21,7 @@ export function makeRepo(files: Record<string, string>, opts: { git?: boolean; r
     writeFileSync(p, content);
   }
   if (opts.git === false) return root;
-  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'init', '-q', '-b', opts.branch ?? 'main');
   git(root, 'config', 'user.name', 'test');
   git(root, 'config', 'user.email', 'test@example.com');
   git(root, 'config', 'commit.gpgsign', 'false');

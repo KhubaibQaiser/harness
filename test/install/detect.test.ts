@@ -95,13 +95,17 @@ test('python tools from requirements', () => {
   expect(f.python).toEqual({ present: true, tools: ['pytest', 'ruff'] });
 });
 
-test('default branch from origin/HEAD', () => {
+test('default branch: origin/HEAD wins', () => {
   expect(detect(makeRepo({ a: '1' }, { remoteHead: 'develop' })).defaultBranch).toBe('develop');
 });
-
-test('default branch falls back to current branch', () => {
-  const root = makeRepo({ a: '1' });
-  expect(detect(root).defaultBranch).toBe('main');
+test('default branch: falls back to main', () => {
+  expect(detect(makeRepo({ a: '1' }, { branch: 'main' })).defaultBranch).toBe('main');
+});
+test('default branch: falls back to master when there is no main', () => {
+  expect(detect(makeRepo({ a: '1' }, { branch: 'master' })).defaultBranch).toBe('master');
+});
+test('default branch: falls back to the current branch when there is no origin/HEAD, main or master', () => {
+  expect(detect(makeRepo({ a: '1' }, { branch: 'trunk' })).defaultBranch).toBe('trunk');
 });
 
 test('existing claude setup and non-git dir', () => {
@@ -127,4 +131,107 @@ test('a settings.local.json with hooks is reported in otherHooks', () => {
   expect(f.existing.otherHooks).toEqual(['notify.sh']);
   expect(f.existing.settingsLocal).toBe(true);
   expect(detect(makeRepo({ '.claude/settings.json': '{bad' })).warnings.some((w) => w.includes('settings.json'))).toBe(true);
+});
+
+// Spec section 8 fixture shapes.
+test('fixture: npm with Vitest', () => {
+  const f = detect(makeRepo({ 'package.json': pj({ name: 'n', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^2' } }), 'package-lock.json': '{}', 'vitest.config.ts': 'export default {}' }));
+  expect(f.packageManager).toBe('npm');
+  expect(f.packages).toEqual([{ dir: '.', name: 'n', scripts: { test: 'vitest run' }, test: 'vitest', testConfig: 'vitest.config.ts' }]);
+});
+
+test('fixture: pnpm monorepo with Vitest', () => {
+  const f = detect(
+    makeRepo({
+      'package.json': pj({ name: 'root', packageManager: 'pnpm@9.0.0' }),
+      'pnpm-workspace.yaml': 'packages:\n  - packages/*\n',
+      'pnpm-lock.yaml': '',
+      'packages/b/package.json': pj({ name: 'b', scripts: { test: 'vitest' }, devDependencies: { vitest: '2' } }),
+      'packages/b/vitest.config.mts': 'export default {}',
+      'packages/a/package.json': pj({ name: 'a', devDependencies: { vitest: '2' } }),
+    }),
+  );
+  expect(f.packageManager).toBe('pnpm');
+  expect(f.packages.map((p) => [p.dir, p.test, p.testConfig])).toEqual([
+    ['.', 'none', undefined],
+    ['packages/a', 'vitest', undefined],
+    ['packages/b', 'vitest', 'vitest.config.mts'],
+  ]);
+});
+
+test('fixture: yarn with Jest', () => {
+  const f = detect(makeRepo({ 'package.json': pj({ name: 'y', scripts: { test: 'jest' }, devDependencies: { jest: '29' } }), 'yarn.lock': '', 'jest.config.js': 'module.exports = {}' }));
+  expect(f.packageManager).toBe('yarn');
+  expect(f.packages[0]).toMatchObject({ test: 'jest', testConfig: 'jest.config.js', scripts: { test: 'jest' } });
+});
+
+test('fixture: bun with Vitest', () => {
+  const f = detect(makeRepo({ 'package.json': pj({ devDependencies: { vitest: '2' } }), 'bun.lock': '', 'vitest.config.ts': 'export default {}' }));
+  expect(f.packageManager).toBe('bun');
+  expect(f.packages[0]).toMatchObject({ test: 'vitest', testConfig: 'vitest.config.ts' });
+});
+
+test('fixture: Python with pytest and ruff', () => {
+  const f = detect(makeRepo({ 'pyproject.toml': '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n[tool.ruff]\nline-length = 100\n' }));
+  expect(f.python).toEqual({ present: true, tools: ['pytest', 'ruff'] });
+  expect(f.packageManager).toBe('none');
+  expect(f.packages).toEqual([]);
+});
+
+test('fixture: a repo with no tests', () => {
+  const f = detect(makeRepo({ 'package.json': pj({ name: 'x', scripts: { build: 'tsc' } }), 'src/index.ts': '' }));
+  expect(f.packages[0]).toEqual({ dir: '.', name: 'x', scripts: { build: 'tsc' }, test: 'none' });
+  expect(f.python.tools).toEqual([]);
+});
+
+test('fixture: existing CLAUDE.md, AGENTS.md, settings with other hooks, CRLF files', () => {
+  const crlf = (o: object) => JSON.stringify(o, null, 2).replace(/\n/g, '\r\n');
+  const f = detect(
+    makeRepo({
+      'CLAUDE.md': '# c\r\n',
+      'AGENTS.md': '# a\r\n',
+      'package.json': crlf({ name: 'crlf', scripts: { test: 'vitest' }, devDependencies: { vitest: '2' } }),
+      '.claude/settings.json': crlf({ hooks: { PostToolUse: [{ hooks: [{ type: 'command', command: 'prettier --write' }, { type: 'command', command: 'node .harness/hooks/dispatch.mjs post' }] }] } }),
+      '.claude/settings.local.json': crlf({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'notify.sh' }] }] } }),
+    }),
+  );
+  expect(f.existing).toEqual({ claudeMd: true, agentsMd: true, settings: true, settingsLocal: true, otherHooks: ['prettier --write', 'notify.sh'] });
+  expect(f.packages[0]).toMatchObject({ name: 'crlf', test: 'vitest' });
+  expect(f.warnings).toEqual([]);
+});
+
+test('fixture: a Vitest config that cannot be edited safely is still reported', () => {
+  const f = detect(makeRepo({ 'package.json': pj({ devDependencies: { vitest: '2' } }), 'vitest.config.ts': "import base from './vite.config';\nexport default mergeConfig(base, defineConfig({ test: {} }));" }));
+  expect(f.packages[0]).toMatchObject({ test: 'vitest', testConfig: 'vitest.config.ts' });
+});
+
+// Warnings are shown to users: repo-relative backticked paths, what happened, next step.
+test('warnings use repo-relative paths, never the absolute root', () => {
+  const root = makeRepo({
+    'package.json': pj({ workspaces: ['packages/*', '../outside/*'] }),
+    'packages/a/package.json': '{nope',
+    '.claude/settings.json': '[]',
+    'pnpm-workspace.yaml': 'packages: [',
+    'pyproject.toml/placeholder': '',
+  });
+  const f = detect(root);
+  expect(f.warnings).toContain('Could not parse `packages/a/package.json`; its scripts and test framework are skipped. Fix the JSON and run init again.');
+  expect(f.warnings).toContain('`.claude/settings.json` is not a JSON object; its hooks are not reported. Fix the file and run init again.');
+  expect(f.warnings).toContain('Could not parse `pnpm-workspace.yaml`; its workspace packages are skipped. Fix the YAML and run init again.');
+  expect(f.warnings.some((w) => w.includes('`../outside/*`'))).toBe(true);
+  expect(f.warnings.length).toBeGreaterThan(0);
+  for (const w of f.warnings) expect(w).not.toContain(root);
+});
+
+test('a workspace glob outside the root is not walked', () => {
+  const root = makeRepo({ 'sub/package.json': pj({ workspaces: ['../*'] }), 'sibling/package.json': '{}' });
+  const f = detect(join(root, 'sub'));
+  expect(f.packages.map((p) => p.dir)).toEqual(['.']);
+  expect(f.warnings.some((w) => w.includes('outside the repo'))).toBe(true);
+});
+
+test('unreadable files become warnings, not throws', () => {
+  const f = detect(makeRepo({ 'package.json': '{}', 'pyproject.toml/x': '' })); // pyproject.toml is a directory: EISDIR
+  expect(f.warnings.some((w) => w.includes('`pyproject.toml`'))).toBe(true);
+  expect(() => detect('/nonexistent/harness-root')).not.toThrow();
 });

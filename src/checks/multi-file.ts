@@ -20,6 +20,16 @@ function target(ctx: Ctx): string | null {
   return rel;
 }
 
+const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {});
+const NAME_CHAR = /[A-Za-z0-9_.-]/;
+// True when `name` occurs in `line` with no name character directly before or after it (so a.ts does not match data.ts).
+function hasName(line: string, name: string): boolean {
+  for (let i = line.indexOf(name); i >= 0; i = line.indexOf(name, i + 1)) {
+    if (!NAME_CHAR.test(line[i - 1] ?? ' ') && !NAME_CHAR.test(line[i + name.length] ?? ' ')) return true;
+  }
+  return false;
+}
+
 // Reason line for `rel` from assistant text after the last real user prompt; null = none found, undefined = transcript unreadable.
 // ponytail: the transcript JSONL format is not a documented stable API; unknown shapes are skipped and an unreadable file fails open.
 function findReason(path: unknown, rel: string): string | null | undefined {
@@ -32,22 +42,25 @@ function findReason(path: unknown, rel: string): string | null | undefined {
   }
   let texts: string[] = [];
   for (const line of raw.split('\n')) {
-    let o: any;
+    let o: unknown;
     try {
       o = JSON.parse(line);
     } catch {
       continue;
     }
-    const c = o?.message?.content;
-    if (o?.type === 'user') {
-      const prompt = typeof c === 'string' || (Array.isArray(c) && c.some((b: any) => b?.type !== 'tool_result'));
-      if (prompt) texts = [];
-    } else if (o?.type === 'assistant' && Array.isArray(c)) {
-      for (const b of c) if (b?.type === 'text' && typeof b.text === 'string') texts.push(b.text);
+    const rec = obj(o);
+    const c = obj(rec.message).content;
+    if (rec.type === 'user') {
+      if (typeof c === 'string' || (Array.isArray(c) && c.some((b) => obj(b).type !== 'tool_result'))) texts = [];
+    } else if (rec.type === 'assistant' && Array.isArray(c)) {
+      for (const b of c) {
+        const { type, text } = obj(b);
+        if (type === 'text' && typeof text === 'string') texts.push(text);
+      }
     }
   }
   const name = basename(rel).toLowerCase();
-  for (const t of texts) for (const l of t.split('\n')) if (l.toLowerCase().includes(name) && /\bbecause\b/i.test(l)) return l.trim().slice(0, 300);
+  for (const t of texts) for (const l of t.split('\n')) if (hasName(l.toLowerCase(), name) && /\bbecause\b/i.test(l)) return l.trim().slice(0, 300);
   return null;
 }
 

@@ -260,3 +260,53 @@ test('require_reason: attended runs unaffected', async () => {
   const d = await t.edit('b.ts', 'Edit', {}, { transcript_path: join(t.root, 't.jsonl') });
   expect(kind(d)).toBe('ask');
 });
+
+test('require_reason: reason line is truncated to 300 chars', async () => {
+  const t = reasonSetup([user('go'), asst('b.ts because ' + 'x'.repeat(400))]);
+  await t.post('a.ts');
+  expect(kind(await t.edit2('b.ts'))).toBe('allow');
+  expect(t.log()[0]!.reason).toBe('b.ts: ' + ('b.ts because ' + 'x'.repeat(400)).slice(0, 300));
+});
+
+test('require_reason: basename matches on boundaries only', async () => {
+  const t = reasonSetup([user('go'), asst('data.ts because it differs\nmy-a.ts because no\na.tsx because no')]);
+  await t.post('z.ts');
+  expect(kind(await t.edit2('a.ts'))).toBe('deny');
+  const ok = reasonSetup([user('go'), asst('Edit `a.ts` because yes')]);
+  await ok.post('z.ts');
+  expect(kind(await ok.edit2('a.ts'))).toBe('allow');
+});
+
+test('require_reason: malformed JSONL line is skipped', async () => {
+  const t = reasonSetup([user('go'), asst('b.ts because ok')]);
+  await t.post('a.ts');
+  writeFileSync(join(t.root, 't.jsonl'), JSON.stringify(user('go')) + '\n{not json\n' + JSON.stringify(asst('b.ts because ok')) + '\n');
+  expect(kind(await t.edit2('b.ts'))).toBe('allow');
+  expect(t.log()[0]!.reason).toBe('b.ts: b.ts because ok');
+});
+
+test('require_reason: a third file needs its own reason', async () => {
+  const t = reasonSetup([user('go'), asst('b.ts because x')]);
+  await t.post('a.ts');
+  expect(kind(await t.edit2('b.ts'))).toBe('allow');
+  expect(kind(await t.edit2('c.ts'))).toBe('deny');
+  expect(kind(await t.edit2('c.ts'))).toBe('allow');
+  expect(t.log().filter((e) => e.decision === 'allow-log').map((e) => e.reason)).toEqual(['b.ts: b.ts because x', 'c.ts: no reason given']);
+});
+
+test('require_reason: block mode still blocks', async () => {
+  const t = setup('block', '  require_reason: true\n');
+  await t.post('a.ts');
+  const d = await t.edit('b.ts', 'Edit', { CI: 'true' });
+  expect(d.permissionDecisionReason).toBe('Unattended multi-file change blocked. Wanted: a.ts, b.ts.');
+});
+
+test('require_reason: a reason deny leaves files and approved unchanged', async () => {
+  const t = reasonSetup([user('go'), asst('nothing')]);
+  await t.post('a.ts');
+  const before = readState(t.root, 's');
+  await t.edit2('b.ts');
+  const after = readState(t.root, 's');
+  expect(after.files).toEqual(before.files);
+  expect(after.approved).toBe(before.approved);
+});

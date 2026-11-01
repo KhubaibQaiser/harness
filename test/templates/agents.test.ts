@@ -46,3 +46,10 @@ test('agents-block: markers once, ordered, under 40 lines', () => {
   expect(s.trimEnd().split('\n').length).toBeLessThan(40);
   for (const t of ['Write a failing test first', 'see it fail', 'Never edit `.harness/`', '`harness tdd off`', 'Installs are denied by default', 'In unattended runs', '<file> because <reason>']) expect(s).toContain(t);
 });
+
+test('agents-block: blank line after the start marker and every heading (prettier style)', () => {
+  const lines = read('templates/agents-block.md').split('\n');
+  lines.forEach((l, i) => {
+    if (l === '<!-- harness:start -->' || l.startsWith('#')) expect(lines[i + 1], `after "${l}"`).toBe('');
+  });
+});

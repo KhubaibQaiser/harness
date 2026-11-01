@@ -53,6 +53,18 @@ test('AGENT_GUARD_ALLOW_INSTALL=1 hands the added names to dep-verify', () => {
   expect(reason(d)).toBe('"github:o/r": could not verify on the registry');
 });
 
+test('checks.depVerify false skips the registry lookup: plain ask when installs are allowed, plain deny otherwise', () => {
+  const lookup = vi.fn(() => 'error' as const);
+  const c = (env: NodeJS.ProcessEnv) => {
+    const x = { ...ctx({ env }), lookup };
+    x.config.checks.depVerify = false;
+    return decideCommand('pnpm add zzz-nope', x);
+  };
+  expect(c({ AGENT_GUARD_ALLOW_INSTALL: '1' })).toEqual({ kind: 'ask', reason: 'Confirm adding zzz-nope.', check: 'guard' });
+  expect(c({}).kind).toBe('deny');
+  expect(lookup).not.toHaveBeenCalled();
+});
+
 test('python installs are not looked up on the npm registry', () => {
   const lookup = vi.fn(() => 'error' as const);
   const env = { AGENT_GUARD_ALLOW_INSTALL: '1' };

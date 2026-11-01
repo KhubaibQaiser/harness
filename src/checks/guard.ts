@@ -154,6 +154,7 @@ const checkInstall = (cmd: string, ctx: GuardCtx): Decision | undefined => {
   if (found.length === 0) return undefined;
   const what = `adding dependency ${found.slice(0, 3).join(', ')}`;
   if (ctx.env.AGENT_GUARD_ALLOW_INSTALL === '1') {
+    if (ctx.config?.checks.depVerify === false) return { kind: 'ask', reason: `Confirm adding ${found.join(', ')}.`, check: 'guard' };
     // The npm registry knows nothing of PyPI, so only JS names are verified.
     const jsDecision = js.length ? verifyPackages(js, { root: ctx.root, now: new Date(), lookup: ctx.lookup ?? defaultLookup }) : undefined;
     if (jsDecision?.kind === 'deny') return jsDecision;

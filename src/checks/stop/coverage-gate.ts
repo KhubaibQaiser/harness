@@ -8,7 +8,7 @@ const MAX_FILES = 10;
 const MAX_LINES = 20;
 
 // `since` is the epoch-ms start of the gate's steps (coverage older than that is stale).
-export function coverageGate(ctx: Ctx, exec: Exec, since: number): Decision {
+export async function coverageGate(ctx: Ctx, exec: Exec, since: number): Promise<Decision> {
   const { root, config, input, state } = ctx;
   const log = (decision: string, reason: string) => {
     try {
@@ -17,7 +17,7 @@ export function coverageGate(ctx: Ctx, exec: Exec, since: number): Decision {
       // event log is best effort
     }
   };
-  const r = diffCoverage(root, config, exec, { baseHead: state.baseHead, since: since / 1000 });
+  const r = await diffCoverage(root, config, exec, { baseHead: state.baseHead, since: since / 1000 });
   if (r.problem === 'no-base') {
     log('coverage-skipped', 'no base'); // nothing to measure against
     return { kind: 'allow' };

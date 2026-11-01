@@ -76,3 +76,26 @@ test('unattended.require_reason defaults false and loads without warning', () =>
   expect(r.config.unattended.require_reason).toBe(true);
   expect(r.warnings).toEqual([]);
 });
+
+test('numeric keys reject NaN, negatives and non-integers', () => {
+  const cases: [string, string, number][] = [
+    ['stop.max_attempts', '-1', 3],
+    ['stop.max_attempts', '11', 3],
+    ['stop.max_attempts', '2.5', 3],
+    ['stop.timeout_s', '.nan', 540],
+    ['stop.timeout_s', '29', 540],
+    ['stop.timeout_s', '551', 540],
+    ['tdd.diff_coverage', '101', 80],
+    ['tdd.diff_coverage', '-1', 80],
+    ['tdd.diff_coverage', '.nan', 80],
+  ];
+  for (const [key, val, dflt] of cases) {
+    const [a, b] = key.split('.');
+    const { config, warnings } = loadConfig(dirWith('.harness/config.yaml', `${a}:\n  ${b}: ${val}\n`));
+    expect((config as never as Record<string, Record<string, number>>)[a][b]).toBe(dflt);
+    expect(warnings.join('\n')).toContain(key);
+  }
+  const ok = loadConfig(dirWith('.harness/config.yaml', 'stop:\n  max_attempts: 10\n  timeout_s: 30\ntdd:\n  diff_coverage: 55.5\n'));
+  expect(ok.warnings).toEqual([]);
+  expect([ok.config.stop.max_attempts, ok.config.stop.timeout_s, ok.config.tdd.diff_coverage]).toEqual([10, 30, 55.5]);
+});

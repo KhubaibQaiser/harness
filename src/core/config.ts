@@ -26,7 +26,18 @@ const defaults = (): HarnessConfig => ({
 });
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+// Valid ranges for numeric keys (int = whole numbers only). Out of range, NaN or non-numeric keeps the default.
+const RANGES: Record<string, { min: number; max: number; int: boolean }> = {
+  'stop.max_attempts': { min: 1, max: 10, int: true },
+  'stop.timeout_s': { min: 30, max: 550, int: true }, // 550 fits the 600 s Stop hook timeout
+  'tdd.diff_coverage': { min: 0, max: 100, int: false },
+};
 const GATE = ['block', 'allow-log', 'off'];
+
+const inRange = (p: string, v: unknown): boolean => {
+  const r = RANGES[p];
+  return !r || (typeof v === 'number' && Number.isFinite(v) && v >= r.min && v <= r.max && (!r.int || Number.isInteger(v)));
+};
 
 // Overlay `user` onto `base` in place, keeping the default (plus a warning) for unknown or mistyped keys.
 function merge(base: Record<string, unknown>, user: Record<string, unknown>, path: string, warnings: string[]): void {
@@ -37,9 +48,9 @@ function merge(base: Record<string, unknown>, user: Record<string, unknown>, pat
     else if (isObj(d)) {
       if (isObj(v)) merge(d, v, p, warnings);
       else warnings.push(`config: "${p}" must be a mapping; using default`);
-    } else if (Array.isArray(d) ? Array.isArray(v) && v.every((x) => typeof x === 'string') : typeof v === typeof d && (p !== 'unattended.multi_file_gate' || GATE.includes(v as string))) {
+    } else if (Array.isArray(d) ? Array.isArray(v) && v.every((x) => typeof x === 'string') : typeof v === typeof d && (p !== 'unattended.multi_file_gate' || GATE.includes(v as string)) && inRange(p, v)) {
       base[k] = v;
-    } else warnings.push(`config: "${p}" has an invalid value; using default`);
+    } else warnings.push(`config: "${p}" has an invalid value${RANGES[p] ? ` (must be ${RANGES[p].int ? 'an integer' : 'a number'} from ${RANGES[p].min} to ${RANGES[p].max})` : ''}; using default`);
   }
 }
 
@@ -57,10 +68,6 @@ export function loadConfig(root: string): { config: HarnessConfig; warnings: str
   if (user == null) return { config, warnings };
   if (!isObj(user)) return { config, warnings: ['config.yaml is invalid: top level must be a mapping; using defaults'] };
   merge(config as unknown as Record<string, unknown>, user, '', warnings);
-  if (config.stop.timeout_s > 550) {
-    config.stop.timeout_s = 550;
-    warnings.push('stop.timeout_s capped at 550 to fit the 600 s Stop hook timeout');
-  }
   const rel = relative(join(root, '.harness/state'), resolve(root, config.tdd.results_dir));
   if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) warnings.push('tdd.results_dir is outside .harness/state; the agent could forge test results there');
   return { config, warnings };

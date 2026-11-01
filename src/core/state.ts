@@ -10,6 +10,7 @@ export interface SessionState {
   redTests: string[];
   lockedTests: string[];
   stopAttempts: number;
+  stopSkipLogged?: boolean; // stop-skipped already logged this session
   baseHead?: string; // git HEAD at the session's first hook
 }
 

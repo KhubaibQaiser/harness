@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, symlinkSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { changedLines, coveredLines, diffCoverage, formatLines } from '../../../src/checks/stop/diff-coverage.js';
-import { runStop, type Exec } from '../../../src/checks/stop/gate.js';
+import { defaultExec, runStop, type Exec } from '../../../src/checks/stop/gate.js';
 import { loadConfig, type HarnessConfig } from '../../../src/core/config.js';
 import type { Ctx } from '../../../src/hooks/dispatch.js';
 
@@ -25,14 +26,15 @@ function repo(coverage: Record<string, unknown> | null, { mtime = FRESH + 10, fi
 }
 const istanbul = () => JSON.parse(fx('coverage/coverage-final.json'));
 // Fake git: merge-base, diff, ls-files (untracked) answers; records calls.
-function gitExec(o: { diff?: string; untracked?: string; mergeBase?: { status: number; output: string } }) {
+function gitExec(o: { diff?: string; untracked?: string; mergeBase?: { status: number; output: string }; diffFail?: string }) {
   const calls: { args: string[]; ms: number }[] = [];
   const exec: Exec = (_c, args, ms) => {
     calls.push({ args, ms });
     const ok = (output: string) => ({ status: 0, output, timedOut: false });
-    if (args[0] === 'merge-base') return { ...(o.mergeBase ?? ok('BASE\n')), timedOut: false };
-    if (args[0] === 'diff') return ok(o.diff ?? '');
-    if (args[0] === 'ls-files') return ok(o.untracked ?? '');
+    const sub = args.find((a) => ['merge-base', 'diff', 'ls-files'].includes(a));
+    if (sub === 'merge-base') return { ...(o.mergeBase ?? ok('BASE\n')), timedOut: false };
+    if (sub === 'diff') return o.diffFail ? { status: 128, output: o.diffFail, timedOut: false } : ok(o.diff ?? '');
+    if (sub === 'ls-files') return ok(o.untracked ?? '');
     return ok('');
   };
   return { exec, calls };
@@ -96,7 +98,7 @@ test('untracked files count with all lines added; missing from every report mean
   writeFileSync(join(root, 'n.txt'), '');
   mkdirSync(join(root, 'src'), { recursive: true });
   writeFileSync(join(root, 'src/new.ts'), 'a\nb\nc\n');
-  const r = diffCoverage(root, cfgOf(), gitExec({ untracked: 'src/new.ts\nn.txt\n' }).exec, opts);
+  const r = diffCoverage(root, cfgOf(), gitExec({ untracked: 'src/new.ts\0n.txt\0\n' }).exec, opts);
   expect(r).toMatchObject({ pct: 0, total: 3, covered: 0, uncovered: [{ file: 'src/new.ts', lines: [1, 2, 3] }] });
 });
 
@@ -129,8 +131,8 @@ test('base: merge-base against base_ref, every git call uses the 5000 ms timeout
   const g = gitExec({ diff: addDiff('src/a.ts', [3]) });
   diffCoverage(repo(istanbul()), cfgOf(), g.exec, opts);
   expect(g.calls[0].args).toEqual(['merge-base', 'HEAD', 'origin/main']);
-  expect(g.calls[1].args).toEqual(['diff', '--relative', '-U0', 'BASE']);
-  expect(g.calls.some((c) => c.args[0] === 'ls-files' && c.args.includes('--exclude-standard'))).toBe(true);
+  expect(g.calls[1].args).toEqual(['-c', 'core.quotePath=false', 'diff', '--relative', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', 'BASE']);
+  expect(g.calls.some((c) => c.args.includes('ls-files') && c.args.includes('-z') && c.args.includes('--exclude-standard'))).toBe(true);
   expect(g.calls.every((c) => c.ms === 5000)).toBe(true);
 });
 
@@ -143,8 +145,8 @@ test('base: falls back to state.baseHead when merge-base fails; neither means no
 });
 
 test('a failing git diff reports diff-failed', () => {
-  const exec: Exec = (_c, a) => (a[0] === 'diff' ? { status: 1, output: '', timedOut: false } : { status: 0, output: 'B\n', timedOut: false });
-  expect(diffCoverage(repo(null), cfgOf(), exec, opts).problem).toBe('diff-failed');
+  const g = gitExec({ diffFail: 'fatal: bad revision\nmore' });
+  expect(diffCoverage(repo(null), cfgOf(), g.exec, opts)).toMatchObject({ problem: 'diff-failed', detail: 'fatal: bad revision' });
 });
 
 test('formatLines collapses consecutive runs into ranges', () => {
@@ -209,4 +211,98 @@ test('config: stop.timeout_s above 580 is capped with a warning', () => {
   const { config, warnings } = loadConfig(root);
   expect(config.stop.timeout_s).toBe(580);
   expect(warnings).toContain('stop.timeout_s capped at 580 to fit the 600 s Stop hook timeout');
+});
+
+// --- fix round 1: real git runs in temp repos ---------------------------------
+const git = (root: string, ...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: root, encoding: 'utf8' });
+function realRepo(files: Record<string, string>) {
+  const root = mkdtempSync(join(tmpdir(), 'h-real-'));
+  git(root, 'init', '-q');
+  for (const [f, body] of Object.entries(files)) {
+    mkdirSync(join(root, f, '..'), { recursive: true });
+    writeFileSync(join(root, f), body);
+  }
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'init');
+  return root;
+}
+const covFor = (root: string, file: string, hit: number[], miss: number[]) => {
+  const statementMap: Record<string, unknown> = {};
+  const s: Record<string, number> = {};
+  [...hit, ...miss].forEach((n, i) => {
+    statementMap[i] = { start: { line: n, column: 0 }, end: { line: n, column: 1 } };
+    s[i] = hit.includes(n) ? 1 : 0;
+  });
+  mkdirSync(join(root, 'coverage'), { recursive: true });
+  const f = join(root, 'coverage/coverage-final.json');
+  writeFileSync(f, JSON.stringify({ [join(root, file)]: { statementMap, s } }));
+  utimesSync(f, FRESH + 10, FRESH + 10);
+};
+const realCfg = () => cfgOf({ paths: ['src/**'], exempt: [] });
+const realRun = (root: string) => {
+  const c = realCfg();
+  c.stop.base_ref = 'HEAD';
+  return diffCoverage(root, c, defaultExec(root), opts);
+};
+
+test.each(['src/sp ace.ts', 'src/café.ts'])('real git: tracked path %s is in scope and its changed lines are counted', (name) => {
+  const root = realRepo({ [name]: 'a\nb\nc\n' });
+  writeFileSync(join(root, name), 'a\nB\nC\n');
+  covFor(root, name, [2], [3]);
+  expect(realRun(root)).toMatchObject({ pct: 50, total: 2, covered: 1, uncovered: [{ file: name, lines: [3] }] });
+});
+
+test('real git: untracked non-ASCII path is counted (not silently dropped)', () => {
+  const root = realRepo({ 'src/a.ts': 'x\n' });
+  writeFileSync(join(root, 'src/ünï.ts'), 'a\nb\n');
+  covFor(root, 'src/ünï.ts', [1], [2]);
+  expect(realRun(root)).toMatchObject({ pct: 50, uncovered: [{ file: 'src/ünï.ts', lines: [2] }] });
+});
+
+test('real git: untracked symlinks are not followed', () => {
+  const root = realRepo({ 'src/a.ts': 'x\n' });
+  const outside = mkdtempSync(join(tmpdir(), 'h-out-'));
+  writeFileSync(join(outside, 'big.ts'), 'a\nb\nc\n');
+  symlinkSync(join(outside, 'big.ts'), join(root, 'src/link.ts'));
+  expect(realRun(root)).toMatchObject({ pct: 100, total: 0 });
+});
+
+test('real git: an added line starting with "++ " does not drop later hunks', () => {
+  const root = realRepo({ 'src/a.ts': 'one\ntwo\nthree\nfour\nfive\n' });
+  writeFileSync(join(root, 'src/a.ts'), 'one\n++ i;\nthree\nfour\nFIVE\n');
+  covFor(root, 'src/a.ts', [], [2, 5]);
+  expect(realRun(root)).toMatchObject({ total: 2, uncovered: [{ file: 'src/a.ts', lines: [2, 5] }] });
+});
+
+test('gate: git diff failure blocks with the short reason and logs coverage-diff-failed', () => {
+  const root = repo(null);
+  const d = stopWith(root, gitExec({ diffFail: 'fatal: bad revision' }));
+  expect(d).toEqual({ kind: 'block', check: 'stop', reason: 'Diff coverage could not read git diff (fatal: bad revision). Fix git, then finish again.' });
+  const log = readFileSync(join(root, '.harness/logs/events.jsonl'), 'utf8');
+  expect(JSON.parse(log.trim().split('\n').at(-1)!)).toMatchObject({ decision: 'coverage-diff-failed' });
+});
+
+test('gate: coverage blocks count attempts and give up at max_attempts', () => {
+  const root = repo(null);
+  const diff = addDiff('src/a.ts', [3]);
+  const run = (attempts: number) => {
+    const ctx = gateCtx(root);
+    ctx.state.stopAttempts = attempts;
+    const saved: number[] = [];
+    ctx.save = (s) => saved.push(s.stopAttempts);
+    return { d: stopWith(root, gitExec({ diff }), ctx), saved };
+  };
+  expect(run(0)).toMatchObject({ d: { kind: 'block' }, saved: [1] });
+  expect(run(2)).toMatchObject({ d: { kind: 'block' }, saved: [3] });
+  expect(run(3)).toEqual({ d: { kind: 'allow' }, saved: [0] });
+  expect(readFileSync(join(root, '.harness/logs/events.jsonl'), 'utf8')).toContain('stop-gave-up');
+});
+
+test('gate: all matched coverage files unparseable says so', () => {
+  const root = repo(null);
+  mkdirSync(join(root, 'coverage'));
+  writeFileSync(join(root, 'coverage/coverage-final.json'), '{"bad');
+  utimesSync(join(root, 'coverage/coverage-final.json'), FRESH + 10, FRESH + 10);
+  const d = stopWith(root, gitExec({ diff: addDiff('src/a.ts', [3]) }));
+  expect(d).toMatchObject({ kind: 'block', reason: 'Coverage output at **/coverage/coverage-final.json could not be parsed.' });
 });

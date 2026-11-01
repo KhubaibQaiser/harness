@@ -1,5 +1,5 @@
 // Diff coverage: share of executable changed lines (vs the base) that istanbul coverage output says ran.
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { HarnessConfig } from '../../core/config.js';
 import { isTestFile, matches, toRepoPath } from '../../core/paths.js';
@@ -15,7 +15,8 @@ export interface DiffCoverage {
   total: number;
   covered: number;
   uncovered: { file: string; lines: number[] }[];
-  problem?: 'no-base' | 'diff-failed' | 'no-fresh-coverage';
+  problem?: 'no-base' | 'diff-failed' | 'no-fresh-coverage' | 'unparseable-coverage';
+  detail?: string; // short reason for diff-failed
 }
 
 const add = (m: Map<string, Set<number>>, file: string, line: number) => (m.get(file) ?? m.set(file, new Set()).get(file)!).add(line);
@@ -24,11 +25,18 @@ const add = (m: Map<string, Set<number>>, file: string, line: number) => (m.get(
 export function changedLines(diffText: string): Map<string, Set<number>> {
   const out = new Map<string, Set<number>>();
   let file: string | null = null;
+  let inHunk = false; // header lines (`+++ `) only count before a file's first hunk; `+++ i;` can be added content
   for (const l of diffText.split('\n')) {
-    if (l.startsWith('+++ ')) file = l === '+++ /dev/null' ? null : l.slice(4).replace(/^"|"$/g, '').replace(/^b\//, '');
-    else if (file) {
+    if (l.startsWith('diff --git ')) file = null, inHunk = false;
+    else if (!inHunk && l.startsWith('+++ ')) {
+      const p = l.slice(4).split('\t')[0].replace(/^"|"$/g, ''); // git may append a tab (+ timestamp) to paths with spaces
+      file = p === '/dev/null' ? null : p.replace(/^b\//, '');
+    } else if (file) {
       const h = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(l);
-      if (h) for (let i = 0; i < Number(h[2] ?? 1); i++) add(out, file, Number(h[1]) + i);
+      if (h) {
+        inHunk = true;
+        for (let i = 0; i < Number(h[2] ?? 1); i++) add(out, file, Number(h[1]) + i);
+      }
     }
   }
   return out;
@@ -66,7 +74,13 @@ export function formatLines(lines: number[]): string {
 function coverageFiles(root: string, globs: string[], since: number): { fresh: string[] } {
   const fresh: string[] = [];
   const walk = (dir: string, rel: string) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // unreadable directory
+    }
+    for (const e of entries) {
       if (e.name === 'node_modules' || e.name === '.git') continue;
       const r = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) walk(join(dir, e.name), r);
@@ -83,15 +97,16 @@ const ok = (r: { status: number | null; timedOut: boolean }) => r.status === 0 &
 export function diffCoverage(root: string, cfg: HarnessConfig, exec: Exec, opts: { baseHead?: string; since: number }): DiffCoverage {
   const result = (problem: DiffCoverage['problem']): DiffCoverage => ({ pct: 100, total: 0, covered: 0, uncovered: [], problem });
   const mb = exec('git', ['merge-base', 'HEAD', cfg.stop.base_ref], GIT_MS);
-  const base = ok(mb) ? mb.output.trim() : opts.baseHead;
+  const base = (ok(mb) ? mb.output.split('\n')[0].trim() : '') || opts.baseHead; // output also carries stderr
   if (!base) return result('no-base');
-  const d = exec('git', ['diff', '--relative', '-U0', base], GIT_MS);
-  if (!ok(d)) return result('diff-failed');
+  const d = exec('git', ['-c', 'core.quotePath=false', 'diff', '--relative', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', base], GIT_MS);
+  if (!ok(d)) return { ...result('diff-failed'), detail: d.timedOut ? 'timed out' : (d.output.split('\n').find((x) => x.trim()) ?? `exit ${d.status}`).trim().slice(0, 100) };
   const changed = changedLines(d.output);
-  const un = exec('git', ['ls-files', '--others', '--exclude-standard'], GIT_MS);
+  const un = exec('git', ['-c', 'core.quotePath=false', 'ls-files', '-z', '--others', '--exclude-standard'], GIT_MS);
   if (ok(un))
-    for (const f of un.output.split('\n').filter(Boolean)) {
+    for (const f of un.output.split('\0').filter((x) => x.trim())) {
       try {
+        if (!lstatSync(join(root, f)).isFile()) continue; // never follow symlinks
         const text = readFileSync(join(root, f), 'utf8');
         const n = text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
         for (let i = 1; i <= n; i++) add(changed, f, i);
@@ -106,9 +121,12 @@ export function diffCoverage(root: string, cfg: HarnessConfig, exec: Exec, opts:
   const reports = new Map<string, FileLines>();
   const { fresh } = coverageFiles(root, cfg.stop.coverage_globs, opts.since);
   if (fresh.length === 0) return result('no-fresh-coverage');
+  let parsed = 0;
   for (const file of fresh) {
     try {
-      for (const [f, v] of coveredLines(JSON.parse(readFileSync(file, 'utf8')), root)) {
+      const cov = coveredLines(JSON.parse(readFileSync(file, 'utf8')), root);
+      parsed++;
+      for (const [f, v] of cov) {
         const cur = reports.get(f) ?? reports.set(f, { executable: new Set(), covered: new Set() }).get(f)!;
         v.executable.forEach((n) => cur.executable.add(n));
         v.covered.forEach((n) => cur.covered.add(n));
@@ -118,6 +136,7 @@ export function diffCoverage(root: string, cfg: HarnessConfig, exec: Exec, opts:
     }
   }
 
+  if (parsed === 0) return result('unparseable-coverage');
   let total = 0;
   let covered = 0;
   const uncovered: DiffCoverage['uncovered'] = [];

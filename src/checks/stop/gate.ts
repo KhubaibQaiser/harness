@@ -93,6 +93,15 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
   // Diff coverage runs after every step passes.
   if (config.checks.tdd) {
     const d = coverageGate(ctx, exec, stepsStart);
+    if (d.kind === 'block') {
+      const attempts = ctx.state.stopAttempts + 1; // coverage blocks share the step-failure attempt counter
+      if (attempts > max) {
+        setAttempts(0);
+        log('stop-gave-up');
+        return allow;
+      }
+      setAttempts(attempts);
+    }
     if (d.kind !== 'allow') return d;
   }
   setAttempts(0);

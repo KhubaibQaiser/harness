@@ -18,10 +18,16 @@ export function coverageGate(ctx: Ctx, exec: Exec, since: number): Decision {
     }
   };
   const r = diffCoverage(root, config, exec, { baseHead: state.baseHead, since: since / 1000 });
-  if (r.problem === 'no-base' || r.problem === 'diff-failed') {
-    log('coverage-skipped', r.problem === 'no-base' ? 'no base' : 'diff failed'); // fail open: nothing to measure against
+  if (r.problem === 'no-base') {
+    log('coverage-skipped', 'no base'); // nothing to measure against
     return { kind: 'allow' };
   }
+  if (r.problem === 'diff-failed') {
+    log('coverage-diff-failed', r.detail ?? '');
+    return { kind: 'block', check: 'stop', reason: `Diff coverage could not read git diff (${r.detail}). Fix git, then finish again.` };
+  }
+  if (r.problem === 'unparseable-coverage')
+    return { kind: 'block', check: 'stop', reason: `Coverage output at ${config.stop.coverage_globs.join(', ')} could not be parsed.` };
   if (r.problem === 'no-fresh-coverage')
     return { kind: 'block', check: 'stop', reason: `Diff coverage needs fresh coverage output (${config.stop.coverage_globs.join(', ')}). Make the test step write coverage, then finish again.` };
   const need = config.tdd.diff_coverage;

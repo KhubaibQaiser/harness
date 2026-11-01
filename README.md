@@ -51,7 +51,7 @@ This does the same thing in a terminal. Run it at the root of a git repo. It ref
 | Red-first TDD, test-lock, tamper check | no | yes |
 | Changed-line coverage | no | yes |
 
-Installs are denied by default. To allow them, run the command yourself, or start Claude Code with `AGENT_GUARD_ALLOW_INSTALL=1`. Then you approve each install, and JS package names are checked on the npm registry first (unless `checks.depVerify` is `false`). Python installs are asked about either way.
+Installs of any kind (JS or Python) are denied by default. To allow them, run the command yourself, or start Claude Code with `AGENT_GUARD_ALLOW_INSTALL=1`. Then you approve each install. JS package names are checked on the npm registry first (unless `checks.depVerify` is `false`). Python installs get a plain ask.
 
 Where a gate is off for the repo's stack, `init` and `status` say so in plain words.
 

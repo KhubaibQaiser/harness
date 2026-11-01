@@ -30,26 +30,35 @@ export function killTree(pid: number, platform: string = process.platform, run: 
   }
 }
 
+const KEEP = 64 * 1024; // rolling tail per stream; the gate only shows the last MAX_LOG chars
+const GRACE_MS = 2000; // after the kill, how long to wait for pipes held by escaped grandchildren
+
 export const defaultExec = (root: string): Exec => (cmd, args, timeout) =>
   new Promise((resolve) => {
     const c = spawn(cmd, args, { cwd: root, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     let timedOut = false;
-    c.stdout.on('data', (d) => (out += d));
-    c.stderr.on('data', (d) => (err += d));
+    let done = false;
+    let grace: NodeJS.Timeout | undefined;
+    const finish = (status: number | null, extra = '') => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      clearTimeout(grace);
+      c.stdout?.destroy();
+      c.stderr?.destroy();
+      resolve({ status, output: `${out}\n${err}${extra}`, timedOut });
+    };
+    c.stdout?.on('data', (d) => (out = (out + d).slice(-KEEP)));
+    c.stderr?.on('data', (d) => (err = (err + d).slice(-KEEP)));
     const timer = setTimeout(() => {
       timedOut = true;
       if (c.pid) killTree(c.pid);
+      grace = setTimeout(() => finish(null), GRACE_MS);
     }, timeout);
-    c.on('error', (e) => {
-      clearTimeout(timer);
-      resolve({ status: null, output: `${out}\n${err}\n${e.message}`, timedOut });
-    });
-    c.on('close', (status) => {
-      clearTimeout(timer);
-      resolve({ status, output: `${out}\n${err}`, timedOut });
-    });
+    c.on('error', (e) => finish(null, `\n${e.message}`));
+    c.on('close', (status) => finish(status));
   });
 
 const tail = (text: string) => {
@@ -103,11 +112,13 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     else failed = true;
   }
   if (failed) {
-    if (ok(git)) log('stop-diff-failed');
-    else if (!ctx.state.stopSkipLogged) {
-      log('stop-skipped', 'git status failed'); // once per session: a non-git dir would otherwise log on every Stop
-      ctx.save({ ...ctx.state, stopSkipLogged: true });
-    }
+    // Not a repo at all: note it once per session (steps still run). A failure inside a repo is logged every Stop.
+    if (!ok(git) && !ok(await exec('git', ['rev-parse', '--is-inside-work-tree'], GIT_MS))) {
+      if (!ctx.state.stopNoGitLogged) {
+        log('stop-no-git');
+        ctx.save({ ...ctx.state, stopNoGitLogged: true });
+      }
+    } else log('stop-diff-failed', ok(git) ? undefined : 'git status failed');
     changed.push('(unknown)'); // fail closed: treat as code changed
   }
   if (changed.every((f) => DOCS_ONLY.test(f))) {

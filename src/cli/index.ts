@@ -67,7 +67,7 @@ function stats(args: string[], { root, out }: CliEnv): number {
   const stop = (d: string) => count((e) => e.check === 'stop' && e.decision === d);
   section('Gave up and timeouts', [
     ['timeouts', stop('context')],
-    ...['stop-gave-up', 'stop-skipped', 'stop-diff-failed', 'coverage-skipped', 'coverage-diff-failed'].map((d): [string, number] => [d, stop(d)]),
+    ...['stop-gave-up', 'stop-no-git', 'stop-diff-failed', 'coverage-skipped', 'coverage-diff-failed'].map((d): [string, number] => [d, stop(d)]),
   ]);
   return 0;
 }

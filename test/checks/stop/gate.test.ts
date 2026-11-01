@@ -175,14 +175,14 @@ test('dispatcher logs exactly one event per block, timeout and give-up', async (
   expect(await run('lint', '', 3)).toEqual(['stop/stop-gave-up']);
 });
 
-test('failed or timed-out git status fails closed: steps run and stop-skipped is logged once', async () => {
+test('failed or timed-out git status fails closed: steps run and stop-diff-failed is logged once', async () => {
   for (const bad of [{ status: 128, output: 'fatal', timedOut: false }, { status: null, output: '', timedOut: true }]) {
     for (const baseHead of [undefined, 'abc']) {
       const s = setup({ baseHead });
       const base = s.exec('');
-      expect(await runStop(s.ctx, (cmd, args, ms) => (cmd === 'git' ? bad : base(cmd, args, ms)))).toEqual({ kind: 'allow' });
+      expect(await runStop(s.ctx, (cmd, args, ms) => (cmd === 'git' && args[0] === 'status' ? bad : base(cmd, args, ms)))).toEqual({ kind: 'allow' });
       expect(s.steps()).toEqual(ALL);
-      expect(readEvents(s.root)).toMatchObject([{ check: 'stop', decision: 'stop-skipped', reason: 'git status failed' }]);
+      expect(readEvents(s.root)).toMatchObject([{ check: 'stop', decision: 'stop-diff-failed', reason: 'git status failed' }]);
     }
   }
 });
@@ -285,14 +285,24 @@ test('git status parsed with -z: rename keeps the new path, odd names stay code'
   expect(b.calls[0].args).toEqual(['status', '--porcelain', '-z']);
 });
 
-test('stop-skipped logged once per session', async () => {
+test('stop-no-git logged once per session', async () => {
   const s = setup();
   const bad = { status: 128, output: 'fatal: not a git repository', timedOut: false };
   const base = s.exec('');
   const exec: Exec = (cmd, args, ms) => (cmd === 'git' ? bad : base(cmd, args, ms));
   await runStop(s.ctx, exec);
   await runStop(s.ctx, exec);
-  expect(readEvents(s.root).filter((e) => e.decision === 'stop-skipped')).toHaveLength(1);
+  expect(readEvents(s.root).filter((e) => e.decision === 'stop-no-git')).toHaveLength(1);
+  expect(s.steps()).toEqual([...ALL, ...ALL]);
+});
+
+test('git status failure in a repo logs stop-diff-failed each time', async () => {
+  const s = setup();
+  const base = s.exec('');
+  const exec: Exec = (cmd, args, ms) => (cmd === 'git' && args[0] === 'status' ? { status: 128, output: 'fatal', timedOut: false } : base(cmd, args, ms));
+  await runStop(s.ctx, exec);
+  await runStop(s.ctx, exec);
+  expect(readEvents(s.root).map((e) => e.decision)).toEqual(['stop-diff-failed', 'stop-diff-failed']);
 });
 
 test('killTree picks the process-group kill on POSIX and taskkill on Windows', () => {
@@ -313,3 +323,24 @@ test.skipIf(process.platform === 'win32')('timed-out step kills its process grou
   await new Promise((res) => setTimeout(res, 200));
   expect(() => process.kill(pid, 0)).toThrow(); // the grandchild died with the group
 }, 10000);
+
+test.skipIf(process.platform === 'win32')('a grandchild holding the pipes does not hang the gate', async () => {
+  const t0 = Date.now();
+  // perl setsid detaches the grandchild from the process group; it keeps stdout open
+  const r = await defaultExec(tmpdir())('sh', ['-c', "perl -MPOSIX -e 'POSIX::setsid(); sleep 20' & wait"], 500);
+  expect(r.timedOut).toBe(true);
+  expect(Date.now() - t0).toBeLessThan(500 + 3000);
+}, 10000);
+
+test('spawn error resolves with status null and does not throw', async () => {
+  const r = await defaultExec(tmpdir())('definitely-not-a-command-xyz', [], 1000);
+  expect(r.status).toBeNull();
+  expect(r.output).toMatch(/ENOENT/);
+});
+
+test('output is bounded to a rolling tail', async () => {
+  const r = await defaultExec(tmpdir())('node', ['-e', "for(let i=0;i<20000;i++)console.log('line '+i+' '+'x'.repeat(100)); console.log('THE-END')"], 20000);
+  expect(r.status).toBe(0);
+  expect(r.output.length).toBeLessThan(200 * 1024);
+  expect(r.output).toContain('THE-END');
+}, 30000);

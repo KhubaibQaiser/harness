@@ -40,7 +40,7 @@ test('skips results outside the root; reads one file per package', () => {
 test('relatedTests finds colocated and __tests__ tests', () => {
   const t = (file: string): TestFileResult => ({ file, status: 'passed', tests: [], writtenAt: 1 });
   const all = [t('src/foo.test.ts'), t('src/__tests__/foo.test.ts'), t('src/bar.test.ts')];
-  expect(relatedTests(root, 'src/foo.ts', all).map((x) => x.file)).toEqual(['src/foo.test.ts', 'src/__tests__/foo.test.ts']);
+  expect(relatedTests('src/foo.ts', all).map((x) => x.file)).toEqual(['src/foo.test.ts', 'src/__tests__/foo.test.ts']);
 });
 
 const one = (name: string) => readResults(root, dir({ 'r.json': fx(name) }));

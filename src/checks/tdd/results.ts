@@ -39,7 +39,7 @@ export function readResults(root: string, dir: string): TestFileResult[] {
   return out;
 }
 
-export const relatedTests = (_root: string, implRel: string, results: TestFileResult[]): TestFileResult[] =>
+export const relatedTests = (implRel: string, results: TestFileResult[]): TestFileResult[] =>
   results.filter((r) => pairKey(r.file) === pairKey(implRel));
 
 // Newest result per test file (key = repo path), keeping only results written since the session started.

@@ -18,7 +18,7 @@ export const redFirst: Check = {
     const { paths, exempt, results_dir } = ctx.config.tdd;
     if (rel === null || !matches(rel, paths) || matches(rel, exempt) || isTestFile(rel) || isPaused(ctx.root, ctx.input.session_id)) return { kind: 'allow' };
 
-    const related = relatedTests(ctx.root, rel, readResults(ctx.root, resultsDir(ctx.root, ctx.config)));
+    const related = relatedTests(rel, readResults(ctx.root, resultsDir(ctx.root, ctx.config)));
     const fresh = [...newestFresh(related, ctx.state.startedAt).values()].sort((a, b) => b.writtenAt - a.writtenAt);
     const newestFile = [...related].sort((a, b) => b.writtenAt - a.writtenAt)[0]?.file;
     if (fresh.some((r) => r.status === 'failed')) return { kind: 'allow' };

@@ -38,7 +38,7 @@ test('first file allowed, second asks with the message', async () => {
   expect(d.permissionDecisionReason).toBe('This change now spans more than one file. Touched: a.ts. Next: b.ts. Approve to continue this turn.');
 });
 
-test('ask lists several touched files joined by ", " and PreToolUse does not record', async () => {
+test('ask lists several touched files joined by ", " and the asked edit is not recorded', async () => {
   const t = setup();
   await t.post('a.ts');
   await t.post('src/b.ts');

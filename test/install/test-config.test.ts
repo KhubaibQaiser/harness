@@ -1,3 +1,4 @@
+import { parseModule } from 'magicast';
 import { describe, expect, it } from 'vitest';
 import type { PackageFacts } from '../../src/install/detect.js';
 import { removeBlocks } from '../../src/install/merge.js';
@@ -24,7 +25,7 @@ describe('testConfigChange vitest', () => {
     const c = edit({ 'vitest.config.ts': "import { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    include: ['test/**'],\n  },\n});\n" }, vt(), 'vitest.config.ts');
     expect(c.after).toContain("reporters: ['default', 'json']");
     expect(c.after).toContain(`outputFile: { json: '${RD}/root.json' }`);
-    expect(c.after).toContain("coverage: { reporter: ['text', 'json'] }");
+    expect(c.after).toContain("coverage: { enabled: true, reporter: ['text', 'json'] }");
     expect(c.after).toContain("include: ['test/**'],");
   });
 
@@ -42,7 +43,7 @@ describe('testConfigChange vitest', () => {
   });
 
   it('already configured returns none', () => {
-    const root = makeRepo({ 'vitest.config.ts': `export default { test: { reporters: ['default', 'json'], outputFile: { json: '${RD}/root.json' }, coverage: { reporter: ['text', 'json'] } } };\n` }, { git: false });
+    const root = makeRepo({ 'vitest.config.ts': `export default { test: { reporters: ['default', 'json'], outputFile: { json: '${RD}/root.json' }, coverage: { enabled: true, reporter: ['text', 'json'] } } };\n` }, { git: false });
     expect(testConfigChange(vt(), root, RD)).toEqual({ none: true });
   });
 
@@ -58,7 +59,42 @@ describe('testConfigChange vitest', () => {
   it('CRLF config keeps CRLF', () => {
     const c = edit({ 'vitest.config.ts': "export default {\r\n  test: {\r\n    globals: true,\r\n  },\r\n};\r\n" }, vt(), 'vitest.config.ts');
     expect(c.after.replace(/\r\n/g, '')).not.toMatch(/\n/);
-    expect(c.after).toContain('reporters');
+    expect(() => parseModule(c.after)).not.toThrow();
+    expect(c.after).toContain('globals: true,');
+  });
+});
+
+describe('testConfigChange vitest fixes', () => {
+  it('empty test object gets one valid insert', () => {
+    const c = edit({ 'vitest.config.ts': 'export default { test: {} };\n' }, vt(), 'vitest.config.ts');
+    expect(c.blocks).toHaveLength(1);
+    expect(() => parseModule(c.after)).not.toThrow();
+    for (const k of ['reporters', 'outputFile', 'coverage']) expect(c.after).toContain(k + ':');
+  });
+
+  it('coverage enabled added', () => {
+    const c = edit({ 'vitest.config.ts': "export default { test: { coverage: { provider: 'v8' } } };\n" }, vt(), 'vitest.config.ts');
+    expect(c.after).toContain('enabled: true');
+    const d = edit({ 'vitest.config.ts': 'export default { test: {} };\n' }, vt(), 'vitest.config.ts');
+    expect(d.after).toContain('enabled: true');
+  });
+
+  it('script with --coverage leaves enabled alone', () => {
+    const c = edit({ 'vitest.config.ts': 'export default { test: {} };\n' }, vt({ scripts: { test: 'vitest run --coverage' } }), 'vitest.config.ts');
+    expect(c.after).not.toContain('enabled');
+  });
+
+  it('existing enabled kept', () => {
+    const c = edit({ 'vitest.config.ts': 'export default { test: { coverage: { enabled: false } } };\n' }, vt(), 'vitest.config.ts');
+    expect(c.after).toContain('enabled: false');
+    expect(c.after).not.toContain('enabled: true');
+  });
+
+  it('manual header names the file to create when there is no config', () => {
+    const root = makeRepo({}, { git: false });
+    const r = testConfigChange(vt({ dir: 'packages/a', testConfig: undefined }), root, RD) as { manual: string[] };
+    expect(r.manual[0]).toBe('Create `packages/a/vitest.config.ts` with:');
+    expect(r.manual.join('\n')).not.toContain('undefined');
   });
 });
 

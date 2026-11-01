@@ -21,7 +21,7 @@ function resultPath(pkg: PackageFacts, root: string, resultsDir: string): string
   return `${rel}/${resultFileName(pkg)}`;
 }
 
-type Ins = { at: number; text: string };
+type Ins = { at: number; text: string; empty?: string };
 
 const unwrap = (n: any): any => (n && (n.type === 'TSAsExpression' || n.type === 'TSSatisfiesExpression' || n.type === 'ParenthesizedExpression') ? unwrap(n.expression) : n);
 const keyOf = (p: any): string | null => (p.type === 'ObjectProperty' && !p.computed ? (p.key.name ?? p.key.value ?? null) : null);
@@ -31,7 +31,7 @@ const strVal = (n: any): string | null => (n?.type === 'StringLiteral' ? n.value
 /** Insert text for a new property into an object literal; keeps the layout (multi-line or inline) of the existing properties. */
 function addProp(src: string, eol: string, o: any, text: string): Ins {
   const last = o.properties[o.properties.length - 1];
-  if (!last) return { at: o.start + 1, text: ` ${text} ` };
+  if (!last) return { at: o.start + 1, text: ` ${text} `, empty: text };
   const multiline = src.slice(o.start, last.start).includes('\n');
   if (!multiline) return { at: last.end, text: `, ${text}` };
   const lineStart = src.lastIndexOf('\n', last.start) + 1;
@@ -45,12 +45,26 @@ function addElem(arr: any, text: string): Ins {
 
 const hasJson = (arr: any) => arr.elements.some((e: any) => strVal(e) === 'json' || (e?.type === 'ArrayExpression' && strVal(e.elements[0]) === 'json'));
 
-function vitestManual(rel: string, path: string): string[] {
-  return [`${rel}:`, 'test: {', "  reporters: ['default', 'json'],", `  outputFile: { json: '${path}' },`, "  coverage: { reporter: ['text', 'json'] },", '},'];
+const covText = (enable: boolean, reporter = true) => [...(enable ? ['enabled: true'] : []), ...(reporter ? ["reporter: ['text', 'json']"] : [])].join(', ');
+
+function vitestManual(header: string, path: string, enable: boolean): string[] {
+  return [header, 'test: {', "  reporters: ['default', 'json'],", `  outputFile: { json: '${path}' },`, `  coverage: { ${covText(enable)} },`, '},'];
+}
+
+/** Several inserts at one offset (new properties of one empty object) become one comma-joined insert. */
+function mergeInserts(ins: Ins[]): Ins[] {
+  const out: Ins[] = [];
+  for (const i of ins) {
+    const prev = out.find((o) => o.at === i.at);
+    if (!prev) out.push({ ...i });
+    else if (prev.empty !== undefined && i.empty !== undefined) { prev.empty += `, ${i.empty}`; prev.text = ` ${prev.empty} `; }
+    else prev.text += i.text;
+  }
+  return out;
 }
 
 /** Returns the inserts for the `test` object, null when it holds something we cannot edit safely, [] when already set up. */
-function editTest(src: string, eol: string, t: any, path: string): Ins[] | null {
+function editTest(src: string, eol: string, t: any, path: string, enable: boolean): Ins[] | null {
   const ins: Ins[] = [];
   if (prop(t, 'root')) return null; // a custom root changes how outputFile resolves
   const rep = prop(t, 'reporters');
@@ -68,9 +82,10 @@ function editTest(src: string, eol: string, t: any, path: string): Ins[] | null 
   }
 
   const cov = prop(t, 'coverage');
-  if (!cov) ins.push(addProp(src, eol, t, "coverage: { reporter: ['text', 'json'] }"));
+  if (!cov) ins.push(addProp(src, eol, t, `coverage: { ${covText(enable)} }`));
   else if (cov.value.type !== 'ObjectExpression') return null;
   else {
+    if (enable && !prop(cov.value, 'enabled')) ins.push(addProp(src, eol, cov.value, 'enabled: true'));
     const r = prop(cov.value, 'reporter');
     if (!r) ins.push(addProp(src, eol, cov.value, "reporter: ['text', 'json']"));
     else if (r.value.type !== 'ArrayExpression') return null;
@@ -81,31 +96,41 @@ function editTest(src: string, eol: string, t: any, path: string): Ins[] | null 
 
 function vitestChange(pkg: PackageFacts, root: string, path: string): TestConfigResult {
   const rel = pkg.dir === '.' ? pkg.testConfig : `${pkg.dir}/${pkg.testConfig}`;
-  const manual: TestConfigResult = { manual: vitestManual(rel ?? 'your vitest config', path) };
+  // vitest writes coverage only with --coverage or coverage.enabled
+  const enable = !/(^|\s)--coverage(\s|$)/.test(pkg.scripts.test ?? '');
+  const header = pkg.testConfig ? `${rel}:` : `Create \`${pkg.dir === '.' ? '' : pkg.dir + '/'}vitest.config.ts\` with:`;
+  const manual: TestConfigResult = { manual: vitestManual(header, path, enable) };
   if (!pkg.testConfig) return manual;
   let before: string;
+  let lf = '';
   let ins: Ins[] | null = null;
   try {
     before = readFileSync(join(root, rel!), 'utf8');
+    lf = before.replace(/\r\n/g, '\n');
+    // the parser's offsets are in LF text (it normalises CRLF), so edit positions are computed on lf and mapped back
     const body: any[] = (parseModule(before).$ast as any).body;
     const def = body.find((n) => n.type === 'ExportDefaultDeclaration');
     let obj = unwrap(def?.declaration);
     if (obj?.type === 'CallExpression' && obj.callee.name === 'defineConfig') obj = unwrap(obj.arguments[0]);
     if (obj?.type !== 'ObjectExpression') return manual;
-    const eol = eolOf(before);
+    const eol = '\n';
     const test = prop(obj, 'test');
-    if (!test) ins = [addProp(before, eol, obj, `test: { reporters: ['default', 'json'], outputFile: { json: '${path}' }, coverage: { reporter: ['text', 'json'] } }`)];
-    else if (unwrap(test.value)?.type === 'ObjectExpression') ins = editTest(before, eol, unwrap(test.value), path);
+    if (!test) ins = [addProp(lf, eol, obj, `test: { reporters: ['default', 'json'], outputFile: { json: '${path}' }, coverage: { ${covText(enable)} } }`)];
+    else if (unwrap(test.value)?.type === 'ObjectExpression') ins = editTest(lf, eol, unwrap(test.value), path, enable);
   } catch {
     return manual;
   }
   if (!ins) return manual;
   if (!ins.length) return { none: true };
+  const eol = eolOf(before);
+  const crlf = (at: number) => (eol === '\r\n' ? at + lf.slice(0, at).split('\n').length - 1 : at);
+  ins = mergeInserts(ins).map((i) => ({ ...i, at: crlf(i.at), text: withEol(i.text, eol) }));
   let after = before;
-  for (const i of [...ins].sort((a, b) => b.at - a.at)) after = after.slice(0, i.at) + withEol(i.text, eolOf(before)) + after.slice(i.at);
-  const blocks = ins.map((i) => withEol(i.text, eolOf(before)));
+  for (const i of [...ins].sort((a, b) => b.at - a.at)) after = after.slice(0, i.at) + i.text + after.slice(i.at);
+  const blocks = ins.map((i) => i.text);
   // Uninstall removes blocks by exact text; refuse any edit that would not round-trip.
   if (removeBlocks(after, blocks) !== before) return manual;
+  try { parseModule(after); } catch { return manual; } // a round-trip alone does not prove the result is valid code
   return { change: { kind: 'update', rel: rel!, before, after, blocks } };
 }
 

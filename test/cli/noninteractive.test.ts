@@ -11,7 +11,7 @@ const REPO = {
   'package-lock.json': '{}\n',
   'vitest.config.ts': "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: {} });\n",
 };
-const MSG = 'No terminal to answer prompts. Run with --yes, or with --config <file> for init.';
+const MSG = 'No terminal to answer prompts. Run with --yes (add --config <file> for init), or use --dry-run to preview.';
 const prompt = (): Prompt & { asked: string[] } => {
   const asked: string[] = [];
   return { asked, async confirm(q) { asked.push(q); return false; }, async edit(_l, v) { return v; } };

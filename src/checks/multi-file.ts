@@ -80,7 +80,10 @@ export const multiFile: Check = {
     const units = new Set(files.map(pairKey));
     if (event === 'PostToolUse') {
       units.add(pairKey(rel));
-      ctx.save({ ...ctx.state, files: files.includes(rel) ? files : [...files, rel], approved: approved || units.size >= 2 });
+      const next = files.includes(rel) ? files : [...files, rel];
+      ctx.save({ ...ctx.state, files: next, approved: approved || units.size >= 2 });
+      // Attended, a second unit only gets here after the user approved the ask; unattended runs log allow-log instead.
+      if (!approved && units.size >= 2 && !ctx.unattended) appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'approved', files: next });
       return { kind: 'allow' };
     }
     // Record whenever allowed, so a parallel second PreToolUse sees this file.

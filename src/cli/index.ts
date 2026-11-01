@@ -56,7 +56,7 @@ function stats(args: string[], { root, out }: CliEnv): number {
   section('Events by check and decision', [...tally(events.map((e) => `${e.check} ${e.decision}`))].sort());
   section('Overrides', [
     ['tdd paused', count((e) => e.check === 'tdd' && e.decision === 'paused')],
-    ['multi-file approvals', count((e) => e.check === 'multi-file' && e.decision.startsWith('allow'))],
+    ['multi-file approvals', count((e) => e.check === 'multi-file' && (e.decision === 'approved' || e.decision === 'allow-log'))],
     ['allow-log', count((e) => e.decision === 'allow-log')],
   ]);
   const steps = events.filter((e) => e.check === 'stop' && e.decision === 'block').map((e) => {

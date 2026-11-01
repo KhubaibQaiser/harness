@@ -24,6 +24,7 @@ const lines = [
   ev(1, 'guard', 'deny'),
   ev(2, 'tdd', 'paused'),
   ev(2, 'multi-file', 'allow-log'),
+  ev(2, 'multi-file', 'approved'),
   ev(3, 'stop', 'block', 'lint failed (attempt 1 of 3). Fix it'),
   ev(3, 'stop', 'block', 'lint failed (attempt 2 of 3). Fix it'),
   ev(3, 'stop', 'block', 'test failed (attempt 1 of 3). Fix it'),
@@ -44,7 +45,7 @@ test('counts the window exactly and skips malformed lines', () => {
   expect(r.code).toBe(0);
   expect(r.out).toContain('guard deny: 2');
   expect(r.out).toContain('stop block: 5');
-  expect(r.out).toContain('Overrides\n  tdd paused: 1\n  multi-file approvals: 1\n  allow-log: 1');
+  expect(r.out).toContain('Overrides\n  tdd paused: 1\n  multi-file approvals: 2\n  allow-log: 1');
   expect(r.out).toContain('Stop failures by step\n  lint: 2\n  test: 1\n  coverage: 1\n  other: 1');
   expect(r.out).toContain('Gave up and timeouts\n  timeouts: 1\n  stop-gave-up: 1\n  stop-skipped: 1\n  stop-diff-failed: 1\n  coverage-skipped: 1\n  coverage-diff-failed: 1');
 });

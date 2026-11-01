@@ -137,7 +137,7 @@ test('unattended allow-log allows and logs once per new unit, even after approva
   const env = { CI: 'true' };
   await t.post('a.ts');
   expect(kind(await t.edit('b.ts', 'Edit', env))).toBe('allow');
-  await t.post('b.ts'); // approved now
+  await t.send({ hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: 'b.ts' } }, env); // approved now, no attended approval logged
   expect(kind(await t.edit('c.ts', 'Edit', env))).toBe('allow');
   expect(kind(await t.edit('b.ts', 'Edit', env))).toBe('allow'); // re-edit: no event
   const ev = readEvents(t.root).filter((e) => e.check === 'multi-file');
@@ -323,4 +323,18 @@ test.each([[{}], [{ CI: 'true' }]])('a red-first deny is not counted: the first 
 test('multiFile runs after every other PreToolUse check', () => {
   const pre = registry.filter((c) => c.events.includes('PreToolUse')).map((c) => c.name);
   expect(pre.at(-1)).toBe('multiFile');
+});
+
+test('an attended approval is logged once per turn', async () => {
+  const t = setup();
+  await t.post('a.ts');
+  expect(kind(await t.edit('b.ts'))).toBe('ask');
+  await t.post('b.ts'); // the user said yes
+  await t.post('c.ts');
+  const approved = () => readEvents(t.root).filter((e) => e.check === 'multi-file' && e.decision === 'approved');
+  expect(approved().map((e) => e.files)).toEqual([['a.ts', 'b.ts']]);
+  await t.prompt();
+  await t.post('a.ts');
+  await t.post('b.ts');
+  expect(approved()).toHaveLength(2);
 });

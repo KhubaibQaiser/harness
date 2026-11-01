@@ -296,6 +296,7 @@ test('gate: coverage blocks count attempts and give up at max_attempts', async (
   const run = async (attempts: number) => {
     const ctx = gateCtx(root);
     ctx.state.stopAttempts = attempts;
+    ctx.state.stopNothingLogged = true; // keep this test about attempt saves only
     const saved: number[] = [];
     ctx.save = (s) => saved.push(s.stopAttempts);
     return { d: await stopWith(root, gitExec({ diff }), ctx), saved };

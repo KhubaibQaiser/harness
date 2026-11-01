@@ -6,6 +6,7 @@ import { appendEvent } from '../../core/events.js';
 import type { Check, Ctx } from '../../hooks/dispatch.js';
 import type { Decision } from '../../hooks/types.js';
 import { coverageGate } from './coverage-gate.js';
+import { findOnPath, resolveStep, winCmdLine } from './runner.js';
 
 export type ExecResult = { status: number | null; output: string; timedOut: boolean };
 export type Exec = (cmd: string, args: string[], timeoutMs: number) => ExecResult | Promise<ExecResult>;
@@ -35,7 +36,11 @@ const GRACE_MS = 2000; // after the kill, how long to wait for pipes held by esc
 
 export const defaultExec = (root: string): Exec => (cmd, args, timeout) =>
   new Promise((resolve) => {
-    const c = spawn(cmd, args, { cwd: root, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    // Node won't spawn .cmd/.bat directly (CVE-2024-27980), so run them through cmd.exe with a pre-quoted line.
+    const shim = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+    const c = shim
+      ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', winCmdLine(cmd, args)], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsVerbatimArguments: true })
+      : spawn(cmd, args, { cwd: root, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     let timedOut = false;
@@ -75,7 +80,9 @@ const scriptsOf = (root: string): Record<string, unknown> => {
   }
 };
 
-export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Promise<Decision> {
+const realWhich = (cmd: string) => (/[\\/]/.test(cmd) ? cmd : findOnPath(cmd, process.env, process.platform));
+
+export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now, which: (cmd: string) => string | null = realWhich): Promise<Decision> {
   const { root, config, input } = ctx;
   const { steps, package_manager: pm, max_attempts: max, timeout_s } = config.stop;
   const log = (decision: string, reason?: string) => {
@@ -128,14 +135,8 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
 
   const scripts = scriptsOf(root);
   const stepsStart = now(); // the step budget starts after the git calls
-  // Task 4: command steps (object steps are skipped here until then)
-  for (const step of steps.filter((s): s is string => typeof s === 'string' && s in scripts)) {
-    const remaining = timeout_s * 1000 - (now() - stepsStart);
-    const r = remaining > 0 ? await exec(pm, ['run', step], remaining) : null;
-    if (!r || r.timedOut) {
-      return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };
-    }
-    if (r.status === 0) continue;
+  // Every failure path shares one attempt counter: block, or give up and allow once max is exceeded.
+  const failStep = (reason: string): Decision => {
     const attempts = ctx.state.stopAttempts + 1;
     if (attempts > max) {
       setAttempts(0);
@@ -143,7 +144,29 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       return allow;
     }
     setAttempts(attempts);
-    return { kind: 'block', reason: `${step} failed (attempt ${attempts} of ${max}). Fix it, then finish again.\n${tail(r.output)}`, check: 'stop' };
+    return { kind: 'block', reason: reason.replace('{n}', `${attempts} of ${max}`), check: 'stop' };
+  };
+  let ran = 0;
+  for (const step of steps) {
+    const rs = resolveStep(step, pm, scripts);
+    if (!rs) continue;
+    ran++;
+    const found = which(rs.cmd);
+    if (!found) {
+      return failStep(`Stop step \`${rs.label}\` could not run: \`${rs.cmd}\` not found. Install it or change stop.steps in \`.harness/config.yaml\`.`);
+    }
+    const remaining = timeout_s * 1000 - (now() - stepsStart);
+    // On Windows pass the resolved path so a .cmd shim can be recognised and wrapped.
+    const r = remaining > 0 ? await exec(process.platform === 'win32' ? found : rs.cmd, rs.args, remaining) : null;
+    if (!r || r.timedOut) {
+      return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };
+    }
+    if (r.status === 0) continue;
+    return failStep(`${rs.label} failed (attempt {n}). Fix it, then finish again.\n${tail(r.output)}`);
+  }
+  if (ran === 0 && !ctx.state.stopNothingLogged) {
+    log('stop-nothing-to-run');
+    ctx.save({ ...ctx.state, stopNothingLogged: true });
   }
 
   // Diff coverage runs after every step passes.

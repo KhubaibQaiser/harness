@@ -11,6 +11,7 @@ export interface SessionState {
   lockedTests: string[];
   stopAttempts: number;
   stopNoGitLogged?: boolean; // stop-no-git already logged this session
+  stopNothingLogged?: boolean; // stop-nothing-to-run already logged this session
   baseHead?: string; // git HEAD at the session's first hook
 }
 

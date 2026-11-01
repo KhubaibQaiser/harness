@@ -2,12 +2,14 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { defaultExec, type Exec, killTree, runStop, stopGate } from '../../../src/checks/stop/gate.js';
+import { defaultExec, type Exec, killTree, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
 import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
 import { readState, writeState } from '../../../src/core/state.js';
 import { type Ctx, detectBaseHead, dispatch, registry } from '../../../src/hooks/dispatch.js';
 
+// Existing tests fake the exec; pretend every binary is on PATH.
+const runStop = (c: Ctx, e: Exec, now?: () => number) => runStopReal(c, e, now, () => '/bin/x');
 const ALL = ['format:check', 'lint', 'typecheck', 'test'];
 type Opts = { baseHead?: string; scripts?: string[]; yaml?: string; attempts?: number; hookActive?: boolean };
 const setup = (o: Opts = {}) => {
@@ -344,3 +346,42 @@ test('output is bounded to a rolling tail', async () => {
   expect(r.output.length).toBeLessThan(200 * 1024);
   expect(r.output).toContain('THE-END');
 }, 30000);
+
+const PY = 'stop:\n  package_manager: none\n  steps:\n    - name: lint\n      run: [ruff, check, .]\n';
+
+test('command step runs as written and a failure blocks with its label', async () => {
+  const s = setup({ yaml: PY });
+  const exec = s.exec(SRC, '.');
+  const d = await runStop(s.ctx, exec);
+  expect(s.calls.at(-1)).toMatchObject({ cmd: 'ruff', args: ['check', '.'] });
+  expect(d).toMatchObject({ kind: 'block' });
+  expect((d as { reason: string }).reason).toContain('lint failed (attempt 1 of');
+});
+
+test('missing command blocks once with the fix', async () => {
+  const s = setup({ yaml: PY });
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  expect(d).toMatchObject({ kind: 'block' });
+  expect((d as { reason: string }).reason).toBe('Stop step `lint` could not run: `ruff` not found. Install it or change stop.steps in `.harness/config.yaml`.');
+  expect(s.steps()).toEqual([]);
+  expect(s.saved.at(-1)).toBe(1);
+});
+
+test('missing package manager binary blocks the same way', async () => {
+  const s = setup();
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  expect((d as { reason: string }).reason).toContain('`pnpm` not found');
+});
+
+test('missing command gives up after max attempts', async () => {
+  const s = setup({ yaml: PY, attempts: 3 });
+  expect(await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null)).toEqual({ kind: 'allow' });
+});
+
+test('no steps at all: allowed, stop-nothing-to-run logged once per session', async () => {
+  const s = setup({ yaml: 'stop:\n  package_manager: none\n' });
+  expect(await runStop(s.ctx, s.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(await runStop(s.ctx, s.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(s.steps()).toEqual([]);
+  expect(readEvents(s.root).filter((e) => e.decision === 'stop-nothing-to-run')).toHaveLength(1);
+});

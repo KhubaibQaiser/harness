@@ -12,7 +12,7 @@ export type Change =
 
 export type FsLike = Pick<
   typeof nodeFs,
-  'readFileSync' | 'writeFileSync' | 'renameSync' | 'unlinkSync' | 'mkdirSync' | 'rmSync' | 'lstatSync' | 'existsSync' | 'copyFileSync' | 'chmodSync'
+  'readFileSync' | 'writeFileSync' | 'renameSync' | 'unlinkSync' | 'mkdirSync' | 'rmSync' | 'lstatSync' | 'existsSync' | 'copyFileSync' | 'chmodSync' | 'rmdirSync'
 >;
 
 export class ApplyError extends Error {
@@ -51,6 +51,8 @@ export function applyChanges(
   for (const c of changes) {
     checkPath(c.rel);
     checkPath(`${backupRel}/${c.rel}`);
+    if (c.kind === 'create' && fs.existsSync(abs(c.rel)))
+      throw new ApplyError(`\`${c.rel}\` already exists. Run the command again.`);
     if (c.kind !== 'create' && fs.readFileSync(abs(c.rel), 'utf8') !== c.before)
       throw new ApplyError(`\`${c.rel}\` changed since the plan was made. Run the command again.`);
   }
@@ -74,10 +76,16 @@ export function applyChanges(
   );
   if (writeManifest) steps.push({ rel: MANIFEST_REL, content: JSON.stringify(manifest, null, 2) + '\n' });
 
-  const pre = ['.harness/backup', '.harness'].map((r) => [r, fs.existsSync(abs(r))] as const);
+  const modes = new Map<string, number>(); // rel -> original mode
+  const madeDirs: string[] = []; // dirs this apply created, shallowest first
   const backedUp = new Map<string, string>(); // rel -> backup path (absolute)
   const touched: string[] = []; // rels whose target may differ from the original
-  const mkParent = (p: string) => fs.mkdirSync(dirname(p), { recursive: true });
+  const mkParent = (p: string) => {
+    const missing: string[] = [];
+    for (let d = dirname(p); !fs.existsSync(d); d = dirname(d)) missing.unshift(d);
+    fs.mkdirSync(dirname(p), { recursive: true });
+    madeDirs.push(...missing);
+  };
   try {
     for (const s of steps) {
       if (!fs.existsSync(abs(s.rel))) continue;
@@ -85,6 +93,7 @@ export function applyChanges(
       mkParent(b);
       fs.copyFileSync(abs(s.rel), b);
       backedUp.set(s.rel, b);
+      modes.set(s.rel, fs.lstatSync(abs(s.rel)).mode & 0o777);
       const f = manifest.files.find((x) => x.rel === s.rel);
       if (f) f.backup = `${backupRel}/${s.rel}`;
     }
@@ -99,7 +108,8 @@ export function applyChanges(
       }
       mkParent(target);
       fs.writeFileSync(target + TMP, s.content);
-      if (s.mode !== undefined && process.platform !== 'win32') fs.chmodSync(target + TMP, s.mode);
+      const mode = s.mode ?? modes.get(s.rel);
+      if (mode !== undefined && process.platform !== 'win32') fs.chmodSync(target + TMP, mode);
       fs.renameSync(target + TMP, target);
     }
   } catch (cause) {
@@ -107,16 +117,21 @@ export function applyChanges(
     for (const rel of touched.reverse()) {
       try {
         const b = backedUp.get(rel);
-        if (b) fs.copyFileSync(b, abs(rel));
+        if (b) {
+          fs.copyFileSync(b, abs(rel));
+          if (process.platform !== 'win32') fs.chmodSync(abs(rel), modes.get(rel)!);
+        }
         else fs.rmSync(abs(rel), { force: true });
       } catch {
         restoreFailed = true;
       }
     }
     for (const s of steps) fs.rmSync(abs(s.rel) + TMP, { force: true });
-    if (!restoreFailed) {
-      fs.rmSync(abs(backupRel), { recursive: true, force: true });
-      for (const [r, existed] of pre) if (!existed) fs.rmSync(abs(r), { recursive: true, force: true });
+    if (!restoreFailed) fs.rmSync(abs(backupRel), { recursive: true, force: true });
+    for (const d of madeDirs.reverse()) {
+      try {
+        fs.rmdirSync(d); // throws if not empty, which is what we want
+      } catch {}
     }
     throw new ApplyError(`apply failed and was rolled back: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
   }

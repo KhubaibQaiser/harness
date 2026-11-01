@@ -114,4 +114,49 @@ describe('applyChanges', () => {
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('A');
     expect(existsSync(join(root, '.harness'))).toBe(false);
   });
+
+  it('create over an existing file fails before any write', () => {
+    const root = makeRepo({ 'a.txt': 'A', 'mine.txt': 'mine' }, { git: false });
+    const changes: Change[] = [
+      { kind: 'update', rel: 'a.txt', before: 'A', after: 'A2', blocks: [] },
+      { kind: 'create', rel: 'mine.txt', content: 'x' },
+    ];
+    expect(() => applyChanges(root, changes, '1', NOW)).toThrow('`mine.txt` already exists. Run the command again.');
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('A');
+    expect(readFileSync(join(root, 'mine.txt'), 'utf8')).toBe('mine');
+    expect(existsSync(join(root, '.harness'))).toBe(false);
+  });
+
+  it('rollback restores the original mode', () => {
+    if (process.platform === 'win32') return;
+    const root = makeRepo({ 'run.sh': 'sh', 'del.sh': 'd', 'z.txt': 'z' }, { git: false });
+    realFs.chmodSync(join(root, 'run.sh'), 0o755);
+    realFs.chmodSync(join(root, 'del.sh'), 0o700);
+    const changes: Change[] = [
+      { kind: 'update', rel: 'run.sh', before: 'sh', after: 'sh2', blocks: [] },
+      { kind: 'delete', rel: 'del.sh', before: 'd' },
+      { kind: 'update', rel: 'z.txt', before: 'z', after: 'z2', blocks: [] },
+    ];
+    const mode = (r: string) => realFs.statSync(join(root, r)).mode & 0o777;
+    expect(() => applyChanges(root, changes, '1', NOW, failingRename(2))).toThrow(ApplyError);
+    expect(mode('run.sh')).toBe(0o755);
+    expect(mode('del.sh')).toBe(0o700);
+    const root2 = makeRepo({ 'run.sh': 'sh' }, { git: false });
+    realFs.chmodSync(join(root2, 'run.sh'), 0o755);
+    applyChanges(root2, [{ kind: 'update', rel: 'run.sh', before: 'sh', after: 'sh2', blocks: [] }], '1', NOW);
+    expect(realFs.statSync(join(root2, 'run.sh')).mode & 0o777).toBe(0o755);
+  });
+
+  it('rollback removes created directories', () => {
+    const root = makeRepo({ 'keep/x.txt': 'x', 'a.txt': 'A' }, { git: false });
+    const changes: Change[] = [
+      { kind: 'create', rel: '.claude/agents/a.md', content: 'x' },
+      { kind: 'create', rel: 'n/deep/b.txt', content: 'x' },
+      { kind: 'create', rel: 'keep/y.txt', content: 'x' },
+      { kind: 'update', rel: 'a.txt', before: 'A', after: 'A2', blocks: [] },
+    ];
+    expect(() => applyChanges(root, changes, '1', NOW, failingRename(4))).toThrow(ApplyError);
+    for (const d of ['.claude', 'n', '.harness']) expect(existsSync(join(root, d))).toBe(false);
+    expect(readdirSync(join(root, 'keep'))).toEqual(['x.txt']);
+  });
 });

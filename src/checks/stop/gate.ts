@@ -128,7 +128,8 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
 
   const scripts = scriptsOf(root);
   const stepsStart = now(); // the step budget starts after the git calls
-  for (const step of steps.filter((s) => s in scripts)) {
+  // Task 4: command steps (object steps are skipped here until then)
+  for (const step of steps.filter((s): s is string => typeof s === 'string' && s in scripts)) {
     const remaining = timeout_s * 1000 - (now() - stepsStart);
     const r = remaining > 0 ? await exec(pm, ['run', step], remaining) : null;
     if (!r || r.timedOut) {

@@ -1,7 +1,7 @@
-import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { appendEvent, readEvents } from '../core/events.js';
+import { repoRoot } from '../core/repo-root.js';
 import { pauseStatus, pauseTdd, resumeTdd } from '../core/pause.js';
 
 export interface CliEnv {
@@ -63,7 +63,7 @@ function stats(args: string[], { root, out }: CliEnv): number {
     const r = e.reason ?? '';
     return r.startsWith('Diff coverage') ? 'coverage' : r.includes(' failed (attempt') ? r.slice(0, r.indexOf(' failed (attempt')) : 'other';
   });
-  section('Stop failures by step', [...tally(steps)]);
+  if (steps.length) section('Stop failures by step', [...tally(steps)]);
   const stop = (d: string) => count((e) => e.check === 'stop' && e.decision === d);
   section('Gave up and timeouts', [
     ['timeouts', stop('context')],
@@ -78,14 +78,6 @@ export function run(argv: string[], cli: CliEnv): number {
   if (cmd === 'stats') return stats(rest, cli);
   cli.out(USAGE);
   return 2;
-}
-
-function repoRoot(cwd: string): string {
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || cwd;
-  } catch {
-    return cwd;
-  }
 }
 
 // Run only as the process entry (also true for the bundled dist file), so tests can import `run`.

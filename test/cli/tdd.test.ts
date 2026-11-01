@@ -68,3 +68,14 @@ test('help and unknown commands exit 2', () => {
   const root = mk();
   for (const a of [['--help'], ['nope'], [], ['tdd'], ['tdd', 'x']]) expect(cli(root, a).code).toBe(2);
 });
+
+test('a session already running when tdd off ran never takes the pause', async () => {
+  const root = mk();
+  await hook(root, 'old', 'PreToolUse');
+  await new Promise((r) => setTimeout(r, 5));
+  cli(root, ['tdd', 'off']);
+  await hook(root, 'old', 'PreToolUse');
+  expect(pauseStatus(root)).toBe('pending');
+  await hook(root, 'new', 'PreToolUse');
+  expect(pauseStatus(root)).toEqual({ session: 'new' });
+});

@@ -13,6 +13,7 @@ import { type HarnessConfig, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
 import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
+import { repoRoot } from '../core/repo-root.js';
 import { isUnattended } from '../core/unattended.js';
 import { emit, parseInput } from './io.js';
 import type { Decision, HookEvent, HookInput } from './types.js';
@@ -39,22 +40,8 @@ export const registry: Check[] = [guard, protect, multiFile, redFirst, tamper, t
 
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 const CURSOR_KEYS = ['conversation_id', 'generation_id', 'model_id', 'workspace_roots'];
-const rootCache = new Map<string, string>();
 const NO_ROOT = '/nonexistent-harness-root'; // loadConfig/readState on it yield defaults and a fresh state without touching disk
 const warn = (what: string, e: unknown) => process.stderr.write(`harness: ${what} failed: ${String((e as Error)?.message ?? e)}\n`);
-
-function repoRoot(cwd: string): string {
-  let r = rootCache.get(cwd);
-  if (r === undefined) {
-    try {
-      r = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || cwd;
-    } catch {
-      r = cwd;
-    }
-    rootCache.set(cwd, r);
-  }
-  return r;
-}
 
 type GitRun = (args: string[]) => { status: number | null; stdout: string };
 
@@ -119,7 +106,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
 
   try {
     if (event === 'SessionEnd') clearPause(root, input.session_id);
-    else bindPause(root, input.session_id);
+    else if (state && config) bindPause(root, input.session_id, state.startedAt);
   } catch (e) {
     warn('tdd pause', e);
   }

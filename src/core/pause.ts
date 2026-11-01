@@ -38,11 +38,11 @@ export function resumeTdd(root: string): void {
   rmSync(pauseFile(root), { force: true });
 }
 
-// A pending pause binds to the first session whose hook runs at or after createdAt.
-export function bindPause(root: string, session: string): void {
+// A pending pause binds only to a session that started at or after createdAt.
+export function bindPause(root: string, session: string, startedAt: number): void {
   if (pauseStatus(root) !== 'pending') return;
   const { createdAt } = JSON.parse(readFileSync(pauseFile(root), 'utf8')) as { createdAt: string };
-  if (Date.now() >= Date.parse(createdAt)) writePause(root, { createdAt, session });
+  if (startedAt >= Date.parse(createdAt)) writePause(root, { createdAt, session });
 }
 
 export function clearPause(root: string, session: string): void {

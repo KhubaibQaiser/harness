@@ -103,7 +103,8 @@ test('dispatcher with the real registry denies a sensitive command end to end', 
   expect(await dispatch(raw('ls'), registry, {})).toBe('');
 });
 
-test.each(['harness tdd off', 'npx @khubaibqaiser/harness tdd off', 'pnpm harness tdd off', 'pnpm exec harness tdd off', 'ls && harness tdd off', 'ls; harness tdd off'])(
+test.each(['harness tdd off', 'npx @khubaibqaiser/harness tdd off', 'pnpm harness tdd off', 'pnpm exec harness tdd off', 'ls && harness tdd off', 'ls; harness tdd off',
+  'env -u CLAUDECODE harness tdd off', 'env CLAUDECODE= harness tdd off', 'CLAUDECODE= harness tdd off', 'unset CLAUDECODE; harness tdd off'])(
   'agent running %s is denied', (cmd) => {
     const d = decideCommand(cmd, ctx());
     expect(d.kind).toBe('deny');

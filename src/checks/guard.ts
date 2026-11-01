@@ -35,7 +35,7 @@ function tddInvocationDenied(command: string): boolean {
     while (k < toks.length && (RUNNERS.has(toks[k]) || toks[k].startsWith('-') || /^\w+=/.test(toks[k]))) {
       const val = toks[k].replace(/^\w+=/, '');
       if (val !== toks[k] && HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
-      k += 1;
+      k += toks[k] === '-u' ? 2 : 1; // env -u NAME: the next token is a variable name
     }
     // $X tdd …, `…` tdd … or $(…) tdd …: the command name is hidden in a variable or substitution.
     if ((toks[k]?.startsWith('$') && toks[k + 1] === 'tdd') || (k === 0 && toks[0] === 'tdd' && /^[`)]$/.test(parts[i - 1] ?? ''))) return true;

@@ -1,7 +1,22 @@
 {
   "name": "@khubaibqaiser/harness",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0-beta.0",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KhubaibQaiser/harness.git"
+  },
+  "files": [
+    "dist/",
+    "templates/",
+    "skills/",
+    ".claude-plugin/plugin.json",
+    "LICENSE",
+    "README.md"
+  ],
   "type": "module",
   "bin": {
     "harness": "dist/cli.mjs"
@@ -14,7 +29,8 @@
     "build": "node build.mjs",
     "test": "node build.mjs && vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepack": "node build.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

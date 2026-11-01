@@ -135,3 +135,62 @@ test('non-repo target exits 2; missing --target exits 2', () => {
   expect(run(d).status).toBe(2);
   expect(spawnSync('node', [script], { encoding: 'utf8' }).status).toBe(2);
 });
+
+const S = '<!-- harness:start -->';
+const E = '<!-- harness:end -->';
+const noWrites = (d: string, settings = '{}') => {
+  expect(existsSync(join(d, '.harness'))).toBe(false);
+  expect(rd(d, '.claude/settings.json')).toBe(settings);
+};
+
+test.each([
+  ['two full blocks', `${S}\na\n${E}\nmid\n${S}\nb\n${E}\n`],
+  ['doubled start', `${S}\nuser text\n${S}\n${E}\n`],
+  ['doubled end', `${S}\n${E}\n${E}\n`],
+  ['end before start', `${E}\n${S}\n`],
+])('AGENTS.md %s: fails, nothing written', (_n, text) => {
+  const d = repo();
+  writeFileSync(join(d, '.claude/settings.json'), '{}');
+  writeFileSync(join(d, 'AGENTS.md'), text);
+  const r = run(d);
+  expect(r.status).toBe(1);
+  expect(r.stderr).toMatch(/marker/);
+  expect(r.stderr).not.toMatch(/\n\s+at /);
+  expect(rd(d, 'AGENTS.md')).toBe(text);
+  noWrites(d);
+});
+
+test.each([
+  ['root array', '[]', /object/],
+  ['hooks not object', '{"hooks":[]}', /hooks/],
+  ['event not array', '{"hooks":{"Stop":{"a":1}}}', /Stop/],
+  ['group not object', '{"hooks":{"Stop":[1]}}', /Stop/],
+  ['deny not array', '{"permissions":{"deny":"x"}}', /deny/],
+  ['permissions not object', '{"permissions":[]}', /permissions/],
+])('settings %s: clear error, no stack, nothing written', (_n, json, re) => {
+  const d = repo();
+  writeFileSync(join(d, '.claude/settings.json'), json);
+  const r = run(d);
+  expect(r.status).toBe(1);
+  expect(r.stderr).toMatch(re);
+  expect(r.stderr).not.toMatch(/\n\s+at /);
+  noWrites(d, json);
+});
+
+test('unknown flag: usage, exit 2, no stack', () => {
+  const r = run(repo(), '--bogus');
+  expect(r.status).toBe(2);
+  expect(r.stderr).toMatch(/usage/i);
+  expect(r.stderr).not.toMatch(/\n\s+at /);
+});
+
+test('missing dist: "run pnpm build first"', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nodist-'));
+  mkdirSync(join(root, 'scripts'));
+  cpSync(script, join(root, 'scripts/install-local.mjs'));
+  const d = repo();
+  const r = spawnSync('node', [join(root, 'scripts/install-local.mjs'), '--target', d], { encoding: 'utf8' });
+  expect(r.status).toBe(1);
+  expect(r.stderr).toContain('run pnpm build first');
+  expect(existsSync(join(d, '.harness'))).toBe(false);
+});

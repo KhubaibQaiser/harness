@@ -7,7 +7,12 @@ import { parseArgs } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fail = (msg, code = 1) => { console.error(`install-local: ${msg}`); process.exit(code); };
-const { values } = parseArgs({ options: { target: { type: 'string' }, 'dry-run': { type: 'boolean' } } });
+let values;
+try {
+  ({ values } = parseArgs({ options: { target: { type: 'string' }, 'dry-run': { type: 'boolean' } } }));
+} catch (e) {
+  fail(`${e.message}\nusage: node scripts/install-local.mjs --target <repo> [--dry-run]`, 2);
+}
 
 if (!values.target) fail('--target <repo> is required', 2);
 const target = resolve(values.target);
@@ -34,6 +39,15 @@ const hasOld = (h) => OLD.some((o) => String(h.command ?? '').includes(o));
 function mergeSettings(existingText) {
   let s;
   try { s = existingText === null ? {} : JSON.parse(existingText); } catch (e) { fail(`.claude/settings.json is not valid JSON: ${e.message}`); }
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(s)) fail('.claude/settings.json must be a JSON object');
+  if (s.hooks !== undefined && !isObj(s.hooks)) fail('.claude/settings.json: "hooks" must be an object');
+  for (const [ev, groups] of Object.entries(s.hooks ?? {})) {
+    if (!Array.isArray(groups) || !groups.every((g) => isObj(g) && (g.hooks === undefined || Array.isArray(g.hooks))))
+      fail(`.claude/settings.json: hooks.${ev} must be an array of objects with a "hooks" array`);
+  }
+  if (s.permissions !== undefined && !isObj(s.permissions)) fail('.claude/settings.json: "permissions" must be an object');
+  if (s.permissions?.deny !== undefined && !Array.isArray(s.permissions.deny)) fail('.claude/settings.json: "permissions.deny" must be an array');
   const frag = JSON.parse(readFileSync(src('templates/settings.fragment.json'), 'utf8'));
   s.hooks ??= {};
   for (const [ev, groups] of Object.entries(s.hooks)) {
@@ -61,6 +75,8 @@ const END = '<!-- harness:end -->';
 function mergeAgents(text) {
   const block = readFileSync(src('templates/agents-block.md'), 'utf8').trimEnd();
   if (text === null) return block + '\n';
+  const count = (m) => text.split(m).length - 1;
+  if (count(START) > 1 || count(END) > 1) fail('AGENTS.md has a repeated harness marker; fix it by hand');
   const s = text.indexOf(START), e = text.indexOf(END);
   if (s === -1 && e === -1) return text + (text.endsWith('\n') ? '' : '\n') + '\n' + block + '\n';
   if (s === -1 || e === -1 || e < s) fail('AGENTS.md has a missing or misordered harness marker; fix it by hand');

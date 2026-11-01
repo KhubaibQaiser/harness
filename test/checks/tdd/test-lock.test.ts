@@ -7,7 +7,7 @@ import { newestFresh, type TestFileResult } from '../../../src/checks/tdd/result
 import { clearTurn, readState, writeState } from '../../../src/core/state.js';
 import { dispatch, registry } from '../../../src/hooks/dispatch.js';
 
-const CFG = 'checks:\n  tdd: true\n';
+const CFG = 'checks:\n  tdd: true\ntdd:\n  paths: ["src/**"]\n  exempt: ["src/ui/**"]\n';
 const T = 'src/a.test.ts';
 const MSG = `${T} was written as a failing test. Changing it while making it pass needs your approval.`;
 const setup = (cfg = CFG, env: NodeJS.ProcessEnv = {}) => {
@@ -84,8 +84,18 @@ test('paused TDD allows', async () => {
   expect((await s.call('PreToolUse', T)).permissionDecision).toBe('allow');
 });
 
+test('tests outside tdd.paths or inside tdd.exempt are never locked', async () => {
+  for (const f of ['lib/b.test.ts', 'src/ui/c.test.ts']) {
+    const s = setup();
+    await s.call('PostToolUse', f);
+    s.result(f, 'failed');
+    expect((await s.call('PreToolUse', f)).permissionDecision, f).toBe('allow');
+    expect(s.st().redTests).toEqual([]);
+  }
+});
+
 test('inactive when checks.tdd or tdd.test_lock is off', async () => {
-  for (const cfg of ['checks:\n  tdd: false\n', 'checks:\n  tdd: true\ntdd:\n  test_lock: false\n']) {
+  for (const cfg of ['checks:\n  tdd: false\ntdd:\n  paths: ["src/**"]\n', 'checks:\n  tdd: true\ntdd:\n  paths: ["src/**"]\n  test_lock: false\n']) {
     const s = setup(cfg);
     await s.call('PostToolUse', T);
     expect(s.st().redTests).toEqual([]);

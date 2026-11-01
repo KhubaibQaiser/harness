@@ -1,10 +1,11 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// .harness/state/tdd-pause.json: { createdAt: ISO string, session?: string }. Task 16 adds writing, binding and clearing.
+// .harness/state/tdd-pause.json: { createdAt: ISO string, session?: string }
+const pauseFile = (root: string) => join(root, '.harness/state/tdd-pause.json');
 export function pauseStatus(root: string): 'off' | 'pending' | { session: string } {
   try {
-    const v: unknown = JSON.parse(readFileSync(join(root, '.harness/state/tdd-pause.json'), 'utf8'));
+    const v: unknown = JSON.parse(readFileSync(pauseFile(root), 'utf8'));
     if (typeof v !== 'object' || v === null || Array.isArray(v)) return 'off';
     const { createdAt, session } = v as { createdAt?: unknown; session?: unknown };
     if (typeof createdAt !== 'string') return 'off';
@@ -17,4 +18,33 @@ export function pauseStatus(root: string): 'off' | 'pending' | { session: string
 export function isPaused(root: string, session: string): boolean {
   const s = pauseStatus(root);
   return typeof s === 'object' && s.session === session;
+}
+
+function writePause(root: string, v: { createdAt: string; session?: string }): void {
+  mkdirSync(join(root, '.harness/state'), { recursive: true });
+  const tmp = `${pauseFile(root)}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(v));
+  renameSync(tmp, pauseFile(root));
+}
+
+// Returns false (and keeps the file) when a pause already exists.
+export function pauseTdd(root: string): boolean {
+  if (pauseStatus(root) !== 'off') return false;
+  writePause(root, { createdAt: new Date().toISOString() });
+  return true;
+}
+
+export function resumeTdd(root: string): void {
+  rmSync(pauseFile(root), { force: true });
+}
+
+// A pending pause binds to the first session whose hook runs at or after createdAt.
+export function bindPause(root: string, session: string): void {
+  if (pauseStatus(root) !== 'pending') return;
+  const { createdAt } = JSON.parse(readFileSync(pauseFile(root), 'utf8')) as { createdAt: string };
+  if (Date.now() >= Date.parse(createdAt)) writePause(root, { createdAt, session });
+}
+
+export function clearPause(root: string, session: string): void {
+  if (isPaused(root, session)) resumeTdd(root);
 }

@@ -11,6 +11,7 @@ import { stopGate } from '../checks/stop/gate.js';
 import { testLock } from '../checks/tdd/test-lock.js';
 import { type HarnessConfig, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
+import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { isUnattended } from '../core/unattended.js';
 import { emit, parseInput } from './io.js';
@@ -114,6 +115,13 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     } catch (e) {
       warn('state write', e);
     }
+  }
+
+  try {
+    if (event === 'SessionEnd') clearPause(root, input.session_id);
+    else bindPause(root, input.session_id);
+  } catch (e) {
+    warn('tdd pause', e);
   }
 
   const ctx = {

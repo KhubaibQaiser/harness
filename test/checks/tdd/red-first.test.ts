@@ -96,7 +96,7 @@ test('does nothing when checks.tdd is false', async () => {
 test('paused TDD allows only when bound to this session', async () => {
   const t = setup();
   const pf = join(t.root, '.harness/state/tdd-pause.json');
-  writeFileSync(pf, JSON.stringify({ createdAt: new Date().toISOString() }));
+  writeFileSync(pf, JSON.stringify({ createdAt: new Date(Date.now() + 3_600_000).toISOString() })); // future, so the dispatcher does not bind it
   expect((await t.edit(A)).permissionDecision).toBe('deny'); // pending
   writeFileSync(pf, JSON.stringify({ createdAt: new Date().toISOString(), session: 'other' }));
   expect((await t.edit(A)).permissionDecision).toBe('deny');

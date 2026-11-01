@@ -18,14 +18,18 @@ const template = (name: string): string => {
 };
 
 /**
- * Removes each text block (first exact occurrence) from `after`. For every text merge except the
- * AGENTS.md marker replace, this returns the pre-merge content byte for byte. Settings blocks are
- * structural JSON and are not removed this way.
+ * Removes each text block from `after`: the last occurrence that starts at a line boundary, else the
+ * last occurrence (init appends, so the last one is ours even if earlier user text contains it). For every
+ * text merge except the AGENTS.md marker replace, this returns the pre-merge content byte for byte.
+ * Settings blocks are structural JSON and are not removed this way.
  */
 export function removeBlocks(after: string, blocks: string[]): string {
   let out = after;
   for (const b of blocks) {
-    const i = out.indexOf(b);
+    const last = out.lastIndexOf(b);
+    let i = last;
+    while (i > 0 && out[i - 1] !== '\n') i = out.lastIndexOf(b, i - 1);
+    if (i === -1) i = last; // no occurrence at a line start: fall back to the last one
     if (i !== -1) out = out.slice(0, i) + out.slice(i + b.length);
   }
   return out;

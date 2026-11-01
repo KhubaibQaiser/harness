@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { appendEvent, readEvents } from '../core/events.js';
 import { repoRoot } from '../core/repo-root.js';
 import { init } from './init.js';
+import { uninstall } from './uninstall.js';
 import { readlinePrompt } from './prompt.js';
 import { pauseStatus, pauseTdd, resumeTdd } from '../core/pause.js';
 
@@ -15,7 +16,7 @@ export interface CliEnv {
 
 declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]';
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force]';
 const DAY = 86_400_000;
 
 function tddStatus(root: string): string {
@@ -96,6 +97,13 @@ try {
       const prompt = readlinePrompt();
       try {
         process.exitCode = await init(argv.slice(1), { ...cli, root: process.cwd(), prompt, version: VERSION, templatesDir: join(distDir, '..', 'templates'), distDir });
+      } finally {
+        prompt.close();
+      }
+    } else if (argv[0] === 'uninstall') {
+      const prompt = readlinePrompt();
+      try {
+        process.exitCode = await uninstall(argv.slice(1), { ...cli, root: process.cwd(), prompt });
       } finally {
         prompt.close();
       }

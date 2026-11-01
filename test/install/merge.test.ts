@@ -248,3 +248,10 @@ describe('round trip: before -> merge -> removeBlocks gives before back', () => 
     expect(removeBlocks(r.after, r.blocks)).toBe('top\n\nbottom\n');
   });
 });
+
+describe('removeBlocks picks the last occurrence', () => {
+  test('earlier user text containing the block is left alone', () => {
+    const m = mergeIgnoreFile('foo.harness/\nbar\n', '.harness/')!;
+    expect(removeBlocks(m.after, m.blocks)).toBe('foo.harness/\nbar\n');
+  });
+});

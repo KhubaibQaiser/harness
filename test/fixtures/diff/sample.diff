@@ -1,0 +1,18 @@
+diff --git a/src/a.ts b/src/a.ts
+index 4fc1b22..667438f 100644
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -3 +3 @@ export function a(x) {
+-    return 1;
++    return 10;
+@@ -5 +5,2 @@ export function a(x) {
+-  return 2;
++  const y = 3;
++  return y;
+diff --git a/src/gone.ts b/src/gone.ts
+deleted file mode 100644
+index b85663f..0000000
+--- a/src/gone.ts
++++ /dev/null
+@@ -1 +0,0 @@
+-export const b = 1;

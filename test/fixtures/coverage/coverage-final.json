@@ -1,0 +1,12 @@
+{
+  "/ROOT/src/a.ts": {
+    "path": "/ROOT/src/a.ts",
+    "statementMap": {
+      "0": { "start": { "line": 2, "column": 2 }, "end": { "line": 4, "column": 3 } },
+      "1": { "start": { "line": 3, "column": 4 }, "end": { "line": 3, "column": 17 } },
+      "2": { "start": { "line": 5, "column": 2 }, "end": { "line": 5, "column": 14 } },
+      "3": { "start": { "line": 6, "column": 2 }, "end": { "line": 6, "column": 11 } }
+    },
+    "s": { "0": 1, "1": 1, "2": 0, "3": 1 }
+  }
+}

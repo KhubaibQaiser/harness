@@ -4,3 +4,4 @@ coverage/
 .superpowers/
 .harness/state/
 .harness/logs/
+!test/fixtures/coverage/

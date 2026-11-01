@@ -90,9 +90,9 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
     return { kind: 'block', reason: `${step} failed (attempt ${attempts} of ${max}). Fix it, then finish again.\n${tail(r.output)}`, check: 'stop' };
   }
 
-  // Task 15 hook point: diff coverage runs after every step passes.
+  // Diff coverage runs after every step passes.
   if (config.checks.tdd) {
-    const d = coverageGate(ctx, exec);
+    const d = coverageGate(ctx, exec, stepsStart);
     if (d.kind !== 'allow') return d;
   }
   setAttempts(0);

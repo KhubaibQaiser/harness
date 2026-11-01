@@ -2,7 +2,6 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { coverageGate } from '../../../src/checks/stop/coverage-gate.js';
 import { type Exec, runStop, stopGate } from '../../../src/checks/stop/gate.js';
 import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
@@ -198,8 +197,7 @@ test('committed code change on a clean tree runs the steps; committed docs only 
   expect(c.calls.some((x) => x.args[0] === 'diff')).toBe(false);
 });
 
-test('coverage hook point: no-op allow now; called after steps pass only when checks.tdd', () => {
-  expect(coverageGate({} as Ctx, (() => ({ status: 0, output: '', timedOut: false })) as Exec)).toEqual({ kind: 'allow' });
+test('coverage hook point: called after steps pass only when checks.tdd (nothing in tdd.paths allows)', () => {
   const s = setup({ yaml: 'checks:\n  tdd: true\n' });
   expect(runStop(s.ctx, s.exec(SRC))).toEqual({ kind: 'allow' });
 });

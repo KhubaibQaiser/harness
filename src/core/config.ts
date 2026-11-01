@@ -114,3 +114,20 @@ export function loadConfig(root: string): { config: HarnessConfig; warnings: str
   if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) warnings.push('tdd.results_dir is outside .harness/state; the agent could forge test results there');
   return { config, warnings };
 }
+
+// For the README generator: every leaf key with its default and the "must be ..." text of its rule (null when only the default's type applies).
+export function configReference(): { key: string; default: unknown; rule: string | null }[] {
+  const rows: { key: string; default: unknown; rule: string | null }[] = [];
+  const walk = (o: Record<string, unknown>, path: string) => {
+    for (const [k, v] of Object.entries(o)) {
+      const p = path ? `${path}.${k}` : k;
+      if (isObj(v)) walk(v, p);
+      else {
+        const bad = RULES[p]?.(undefined) ?? null; // undefined is never valid, so a rule answers with its message
+        rows.push({ key: p, default: v, rule: bad === null ? null : typeof bad === 'string' ? bad : bad.msg });
+      }
+    }
+  };
+  walk(defaults() as unknown as Record<string, unknown>, '');
+  return rows;
+}

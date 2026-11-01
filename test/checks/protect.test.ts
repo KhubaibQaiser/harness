@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { protect } from '../../src/checks/protect.js';
 import { loadConfig } from '../../src/core/config.js';
 import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
@@ -75,10 +75,10 @@ test('glob targets whose literal prefix is protected are denied', () => {
   for (const c of ['rm -rf .harness/*', 'rm .harness/hooks/*.mjs', 'rm -rf .claude/*', 'git rm .harness/hooks/d?spatch.mjs', 'mv .harness/[hs]* /tmp']) expect(bash(c), c).toBe('deny');
   expect(bash('rm -rf dist/*')).toBe('allow');
 });
-test('whole-tree and protected-path git restores are denied; branch switches are not', () => {
+test('whole-tree and protected-path git restores are denied; other restores are not', () => {
   for (const c of ['git restore .', 'git checkout -- .', 'git checkout .', 'git restore :/', 'git restore ./', 'git checkout HEAD .harness/config.yaml', 'git restore --source=HEAD~1 .claude'])
     expect(bash(c), c).toBe('deny');
-  for (const c of ['git checkout feature/x', 'git restore src/a.ts', 'git checkout -b new', 'git checkout HEAD src/a.ts']) expect(bash(c), c).toBe('allow');
+  for (const c of ['git restore src/a.ts', 'git checkout -b new', 'git checkout HEAD src/a.ts']) expect(bash(c), c).toBe('allow');
 });
 
 test('globs are matched against concrete protected paths', () => {
@@ -108,4 +108,41 @@ test('a repo reached through a symlinked path is still protected (dispatch, real
   const link = join(real, 'link');
   const out = await dispatch(JSON.stringify({ session_id: 's', cwd: link, hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: join(link, '.harness/config.yaml') } }), registry, {});
   expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny');
+});
+
+describe('branch switch to a ref without the harness hooks (real repo)', () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'h-sw-')));
+  const git = (...a: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  git('init', '-q', '-b', 'main');
+  writeFileSync(join(repo, 'a.ts'), 'x');
+  git('add', 'a.ts');
+  git('commit', '-q', '-m', 'old');
+  git('branch', 'old');
+  const oldSha = git('rev-parse', 'HEAD');
+  mkdirSync(join(repo, '.harness/hooks'), { recursive: true });
+  writeFileSync(join(repo, '.harness/hooks/dispatch.mjs'), '');
+  git('add', '.harness');
+  git('commit', '-q', '-m', 'harness');
+  const cmd = (command: string) => {
+    const config = loadConfig('/nonexistent-harness-root').config;
+    const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: repo, tool_name: 'Bash', tool_input: { command } };
+    return protect.run({ input, root: repo, config, env: {}, unattended: false } as unknown as Ctx) as { kind: string; reason?: string };
+  };
+  const SW = (ref: string) => `Switching to ${ref} removes the harness hooks (no .harness/hooks/dispatch.mjs there). Confirm the switch.`;
+
+  test.each(['git checkout old', 'git switch old', 'git checkout -b x old', 'git checkout -B x old', 'git switch -c x old', 'git switch --detach old', 'git -C . switch old', 'git --no-pager checkout old', 'cd . && git switch old'])('%s asks', (c) => {
+    expect(cmd(c)).toEqual({ kind: 'ask', reason: SW('old'), check: 'protect' });
+  });
+  test('a sha without the hooks asks', () => expect(cmd(`git checkout ${oldSha}`).reason).toBe(SW(oldSha)));
+  test.each(['git checkout main', 'git switch main', 'git checkout -b x', 'git switch -c x', 'git switch -c x main', 'git checkout -- a.ts', 'git checkout old a.ts', 'git checkout old -- a.ts', 'git checkout a.ts', 'git status'])('%s is allowed', (c) => {
+    expect(cmd(c).kind).toBe('allow');
+  });
+  test('a failed lookup asks', () => {
+    expect(cmd('git switch no-such-branch')).toMatchObject({ kind: 'ask', reason: 'Could not check that no-such-branch has the harness hooks. Confirm the switch.' });
+    expect(cmd('git -C /nonexistent-harness-dir checkout main').kind).toBe('ask');
+  });
+  test('unattended, the ask becomes a deny', async () => {
+    const out = await dispatch(JSON.stringify({ session_id: 's', cwd: repo, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git switch old' } }), registry, { CI: 'true' });
+    expect(JSON.parse(out).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: `Unattended run: ${SW('old')}` });
+  });
 });

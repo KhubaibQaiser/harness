@@ -1,8 +1,10 @@
 // Harness files and Claude settings are changed by a person; the agent is denied at the tool-call level.
+import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
+import type { Decision } from '../hooks/types.js';
 import { fileWriteTargets, gitArgs, rmTargets } from './guard.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/config.yaml', '.claude/settings.json', '.claude/settings.local.json'];
@@ -50,6 +52,41 @@ function gitRestoreTargets(cmds: string[]): string[] {
   return out;
 }
 
+// The ref a git checkout/switch moves the worktree to, with the dir git runs in; null for file checkouts and new branches off HEAD.
+// ponytail: checkout's remote-tracking DWIM (`git checkout foo` with only origin/foo) reads as a file checkout; `-`, @{-1} and --orphan are not looked up.
+function switchTarget(toks: string[], cwd: string): { ref: string; dir: string; sw: boolean } | null {
+  const [sub, ...rest] = gitArgs(toks);
+  if (sub !== 'checkout' && sub !== 'switch') return null;
+  let dir = cwd;
+  for (let i = toks.indexOf('git') + 1; toks[i]?.startsWith('-'); i += /^-[Cc]$/.test(toks[i]!) ? 2 : 1) if (toks[i] === '-C') dir = resolve(dir, toks[i + 1] ?? '');
+  if (rest.includes('--')) return null;
+  const pos: string[] = [];
+  for (let i = 0; i < rest.length; i += 1) {
+    if (/^(-[bBcC]|--orphan)$/.test(rest[i]!)) i += 1; // value is the new branch name
+    else if (!rest[i]!.startsWith('-')) pos.push(rest[i]!);
+  }
+  return pos.length === 1 ? { ref: pos[0]!, dir, sw: sub === 'switch' } : null;
+}
+
+const git = (dir: string, args: string[]) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', timeout: 1500 });
+
+// Ask before moving to a ref with no .harness/hooks/dispatch.mjs: every hook would then fail open until someone switches back.
+function switchAsk(cmds: string[], cwd: string): Decision | null {
+  for (const toks of cmds.flatMap(segTokens)) {
+    const t = switchTarget(toks, cwd);
+    if (!t) continue;
+    const ask = (reason: string): Decision => ({ kind: 'ask', reason, check: 'protect' });
+    const failed = ask(`Could not check that ${t.ref} has the harness hooks. Confirm the switch.`);
+    const rp = git(t.dir, ['rev-parse', '--verify', '-q', `${t.ref}^{commit}`]);
+    if (rp.status === 1 && !t.sw) continue; // not a ref: checkout of a file
+    if (rp.status !== 0) return failed;
+    const cf = git(t.dir, ['cat-file', '-e', `${t.ref}:.harness/hooks/dispatch.mjs`]);
+    if (cf.status === null || cf.error) return failed;
+    if (cf.status !== 0) return ask(`Switching to ${t.ref} removes the harness hooks (no .harness/hooks/dispatch.mjs there). Confirm the switch.`);
+  }
+  return null;
+}
+
 const GLOB = /[*?[{]/;
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
@@ -86,6 +123,7 @@ export const protect: Check = {
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       paths = [...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git];
+      if (!paths.some((p) => p && isProtected(root, p))) return switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
     }
     return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };
   },

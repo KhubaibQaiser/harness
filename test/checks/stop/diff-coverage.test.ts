@@ -26,7 +26,7 @@ function repo(coverage: Record<string, unknown> | null, { mtime = FRESH + 10, fi
 }
 const istanbul = () => JSON.parse(fx('coverage/coverage-final.json'));
 // Fake git: merge-base, diff, ls-files (untracked) answers; records calls.
-function gitExec(o: { diff?: string; untracked?: string; mergeBase?: { status: number; output: string }; diffFail?: string }) {
+function gitExec(o: { diff?: string; untracked?: string; mergeBase?: { status: number; output: string }; diffFail?: string; lsFail?: boolean }) {
   const calls: { args: string[]; ms: number }[] = [];
   const exec: Exec = (_c, args, ms) => {
     calls.push({ args, ms });
@@ -34,7 +34,7 @@ function gitExec(o: { diff?: string; untracked?: string; mergeBase?: { status: n
     const sub = args.find((a) => ['merge-base', 'diff', 'ls-files'].includes(a));
     if (sub === 'merge-base') return { ...(o.mergeBase ?? ok('BASE\n')), timedOut: false };
     if (sub === 'diff') return o.diffFail ? { status: 128, output: o.diffFail, timedOut: false } : ok(o.diff ?? '');
-    if (sub === 'ls-files') return ok(o.untracked ?? '');
+    if (sub === 'ls-files') return o.lsFail ? { status: null, output: '', timedOut: true } : ok(o.untracked ?? '');
     return ok('');
   };
   return { exec, calls };
@@ -280,6 +280,14 @@ test('gate: git diff failure blocks with the short reason and logs coverage-diff
   expect(d).toEqual({ kind: 'block', check: 'stop', reason: 'Diff coverage could not read git diff (fatal: bad revision). Fix git, then finish again.' });
   const log = readFileSync(join(root, '.harness/logs/events.jsonl'), 'utf8');
   expect(JSON.parse(log.trim().split('\n').at(-1)!)).toMatchObject({ decision: 'coverage-diff-failed' });
+});
+
+test('gate: a failed untracked listing blocks and logs coverage-diff-failed', () => {
+  const root = repo(null);
+  const d = stopWith(root, gitExec({ diff: addDiff('src/a.ts', [3]), lsFail: true }));
+  expect(d).toEqual({ kind: 'block', check: 'stop', reason: 'Diff coverage could not read git diff (untracked files: timed out). Fix git, then finish again.' });
+  const log = readFileSync(join(root, '.harness/logs/events.jsonl'), 'utf8');
+  expect(JSON.parse(log.trim().split('\n').at(-1)!)).toMatchObject({ decision: 'coverage-diff-failed', reason: 'untracked files: timed out' });
 });
 
 test('gate: coverage blocks count attempts and give up at max_attempts', () => {

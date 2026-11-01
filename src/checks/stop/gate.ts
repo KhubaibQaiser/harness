@@ -50,21 +50,20 @@ export function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now): Dec
 
   const paths = (out: string, porcelain: boolean) =>
     out.split('\n').filter(Boolean).map((l) => (porcelain ? (l.slice(3).split(' -> ').pop() as string) : l).replace(/^"|"$/g, ''));
+  const ok = (r: { status: number | null; timedOut: boolean }) => r.status === 0 && !r.timedOut;
   const git = exec('git', ['status', '--porcelain'], GIT_MS);
-  if (git.status !== 0 || git.timedOut) {
-    log('stop-skipped', 'git status failed');
-    return allow;
-  }
-  const changed = paths(git.output, true);
+  const changed = ok(git) ? paths(git.output, true) : [];
+  let failed = !ok(git);
   const base = ctx.state.baseHead;
   if (base) {
     // The agent may have committed its work, leaving a clean tree.
     const d = exec('git', ['diff', '--name-only', base, 'HEAD'], GIT_MS);
-    if (d.status === 0 && !d.timedOut) changed.push(...paths(d.output, false));
-    else {
-      log('stop-diff-failed');
-      changed.push('(unknown)'); // fail closed: treat as code changed
-    }
+    if (ok(d)) changed.push(...paths(d.output, false));
+    else failed = true;
+  }
+  if (failed) {
+    log('stop-diff-failed', ok(git) ? undefined : 'git status failed');
+    changed.push('(unknown)'); // fail closed: treat as code changed
   }
   if (changed.every((f) => DOCS_ONLY.test(f))) {
     setAttempts(0);

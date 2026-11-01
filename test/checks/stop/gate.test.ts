@@ -175,11 +175,15 @@ test('dispatcher logs exactly one event per block, timeout and give-up', async (
   expect(await run('lint', '', 3)).toEqual(['stop/stop-gave-up']);
 });
 
-test('failed git status allows and logs stop-skipped; timed out too', () => {
-  for (const r of [{ status: 128, output: 'fatal', timedOut: false }, { status: null, output: '', timedOut: true }]) {
-    const s = setup();
-    expect(runStop(s.ctx, () => r)).toEqual({ kind: 'allow' });
-    expect(readEvents(s.root)).toMatchObject([{ check: 'stop', decision: 'stop-skipped', reason: 'git status failed' }]);
+test('failed or timed-out git status fails closed: steps run and stop-diff-failed is logged once', () => {
+  for (const bad of [{ status: 128, output: 'fatal', timedOut: false }, { status: null, output: '', timedOut: true }]) {
+    for (const baseHead of [undefined, 'abc']) {
+      const s = setup({ baseHead });
+      const base = s.exec('');
+      expect(runStop(s.ctx, (cmd, args, ms) => (cmd === 'git' ? bad : base(cmd, args, ms)))).toEqual({ kind: 'allow' });
+      expect(s.steps()).toEqual(ALL);
+      expect(readEvents(s.root)).toMatchObject([{ check: 'stop', decision: 'stop-diff-failed', reason: 'git status failed' }]);
+    }
   }
 });
 

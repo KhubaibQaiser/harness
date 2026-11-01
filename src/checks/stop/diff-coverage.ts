@@ -100,20 +100,21 @@ export function diffCoverage(root: string, cfg: HarnessConfig, exec: Exec, opts:
   const base = (ok(mb) ? mb.output.split('\n')[0].trim() : '') || opts.baseHead; // output also carries stderr
   if (!base) return result('no-base');
   const d = exec('git', ['-c', 'core.quotePath=false', 'diff', '--relative', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', base], GIT_MS);
-  if (!ok(d)) return { ...result('diff-failed'), detail: d.timedOut ? 'timed out' : (d.output.split('\n').find((x) => x.trim()) ?? `exit ${d.status}`).trim().slice(0, 100) };
+  const why = (r: { status: number | null; output: string; timedOut: boolean }) => (r.timedOut ? 'timed out' : (r.output.split('\n').find((x) => x.trim()) ?? `exit ${r.status}`).trim().slice(0, 100));
+  if (!ok(d)) return { ...result('diff-failed'), detail: why(d) };
   const changed = changedLines(d.output);
   const un = exec('git', ['-c', 'core.quotePath=false', 'ls-files', '-z', '--others', '--exclude-standard'], GIT_MS);
-  if (ok(un))
-    for (const f of un.output.split('\0').filter((x) => x.trim())) {
-      try {
-        if (!lstatSync(join(root, f)).isFile()) continue; // never follow symlinks
-        const text = readFileSync(join(root, f), 'utf8');
-        const n = text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
-        for (let i = 1; i <= n; i++) add(changed, f, i);
-      } catch {
-        // unreadable or vanished: nothing to count
-      }
+  if (!ok(un)) return { ...result('diff-failed'), detail: `untracked files: ${why(un)}` };
+  for (const f of un.output.split('\0').filter((x) => x.trim())) {
+    try {
+      if (!lstatSync(join(root, f)).isFile()) continue; // never follow symlinks
+      const text = readFileSync(join(root, f), 'utf8');
+      const n = text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+      for (let i = 1; i <= n; i++) add(changed, f, i);
+    } catch {
+      // unreadable or vanished: nothing to count
     }
+  }
   const { paths, exempt } = cfg.tdd;
   const scoped = [...changed].filter(([f]) => toRepoPath(root, f) && matches(f, paths) && !matches(f, exempt) && !isTestFile(f));
   if (scoped.length === 0) return result(undefined);

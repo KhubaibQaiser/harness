@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { validateConfig } from '../core/config-io.js';
-import { matches } from '../core/paths.js';
 import { MIN_CLAUDE_CODE } from '../core/min-claude.js';
 import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
@@ -91,7 +90,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     parseErr = (e as Error).message.split('\n')[0];
   }
   const v = cfgText === null ? null : parseErr ? null : validateConfig(raw);
-  if (cfgText === null) fix('`.harness/config.yaml` is missing', 'run harness update to restore it');
+  if (cfgText === null) fix('`.harness/config.yaml` is missing', 'restore it with git checkout -- .harness/config.yaml, or run harness uninstall and then harness init.');
   else if (parseErr) fix(`\`.harness/config.yaml\` is not valid YAML (${parseErr})`, 'fix the YAML, then run harness doctor');
   else if (!v!.ok) fix(`\`.harness/config.yaml\` is invalid (${(v as { errors: string[] }).errors.join('; ')})`, 'fix those keys, then run harness doctor');
   else ok('`.harness/config.yaml` is valid');
@@ -100,8 +99,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const facts = detect(root);
 
   if (config.checks.tdd) {
-    // ponytail: a package counts as TDD when a probe file under its src/ matches tdd.paths.
-    const tddPkgs = facts.packages.filter((p) => p.test !== 'none' && matches(`${p.dir === '.' ? '' : p.dir + '/'}src/__probe__.ts`, config.tdd.paths));
+    const tddPkgs = facts.packages.filter((p) => p.test !== 'none'); // same set update checks
     for (const p of tddPkgs) {
       const r = testConfigChange(p, root, config.tdd.results_dir);
       const where = p.dir === '.' ? 'the root package' : `\`${p.dir}\``;

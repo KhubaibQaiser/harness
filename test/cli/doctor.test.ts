@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -96,4 +96,22 @@ test('not installed: message and exit 1', () => {
   const r = run(root);
   expect(r.out).toContain('not installed');
   expect(r.code).toBe(1);
+});
+
+test('missing config: restore from git, never loops through update', async () => {
+  const root = await installed();
+  rmSync(join(root, '.harness/config.yaml'));
+  const r = run(root, { path: bin('npm') });
+  expect(r.out).toContain('fix `.harness/config.yaml` is missing: restore it with git checkout -- .harness/config.yaml, or run harness uninstall and then harness init.');
+  expect(r.lines.find((l) => l.includes('config.yaml` is missing'))).not.toContain('harness update');
+  expect(r.code).toBe(1);
+});
+
+test('custom tdd.paths: missing reporter is still reported', async () => {
+  const root = await installed();
+  setConfig(root, (s) => s.replace(/paths:[\s\S]*?\n {2}exempt/, 'paths:\n    - lib/**\n  exempt'));
+  const r = run(root, { path: bin('npm') });
+  expect(r.out).toMatch(/^ok vitest reporter output is set up/m);
+  writeFileSync(join(root, 'vitest.config.ts'), "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: {} });\n");
+  expect(run(root, { path: bin('npm') }).out).toMatch(/^fix .*`vitest\.config\.ts`/m);
 });

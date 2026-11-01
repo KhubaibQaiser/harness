@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,4 +35,14 @@ test('status shows gates on and not-installed', async () => {
   let out = '';
   expect(status([], { root: makeRepo({ a: 'b' }), env: {}, out: (s) => (out += s) })).toBe(1);
   expect(out).toContain('not installed');
+});
+
+test('status prints config warnings before the gates', async () => {
+  const root = makeRepo({ a: 'b' });
+  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  writeFileSync(join(root, '.harness/config.yaml'), 'bogus: 1\n');
+  let out = '';
+  status([], { root, env: {}, out: (s) => (out += s + '\n') });
+  expect(out).toMatch(/^warn config: unknown key "bogus" ignored$/m);
+  expect(out.indexOf('warn ')).toBeLessThan(out.indexOf('Gates'));
 });

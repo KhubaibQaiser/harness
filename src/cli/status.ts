@@ -24,9 +24,9 @@ export function status(args: string[], cli: CliEnv): number {
   }
   if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run harness init to install it.'), 1;
 
-  const { config } = loadConfig(root);
+  const { config, warnings } = loadConfig(root);
   const noJs = !detect(root).packages.some((p) => p.test !== 'none');
-  const lines = [`Harness ${VERSION} (installed ${m.version})`, 'Gates'];
+  const lines = [...warnings.map((w) => `warn ${w}`), `Harness ${VERSION} (installed ${m.version})`, 'Gates'];
   for (const [label, key] of GATES) {
     const on = config.checks[key];
     lines.push(`  ${label}: ${on ? 'on' : `off - ${key === 'tdd' && noJs ? OFF_WHY : OFF_CONFIG}`}`);

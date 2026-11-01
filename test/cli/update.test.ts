@@ -1,3 +1,5 @@
+import * as realFs from 'node:fs';
+import type { FsLike } from '../../src/install/apply.js';
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -37,9 +39,9 @@ const installed = async () => {
   await init(['--yes'], { env: {}, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
   return root;
 };
-const up = async (root: string, args: string[], over: { distDir?: string; version?: string; prompt?: Prompt; fetchImpl?: typeof fetch } = {}) => {
+const up = async (root: string, args: string[], over: { distDir?: string; version?: string; prompt?: Prompt; fetchImpl?: typeof fetch; fs?: FsLike } = {}) => {
   let out = '';
-  const code = await update(args, { env: {}, root, out: (s) => (out += s + '\n'), prompt: over.prompt ?? fake(), version: over.version ?? '1.1.0', templatesDir, distDir: over.distDir ?? join(pkgDir, 'dist'), fetchImpl: over.fetchImpl });
+  const code = await update(args, { env: {}, root, out: (s) => (out += s + '\n'), prompt: over.prompt ?? fake(), version: over.version ?? '1.1.0', templatesDir, distDir: over.distDir ?? join(pkgDir, 'dist'), fetchImpl: over.fetchImpl, fs: over.fs });
   return { code, out };
 };
 const DISPATCH = '.harness/hooks/dispatch.mjs';
@@ -55,10 +57,49 @@ test('update re-renders the dispatcher and rewrites the manifest version', async
   expect(f.kind).toBe('create');
   expect(f.hash).toBe(sha256(readFileSync(join(root, DISPATCH), 'utf8')));
   expect(m.files.map((x) => x.rel)).toContain('.claude/settings.json'); // untouched entries carried over
-  // uninstall still removes everything
+  // uninstall still removes everything and restores merged files
   const u = await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() });
   expect(u).toBe(0);
   expect(() => readFileSync(join(root, DISPATCH))).toThrow();
+  expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toBe(REPO['AGENTS.md']);
+  expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe(REPO['.gitignore']);
+});
+
+const manifestFails = (): FsLike => { let n = 0; return ({ ...realFs, renameSync: (a: any, b: any) => { if (String(b).endsWith('.harness/manifest.json') && !n++) throw new Error('boom'); realFs.renameSync(a, b); } }) as FsLike; };
+const snapshot = (root: string) => [DISPATCH, '.harness/manifest.json', 'AGENTS.md', '.claude/settings.json'].map((r) => readFileSync(join(root, r), 'utf8'));
+
+test('manifest write failure in update rolls back every file', async () => {
+  const root = await installed();
+  const before = snapshot(root);
+  const r = await up(root, ['--yes'], { distDir: newDist(), fs: manifestFails() });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('rolled back');
+  expect(snapshot(root)).toEqual(before);
+});
+
+test('manifest write failure in uninstall (kept path) rolls back every file', async () => {
+  const root = await installed();
+  const p = join(root, DISPATCH);
+  writeFileSync(p, readFileSync(p, 'utf8') + '// mine\n'); // edited created file -> kept
+  const before = snapshot(root);
+  let out = '';
+  const code = await uninstall(['--yes'], { env: {}, root, out: (s) => (out += s), prompt: fake(), fs: manifestFails() });
+  expect(code).toBe(1);
+  expect(snapshot(root)).toEqual(before);
+});
+
+test('edited-files copy differs for merged files', async () => {
+  const root = await installed();
+  writeFileSync(join(root, DISPATCH), 'x\n');
+  writeFileSync(join(root, 'AGENTS.md'), '# Mine\nedit\n');
+  // a changed template makes the merged AGENTS.md block update too
+  const t = mkdtempSync(join(tmpdir(), 'harness-tpl-'));
+  cpSync(templatesDir, t, { recursive: true });
+  writeFileSync(join(t, 'agents-block.md'), readFileSync(join(t, 'agents-block.md'), 'utf8') + '\nNew line.\n');
+  let out = '';
+  await update(['--yes'], { env: {}, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir: t, distDir: newDist() });
+  expect(out).toContain(`You edited these harness files; update replaces them: \`${DISPATCH}\`.`);
+  expect(out).toMatch(/You edited these files; update changes only the harness parts: `AGENTS.md`\./);
 });
 
 test('update keeps user config', async () => {

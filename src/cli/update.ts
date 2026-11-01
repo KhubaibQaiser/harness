@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { validateConfig } from '../core/config-io.js';
 import { latestVersion } from '../core/registry.js';
-import { ApplyError, ManifestError, applyChanges, readManifest, type Manifest } from '../install/apply.js';
+import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Manifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
@@ -13,7 +13,7 @@ import { sha256 } from '../install/text.js';
 import type { Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
-export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch };
+export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch; fs?: FsLike };
 
 const USAGE = 'Usage: harness update [--yes] [--check]';
 const PKG = '@khubaibqaiser/harness';
@@ -60,22 +60,31 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   try {
     plan = planChanges(root, v.config, detect(root), { version, distDir: cli.distDir, templatesDir: cli.templatesDir });
   } catch (e) {
-    return out(`Cannot build the update plan: ${(e as Error).message}`), 1;
+    return out(`Cannot build the update plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
   }
   const changes = plan.changes.filter((c) => c.rel !== CONFIG); // the user owns the config after init
 
-  const writeManifest = (next: Manifest) => {
-    const p = join(root, MANIFEST_REL);
-    writeFileSync(p + '.tmp', JSON.stringify(next, null, 2) + '\n');
-    renameSync(p + '.tmp', p);
+  const commit = (cs: typeof changes, manifest: Manifest) => {
+    try {
+      applyChanges(root, cs, version, undefined, cli.fs, { manifest });
+      return null;
+    } catch (e) {
+      if (e instanceof ApplyError) return e.message;
+      throw e;
+    }
   };
   if (!changes.length) {
     if (m.version === version) return out(`Harness ${version} is up to date.`), 0;
-    writeManifest({ ...m, version });
-    return out(`Harness files already match ${version}. Manifest version updated from ${m.version}.`), 0;
+    const err = commit([], { ...m, version });
+    return out(err ?? `Harness files already match ${version}. Manifest version updated from ${m.version}.`), err ? 1 : 0;
   }
 
-  const edited = changes.filter((c) => c.kind === 'update' && m!.files.some((f) => f.rel === c.rel && f.hash !== sha256(c.before))).map((c) => `\`${c.rel}\``);
+  const entry = (rel: string) => m!.files.find((f) => f.rel === rel);
+  const merged = (rel: string) => entry(rel)?.kind === 'update' || !!entry(rel)?.blocks?.length;
+  const editedRels = changes.filter((c) => c.kind === 'update' && entry(c.rel) && entry(c.rel)!.hash !== sha256(c.before)).map((c) => c.rel);
+  const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
+  const editedOwned = editedRels.filter((r) => !merged(r));
+  const editedMerged = editedRels.filter(merged);
   out(`Update ${m.version} -> ${version}:`);
   for (const c of changes) {
     out(`  ${c.kind} ${c.rel}`);
@@ -83,28 +92,24 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   }
   if (plan.manual.length) out('Do these by hand:\n' + plan.manual.map((l) => `  ${l}`).join('\n'));
   for (const n of plan.notes) out(`Note: ${n}`);
-  if (edited.length) out(`You edited these harness files; update replaces them: ${edited.join(', ')}.`);
+  if (editedOwned.length) out(`You edited these harness files; update replaces them: ${list(editedOwned)}.`);
+  if (editedMerged.length) out(`You edited these files; update changes only the harness parts: ${list(editedMerged)}.`);
   if (!yes && !(await prompt.confirm('Apply these changes? (y/N)'))) return out('Cancelled. Nothing was written.'), 0;
 
-  // Apply transactionally without its manifest, then write one merged manifest (same tmp+rename as uninstall).
-  let applied: Manifest;
-  try {
-    applied = applyChanges(root, changes, version, undefined, undefined, { writeManifest: false });
-  } catch (e) {
-    if (e instanceof ApplyError) return out(e.message), 1;
-    throw e;
-  }
-  const done = new Map(applied.files.map((f) => [f.rel, f]));
+  // One transaction: the files and the merged manifest commit together or roll back together.
   const files: Manifest['files'] = m.files.map((old) => {
-    const a = done.get(old.rel);
-    if (!a) return old; // not touched by this update
-    done.delete(old.rel);
-    const blocks = [...new Set([...(old.blocks ?? []), ...(a.blocks ?? [])])];
-    // Keep init's kind (a created file stays deletable) and, for merged files, the pre-init backup uninstall restores.
-    const backup = old.backup ?? (old.kind === 'update' ? a.backup : undefined);
-    return { rel: old.rel, kind: old.kind, hash: a.hash, ...(blocks.length ? { blocks } : {}), ...(backup ? { backup } : {}) };
+    const c = changes.find((x) => x.rel === old.rel);
+    if (!c || c.kind === 'delete') return old; // not touched by this update
+    const blocks = [...new Set([...(old.blocks ?? []), ...(c.blocks ?? [])])];
+    // Keep init's kind (a created file stays deletable) and the pre-init backup uninstall restores.
+    return { rel: old.rel, kind: old.kind, hash: sha256(c.kind === 'create' ? c.content : c.after), ...(blocks.length ? { blocks } : {}), ...(old.backup ? { backup: old.backup } : {}) };
   });
-  writeManifest({ version, createdAt: applied.createdAt, files: [...files, ...done.values()] });
+  for (const c of changes) {
+    if (c.kind === 'delete' || m.files.some((f) => f.rel === c.rel)) continue;
+    files.push({ rel: c.rel, kind: c.kind, hash: sha256(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}) });
+  }
+  const err = commit(changes, { version, createdAt: new Date().toISOString(), files });
+  if (err) return out(err), 1;
 
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : 'Updated'} \`${c.rel}\``);
   out(`Harness updated to ${version}. Commit these files: ${[...changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);

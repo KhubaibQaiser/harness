@@ -30,12 +30,13 @@ export function applyChanges(
   version: string,
   now: () => Date = () => new Date(),
   fs: FsLike = nodeFs,
-  opts: { writeManifest?: boolean } = {},
+  /** `manifest`: write this instead of the computed one, as the transaction's last step (rolled back with the files). */
+  opts: { writeManifest?: boolean; manifest?: Manifest } = {},
 ): Manifest {
   const abs = (rel: string) => join(root, ...rel.split('/'));
   const createdAt = now().toISOString();
   const backupRel = `.harness/backup/${createdAt.replace(/:/g, '-')}`;
-  const writeManifest = opts.writeManifest ?? true;
+  const writeManifest = opts.manifest !== undefined || (opts.writeManifest ?? true);
 
   // Validate everything before touching the disk.
   const checkPath = (rel: string) => {
@@ -83,7 +84,7 @@ export function applyChanges(
   const steps: Step[] = changes.map((c) =>
     c.kind === 'delete' ? { rel: c.rel, content: null } : c.kind === 'create' ? { rel: c.rel, content: c.content, mode: c.mode } : { rel: c.rel, content: c.after },
   );
-  if (writeManifest) steps.push({ rel: MANIFEST_REL, content: JSON.stringify(manifest, null, 2) + '\n' });
+  if (writeManifest) steps.push({ rel: MANIFEST_REL, content: JSON.stringify(opts.manifest ?? manifest, null, 2) + '\n' });
 
   const modes = new Map<string, number>(); // rel -> original mode
   const madeDirs: string[] = []; // dirs this apply created, shallowest first
@@ -107,7 +108,7 @@ export function applyChanges(
       if (f) f.backup = `${backupRel}/${s.rel}`;
     }
     // The manifest content was serialised before backup paths were known; rebuild it.
-    if (writeManifest) steps[steps.length - 1].content = JSON.stringify(manifest, null, 2) + '\n';
+    if (writeManifest && !opts.manifest) steps[steps.length - 1].content = JSON.stringify(manifest, null, 2) + '\n';
     for (const s of steps) {
       const target = abs(s.rel);
       touched.push(s.rel);

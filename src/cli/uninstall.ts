@@ -1,15 +1,15 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, rmdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { ApplyError, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
+import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
 import { removeBlocks } from '../install/merge.js';
 import { sha256, eolOf, jsonIndentOf, withEol } from '../install/text.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import type { Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
-export type UninstallEnv = CliEnv & { prompt: Prompt };
+export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike };
 
 const USAGE = 'Usage: harness uninstall [--yes] [--force]';
 const SETTINGS = '.claude/settings.json';
@@ -135,9 +135,11 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     }
   }
 
-  if (changes.length) {
+  // Keep a manifest that lists only the kept files, so a second run with --force can still reach them.
+  const keptManifest: Manifest | undefined = kept.length ? { ...m, files: m.files.filter((f) => kept.includes(f.rel)) } : undefined;
+  if (changes.length || keptManifest) {
     try {
-      applyChanges(root, changes, m.version, undefined, undefined, { writeManifest: false });
+      applyChanges(root, changes, m.version, undefined, cli.fs, keptManifest ? { manifest: keptManifest } : { writeManifest: false });
     } catch (e) {
       if (e instanceof ApplyError) return out(e.message), 1;
       throw e;
@@ -154,10 +156,6 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   for (const n of notes) out(`Note: ${n}`);
 
   if (kept.length) {
-    // Keep a manifest that lists only the kept files, so a second run with --force can still reach them.
-    const mp = join(root, MANIFEST_REL);
-    writeFileSync(mp + '.tmp', JSON.stringify({ ...m, files: m.files.filter((f) => kept.includes(f.rel)) }, null, 2) + '\n');
-    renameSync(mp + '.tmp', mp);
     out(`Kept ${kept.map((k) => `\`${k}\``).join(', ')} because you edited them. Run harness uninstall --force to remove them too.`);
   } else if (yes || (await prompt.confirm('Delete .harness/ including logs? (y/N)'))) {
     rmSync(join(root, '.harness'), { recursive: true, force: true });

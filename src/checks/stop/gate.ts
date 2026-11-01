@@ -164,9 +164,14 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     if (r.status === 0) continue;
     return failStep(`${rs.label} failed (attempt {n}). Fix it, then finish again.\n${tail(r.output)}`);
   }
-  if (ran === 0 && !ctx.state.stopNothingLogged) {
-    log('stop-nothing-to-run');
-    ctx.save({ ...ctx.state, stopNothingLogged: true });
+  if (ran === 0) {
+    // Nothing ran, so there is no fresh coverage to judge: allow without the coverage gate.
+    if (!ctx.state.stopNothingLogged) {
+      log('stop-nothing-to-run');
+      ctx.save({ ...ctx.state, stopNothingLogged: true });
+    }
+    setAttempts(0);
+    return allow;
   }
 
   // Diff coverage runs after every step passes.

@@ -157,12 +157,12 @@ test('formatLines collapses consecutive runs into ranges', async () => {
 function gateCtx(root: string, tdd = true) {
   const config = cfgOf();
   config.checks.tdd = tdd;
-  config.stop.steps = [];
+  config.stop.steps = [{ name: 't', run: ['true'] }]; // one passing step so the coverage gate is reached
   const saved: unknown[] = [];
   return { root, config, input: { session_id: 's' }, state: { startedAt: 0, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0, baseHead: undefined }, unattended: false, env: {}, save: (s: unknown) => saved.push(s) } as unknown as Ctx;
 }
 const stopWith = (root: string, g: ReturnType<typeof gitExec>, ctx = gateCtx(root)) =>
-  runStop(ctx, (c, a, ms) => (c === 'git' && a[0] === 'status' ? { status: 0, output: ' M src/a.ts\0', timedOut: false } : g.exec(c, a, ms)), () => FRESH * 1000);
+  runStop(ctx, (c, a, ms) => (c === 'true' ? { status: 0, output: '', timedOut: false } : c === 'git' && a[0] === 'status' ? { status: 0, output: ' M src/a.ts\0', timedOut: false } : g.exec(c, a, ms)), () => FRESH * 1000, () => '/bin/true');
 
 test('gate blocks below threshold with the brief message, capped at 10 files and 20 line numbers', async () => {
   const cov = istanbul();
@@ -296,7 +296,6 @@ test('gate: coverage blocks count attempts and give up at max_attempts', async (
   const run = async (attempts: number) => {
     const ctx = gateCtx(root);
     ctx.state.stopAttempts = attempts;
-    ctx.state.stopNothingLogged = true; // keep this test about attempt saves only
     const saved: number[] = [];
     ctx.save = (s) => saved.push(s.stopAttempts);
     return { d: await stopWith(root, gitExec({ diff }), ctx), saved };

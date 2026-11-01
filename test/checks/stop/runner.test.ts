@@ -28,6 +28,14 @@ test('windows resolves .cmd shims', () => {
   expect(findOnPath('nope', { PATH: dir }, 'win32')).toBeNull();
 });
 
+test('windows prefers pnpm.cmd over the extensionless shim', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'h-path-'));
+  writeFileSync(join(dir, 'pnpm'), '');
+  writeFileSync(join(dir, 'pnpm.cmd'), '');
+  expect(findOnPath('pnpm', { PATH: dir, PATHEXT: '.EXE;.CMD' }, 'win32')).toBe(join(dir, 'pnpm.cmd'));
+  expect(findOnPath('pnpm.cmd', { PATH: dir }, 'win32')).toBe(join(dir, 'pnpm.cmd'));
+});
+
 test('posix needs an executable file', () => {
   const dir = mkdtempSync(join(tmpdir(), 'h-path-'));
   writeFileSync(join(dir, 'tool'), '', { mode: 0o755 });

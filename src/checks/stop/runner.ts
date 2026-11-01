@@ -32,7 +32,8 @@ export function findOnPath(cmd: string, env: NodeJS.ProcessEnv, platform: NodeJS
   const key = Object.keys(env).find((k) => (win ? k.toUpperCase() === 'PATH' : k === 'PATH'));
   const dirs = (key ? env[key] ?? '' : '').split(win ? ';' : ':').filter(Boolean);
   const pathext = win ? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean) : [];
-  const names = win ? [cmd, ...pathext.map((e) => cmd + e.toLowerCase()), ...pathext.map((e) => cmd + e)] : [cmd];
+  // Windows: npm/pnpm ship an extensionless sh shim beside the .cmd; only try the bare name when cmd has an extension.
+  const names = win ? [...(cmd.includes('.') ? [cmd] : []), ...pathext.flatMap((e) => [cmd + e.toLowerCase(), cmd + e])] : [cmd];
   for (const d of dirs) for (const n of names) if (isFile(join(d, n), win)) return join(d, n);
   return null;
 }

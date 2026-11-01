@@ -385,3 +385,10 @@ test('no steps at all: allowed, stop-nothing-to-run logged once per session', as
   expect(s.steps()).toEqual([]);
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-nothing-to-run')).toHaveLength(1);
 });
+
+test('no steps with tdd on: allowed, coverage gate not run', async () => {
+  const s = setup({ yaml: 'stop:\n  package_manager: none\nchecks:\n  tdd: true\n' });
+  expect(s.ctx.config.checks.tdd).toBe(true);
+  expect(await runStop(s.ctx, s.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(s.calls.every((c) => c.cmd === 'git' && c.args[0] === 'status')).toBe(true);
+});

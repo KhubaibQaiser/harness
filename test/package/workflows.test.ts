@@ -99,3 +99,11 @@ test('every checkout sets persist-credentials: false', () => {
     for (const c of cos) expect(c.with['persist-credentials'], f).toBe(false);
   }
 });
+
+test('real-frameworks job runs the opt-in e2e on ubuntu with node 22', () => {
+  const job = load('ci.yml').jobs['real-frameworks'];
+  expect(job['runs-on']).toBe('ubuntu-latest');
+  expect(job.steps.find((s: any) => s['actions/setup-node'] || /setup-node@/.test(s.uses ?? '')).with['node-version']).toBe(22);
+  const run = job.steps.find((s: any) => /real-frameworks/.test(s.run ?? ''));
+  expect(run.env.HARNESS_E2E_REAL).toBe('1');
+});

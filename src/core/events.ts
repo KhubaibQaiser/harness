@@ -8,6 +8,7 @@ export interface HarnessEvent {
   decision: string;
   reason?: string;
   files?: string[];
+  co?: true; // denied alongside an earlier deny on the same call
 }
 
 const file = (root: string) => join(root, '.harness/logs/events.jsonl');

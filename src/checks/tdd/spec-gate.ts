@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { toRepoPath } from '../../core/paths.js';
 import type { Check } from '../../hooks/dispatch.js';
+import { editTarget } from '../../hooks/edit-target.js';
 import { fileWriteTargets } from '../guard.js';
 import { newestFresh, readResults, resultsDir } from './results.js';
 import { afterContent } from './tamper.js';
@@ -22,6 +23,7 @@ const features = (text: string): Feature[] | null => {
 export const specGate: Check = {
   name: 'specGate',
   events: ['PreToolUse'],
+  pure: true,
   run(ctx) {
     if (!ctx.config.checks.tdd) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = ctx.input;
@@ -31,8 +33,8 @@ export const specGate: Check = {
       const hit = typeof cmd === 'string' && fileWriteTargets(cmd).some((t) => toRepoPath(ctx.root, t) === FILE);
       return hit ? deny('Edit features.json with the Edit or Write tool so the spec gate can check it.') : { kind: 'allow' };
     }
-    const p = tool_input.file_path;
-    if ((tool_name !== 'Edit' && tool_name !== 'Write' && tool_name !== 'MultiEdit') || typeof p !== 'string' || toRepoPath(ctx.root, p) !== FILE) return { kind: 'allow' };
+    const p = editTarget(ctx.input);
+    if (p === null || toRepoPath(ctx.root, p) !== FILE) return { kind: 'allow' };
 
     let current = '';
     try {

@@ -135,3 +135,16 @@ test('lookups stop when the time budget is spent', () => {
   expect(d.kind).toBe('ask');
   expect(reason(d)).toBe('"c3": could not verify on the registry');
 });
+
+test('lookup budget starts at process start', () => {
+  let now = 4000; // process started 4000 ms before the first lookup
+  const timeouts: (number | undefined)[] = [];
+  const lookup: Look = (_n, t) => (timeouts.push(t), OLD);
+  verifyPackages(['a1'], { root: repo(), now: NOW, lookup, startedAt: 0, clock: () => now });
+  expect(timeouts).toEqual([5000]);
+  now = 7000; // 7000 spent: only 2000 of the 9000 budget left
+  verifyPackages(['a1'], { root: repo(), now: NOW, lookup, startedAt: 0, clock: () => now });
+  expect(timeouts).toEqual([5000, 2000]);
+  now = 9000;
+  expect(reason(verifyPackages(['a1'], { root: repo(), now: NOW, lookup, startedAt: 0, clock: () => now }))).toBe('"a1": could not verify on the registry');
+});

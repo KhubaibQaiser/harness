@@ -38,6 +38,24 @@ test('PreToolUse stops running checks at the first deny', async () => {
   await dispatch(pre({ hook_event_name: 'PostToolUse' }), [denyAll, later], {});
   expect(ran).toBe(true);
 });
+const pureDeny = (name: string): Check => ({ ...mk(name, { kind: 'deny', reason: `r-${name}`, check: name }), pure: true });
+test('co-denies are logged', async () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  const res = await dispatch(pre({ cwd: r }), [pureDeny('guard'), pureDeny('protect')], {});
+  expect(out(res).hookSpecificOutput?.permissionDecisionReason).toBe('r-guard');
+  const ev = readEvents(r).filter((e) => e.decision === 'deny');
+  expect(ev).toHaveLength(2);
+  expect(ev[0]!.co).toBeUndefined();
+  expect(ev[1]).toMatchObject({ check: 'protect', co: true });
+});
+test('impure checks do not run after a deny', async () => {
+  let ran = false;
+  const impure: Check = { name: 'impure', events: ['PreToolUse'], run: () => ((ran = true), { kind: 'allow' }) };
+  await dispatch(pre(), [pureDeny('guard'), impure], {});
+  expect(ran).toBe(false);
+});
 test('unattended turns ask into deny with prefix', async () => {
   const r = await dispatch(pre(), [askAll], { CI: 'true' });
   expect(decisionOf(r)).toBe('deny');

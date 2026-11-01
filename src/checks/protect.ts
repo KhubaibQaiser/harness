@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
+import { editTarget } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
 import { fileWriteTargets, gitArgs, rmTargets } from './guard.js';
 
@@ -108,12 +109,13 @@ export const protect: Check = {
   name: 'protect',
   events: ['PreToolUse'],
   failClosed: true,
+  pure: true,
   run({ input, root, config }) {
     if (config?.checks.protect === false) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = input;
     let paths: string[] = [];
-    if (tool_name === 'Edit' || tool_name === 'Write' || tool_name === 'MultiEdit') paths = [String(tool_input.file_path ?? '')];
-    else if (tool_name === 'NotebookEdit') paths = [String(tool_input.notebook_path ?? '')];
+    const target = editTarget(input);
+    if (target !== null) paths = [target];
     else if (tool_name === 'Bash') {
       const cmd = String(tool_input.command ?? '');
       const cmds = expand(cmd);

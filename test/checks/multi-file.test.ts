@@ -160,30 +160,26 @@ test('end to end through the real registry: two edits, a prompt, then the third 
   expect(await pre('d.ts')).not.toBe('');
 });
 
-test('PreToolUse records an allowed edit, so a parallel second Pre asks', async () => {
-  const t = setup();
-  expect(kind(await t.edit('a.ts'))).toBe('allow');
-  expect(readState(t.root, 's').files).toEqual(['a.ts']);
-  expect(kind(await t.edit('b.ts'))).toBe('ask');
-});
-
 test('an asked edit is not recorded: retrying a allows, b asks again', async () => {
   const t = setup();
   await t.edit('a.ts');
+  await t.post('a.ts');
   expect(kind(await t.edit('b.ts'))).toBe('ask');
   expect(kind(await t.edit('a.ts'))).toBe('allow');
   expect(kind(await t.edit('b.ts'))).toBe('ask');
   expect(readState(t.root, 's').files).toEqual(['a.ts']);
 });
 
-test('allow-log appends only when a unit is newly recorded, not on repeated Pre', async () => {
+test('allow-log appends once per Pre of a new unit, not for recorded units', async () => {
   const t = setup('allow-log');
   const env = { CI: 'true' };
   await t.edit('a.ts', 'Edit', env);
+  await t.post('a.ts');
   await t.edit('b.ts', 'Edit', env);
+  await t.post('b.ts');
   await t.edit('b.ts', 'Edit', env);
   await t.edit('b.test.ts', 'Edit', env);
-  expect(readEvents(t.root).filter((e) => e.check === 'multi-file').map((e) => e.files)).toEqual([['a.ts', 'b.ts']]);
+  expect(readEvents(t.root).filter((e) => e.check === 'multi-file' && e.decision === 'allow-log').map((e) => e.files)).toEqual([['a.ts', 'b.ts']]);
 });
 
 // --- unattended.require_reason ---
@@ -346,4 +342,21 @@ test('a new prompt resets the turn (stop attempts too) even with checks.multiFil
   writeState(t.root, 's', { ...readState(t.root, 's'), stopAttempts: 2 });
   await t.prompt();
   expect(readState(t.root, 's').stopAttempts).toBe(0);
+});
+
+test('a declined ask does not record the file', async () => {
+  const t = setup();
+  await t.edit('a.ts');
+  await t.post('a.ts');
+  expect(kind(await t.edit('b.ts'))).toBe('ask'); // declined: no PostToolUse follows
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+  expect(kind(await t.edit('c.ts'))).toBe('ask'); // still asks about the second unit only
+});
+
+test('PreToolUse never records; PostToolUse records the file', async () => {
+  const t = setup();
+  expect(kind(await t.edit('a.ts'))).toBe('allow');
+  expect(readState(t.root, 's').files).toEqual([]);
+  await t.post('a.ts');
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
 });

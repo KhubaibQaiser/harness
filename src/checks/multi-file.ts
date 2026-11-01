@@ -6,15 +6,14 @@ import { appendEvent } from '../core/events.js';
 import { matches, pairKey, toRepoPath } from '../core/paths.js';
 import { clearTurn } from '../core/state.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
+import { editTarget } from '../hooks/edit-target.js';
 
 const LOCKS = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb'];
 
 // Repo-relative path of a counted edit, or null for other tools, outside-root, snapshots, lockfiles and generated files.
 function target(ctx: Ctx): string | null {
-  const { tool_name, tool_input = {} } = ctx.input;
-  const key = tool_name === 'NotebookEdit' ? 'notebook_path' : tool_name === 'Edit' || tool_name === 'Write' || tool_name === 'MultiEdit' ? 'file_path' : '';
-  const p = key && tool_input[key];
-  if (typeof p !== 'string' || !p) return null;
+  const p = editTarget(ctx.input);
+  if (p === null) return null;
   const rel = toRepoPath(ctx.root, p);
   if (rel === null || /(^|\/)__snapshots__\//.test(rel) || rel.endsWith('.snap') || LOCKS.includes(basename(rel)) || matches(rel, ctx.config.multi_file_gate.generated)) return null;
   return rel;
@@ -86,14 +85,8 @@ export const multiFile: Check = {
       if (!approved && units.size >= 2 && !ctx.unattended) appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'approved', files: next });
       return { kind: 'allow' };
     }
-    // Record whenever allowed, so a parallel second PreToolUse sees this file.
-    const record = () => {
-      if (!files.includes(rel)) ctx.save({ ...ctx.state, files: [...files, rel] });
-    };
-    if (units.size === 0 || units.has(pairKey(rel))) {
-      record();
-      return { kind: 'allow' };
-    }
+    // PreToolUse only decides; PostToolUse records, so a declined ask leaves no trace.
+    if (units.size === 0 || units.has(pairKey(rel))) return { kind: 'allow' };
     const list = files.join(', ');
     if (ctx.unattended) {
       const mode = ctx.config.unattended.multi_file_gate;
@@ -114,13 +107,9 @@ export const multiFile: Check = {
         }
         appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'allow-log', files: [...files, rel], ...(why ? { reason: `${rel}: ${why}` } : {}) });
       }
-      record();
       return { kind: 'allow' };
     }
-    if (approved) {
-      record();
-      return { kind: 'allow' };
-    }
+    if (approved) return { kind: 'allow' };
     return { kind: 'ask', reason: `This change now spans more than one file. Touched: ${list}. Next: ${rel}. Approve to continue this turn.`, check: 'multi-file' };
   },
 };

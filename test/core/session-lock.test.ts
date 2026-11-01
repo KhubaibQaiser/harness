@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { withSessionLock } from '../../src/core/state.js';
+import { readState, withSessionLock } from '../../src/core/state.js';
 import { dispatch } from '../../src/hooks/dispatch.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'h-lock-'));
@@ -92,7 +92,7 @@ test('a fresh held lock times out after ~2 s, runs fn anyway and warns', async (
   expect(w.join('')).toContain('harness: state lock timeout');
 }, 10000);
 
-test('10 parallel dispatcher processes for one session: exactly one allow, the rest ask', async () => {
+test('10 parallel dispatcher processes for one session: no lost state updates', async () => {
   const repo = tmp();
   mkdirSync(join(repo, '.harness'), { recursive: true });
   writeFileSync(join(repo, '.harness/config.yaml'), 'checks:\n  multiFile: true\n');
@@ -102,9 +102,9 @@ test('10 parallel dispatcher processes for one session: exactly one allow, the r
       let out = '';
       p.stdout.on('data', (d) => (out += d));
       p.on('close', () => res(out));
-      p.stdin.end(JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'par', cwd: repo, tool_name: 'Edit', tool_input: { file_path: `f${i}.ts` } }));
+      p.stdin.end(JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'par', cwd: repo, tool_name: 'Edit', tool_input: { file_path: `f${i}.ts` } }));
     });
   const outs = await Promise.all(Array.from({ length: 10 }, (_, i) => run(i)));
-  expect(outs.filter((o) => o === '')).toHaveLength(1);
-  expect(outs.filter((o) => JSON.parse(o || '{}').hookSpecificOutput?.permissionDecision === 'ask')).toHaveLength(9);
+  expect(outs).toEqual(Array(10).fill(''));
+  expect(readState(repo, 'par').files.sort()).toEqual(Array.from({ length: 10 }, (_, i) => `f${i}.ts`).sort());
 }, 30000);

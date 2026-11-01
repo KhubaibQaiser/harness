@@ -25,6 +25,7 @@ export interface Ctx {
   state: SessionState;
   unattended: boolean;
   env: NodeJS.ProcessEnv;
+  startedAt: number; // process start, for the hook time budget
   save(s: SessionState): void;
 }
 
@@ -32,12 +33,14 @@ export interface Check {
   name: string;
   events: HookEvent[];
   failClosed?: boolean;
+  pure?: boolean; // never calls ctx.save or writes files other than the event log
   run(ctx: Ctx): Decision | Promise<Decision>;
 }
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
 export const registry: Check[] = [guard, protect, redFirst, tamper, testLock, specGate, multiFile, stopGate];
 
+const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 const CURSOR_KEYS = ['conversation_id', 'generation_id', 'model_id', 'workspace_roots'];
 const NO_ROOT = '/nonexistent-harness-root'; // loadConfig/readState on it yield defaults and a fresh state without touching disk
@@ -112,22 +115,24 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   }
 
   const ctx = {
-    input, root, config, state, unattended, env,
+    input, root, config, state, unattended, env, startedAt: PROCESS_START,
     save(s: SessionState) {
       writeState(root, input.session_id, s);
       ctx.state = s;
     },
   } as Ctx;
-  const log = (check: string, decision: string, reason?: string) => {
+  const log = (check: string, decision: string, reason?: string, co?: true) => {
     try {
-      appendEvent(root, { ts: new Date().toISOString(), session: input.session_id, check, decision, ...(reason ? { reason } : {}) });
+      appendEvent(root, { ts: new Date().toISOString(), session: input.session_id, check, decision, ...(reason ? { reason } : {}), ...(co ? { co } : {}) });
     } catch (e) {
       warn('event log', e);
     }
   };
 
   const decisions: Decision[] = [];
+  let denied = false; // after the first PreToolUse deny only pure checks run; their findings are logged, not returned
   for (const c of checks.filter((c) => c.events.includes(event) && (!degraded || c.failClosed))) {
+    if (denied && !c.pure) continue;
     let d: Decision;
     try {
       const r = await c.run(ctx);
@@ -149,9 +154,9 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
         continue;
       } else if (unattended) d = { kind: 'deny', reason: `Unattended run: ${d.reason}`, check: d.check };
     }
-    log(d.check, d.kind, d.kind === 'context' ? d.text : d.reason);
-    decisions.push(d);
-    if (event === 'PreToolUse' && d.kind === 'deny') break; // later checks (multiFile records) must not see a denied call
+    log(d.check, d.kind, d.kind === 'context' ? d.text : d.reason, denied ? true : undefined);
+    if (!denied) decisions.push(d);
+    if (event === 'PreToolUse' && d.kind === 'deny') denied = true;
   }
 
   const win =

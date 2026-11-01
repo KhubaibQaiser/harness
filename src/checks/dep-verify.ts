@@ -10,6 +10,7 @@ export interface VerifyOpts {
   now: Date;
   lookup: (name: string, timeoutMs?: number) => Lookup;
   deadlineMs?: number; // total lookup budget; must fit inside the hook timeout (10 s)
+  startedAt?: number; // clock() reading the budget counts from (process start); defaults to this call
   clock?: () => number;
 }
 
@@ -85,14 +86,14 @@ export function verifyPackages(specs: string[], opts: VerifyOpts): Decision {
   const asks: string[] = [];
   const clock = opts.clock ?? Date.now;
   const start = clock();
-  const budget = opts.deadlineMs ?? 7000;
+  const budget = opts.deadlineMs ?? 9000;
   const names: string[] = [];
   for (const spec of specs) {
     const name = UNRESOLVABLE.test(spec) ? spec : stripVersion(spec);
     if (names.includes(name)) continue;
     names.push(name);
     if (UNRESOLVABLE.test(spec)) { asks.push(UNVERIFIED(spec)); continue; }
-    const remaining = budget - (clock() - start);
+    const remaining = budget - (clock() - (opts.startedAt ?? start));
     if (remaining <= 0) { asks.push(UNVERIFIED(name)); continue; }
     const found = opts.lookup(name, Math.min(5000, remaining));
     if (found === 'error') { asks.push(UNVERIFIED(name)); continue; }

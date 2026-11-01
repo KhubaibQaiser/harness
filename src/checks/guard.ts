@@ -4,7 +4,7 @@ import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
-type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { lookup?: VerifyOpts['lookup'] }; // lookup: test seam
+type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { startedAt?: number; lookup?: VerifyOpts['lookup'] }; // lookup: test seam
 type Verdict = ['allow'] | ['deny' | 'ask', string];
 
 const SAFE_EXAMPLE = /\.(example|sample|template|dist)$/i;
@@ -156,7 +156,7 @@ const checkInstall = (cmd: string, ctx: GuardCtx): Decision | undefined => {
   if (ctx.env.AGENT_GUARD_ALLOW_INSTALL === '1') {
     if (ctx.config?.checks.depVerify === false) return { kind: 'ask', reason: `Confirm adding ${found.join(', ')}.`, check: 'guard' };
     // The npm registry knows nothing of PyPI, so only JS names are verified.
-    const jsDecision = js.length ? verifyPackages(js, { root: ctx.root, now: new Date(), lookup: ctx.lookup ?? defaultLookup }) : undefined;
+    const jsDecision = js.length ? verifyPackages(js, { root: ctx.root, now: new Date(), lookup: ctx.lookup ?? defaultLookup, startedAt: ctx.startedAt }) : undefined;
     if (jsDecision?.kind === 'deny') return jsDecision;
     const reasons = [jsDecision && 'reason' in jsDecision ? jsDecision.reason : '', py.length ? `Confirm adding ${py.join(', ')}.` : ''];
     return { kind: 'ask', reason: reasons.filter(Boolean).join('; '), check: 'dep-verify' };
@@ -276,6 +276,7 @@ export const guard: Check = {
   name: 'guard',
   events: ['PreToolUse'],
   failClosed: true,
+  pure: true,
   run(ctx) {
     if (ctx.config?.checks.guard === false) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = ctx.input;

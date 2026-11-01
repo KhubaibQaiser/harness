@@ -2,7 +2,7 @@ import { defaults, type HarnessConfig, type StopStep } from '../core/config.js';
 import type { Facts } from './detect.js';
 
 const EXEMPT = ['**/*.tsx', '**/*.stories.*', '**/index.ts', '**/generated/**', '**/migrations/**'];
-const OFF_WHY = 'TDD and coverage support JS/TS (Vitest or Jest) only in this beta.';
+export const OFF_WHY = 'TDD and coverage support JS/TS (Vitest or Jest) only in this beta.';
 
 const RECURSIVE: Record<string, (berry: boolean) => string[]> = {
   pnpm: () => ['pnpm', '-r', 'test'],

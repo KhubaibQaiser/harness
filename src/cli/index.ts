@@ -7,6 +7,8 @@ import { init } from './init.js';
 import { uninstall } from './uninstall.js';
 import { update } from './update.js';
 import { readlinePrompt } from './prompt.js';
+import { doctor } from './doctor.js';
+import { status } from './status.js';
 import { pauseStatus, pauseTdd, resumeTdd } from '../core/pause.js';
 
 export interface CliEnv {
@@ -17,10 +19,10 @@ export interface CliEnv {
 
 declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force]\n       harness update [--yes] [--check]';
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force]\n       harness update [--yes] [--check]\n       harness doctor\n       harness status';
 const DAY = 86_400_000;
 
-function tddStatus(root: string): string {
+export function tddStatus(root: string): string {
   const s = pauseStatus(root);
   return s === 'off' ? 'TDD gate: on' : s === 'pending' ? 'TDD gate: paused (waiting for next session)' : `TDD gate: paused for session ${s.session}`;
 }
@@ -42,7 +44,7 @@ function tdd(sub: string | undefined, { root, env, out }: CliEnv): number {
   return 0;
 }
 
-function stats(args: string[], { root, out }: CliEnv): number {
+export function stats(args: string[], { root, out }: CliEnv): number {
   let days = 7;
   if (args.length) {
     if (args.length !== 2 || args[0] !== '--days' || !/^[1-9]\d*$/.test(args[1] as string)) return out(USAGE), 2;
@@ -83,6 +85,8 @@ export function run(argv: string[], cli: CliEnv): number {
   const [cmd, ...rest] = argv;
   if (cmd === 'tdd' && rest.length === 1) return tdd(rest[0], cli);
   if (cmd === 'stats') return stats(rest, cli);
+  if (cmd === 'doctor') return doctor(rest, cli);
+  if (cmd === 'status') return status(rest, cli);
   cli.out(USAGE);
   return 2;
 }

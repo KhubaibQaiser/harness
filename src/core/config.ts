@@ -57,9 +57,9 @@ export function loadConfig(root: string): { config: HarnessConfig; warnings: str
   if (user == null) return { config, warnings };
   if (!isObj(user)) return { config, warnings: ['config.yaml is invalid: top level must be a mapping; using defaults'] };
   merge(config as unknown as Record<string, unknown>, user, '', warnings);
-  if (config.stop.timeout_s > 580) {
-    config.stop.timeout_s = 580;
-    warnings.push('stop.timeout_s capped at 580 to fit the 600 s Stop hook timeout');
+  if (config.stop.timeout_s > 550) {
+    config.stop.timeout_s = 550;
+    warnings.push('stop.timeout_s capped at 550 to fit the 600 s Stop hook timeout');
   }
   const rel = relative(join(root, '.harness/state'), resolve(root, config.tdd.results_dir));
   if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) warnings.push('tdd.results_dir is outside .harness/state; the agent could forge test results there');

@@ -204,13 +204,13 @@ test('gate allows and logs coverage-skipped when there is no base', () => {
   expect(JSON.parse(log.trim().split('\n').at(-1)!)).toMatchObject({ check: 'stop', decision: 'coverage-skipped', reason: 'no base' });
 });
 
-test('config: stop.timeout_s above 580 is capped with a warning', () => {
+test('config: stop.timeout_s above 550 is capped with a warning', () => {
   const root = mkdtempSync(join(tmpdir(), 'h-cap-'));
   mkdirSync(join(root, '.harness'));
   writeFileSync(join(root, '.harness/config.yaml'), 'stop:\n  timeout_s: 900\n');
   const { config, warnings } = loadConfig(root);
-  expect(config.stop.timeout_s).toBe(580);
-  expect(warnings).toContain('stop.timeout_s capped at 580 to fit the 600 s Stop hook timeout');
+  expect(config.stop.timeout_s).toBe(550);
+  expect(warnings).toContain('stop.timeout_s capped at 550 to fit the 600 s Stop hook timeout');
 });
 
 // --- fix round 1: real git runs in temp repos ---------------------------------

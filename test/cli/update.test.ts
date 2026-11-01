@@ -165,7 +165,7 @@ const reply = (status: number, body: unknown) => (async () => new Response(JSON.
 test('--check with a fake fetch: newer, same, unreachable', async () => {
   const root = await installed();
   const n = await up(root, ['--check'], { version: '1.0.0', fetchImpl: reply(200, { version: '2.0.0' }) });
-  expect(n.out).toContain('Harness 2.0.0 is available (you have 1.0.0). Run: npx @khubaibqaiser/harness@latest update');
+  expect(n.out).toContain('Harness 2.0.0 is available (you have 1.0.0). Plugin users: update the plugin, then run /harness:update. CLI users: npx @khubaibqaiser/harness@latest update.');
   const s = await up(root, ['--check'], { version: '2.0.0', fetchImpl: reply(200, { version: '2.0.0' }) });
   expect(s.out).toContain('Harness 2.0.0 is the latest.');
   const u = await up(root, ['--check'], { fetchImpl: (async () => { throw new Error('down'); }) as unknown as typeof fetch });
@@ -181,4 +181,14 @@ test('latestVersion: URL-encoded scope, null on bad status or body', async () =>
   expect(await latestVersion('x', reply(404, {}))).toBeNull();
   expect(await latestVersion('x', reply(200, { version: 3 }))).toBeNull();
   expect(await latestVersion('x', (async () => new Response('not json')) as unknown as typeof fetch)).toBeNull();
+});
+
+test('update --dry-run prints the plan and writes nothing', async () => {
+  const root = await installed();
+  const before = snapshot(root);
+  const r = await up(root, ['--dry-run'], { distDir: newDist(), prompt: { async confirm() { throw new Error('prompted'); }, async edit(_l, v) { return v; } } });
+  expect(r.code).toBe(0);
+  expect(r.out).toContain(`  update ${DISPATCH}`);
+  expect(r.out).toContain('Dry run: nothing was written.');
+  expect(snapshot(root)).toEqual(before);
 });

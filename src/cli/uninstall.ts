@@ -11,7 +11,7 @@ import type { CliEnv } from './index.js';
 
 export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike };
 
-const USAGE = 'Usage: harness uninstall [--yes] [--force]';
+const USAGE = 'Usage: harness uninstall [--yes] [--force] [--dry-run]';
 const SETTINGS = '.claude/settings.json';
 const isObj = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -73,10 +73,11 @@ function removeFromSettings(current: string, f: Manifest['files'][number], origi
 
 export async function uninstall(args: string[], cli: UninstallEnv): Promise<number> {
   const { out, prompt } = cli;
-  if (args.some((a) => a !== '--yes' && a !== '--force')) return out(USAGE), 2;
+  if (args.some((a) => a !== '--yes' && a !== '--force' && a !== '--dry-run')) return out(USAGE), 2;
   const yes = args.includes('--yes');
   const force = args.includes('--force');
-  if (!yes && cli.tty === false) return out(NO_TTY), 2;
+  const dryRun = args.includes('--dry-run');
+  if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
 
   let root: string;
   try {
@@ -134,6 +135,14 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       }
       if (after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after, blocks: [] });
     }
+  }
+
+  if (dryRun) {
+    for (const c of changes) out(`Would ${c.kind === 'delete' ? 'remove' : 'restore'} \`${c.rel}\``);
+    for (const n of notes) out(`Note: ${n}`);
+    if (kept.length) out(`Would keep ${kept.map((k) => `\`${k}\``).join(', ')} because you edited them (--force removes them too).`);
+    else out('With --yes, `.harness/` is deleted too, including its logs.');
+    return out('Dry run: nothing was written.'), 0;
   }
 
   // Keep a manifest that lists only the kept files, so a second run with --force can still reach them.

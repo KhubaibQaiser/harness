@@ -15,20 +15,21 @@ import type { CliEnv } from './index.js';
 
 export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch; fs?: FsLike };
 
-const USAGE = 'Usage: harness update [--yes] [--check]';
+const USAGE = 'Usage: harness update [--yes] [--check] [--dry-run]';
 const PKG = '@khubaibqaiser/harness';
 const CONFIG = '.harness/config.yaml';
 
 export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const { out, prompt, version } = cli;
-  if (args.some((a) => a !== '--yes' && a !== '--check')) return out(USAGE), 2;
+  if (args.some((a) => a !== '--yes' && a !== '--check' && a !== '--dry-run')) return out(USAGE), 2;
   const yes = args.includes('--yes');
-  if (!yes && !args.includes('--check') && cli.tty === false) return out(NO_TTY), 2;
+  const dryRun = args.includes('--dry-run');
+  if (!yes && !dryRun && !args.includes('--check') && cli.tty === false) return out(NO_TTY), 2;
 
   if (args.includes('--check')) {
     const latest = await latestVersion(PKG, cli.fetchImpl);
     if (latest === null) return out('Could not reach npm to check for a newer version. Try again later.'), 1;
-    out(latest === version ? `Harness ${version} is the latest.` : `Harness ${latest} is available (you have ${version}). Run: npx ${PKG}@latest update`);
+    out(latest === version ? `Harness ${version} is the latest.` : `Harness ${latest} is available (you have ${version}). Plugin users: update the plugin, then run /harness:update. CLI users: npx ${PKG}@latest update.`);
     return 0;
   }
 
@@ -75,6 +76,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     }
   };
   if (!changes.length) {
+    if (dryRun) return out(m.version === version ? `Harness ${version} is up to date.` : `Harness files already match ${version}. Dry run: nothing was written.`), 0;
     if (m.version === version) return out(`Harness ${version} is up to date.`), 0;
     const err = commit([], { ...m, version });
     return out(err ?? `Harness files already match ${version}. Manifest version updated from ${m.version}.`), err ? 1 : 0;
@@ -95,6 +97,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   for (const n of plan.notes) out(`Note: ${n}`);
   if (editedOwned.length) out(`You edited these harness files; update replaces them: ${list(editedOwned)}.`);
   if (editedMerged.length) out(`You edited these files; update changes only the harness parts: ${list(editedMerged)}.`);
+  if (dryRun) return out('Dry run: nothing was written.'), 0;
   if (!yes && !(await prompt.confirm('Apply these changes? (y/N)'))) return out('Cancelled. Nothing was written.'), 0;
 
   // One transaction: the files and the merged manifest commit together or roll back together.

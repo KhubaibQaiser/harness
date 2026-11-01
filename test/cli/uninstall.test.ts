@@ -148,3 +148,15 @@ test('edited created settings.json uses recorded blocks', async () => {
   const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
   expect(m.files.find((f: { rel: string }) => f.rel === '.claude/settings.json').blocks.length).toBeGreaterThan(0);
 });
+
+test('uninstall --dry-run lists what it would do and writes nothing', async () => {
+  const root = await installed();
+  const before = hashes(root);
+  const r = await un(root, ['--dry-run']);
+  expect(r.code).toBe(0);
+  expect(r.out).toContain('Would remove `.harness/hooks/dispatch.mjs`');
+  expect(r.out).toContain('`.harness/` is deleted too, including its logs');
+  expect(r.out).toContain('Dry run: nothing was written.');
+  expect(hashes(root)).toEqual(before);
+  expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
+});

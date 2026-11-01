@@ -65,7 +65,7 @@ test('edited created file kept without --force, deleted with it', async () => {
   writeFileSync(p, readFileSync(p, 'utf8') + '# mine\n');
   const r = await un(root, ['--yes']);
   expect(r.code).toBe(0);
-  expect(r.out).toContain('.harness/config.yaml');
+  expect(r.out).toContain('`.harness/config.yaml`');
   expect(existsSync(p)).toBe(true);
   const root2 = await installed();
   writeFileSync(join(root2, '.harness/config.yaml'), 'x\n');
@@ -77,6 +77,7 @@ test('no manifest: says harness is not installed, exit 1', async () => {
   const r = await un(makeRepo(REPO), ['--yes']);
   expect(r.code).toBe(1);
   expect(r.out).toContain('not installed');
+  expect(r.out).toContain('Run harness init');
 });
 
 test('edited settings.json: structural removal keeps the user hooks and deny rules', async () => {
@@ -126,4 +127,24 @@ test('never removes a non-empty parent directory', async () => {
 test('bad flag prints usage, exit 2', async () => {
   const r = await un(makeRepo(REPO), ['--nope']);
   expect(r.code).toBe(2);
+});
+
+test('kept file: manifest keeps only kept entries and --force removes them on a second run', async () => {
+  const root = await installed();
+  const p = join(root, '.harness/config.yaml');
+  writeFileSync(p, 'edited\n');
+  const prompt = fake();
+  const r = await un(root, ['--yes'], prompt);
+  expect(prompt.asked).toEqual([]);
+  expect(r.out).toContain('Run harness uninstall --force');
+  expect(JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8')).files.map((f: { rel: string }) => f.rel)).toEqual(['.harness/config.yaml']);
+  const r2 = await un(root, ['--yes', '--force']);
+  expect(r2.code).toBe(0);
+  expect(existsSync(join(root, '.harness'))).toBe(false);
+});
+
+test('edited created settings.json uses recorded blocks', async () => {
+  const root = await installed();
+  const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
+  expect(m.files.find((f: { rel: string }) => f.rel === '.claude/settings.json').blocks.length).toBeGreaterThan(0);
 });

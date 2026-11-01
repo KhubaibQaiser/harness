@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, rmSync, rmdirSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
-import { mergeSettings, removeBlocks } from '../install/merge.js';
+import { removeBlocks } from '../install/merge.js';
 import { sha256, eolOf, jsonIndentOf, withEol } from '../install/text.js';
+import { MANIFEST_REL } from '../install/manifest.js';
 import type { Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -39,8 +40,7 @@ function removeFromSettings(current: string, f: Manifest['files'][number], origi
     } catch {}
   }
   const had = (...path: string[]) => (orig === null ? true : path.reduce((v: any, k) => v?.[k], orig) !== undefined);
-  // A created file records no blocks, so rebuild them from the current template (a fresh merge is exactly what init wrote).
-  for (const b of f.kind === 'create' ? mergeSettings(null).blocks : (f.blocks ?? [])) {
+  for (const b of f.blocks ?? []) {
     let blk: any;
     try {
       blk = JSON.parse(b);
@@ -50,11 +50,11 @@ function removeFromSettings(current: string, f: Manifest['files'][number], origi
     if (typeof blk?.event === 'string') {
       const list = s.hooks?.[blk.event];
       const kept = Array.isArray(list) ? list.filter((g: unknown) => !isDeepStrictEqual(g, blk.group)) : [];
-      if (!Array.isArray(list) || kept.length === list.length) notes.push(`${SETTINGS}: the harness ${blk.event} hook was not found; left as is.`);
+      if (!Array.isArray(list) || kept.length === list.length) notes.push(`\`${SETTINGS}\`: the harness ${blk.event} hook was not found; left as is.`);
       else s.hooks[blk.event] = kept;
     } else if (typeof blk?.deny === 'string') {
       const list = s.permissions?.deny;
-      if (!Array.isArray(list) || !list.includes(blk.deny)) notes.push(`${SETTINGS}: deny rule ${blk.deny} was not found; left as is.`);
+      if (!Array.isArray(list) || !list.includes(blk.deny)) notes.push(`\`${SETTINGS}\`: deny rule \`${blk.deny}\` was not found; left as is.`);
       else s.permissions.deny = list.filter((d: unknown) => d !== blk.deny);
     }
   }
@@ -90,7 +90,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     if (e instanceof ManifestError) return out(e.message), 1;
     throw e;
   }
-  if (!m) return out('Harness is not installed (no .harness/manifest.json).'), 1;
+  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run harness init to install it.'), 1;
 
   const changes: Change[] = [];
   const kept: string[] = [];
@@ -98,7 +98,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   for (const f of m.files) {
     const cur = read(join(root, f.rel));
     if (cur === null) {
-      notes.push(`${f.rel} is already gone.`);
+      notes.push(`\`${f.rel}\` is already gone.`);
       continue;
     }
     const backup = f.backup ? read(join(root, f.backup)) : null;
@@ -112,7 +112,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
         continue;
       }
       const r = removeFromSettings(cur, f, backup, notes);
-      if (!r) notes.push(`${SETTINGS} is not valid JSON; left as is. Remove the harness hooks and deny rules by hand.`);
+      if (!r) notes.push(`\`${SETTINGS}\` is not valid JSON; left as is. Remove the harness hooks and deny rules by hand.`);
       else if (r.empty && f.kind === 'create') changes.push({ kind: 'delete', rel: f.rel, before: cur });
       else if (r.after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] });
       continue;
@@ -128,7 +128,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       let after = cur;
       for (const b of f.blocks ?? []) {
         const next = removeBlocks(after, [b]);
-        if (next === after) notes.push(`${f.rel}: a block harness added was not found; left as is.`);
+        if (next === after) notes.push(`\`${f.rel}\`: a block harness added was not found; left as is.`);
         after = next;
       }
       if (after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after, blocks: [] });
@@ -150,21 +150,22 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       for (let d = dirname(join(root, c.rel)); d !== root; d = dirname(d)) rmdirSync(d);
     } catch {} // rmdir refuses a non-empty directory
   }
-  for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} ${c.rel}`);
-  if (kept.length) out(`Kept ${kept.length} edited file${kept.length === 1 ? '' : 's'} (run with --force to delete): ${kept.join(', ')}.`);
+  for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} \`${c.rel}\``);
   for (const n of notes) out(`Note: ${n}`);
 
-  const keptInside = kept.filter((k) => k.startsWith('.harness/'));
-  if (keptInside.length) {
-    rmSync(join(root, '.harness/manifest.json'), { force: true });
-    out('Kept .harness/ because it holds files you edited (manifest removed).');
+  if (kept.length) {
+    // Keep a manifest that lists only the kept files, so a second run with --force can still reach them.
+    const mp = join(root, MANIFEST_REL);
+    writeFileSync(mp + '.tmp', JSON.stringify({ ...m, files: m.files.filter((f) => kept.includes(f.rel)) }, null, 2) + '\n');
+    renameSync(mp + '.tmp', mp);
+    out(`Kept ${kept.map((k) => `\`${k}\``).join(', ')} because you edited them. Run harness uninstall --force to remove them too.`);
   } else if (yes || (await prompt.confirm('Delete .harness/ including logs? (y/N)'))) {
     rmSync(join(root, '.harness'), { recursive: true, force: true });
-    out('Removed .harness/.');
+    out('Removed `.harness/`.');
   } else {
     // Keep the logs but mark harness as uninstalled so init can run again.
-    rmSync(join(root, '.harness/manifest.json'), { force: true });
-    out('Kept .harness/ (manifest removed).');
+    rmSync(join(root, MANIFEST_REL), { force: true });
+    out('Kept `.harness/` (manifest removed).');
   }
   return 0;
 }

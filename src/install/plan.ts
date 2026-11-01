@@ -27,7 +27,7 @@ export function planChanges(
   const read = (rel: string): string | null => (existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null);
   const put = (rel: string, after: string, blocks: string[] = [], mode?: number) => {
     const before = read(rel);
-    if (before === null) changes.push({ kind: 'create', rel, content: after, ...(mode ? { mode } : {}) });
+    if (before === null) changes.push({ kind: 'create', rel, content: after, ...(mode ? { mode } : {}), ...(blocks.length ? { blocks } : {}) });
     else if (before !== after) changes.push({ kind: 'update', rel, before, after, blocks });
   };
 

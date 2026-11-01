@@ -6,7 +6,7 @@ import { sha256 } from './text.js';
 export { readManifest, ManifestError, type Manifest };
 
 export type Change =
-  | { kind: 'create'; rel: string; content: string; mode?: number }
+  | { kind: 'create'; rel: string; content: string; mode?: number; blocks?: string[] }
   | { kind: 'update'; rel: string; before: string; after: string; blocks: string[] }
   | { kind: 'delete'; rel: string; before: string };
 
@@ -74,7 +74,7 @@ export function applyChanges(
       rel: c.rel,
       kind: c.kind,
       hash: sha256(c.kind === 'delete' ? c.before : c.kind === 'create' ? c.content : c.after),
-      ...(c.kind === 'update' ? { blocks: c.blocks } : {}),
+      ...(c.kind === 'update' ? { blocks: c.blocks } : c.kind === 'create' && c.blocks?.length ? { blocks: c.blocks } : {}),
     })),
   };
 

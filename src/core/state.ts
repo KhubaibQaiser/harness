@@ -6,6 +6,7 @@ export interface SessionState {
   startedAt: number;
   files: string[];
   approved: boolean;
+  reasonDenied?: string[]; // files already denied for a missing reason this turn
   redTests: string[];
   lockedTests: string[];
   stopAttempts: number;
@@ -50,7 +51,7 @@ export function writeState(root: string, session: string, s: SessionState): void
 }
 
 export function clearTurn(root: string, session: string): void {
-  writeState(root, session, { ...readState(root, session), files: [], approved: false });
+  writeState(root, session, { ...readState(root, session), files: [], approved: false, reasonDenied: [] });
 }
 
 const readOwner = (lock: string): { pid?: number; nonce?: string } | null => {

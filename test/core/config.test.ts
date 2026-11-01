@@ -69,3 +69,10 @@ test('warns when tdd.results_dir is outside .harness/state', () => {
   expect(w('.harness/state/other')).not.toContain(msg);
   expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: true\n')).warnings).not.toContain(msg);
 });
+
+test('unattended.require_reason defaults false and loads without warning', () => {
+  expect(loadConfig(dirWith('.harness/config.yaml', 'x: 1\n')).config.unattended.require_reason).toBe(false);
+  const r = loadConfig(dirWith('.harness/config.yaml', 'unattended:\n  require_reason: true\n'));
+  expect(r.config.unattended.require_reason).toBe(true);
+  expect(r.warnings).toEqual([]);
+});

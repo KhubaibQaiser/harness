@@ -185,3 +185,78 @@ test('allow-log appends only when a unit is newly recorded, not on repeated Pre'
   await t.edit('b.test.ts', 'Edit', env);
   expect(readEvents(t.root).filter((e) => e.check === 'multi-file').map((e) => e.files)).toEqual([['a.ts', 'b.ts']]);
 });
+
+// --- unattended.require_reason ---
+const user = (content: unknown) => ({ type: 'user', message: { role: 'user', content } });
+const asst = (text: string) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }, { type: 'tool_use', name: 'Edit' }] } });
+const toolResult = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } };
+const reasonSetup = (lines: unknown[] | null, extra = '  require_reason: true\n') => {
+  const t = setup('allow-log', extra);
+  const transcript = join(t.root, 't.jsonl');
+  if (lines) writeFileSync(transcript, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const edit2 = async (p: string) => t.edit(p, 'Edit', { CI: 'true' }, { transcript_path: transcript });
+  const log = () => readEvents(t.root).filter((e) => e.check === 'multi-file');
+  return { ...t, edit2, log };
+};
+const DENY = 'State why each extra file is necessary, then retry. Write one line per file: "<file> because <reason>".';
+
+test('require_reason: reason present allows and logs it', async () => {
+  const t = reasonSetup([user('go'), asst('Plan:\nsrc/b.ts because the helper moves there\nmore')]);
+  await t.post('a.ts');
+  expect(kind(await t.edit2('src/b.ts'))).toBe('allow');
+  expect(t.log().map((e) => [e.decision, e.reason])).toEqual([['allow-log', 'src/b.ts: src/b.ts because the helper moves there']]);
+});
+
+test('require_reason: absent denies once, retry allowed with no reason given', async () => {
+  const t = reasonSetup([user('go'), asst('just editing')]);
+  await t.post('a.ts');
+  const d = await t.edit2('b.ts');
+  expect(kind(d)).toBe('deny');
+  expect(d.permissionDecisionReason).toBe(DENY);
+  expect(t.log().map((e) => e.decision)).toContain('reason-required');
+  expect(kind(await t.edit2('b.ts'))).toBe('allow');
+  expect(t.log().filter((e) => e.decision === 'allow-log').map((e) => e.reason)).toEqual(['b.ts: no reason given']);
+});
+
+test('require_reason: denied-state clears on the next prompt', async () => {
+  const t = reasonSetup([user('go'), asst('nothing')]);
+  await t.post('a.ts');
+  await t.edit2('b.ts');
+  await t.prompt();
+  await t.post('a.ts');
+  expect(kind(await t.edit2('b.ts'))).toBe('deny');
+});
+
+test('require_reason: a reason before the last user prompt does not count', async () => {
+  const t = reasonSetup([user('one'), asst('b.ts because old'), user('two'), asst('nothing')]);
+  await t.post('a.ts');
+  expect(kind(await t.edit2('b.ts'))).toBe('deny');
+});
+
+test('require_reason: tool_result user lines do not end the turn', async () => {
+  const t = reasonSetup([user([{ type: 'text', text: 'go' }]), asst('b.ts BECAUSE it is needed'), toolResult, asst('working')]);
+  await t.post('a.ts');
+  expect(kind(await t.edit2('b.ts'))).toBe('allow');
+  expect(t.log()[0]!.reason).toBe('b.ts: b.ts BECAUSE it is needed');
+});
+
+test('require_reason: unreadable transcript fails open', async () => {
+  const t = reasonSetup(null);
+  await t.post('a.ts');
+  expect(kind(await t.edit2('b.ts'))).toBe('allow');
+  expect(t.log().map((e) => e.reason)).toEqual(['b.ts: transcript unreadable']);
+});
+
+test('require_reason false: plain allow-log, no reason needed', async () => {
+  const t = reasonSetup([user('go'), asst('nothing')], '');
+  await t.post('a.ts');
+  expect(kind(await t.edit2('b.ts'))).toBe('allow');
+  expect(t.log().map((e) => [e.decision, e.reason])).toEqual([['allow-log', undefined]]);
+});
+
+test('require_reason: attended runs unaffected', async () => {
+  const t = reasonSetup([user('go'), asst('nothing')]);
+  await t.post('a.ts');
+  const d = await t.edit('b.ts', 'Edit', {}, { transcript_path: join(t.root, 't.jsonl') });
+  expect(kind(d)).toBe('ask');
+});

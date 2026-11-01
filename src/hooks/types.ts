@@ -12,6 +12,7 @@ export interface HookInput {
   session_id: string;
   cwd: string;
   permission_mode?: string;
+  transcript_path?: string;
   agent_id?: string;
   agent_type?: string;
   tool_name?: string;

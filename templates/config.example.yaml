@@ -19,6 +19,7 @@ multi_file_gate:
 
 unattended:
   multi_file_gate: block   # block | allow-log | off
+  require_reason: false    # allow-log only: each extra file needs a "<file> because <reason>" line
 
 stop:
   steps: [format:check, lint, typecheck, test]

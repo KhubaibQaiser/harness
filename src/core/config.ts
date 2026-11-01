@@ -6,7 +6,7 @@ export interface HarnessConfig {
   checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop', boolean>;
   tdd: { paths: string[]; exempt: string[]; diff_coverage: number; test_lock: boolean; results_dir: string };
   multi_file_gate: { generated: string[] };
-  unattended: { multi_file_gate: 'block' | 'allow-log' | 'off' };
+  unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
   stop: { steps: string[]; package_manager: string; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
 }
 
@@ -14,7 +14,7 @@ const defaults = (): HarnessConfig => ({
   checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true },
   tdd: { paths: [], exempt: [], diff_coverage: 80, test_lock: true, results_dir: '.harness/state/test-results' },
   multi_file_gate: { generated: [] },
-  unattended: { multi_file_gate: 'block' },
+  unattended: { multi_file_gate: 'block', require_reason: false },
   stop: {
     steps: ['format:check', 'lint', 'typecheck', 'test'],
     package_manager: 'pnpm',

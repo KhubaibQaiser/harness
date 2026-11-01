@@ -124,3 +124,18 @@ test('writtenAt equal to startedAt counts as fresh', async () => {
   t.result(T, 'failed', t.startedAt);
   expect((await t.edit(A)).permissionDecision).toBe('allow');
 });
+
+test('test file on disk with no results gives the run-it message', async () => {
+  const t = setup();
+  mkdirSync(join(t.root, 'packages/core/src'), { recursive: true });
+  writeFileSync(join(t.root, 'packages/core/src/money.test.ts'), '');
+  expect((await t.edit('packages/core/src/money.ts')).permissionDecisionReason).toBe('Run the test for `money.ts` and see it fail first, then edit.');
+  mkdirSync(join(t.root, 'packages/core/src/__tests__'), { recursive: true });
+  writeFileSync(join(t.root, 'packages/core/src/__tests__/tax.ts'), '');
+  expect((await t.edit('packages/core/src/tax.ts')).permissionDecisionReason).toBe('Run the test for `tax.ts` and see it fail first, then edit.');
+});
+
+test('no test file anywhere keeps No test for', async () => {
+  const d = await setup().edit('packages/core/src/none.ts');
+  expect(d.permissionDecisionReason).toBe('No test for packages/core/src/none.ts. Write a failing test first (e.g. packages/core/src/none.test.ts), run it, then edit.');
+});

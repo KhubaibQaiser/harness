@@ -63,7 +63,7 @@ Where a gate is off for the repo's stack, `init`, `status` and `doctor` say so i
   1. `claude plugin marketplace add KhubaibQaiser/harness`. This works through their collaborator access.
   2. `claude plugin install harness@harness`.
   3. `/harness:init` inside their repo.
-- **No CLI or plugin drift.** The plugin's skills call `npx -y @khubaibqaiser/harness@<version>`, where `<version>` is written into the plugin at build time. A test that checks the plugin version, package version and marketplace pin are equal runs in CI and before every release.
+- **No CLI or plugin drift.** The npm package root is the plugin root, so the plugin's skills run the CLI bundled next to them: `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs"`. Plugin and CLI are always the same files. A test that checks the plugin version, package version and marketplace pin are equal runs in CI and before every release.
 - **Without the plugin:** `npx @khubaibqaiser/harness init` does the same thing in a terminal.
 - **Still to verify on day 1:** that an `npm` plugin source installs cleanly from a private-repo marketplace for a collaborator. If it doesn't, the plugin entry switches to a relative path inside the repo, and the version-equality test still applies.
 
@@ -178,7 +178,13 @@ All required for the beta, each with a test:
 
 - **Rollback, CRLF and malformed settings:** handled by the installer (5.2).
 - **F5:** time limits on install-path checks, so the dependency lookup can't hang a hook past its time limit.
-- **F11:** duplicate events in `events.jsonl` are written once.
+- **F11:** one shared `editTarget(input)` helper replaces the six copies that work out which file an edit targets. Today they disagree on `NotebookEdit`.
+- **Earlier deferred minors that strangers would hit:**
+  - numeric config keys accept `NaN` and negative values
+  - Stop steps can leave child processes holding pipes after a timeout (pnpm grandchildren)
+  - `git status` is parsed without `-z`, so unusual file names break
+  - `stop-skipped` is logged on every Stop in a non-git folder
+  - `dist/cli.mjs` is not executable
 - **Co-denies:** when several checks deny the same action, each is logged, with the first one shown to the agent, so `harness stats` counts them all.
 - **Test-lock:** a file is recorded as touched only after the edit is allowed, so declining a test-lock ask doesn't trigger a later multi-file ask.
 - **Red-first message:** when the test exists but has no fresh failing result, the message says "Run the test for `<file>` and see it fail first" instead of "No test for `<file>`".

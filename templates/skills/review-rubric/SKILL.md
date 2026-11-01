@@ -14,7 +14,7 @@ Ask of every change:
 5. Accessibility.
 6. SEO, for public-facing apps.
 7. Operability: logs, errors and config someone on call can act on.
-8. Design: DRY, coupling, single responsibility.
+8. Design: DRY, coupling, single responsibility, anti-patterns.
 9. Simplicity: is there a smaller change that does the job?
 10. Tests: any new logic or risky branch without a test that would have failed before the change.
 11. `AGENTS.md` rules and ADRs: any violation.

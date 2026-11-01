@@ -13,7 +13,7 @@ Do not weaken or delete a test to make it pass; fix the code.
 
 ### Scope
 - Before editing a second file in one turn, list the files you plan to change. The user is asked once per turn.
-- Add a dependency only after checking it exists and is the right one.
+- A hook checks every install against the npm registry, and a person approves each new package.
 
 ### Protected paths
 - Never edit `.harness/` or `.claude/settings*.json`.

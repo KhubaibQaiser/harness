@@ -13,7 +13,7 @@ Do not weaken or delete a test to make it pass; fix the code.
 
 ### Scope
 - Before editing a second file in one turn, list the files you plan to change. The user is asked once per turn.
-- A hook checks every install against the npm registry, and a person approves each new package.
+- Installs are denied by default: ask the user to run them. When the user allows installs, JS package names are checked on the npm registry and the user approves each one.
 
 ### Protected paths
 - Never edit `.harness/` or `.claude/settings*.json`.

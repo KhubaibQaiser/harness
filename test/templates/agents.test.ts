@@ -44,5 +44,5 @@ test('agents-block: markers once, ordered, under 40 lines', () => {
   expect(s.split(b)).toHaveLength(2);
   expect(s.indexOf(a)).toBeLessThan(s.indexOf(b));
   expect(s.trimEnd().split('\n').length).toBeLessThan(40);
-  for (const t of ['Write a failing test first', 'see it fail', 'Never edit `.harness/`', '`harness tdd off`']) expect(s).toContain(t);
+  for (const t of ['Write a failing test first', 'see it fail', 'Never edit `.harness/`', '`harness tdd off`', 'Installs are denied by default']) expect(s).toContain(t);
 });

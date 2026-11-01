@@ -35,11 +35,28 @@ const isStrs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) =>
 
 // The one table of key rules, shared by loadConfig (lenient) and validateConfig (strict).
 // Keys not listed here are checked by the type of their default. Each rule returns the "must be ..." text, or null if v is fine.
-type Rule = (v: unknown) => string | null;
+type Fail = string | { at: string; msg: string }; // `at` is a path suffix such as [1].run
+type Rule = (v: unknown) => Fail | null;
 const num = (min: number, max: number, int: boolean): Rule => (v) =>
   typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max && (!int || Number.isInteger(v)) ? null : `must be ${int ? 'an integer' : 'a number'} from ${min} to ${max}`;
 const oneOf = (...vals: string[]): Rule => (v) => (vals.includes(v as string) ? null : `must be one of ${vals.join(', ')}`);
-const isStep = (x: unknown) => typeof x === 'string' || (isObj(x) && typeof x.name === 'string' && x.name !== '' && isStrs(x.run) && x.run.length > 0);
+const stepError = (x: unknown, i: number): Fail | null => {
+  if (typeof x === 'string') return null;
+  if (!isObj(x)) return { at: `[${i}]`, msg: 'must be a script name or a { name, run } object' };
+  const extra = Object.keys(x).find((k) => k !== 'name' && k !== 'run'); // Task 4 runs these, so no env/cwd/shell
+  if (extra !== undefined) return { at: `[${i}]`, msg: `unknown key "${extra}"` };
+  if (typeof x.name !== 'string' || x.name === '') return { at: `[${i}].name`, msg: 'must be a non-empty string' };
+  if (!isStrs(x.run) || x.run.length === 0) return { at: `[${i}].run`, msg: 'must be a non-empty array of strings' };
+  return null;
+};
+const stepsRule: Rule = (v) => {
+  if (!Array.isArray(v)) return 'must be a list of script names or { name, run } objects';
+  for (let i = 0; i < v.length; i++) {
+    const e = stepError(v[i], i);
+    if (e) return e;
+  }
+  return null;
+};
 const RULES: Record<string, Rule> = {
   version: (v) => (v === 1 ? null : 'must be 1'),
   'stop.max_attempts': num(1, 10, true),
@@ -47,10 +64,10 @@ const RULES: Record<string, Rule> = {
   'tdd.diff_coverage': num(0, 100, false),
   'unattended.multi_file_gate': oneOf('block', 'allow-log', 'off'),
   'stop.package_manager': oneOf('npm', 'pnpm', 'yarn', 'bun', 'none'),
-  'stop.steps': (v) => (Array.isArray(v) && v.every(isStep) ? null : 'must be a list of script names or { name, run: [command, ...] } objects with a non-empty run'),
+  'stop.steps': stepsRule,
 };
 
-function problem(p: string, v: unknown, d: unknown): string | null {
+function problem(p: string, v: unknown, d: unknown): Fail | null {
   const rule = RULES[p];
   if (rule) return rule(v);
   if (Array.isArray(d)) return isStrs(v) ? null : 'must be a list of strings';
@@ -63,14 +80,14 @@ export type Issue = { path: string; kind: 'unknown' | 'mapping' | 'invalid'; det
 export function overlay(base: Record<string, unknown>, user: Record<string, unknown>, path: string, issues: Issue[]): void {
   for (const [k, v] of Object.entries(user)) {
     const p = path ? `${path}.${k}` : k;
-    const d = base[k];
+    const d = Object.hasOwn(base, k) ? base[k] : undefined; // own keys only: no __proto__/constructor lookups
     if (d === undefined) issues.push({ path: p, kind: 'unknown' });
     else if (isObj(d)) {
       if (isObj(v)) overlay(d, v, p, issues);
       else issues.push({ path: p, kind: 'mapping' });
     } else {
       const bad = problem(p, v, d);
-      if (bad) issues.push({ path: p, kind: 'invalid', detail: bad });
+      if (bad) issues.push({ path: typeof bad === 'string' ? p : p + bad.at, kind: 'invalid', detail: typeof bad === 'string' ? bad : bad.msg });
       else base[k] = v;
     }
   }

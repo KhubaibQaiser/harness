@@ -45,7 +45,7 @@ test('steps accept command objects as written', () => {
 
 test('a bad command step is an error in validateConfig and keeps the default in loadConfig', () => {
   for (const bad of [{ name: 'x', run: [] }, { name: 'x', run: ['a', 1] }, { run: ['a'] }]) {
-    expect(errs({ stop: { steps: [bad] } })[0]).toMatch(/^stop\.steps: /);
+    expect(errs({ stop: { steps: [bad] } })[0]).toMatch(/^stop\.steps\[0\]/);
   }
   const l = load('stop:\n  steps:\n    - name: x\n      run: []\n');
   expect(l.config.stop.steps).toEqual(defaults().stop.steps);
@@ -74,4 +74,27 @@ test('serializeConfig writes the header and a comment per section', () => {
 
 test('config.example.yaml equals serializeConfig(defaults)', () => {
   expect(readFileSync(join(__dirname, '../../templates/config.example.yaml'), 'utf8')).toBe(serializeConfig(defaults()));
+});
+
+test('step object with an extra key is an error naming stop.steps[0]', () => {
+  expect(errs({ stop: { steps: [{ name: 'x', run: ['a'], env: {} }] } })).toEqual(['stop.steps[0]: unknown key "env"']);
+  const l = load('stop:\n  steps:\n    - name: x\n      run: [a]\n      cwd: /\n');
+  expect(l.config.stop.steps).toEqual(defaults().stop.steps);
+  expect(l.warnings.join()).toMatch(/stop\.steps\[0\]/);
+});
+
+test('steps error names the element index', () => {
+  expect(errs({ stop: { steps: ['t', { name: 'a', run: ['x'], shell: true }, { name: 'b', run: [] }] } })).toEqual(['stop.steps[1]: unknown key "shell"']);
+  expect(errs({ stop: { steps: ['t', 'u', { name: 'b', run: [] }] } })).toEqual(['stop.steps[2].run: must be a non-empty array of strings']);
+  expect(errs({ stop: { steps: [{ run: ['a'] }] } })).toEqual(['stop.steps[0].name: must be a non-empty string']);
+});
+
+test('__proto__ and constructor keys are unknown-key errors', () => {
+  expect(errs(JSON.parse('{"__proto__": {}}'))).toEqual(['__proto__: unknown key']);
+  expect(errs({ constructor: 1 })).toEqual(['constructor: unknown key']);
+  expect(errs(JSON.parse('{"stop": {"__proto__": 1, "toString": 1}}'))).toEqual(['stop.__proto__: unknown key', 'stop.toString: unknown key']);
+  const l = load('"__proto__": {}\nconstructor: 1\n');
+  expect(l.warnings.join()).toMatch(/unknown key "__proto__"[\s\S]*unknown key "constructor"/);
+  expect(l.config).toEqual(defaults());
+  expect(({} as Record<string, unknown>).polluted).toBeUndefined();
 });

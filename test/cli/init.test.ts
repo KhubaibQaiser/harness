@@ -161,3 +161,39 @@ test('planChanges omits unchanged files and decides create vs update', () => {
 test('the hook bundle never contains magicast', () => {
   expect(readFileSync(join(distDir, 'hooks', 'dispatch.mjs'), 'utf8')).not.toContain('magicast');
 });
+
+test('preset reasons describe the multi-file gate and require_reason accurately', () => {
+  const r = preset(detect(makeRepo(NPM_VITEST))).reasons;
+  expect(r['checks.multiFile']).toBe('Asks you once per turn before an agent edits a second source file; your approval covers the rest of that turn.');
+  expect(r['unattended.require_reason']).toBe('Only used when the unattended gate is allow-log: extra files then need a one-line reason. It has no effect while the gate is block.');
+});
+
+test('partial --config keeps detected values', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const f = join(root, '..', `part-${Date.now()}.yaml`);
+  writeFileSync(f, 'stop:\n  max_attempts: 5\n');
+  expect((await go(root, ['--config', f, '--yes'])).code).toBe(0);
+  const y = readFileSync(join(root, '.harness/config.yaml'), 'utf8');
+  expect(y).toContain('max_attempts: 5');
+  expect(y).toContain('package_manager: npm');
+  expect(y).toContain('src/**');
+  expect(y).toMatch(/tdd: true/);
+});
+
+test('report off-reasons match the final config', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const f = join(root, '..', `off-${Date.now()}.json`);
+  writeFileSync(f, JSON.stringify({ checks: { tdd: false } }));
+  const r = await go(root, ['--config', f, '--yes']);
+  expect(r.out).toMatch(/Gates that are off:\n\s+TDD: Turned off in the config\./);
+  expect(r.out).not.toContain('Vitest or Jest (');
+});
+
+test('--dry-run on dirty files warns and exits 0', async () => {
+  const root = makeRepo(NPM_VITEST);
+  writeFileSync(join(root, '.gitignore'), 'node_modules\nlocal\n');
+  const r = await go(root, ['--yes', '--dry-run']);
+  expect(r.code).toBe(0);
+  expect(r.out).toContain('These files have uncommitted changes; commit or stash them before applying: .gitignore.');
+  expect(existsSync(join(root, '.harness'))).toBe(false);
+});

@@ -43,9 +43,9 @@ export function preset(f: Facts): { config: HarnessConfig; reasons: Record<strin
   reasons['tdd.paths'] = tdd ? 'These are the `src` folders of packages with a test setup.' : 'No package has a test setup, so no paths are covered.';
   reasons['tdd.exempt'] = 'These files are hard to test first, so TDD skips them.';
   reasons['tdd.diff_coverage'] = 'Changed lines need at least 80% coverage.';
-  reasons['checks.multiFile'] = 'Edits that touch many files at once are stopped for review.';
+  reasons['checks.multiFile'] = 'Asks you once per turn before an agent edits a second source file; your approval covers the rest of that turn.';
   reasons['unattended.multi_file_gate'] = 'With no human watching, a multi-file edit is blocked.';
-  reasons['unattended.require_reason'] = 'Agents are not forced to explain every edit.';
+  reasons['unattended.require_reason'] = 'Only used when the unattended gate is allow-log: extra files then need a one-line reason. It has no effect while the gate is block.';
   reasons['stop.steps'] = steps.length
     ? 'These are the checks your repo already defines, in a fixed order.'
     : 'No lint, typecheck, or test scripts were found, so nothing runs before stopping.';

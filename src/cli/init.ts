@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
+import { overlay } from '../core/config.js';
 import { validateConfig } from '../core/config-io.js';
 import type { HarnessConfig } from '../core/config.js';
 import { ApplyError, ManifestError, applyChanges, readManifest } from '../install/apply.js';
@@ -82,7 +83,12 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     }
     const v = validateConfig(raw);
     if (!v.ok) return v.errors.forEach((m) => out(m)), 2;
-    config = v.config;
+    // Overlay onto the preset so a partial file keeps the detected values; the merged result is validated again.
+    const merged = structuredClone(p.config);
+    overlay(merged as unknown as Record<string, unknown>, raw as Record<string, unknown>, '', []);
+    const v2 = validateConfig(merged);
+    if (!v2.ok) return v2.errors.forEach((m) => out(m)), 2;
+    config = v2.config;
     out(`Using the answers in ${opts.config}.`);
   } else {
     out('Recommended settings:');
@@ -115,7 +121,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   }
   const dirty = dirtyPaths(root);
   const touched = plan.changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
-  if (touched.length) return out(`Commit or stash these files first, so the install can be undone cleanly: ${touched.join(', ')}.`), 1;
+  if (touched.length && !opts.dryRun) return out(`Commit or stash these files first, so the install can be undone cleanly: ${touched.join(', ')}.`), 1;
 
   // 4. Plan
   out('Plan:');
@@ -125,7 +131,10 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   }
   if (plan.manual.length) out('Do these by hand:\n' + plan.manual.map((l) => `  ${l}`).join('\n'));
   for (const n of plan.notes) out(`Note: ${n}`);
-  if (opts.dryRun) return out('Dry run: nothing was written.'), 0;
+  if (opts.dryRun) {
+    if (touched.length) out(`These files have uncommitted changes; commit or stash them before applying: ${touched.join(', ')}.`);
+    return out('Dry run: nothing was written.'), 0;
+  }
   if (!opts.yes && !(await prompt.confirm('Apply these changes? (y/N)'))) return out('Cancelled. Nothing was written.'), 0;
 
   // 5. Apply

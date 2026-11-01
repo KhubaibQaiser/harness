@@ -1,0 +1,23 @@
+{
+  "model": "sonnet",
+  "env": { "FOO": "bar" },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/agent-hooks/guard.mjs\" --tool claude", "timeout": 10 }] },
+      { "matcher": "Write", "hooks": [
+        { "type": "command", "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/agent-hooks/guard.mjs\" --tool claude", "timeout": 10 },
+        { "type": "command", "command": "echo unrelated-pre", "timeout": 5 }
+      ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Edit", "hooks": [{ "type": "command", "command": "echo unrelated-post" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/agent-hooks/stop-check.mjs\" --tool claude", "timeout": 600 }] }
+    ]
+  },
+  "permissions": {
+    "allow": ["Bash(pnpm test:*)"],
+    "deny": ["Read(./secrets/**)", "Read(./.env)"]
+  }
+}

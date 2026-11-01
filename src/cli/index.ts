@@ -1,7 +1,10 @@
 import { realpathSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { appendEvent, readEvents } from '../core/events.js';
 import { repoRoot } from '../core/repo-root.js';
+import { init } from './init.js';
+import { readlinePrompt } from './prompt.js';
 import { pauseStatus, pauseTdd, resumeTdd } from '../core/pause.js';
 
 export interface CliEnv {
@@ -10,7 +13,9 @@ export interface CliEnv {
   out(line: string): void;
 }
 
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]';
+declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
+const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]';
 const DAY = 86_400_000;
 
 function tddStatus(root: string): string {
@@ -83,8 +88,19 @@ export function run(argv: string[], cli: CliEnv): number {
 // Run only as the process entry (also true for the bundled dist file), so tests can import `run`.
 const entry = process.argv[1];
 try {
-  if (entry && import.meta.url === pathToFileURL(realpathSync(entry)).href)
-    process.exitCode = run(process.argv.slice(2), { root: repoRoot(process.cwd()), env: process.env, out: (s) => console.log(s) });
+  if (entry && import.meta.url === pathToFileURL(realpathSync(entry)).href) {
+    const cli: CliEnv = { root: repoRoot(process.cwd()), env: process.env, out: (s) => console.log(s) };
+    const argv = process.argv.slice(2);
+    if (argv[0] === 'init') {
+      const distDir = dirname(fileURLToPath(import.meta.url)); // dist/ of the running cli.mjs
+      const prompt = readlinePrompt();
+      try {
+        process.exitCode = await init(argv.slice(1), { ...cli, root: process.cwd(), prompt, version: VERSION, templatesDir: join(distDir, '..', 'templates'), distDir });
+      } finally {
+        prompt.close();
+      }
+    } else process.exitCode = run(argv, cli);
+  }
 } catch (e) {
   console.error(`harness: ${(e as Error).message}`);
   process.exitCode = 1;

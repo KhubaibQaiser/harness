@@ -61,7 +61,7 @@ function stats(args: string[], { root, out }: CliEnv): number {
   ]);
   const steps = events.filter((e) => e.check === 'stop' && e.decision === 'block').map((e) => {
     const r = e.reason ?? '';
-    return r.startsWith('Diff coverage') ? 'coverage' : r.includes(' failed (attempt') ? r.slice(0, r.indexOf(' failed (attempt')) : 'other';
+    return r.startsWith('Diff coverage') || r.startsWith('Coverage output') ? 'coverage' : r.includes(' failed (attempt') ? r.slice(0, r.indexOf(' failed (attempt')) : 'other';
   });
   if (steps.length) section('Stop failures by step', [...tally(steps)]);
   const stop = (d: string) => count((e) => e.check === 'stop' && e.decision === d);

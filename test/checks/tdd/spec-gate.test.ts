@@ -174,3 +174,10 @@ test('features.json missing on disk: Write creating a passing, evidenced feature
   s.result(T, [['adds', 'passed']]);
   expect((await s.write(doc(feat('f1', true, crit(`${T}::adds`))))).permissionDecision).toBe('allow');
 });
+
+test('a deny is logged under the kebab-case id spec-gate', async () => {
+  const s = setup();
+  await s.write('{not json');
+  const ev = readFileSync(join(s.root, '.harness/logs/events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  expect(ev.at(-1)).toMatchObject({ check: 'spec-gate', decision: 'deny' });
+});

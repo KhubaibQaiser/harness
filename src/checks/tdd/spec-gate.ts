@@ -25,7 +25,7 @@ export const specGate: Check = {
   run(ctx) {
     if (!ctx.config.checks.tdd) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = ctx.input;
-    const deny = (reason: string) => ({ kind: 'deny' as const, reason, check: 'specGate' });
+    const deny = (reason: string) => ({ kind: 'deny' as const, reason, check: 'spec-gate' });
     if (tool_name === 'Bash') {
       const cmd = tool_input.command;
       const hit = typeof cmd === 'string' && fileWriteTargets(cmd).some((t) => toRepoPath(ctx.root, t) === FILE);

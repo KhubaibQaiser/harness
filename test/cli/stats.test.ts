@@ -29,6 +29,7 @@ const lines = [
   ev(3, 'stop', 'block', 'lint failed (attempt 2 of 3). Fix it'),
   ev(3, 'stop', 'block', 'test failed (attempt 1 of 3). Fix it'),
   ev(3, 'stop', 'block', 'Diff coverage 40% is below 80%. Uncovered: a.ts:1'),
+  ev(3, 'stop', 'block', 'Coverage output at **/coverage/coverage-final.json could not be parsed.'),
   ev(3, 'stop', 'block'),
   ev(3, 'stop', 'context', 'Stop gate timed out after 5s'),
   ev(3, 'stop', 'stop-gave-up'),
@@ -44,9 +45,9 @@ test('counts the window exactly and skips malformed lines', () => {
   const r = stats(seed(lines));
   expect(r.code).toBe(0);
   expect(r.out).toContain('guard deny: 2');
-  expect(r.out).toContain('stop block: 5');
+  expect(r.out).toContain('stop block: 6');
   expect(r.out).toContain('Overrides\n  tdd paused: 1\n  multi-file approvals: 2\n  allow-log: 1');
-  expect(r.out).toContain('Stop failures by step\n  lint: 2\n  test: 1\n  coverage: 1\n  other: 1');
+  expect(r.out).toContain('Stop failures by step\n  lint: 2\n  test: 1\n  coverage: 2\n  other: 1');
   expect(r.out).toContain('Gave up and timeouts\n  timeouts: 1\n  stop-gave-up: 1\n  stop-skipped: 1\n  stop-diff-failed: 1\n  coverage-skipped: 1\n  coverage-diff-failed: 1');
 });
 

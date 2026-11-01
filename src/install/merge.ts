@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateCode, parseModule } from 'magicast';
 import { eolOf, jsonIndentOf, withEol } from './text.js';
@@ -7,14 +8,28 @@ export class MergeError extends Error {
   constructor(message: string) { super(message); this.name = 'MergeError'; }
 }
 
-// Same path from src/install (tests) and from dist/ (bundled).
+// Package-local only: source/tests live in <pkg>/src/install, the bundle in <pkg>/dist. Never probes outside the package.
+const modulePath = fileURLToPath(import.meta.url);
+const templatesDir = fileURLToPath(new URL(/[\\/]src[\\/]install[\\/]merge\.[jt]s$/.test(modulePath) ? '../../templates/' : '../templates/', import.meta.url));
 const template = (name: string): string => {
-  for (const dir of ['../../templates/', '../templates/']) {
-    const p = fileURLToPath(new URL(dir + name, import.meta.url));
-    if (existsSync(p)) return readFileSync(p, 'utf8');
-  }
-  throw new MergeError(`template ${name} not found`);
+  const p = join(templatesDir, name);
+  if (!existsSync(p)) throw new MergeError(`template ${name} not found at ${p}`);
+  return readFileSync(p, 'utf8');
 };
+
+/**
+ * Removes each text block (first exact occurrence) from `after`. For every text merge except the
+ * AGENTS.md marker replace, this returns the pre-merge content byte for byte. Settings blocks are
+ * structural JSON and are not removed this way.
+ */
+export function removeBlocks(after: string, blocks: string[]): string {
+  let out = after;
+  for (const b of blocks) {
+    const i = out.indexOf(b);
+    if (i !== -1) out = out.slice(0, i) + out.slice(i + b.length);
+  }
+  return out;
+}
 
 const isObj = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
 const SETTINGS = '.claude/settings.json';
@@ -32,13 +47,16 @@ export function mergeSettings(before: string | null): { after: string; blocks: s
   if (s.hooks !== undefined && !isObj(s.hooks)) bad('"hooks" must be an object');
   if (s.permissions !== undefined && !isObj(s.permissions)) bad('"permissions" must be an object');
   if (s.permissions?.deny !== undefined && !Array.isArray(s.permissions.deny)) bad('"permissions.deny" must be an array');
-  for (const [ev, groups] of Object.entries(s.hooks ?? {})) if (!Array.isArray(groups)) bad(`hooks.${ev} must be an array`);
 
   const frag = JSON.parse(template('settings.fragment.json'));
   const blocks: string[] = [];
   const notes: string[] = [];
   s.hooks ??= {};
   for (const [ev, groups] of Object.entries<any[]>(frag.hooks)) {
+    if (s.hooks[ev] !== undefined && !Array.isArray(s.hooks[ev])) {
+      notes.push(`${SETTINGS}: hooks.${ev} is not an array; left untouched and the harness ${ev} hook was not added.`);
+      continue;
+    }
     const list: any[] = (s.hooks[ev] ??= []);
     const have = new Set<string>();
     list.forEach((g, i) => {
@@ -68,17 +86,25 @@ export function mergeSettings(before: string | null): { after: string; blocks: s
   return { after: withEol(JSON.stringify(s, null, before === null ? 2 : jsonIndentOf(before)), eol) + tail, blocks, notes };
 }
 
+/** Separator to put before an appended block: nothing for an empty file, else finish the last line and add a blank one. */
+const sep = (before: string, eol: string) => (before === '' ? '' : (before.endsWith('\n') ? '' : eol) + eol);
+
 const START = '<!-- harness:start -->';
 const END = '<!-- harness:end -->';
 export function mergeAgents(before: string | null): { after: string; blocks: string[] } {
   const eol = before === null ? '\n' : eolOf(before);
   const block = withEol(template('agents-block.md').trimEnd(), eol);
-  if (before === null) return { after: block + eol, blocks: [block] };
+  if (before === null) return { after: block + eol, blocks: [block + eol] };
   const count = (m: string) => before.split(m).length - 1;
   if (count(START) > 1 || count(END) > 1) throw new MergeError('AGENTS.md has a repeated harness marker; fix it by hand');
   const s = before.indexOf(START), e = before.indexOf(END);
-  if (s === -1 && e === -1) return { after: before + (before.endsWith('\n') ? '' : eol) + eol + block + eol, blocks: [block] };
+  if (s === -1 && e === -1) {
+    const added = sep(before, eol) + block + eol; // separator is part of the block so removal is exact
+    return { after: before + added, blocks: [added] };
+  }
   if (s === -1 || e === -1 || e < s) throw new MergeError('AGENTS.md has a missing or misordered harness marker; fix it by hand');
+  // Marker replace: removing the block gives back the text outside the markers only; the user's
+  // original text between the markers was overwritten and cannot be restored.
   return { after: before.slice(0, s) + block + before.slice(e + END.length), blocks: [block] };
 }
 
@@ -88,8 +114,8 @@ export function mergeClaudeMd(before: string | null, agentsExists: boolean): { a
   if (before === null) return { after: '@AGENTS.md\n', blocks: ['@AGENTS.md\n'] };
   if (/(^|\s)@AGENTS\.md(\s|$)/.test(before)) return null;
   const eol = eolOf(before);
-  const block = `${eol}@AGENTS.md${eol}`;
-  return { after: before + (before.endsWith('\n') || before === '' ? '' : eol) + block, blocks: [block] };
+  const block = (before === '' ? '' : (before.endsWith('\n') ? '' : eol) + eol) + `@AGENTS.md${eol}`;
+  return { after: before + block, blocks: [block] };
 }
 
 function appendLines(before: string | null, lines: string[]): { after: string; blocks: string[] } {
@@ -98,8 +124,8 @@ function appendLines(before: string | null, lines: string[]): { after: string; b
   const have = new Set(text.split(/\r?\n/));
   const add = lines.filter((l) => !have.has(l));
   if (!add.length) return { after: text, blocks: [] };
-  const block = add.map((l) => l + eol).join('');
-  return { after: text + (text === '' || text.endsWith('\n') ? '' : eol) + block, blocks: [block] };
+  const block = (text === '' || text.endsWith('\n') ? '' : eol) + add.map((l) => l + eol).join('');
+  return { after: text + block, blocks: [block] };
 }
 
 export const mergeGitignore = (before: string | null) => appendLines(before, ['.harness/state/', '.harness/logs/', '.harness/backup/']);
@@ -127,8 +153,16 @@ export function mergeEslintFlatIgnores(before: string): { after: string; blocks:
     const present = target.elements.some((el: any) => el && el.type === 'StringLiteral' && /^\.harness\/?$/.test(el.value));
     if (present) return { after: before, blocks: [] };
     target.elements.push({ type: 'StringLiteral', value: '.harness/', extra: { raw: "'.harness/'", rawValue: '.harness/' } });
-    const code = generateCode(mod, { format: { quote: 'single' } } as any).code.trimEnd();
-    return { after: code + (/\r?\n$/.test(before) ? eolOf(before) : ''), blocks: ["'.harness/'"] };
+    const code = withEol(generateCode(mod, { format: { quote: 'single' } } as any).code.trimEnd(), eolOf(before));
+    const after = code + (/\r?\n$/.test(before) ? eolOf(before) : '');
+    // The block is exactly the inserted text (separator included), found by common prefix/suffix.
+    // If the reprint changed anything else, it is not safely reversible: give up.
+    let p = 0;
+    while (p < before.length && before[p] === after[p]) p++;
+    let q = 0;
+    while (q < before.length - p && before[before.length - 1 - q] === after[after.length - 1 - q]) q++;
+    if (p + q !== before.length) return null;
+    return { after, blocks: [after.slice(p, after.length - q)] };
   } catch {
     return null;
   }

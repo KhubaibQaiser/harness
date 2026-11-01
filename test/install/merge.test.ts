@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, test } from 'vitest';
-import { MergeError, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings } from '../../src/install/merge.js';
+import { MergeError, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings, removeBlocks } from '../../src/install/merge.js';
 
 const fx = (p: string) => readFileSync(`test/fixtures/install-repo/${p}`, 'utf8');
 const DISPATCH = 'node "${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"';
@@ -81,6 +81,15 @@ describe('mergeSettings', () => {
     expect(mergeSettings('{"model":"x"}').after.endsWith('}')).toBe(true);
   });
 
+  it('non-array hook event: noted, left untouched, others still added', () => {
+    const before = '{"hooks":{"Stop":{"a":1}}}';
+    const { after, notes } = mergeSettings(before);
+    const s = JSON.parse(after);
+    expect(s.hooks.Stop).toEqual({ a: 1 });
+    expect(notes.join('\n')).toMatch(/hooks\.Stop is not an array/);
+    expect(s.hooks.PreToolUse).toHaveLength(1);
+  });
+
   it('invalid JSON: MergeError naming the file', () => {
     expect(() => mergeSettings('{ nope')).toThrow(MergeError);
     expect(() => mergeSettings('{ nope')).toThrow(/settings\.json/);
@@ -89,7 +98,6 @@ describe('mergeSettings', () => {
   test.each([
     ['root array', '[]', /object/],
     ['hooks not object', '{"hooks":[]}', /hooks/],
-    ['event not array', '{"hooks":{"Stop":{"a":1}}}', /Stop/],
     ['deny not array', '{"permissions":{"deny":"x"}}', /deny/],
     ['permissions not object', '{"permissions":[]}', /permissions/],
   ])('settings %s: clear MergeError', (_n, json, re) => {
@@ -113,7 +121,7 @@ describe('mergeAgents', () => {
     const { after, blocks } = mergeAgents(null);
     expect(after.startsWith(S)).toBe(true);
     expect(after.trimEnd().endsWith(E)).toBe(true);
-    expect(blocks).toEqual([after.trimEnd()]);
+    expect(blocks).toEqual([after]);
   });
 
   it('CRLF stays CRLF', () => {
@@ -162,6 +170,7 @@ describe('mergeGitignore / mergeIgnoreFile', () => {
   });
   it('null creates; missing newline and CRLF handled; partial adds only missing', () => {
     expect(mergeGitignore(null).after).toBe('.harness/state/\n.harness/logs/\n.harness/backup/\n');
+    expect(mergeGitignore('a').blocks[0].startsWith('\n')).toBe(true);
     expect(mergeGitignore('a').after).toBe('a\n.harness/state/\n.harness/logs/\n.harness/backup/\n');
     expect(mergeGitignore('a\r\n').after).toBe('a\r\n.harness/state/\r\n.harness/logs/\r\n.harness/backup/\r\n');
     expect(mergeGitignore('.harness/logs/\n').blocks).toEqual(['.harness/state/\n.harness/backup/\n']);
@@ -178,7 +187,7 @@ describe('mergeEslintFlatIgnores', () => {
     const r = mergeEslintFlatIgnores(src)!;
     expect(r.after).toContain("'dist/', '.harness/'");
     expect(r.after).toContain("files: ['**/*.ts']");
-    expect(r.blocks).toEqual(["'.harness/'"]);
+    expect(r.blocks).toEqual([", '.harness/'"]);
     expect(mergeEslintFlatIgnores(r.after)).toEqual({ after: r.after, blocks: [] });
   });
   it('leaves the rest of the file as written', () => {
@@ -200,5 +209,42 @@ describe('mergeEslintFlatIgnores', () => {
     expect(mergeEslintFlatIgnores("export default [{ rules: {} }];\n")).toBeNull();
     expect(mergeEslintFlatIgnores('export default [ {{{')).toBeNull();
     expect(mergeEslintFlatIgnores('module.exports = [];\n')).toBeNull();
+  });
+});
+
+describe('round trip: before -> merge -> removeBlocks gives before back', () => {
+  const inputs: [string, string | null][] = [
+    ['null', null],
+    ['empty', ''],
+    ['no trailing newline', '# Mine'],
+    ['CRLF', '# Mine\r\nmore\r\n'],
+    ['existing content', '# Mine\n\nstuff\n'],
+  ];
+  const rt = (name: string, f: (b: string | null) => { after: string; blocks: string[] } | null) =>
+    test.each(inputs)(`${name}: %s`, (_n, before) => {
+      const r = f(before)!;
+      expect(r).not.toBeNull();
+      expect(removeBlocks(r.after, r.blocks)).toBe(before ?? '');
+    });
+  rt('mergeAgents', mergeAgents);
+  rt('mergeClaudeMd', (b) => mergeClaudeMd(b, true));
+  rt('mergeGitignore', mergeGitignore);
+  rt('mergeIgnoreFile', (b) => mergeIgnoreFile(b, '.harness/'));
+
+  test.each([
+    ['no trailing newline', "export default [{ ignores: ['a'] }];"],
+    ['CRLF', "export default [\r\n  { ignores: ['a'] },\r\n];\r\n"],
+    ['existing content', "export default [\n  { ignores: ['a', 'b'] },\n  { rules: {} },\n];\n"],
+    ['empty ignores', "export default [{ ignores: [] }];\n"],
+  ])('mergeEslintFlatIgnores: %s', (_n, before) => {
+    const r = mergeEslintFlatIgnores(before)!;
+    expect(r.after).not.toBe(before);
+    expect(removeBlocks(r.after, r.blocks)).toBe(before);
+  });
+
+  it('AGENTS.md marker replace: removal gives back only the text outside the markers', () => {
+    const before = `top\n${S}\nmy own text\n${E}\nbottom\n`;
+    const r = mergeAgents(before);
+    expect(removeBlocks(r.after, r.blocks)).toBe('top\n\nbottom\n');
   });
 });

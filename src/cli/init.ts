@@ -10,7 +10,7 @@ import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { planChanges } from '../install/plan.js';
 import { preset } from '../install/preset.js';
-import type { Prompt } from './prompt.js';
+import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
 export type { Prompt };
@@ -51,6 +51,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   const { out, prompt } = cli;
   const opts = parseArgs(args);
   if (!opts) return out(USAGE), 2;
+  if (!opts.yes && !opts.dryRun && cli.tty === false) return out(NO_TTY), 2;
 
   // 1. Preflight
   let root: string;
@@ -94,7 +95,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     out('Recommended settings:');
     for (const [k, why] of Object.entries(p.reasons)) out(`  ${k} = ${JSON.stringify(at(config, k))}\n    ${why}`);
     if (p.off.length) out('Off for this repo:\n' + p.off.map((o) => `  ${o.gate}: ${o.why}`).join('\n'));
-    if (!opts.yes && (await prompt.confirm('Edit any value? (y/N)'))) {
+    if (!opts.yes && !opts.dryRun && (await prompt.confirm('Edit any value? (y/N)'))) {
       const next: Record<string, unknown> = { ...config };
       for (const k of Object.keys(config).filter((k) => k !== 'version')) {
         const cur = JSON.stringify((config as any)[k]);

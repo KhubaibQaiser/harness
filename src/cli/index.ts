@@ -12,6 +12,8 @@ import { status } from './status.js';
 import { pauseStatus, pauseTdd, resumeTdd } from '../core/pause.js';
 
 export interface CliEnv {
+  /** False when stdin is not a terminal; undefined (tests) counts as interactive. */
+  tty?: boolean;
   root: string;
   env: NodeJS.ProcessEnv;
   out(line: string): void;
@@ -95,7 +97,7 @@ export function run(argv: string[], cli: CliEnv): number {
 const entry = process.argv[1];
 try {
   if (entry && import.meta.url === pathToFileURL(realpathSync(entry)).href) {
-    const cli: CliEnv = { root: repoRoot(process.cwd()), env: process.env, out: (s) => console.log(s) };
+    const cli: CliEnv = { root: repoRoot(process.cwd()), env: process.env, tty: !!process.stdin.isTTY, out: (s) => console.log(s) };
     const argv = process.argv.slice(2);
     if (argv[0] === 'init') {
       const distDir = dirname(fileURLToPath(import.meta.url)); // dist/ of the running cli.mjs

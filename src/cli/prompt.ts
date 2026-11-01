@@ -1,5 +1,7 @@
 import { createInterface } from 'node:readline/promises';
 
+export const NO_TTY = "No terminal to answer prompts. Run with --yes, or with --config <file> for init.";
+
 export interface Prompt {
   confirm(q: string): Promise<boolean>;
   edit(label: string, value: string): Promise<string>;

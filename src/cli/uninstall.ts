@@ -6,7 +6,7 @@ import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, typ
 import { removeBlocks } from '../install/merge.js';
 import { sha256, eolOf, jsonIndentOf, withEol } from '../install/text.js';
 import { MANIFEST_REL } from '../install/manifest.js';
-import type { Prompt } from './prompt.js';
+import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
 export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike };
@@ -76,6 +76,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   if (args.some((a) => a !== '--yes' && a !== '--force')) return out(USAGE), 2;
   const yes = args.includes('--yes');
   const force = args.includes('--force');
+  if (!yes && cli.tty === false) return out(NO_TTY), 2;
 
   let root: string;
   try {

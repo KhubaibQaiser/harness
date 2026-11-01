@@ -10,7 +10,7 @@ import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { planChanges } from '../install/plan.js';
 import { sha256 } from '../install/text.js';
-import type { Prompt } from './prompt.js';
+import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
 export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch; fs?: FsLike };
@@ -23,6 +23,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const { out, prompt, version } = cli;
   if (args.some((a) => a !== '--yes' && a !== '--check')) return out(USAGE), 2;
   const yes = args.includes('--yes');
+  if (!yes && !args.includes('--check') && cli.tty === false) return out(NO_TTY), 2;
 
   if (args.includes('--check')) {
     const latest = await latestVersion(PKG, cli.fetchImpl);

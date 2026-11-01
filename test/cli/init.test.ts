@@ -142,7 +142,7 @@ test('refuses outside a git repo and on an old Node', async () => {
 test('editing a value validates it', async () => {
   const root = makeRepo(NPM_VITEST);
   const p: Prompt = { async confirm() { return true; }, async edit(label, v) { return label === 'unattended' ? '{"bad": 1}' : v; } };
-  const r = await go(root, ['--dry-run'], p);
+  const r = await go(root, [], p);
   expect(r.code).toBe(2);
   expect(r.out).toContain('unattended.bad: unknown key');
 });

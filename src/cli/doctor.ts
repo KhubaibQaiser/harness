@@ -124,7 +124,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     for (const p of facts.packages.filter((p) => p.test === 'vitest' && config.tdd.coverage_skip.includes(srcGlob(p.dir)))) {
       const what = `the coverage gate is off for ${whereOf(p.dir)}`;
       if (p.noCoverageProvider) note(what, COVERAGE_HINT);
-      else note(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
+      else fix(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
     }
 
   if (config.checks.tdd) {

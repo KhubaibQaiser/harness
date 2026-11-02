@@ -87,13 +87,16 @@ export function lineHunks(a: string, b: string, ctx = 1): Hunk[] {
 }
 
 /** Applies hunks backwards (last one first): each `from`, at a line start (the last such match), becomes `to`. Null when one is missing. */
+// Matched in LF form, like removeBlocks: a teammate's core.autocrlf checkout has CRLF; the result keeps the text's EOL.
 export function revertHunks(text: string, hunks: Hunk[]): string | null {
-  let out = text;
+  const lf = (t: string) => t.replace(/\r\n/g, '\n');
+  let out = lf(text);
   for (const h of [...hunks].reverse()) {
-    let i = out.lastIndexOf(h.from);
-    while (i > 0 && out[i - 1] !== '\n') i = out.lastIndexOf(h.from, i - 1);
+    const from = lf(h.from);
+    let i = out.lastIndexOf(from);
+    while (i > 0 && out[i - 1] !== '\n') i = out.lastIndexOf(from, i - 1);
     if (i < 0) return null;
-    out = out.slice(0, i) + h.to + out.slice(i + h.from.length);
+    out = out.slice(0, i) + lf(h.to) + out.slice(i + from.length);
   }
-  return out;
+  return text.includes('\r\n') ? out.replace(/\n/g, '\r\n') : out;
 }

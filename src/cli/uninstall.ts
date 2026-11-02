@@ -155,7 +155,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       const bin = f.formatted && after !== cur ? repoPrettier(root, f.rel) : null;
       if (bin) {
         try {
-          after = prettierFormat(bin, root, f.rel, after);
+          after = withEol(prettierFormat(bin, root, f.rel, after), eolOf(cur)); // keep the checkout's own EOL
         } catch (e) {
           notes.push(`\`${f.rel}\`: Prettier could not format it after the harness part was removed (${String((e as Error).message).split('\n')[0]}).`);
         }

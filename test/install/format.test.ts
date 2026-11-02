@@ -112,3 +112,18 @@ test('R3: a Prettier that ignores SIGTERM is killed at the timeout, not waited o
   expect(() => prettierFormat(bin, root, 'x.ts', 'x', 500)).toThrow();
   expect(Date.now() - t0).toBeLessThan(5000);
 }, 15_000);
+
+test('R1: on a CRLF checkout with no backup, uninstall still undoes the formatted edit and keeps CRLF', async () => {
+  const root = repo(withPrettier);
+  await go(root);
+  const p = join(root, 'vitest.config.ts');
+  writeFileSync(p, cfg(root).replace(/\r?\n/g, '\r\n')); // a teammate with core.autocrlf=true
+  rmSync(join(root, '.harness/backup'), { recursive: true, force: true });
+  const r = await un(root);
+  expect(r.out).not.toContain('was not found');
+  expect(cfg(root)).toBe(VITEST.replace(/\n/g, '\r\n'));
+});
+test('R1: revertHunks matches across line endings and writes the text\'s own', () => {
+  const h = lineHunks('a\n  test: { x },\nb\n', 'a\n  test: {\n    x,\n    y,\n  },\nb\n');
+  expect(revertHunks('a\r\n  test: {\r\n    x,\r\n    y,\r\n  },\r\nb\r\n', h)).toBe('a\r\n  test: { x },\r\nb\r\n');
+});

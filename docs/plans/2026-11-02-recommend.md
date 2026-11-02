@@ -18,7 +18,7 @@
 
 ## Owner questions
 
-**Answered 2026-11-02:** Q1 (a), Q2 (a), Q3 (a), Q4 (a), Q6 keeps the rule. Q5: the owner writes the six reasons; until then those six items are excluded. The spec's amendment note records these answers. Q7 (a), Q8 (b), Q10 (a), Q11 (b) answered 2026-11-02 (recommended options). Q9 is open: without a copy of the audit, research uses (b).
+**Answered 2026-11-02:** Q1 (a), Q2 (a), Q3 (a), Q4 (a), Q6 keeps the rule. Q5: the owner writes the six reasons; until then those six items are excluded. The spec's amendment note records these answers. Q7 (a), Q8 (b), Q10 (a), Q11 (b) answered 2026-11-02 (recommended options). Q9 (a): the audit is the owner's claude.ai artifact, readable with the Artifact tool; a local copy lives in the M3 SDD workspace. Items it does not cover use (b).
 
 **Q1. Who installs the plugins on each machine?** The spec (§6) expects committed `enabledPlugins` and `extraKnownMarketplaces` to reach everyone who clones. The docs say they don't install plugins by themselves: "When a plugin's only `true` is in the project's `.claude/settings.json`, Claude Code doesn't fetch it onto a machine where it isn't installed". Each contributor sees `Plugin "<name>" is enabled in project settings but isn't installed here` until they run `claude plugin install <name>@<marketplace> --scope project` (https://code.claude.com/docs/en/plugins/loading.md; https://code.claude.com/docs/en/plugins/org.md). The spec's `sync` only fixes drift, and spec §2 Q7 makes `sync` refuse outside Claude Code.
 - (a) `init` and `sync` run `claude plugin install <id> --scope project --json` for each plugin pick, after one confirmation, for the person running them. `doctor` and `status` list missing plugins with the exact command to paste.

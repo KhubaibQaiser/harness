@@ -279,6 +279,8 @@ test('jest coverageReporters without json: TDD on, coverage gate off for that pa
   const r = await go(root, ['--yes']);
   expect(r.code).toBe(0);
   expect(r.out).toMatch(/^Gates that are on: .*TDD/m);
+  expect(r.out).not.toMatch(/^Gates that are on: .*coverage/m); // N7: the only package is skipped
+  expect(r.out).toMatch(/^Gates that are off:\n  coverage: Coverage gate off for the root package/m);
   expect(r.out.slice(r.out.indexOf('Gates that are off'))).toContain("Coverage gate off for the root package: `package.json` \"jest\" sets `coverageReporters` without 'json'; the gate reads coverage/coverage-final.json");
   expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).toMatch(/coverage_skip:\n\s+- src\/\*\*/);
 });

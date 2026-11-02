@@ -230,6 +230,12 @@ function jestConfigLines(pkg: PackageFacts, root: string, pkgJson: Record<string
 export function jestCoverageUnreadable(root: string, dir: string, pkgJson: Record<string, any>, testConfig?: string): string | null {
   const pjRel = dir === '.' ? 'package.json' : `${dir}/package.json`;
   const okDir = (v: unknown) => v === undefined || v === 'coverage' || v === './coverage';
+  // Jest CLI flags in the test script override the config.
+  const script = typeof pkgJson.scripts?.test === 'string' ? pkgJson.scripts.test : '';
+  const flag = (name: string) => [...script.matchAll(new RegExp(`(?:^|\\s)--${name}(?:=|\\s+)(\\S+)`, 'g'))].map((m) => m[1].replace(/^['"]|['"]$/g, ''));
+  if (flag('coverageDirectory').some((d) => !okDir(d))) return `the "test" script in \`${pjRel}\` sets \`--coverageDirectory\``;
+  const cli = flag('coverageReporters');
+  if (cli.length && !cli.includes('json')) return `the "test" script in \`${pjRel}\` sets \`--coverageReporters\` without 'json'`;
   const j = pkgJson.jest;
   if (j && typeof j === 'object') {
     if (j.preset !== undefined) return `\`${pjRel}\` "jest" uses a preset, which may set \`coverageReporters\` or \`coverageDirectory\``;

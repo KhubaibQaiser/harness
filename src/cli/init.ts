@@ -154,7 +154,9 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
 
   // 6. Report
   const checks = config.checks as Record<string, boolean>;
-  const gates = [...Object.keys(GATES).map((k) => [GATES[k], checks[k]] as const), ['coverage', checks.tdd] as const];
+  // Coverage is on only if some TDD path is not skipped.
+  const coverageOn = checks.tdd && config.tdd.paths.some((p) => !config.tdd.coverage_skip.includes(p));
+  const gates = [...Object.keys(GATES).map((k) => [GATES[k], checks[k]] as const), ['coverage', coverageOn] as const];
   const why = (g: string) => p.off.find((o) => o.gate === g)?.why ?? 'Turned off in the config.';
   out('Gates that are on: ' + gates.filter(([, on]) => on).map(([g]) => g).join(', '));
   const off = gates.filter(([, on]) => !on);

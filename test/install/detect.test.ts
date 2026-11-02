@@ -270,3 +270,13 @@ test('jest coverage the gate cannot read: coverageReporters without json, a cust
   expect(cfg("const base = require('./base');\nmodule.exports = { ...base };\n")).toMatch(/inherits or computes/);
   expect(cfg("module.exports = { coverageReporters: reporters };\n")).toBe("`jest.config.js` sets `coverageReporters` without 'json'");
 });
+
+test('N7: jest coverage flags in the test script count too', () => {
+  const j = (test: string) => detect(makeRepo({ 'package.json': pj({ name: 'j', scripts: { test }, devDependencies: { jest: '1' } }) }, NOGIT)).packages[0].coverageUnreadable;
+  expect(j('jest')).toBeUndefined();
+  expect(j('jest --coverageDirectory=out')).toBe('the "test" script in `package.json` sets `--coverageDirectory`');
+  expect(j('jest --coverageDirectory out')).toMatch(/--coverageDirectory/);
+  expect(j('jest --coverageDirectory=coverage')).toBeUndefined();
+  expect(j('jest --coverageReporters=text')).toBe('the "test" script in `package.json` sets `--coverageReporters` without \'json\'');
+  expect(j('jest --coverageReporters=text --coverageReporters=json')).toBeUndefined();
+});

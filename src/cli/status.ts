@@ -1,7 +1,7 @@
 import { loadConfig } from '../core/config.js';
 import { readManifest, ManifestError } from '../install/apply.js';
 import { detect } from '../install/detect.js';
-import { OFF_WHY, coverageSkipped, coverageWhy, srcGlob, unsafeWhy } from '../install/preset.js';
+import { OFF_WHY, coverageSkipped, coverageWhy, noConfigFile, srcGlob, unsafeWhy } from '../install/preset.js';
 import { stats, tddStatus, type CliEnv } from './index.js';
 
 declare const __HARNESS_VERSION__: string;
@@ -28,7 +28,7 @@ export function status(args: string[], cli: CliEnv): number {
   const facts = detect(root);
   const noJs = !facts.packages.some((p) => p.test !== 'none');
   // Packages init left out of TDD that are still out of it.
-  const left = (m.tddOff ?? []).filter((d) => !(config.checks.tdd && config.tdd.paths.includes(srcGlob(d)))).map(unsafeWhy);
+  const left = (m.tddOff ?? []).filter((d) => !(config.checks.tdd && config.tdd.paths.includes(srcGlob(d)))).map((d) => unsafeWhy(d, noConfigFile(facts.packages.find((p) => p.dir === d))));
   const tddOffWhy = noJs ? OFF_WHY : left.length ? left.join(' ') : OFF_CONFIG;
   const lines = [...warnings.map((w) => `warn ${w}`), `Harness ${VERSION} (installed ${m.version})`, 'Gates'];
   for (const [label, key] of GATES) {

@@ -162,3 +162,9 @@ it('script steps need the package manager itself to resolve', () => {
   expect(p.config.stop.steps).toEqual([]);
   expect(p.skippedSteps).toEqual([{ name: 'lint', why: '`pnpm` is not on PATH' }, { name: 'test', why: '`pnpm` is not on PATH' }]);
 });
+
+it('a vitest package with no config file is left out with its own reason', () => {
+  const p = preset(detect(makeRepo({ 'package.json': pj({ name: 'n', scripts: { test: 'vitest run' }, devDependencies: { vitest: '1' } }) })), ALL);
+  expect(p.config.checks.tdd).toBe(false);
+  expect(p.off[0].why).toBe('TDD off for the root package because it has no Vitest/Jest config file; create one with the printed lines, then add `src/**` to tdd.paths.');
+});

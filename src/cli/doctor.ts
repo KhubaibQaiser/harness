@@ -8,7 +8,7 @@ import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { matchesHash } from '../install/text.js';
 import { JEST_REPORTER, hasResultsOutput, testConfigChange } from '../install/test-config.js';
-import { COVERAGE_HINT, srcGlob } from '../install/preset.js';
+import { COVERAGE_HINT, noConfigFile, offCause, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
 
@@ -56,6 +56,8 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   let bad = 0;
   const ok = (s: string) => out(`ok ${s}`);
   const fix = (what: string, next: string) => (bad++, out(`fix ${what}: ${next}`));
+  // A gate init turned off on purpose, with what turns it on: worth knowing, not a problem (doctor still exits 0).
+  const note = (what: string, next: string) => out(`note ${what}: ${next}`);
 
   const node = process.versions.node;
   if (older(nums(node), NODE_MIN)) fix(`Node ${node} is too old`, 'install Node 22.11 or newer');
@@ -113,16 +115,16 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     const glob = `\`${srcGlob(p.dir)}\``;
     const addPath = `${config.checks.tdd ? 'add' : 'set checks.tdd to true and add'} ${glob} to tdd.paths in .harness/config.yaml`;
     const r = testConfigChange(p, root, config.tdd.results_dir);
-    if (hasResultsOutput(p, root, config.tdd.results_dir)) fix(`TDD is off for ${whereOf(p.dir)}`, addPath);
-    else if ('manual' in r) fix(`TDD is off for ${whereOf(p.dir)} because its test config could not be edited safely`, `do this by hand: ${r.manual.join(' ')}; then ${addPath}`);
-    else fix(`TDD is off for ${whereOf(p.dir)}`, `${addPath}, then run harness update to add the reporter output`);
+    if (hasResultsOutput(p, root, config.tdd.results_dir)) note(`TDD is off for ${whereOf(p.dir)}`, addPath);
+    else if ('manual' in r) note(`TDD is off for ${whereOf(p.dir)} because ${offCause(noConfigFile(p))}`, `do this by hand: ${r.manual.join(' ')}; then ${addPath}`);
+    else note(`TDD is off for ${whereOf(p.dir)}`, `${addPath}, then run harness update to add the reporter output`);
   }
 
   if (config.checks.tdd)
     for (const p of facts.packages.filter((p) => p.test === 'vitest' && config.tdd.coverage_skip.includes(srcGlob(p.dir)))) {
       const what = `the coverage gate is off for ${whereOf(p.dir)}`;
-      if (p.noCoverageProvider) fix(what, COVERAGE_HINT);
-      else fix(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
+      if (p.noCoverageProvider) note(what, COVERAGE_HINT);
+      else note(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
     }
 
   if (config.checks.tdd) {

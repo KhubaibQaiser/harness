@@ -76,3 +76,8 @@ test('status: coverage gate off for a vitest package without a coverage provider
   expect(r.out).toMatch(/tdd: on/);
   expect(r.out).toContain('Coverage gate off for the root package: install @vitest/coverage-v8 to turn on the coverage gate.');
 });
+
+test('status: a vitest package with no config file says so', async () => {
+  const r = await go({ 'package.json': pkg('n'), 'package-lock.json': '{}' });
+  expect(r.out).toContain('tdd: off - TDD off for the root package because it has no Vitest/Jest config file; create one with the printed lines, then add `src/**` to tdd.paths.');
+});

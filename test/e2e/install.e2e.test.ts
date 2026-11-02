@@ -144,8 +144,8 @@ test('unsafe vitest config: init prints manual lines and doctor names the fix', 
   expect(i.out).toContain("outputFile: { json: '.harness/state/test-results/root.json' }");
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toBe(f.files['vitest.config.ts']);
   const d = cli(root, 'doctor');
-  expect(d.code).toBe(1);
-  expect(d.out).toMatch(/fix TDD is off for the root package because its test config could not be edited safely: do this by hand/);
+  expect(d.code).toBe(0); // a note, not a problem
+  expect(d.out).toMatch(/note TDD is off for the root package because its test config could not be edited safely: do this by hand/);
   expect(cli(root, 'uninstall', '--yes').code).toBe(0);
   expect(walk(root)).toEqual(before);
 });

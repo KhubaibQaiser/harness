@@ -122,11 +122,11 @@ test('package left out of TDD: doctor repeats the manual lines, then names the t
   const root = makeRepo({ ...REPO, 'vitest.config.ts': UNSAFE });
   await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   const a = run(root, { path: bin('npm') });
-  expect(a.out).toMatch(/^fix TDD is off for the root package because its test config could not be edited safely: do this by hand: .*outputFile: \{ json: '\.harness\/state\/test-results\/root\.json' \}.*then set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
-  expect(a.code).toBe(1);
+  expect(a.out).toMatch(/^note TDD is off for the root package because its test config could not be edited safely: do this by hand: .*outputFile: \{ json: '\.harness\/state\/test-results\/root\.json' \}.*then set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
+  expect(a.code).toBe(0); // a note, not a problem
   writeFileSync(join(root, 'vitest.config.ts'), "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: { root: './src', reporters: ['default', 'json'], outputFile: { json: '.harness/state/test-results/root.json' } } });\n");
   const b = run(root, { path: bin('npm') });
-  expect(b.out).toMatch(/^fix TDD is off for the root package: set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
+  expect(b.out).toMatch(/^note TDD is off for the root package: set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toContain("root: './src'"); // never rewritten
   setConfig(root, (s) => s.replace('tdd: false', 'tdd: true').replace(/paths: \[\]/, 'paths:\n    - src/**'));
   const c = run(root, { path: bin('npm') });
@@ -149,10 +149,11 @@ test('vitest without a coverage provider: doctor gives the install hint, then th
   await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).not.toContain('enabled: true');
   const a = run(root, { path: bin('npm') });
-  expect(a.out).toMatch(/^fix the coverage gate is off for the root package: install @vitest\/coverage-v8 to turn on the coverage gate$/m);
-  expect(a.code).toBe(1);
+  expect(a.out).toMatch(/^note the coverage gate is off for the root package: install @vitest\/coverage-v8 to turn on the coverage gate$/m);
+  expect(a.out).not.toMatch(/problems? found/);
+  expect(a.code).toBe(0);
   mkdirSync(join(root, 'node_modules/@vitest/coverage-v8'), { recursive: true });
-  expect(run(root, { path: bin('npm') }).out).toMatch(/^fix the coverage gate is off for the root package: run harness update to turn on Vitest coverage, then remove `src\/\*\*` from tdd\.coverage_skip in \.harness\/config\.yaml$/m);
+  expect(run(root, { path: bin('npm') }).out).toMatch(/^note the coverage gate is off for the root package: run harness update to turn on Vitest coverage, then remove `src\/\*\*` from tdd\.coverage_skip in \.harness\/config\.yaml$/m);
 });
 
 test('CRLF checkout of the dispatcher still matches the manifest', async () => {
@@ -160,4 +161,13 @@ test('CRLF checkout of the dispatcher still matches the manifest', async () => {
   const p = join(root, '.harness/hooks/dispatch.mjs');
   writeFileSync(p, readFileSync(p, 'utf8').replace(/\r?\n/g, '\r\n'));
   expect(run(root, { path: bin('npm') }).out).toMatch(/^ok dispatcher matches the manifest$/m);
+});
+
+test('package with no vitest config file: the note says so and gives the lines to create it', async () => {
+  const { 'vitest.config.ts': _, ...noCfg } = REPO;
+  const root = makeRepo(noCfg);
+  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  const r = run(root, { path: bin('npm') });
+  expect(r.out).toMatch(/^note TDD is off for the root package because it has no Vitest\/Jest config file: do this by hand: Create `vitest\.config\.ts` with:/m);
+  expect(r.code).toBe(0);
 });

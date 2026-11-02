@@ -12,8 +12,11 @@ export const coverageWhy = (dir: string): string => `Coverage gate off for ${lab
 /** Dirs of Vitest packages with no coverage provider that the coverage gate skips (their src/** is in tdd.coverage_skip). */
 export const coverageSkipped = (f: Facts, c: HarnessConfig): string[] =>
   f.packages.filter((p) => p.noCoverageProvider && c.tdd.coverage_skip.includes(srcGlob(p.dir))).map((p) => p.dir);
-export const unsafeWhy = (dir: string): string =>
-  `TDD off for ${label(dir)} because its test config could not be edited safely; add the printed lines, then add \`${srcGlob(dir)}\` to tdd.paths.`;
+/** A Vitest package with no config file: init has nothing to edit, so the user creates one. */
+export const noConfigFile = (p: { test: string; testConfig?: string } | undefined): boolean => p?.test === 'vitest' && !p.testConfig;
+export const offCause = (noConfig: boolean): string => (noConfig ? 'it has no Vitest/Jest config file' : 'its test config could not be edited safely');
+export const unsafeWhy = (dir: string, noConfig = false): string =>
+  `TDD off for ${label(dir)} because ${offCause(noConfig)}; ${noConfig ? 'create one with' : 'add'} the printed lines, then add \`${srcGlob(dir)}\` to tdd.paths.`;
 
 const RECURSIVE: Record<string, (berry: boolean) => string[]> = {
   pnpm: () => ['pnpm', '-r', 'test'],
@@ -27,7 +30,7 @@ export type Preset = {
   reasons: Record<string, string>;
   off: { gate: string; why: string }[];
   /** Packages left out of tdd.paths because their test config could not be edited safely, with the lines to add by hand. */
-  tddOff: { dir: string; manual: string[] }[];
+  tddOff: { dir: string; manual: string[]; noConfig: boolean }[];
   /** Stop steps left out because their tool (or the package manager running them) is not on PATH. */
   skippedSteps: { name: string; why: string }[];
 };
@@ -46,11 +49,11 @@ export function preset(f: Facts, which: Which = pathWhich): Preset {
     if (p.test === 'none') return false;
     const r = testConfigChange(p, f.root, config.tdd.results_dir);
     if (!('manual' in r)) return true;
-    tddOff.push({ dir: p.dir, manual: r.manual });
+    tddOff.push({ dir: p.dir, manual: r.manual, noConfig: noConfigFile(p) });
     return false;
   });
   const tdd = jsTested.length > 0;
-  const unsafe = tddOff.map((o) => unsafeWhy(o.dir));
+  const unsafe = tddOff.map((o) => unsafeWhy(o.dir, o.noConfig));
 
   config.checks.tdd = tdd;
   config.checks.multiFile = true;

@@ -147,6 +147,8 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
       else if (!findOnPath(r.cmd, env, process.platform)) fix(`Stop step \`${name}\` needs \`${r.cmd}\`, which is not on PATH`, `install \`${r.cmd}\` or remove the step from \`.harness/config.yaml\``);
       else ok(`Stop step \`${name}\` runs with \`${r.cmd}\``);
     }
+    if (config.stop.steps.length)
+      note("Stop steps were checked against this terminal's PATH", "Claude Code's hooks may see a different one (for example when Claude Code starts from the GUI); if Stop warns that a tool is not on its PATH, make the tool available there");
   }
   if (bad) out(`${bad} problem${bad === 1 ? '' : 's'} found.`);
   return bad ? 1 : 0;

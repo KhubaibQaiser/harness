@@ -358,7 +358,8 @@ test('command step runs as written and a failure blocks with its label', async (
   expect((d as { reason: string }).reason).toContain('lint failed (attempt 1 of');
 });
 
-const MISSING = 'Stop step `lint` was skipped: `ruff` not found. Install it, or remove the step from stop.steps in `.harness/config.yaml`.';
+const HINT = "Install it there, or edit stop.steps in `.harness/config.yaml`.";
+const MISSING = `Every Stop step was skipped: \`ruff\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). ${HINT}`;
 
 test('missing command does not block: one warning and one stop-tool-missing event per session per step', async () => {
   const s = setup({ yaml: PY });
@@ -383,7 +384,19 @@ test('missing package manager binary is skipped the same way; other steps still 
   const d = await runStopReal(s.ctx, s.exec(SRC, 'x'), Date.now, which);
   expect(d).toMatchObject({ kind: 'block' });
   expect((d as { reason: string }).reason).toContain('own failed (attempt 1 of');
+  // The block wins and the warning was not shown, so the step is not marked: the next Stop that passes warns.
+  expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing')).toEqual([]);
+  expect(s.ctx.state.stopToolMissing ?? []).toEqual([]);
+  const ok = await runStopReal(s.ctx, s.exec(SRC), Date.now, which);
+  expect(ok).toEqual({ kind: 'context', check: 'stop', text: `Stop step \`lint\` was skipped: \`pnpm\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). ${HINT}` });
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing').map((e) => e.reason)).toEqual(['lint: pnpm']);
+});
+
+test('package manager missing for every step: one warning that says every step was skipped', async () => {
+  const s = setup();
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  expect(d).toEqual({ kind: 'context', check: 'stop', text: `Every Stop step was skipped: \`pnpm\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). ${HINT}` });
+  expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing')).toHaveLength(4);
 });
 
 test('no steps at all: allowed, stop-nothing-to-run logged once per session', async () => {

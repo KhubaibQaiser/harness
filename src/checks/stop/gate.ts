@@ -148,19 +148,30 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   };
   let ran = 0;
   // A missing tool is the user's setup, not the agent's work: skip the step and warn once per session, never block.
-  const warnings: string[] = [];
-  const done = (d: Decision): Decision => (d.kind === 'allow' && warnings.length ? { kind: 'context', text: warnings.join('\n'), check: 'stop' } : d);
+  // A step is marked warned (and logged) only when the warning is shown, i.e. when this Stop is not blocked.
+  let resolved = 0;
+  const missing: { label: string; cmd: string }[] = [];
+  const done = (d: Decision): Decision => {
+    const seen = ctx.state.stopToolMissing ?? [];
+    const fresh = missing.filter((m) => !seen.includes(m.label));
+    if (d.kind !== 'allow' || !fresh.length) return d;
+    for (const m of fresh) log('stop-tool-missing', `${m.label}: ${m.cmd}`);
+    ctx.save({ ...ctx.state, stopToolMissing: [...seen, ...fresh.map((m) => m.label)] });
+    const cmds = [...new Set(fresh.map((m) => m.cmd))];
+    const text = cmds.map((cmd) => {
+      const labels = fresh.filter((m) => m.cmd === cmd).map((m) => `\`${m.label}\``);
+      const who = ran === 0 && cmds.length === 1 && labels.length === resolved ? 'Every Stop step was' : `Stop step${labels.length > 1 ? 's' : ''} ${labels.join(', ')} ${labels.length > 1 ? 'were' : 'was'}`;
+      return `${who} skipped: \`${cmd}\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). Install it there, or edit stop.steps in \`.harness/config.yaml\`.`;
+    });
+    return { kind: 'context', text: text.join('\n'), check: 'stop' };
+  };
   for (const step of steps) {
     const rs = resolveStep(step, pm, scripts);
     if (!rs) continue;
+    resolved++;
     const found = which(rs.cmd);
     if (!found) {
-      const seen = ctx.state.stopToolMissing ?? [];
-      if (!seen.includes(rs.label)) {
-        log('stop-tool-missing', `${rs.label}: ${rs.cmd}`);
-        ctx.save({ ...ctx.state, stopToolMissing: [...seen, rs.label] });
-        warnings.push(`Stop step \`${rs.label}\` was skipped: \`${rs.cmd}\` not found. Install it, or remove the step from stop.steps in \`.harness/config.yaml\`.`);
-      }
+      missing.push({ label: rs.label, cmd: rs.cmd });
       continue;
     }
     ran++;

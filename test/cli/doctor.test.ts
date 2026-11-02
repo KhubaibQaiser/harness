@@ -43,7 +43,7 @@ test('healthy install: all ok, exit 0', async () => {
   // tdd is on for the vitest repo; init applied the reporter config. npm must be on PATH for the test step.
   const r = run(root, { path: bin('npm') });
   expect(r.out).not.toMatch(/^fix /m);
-  expect(r.lines.every((l) => l.startsWith('ok '))).toBe(true);
+  expect(r.lines.every((l) => l.startsWith('ok ') || l.startsWith('note '))).toBe(true);
   expect(r.lines.length).toBeGreaterThanOrEqual(7);
   expect(r.code).toBe(0);
 });
@@ -169,5 +169,11 @@ test('package with no vitest config file: the note says so and gives the lines t
   await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   const r = run(root, { path: bin('npm') });
   expect(r.out).toMatch(/^note TDD is off for the root package because it has no Vitest\/Jest config file: do this by hand: Create `vitest\.config\.ts` with:/m);
+  expect(r.code).toBe(0);
+});
+
+test('doctor notes that the hooks may see a different PATH than this terminal', async () => {
+  const r = run(await installed(), { path: bin('npm') });
+  expect(r.out).toMatch(/^note Stop steps were checked against this terminal's PATH: Claude Code's hooks may see a different one \(for example when Claude Code starts from the GUI\); if Stop warns that a tool is not on its PATH, make the tool available there$/m);
   expect(r.code).toBe(0);
 });

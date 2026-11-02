@@ -41,7 +41,7 @@
 - (b) Leave every hosted server out.
 - **Answer: (a).**
 
-**Q5. Missing `stance_reason`** for `feature-dev`, `pr-review-toolkit`, `sourcegraph`, `sonarqube`, `jfrog`, `sonatype-guide`. **Answer:** the owner writes the six lines. Until then the six are in `catalog/excluded.yaml` with reason `stance reason pending from owner`.
+**Q5. Missing `stance_reason`** for `feature-dev`, `pr-review-toolkit`, `sourcegraph`, `sonarqube`, `jfrog`, `sonatype-guide`. **Answer:** the owner writes the six lines. **Lines (2026-11-02):** `feature-dev`: overlaps superpowers; use one process pack. `pr-review-toolkit`: overlaps the built-in /code-review and the harness reviewer. `sourcegraph`: duplicates typescript-lsp and local search for single-repo work; needs a Sourcegraph instance (verify in research). `sonarqube`: belongs in CI quality gates, not the agent session. `jfrog` and `sonatype-guide`: owner chose 'only for their users' — not discouraged; recommended only to teams already on Artifactory or Nexus (stance neutral with that condition). These replace the `stance reason pending from owner` exclusion. Until then the six are in `catalog/excluded.yaml` with reason `stance reason pending from owner`.
 
 **Q6. `CLAUDECODE=1` is also set in IDE terminals** (https://code.claude.com/docs/en/env-vars.md). **Answer:** keep the rule, and list it as a known limit in the README.
 

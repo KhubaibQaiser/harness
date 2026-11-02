@@ -160,3 +160,19 @@ test('uninstall --dry-run lists what it would do and writes nothing', async () =
   expect(hashes(root)).toEqual(before);
   expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
 });
+
+test('jest repo: uninstall removes the reporter and restores the test script byte for byte', async () => {
+  const files = {
+    'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest --silent' }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n',
+    'package-lock.json': '{}\n',
+    '.gitignore': 'node_modules\n',
+  };
+  const root = makeRepo(files);
+  await init(['--yes'], { ...base, root, out: () => {}, prompt: fake() });
+  expect(existsSync(join(root, '.harness/hooks/jest-results.cjs'))).toBe(true);
+  git(root, 'add', '-A');
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'h');
+  expect((await un(root, ['--yes'])).code).toBe(0);
+  expect(existsSync(join(root, '.harness'))).toBe(false);
+  expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(files['package.json']);
+});

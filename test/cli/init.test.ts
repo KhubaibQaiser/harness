@@ -212,3 +212,39 @@ test('--dry-run on dirty files warns and exits 0', async () => {
   expect(r.out).toContain('These files have uncommitted changes; commit or stash them before applying: .gitignore.');
   expect(existsSync(join(root, '.harness'))).toBe(false);
 });
+
+const NPM_JEST = {
+  'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n',
+  'package-lock.json': '{}\n',
+  'jest.config.js': 'module.exports = {};\n',
+  '.gitignore': 'node_modules\n',
+};
+
+test('jest repo: init installs the harness reporter, wires it in the test script, and the manifest hashes it', async () => {
+  const root = makeRepo(NPM_JEST);
+  expect((await go(root, ['--yes'])).code).toBe(0);
+  const rep = readFileSync(join(root, '.harness/hooks/jest-results.cjs'), 'utf8');
+  expect(rep).toBe(readFileSync(join(templatesDir, 'hooks/jest-results.cjs'), 'utf8').replace(/\r\n/g, '\n'));
+  expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts.test).toContain('--reporters=./.harness/hooks/jest-results.cjs');
+  const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
+  expect(m.files.find((f: { rel: string }) => f.rel === '.harness/hooks/jest-results.cjs')).toMatchObject({ kind: 'create' });
+});
+
+test('vitest repo: no jest reporter is installed', async () => {
+  const root = makeRepo(NPM_VITEST);
+  expect((await go(root, ['--yes'])).code).toBe(0);
+  expect(existsSync(join(root, '.harness/hooks/jest-results.cjs'))).toBe(false);
+});
+
+test('the jest reporter creates the results folder and writes what the TDD gate reads', async () => {
+  const { createRequire } = await import('node:module');
+  const { readResults } = await import('../../src/checks/tdd/results.js');
+  const root = makeRepo({ 'src/a.test.js': '' }, { git: false });
+  const Reporter = createRequire(import.meta.url)(join(templatesDir, 'hooks/jest-results.cjs'));
+  const out = join(root, '.harness/state/test-results/root.json');
+  new Reporter({ outputFile: out }).onRunComplete(new Set(), {
+    testResults: [{ testFilePath: join(root, 'src/a.test.js'), numFailingTests: 1, testResults: [{ fullName: 'a adds', status: 'failed' }, { fullName: 'a ok', status: 'passed' }] }],
+  });
+  const r = readResults(root, join(root, '.harness/state/test-results'));
+  expect(r).toEqual([{ file: 'src/a.test.js', status: 'failed', tests: [{ fullName: 'a adds', status: 'failed' }, { fullName: 'a ok', status: 'passed' }], writtenAt: expect.any(Number) }]);
+});

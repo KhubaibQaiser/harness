@@ -7,7 +7,7 @@ import { MIN_CLAUDE_CODE } from '../core/min-claude.js';
 import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { sha256 } from '../install/text.js';
-import { hasResultsOutput, testConfigChange } from '../install/test-config.js';
+import { JEST_REPORTER, hasResultsOutput, testConfigChange } from '../install/test-config.js';
 import { srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
@@ -82,6 +82,12 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   if (disp === null) fix(`\`${DISPATCH}\` is missing`, 'run harness update to restore it');
   else if (!entry || sha256(disp) !== entry.hash) fix(`\`${DISPATCH}\` does not match the installed version`, 'run harness update to restore it');
   else ok('dispatcher matches the manifest');
+  const rep = manifest.files.find((f) => f.rel === JEST_REPORTER);
+  if (rep) {
+    const cur = readText(join(root, JEST_REPORTER));
+    if (cur === null || sha256(cur) !== rep.hash) fix(`\`${JEST_REPORTER}\` is ${cur === null ? 'missing' : 'not the installed version'}`, 'run harness update to restore it');
+    else ok('Jest reporter matches the manifest');
+  }
 
   const cfgText = readText(join(root, '.harness/config.yaml'));
   let raw: unknown;

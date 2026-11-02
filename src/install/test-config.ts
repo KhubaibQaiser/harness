@@ -134,17 +134,36 @@ function vitestChange(pkg: PackageFacts, root: string, path: string): TestConfig
   return { change: { kind: 'update', rel: rel!, before, after, blocks } };
 }
 
+export const JEST_REPORTER = '.harness/hooks/jest-results.cjs';
+
+// Jest's --outputFile writes nothing without --json, so the harness reporter reads it (Jest does not create the
+// folder, the reporter does). Reporter paths resolve against Jest's rootDir, the package dir; ./ or ../ marks them
+// as paths, not module names. The ignore keeps Jest's haste map out of .harness/backup (a copy of package.json).
+function jestFlags(pkg: PackageFacts, root: string, path: string, coverage: boolean): string {
+  let rep = relative(join(root, pkg.dir), join(root, JEST_REPORTER)).split(sep).join('/');
+  if (!rep.startsWith('../')) rep = `./${rep}`;
+  return `--reporters=default --reporters=${rep} "--modulePathIgnorePatterns=<rootDir>/.harness" --outputFile=${path}${coverage ? ' --coverage' : ''}`;
+}
+
 function jestChange(pkg: PackageFacts, root: string, path: string): TestConfigResult {
   const script = pkg.scripts.test;
   const rel = pkg.dir === '.' ? 'package.json' : `${pkg.dir}/package.json`;
-  const flags = `--json --outputFile=${path} --coverage`;
-  const manual: TestConfigResult = { manual: [`${rel}: add \`${flags}\` to the jest call in the "test" script`] };
+  const has = (flag: string) => script !== undefined && new RegExp(`(^|\\s)${flag}(=|\\s|$)`).test(script);
+  const flags = jestFlags(pkg, root, path, !has('--coverage'));
+  const manual: TestConfigResult = { manual: [`${rel}: add \`${jestFlags(pkg, root, path, true)}\` to the jest call in the "test" script`] };
   if (script === undefined) return manual;
-  if (/(^|\s)--json(\s|$)/.test(script)) return { none: true };
+  if (script.includes(JEST_REPORTER.split('/').pop()!)) return { none: true };
+  if (has('--json') || has('--outputFile') || has('--rootDir')) return manual;
   if (!/^jest(\s+[\w=.:,/@-]+)*$/.test(script) || !/^[\w./@-]+$/.test(path)) return manual;
-  const add = ` ${/(^|\s)--coverage(\s|$)/.test(script) ? flags.replace(' --coverage', '') : flags}`;
+  // A custom rootDir moves where Jest resolves the reporter path.
+  const cfgText = (f: string) => {
+    try { return readFileSync(join(root, pkg.dir, f), 'utf8'); } catch { return ''; }
+  };
+  if (pkg.testConfig && /\brootDir\b/.test(cfgText(pkg.testConfig))) return manual;
   let before: string;
   try { before = readFileSync(join(root, rel), 'utf8'); } catch { return manual; }
+  try { if (JSON.parse(before).jest?.rootDir !== undefined) return manual; } catch { return manual; }
+  const add = JSON.stringify(` ${flags}`).slice(1, -1); // inserted inside the JSON string, so its quotes are escaped
   const lit = JSON.stringify(script);
   const re = new RegExp(`("test"\\s*:\\s*)${lit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
   const hits = [...before.matchAll(re)];

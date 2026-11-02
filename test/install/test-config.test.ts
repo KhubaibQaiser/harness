@@ -101,14 +101,46 @@ describe('testConfigChange vitest fixes', () => {
 describe('testConfigChange jest', () => {
   const pj = (s: string) => JSON.stringify({ name: 'demo', scripts: { test: s } }, null, 2) + '\n';
 
-  it('jest script appended', () => {
+  const FLAGS = '--reporters=default --reporters=./.harness/hooks/jest-results.cjs "--modulePathIgnorePatterns=<rootDir>/.harness"';
+
+  it('jest script gets the harness reporter, the results path, coverage and the .harness ignore', () => {
     const c = edit({ 'package.json': pj('jest --silent') }, jest('jest --silent'), 'package.json');
-    expect(JSON.parse(c.after).scripts.test).toBe(`jest --silent --json --outputFile=${RD}/root.json --coverage`);
+    expect(JSON.parse(c.after).scripts.test).toBe(`jest --silent ${FLAGS} --outputFile=${RD}/root.json --coverage`);
   });
 
-  it('jest script with --json untouched', () => {
-    const root = makeRepo({ 'package.json': pj('jest --json') }, { git: false });
-    expect(testConfigChange(jest('jest --json'), root, RD)).toEqual({ none: true });
+  it('jest script that already has --coverage keeps one', () => {
+    const c = edit({ 'package.json': pj('jest --coverage') }, jest('jest --coverage'), 'package.json');
+    expect(JSON.parse(c.after).scripts.test).toBe(`jest --coverage ${FLAGS} --outputFile=${RD}/root.json`);
+  });
+
+  it('monorepo package: reporter path relative to the package, results named after the package', () => {
+    const files = { 'packages/a/package.json': pj('jest') };
+    const root = makeRepo(files, { git: false });
+    const r = testConfigChange(jest('jest', { dir: 'packages/a', name: '@acme/a' }), root, RD) as { change: { after: string } };
+    expect(JSON.parse(r.change.after).scripts.test).toBe(
+      `jest --reporters=default --reporters=../../.harness/hooks/jest-results.cjs "--modulePathIgnorePatterns=<rootDir>/.harness" --outputFile=../../${RD}/acme__a.json --coverage`,
+    );
+  });
+
+  it('jest script already set up is untouched', () => {
+    const s = `jest ${FLAGS} --outputFile=${RD}/root.json --coverage`;
+    const root = makeRepo({ 'package.json': pj(s) }, { git: false });
+    expect(testConfigChange(jest(s), root, RD)).toEqual({ none: true });
+  });
+
+  it('jest script with its own --json or --outputFile, or a custom rootDir, returns manual', () => {
+    for (const s of ['jest --json', 'jest --outputFile=x.json']) {
+      const root = makeRepo({ 'package.json': pj(s) }, { git: false });
+      expect(testConfigChange(jest(s), root, RD), s).toHaveProperty('manual');
+    }
+    const root = makeRepo({ 'package.json': pj('jest'), 'jest.config.js': "module.exports = { rootDir: 'src' };\n" }, { git: false });
+    expect(testConfigChange(jest('jest', { testConfig: 'jest.config.js' }), root, RD)).toHaveProperty('manual');
+  });
+
+  it('jest manual line names the reporter flags', () => {
+    const root = makeRepo({ 'package.json': pj('cross-env CI=1 jest') }, { git: false });
+    const r = testConfigChange(jest('cross-env CI=1 jest'), root, RD) as { manual: string[] };
+    expect(r.manual[0]).toBe(`package.json: add \`${FLAGS} --outputFile=${RD}/root.json --coverage\` to the jest call in the "test" script`);
   });
 
   it('jest script via a wrapper returns manual', () => {

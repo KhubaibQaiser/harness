@@ -23,7 +23,7 @@ test('protect is registered second, fail-closed, on PreToolUse', () => {
   expect(protect.events).toEqual(['PreToolUse']);
 });
 
-test.each(['.harness/hooks/dispatch.mjs', '.harness/state/s.json', '.harness/state/tdd-pause.json', '.harness/config.yaml', '.claude/settings.json', '.claude/settings.local.json', '/p/.harness/hooks/dispatch.mjs'])(
+test.each(['.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state/s.json', '.harness/state/tdd-pause.json', '.harness/config.yaml', '.claude/settings.json', '.claude/settings.local.json', '/p/.harness/hooks/dispatch.mjs'])(
   'agent Write to %s is denied with the reason', (p) => {
     const d = edit(p, 'Write');
     expect(d.kind).toBe('deny');
@@ -49,7 +49,7 @@ test('shell redirect to tdd-pause.json is denied (pause comes only from the CLI)
 test('shell writes, rm, mv and cp touching protected paths are denied', () => {
   for (const c of [
     'echo x >> .harness/config.yaml', 'tee .claude/settings.json < a', "sed -i 's/a/b/' .claude/settings.local.json",
-    'rm .harness/hooks/dispatch.mjs', 'rm -rf .harness/hooks', 'rm -rf node_modules .harness/state/',
+    'rm .harness/hooks/dispatch.mjs', 'rm .harness/hooks/jest-*.cjs', 'rm -rf .harness/hooks', 'rm -rf node_modules .harness/state/',
     'mv a .harness/hooks/dispatch.mjs', 'cp a.mjs .harness/hooks/dispatch.mjs', 'mv .harness/hooks/dispatch.mjs /tmp/x', 'cd x && mv -f a .claude/settings.json',
   ]) expect(bash(c), c).toBe('deny');
 });

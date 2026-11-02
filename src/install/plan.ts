@@ -5,7 +5,7 @@ import { serializeConfig } from '../core/config-io.js';
 import type { Change } from './apply.js';
 import type { Facts } from './detect.js';
 import { mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings } from './merge.js';
-import { testConfigChange } from './test-config.js';
+import { JEST_REPORTER, testConfigChange } from './test-config.js';
 
 const ESLINT = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'];
 
@@ -57,6 +57,7 @@ export function planChanges(
     else ignore(eslint, m);
   }
 
+  if (config.checks.tdd && facts.packages.some((p) => p.test === 'jest')) put(JEST_REPORTER, tpl('hooks', 'jest-results.cjs'));
   if (config.checks.tdd)
     for (const pkg of facts.packages) {
       const r = testConfigChange(pkg, root, config.tdd.results_dir);

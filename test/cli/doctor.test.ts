@@ -133,3 +133,13 @@ test('package left out of TDD: doctor repeats the manual lines, then names the t
   expect(c.out).not.toMatch(/TDD is off/);
   expect(c.out).toMatch(/^ok vitest reporter output is set up for the root package$/m);
 });
+
+test('jest repo: doctor checks the installed reporter against the manifest', async () => {
+  const root = makeRepo({ 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' } }), 'package-lock.json': '{}\n' });
+  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  expect(run(root, { path: bin('npm') }).out).toMatch(/^ok Jest reporter matches the manifest$/m);
+  writeFileSync(join(root, '.harness/hooks/jest-results.cjs'), '// edited\n');
+  const r = run(root, { path: bin('npm') });
+  expect(r.out).toMatch(/^fix `\.harness\/hooks\/jest-results\.cjs` is not the installed version: run harness update to restore it$/m);
+  expect(r.code).toBe(1);
+});

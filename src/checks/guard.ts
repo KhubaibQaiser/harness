@@ -316,7 +316,12 @@ export const guard: Check = {
     if (ctx.config?.checks.guard === false) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = ctx.input;
     if (tool_name === 'Bash') return decideCommand(String(tool_input.command ?? ''), ctx);
-    if (tool_name === 'Read' || tool_name === 'Grep') return decidePaths([String(tool_input.file_path ?? tool_input.path ?? '')]);
+    if (tool_name === 'Read') return decidePaths([String(tool_input.file_path ?? tool_input.path ?? '')]);
+    if (tool_name === 'Grep') {
+      // ponytail: the glob is checked as written and with its wildcards dropped, not expanded, so `.e*v` is missed.
+      const glob = String(tool_input.glob ?? '');
+      return decidePaths([String(tool_input.path ?? ''), glob, glob.replace(/[*?[\]{}]/g, '')]);
+    }
     return { kind: 'allow' };
   },
 };

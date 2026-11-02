@@ -127,6 +127,11 @@ test('guard check handles Bash, Read and Grep tool calls', async () => {
   expect(await run('Bash', { command: 'ls' })).toEqual({ kind: 'allow' });
   expect(await run('Read', { file_path: '/Users/x/.ssh/id_ed25519' })).toMatchObject({ kind: 'deny' });
   expect(await run('Grep', { path: '/p/.env', pattern: 'x' })).toMatchObject({ kind: 'deny' });
+  expect(await run('Grep', { path: '.', glob: '.env*', pattern: 'x' })).toMatchObject({ kind: 'deny' });
+  expect(await run('Grep', { path: '.', glob: '**/*.pem', pattern: 'x' })).toMatchObject({ kind: 'deny' });
+  expect(await run('Grep', { glob: '.env.local', pattern: 'x' })).toMatchObject({ kind: 'deny' });
+  expect(await run('Grep', { path: '.', glob: '*.ts', pattern: 'x' })).toEqual({ kind: 'allow' });
+  expect(await run('Grep', { path: '.', glob: '.env.example', pattern: 'x' })).toEqual({ kind: 'allow' });
   expect(await run('Read', { file_path: '/p/README.md' })).toEqual({ kind: 'allow' });
   expect(await run('Edit', { file_path: '/p/.env' })).toEqual({ kind: 'allow' });
 });

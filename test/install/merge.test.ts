@@ -203,10 +203,19 @@ describe('mergeEslintFlatIgnores', () => {
     const b = mergeEslintFlatIgnores("const cfg = [{ ignores: ['x'] }];\nexport default cfg;\n")!;
     expect(b.after).toContain('.harness/');
   });
+  it('a per-object ignores is not global: a new global-ignores entry is appended, in the file\'s layout and quotes', () => {
+    const src = 'export default [\n  { files: ["**/*.ts"], ignores: ["x/"] },\n];\n';
+    const r = mergeEslintFlatIgnores(src)!;
+    expect(r.after).toBe('export default [\n  { files: ["**/*.ts"], ignores: ["x/"] },\n  { ignores: [".harness/"] },\n];\n');
+    expect(removeBlocks(r.after, r.blocks)).toBe(src);
+    expect(mergeEslintFlatIgnores("export default [{ rules: {} }];\n")!.after).toBe("export default [{ rules: {} }, { ignores: ['.harness/'] }];\n");
+    expect(mergeEslintFlatIgnores('export default [];\n')!.after).toBe("export default [{ ignores: ['.harness/'] }];\n");
+    // with a global-ignores object later in the array, that one is edited
+    expect(mergeEslintFlatIgnores("export default [{ files: ['a'], ignores: ['x'] }, { ignores: ['dist/'] }];\n")!.after).toContain("{ ignores: ['dist/', '.harness/'] }");
+  });
   it('computed eslint config returns null', () => {
     expect(mergeEslintFlatIgnores('export default makeConfig();\n')).toBeNull();
     expect(mergeEslintFlatIgnores("export default [{ ignores: IGN }];\n")).toBeNull();
-    expect(mergeEslintFlatIgnores("export default [{ rules: {} }];\n")).toBeNull();
     expect(mergeEslintFlatIgnores('export default [ {{{')).toBeNull();
     expect(mergeEslintFlatIgnores('module.exports = [];\n')).toBeNull();
   });

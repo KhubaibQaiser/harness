@@ -25,6 +25,8 @@ export interface Facts {
   existing: { claudeMd: boolean; agentsMd: boolean; settings: boolean; settingsLocal: boolean; otherHooks: string[] };
   defaultBranch: string;
   warnings: string[];
+  /** Prettier is a dependency of the root or a workspace package. */
+  prettier?: true;
 }
 
 const SKIP = new Set(['node_modules', '.git', '.harness']);
@@ -191,6 +193,7 @@ export function detect(root: string): Facts {
   const dirs = globs.length ? workspaceDirs(root, globs, warnings) : [];
   const rootDeps = depsOf(rootPkg);
   const packages = [...(hasPkg ? ['.'] : []), ...dirs].map((d) => packageFacts(root, d, warnings, rootDeps));
+  const prettier = rootDeps.has('prettier') || dirs.some((d) => depsOf(readJson(root, `${d}/package.json`, [], '')).has('prettier'));
 
   const otherHooks: string[] = [];
   for (const f of ['settings.json', 'settings.local.json']) {
@@ -213,5 +216,6 @@ export function detect(root: string): Facts {
     },
     defaultBranch: defaultBranch(root),
     warnings: [...new Set(warnings)],
+    ...(prettier ? { prettier: true as const } : {}),
   };
 }

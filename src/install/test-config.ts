@@ -4,7 +4,7 @@ import { parseModule } from 'magicast';
 import type { PackageFacts } from './detect.js';
 import type { Change } from './apply.js';
 import { removeBlocks } from './merge.js';
-import { eolOf, withEol } from './text.js';
+import { eolOf, quoteOf, requote, withEol } from './text.js';
 
 export type TestConfigResult = { change: Change } | { manual: string[] } | { none: true };
 
@@ -36,6 +36,20 @@ function addProp(src: string, eol: string, o: any, text: string): Ins {
   if (!multiline) return { at: last.end, text: `, ${text}` };
   const lineStart = src.lastIndexOf('\n', last.start) + 1;
   return { at: last.end, text: `,${eol}${/^[ \t]*/.exec(src.slice(lineStart))![0]}${text}` };
+}
+
+const indentAt = (src: string, at: number): string => /^[ \t]*/.exec(src.slice(src.lastIndexOf('\n', at - 1) + 1))![0];
+/**
+ * The inside of a new object literal for `props`: inline, or one property per line (Prettier's layout) when the object
+ * it goes into, `parent`, already has one property per line. Trailing commas follow `parent`'s last property.
+ */
+function objInner(src: string, parent: any, props: string[]): string {
+  const last = parent.properties[parent.properties.length - 1];
+  if (!last || !src.slice(parent.start, last.start).includes('\n')) return ` ${props.join(', ')} `;
+  const ind = indentAt(src, last.start);
+  const unit = ind.slice(indentAt(src, parent.start).length) || '  ';
+  const trailing = /^\s*,/.test(src.slice(last.end)) ? ',' : '';
+  return `\n${ind}${unit}${props.join(`,\n${ind}${unit}`)}${trailing}\n${ind}`;
 }
 
 function addElem(arr: any, text: string): Ins {
@@ -116,8 +130,11 @@ function vitestChange(pkg: PackageFacts, root: string, path: string): TestConfig
     if (obj?.type !== 'ObjectExpression') return manual;
     const eol = '\n';
     const test = prop(obj, 'test');
-    if (!test) ins = [addProp(lf, eol, obj, `test: { reporters: ['default', 'json'], outputFile: { json: '${path}' }, coverage: { ${covText(enable)} } }`)];
-    else if (unwrap(test.value)?.type === 'ObjectExpression') ins = editTest(lf, eol, unwrap(test.value), path, enable);
+    const props = ["reporters: ['default', 'json']", `outputFile: { json: '${path}' }`, `coverage: { ${covText(enable)} }`];
+    const t = unwrap(test?.value);
+    if (!test) ins = [addProp(lf, eol, obj, `test: {${objInner(lf, obj, props)}}`)];
+    else if (t?.type === 'ObjectExpression' && !t.properties.length) ins = [{ at: t.start + 1, text: objInner(lf, obj, props) }];
+    else if (t?.type === 'ObjectExpression') ins = editTest(lf, eol, t, path, enable);
   } catch {
     return manual;
   }
@@ -125,7 +142,8 @@ function vitestChange(pkg: PackageFacts, root: string, path: string): TestConfig
   if (!ins.length) return { none: true };
   const eol = eolOf(before);
   const crlf = (at: number) => (eol === '\r\n' ? at + lf.slice(0, at).split('\n').length - 1 : at);
-  ins = mergeInserts(ins).map((i) => ({ ...i, at: crlf(i.at), text: withEol(i.text, eol) }));
+  const q = quoteOf(lf); // Harness's text is single-quoted; a double-quoted file gets double quotes
+  ins = mergeInserts(ins).map((i) => ({ ...i, at: crlf(i.at), text: withEol(requote(i.text, q), eol) }));
   let after = before;
   for (const i of [...ins].sort((a, b) => b.at - a.at)) after = after.slice(0, i.at) + i.text + after.slice(i.at);
   const blocks = ins.map((i) => i.text);

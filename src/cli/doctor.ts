@@ -7,6 +7,8 @@ import { MIN_CLAUDE_CODE } from '../core/min-claude.js';
 import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { matchesHash } from '../install/text.js';
+import { mergeEslintFlatIgnores } from '../install/merge.js';
+import { ESLINT } from '../install/plan.js';
 import { JEST_REPORTER, hasResultsOutput, testConfigChange } from '../install/test-config.js';
 import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
@@ -153,6 +155,17 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
       if (!r) fix(`Stop step \`${name}\` has no \`${name}\` script in \`package.json\``, 'add the script or remove the step from `.harness/config.yaml`');
       else if (!findOnPath(r.cmd, env, process.platform)) fix(`Stop step \`${name}\` needs \`${r.cmd}\`, which is not on PATH`, `install \`${r.cmd}\` or remove the step from \`.harness/config.yaml\``);
       else ok(`Stop step \`${name}\` runs with \`${r.cmd}\``);
+      // A format or lint step that would flag harness's own committed files blocks every Stop.
+      const text = typeof step === 'string' ? (scripts[step] ?? '') : step.run.join(' ');
+      const ignored = (rel: string) => (readText(join(root, rel)) ?? '').split(/\r?\n/).some((l) => /^\/?\.harness\/?$/.test(l.trim()));
+      if (/\bprettier\b/.test(text) && !ignored('.prettierignore'))
+        fix(`Stop step \`${name}\` runs Prettier, which checks the committed \`.harness/\` files`, 'add `.harness/` to `.prettierignore`');
+      const eslintCfg = ESLINT.find((f) => readText(join(root, f)) !== null);
+      if (/\beslint\b/.test(text) && eslintCfg && !ignored('.eslintignore')) {
+        const m = mergeEslintFlatIgnores(readText(join(root, eslintCfg))!);
+        if (m ? m.blocks.length > 0 : !readText(join(root, eslintCfg))!.includes('.harness'))
+          fix(`Stop step \`${name}\` runs ESLint, which lints the \`.harness/\` files`, `add \`{ ignores: ['.harness/'] }\` to the exported array in \`${eslintCfg}\``);
+      }
     }
     if (config.stop.steps.length)
       note("Stop steps were checked against this terminal's PATH", "Claude Code's hooks may see a different one (for example when Claude Code starts from the GUI); if Stop warns that a tool is not on its PATH, make the tool available there");

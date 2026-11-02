@@ -11,6 +11,8 @@ import { PREFIX, cleanup } from './fixtures.js';
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'cli.mjs');
 const VITEST = '5.0.5';
 const JEST = '30.0.0';
+const PRETTIER = '3.9.4';
+const ESLINT = '9.39.4';
 
 const made: string[] = [];
 afterEach(() => void made.splice(0).forEach(cleanup));
@@ -53,5 +55,28 @@ describe.skipIf(process.env.HARNESS_E2E_REAL !== '1')('real frameworks', () => {
     expect(existsSync(join(dir, 'root.json'))).toBe(true);
     expect(readResults(root, dir)).toMatchObject([{ file: 'src/a.test.js', status: 'passed', tests: [{ status: 'passed' }] }]);
     expect(existsSync(join(root, 'coverage/coverage-final.json'))).toBe(true);
+  }, 300_000);
+
+  // C2: a repo that passes `prettier --check` and ESLint 9 (flat config, recommended rules) still passes after init.
+  test('prettier and eslint stay clean after init', () => {
+    const pj = { name: 'real-format', type: 'module', scripts: { test: 'vitest run', 'format:check': 'prettier --check .', lint: 'eslint .' }, devDependencies: { vitest: VITEST, '@vitest/coverage-v8': VITEST, prettier: PRETTIER, eslint: ESLINT, '@eslint/js': ESLINT } };
+    const root = makeRepo({
+      'package.json': JSON.stringify(pj, null, 2) + '\n',
+      'vitest.config.js': 'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  plugins: [],\n});\n',
+      'eslint.config.js': 'import js from "@eslint/js";\n\nexport default [js.configs.recommended];\n',
+      'src/a.js': 'export const a = () => 1;\n',
+      '.gitignore': 'node_modules\n',
+    }, { prefix: PREFIX });
+    made.push(root);
+    expect(run(root, 'npm', ['install', '--no-audit', '--no-fund']).code).toBe(0);
+    const check = () => [run(root, 'npx', ['prettier', '--check', '.']), run(root, 'npx', ['eslint', '.'])];
+    for (const r of check()) expect(r.code, r.out).toBe(0);
+    run(root, 'git', ['add', '-A']);
+    expect(run(root, 'git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'deps']).code).toBe(0);
+
+    const init = run(root, 'node', [CLI, 'init', '--yes']);
+    expect(init.code, init.out).toBe(0);
+    expect(init.out).not.toContain('Do these by hand');
+    for (const r of check()) expect(r.code, r.out).toBe(0);
   }, 300_000);
 });

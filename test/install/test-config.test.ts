@@ -255,3 +255,22 @@ describe('testConfigChange jest: an old-form script in a package that now needs 
     expect(hasResultsOutput(jest(s), root, RD)).toBe(false);
   });
 });
+
+// C2: the inserted text follows the file's quotes and Prettier's layout, so a Prettier-clean config stays clean.
+describe('testConfigChange vitest: quote style and layout', () => {
+  it('a double-quoted, multi-line config gets double quotes and one property per line', () => {
+    const before = 'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  plugins: [],\n});\n';
+    const c = edit({ 'vitest.config.ts': before }, vt(), 'vitest.config.ts');
+    expect(c.after).toBe(`import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  plugins: [],\n  test: {\n    reporters: ["default", "json"],\n    outputFile: { json: "${RD}/root.json" },\n    coverage: { enabled: true, reporter: ["text", "json"] },\n  },\n});\n`);
+  });
+  it('an empty test object in a multi-line config is filled one property per line; no trailing comma when the file has none', () => {
+    const c = edit({ 'vitest.config.ts': "export default {\n    test: {}\n};\n" }, vt(), 'vitest.config.ts');
+    expect(c.after).toBe(`export default {\n    test: {\n        reporters: ['default', 'json'],\n        outputFile: { json: '${RD}/root.json' },\n        coverage: { enabled: true, reporter: ['text', 'json'] }\n    }\n};\n`);
+  });
+  it('a double-quoted config gets double quotes in edits to an existing test object', () => {
+    const c = edit({ 'vitest.config.ts': 'export default {\n  test: {\n    globals: true,\n    include: ["src/**"],\n  },\n};\n' }, vt(), 'vitest.config.ts');
+    expect(c.after).toContain('    reporters: ["default", "json"],\n');
+    expect(c.after).toContain(`    outputFile: { json: "${RD}/root.json" },\n`);
+    expect(c.after).not.toContain("'");
+  });
+});

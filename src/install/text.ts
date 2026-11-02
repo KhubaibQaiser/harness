@@ -13,3 +13,7 @@ export const sha256 = (s: string): string => createHash('sha256').update(s).dige
 export const hashText = (s: string): string => sha256(s.replace(/\r\n/g, '\n'));
 /** True for the LF-normalized hash this version records, and for the exact hash older manifests recorded. */
 export const matchesHash = (s: string, h: string): boolean => hashText(s) === h || sha256(s) === h;
+/** The quote a JS/TS file mostly uses. ponytail: counts one-line quote pairs, comments included; fine for config files. */
+export const quoteOf = (src: string): "'" | '"' => ((src.match(/"[^"\n]*"/g)?.length ?? 0) > (src.match(/'[^'\n]*'/g)?.length ?? 0) ? '"' : "'");
+/** Harness writes its inserted JS text with single quotes; this swaps them for the file's own style. */
+export const requote = (text: string, q: "'" | '"'): string => (q === '"' ? text.replace(/'/g, '"') : text);

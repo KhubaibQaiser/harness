@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateCode, parseModule } from 'magicast';
-import { eolOf, jsonIndentOf, withEol } from './text.js';
+import { parseModule } from 'magicast';
+import { eolOf, jsonIndentOf, quoteOf, requote, withEol } from './text.js';
 
 export class MergeError extends Error {
   constructor(message: string) { super(message); this.name = 'MergeError'; }
@@ -137,15 +137,19 @@ function appendLines(before: string | null, lines: string[]): { after: string; b
 export const mergeGitignore = (before: string | null) => appendLines(before, ['.harness/state/', '.harness/logs/', '.harness/backup/']);
 export const mergeIgnoreFile = (before: string | null, entry: '.harness/') => appendLines(before, [entry]);
 
-/** Adds '.harness/' to the first `ignores: [...]` literal of the default-exported flat config; null when unsure. */
+/**
+ * Adds '.harness/' to the flat config's global ignores: an object whose only key is `ignores`. With none, a new
+ * `{ ignores: ['.harness/'] }` entry is appended to the exported array. Null when the config is not a plain array
+ * (or the edit would not round-trip). Inserted text uses the file's quote style and layout, so formatters stay clean.
+ */
 export function mergeEslintFlatIgnores(before: string): { after: string; blocks: string[] } | null {
   try {
-    const mod = parseModule(before);
-    const body: any[] = (mod.$ast as any).body;
+    const lf = before.replace(/\r\n/g, '\n'); // the parser's offsets are in LF text
+    const body: any[] = (parseModule(lf).$ast as any).body;
     const def = body.find((n) => n.type === 'ExportDefaultDeclaration');
     if (!def) return null;
     let root = def.declaration;
-    if (root.type === 'CallExpression') root = root.arguments[0]; // defineConfig([...])
+    if (root.type === 'CallExpression') root = root.arguments.length === 1 ? root.arguments[0] : null; // defineConfig([...])
     if (root?.type === 'Identifier') {
       for (const n of body) {
         const decl = n.type === 'ExportNamedDeclaration' ? n.declaration : n;
@@ -154,37 +158,36 @@ export function mergeEslintFlatIgnores(before: string): { after: string; blocks:
       }
     }
     if (root?.type !== 'ArrayExpression') return null;
-    const target = findIgnores(root);
-    if (!target) return null;
-    const present = target.elements.some((el: any) => el && el.type === 'StringLiteral' && /^\.harness\/?$/.test(el.value));
-    if (present) return { after: before, blocks: [] };
-    target.elements.push({ type: 'StringLiteral', value: '.harness/', extra: { raw: "'.harness/'", rawValue: '.harness/' } });
-    const code = withEol(generateCode(mod, { format: { quote: 'single' } } as any).code.trimEnd(), eolOf(before));
-    const after = code + (/\r?\n$/.test(before) ? eolOf(before) : '');
-    // The block is exactly the inserted text (separator included), found by common prefix/suffix.
-    // If the reprint changed anything else, it is not safely reversible: give up.
-    let p = 0;
-    while (p < before.length && before[p] === after[p]) p++;
-    let q = 0;
-    while (q < before.length - p && before[before.length - 1 - q] === after[after.length - 1 - q]) q++;
-    if (p + q !== before.length) return null;
-    return { after, blocks: [after.slice(p, after.length - q)] };
+    const q = quoteOf(lf);
+    const entry = requote("'.harness/'", q);
+    const keyName = (p: any) => (p.type === 'ObjectProperty' && !p.computed ? (p.key?.name ?? p.key?.value) : null);
+    const global = root.elements.find((e: any) => e?.type === 'ObjectExpression' && e.properties.length === 1 && keyName(e.properties[0]) === 'ignores');
+    let at: number;
+    let text: string;
+    if (global) {
+      const arr = global.properties[0].value;
+      if (arr?.type !== 'ArrayExpression') return null;
+      if (arr.elements.some((el: any) => el?.type === 'StringLiteral' && /^\.harness\/?$/.test(el.value))) return { after: before, blocks: [] };
+      const last = arr.elements[arr.elements.length - 1];
+      [at, text] = last ? [last.end, `, ${entry}`] : [arr.start + 1, entry];
+    } else {
+      const obj = `{ ignores: [${entry}] }`;
+      const last = root.elements[root.elements.length - 1];
+      if (!last) [at, text] = [root.start + 1, obj];
+      else if (!lf.slice(root.start, last.start).includes('\n')) [at, text] = [last.end, `, ${obj}`];
+      else {
+        const lineStart = lf.lastIndexOf('\n', last.start) + 1;
+        [at, text] = [last.end, `,\n${/^[ \t]*/.exec(lf.slice(lineStart))![0]}${obj}`];
+      }
+    }
+    const eol = eolOf(before);
+    const crlfAt = eol === '\r\n' ? at + lf.slice(0, at).split('\n').length - 1 : at;
+    const block = withEol(text, eol);
+    const after = before.slice(0, crlfAt) + block + before.slice(crlfAt);
+    if (removeBlocks(after, [block]) !== before) return null;
+    parseModule(after.replace(/\r\n/g, '\n'));
+    return { after, blocks: [block] };
   } catch {
     return null;
   }
-}
-
-function findIgnores(node: any): any | null {
-  if (!node || typeof node !== 'object') return null;
-  if (Array.isArray(node)) { for (const n of node) { const r = findIgnores(n); if (r) return r; } return null; }
-  if ((node.type === 'ObjectProperty' || node.type === 'Property') && !node.computed &&
-      (node.key?.name === 'ignores' || node.key?.value === 'ignores')) {
-    return node.value?.type === 'ArrayExpression' ? node.value : null;
-  }
-  for (const [k, v] of Object.entries(node)) {
-    if (k === 'loc' || k === 'tokens' || k === 'extra' || k === 'comments') continue;
-    const r = findIgnores(v);
-    if (r) return r;
-  }
-  return null;
 }

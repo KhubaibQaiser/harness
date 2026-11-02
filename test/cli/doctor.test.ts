@@ -215,3 +215,21 @@ test.each([
   expect(await doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') })).toBe(1);
   expect(out).toMatch(/^fix `\.harness\/config\.yaml` is (invalid|not valid YAML)/m);
 });
+
+test('doctor: a format or lint Stop step that would check the .harness/ files is a problem', async () => {
+  const pkg = JSON.parse(REPO['package.json']);
+  pkg.scripts['format:check'] = 'prettier --check .';
+  pkg.devDependencies.prettier = '^3.0.0';
+  const root = makeRepo({ ...REPO, 'package.json': JSON.stringify(pkg, null, 2) + '\n', 'eslint.config.js': 'export default makeConfig();\n' });
+  await init(['--yes'], { env: { PATH: bin('npm') }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') }); return { code, out }; };
+  const a = await run(); // init wrote .prettierignore, but could not edit the computed ESLint config
+  expect(a.out).not.toMatch(/runs Prettier/);
+  expect(a.out).toMatch(/^fix Stop step `lint` runs ESLint, which lints the `\.harness\/` files: add `\{ ignores: \['\.harness\/'\] \}` to the exported array in `eslint\.config\.js`/m);
+  writeFileSync(join(root, 'eslint.config.js'), "export default makeConfig({ ignores: ['.harness/'] });\n");
+  rmSync(join(root, '.prettierignore'));
+  const b = await run();
+  expect(b.out).not.toMatch(/runs ESLint/);
+  expect(b.out).toMatch(/^fix Stop step `format:check` runs Prettier, which checks the committed `\.harness\/` files: add `\.harness\/` to `\.prettierignore`/m);
+  expect(b.code).toBe(1);
+});

@@ -282,3 +282,40 @@ test('jest coverageReporters without json: TDD on, coverage gate off for that pa
   expect(r.out.slice(r.out.indexOf('Gates that are off'))).toContain("Coverage gate off for the root package: `package.json` \"jest\" sets `coverageReporters` without 'json'; the gate reads coverage/coverage-final.json");
   expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).toMatch(/coverage_skip:\n\s+- src\/\*\*/);
 });
+
+// C2: Prettier reads .gitignore, not the committed .harness/ files, so init adds .prettierignore when Prettier is used.
+const WITH_PRETTIER = { ...NPM_VITEST, 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^1.0.0', prettier: '^3.0.0' } }, null, 2) + '\n' };
+test('prettier dependency, no .prettierignore: init creates it; uninstall removes it, or only the harness line once the user added one', async () => {
+  const { uninstall } = await import('../../src/cli/uninstall.js');
+  const un = (root: string) => uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() });
+  const root = makeRepo(WITH_PRETTIER);
+  expect((await go(root, ['--yes'])).out).toContain('  create .prettierignore');
+  expect(readFileSync(join(root, '.prettierignore'), 'utf8')).toBe('.harness/\n');
+  expect(await un(root)).toBe(0);
+  expect(existsSync(join(root, '.prettierignore'))).toBe(false);
+  const r2 = makeRepo(WITH_PRETTIER);
+  await go(r2, ['--yes']);
+  writeFileSync(join(r2, '.prettierignore'), '.harness/\ndist/\n');
+  expect(await un(r2)).toBe(0);
+  expect(readFileSync(join(r2, '.prettierignore'), 'utf8')).toBe('dist/\n');
+  // no Prettier anywhere: no file
+  const r3 = makeRepo(NPM_VITEST);
+  await go(r3, ['--yes']);
+  expect(existsSync(join(r3, '.prettierignore'))).toBe(false);
+});
+
+test('prettier in a workspace package counts too', () => {
+  const root = makeRepo({
+    'package.json': JSON.stringify({ name: 'root', workspaces: ['packages/*'] }),
+    'packages/a/package.json': JSON.stringify({ name: 'a', devDependencies: { prettier: '3' } }),
+  }, { git: false });
+  expect(detect(root).prettier).toBe(true);
+  expect(detect(makeRepo({ 'package.json': '{}' }, { git: false })).prettier).toBeUndefined();
+});
+
+test('eslint flat config with only a per-object ignores: init appends a global-ignores entry', async () => {
+  const root = makeRepo({ ...NPM_VITEST, 'eslint.config.js': 'export default [\n  { files: ["src/**"], ignores: ["src/gen/**"] },\n];\n' });
+  const r = await go(root, ['--yes']);
+  expect(r.out).not.toContain("add '.harness/' to the ignores array");
+  expect(readFileSync(join(root, 'eslint.config.js'), 'utf8')).toBe('export default [\n  { files: ["src/**"], ignores: ["src/gen/**"] },\n  { ignores: [".harness/"] },\n];\n');
+});

@@ -7,7 +7,7 @@ import type { Facts } from './detect.js';
 import { mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings } from './merge.js';
 import { JEST_REPORTER, testConfigChange } from './test-config.js';
 
-const ESLINT = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'];
+export const ESLINT = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'];
 
 /**
  * Every file init (and update) would write, as Change[]: `create` when the file is absent, `update` when its
@@ -50,7 +50,8 @@ export function planChanges(
 
   const ignore = (rel: string, m: { after: string; blocks: string[] }) => m.blocks.length && put(rel, m.after, m.blocks);
   ignore('.gitignore', mergeGitignore(read('.gitignore')));
-  for (const rel of ['.prettierignore', '.eslintignore']) if (existsSync(join(root, rel))) ignore(rel, mergeIgnoreFile(read(rel), '.harness/'));
+  // Prettier 3 reads .gitignore, but the committed .harness/ files are not in it, so they need .prettierignore.
+  for (const rel of ['.prettierignore', '.eslintignore']) if (existsSync(join(root, rel)) || (rel === '.prettierignore' && facts.prettier)) ignore(rel, mergeIgnoreFile(read(rel), '.harness/'));
   const eslint = ESLINT.find((f) => existsSync(join(root, f)));
   if (eslint) {
     const m = mergeEslintFlatIgnores(read(eslint)!);

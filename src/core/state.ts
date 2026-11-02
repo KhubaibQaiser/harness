@@ -49,7 +49,24 @@ export function writeState(root: string, session: string, s: SessionState): void
   mkdirSync(join(root, '.harness/state'), { recursive: true });
   const tmp = `${f}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(s));
-  renameSync(tmp, f);
+  try {
+    renameWithRetry(tmp, f);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+// Windows refuses a rename onto a file another process has open (EPERM/EACCES/EBUSY) for a moment; retry ~200 ms.
+export function renameWithRetry(from: string, to: string, rename: (a: string, b: string) => void = renameSync): void {
+  for (let i = 0; ; i++) {
+    try {
+      return rename(from, to);
+    } catch (e) {
+      if (i >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
 }
 
 export function clearTurn(root: string, session: string): void {

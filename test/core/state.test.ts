@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, test } from 'vitest';
-import { clearTurn, isSafeSessionId, readState, writeState } from '../../src/core/state.js';
+import { clearTurn, isSafeSessionId, readState, renameWithRetry, writeState } from '../../src/core/state.js';
 
 const stateTs = join(process.cwd(), 'src/core/state.ts');
 const root = mkdtempSync(join(tmpdir(), 'h-st-'));
@@ -58,4 +58,18 @@ test('corrupt or non-object state file yields fresh state', () => {
 test('isSafeSessionId rejects traversal and odd characters', () => {
   for (const id of ['', '.', '..', 'a/b', 'a b', '../x']) expect(isSafeSessionId(id)).toBe(false);
   for (const id of ['abc-1_2.3', '.hidden', '...']) expect(isSafeSessionId(id)).toBe(true);
+});
+
+// Windows: renaming onto a file another process has open fails with EPERM/EACCES/EBUSY for a moment.
+test('renameWithRetry retries transient Windows lock errors, never other errors', () => {
+  const err = (code: string) => Object.assign(new Error(code), { code });
+  let n = 0;
+  renameWithRetry('a', 'b', () => { if (n++ < 2) throw err('EPERM'); });
+  expect(n).toBe(3);
+  n = 0;
+  expect(() => renameWithRetry('a', 'b', () => { n++; throw err('ENOENT'); })).toThrow('ENOENT');
+  expect(n).toBe(1);
+  n = 0;
+  expect(() => renameWithRetry('a', 'b', () => { n++; throw err('EBUSY'); })).toThrow('EBUSY');
+  expect(n).toBeGreaterThan(3);
 });

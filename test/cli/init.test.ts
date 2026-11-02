@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, realpathSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,6 +58,7 @@ test('init from a subdirectory writes at the repo root', async () => {
   expect(r.code).toBe(0);
   expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
   expect(existsSync(join(root, 'sub/.harness'))).toBe(false);
+  expect(r.out).toContain(`Installing at the repo root: ${realpathSync.native(root)}\n`);
 });
 
 test('second init refuses and names update', async () => {

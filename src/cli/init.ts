@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { overlay } from '../core/config.js';
 import { validateConfig } from '../core/config-io.js';
@@ -61,6 +62,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   } catch {
     return out('Not a git repository. Run harness init inside a git repo.'), 1;
   }
+  out(`Installing at the repo root: ${resolve(root)}`);
   const node = cli.nodeVersion ?? process.versions.node;
   const [major, minor] = node.split('.').map(Number);
   if (major < 22 || (major === 22 && minor < 11)) return out(`Node ${node} is too old. Harness needs Node 22.11 or newer.`), 1;

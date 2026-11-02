@@ -79,6 +79,17 @@ test('prerelease versions publish with --tag beta, others latest', () => {
   expect(pub.run).toContain('--tag "$tag"');
 });
 
+test('ci validates the plugin on every push and PR, on ubuntu, with Claude Code pinned to the minimum version', async () => {
+  const ci = load('ci.yml');
+  expect(ci.on).toHaveProperty('push');
+  expect(ci.on).toHaveProperty('pull_request');
+  const job = ci.jobs['plugin-validate'];
+  expect(job['runs-on']).toBe('ubuntu-latest');
+  const { MIN_CLAUDE_CODE } = await import('../../src/core/min-claude.js');
+  const runs = job.steps.map((s: any) => s.run).filter(Boolean);
+  expect(runs).toEqual([`npm install -g @anthropic-ai/claude-code@${MIN_CLAUDE_CODE}`, 'claude plugin validate .']);
+});
+
 test('weekly validate step is conditional on the plugin manifest', () => {
   const s = allSteps('claude-code-weekly.yml').find((x) => /plugin validate/.test(x.run ?? ''));
   expect(s.if).toBe("hashFiles('.claude-plugin/plugin.json') != ''");

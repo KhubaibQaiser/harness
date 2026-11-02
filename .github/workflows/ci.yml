@@ -70,3 +70,16 @@ jobs:
         run: pnpm vitest run --project e2e test/e2e/real-frameworks.e2e.test.ts
         env:
           HARNESS_E2E_REAL: '1'
+  plugin-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      # Pinned to MIN_CLAUDE_CODE; validate is offline and needs no login (checked with an empty HOME).
+      - run: npm install -g @anthropic-ai/claude-code@2.1.285
+      - name: Validate plugin manifest
+        run: claude plugin validate .

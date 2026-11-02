@@ -350,6 +350,24 @@ export function decideCommand(command: string, ctx: GuardCtx): Decision {
   return { kind: 'allow' };
 }
 
+/** `*.{a,b}` -> [`*.a`, `*.b`], innermost groups first, at most 256 results (the rest is checked unexpanded). */
+export function expandBraces(glob: string): string[] {
+  let out = [glob];
+  for (let round = 0; round < 8; round++) {
+    const next: string[] = [];
+    let changed = false;
+    for (const g of out) {
+      const m = /\{([^{}]*)\}/.exec(g);
+      if (!m) { next.push(g); continue; }
+      changed = true;
+      for (const alt of m[1].split(',')) next.push(g.slice(0, m.index) + alt + g.slice(m.index + m[0].length));
+    }
+    if (!changed || next.length > 256) return changed ? [...out, ...next.slice(0, 256)] : out;
+    out = next;
+  }
+  return out;
+}
+
 export const guard: Check = {
   name: 'guard',
   events: ['PreToolUse'],
@@ -361,9 +379,9 @@ export const guard: Check = {
     if (tool_name === 'Bash') return decideCommand(String(tool_input.command ?? ''), ctx);
     if (tool_name === 'Read') return decidePaths([String(tool_input.file_path ?? tool_input.path ?? '')]);
     if (tool_name === 'Grep') {
-      // ponytail: the glob is checked as written and with its wildcards dropped, not expanded, so `.e*v` is missed.
-      const glob = String(tool_input.glob ?? '');
-      return decidePaths([String(tool_input.path ?? ''), glob, glob.replace(/[*?[\]{}]/g, '')]);
+      // ponytail: each brace alternative is checked as written and with its wildcards dropped; `.e*v` is still missed.
+      const globs = expandBraces(String(tool_input.glob ?? ''));
+      return decidePaths([String(tool_input.path ?? ''), ...globs, ...globs.map((g) => g.replace(/[*?[\]{}]/g, ''))]);
     }
     return { kind: 'allow' };
   },

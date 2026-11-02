@@ -132,6 +132,9 @@ test('guard check handles Bash, Read and Grep tool calls', async () => {
   expect(await run('Grep', { glob: '.env.local', pattern: 'x' })).toMatchObject({ kind: 'deny' });
   expect(await run('Grep', { path: '.', glob: '*.ts', pattern: 'x' })).toEqual({ kind: 'allow' });
   expect(await run('Grep', { path: '.', glob: '.env.example', pattern: 'x' })).toEqual({ kind: 'allow' });
+  // N5: brace alternatives are expanded first
+  for (const glob of ['*.{env,pem}', '{.env,src/*.ts}', '**/{a,{.env,b}}', '{x,.ssh/id_rsa}']) expect(await run('Grep', { path: '.', glob, pattern: 'x' }), glob).toMatchObject({ kind: 'deny' });
+  expect(await run('Grep', { path: '.', glob: '*.{ts,tsx}', pattern: 'x' })).toEqual({ kind: 'allow' });
   expect(await run('Read', { file_path: '/p/README.md' })).toEqual({ kind: 'allow' });
   expect(await run('Edit', { file_path: '/p/.env' })).toEqual({ kind: 'allow' });
 });

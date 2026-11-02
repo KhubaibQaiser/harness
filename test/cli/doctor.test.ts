@@ -193,3 +193,14 @@ test('doctor: a Jest coverage config the gate cannot read is a note when skipped
   expect(b.code).toBe(1);
   expect(b.out).toMatch(/^fix the coverage gate cannot read coverage for the root package/m);
 });
+
+test('doctor: a package with working coverage that the user lists in tdd.coverage_skip is a note, not a problem', async () => {
+  const root = await installed(); // REPO has @vitest/coverage-v8, so init turned coverage on
+  const p = join(root, '.harness/config.yaml');
+  writeFileSync(p, readFileSync(p, 'utf8').replace(/coverage_skip: \[\]/, 'coverage_skip:\n    - src/**'));
+  expect(readFileSync(p, 'utf8')).toContain('    - src/**');
+  let out = '';
+  const code = await doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') });
+  expect(out).toMatch(/^note the coverage gate is off for the root package: it is listed in tdd.coverage_skip/m);
+  expect(code).toBe(0);
+});

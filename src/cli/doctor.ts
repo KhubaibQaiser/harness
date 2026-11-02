@@ -125,7 +125,9 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     for (const p of facts.packages.filter((p) => p.test !== 'none' && skipped(p))) {
       const what = `the coverage gate is off for ${whereOf(p.dir)}`;
       if (noCoverage(p)) note(what, coverageHint(p));
-      else if (p.test === 'vitest') fix(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
+      // Coverage not yet turned on in the Vitest config (the provider came later): update can fix it.
+      else if (p.test === 'vitest' && 'change' in testConfigChange(p, root, config.tdd.results_dir)) fix(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
+      else note(what, `it is listed in tdd.coverage_skip; remove \`${srcGlob(p.dir)}\` from it in .harness/config.yaml to turn the gate on`); // a deliberate choice
     }
     // A Jest coverage config the gate can't read, in a TDD path: every Stop would block on missing coverage.
     for (const p of facts.packages.filter((p) => p.coverageUnreadable && config.tdd.paths.includes(srcGlob(p.dir)) && !skipped(p)))

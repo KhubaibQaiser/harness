@@ -25,7 +25,7 @@ const GATES: Record<string, string> = { guard: 'guard', protect: 'protect', depV
 const at = (o: any, path: string): unknown => path.split('.').reduce((v, k) => v?.[k], o);
 
 /** Paths git reports as modified, staged or untracked, relative to the repo root (untracked dirs end in "/"). */
-function dirtyPaths(root: string): string[] {
+export function dirtyPaths(root: string): string[] {
   const raw = execFileSync('git', ['status', '--porcelain', '-z'], { cwd: root, encoding: 'utf8' }).split('\0');
   const paths: string[] = [];
   for (let i = 0; i < raw.length; i++) {

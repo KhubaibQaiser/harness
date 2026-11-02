@@ -119,21 +119,21 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       else if (r.after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] });
       continue;
     }
-    if (f.kind === 'create') {
-      if (matchesHash(cur, f.hash) || force) changes.push({ kind: 'delete', rel: f.rel, before: cur });
-      else kept.push(f.rel);
-    } else if (f.kind === 'update') {
-      if (matchesHash(cur, f.hash) && backup !== null) {
-        changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
-        continue;
-      }
+    const merged = !!f.blocks?.length;
+    if (f.kind === 'create' && (matchesHash(cur, f.hash) || (force && !merged))) changes.push({ kind: 'delete', rel: f.rel, before: cur });
+    else if (f.kind === 'create' && !merged) kept.push(f.rel);
+    else if (f.kind === 'update' && matchesHash(cur, f.hash) && backup !== null) changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
+    else if (f.kind === 'create' || f.kind === 'update') {
+      // A merged file the user edited: remove only harness's blocks and keep the rest.
       let after = cur;
       for (const b of f.blocks ?? []) {
         const next = removeBlocks(after, [b]);
         if (next === after) notes.push(`\`${f.rel}\`: a block harness added was not found; left as is.`);
         after = next;
       }
-      if (after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after, blocks: [] });
+      // A created file that held only harness's blocks and whitespace is removed whole.
+      if (f.kind === 'create' && !after.trim()) changes.push({ kind: 'delete', rel: f.rel, before: cur });
+      else if (after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after, blocks: [] });
     }
   }
 

@@ -198,3 +198,15 @@ test('CRLF checkout: uninstall removes the created files and the harness blocks'
   expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toBe('# Mine\r\n');
   expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe('node_modules\r\n');
 });
+
+test('AGENTS.md created by init and then edited: harness block removed, user text kept, even with --force', async () => {
+  const { 'AGENTS.md': _, ...noAgents } = REPO;
+  for (const args of [['--yes'], ['--yes', '--force']]) {
+    const root = await installed(noAgents);
+    const p = join(root, 'AGENTS.md');
+    writeFileSync(p, readFileSync(p, 'utf8') + 'my rule\n');
+    expect((await un(root, args)).code).toBe(0);
+    expect(readFileSync(p, 'utf8')).toContain('my rule');
+    expect(readFileSync(p, 'utf8')).not.toContain('harness:start');
+  }
+});

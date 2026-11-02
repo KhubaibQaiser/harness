@@ -12,6 +12,7 @@ import { latestVersion } from '../../src/core/registry.js';
 import { readManifest } from '../../src/install/apply.js';
 import { sha256 } from '../../src/install/text.js';
 import { makeRepo } from '../install/helpers.js';
+import { execFileSync } from 'node:child_process';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const templatesDir = join(pkgDir, 'templates');
@@ -34,11 +35,18 @@ const newDist = () => {
   writeFileSync(p, readFileSync(p, 'utf8') + '\n// v2\n');
   return d;
 };
-const installed = async () => {
-  const root = makeRepo(REPO);
+/** Commits everything, as a user does before update (update refuses uncommitted changes to files it touches). */
+const commitAll = (root: string) => {
+  execFileSync('git', ['add', '-A'], { cwd: root });
+  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'x'], { cwd: root });
+};
+const installed = async (files: Record<string, string> = REPO) => {
+  const root = makeRepo(files);
   await init(['--yes'], { env: {}, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
+  commitAll(root);
   return root;
 };
+
 const up = async (root: string, args: string[], over: { distDir?: string; version?: string; prompt?: Prompt; fetchImpl?: typeof fetch; fs?: FsLike } = {}) => {
   let out = '';
   const code = await update(args, { env: {}, root, out: (s) => (out += s + '\n'), prompt: over.prompt ?? fake(), version: over.version ?? '1.1.0', templatesDir, distDir: over.distDir ?? join(pkgDir, 'dist'), fetchImpl: over.fetchImpl, fs: over.fs });
@@ -92,6 +100,7 @@ test('edited-files copy differs for merged files', async () => {
   const root = await installed();
   writeFileSync(join(root, DISPATCH), 'x\n');
   writeFileSync(join(root, 'AGENTS.md'), '# Mine\nedit\n');
+  commitAll(root);
   // a changed template makes the merged AGENTS.md block update too
   const t = mkdtempSync(join(tmpdir(), 'harness-tpl-'));
   cpSync(templatesDir, t, { recursive: true });
@@ -118,11 +127,12 @@ test('lists user-edited harness files, even with --yes, and asks once', async ()
   const root = await installed();
   const p = join(root, DISPATCH);
   writeFileSync(p, readFileSync(p, 'utf8') + '// mine\n');
+  commitAll(root);
   const pr = fake([true]);
   const r = await up(root, [], { distDir: newDist(), prompt: pr });
   expect(r.out).toContain(`You edited these harness files; update replaces them: \`${DISPATCH}\`.`);
   expect(pr.asked).toHaveLength(1);
-  const y = await up(await (async () => { const x = await installed(); writeFileSync(join(x, DISPATCH), 'x\n'); return x; })(), ['--yes'], { distDir: newDist() });
+  const y = await up(await (async () => { const x = await installed(); writeFileSync(join(x, DISPATCH), 'x\n'); commitAll(x); return x; })(), ['--yes'], { distDir: newDist() });
   expect(y.out).toContain('You edited these harness files');
 });
 
@@ -205,6 +215,7 @@ test('CRLF checkout: update with the same version finds nothing edited and nothi
 test('CRLF checkout: a real update does not call the files edited, and records LF-normalized hashes', async () => {
   const root = await installed();
   for (const f of readManifest(root)!.files) writeFileSync(join(root, f.rel), readFileSync(join(root, f.rel), 'utf8').replace(/\r?\n/g, '\r\n'));
+  commitAll(root);
   const r = await up(root, ['--yes'], { distDir: newDist() });
   expect(r.code).toBe(0);
   expect(r.out).not.toContain('You edited');
@@ -213,8 +224,7 @@ test('CRLF checkout: a real update does not call the files edited, and records L
 });
 
 test('update keeps the packages init left out of TDD in the manifest', async () => {
-  const root = makeRepo({ ...REPO, 'vitest.config.ts': "export default { test: { root: './src' } };\n" });
-  await init(['--yes'], { env: {}, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
+  const root = await installed({ ...REPO, 'vitest.config.ts': "export default { test: { root: './src' } };\n" });
   expect(readManifest(root)!.tddOff).toEqual(['.']);
   expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
   expect(readManifest(root)!.tddOff).toEqual(['.']);
@@ -234,6 +244,7 @@ const oldJestInstall = async () => {
   f.blocks = [oldBlock];
   f.hash = sha256(oldPkg);
   writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+  commitAll(root);
   return { root, pkg };
 };
 
@@ -267,6 +278,91 @@ test('CRLF checkout: a multi-line block still in the file stays in the manifest 
   const f = m.files.find((x: { rel: string }) => x.rel === 'AGENTS.md');
   f.blocks = [...f.blocks, 'kept line 1\nkept line 2\n'];
   writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+  commitAll(root);
   expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
   expect(readManifest(root)!.files.find((x) => x.rel === 'AGENTS.md')!.blocks).toContain('kept line 1\nkept line 2\n');
+});
+
+test('update refuses uncommitted changes to a file it would touch; --dry-run only warns', async () => {
+  const root = await installed();
+  oldAgentsBlock(root);
+  writeFileSync(join(root, 'AGENTS.md'), readFileSync(join(root, 'AGENTS.md'), 'utf8') + 'uncommitted\n');
+  const dist = newDist();
+  let out = '';
+  const run = (args: string[]) => update(args, { env: {}, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir, distDir: dist });
+  expect(await run(['--yes'])).toBe(1);
+  expect(out).toContain('Commit or stash these files first, so the update can be undone cleanly: AGENTS.md.');
+  expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toContain('uncommitted');
+  expect(readFileSync(join(root, DISPATCH), 'utf8')).not.toContain('// v2');
+  out = '';
+  expect(await run(['--dry-run'])).toBe(0);
+  expect(out).toContain('These files have uncommitted changes; commit or stash them before applying: AGENTS.md.');
+});
+
+const un = async (root: string) => {
+  let out = '';
+  const code = await uninstall(['--yes'], { env: {}, root, out: (s) => (out += s + '\n'), prompt: fake() });
+  return { code, out };
+};
+/** Makes the installed AGENTS.md block look like an older release's, so update rewrites it. */
+const oldAgentsBlock = (root: string) => {
+  const old = (t: string) => t.replace('<!-- harness:end -->', 'Old line.\n<!-- harness:end -->');
+  const p = join(root, 'AGENTS.md');
+  writeFileSync(p, old(readFileSync(p, 'utf8')));
+  const mp = join(root, '.harness/manifest.json');
+  const m = JSON.parse(readFileSync(mp, 'utf8'));
+  const f = m.files.find((x: { rel: string }) => x.rel === 'AGENTS.md');
+  f.blocks = f.blocks.map(old);
+  f.hash = sha256(readFileSync(p, 'utf8'));
+  writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+  commitAll(root);
+};
+const updateBlock = async (root: string) => {
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).not.toContain('Old line.');
+};
+
+test('update then uninstall keeps a user edit to a merged file that existed before init', async () => {
+  const root = await installed();
+  oldAgentsBlock(root);
+  const p = join(root, 'AGENTS.md');
+  writeFileSync(p, readFileSync(p, 'utf8') + 'my rule\n');
+  commitAll(root);
+  await updateBlock(root);
+  expect((await un(root)).code).toBe(0);
+  const now = readFileSync(p, 'utf8');
+  expect(now).toContain('# Mine');
+  expect(now).toContain('my rule');
+  expect(now).not.toContain('harness:start');
+  expect(now).not.toContain('Old line.');
+});
+
+test('update then uninstall keeps a user edit to a file init created (AGENTS.md)', async () => {
+  const { 'AGENTS.md': _, ...noAgents } = REPO;
+  const root = await installed(noAgents);
+  expect(readManifest(root)!.files.find((f) => f.rel === 'AGENTS.md')!.kind).toBe('create');
+  oldAgentsBlock(root);
+  const p = join(root, 'AGENTS.md');
+  writeFileSync(p, readFileSync(p, 'utf8') + 'my rule\n');
+  commitAll(root);
+  await updateBlock(root);
+  const r = await un(root);
+  expect(r.code).toBe(0);
+  const now = readFileSync(p, 'utf8');
+  expect(now).toContain('my rule');
+  expect(now).not.toContain('harness:start');
+  expect(now).not.toContain('Old line.');
+  // CLAUDE.md, also created by init and never edited, is still removed whole
+  expect(realFs.existsSync(join(root, 'CLAUDE.md'))).toBe(false);
+});
+
+test('migrated Jest script: uninstall keeps a user edit to package.json made before the update', async () => {
+  const { root, pkg } = await oldJestInstall();
+  const p = join(root, 'package.json');
+  const edited = readFileSync(p, 'utf8').replace('"name": "app",', '"name": "app",\n  "private": true,');
+  writeFileSync(p, edited);
+  commitAll(root);
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  expect((await un(root)).code).toBe(0);
+  expect(readFileSync(p, 'utf8')).toBe(pkg.replace('"name": "app",', '"name": "app",\n  "private": true,'));
 });

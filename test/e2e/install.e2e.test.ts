@@ -175,6 +175,11 @@ test('doctor flags tampering and a broken wiring, and update repairs both', () =
   expect(b.code).toBe(1);
   expect(b.out).toMatch(/^fix .*does not run the dispatcher/m);
 
+  const dirty = cli(root, 'update', '--yes');
+  expect(dirty.code).toBe(1); // uncommitted changes to files update would rewrite
+  expect(dirty.out).toContain('Commit or stash these files first');
+  git('add', '-A');
+  expect(git('commit', '-q', '-m', 'tampered').status).toBe(0);
   const u = cli(root, 'update', '--yes');
   expect(u.code).toBe(0);
   const c = cli(root, 'doctor');

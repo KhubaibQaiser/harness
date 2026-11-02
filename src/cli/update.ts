@@ -11,6 +11,7 @@ import { MANIFEST_REL } from '../install/manifest.js';
 import { planChanges } from '../install/plan.js';
 import { removeBlocks } from '../install/merge.js';
 import { hashText, matchesHash } from '../install/text.js';
+import { dirtyPaths } from './init.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -83,6 +84,10 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     return out(err ?? `Harness files already match ${version}. Manifest version updated from ${m.version}.`), err ? 1 : 0;
   }
 
+  const dirty = dirtyPaths(root);
+  const touched = changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
+  if (touched.length && !dryRun) return out(`Commit or stash these files first, so the update can be undone cleanly: ${touched.join(', ')}.`), 1;
+
   const entry = (rel: string) => m!.files.find((f) => f.rel === rel);
   const merged = (rel: string) => entry(rel)?.kind === 'update' || !!entry(rel)?.blocks?.length;
   const editedRels = changes.filter((c) => c.kind === 'update' && entry(c.rel) && !matchesHash(c.before, entry(c.rel)!.hash)).map((c) => c.rel);
@@ -98,7 +103,10 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   for (const n of plan.notes) out(`Note: ${n}`);
   if (editedOwned.length) out(`You edited these harness files; update replaces them: ${list(editedOwned)}.`);
   if (editedMerged.length) out(`You edited these files; update changes only the harness parts: ${list(editedMerged)}.`);
-  if (dryRun) return out('Dry run: nothing was written.'), 0;
+  if (dryRun) {
+    if (touched.length) out(`These files have uncommitted changes; commit or stash them before applying: ${touched.join(', ')}.`);
+    return out('Dry run: nothing was written.'), 0;
+  }
   if (!yes && !(await prompt.confirm('Apply these changes? (y/N)'))) return out('Cancelled. Nothing was written.'), 0;
 
   // One transaction: the files and the merged manifest commit together or roll back together.
@@ -109,8 +117,12 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     // Settings blocks are JSON structures, not text, so they are always kept.
     const still = (b: string) => old.rel === '.claude/settings.json' || c.kind !== 'update' || removeBlocks(c.after, [b]) !== c.after; // EOL-tolerant, like uninstall's removal
     const blocks = [...new Set([...(old.blocks ?? []).filter(still), ...(c.blocks ?? [])])];
-    // Keep init's kind (a created file stays deletable) and the pre-init backup uninstall restores.
-    return { rel: old.rel, kind: old.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(blocks.length ? { blocks } : {}), ...(old.backup ? { backup: old.backup } : {}) };
+    // A merged file the user edited since harness last wrote it: keep the old hash and drop the pre-init backup, so
+    // uninstall still sees the edit and removes only harness's blocks (a whole-file restore or delete would lose it).
+    const edited = c.kind === 'update' && merged(old.rel) && !matchesHash(c.before, old.hash);
+    const hash = edited ? old.hash : hashText(c.kind === 'create' ? c.content : c.after);
+    // Otherwise keep init's kind (a created file stays deletable) and the pre-init backup uninstall restores.
+    return { rel: old.rel, kind: old.kind, hash, ...(blocks.length ? { blocks } : {}), ...(old.backup && !edited ? { backup: old.backup } : {}) };
   });
   for (const c of changes) {
     if (c.kind === 'delete' || m.files.some((f) => f.rel === c.rel)) continue;

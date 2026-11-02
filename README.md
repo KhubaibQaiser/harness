@@ -1,43 +1,55 @@
 # @khubaibqaiser/harness
 
-Harness is a set of Claude Code hooks that check what an agent does in your repo: guard, protected paths, multi-file edits, red-first TDD and a Stop gate. It installs into any git repo, as a Claude Code plugin or with `npx`.
+Harness is a set of Claude Code hooks that check what an agent does in your repo. It blocks secret reads and risky shell commands, protects its own files, asks before an agent spreads one change across many files, enforces red-first TDD for JS/TS, and runs your format, lint, typecheck and test commands before the agent may stop. It installs into any git repo, as a Claude Code plugin or with a CLI, and commits its hooks into the repo so every teammate gets the same rules.
 
-This is a private beta. Version `0.1.0-beta.0`.
+Status: private beta, version `0.1.0-beta.0`. See [Project status](#project-status).
 
-## Requirements
+## Why it exists
 
-- Node 22.11 or newer
-- git
-- Claude Code 2.1.285 or newer. Older versions are untested with these hooks.
+Rules written in `CLAUDE.md` or `AGENTS.md` are advice. An agent can skip "write a failing test first" or "don't touch `.env`" when it is busy. Harness turns those rules into hooks that Claude Code runs on every tool call. A hook can deny the call, ask you, or block the agent from stopping, and its message names the next step.
 
-## Install with the plugin
+## How it works, and how it differs
 
-You need collaborator access to the private repo `KhubaibQaiser/harness`.
+- **Hooks, not prompts.** The rules run as `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` and `SessionEnd` hooks. `AGENTS.md` gets a short block that explains the rules, but the hooks enforce them.
+- **Deterministic.** The hooks call no model. They read the tool call, your test results, coverage files and `git diff`, and decide from those.
+- **Tests decide, not the agent.** The TDD gate reads JSON results that your own Vitest or Jest run writes. A source edit needs a fresh failing test from this session.
+- **Fails closed where it matters.** If `.harness/config.yaml` is invalid, agent edits are denied and Stop blocks until a person fixes it. The guard and protected-path checks deny the call if they crash.
+- **Repo-level.** `init` writes plain files into the repo (`.harness/`, `.claude/settings.json`, `AGENTS.md`). Commit them, and the hooks run for anyone who opens the repo in Claude Code, with or without the plugin.
+- **Local-first.** Events go to `.harness/logs/events.jsonl` in the repo. Nothing is sent anywhere, except an npm registry lookup for a package name when you allow an install, and `update --check`.
+- **Reversible.** `init` backs up every file it changes and records every edit in `.harness/manifest.json`. `uninstall` removes exactly what the manifest lists and restores your files.
+- **You confirm every write.** `init` and `update` show the full plan and diff first. Neither commits, pushes or opens a PR.
 
-```
-claude plugin marketplace add KhubaibQaiser/harness
-claude plugin install harness@harness
-```
+## Features
 
-Then, inside your repo in Claude Code:
+### Guard and protection (any repo)
 
-```
-/harness:init
-```
+- **Secret files.** Denies reads of `.env` and `.env.*` (but not `.example`, `.sample`, `.template` or `.dist`), SSH and GnuPG keys, AWS credentials, `id_rsa`-style keys, `.pem`, `.p12`, `.pfx`, `.keystore`, `.netrc`, `.pgpass` and Terraform state and vars, through `Read`, `Grep` and shell commands.
+- **Dangerous commands.** Denies force-push (use `--force-with-lease`), pushing to `main` or `master`, `curl | sh`, `chmod 777`, writing to a block device and a recursive delete of root, home, `.` or `..`. Asks before `git reset --hard`, `git clean -f`, `sudo`, `npm publish`, recursive deletes outside build and cache folders, and destructive cloud, Kubernetes, Docker, GitHub and SQL commands.
+- **Installs denied by default.** Package installs (JS or Python) are denied. See [Allowing installs](#allowing-installs).
+- **Protected paths.** The agent may not edit `.harness/` or `.claude/settings*.json`, with an edit tool or a shell command.
+- **Person-only commands.** The agent may never run `harness tdd off`. It must ask before running `harness uninstall`.
 
-The plugin also gives you `/harness:doctor`, `/harness:status`, `/harness:update` and `/harness:uninstall`. They run the CLI bundled with the plugin.
+### Multi-file gate (any repo)
 
-`init` writes files. It does not commit, push or open a PR. It lists the files for you to commit.
+Asks you once per turn before the agent edits a second source file. Your yes covers the rest of the turn. Test files, snapshots, lockfiles and files in `multi_file_gate.generated` never count. In unattended runs you choose: block, allow and log, or off. See [Unattended runs and CI](#unattended-runs-and-ci).
 
-## Install without the plugin
+### TDD gates (JS/TS with Vitest or Jest)
 
-```
-npx @khubaibqaiser/harness init
-```
+- **Red-first.** An edit to a file in `tdd.paths` is denied until a related test has a fresh failing result from this session.
+- **Test-lock.** A test seen failing is locked until it passes. Changing it in the meantime needs your approval.
+- **Tamper check.** Denies edits that weaken tests to make them pass: adding `.skip`, `.only`, `.todo`, `xit` and similar, removing assertions, adding no-op assertions, lowering coverage thresholds, turning coverage off, enabling `passWithNoTests` or changing which tests run.
+- **Spec gate.** A feature in a root `features.json` may only become `passes: true` when each criterion names a test that just passed.
+- **Pause.** A person can pause the TDD layers for one session with `harness tdd off`.
 
-This does the same thing in a terminal. Run it anywhere in a git repo: it installs at the repo root and prints that path. It refuses if the directory is not a git repo, if Node is older than 22.11, or if `.harness/manifest.json` already exists (use `update` then). It also stops if files it would change have uncommitted changes.
+### Stop gate (any repo)
 
-## What each gate does
+Before the agent may stop, harness runs the steps in `stop.steps`: script names run with your package manager, or `{ name, run }` commands for any language. In a JS/TS repo with TDD on, it then checks that changed lines (against `stop.base_ref`) have at least `tdd.diff_coverage` percent coverage. A failing step blocks the stop and shows the end of its output, up to `stop.max_attempts` times.
+
+### Review agent
+
+`init` also adds a `staff-reviewer` agent (`.claude/agents/staff-reviewer.md`) and its `review-rubric` skill (`.claude/skills/review-rubric/SKILL.md`). The agent reviews a diff you give it in a fresh context and reports findings. It cannot edit files.
+
+### What each repo gets
 
 | Gate | Any repo | JS/TS (npm, pnpm, yarn, bun; Vitest or Jest) |
 |---|---|---|
@@ -51,25 +63,72 @@ This does the same thing in a terminal. Run it anywhere in a git repo: it instal
 | Red-first TDD, test-lock, tamper check | no | yes |
 | Changed-line coverage | no | yes |
 
-Installs of any kind (JS or Python) are denied by default. To allow them, run the command yourself, or start Claude Code with `AGENT_GUARD_ALLOW_INSTALL=1`. Then you approve each install. JS package names are checked on the npm registry first (unless `checks.depVerify` is `false`). Python installs get a plain ask.
-
 Where a gate is off for the repo's stack, `init` and `status` say so in plain words.
 
-The guard matches secrets paths without regard to case, and the way Windows resolves them: trailing dots and spaces, `::$DATA` streams, drive-relative `C:name`, and 8.3 short names. It can't map a short name (`~1`) back exactly, so it denies any short-name segment that could stand for a protected name. A short-name path through a folder that starts like one (for example `AWSADM~1`) is then denied too.
+## Requirements
 
-The multi-file gate never counts test files: JS/TS `*.test.*`, `*.spec.*` and `__tests__/`, and Python `test_*.py`, `*_test.py`, `conftest.py` and `.py` files under `tests/`. Writing a test and then its code is one change.
+- Node 22.11 or newer
+- git, and a git repo to install into
+- Claude Code 2.1.285 or newer. Older versions are untested with these hooks.
+- On Windows, CI runs the tests, but live Claude Code use is untested (see [Known limits](#known-limits)).
 
-With `unattended.require_reason`, an extra file without a reason line is denied once, and the retry is allowed and logged as "no reason given". Claude Code writes a message to the transcript only after the hook for its tool call has run, so a reason written in the same message as the edit isn't visible yet. At Stop and at the next prompt, harness reads the transcript once more and logs `reason-found-late` with the line it finds, or `reason-not-found`.
+## Quick start
 
-`init` adds a Stop step only when its tool is on PATH (for a script step, the package manager that runs it), and lists the steps it left out. At Stop, a step whose tool is not found is skipped instead of blocking: you get a warning once per session to install it or edit `stop.steps`, and a `stop-tool-missing` event is logged. The hooks see Claude Code's PATH, which can differ from your terminal's (for example when Claude Code starts from the GUI and `pnpm` comes from nvm or corepack). If the package manager is missing there, every script step is skipped and the warning says so. `doctor` checks your terminal's PATH and notes this. Any other step failure still blocks.
+The npm package is not published yet. Until the first release, install from source.
 
-TDD needs a JSON test reporter and coverage output. `init` shows the edit to your Vitest config or Jest `test` script in its plan, and writes nothing until you confirm or pass `--yes`. For Jest, `init` also installs a small reporter, `.harness/hooks/jest-results.cjs` (commit it like the dispatcher), and adds it to the `test` script with `--outputFile` and `--coverage`. The reporter creates the results folder, which a fresh clone doesn't have. The same edit tells Jest to ignore `.harness/`. The script is not edited when it passes `--config`, `-c`, `--projects` or `--rootDir`, or when your Jest config sets `rootDir`, `reporters` or `modulePathIgnorePatterns` (a script flag would replace your value), or inherits settings harness can't read (a spread base config, `preset`, a function or a re-export). The lines to add by hand then include the merged values, or put the reporter in your config for an inherited one. An earlier beta's `--json --outputFile=...` script that can't be migrated gets a line telling you to remove it. `update` turns a script from an earlier beta (`--json --outputFile=...`) into the reporter form. For Vitest, `init` turns coverage on only when `@vitest/coverage-v8` or `@vitest/coverage-istanbul` is in the package's or the workspace root's dependencies, or in `node_modules`. Without one, it still adds the JSON reporter (TDD works), lists the package in `tdd.coverage_skip` so changed-line coverage skips it, and `init`, `status` and `doctor` say "install @vitest/coverage-v8 to turn on the coverage gate". After you install it, `doctor` tells you to run `harness update` and remove the package from `tdd.coverage_skip`. A Jest package goes in `tdd.coverage_skip` the same way when its config sets `coverageReporters` without `json`, a custom `coverageDirectory`, or a preset or inherited config that could, since the gate reads `coverage/coverage-final.json`; `init`, `status` and `doctor` name the setting. If a package's test config can't be edited safely, or a Vitest package has no config file, `init` prints the lines to add under "Do these by hand:" and leaves that package's `src/**` out of `tdd.paths`, so TDD is off for it. If no package is left, `checks.tdd` is `false`. `status` names each such package and why. `harness doctor` repeats the lines until they are in the config, then tells you to add `<package>/src/**` to `tdd.paths`. Harness never rewrites that config later. Edits to a test config use the file's own quote style and, in an object laid out one property per line, the same layout, so a Prettier-clean config stays clean. When Prettier is installed in the repo (`node_modules` of the package or the repo root), `init` and `update` also run that Prettier, with your config and no shell, on the JS/TS configs they edit, if the file was Prettier-clean before. The manifest records the formatted change, so `uninstall` can undo it, then runs Prettier on the file again; with no other edits you get the original back, also on a teammate's clone. If Prettier fails, the edit stays unformatted, and `init` and `doctor` say so. An ESLint `globalIgnores([...])` entry counts as global ignores.
+### From source (works today)
 
-Your format and lint checks must skip the committed `.harness/` files. When Prettier is a dependency of the root or a workspace package, `init` adds `.harness/` to `.prettierignore`, creating the file if needed (`uninstall` removes the file, or only that line if you added others); an existing `.eslintignore` gets the line too. In an ESLint flat config, `init` adds `.harness/` to a global-ignores entry (an object whose only key is `ignores`), or appends `{ ignores: ['.harness/'] }` to the exported array. When the config is not a plain array, the "Do these by hand:" list holds the line instead. `doctor` names a format or lint Stop step that would still check the `.harness/` files.
+You need collaborator access to the private repo `KhubaibQaiser/harness`, and pnpm (the repo pins its version in `package.json`; `corepack enable` provides it).
+
+```bash
+git clone https://github.com/KhubaibQaiser/harness.git
+cd harness
+pnpm install
+pnpm build
+```
+
+Then, in the repo you want to protect:
+
+```bash
+cd /path/to/your-repo
+node /path/to/harness/dist/cli.mjs init --dry-run
+node /path/to/harness/dist/cli.mjs init
+```
+
+`--dry-run` prints the recommended settings and the plan and writes nothing. Without it, `init` shows the same and asks before it writes. Commit the files it lists, then start Claude Code in the repo.
+
+### With the plugin (after the first release)
+
+The marketplace entry pins the npm package, so this works only after `0.1.0-beta.0` is published.
+
+```bash
+claude plugin marketplace add KhubaibQaiser/harness
+claude plugin install harness@harness
+```
+
+Then, inside your repo in Claude Code:
+
+```
+/harness:init
+```
+
+The skill runs `init --dry-run`, asks you which settings to change, shows the plan and writes only after your yes. The plugin also gives you `/harness:doctor`, `/harness:status`, `/harness:update` and `/harness:uninstall`. They run the CLI bundled with the plugin, so plugin and CLI are always the same version.
+
+### With npx (after the first release)
+
+```bash
+npx @khubaibqaiser/harness init
+```
+
+This does the same thing in a terminal.
+
+### What `init` checks first
+
+Run `init` anywhere in a git repo: it installs at the repo root and prints that path. It refuses if the directory is not a git repo, if Node is older than 22.11, or if `.harness/manifest.json` already exists (use `update` then). It also stops if files it would change have uncommitted changes.
 
 ## Commands
 
-Run these as `npx @khubaibqaiser/harness <command>`, or as `harness <command>` if it is installed. In Claude Code, the plugin skills cover `init`, `doctor`, `status`, `update` and `uninstall`.
+Run these as `npx @khubaibqaiser/harness <command>` once released, as `node /path/to/harness/dist/cli.mjs <command>` from source, or as `harness <command>` if it is on your PATH. In Claude Code, the plugin skills cover `init`, `doctor`, `status`, `update` and `uninstall`. The examples below use `harness`; from source, replace it with `node /path/to/harness/dist/cli.mjs`.
 
 | Command | What it does |
 |---|---|
@@ -77,21 +136,85 @@ Run these as `npx @khubaibqaiser/harness <command>`, or as `harness <command>` i
 | `status` | Shows each gate as on or off, with the reason when off, whether TDD is paused, the installed version and the last day of events. Exits 1 if the harness is not installed. |
 | `doctor` | Checks Node, Claude Code, the hook wiring in `.claude/settings.json`, the dispatcher hash (and the Jest reporter's), `.harness/config.yaml`, the test reporter setup and that each Stop step can run. Prints a fix for each problem, and a `note` for a gate `init` turned off on purpose (a package left out of TDD, coverage off for lack of a provider) with what turns it on. Exit 0 means no problems (notes allowed), 1 means at least one problem. |
 | `update [--yes\|--check\|--dry-run]` | Re-renders the installed files from your config with the harness version you run, and shows the diff before it writes. Like `init`, it stops if files it would change have uncommitted changes. `--check` only asks npm whether a newer version exists. |
-| `uninstall [--yes\|--force\|--dry-run]` | Removes only what `.harness/manifest.json` lists. A merged file (`AGENTS.md`, `.gitignore`, the settings, a test config) that you have not edited comes back from the backup `init` made. That backup is gitignored, so on a teammate's clone, and for any merged file you edited (also when `update` changed it later), uninstall removes only the harness blocks and keeps the rest of the file. If `init` replaced the text between existing `AGENTS.md` harness markers, that old text cannot be restored. A harness file you edited, such as `.harness/config.yaml`, is listed and kept unless you pass `--force`; a merged file is never deleted whole. A yes also deletes the rest of `.harness/`, including its logs. Answering no at that prompt keeps `.harness/` and its `.gitignore` lines, so the logs and backups stay out of git. Harness is uninstalled either way: the manifest goes, so `status` and `doctor` report it as not installed and `init` can run again. |
+| `uninstall [--yes\|--force\|--dry-run]` | Removes only what `.harness/manifest.json` lists, and restores the files `init` changed. See [Uninstall](#uninstall). |
 | `stats [--days N]` | Counts harness events by check and decision, overrides, Stop failures and timeouts. The default is the last 7 days. |
 | `tdd off\|on\|status` | `off` pauses the TDD layers for your next Claude Code session; the Stop gate and CI still apply. `on` resumes. `status` shows the state. |
 
-`doctor`, `update` and `uninstall` compare files with `.harness/manifest.json` ignoring CRLF vs LF, so a teammate's checkout with `core.autocrlf=true` is not treated as edited, and the harness blocks are still found and removed.
-
-The guard asks you before the agent runs `harness uninstall` in any form (`npx`, `pnpm dlx`, `bunx`, `node …/cli.mjs`, a global `harness`, behind `command`, `nohup`, `timeout`, `xargs`, or a package script), and denies it in an unattended run; `uninstall --dry-run` needs no approval. The agent may never run `harness tdd off`: the guard denies it and names the absolute command to run in your own terminal. Inside Claude Code the CLI also refuses it, printing "Run harness tdd off from a plain terminal, not inside Claude Code" and the full command.
-
 `init`, `update` and `uninstall` need a terminal to answer prompts. Without one, pass `--yes` (add `--config <file>` for `init`), or `--dry-run` to preview.
 
-## Config reference
+## What `init` changes in your repo
+
+| File | What happens |
+|---|---|
+| `.harness/hooks/dispatch.mjs` | Created. The hook dispatcher every hook runs. Commit it. |
+| `.harness/config.yaml` | Created. Your settings (see [Configuration](#configuration)). |
+| `.harness/manifest.json` | Created. Every file and block `init` wrote, with hashes, so `uninstall` can undo it. |
+| `.claude/settings.json` | Created or merged. Adds the hook entries and `permissions.deny` rules for `.env` reads and edits to harness files. Hooks from other tools are kept. |
+| `AGENTS.md` | Created or merged. Adds a block between `<!-- harness:start -->` and `<!-- harness:end -->` that explains the rules. |
+| `CLAUDE.md` | Created as `@AGENTS.md`, or that line is appended, unless it already imports `AGENTS.md`. |
+| `.gitignore` | Adds `.harness/state/`, `.harness/logs/` and `.harness/backup/`. |
+| `.claude/agents/staff-reviewer.md`, `.claude/skills/review-rubric/SKILL.md` | Created. The review agent and its rubric. |
+| `.prettierignore`, `.eslintignore`, ESLint flat config | Adds `.harness/` so your format and lint steps skip the harness files. |
+| `.harness/hooks/jest-results.cjs` | Created in a repo with Jest. A small reporter that writes JSON results. |
+| Vitest config or Jest `test` script | Edited when TDD is on, to write JSON results and coverage. Shown in the plan first. |
+
+Before any write, `init` backs up every file it will change into `.harness/backup/`. If a step fails, it restores the backups, deletes what it created and exits non-zero. Edits keep each file's line endings, trailing newline and JSON indentation.
+
+## Uninstall
+
+```bash
+harness uninstall --dry-run
+harness uninstall
+```
+
+`uninstall` removes only what `.harness/manifest.json` lists. A merged file (`AGENTS.md`, `.gitignore`, the settings, a test config) that you have not edited comes back from the backup `init` made. That backup is gitignored, so on a teammate's clone, and for any merged file you edited (also when `update` changed it later), uninstall removes only the harness blocks and keeps the rest of the file. If `init` replaced the text between existing `AGENTS.md` harness markers, that old text cannot be restored. A harness file you edited, such as `.harness/config.yaml`, is listed and kept unless you pass `--force`; a merged file is never deleted whole. A yes also deletes the rest of `.harness/`, including its logs. Answering no at that prompt keeps `.harness/` and its `.gitignore` lines, so the logs and backups stay out of git. Harness is uninstalled either way: the manifest goes, so `status` and `doctor` report it as not installed and `init` can run again.
+
+`doctor`, `update` and `uninstall` compare files with `.harness/manifest.json` ignoring CRLF vs LF, so a teammate's checkout with `core.autocrlf=true` is not treated as edited, and the harness blocks are still found and removed.
+
+The guard asks you before the agent runs `harness uninstall` in any form (`npx`, `pnpm dlx`, `bunx`, `node …/cli.mjs`, a global `harness`, behind `command`, `nohup`, `timeout`, `xargs`, or a package script), and denies it in an unattended run; `uninstall --dry-run` needs no approval.
+
+## Unattended runs and CI
+
+Harness treats a run as unattended when any of these is true:
+
+- `CI` is `true` or `1`
+- `HARNESS_UNATTENDED` is `1` or `true`
+- `CLAUDE_CODE_REMOTE` is `true`
+- Claude Code runs with permission mode `dontAsk` or `bypassPermissions`
+
+In an unattended run, every hook question becomes a deny, because nobody can answer it. The multi-file gate follows `unattended.multi_file_gate`: `block` (the default) denies a second source file, `allow-log` allows it and logs it, and `off` skips the gate. Background subagents are not detected as unattended.
+
+With `unattended.require_reason`, an extra file without a reason line is denied once, and the retry is allowed and logged as "no reason given". Claude Code writes a message to the transcript only after the hook for its tool call has run, so a reason written in the same message as the edit isn't visible yet. At Stop and at the next prompt, harness reads the transcript once more and logs `reason-found-late` with the line it finds, or `reason-not-found`.
+
+Hooks run with the user's permissions, so they are a seatbelt, not a sandbox. Use CI and branch protection to enforce rules for everyone.
+
+## Allowing installs
+
+Installs of any kind (JS or Python) are denied by default. To allow them, run the command yourself, or start Claude Code with `AGENT_GUARD_ALLOW_INSTALL=1`. Then you approve each install.
+
+```bash
+AGENT_GUARD_ALLOW_INSTALL=1 claude
+```
+
+JS package names are checked on the npm registry first (unless `checks.depVerify` is `false`). A name that is not on the registry, is not a valid npm name, or was first published less than 14 days ago is denied. A name close to a dependency you already have gets a typo warning. Python installs get a plain ask.
+
+## Configuration
 
 The file is `.harness/config.yaml`. `init` writes it. If the file is not valid YAML, or has an unknown, mistyped or out-of-range key, harness fails closed: every agent edit, including a shell command that writes, moves or deletes a file in the repo, is denied, and Stop blocks (up to `stop.max_attempts` times), with a message naming the key or line, until a person fixes the file. Reads and other shell commands still run, so `harness doctor` can show every problem; it exits 1 until the file is valid.
 
 Defaults are what harness uses when a key is missing. `init` writes recommended values from your repo instead. It sets `checks.tdd`, `checks.multiFile` (for example `checks.multiFile: true`), `tdd.paths`, `tdd.exempt`, `stop.steps`, `stop.base_ref` and, when it finds one, `stop.package_manager`.
+
+A Stop step is a script name, run with `stop.package_manager`, or a command object run without a shell. For example, in a Python repo:
+
+```yaml
+stop:
+  package_manager: none
+  steps:
+    - { name: lint, run: [ruff, check, .] }
+    - { name: test, run: [pytest] }
+```
+
+After you edit the config, run `harness doctor` to check it.
 
 This table is generated by `node scripts/gen-config-docs.mjs --write`. A test fails if it drifts from the code.
 
@@ -122,6 +245,41 @@ This table is generated by `node scripts/gen-config-docs.mjs --write`. A test fa
 | `stop.coverage_globs` | `["**/coverage/coverage-final.json"]` | Globs for the coverage files that diff coverage reads. |
 <!-- config:end -->
 
+## Troubleshooting
+
+Start with `doctor`. It prints a fix for each problem it finds.
+
+```bash
+harness doctor
+harness status
+```
+
+- **A Stop step is skipped with a warning.** `init` adds a Stop step only when its tool is on PATH (for a script step, the package manager that runs it), and lists the steps it left out. At Stop, a step whose tool is not found is skipped instead of blocking: you get a warning once per session to install it or edit `stop.steps`, and a `stop-tool-missing` event is logged. The hooks see Claude Code's PATH, which can differ from your terminal's (for example when Claude Code starts from the GUI and `pnpm` comes from nvm or corepack). If the package manager is missing there, every script step is skipped and the warning says so. `doctor` checks your terminal's PATH and notes this. Any other step failure still blocks.
+- **The agent is told to run a test first, but the test exists.** Red-first needs a fresh failing result from this session, not just a test file. Run the test, see it fail, then edit.
+- **You need to pause TDD.** Run `harness tdd off` in your own terminal, not inside Claude Code. The guard denies it from the agent, and the CLI refuses it inside Claude Code, printing "Run harness tdd off from a plain terminal, not inside Claude Code" and the full command. It applies to your next Claude Code session.
+- **Every edit is denied.** `.harness/config.yaml` is probably invalid. `doctor` names the key or line.
+- **Format or lint fails on `.harness/` files.** `doctor` names a format or lint Stop step that would still check them. See [Format and lint ignores](#format-and-lint-ignores).
+
+### TDD setup details
+
+TDD needs a JSON test reporter and coverage output. `init` shows the edit to your Vitest config or Jest `test` script in its plan, and writes nothing until you confirm or pass `--yes`. For Jest, `init` also installs a small reporter, `.harness/hooks/jest-results.cjs` (commit it like the dispatcher), and adds it to the `test` script with `--outputFile` and `--coverage`. The reporter creates the results folder, which a fresh clone doesn't have. The same edit tells Jest to ignore `.harness/`. The script is not edited when it passes `--config`, `-c`, `--projects` or `--rootDir`, or when your Jest config sets `rootDir`, `reporters` or `modulePathIgnorePatterns` (a script flag would replace your value), or inherits settings harness can't read (a spread base config, `preset`, a function or a re-export). The lines to add by hand then include the merged values, or put the reporter in your config for an inherited one. An earlier beta's `--json --outputFile=...` script that can't be migrated gets a line telling you to remove it. `update` turns a script from an earlier beta (`--json --outputFile=...`) into the reporter form.
+
+For Vitest, `init` turns coverage on only when `@vitest/coverage-v8` or `@vitest/coverage-istanbul` is in the package's or the workspace root's dependencies, or in `node_modules`. Without one, it still adds the JSON reporter (TDD works), lists the package in `tdd.coverage_skip` so changed-line coverage skips it, and `init`, `status` and `doctor` say "install @vitest/coverage-v8 to turn on the coverage gate". After you install it, `doctor` tells you to run `harness update` and remove the package from `tdd.coverage_skip`. A Jest package goes in `tdd.coverage_skip` the same way when its config sets `coverageReporters` without `json`, a custom `coverageDirectory`, or a preset or inherited config that could, since the gate reads `coverage/coverage-final.json`; `init`, `status` and `doctor` name the setting.
+
+If a package's test config can't be edited safely, or a Vitest package has no config file, `init` prints the lines to add under "Do these by hand:" and leaves that package's `src/**` out of `tdd.paths`, so TDD is off for it. If no package is left, `checks.tdd` is `false`. `status` names each such package and why. `harness doctor` repeats the lines until they are in the config, then tells you to add `<package>/src/**` to `tdd.paths`. Harness never rewrites that config later.
+
+Edits to a test config use the file's own quote style and, in an object laid out one property per line, the same layout, so a Prettier-clean config stays clean. When Prettier is installed in the repo (`node_modules` of the package or the repo root), `init` and `update` also run that Prettier, with your config and no shell, on the JS/TS configs they edit, if the file was Prettier-clean before. The manifest records the formatted change, so `uninstall` can undo it, then runs Prettier on the file again; with no other edits you get the original back, also on a teammate's clone. If Prettier fails, the edit stays unformatted, and `init` and `doctor` say so.
+
+### Format and lint ignores
+
+Your format and lint checks must skip the committed `.harness/` files. When Prettier is a dependency of the root or a workspace package, `init` adds `.harness/` to `.prettierignore`, creating the file if needed (`uninstall` removes the file, or only that line if you added others); an existing `.eslintignore` gets the line too. In an ESLint flat config, `init` adds `.harness/` to a global-ignores entry (an object whose only key is `ignores`), or appends `{ ignores: ['.harness/'] }` to the exported array. An ESLint `globalIgnores([...])` entry counts as global ignores. When the config is not a plain array, the "Do these by hand:" list holds the line instead.
+
+### Guard details
+
+The guard matches secrets paths without regard to case, and the way Windows resolves them: trailing dots and spaces, `::$DATA` streams, drive-relative `C:name`, and 8.3 short names. It can't map a short name (`~1`) back exactly, so it denies any short-name segment that could stand for a protected name. A short-name path through a folder that starts like one (for example `AWSADM~1`) is then denied too.
+
+The multi-file gate never counts test files: JS/TS `*.test.*`, `*.spec.*` and `__tests__/`, and Python `test_*.py`, `*_test.py`, `conftest.py` and `.py` files under `tests/`. Writing a test and then its code is one change.
+
 ## Known limits
 
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
@@ -131,12 +289,48 @@ This table is generated by `node scripts/gen-config-docs.mjs --write`. A test fa
 - Hooks run with the user's permissions. Only CI and branch protection enforce rules for everyone.
 - Out of the beta: the PR reviewer, the interview and catalog, committing during `init`, and TDD for other languages.
 
-## Not yet verified
+## Project status
+
+This is a private beta. The repo is private, and test users get collaborator access.
+
+Not yet verified:
 
 - The plugin has not been run in live Claude Code sessions.
 - Installing the plugin from the private marketplace through its npm source is not verified yet.
 - The package is not published yet. `npx @khubaibqaiser/harness` and the marketplace pin to `0.1.0-beta.0` only work after the first release.
 
+## Roadmap (not yet shipped)
+
+None of this is in the beta. Plans can change.
+
+- **Per-project recommend (M3).** `/harness:init` interviews you, recommends items from a closed catalog with reasons, installs your picks into the repo, writes an audit report, and offers to commit, push and open a PR. Adds `add`, `remove`, `why`, `explain` and `sync`. Design: [`docs/specs/2026-11-02-harness-recommend-design.md`](docs/specs/2026-11-02-harness-recommend-design.md).
+- **PR size check.** A skill that plans how to split a large change, and a guard ask when the agent opens a PR over a size limit. Research: [`docs/research/2026-11-02-pr-size.md`](docs/research/2026-11-02-pr-size.md).
+- **Memory.** A memory feature with its own spec after M3.
+- **Later:** the PR reviewer, TDD for Python and other languages, and support for other coding agents.
+
+## Development
+
+```bash
+pnpm install
+pnpm build        # bundles dist/cli.mjs and dist/hooks/dispatch.mjs
+pnpm test         # build, then the unit and e2e suites
+pnpm test:perf    # build, then the hook latency suite (run it alone)
+pnpm typecheck
+pnpm lint
+```
+
+The config table in this README comes from the key rules in `src/core/config.ts`. After you change a key, regenerate it:
+
+```bash
+node scripts/gen-config-docs.mjs --write
+```
+
+CI runs typecheck, tests and the latency suite on Ubuntu, macOS and Windows with Node 22 and 24, plus a gitleaks scan, `npm pack --dry-run`, real Vitest and Jest installs and `claude plugin validate`. A release runs from a `v<version>` tag that matches `package.json`, and publishes only from a manual run on a tag that is on `main`.
+
 ## Reporting feedback
 
 Open a GitHub issue in the private repo `KhubaibQaiser/harness`. Say what you ran, what you expected and what happened. Paste the output of `harness doctor` and `harness status`.
+
+## License
+
+All rights reserved. See [LICENSE](LICENSE). No license is granted to use, copy, modify or distribute this software without written permission.

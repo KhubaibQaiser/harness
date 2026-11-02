@@ -87,7 +87,8 @@ test('strips version specifiers before lookup', () => {
 });
 
 test('specs the registry cannot resolve ask without a lookup', () => {
-  const specs = ['file:../x', 'link:../x', 'workspace:*', 'git+https://h/r.git', 'github:o/r', 'https://h/t.tgz', 'http://h/t.tgz', './x', '/abs/x'];
+  const specs = ['file:../x', 'link:../x', 'workspace:*', 'git+https://h/r.git', 'github:o/r', 'https://h/t.tgz', 'http://h/t.tgz', './x', '/abs/x',
+    'user/repo', 'user/repo#main', 'jsr:@std/path', 'gitlab:o/r', 'bitbucket:o/r', 'git://h/r.git', 'git@github.com:x/y.git', 'ssh://git@h/r.git', 'pkg.tgz', 'x.tar.gz'];
   for (const s of specs) {
     const d = run([s], () => { throw new Error('lookup must not run'); });
     expect(d.kind, s).toBe('ask');
@@ -159,4 +160,12 @@ test('names outside the npm name grammar are denied without a lookup (no shell m
     expect(looked, n).toBe(false);
   }
   for (const n of ['lodash', '@types/node', 'JSONStream', 'lodash.merge', 'a-b_c~d', '7zip-bin', 'react@18.3.1', '@scope/pkg@^1']) expect(run([n], () => OLD).kind, n).toBe('ask');
+});
+
+test('non-registry specs with shell metacharacters are denied, never asked about', () => {
+  for (const s of ['user/repo&calc', 'git+https://h/r.git|x', 'file:../x"&y', 'https://h/%PATH%.tgz']) {
+    const d = run([s], () => { throw new Error('lookup must not run'); });
+    expect(d.kind, s).toBe('deny');
+    expect(reason(d), s).toContain('shell metacharacters');
+  }
 });

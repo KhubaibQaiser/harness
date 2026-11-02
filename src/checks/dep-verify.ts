@@ -17,7 +17,9 @@ export interface VerifyOpts {
 
 const DAY = 86400000;
 const MIN_AGE_DAYS = 14;
-const UNRESOLVABLE = /^(file:|link:|workspace:|git\+|github:|https?:\/\/|[./])/;
+// Specs that are not registry names: protocols, URLs, paths, tarballs, git remotes and user/repo (GitHub) shorthand.
+const UNRESOLVABLE = /^(file:|link:|workspace:|jsr:|git\+|git:|git@|ssh:|github:|gitlab:|bitbucket:|gist:|https?:\/\/|[./])|\.(tgz|tar\.gz|tar)$|^[^@/][^/]*\/[^/]+$/;
+const SHELL_META = /[&|<>^%"'`;$!()\s]/;
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
 const UNVERIFIED = (n: string) => `"${n}": could not verify on the registry`;
 // npm's name grammar (legacy names may have capitals). Checked before any lookup: on Windows the name reaches npm.cmd,
@@ -100,7 +102,11 @@ export function verifyPackages(specs: string[], opts: VerifyOpts): Decision {
     const name = UNRESOLVABLE.test(spec) ? spec : stripVersion(spec);
     if (names.includes(name)) continue;
     names.push(name);
-    if (UNRESOLVABLE.test(spec)) { asks.push(UNVERIFIED(spec)); continue; }
+    if (UNRESOLVABLE.test(spec)) {
+      if (SHELL_META.test(spec)) denies.push(`"${spec}" contains shell metacharacters, so it was not looked up.`);
+      else asks.push(UNVERIFIED(spec));
+      continue;
+    }
     if (!validNpmName(name)) { denies.push(`"${name}" is not a valid npm package name, so it was not looked up.`); continue; }
     const remaining = budget - (clock() - (opts.startedAt ?? start));
     if (remaining <= 0) { asks.push(UNVERIFIED(name)); continue; }

@@ -215,3 +215,43 @@ describe('testConfigChange jest: migrating the pre-reporter script', () => {
     expect(removeBlocks(r.change.after, r.change.blocks)).toBe(pj(orig));
   });
 });
+
+describe('testConfigChange jest: inherited config (base spreads, presets, functions) is never overridden', () => {
+  const pj = (jest?: object) => JSON.stringify({ name: 'demo', scripts: { test: 'jest' }, ...(jest ? { jest } : {}) }, null, 2) + '\n';
+  it.each([
+    "module.exports = { ...require('../../jest.base.js'), testMatch: ['**/*.test.js'] };\n",
+    "module.exports = require('../../jest.base.js');\n",
+    "module.exports = { preset: '../../jest.preset.js' };\n",
+    'module.exports = async () => ({ testMatch: [] });\n',
+    'export default base;\n',
+  ])('jest.config.js %j returns manual, with the reporter and ignore in the config, not as script flags', (cfg) => {
+    const root = makeRepo({ 'package.json': pj(), 'jest.config.js': cfg }, { git: false });
+    const r = testConfigChange(jest('jest', { testConfig: 'jest.config.js' }), root, RD) as { manual: string[] };
+    expect(r.manual).toEqual([
+      "jest.config.js: add './.harness/hooks/jest-results.cjs' to `reporters` (keep the reporters it inherits)",
+      "jest.config.js: add '<rootDir>/.harness' to `modulePathIgnorePatterns`",
+      `package.json: add \`--outputFile=${RD}/root.json --coverage\` to the jest call in the "test" script`,
+    ]);
+  });
+
+  it('package.json jest.preset returns manual', () => {
+    const root = makeRepo({ 'package.json': pj({ preset: 'ts-jest' }) }, { git: false });
+    expect(testConfigChange(jest('jest'), root, RD)).toHaveProperty('manual');
+  });
+
+  it('a plain literal config is still edited', () => {
+    const root = makeRepo({ 'package.json': pj(), 'jest.config.js': "module.exports = { testMatch: ['**/*.test.js'] };\n" }, { git: false });
+    expect(testConfigChange(jest('jest', { testConfig: 'jest.config.js' }), root, RD)).toHaveProperty('change');
+  });
+});
+
+describe('testConfigChange jest: an old-form script in a package that now needs manual lines', () => {
+  it('says to remove the old flags, and hasResultsOutput no longer counts it as set up', async () => {
+    const { hasResultsOutput } = await import('../../src/install/test-config.js');
+    const s = `jest --config=config/jest.config.js --json --outputFile=${RD}/root.json --coverage`;
+    const root = makeRepo({ 'package.json': JSON.stringify({ name: 'demo', scripts: { test: s } }) }, { git: false });
+    const r = testConfigChange(jest(s), root, RD) as { manual: string[] };
+    expect(r.manual[0]).toBe(`package.json: remove \`--json --outputFile=${RD}/root.json --coverage\` from the "test" script; Jest does not create the results folder, so it fails on a fresh clone`);
+    expect(hasResultsOutput(jest(s), root, RD)).toBe(false);
+  });
+});

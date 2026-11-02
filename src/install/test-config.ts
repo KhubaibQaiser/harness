@@ -148,6 +148,33 @@ function reporterRel(pkg: PackageFacts, root: string): string {
 
 type JestKey = 'reporters' | 'modulePathIgnorePatterns';
 
+/** The object literal a Jest config file exports (module.exports = {...}, export default {...} or a const it names), else null. */
+function jestConfigObject(lf: string): any {
+  try {
+    const body: any[] = (parseModule(lf).$ast as any).body;
+    const named = (id: string) => {
+      for (const n of body)
+        for (const d of n.type === 'VariableDeclaration' ? n.declarations : []) if (d.id?.name === id) return unwrap(d.init);
+      return null;
+    };
+    let obj: any = null;
+    for (const n of body) {
+      const e = n.type === 'ExpressionStatement' ? n.expression : null;
+      const isCjs = e?.type === 'AssignmentExpression' && e.left.type === 'MemberExpression' && e.left.object.name === 'module' && e.left.property.name === 'exports';
+      let o = unwrap(n.type === 'ExportDefaultDeclaration' ? n.declaration : isCjs ? e.right : null);
+      if (o?.type === 'Identifier') o = named(o.name);
+      if (o?.type === 'CallExpression' && o.callee?.name === 'defineConfig') o = unwrap(o.arguments[0]);
+      if (o) obj = o;
+    }
+    return obj?.type === 'ObjectExpression' ? obj : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A config Harness can read in full: a literal object with no spread and no preset (either could set rootDir or reporters). */
+const ownJestConfig = (obj: any): boolean => !!obj && !obj.properties.some((p: any) => p.type !== 'ObjectProperty' || keyOf(p) === 'preset');
+
 /** Lines for the keys the user's own Jest config sets: Jest lets CLI flags replace them, so they are merged by hand. */
 function jestConfigLines(pkg: PackageFacts, root: string, pkgJson: Record<string, any>, values: Record<JestKey, string>): Partial<Record<JestKey, string>> {
   const out: Partial<Record<JestKey, string>> = {};
@@ -165,16 +192,7 @@ function jestConfigLines(pkg: PackageFacts, root: string, pkgJson: Record<string
   } catch {
     return out;
   }
-  let obj: any = null;
-  try {
-    for (const n of (parseModule(lf).$ast as any).body) {
-      const e = n.type === 'ExpressionStatement' ? n.expression : null;
-      const isCjs = e?.type === 'AssignmentExpression' && e.left.type === 'MemberExpression' && e.left.object.name === 'module' && e.left.property.name === 'exports';
-      let o = unwrap(n.type === 'ExportDefaultDeclaration' ? n.declaration : isCjs ? e.right : null);
-      if (o?.type === 'CallExpression') o = unwrap(o.arguments[0]);
-      if (o?.type === 'ObjectExpression') obj = o;
-    }
-  } catch {}
+  const obj = jestConfigObject(lf);
   for (const key of Object.keys(values) as JestKey[]) {
     const p = obj ? prop(obj, key) : null;
     if (!p && !(obj === null && new RegExp(`\\b${key}\\b`).test(lf))) continue;
@@ -186,6 +204,8 @@ function jestConfigLines(pkg: PackageFacts, root: string, pkgJson: Record<string
   }
   return out;
 }
+
+const oldJestFlags = (path: string) => [` --json --outputFile=${path} --coverage`, ` --json --outputFile=${path}`];
 
 function jestChange(pkg: PackageFacts, root: string, path: string): TestConfigResult {
   const rel = pkg.dir === '.' ? 'package.json' : `${pkg.dir}/package.json`;
@@ -199,14 +219,19 @@ function jestChange(pkg: PackageFacts, root: string, path: string): TestConfigRe
       ...(has('--coverage') ? [] : ['--coverage']),
     ].join(' ');
   };
-  const manualFor = (own: Partial<Record<JestKey, string>> = {}): TestConfigResult => ({
-    manual: [...Object.values(own), `${rel}: add \`${flagsFor(undefined, own)}\` to the jest call in the "test" script`],
-  });
   const script = pkg.scripts.test;
+  // Before the reporter, init appended these flags; update swaps them for the reporter form.
+  const old = script === undefined ? undefined : oldJestFlags(path).find((o) => script.endsWith(o));
+  const manualFor = (own: Partial<Record<JestKey, string>> = {}): TestConfigResult => ({
+    manual: [
+      // An earlier install's flags that can't be migrated here: --json makes Jest write the file itself, without the folder.
+      ...(old ? [`${rel}: remove \`${old.trim()}\` from the "test" script; Jest does not create the results folder, so it fails on a fresh clone`] : []),
+      ...Object.values(own),
+      `${rel}: add \`${flagsFor(undefined, own)}\` to the jest call in the "test" script`,
+    ],
+  });
   if (script === undefined) return manualFor();
   if (script.includes(JEST_REPORTER.split('/').pop()!)) return { none: true };
-  // Before the reporter, init appended these flags; update swaps them for the reporter form.
-  const old = [` --json --outputFile=${path} --coverage`, ` --json --outputFile=${path}`].find((o) => script.endsWith(o));
   const orig = old ? script.slice(0, -old.length) : script;
   const has = (flag: string) => new RegExp(`(^|\\s)${flag}(=|\\s|$)`).test(orig);
   // --config/-c/--projects/--rootDir move Jest's rootDir, which the reporter path is relative to.
@@ -220,11 +245,21 @@ function jestChange(pkg: PackageFacts, root: string, path: string): TestConfigRe
   } catch {
     return manualFor();
   }
+  // Inherited settings (a spread base, a preset, a function or a re-export) may set rootDir or reporters we can't see:
+  // the script is left alone, and the reporter and ignore go in the config, where they merge with what it inherits.
+  const inConfig = (where: string): TestConfigResult =>
+    manualFor({
+      reporters: `${where}: add '${rep}' to \`reporters\` (keep the reporters it inherits)`,
+      modulePathIgnorePatterns: `${where}: add '${JEST_IGNORE}' to \`modulePathIgnorePatterns\``,
+    });
   if (pkgJson.jest?.rootDir !== undefined) return manualFor();
-  const cfgText = (() => {
-    try { return pkg.testConfig ? readFileSync(join(root, pkg.dir, pkg.testConfig), 'utf8') : ''; } catch { return ''; }
-  })();
-  if (/\brootDir\b/.test(cfgText)) return manualFor();
+  if (pkgJson.jest?.preset !== undefined) return inConfig(`${rel} "jest"`);
+  if (pkg.testConfig) {
+    let cfgText: string;
+    try { cfgText = readFileSync(join(root, pkg.dir, pkg.testConfig), 'utf8').replace(/\r\n/g, '\n'); } catch { return manualFor(); }
+    if (/\brootDir\b/.test(cfgText)) return manualFor();
+    if (!ownJestConfig(jestConfigObject(cfgText))) return inConfig(pkg.dir === '.' ? pkg.testConfig : `${pkg.dir}/${pkg.testConfig}`);
+  }
   const own = jestConfigLines(pkg, root, pkgJson, { reporters: rep, modulePathIgnorePatterns: JEST_IGNORE });
   if (Object.keys(own).length) return manualFor(own);
   const add = JSON.stringify(` ${flagsFor(orig)}`).slice(1, -1); // inserted inside the JSON string, so its quotes are escaped
@@ -246,6 +281,7 @@ export function hasResultsOutput(pkg: PackageFacts, root: string, resultsDir: st
   if ('none' in r) return true;
   if ('change' in r) return false;
   const path = resultPath(pkg, root, resultsDir);
+  if (pkg.test === 'jest' && oldJestFlags(path).some((o) => pkg.scripts.test?.endsWith(o))) return false; // fails on a fresh clone
   const file = pkg.test === 'vitest' ? pkg.testConfig : pkg.test === 'jest' ? 'package.json' : undefined;
   if (!file) return false;
   try {

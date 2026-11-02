@@ -11,6 +11,9 @@ import { fileWriteTargets, gitArgs, rmTargets } from './guard.js';
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/config.yaml', '.harness/manifest.json', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/config.yaml', '.harness/manifest.json', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
 const REASON = 'Harness files and Claude settings are changed by a person, not the agent.';
+const NM_REASON = 'node_modules is managed by the package manager, not edited by hand: change package.json and run an install instead.';
+// Owner rule: nobody edits node_modules directly. Installs still go through the guard's install gate.
+const inNodeModules = (root: string, p: string): boolean => !!toRepoPath(root, p)?.toLowerCase().split('/').includes('node_modules');
 
 const segTokens = (cmd: string): string[][] =>
   cmd.split(/[;&|\n]+/).map((seg) => [...(seg.match(/'[^']*'|"[^"]*"|\S+/g) ?? [])].map((t) => t.replace(/^['"]|['"]$/g, '')));
@@ -124,9 +127,13 @@ export const protect: Check = {
     const { tool_name, tool_input = {} } = input;
     let paths: string[] = [];
     const target = editTarget(input);
+    const nm = { kind: 'deny' as const, reason: NM_REASON, check: 'protect' };
+    if (target !== null && inNodeModules(root, target)) return nm;
     if (target !== null) paths = [target];
     else if (tool_name === 'Bash') {
       const cmd = String(tool_input.command ?? '');
+      if (INLINE_CODE.test(cmd) && /node_modules[\\/]/i.test(cmd)) return nm;
+      if (shellWriteTargets(cmd).some((t) => t && inNodeModules(root, t))) return nm;
       // Inline interpreter code (node -e, python -c, …) that names a protected path: its writes can't be parsed.
       // ponytail: textual only; a path built from pieces (".har" + "ness") still gets past.
       if (INLINE_CODE.test(cmd) && /\.harness[\\/]|\.claude[\\/]settings/i.test(cmd)) return { kind: 'deny', reason: REASON, check: 'protect' };

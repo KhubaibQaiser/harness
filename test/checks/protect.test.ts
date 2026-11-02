@@ -85,7 +85,8 @@ test('whole-tree and protected-path git restores are denied; other restores are 
 test('globs are matched against concrete protected paths', () => {
   for (const c of ['rm .harness/config.y?ml', 'rm -f .harness/co*', 'rm -f .claude/settings.j?on', 'rm -rf .*', 'rm .[!.]*', 'rm -rf .harness/{hooks,state}', "git restore '.harness/*'", 'mv .harness/{hooks,x} /tmp', 'cp a .claude/settings.j*'])
     expect(bash(c), c).toBe('deny');
-  for (const c of ['rm -rf dist/*', 'rm src/*.tmp', 'rm -rf node_modules/{a,b}']) expect(bash(c), c).toBe('allow');
+  for (const c of ['rm -rf dist/*', 'rm src/*.tmp']) expect(bash(c), c).toBe('allow');
+  expect(bash('rm -rf node_modules/{a,b}')).toBe('deny'); // node_modules is the package manager's (owner rule)
 });
 test('git global options do not hide restore and checkout', () => {
   for (const c of ['git -C . restore .', 'git -C . checkout -- .', 'git --no-pager restore .', 'git -c core.x=1 restore .claude/settings.json', 'git --git-dir=.git checkout HEAD .harness/config.yaml'])
@@ -181,3 +182,27 @@ test.each([
 ])('inline interpreter code that names a protected path is denied: %s', (c) => expect(bash(c)).toBe('deny'));
 test.each([`node -e "console.log(1)"`, 'node dist/cli.mjs doctor', `python3 -c "print(1)"`, 'cat .harness/config.yaml'])(
   'other interpreter use is allowed: %s', (c) => expect(bash(c)).toBe('allow'));
+
+// Owner rule: node_modules is managed by the package manager; the agent never writes into it directly.
+const NM_REASON = 'node_modules is managed by the package manager, not edited by hand: change package.json and run an install instead.';
+test.each(['Write', 'Edit', 'MultiEdit'])('%s into node_modules is denied with the package-manager reason', (tool) => {
+  for (const p of ['node_modules/x/index.js', '/p/node_modules/@khubaibqaiser/harness/dist/cli.mjs', 'packages/a/node_modules/x/a.js', 'Node_Modules/x.js']) {
+    const d = edit(p, tool);
+    expect(d.kind, p).toBe('deny');
+    expect(d.reason, p).toBe(NM_REASON);
+  }
+});
+test('NotebookEdit into node_modules is denied', () => expect(run('NotebookEdit', { notebook_path: 'node_modules/x/n.ipynb' }).reason).toBe(NM_REASON));
+test.each([
+  'echo x > node_modules/x/index.js', 'echo x >> packages/a/node_modules/y.js', 'tee node_modules/x.js < a', "sed -i 's/a/b/' node_modules/x/index.js",
+  'mv a.js node_modules/x/a.js', 'mv node_modules/x/a.js a.js', 'cp -r dist node_modules/@khubaibqaiser/harness/dist', 'rm -rf node_modules',
+  'rm -rf node_modules/x', 'rm node_modules/*', 'rm -rf packages/*/node_modules', 'git checkout -- node_modules/x/a.js', 'bash -c "echo x > node_modules/y.js"',
+  'truncate -s 0 node_modules/x.js', 'ln -s /tmp/evil node_modules/x',
+  `node -e "require('fs').writeFileSync('node_modules/@khubaibqaiser/harness/dist/cli.mjs', '')"`, `python3 -c "open('node_modules/x.js','w')"`,
+])('shell write into node_modules is denied: %s', (c) => {
+  const d = run('Bash', { command: c });
+  expect(d.kind, c).toBe('deny');
+  expect(d.reason, c).toBe(NM_REASON);
+});
+test.each(['cat node_modules/x/package.json', 'ls node_modules', 'cp node_modules/x/a.js /tmp/a.js', 'pnpm install', 'npm ci', 'echo x > /tmp/node_modules/x.js', 'grep -r foo node_modules'])(
+  'reading node_modules, an install, or a path outside the repo is not this rule: %s', (c) => expect(bash(c)).toBe('allow'));

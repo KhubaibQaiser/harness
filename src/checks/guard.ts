@@ -62,7 +62,16 @@ const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');
 const sensitivePath = (p: string): boolean => {
   if (!p) return false;
   // Backslashes as separators: Windows paths (C:\proj\...) must match the same rules.
-  const s = String(p).replace(/^['"]|['"]$/g, '').replace(/\\/g, '/').replace(/^~(?=\/|$)/, '$HOME');
+  // Then per segment: lowercase (macOS and Windows file systems ignore case), drop an NTFS stream (`.env::$DATA`) and
+  // the trailing dots and spaces Win32 strips (`.env.` opens `.env`). Stricter than POSIX needs, never looser.
+  const s = String(p)
+    .replace(/^['"]|['"]$/g, '')
+    .replace(/\\/g, '/')
+    .replace(/^~(?=\/|$)/, '$HOME')
+    .toLowerCase()
+    .split('/')
+    .map((seg, i) => (i === 0 && /^[a-z]:$/.test(seg) ? seg : seg.replace(/:.*$/, '').replace(/[. ]+$/, '')))
+    .join('/');
   const base = s.split('/').pop() ?? '';
   if (/^\.env(\..+)?$/.test(base)) return !SAFE_EXAMPLE.test(base);
   if (/(^|\/)\.(ssh|gnupg)\//.test(s) && !/\.pub$/.test(base)) return true;

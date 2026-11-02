@@ -89,6 +89,13 @@ test('non-executable changed lines, test files, exempt and out-of-scope files ar
   expect(r).toMatchObject({ pct: 100, total: 1, covered: 1, uncovered: [] });
 });
 
+test('files under tdd.coverage_skip are not measured and need no coverage file', async () => {
+  const diff = addDiff('src/a.ts', [1, 3]);
+  const r = await diffCoverage(repo(null), cfgOf({ coverage_skip: ['src/**'] }), gitExec({ diff }).exec, opts);
+  expect(r).toMatchObject({ pct: 100, total: 0, uncovered: [] });
+  expect(r.problem).toBeUndefined();
+});
+
 test('no changes means 100 and needs no coverage file', async () => {
   const r = await diffCoverage(repo(null), cfgOf(), gitExec({}).exec, opts);
   expect(r).toMatchObject({ pct: 100, total: 0, covered: 0, uncovered: [] });

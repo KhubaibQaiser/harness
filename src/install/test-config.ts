@@ -97,7 +97,8 @@ function editTest(src: string, eol: string, t: any, path: string, enable: boolea
 function vitestChange(pkg: PackageFacts, root: string, path: string): TestConfigResult {
   const rel = pkg.dir === '.' ? pkg.testConfig : `${pkg.dir}/${pkg.testConfig}`;
   // vitest writes coverage only with --coverage or coverage.enabled
-  const enable = !/(^|\s)--coverage(\s|$)/.test(pkg.scripts.test ?? '');
+  // and only with a provider installed: without one Vitest exits with MISSING DEPENDENCY
+  const enable = !/(^|\s)--coverage(\s|$)/.test(pkg.scripts.test ?? '') && !pkg.noCoverageProvider;
   const header = pkg.testConfig ? `${rel}:` : `Create \`${pkg.dir === '.' ? '' : pkg.dir + '/'}vitest.config.ts\` with:`;
   const manual: TestConfigResult = { manual: vitestManual(header, path, enable) };
   if (!pkg.testConfig) return manual;

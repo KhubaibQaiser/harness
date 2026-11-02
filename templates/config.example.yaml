@@ -17,6 +17,7 @@ tdd:
   paths: []
   exempt: []
   diff_coverage: 80
+  coverage_skip: []
   test_lock: true
   results_dir: .harness/state/test-results
 

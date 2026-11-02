@@ -18,7 +18,7 @@ test('empty repo', () => {
 test('single npm package with vitest', () => {
   const f = detect(makeRepo({ 'package.json': pj({ name: 'a', scripts: { test: 'vitest run' }, devDependencies: { vitest: '1' } }), 'package-lock.json': '{}' }));
   expect(f.packageManager).toBe('npm');
-  expect(f.packages).toEqual([{ dir: '.', name: 'a', scripts: { test: 'vitest run' }, test: 'vitest' }]);
+  expect(f.packages).toEqual([{ dir: '.', name: 'a', scripts: { test: 'vitest run' }, test: 'vitest', noCoverageProvider: true }]);
 });
 
 test('package.json without lockfile is npm', () => {
@@ -137,7 +137,7 @@ test('a settings.local.json with hooks is reported in otherHooks', () => {
 test('fixture: npm with Vitest', () => {
   const f = detect(makeRepo({ 'package.json': pj({ name: 'n', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^2' } }), 'package-lock.json': '{}', 'vitest.config.ts': 'export default {}' }));
   expect(f.packageManager).toBe('npm');
-  expect(f.packages).toEqual([{ dir: '.', name: 'n', scripts: { test: 'vitest run' }, test: 'vitest', testConfig: 'vitest.config.ts' }]);
+  expect(f.packages).toEqual([{ dir: '.', name: 'n', scripts: { test: 'vitest run' }, test: 'vitest', testConfig: 'vitest.config.ts', noCoverageProvider: true }]);
 });
 
 test('fixture: pnpm monorepo with Vitest', () => {
@@ -234,4 +234,18 @@ test('unreadable files become warnings, not throws', () => {
   const f = detect(makeRepo({ 'package.json': '{}', 'pyproject.toml/x': '' })); // pyproject.toml is a directory: EISDIR
   expect(f.warnings.some((w) => w.includes('`pyproject.toml`'))).toBe(true);
   expect(() => detect('/nonexistent/harness-root')).not.toThrow();
+});
+
+test('vitest coverage provider: from the package deps, the workspace root deps, or node_modules', () => {
+  const v = (extra: object = {}) => pj({ name: 'a', devDependencies: { vitest: '1', ...extra } });
+  expect(detect(makeRepo({ 'package.json': v() })).packages[0].noCoverageProvider).toBe(true);
+  expect(detect(makeRepo({ 'package.json': v({ '@vitest/coverage-v8': '1' }) })).packages[0].noCoverageProvider).toBeUndefined();
+  expect(detect(makeRepo({ 'package.json': v({ '@vitest/coverage-istanbul': '1' }) })).packages[0].noCoverageProvider).toBeUndefined();
+  expect(detect(makeRepo({ 'package.json': v(), 'node_modules/@vitest/coverage-v8/package.json': '{}' })).packages[0].noCoverageProvider).toBeUndefined();
+  const ws = detect(makeRepo({
+    'package.json': pj({ name: 'root', workspaces: ['packages/*'], devDependencies: { '@vitest/coverage-v8': '1' } }),
+    'packages/a/package.json': v(),
+  }));
+  expect(ws.packages.find((p) => p.dir === 'packages/a')?.noCoverageProvider).toBeUndefined();
+  expect(detect(makeRepo({ 'package.json': pj({ name: 'j', devDependencies: { jest: '1' } }) })).packages[0].noCoverageProvider).toBeUndefined(); // Jest has coverage built in
 });

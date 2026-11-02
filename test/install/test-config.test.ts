@@ -152,3 +152,13 @@ describe('testConfigChange jest', () => {
 it('none for packages without a test runner', () => {
   expect(testConfigChange({ dir: '.', scripts: {}, test: 'none' }, '/nowhere', RD)).toEqual({ none: true });
 });
+
+describe('testConfigChange vitest without a coverage provider', () => {
+  it('adds the json reporter and outputFile but does not enable coverage', () => {
+    const c = edit({ 'vitest.config.ts': "export default { test: {} };\n" }, vt({ noCoverageProvider: true }), 'vitest.config.ts');
+    expect(c.after).toContain(`outputFile: { json: '${RD}/root.json' }`);
+    expect(c.after).not.toContain('enabled: true');
+    const m = testConfigChange(vt({ noCoverageProvider: true, testConfig: undefined }), makeRepo({}, { git: false }), RD) as { manual: string[] };
+    expect(m.manual.join('\n')).not.toContain('enabled: true');
+  });
+});

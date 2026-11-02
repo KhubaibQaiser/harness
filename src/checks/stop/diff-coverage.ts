@@ -115,8 +115,8 @@ export async function diffCoverage(root: string, cfg: HarnessConfig, exec: Exec,
       // unreadable or vanished: nothing to count
     }
   }
-  const { paths, exempt } = cfg.tdd;
-  const scoped = [...changed].filter(([f]) => toRepoPath(root, f) && matches(f, paths) && !matches(f, exempt) && !isTestFile(f));
+  const { paths, exempt, coverage_skip } = cfg.tdd;
+  const scoped = [...changed].filter(([f]) => toRepoPath(root, f) && matches(f, paths) && !matches(f, exempt) && !matches(f, coverage_skip) && !isTestFile(f));
   if (scoped.length === 0) return result(undefined);
 
   const reports = new Map<string, FileLines>();

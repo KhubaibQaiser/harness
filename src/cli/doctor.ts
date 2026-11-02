@@ -8,7 +8,7 @@ import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { sha256 } from '../install/text.js';
 import { JEST_REPORTER, hasResultsOutput, testConfigChange } from '../install/test-config.js';
-import { srcGlob } from '../install/preset.js';
+import { COVERAGE_HINT, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
 
@@ -117,6 +117,13 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     else if ('manual' in r) fix(`TDD is off for ${whereOf(p.dir)} because its test config could not be edited safely`, `do this by hand: ${r.manual.join(' ')}; then ${addPath}`);
     else fix(`TDD is off for ${whereOf(p.dir)}`, `${addPath}, then run harness update to add the reporter output`);
   }
+
+  if (config.checks.tdd)
+    for (const p of facts.packages.filter((p) => p.test === 'vitest' && config.tdd.coverage_skip.includes(srcGlob(p.dir)))) {
+      const what = `the coverage gate is off for ${whereOf(p.dir)}`;
+      if (p.noCoverageProvider) fix(what, COVERAGE_HINT);
+      else fix(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
+    }
 
   if (config.checks.tdd) {
     const tddPkgs = facts.packages.filter((p) => p.test !== 'none' && !left.has(p.dir)); // same set update checks

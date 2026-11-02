@@ -4,7 +4,15 @@ import { isAbsolute, join } from 'node:path';
 import picomatch from 'picomatch';
 import { parse as parseYaml } from 'yaml';
 
-export interface PackageFacts { dir: string; name?: string; scripts: Record<string, string>; test: 'vitest' | 'jest' | 'none'; testConfig?: string }
+export interface PackageFacts {
+  dir: string;
+  name?: string;
+  scripts: Record<string, string>;
+  test: 'vitest' | 'jest' | 'none';
+  testConfig?: string;
+  /** Vitest only: neither @vitest/coverage-v8 nor -istanbul is declared or installed, so coverage must stay off. */
+  noCoverageProvider?: true;
+}
 export interface Facts {
   root: string;
   packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun' | 'none';
@@ -20,6 +28,8 @@ const SKIP = new Set(['node_modules', '.git', '.harness']);
 const MAX_DIRS = 5000;
 const PY_TOOLS = ['pytest', 'ruff', 'mypy', 'black'] as const;
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+const COVERAGE_PROVIDERS = ['@vitest/coverage-v8', '@vitest/coverage-istanbul'];
+const depsOf = (pkg: Record<string, any> | null) => new Set(DEP_FIELDS.flatMap((f) => Object.keys(pkg?.[f] ?? {})));
 
 // Every fs read goes through these so detect never throws; a missing file is silent, any other failure becomes a warning.
 function read(root: string, rel: string, warnings: string[], skipped: string): string | null {
@@ -97,10 +107,10 @@ function workspaceDirs(root: string, allGlobs: string[], warnings: string[]): st
   return [...found].sort();
 }
 
-function packageFacts(root: string, dir: string, warnings: string[]): PackageFacts {
+function packageFacts(root: string, dir: string, warnings: string[], rootDeps: Set<string>): PackageFacts {
   const pkgRel = dir === '.' ? 'package.json' : `${dir}/package.json`;
   const pkg = readJson(root, pkgRel, warnings, 'its scripts and test framework are skipped') ?? {};
-  const deps = new Set(DEP_FIELDS.flatMap((f) => Object.keys(pkg[f] ?? {})));
+  const deps = depsOf(pkg);
   const files = list(root, dir === '.' ? '' : dir, warnings, 'its test config is not detected').filter((e) => e.isFile()).map((e) => e.name);
   const cfgText = (f: string) => read(root, dir === '.' ? f : `${dir}/${f}`, warnings, 'its test config is not detected') ?? '';
   const vitestCfg = files.find((f) => /^vitest\.config\./.test(f)) ?? files.find((f) => /^vite\.config\./.test(f) && /\btest\s*:/.test(cfgText(f)));
@@ -111,6 +121,8 @@ function packageFacts(root: string, dir: string, warnings: string[]): PackageFac
   else if (deps.has('jest') || jestCfg || pkg.jest) out.test = 'jest';
   const cfg = out.test === 'vitest' ? vitestCfg : jestCfg;
   if (cfg) out.testConfig = cfg;
+  const provider = (p: string) => deps.has(p) || rootDeps.has(p) || existsSync(join(root, dir, 'node_modules', p)) || existsSync(join(root, 'node_modules', p));
+  if (out.test === 'vitest' && !COVERAGE_PROVIDERS.some(provider)) out.noCoverageProvider = true;
   return out;
 }
 
@@ -172,7 +184,8 @@ export function detect(root: string): Facts {
   globs.push(...wsList.filter((g: unknown): g is string => typeof g === 'string'));
 
   const dirs = globs.length ? workspaceDirs(root, globs, warnings) : [];
-  const packages = [...(hasPkg ? ['.'] : []), ...dirs].map((d) => packageFacts(root, d, warnings));
+  const rootDeps = depsOf(rootPkg);
+  const packages = [...(hasPkg ? ['.'] : []), ...dirs].map((d) => packageFacts(root, d, warnings, rootDeps));
 
   const otherHooks: string[] = [];
   for (const f of ['settings.json', 'settings.local.json']) {

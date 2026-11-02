@@ -9,7 +9,7 @@ import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { planChanges } from '../install/plan.js';
-import { preset, unsafeWhy } from '../install/preset.js';
+import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/preset.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -156,6 +156,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   const off = gates.filter(([, on]) => !on);
   out('Gates that are off:' + (off.length ? '\n' + off.map(([g]) => `  ${g}: ${why(g)}`).join('\n') : ' none'));
   if (checks.tdd) for (const o of p.tddOff) out(unsafeWhy(o.dir));
+  if (checks.tdd) for (const d of coverageSkipped(facts, config)) out(coverageWhy(d));
   out(`Commit these files: ${[...plan.changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);
   out('Teammates need nothing else: the hooks are in the repo.');
   return 0;

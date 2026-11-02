@@ -152,6 +152,8 @@ test('unsafe vitest config: init prints manual lines and doctor names the fix', 
 
 test('doctor flags tampering and a broken wiring, and update repairs both', () => {
   const f = npmVitest();
+  // A coverage provider, so a fresh install is fully healthy (without one doctor names the coverage-gate fix).
+  f.files['package.json'] = JSON.stringify({ name: 'n', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^2.0.0', '@vitest/coverage-v8': '^2.0.0' } }, null, 2) + '\n';
   const root = repo(f);
   expect(init(root, f).code).toBe(0);
   expect(cli(root, 'doctor').code).toBe(0);

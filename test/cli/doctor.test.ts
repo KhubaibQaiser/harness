@@ -10,7 +10,7 @@ import { makeRepo } from '../install/helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const REPO = {
-  'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run', lint: 'eslint .' }, devDependencies: { vitest: '^1.0.0' } }, null, 2) + '\n',
+  'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run', lint: 'eslint .' }, devDependencies: { vitest: '^1.0.0', '@vitest/coverage-v8': '^1.0.0' } }, null, 2) + '\n',
   'package-lock.json': '{}\n',
   'vitest.config.ts': "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: {} });\n",
   '.gitignore': 'node_modules\n',
@@ -142,4 +142,15 @@ test('jest repo: doctor checks the installed reporter against the manifest', asy
   const r = run(root, { path: bin('npm') });
   expect(r.out).toMatch(/^fix `\.harness\/hooks\/jest-results\.cjs` is not the installed version: run harness update to restore it$/m);
   expect(r.code).toBe(1);
+});
+
+test('vitest without a coverage provider: doctor gives the install hint, then the steps once it is installed', async () => {
+  const root = makeRepo({ ...REPO, 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^1.0.0' } }) });
+  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).not.toContain('enabled: true');
+  const a = run(root, { path: bin('npm') });
+  expect(a.out).toMatch(/^fix the coverage gate is off for the root package: install @vitest\/coverage-v8 to turn on the coverage gate$/m);
+  expect(a.code).toBe(1);
+  mkdirSync(join(root, 'node_modules/@vitest/coverage-v8'), { recursive: true });
+  expect(run(root, { path: bin('npm') }).out).toMatch(/^fix the coverage gate is off for the root package: run harness update to turn on Vitest coverage, then remove `src\/\*\*` from tdd\.coverage_skip in \.harness\/config\.yaml$/m);
 });

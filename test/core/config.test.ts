@@ -26,7 +26,7 @@ test('missing config yields defaults, a warning, and tdd/multiFile disabled', ()
     base_ref: 'origin/main',
     coverage_globs: ['**/coverage/coverage-final.json'],
   });
-  expect(config.tdd).toEqual({ paths: [], exempt: [], diff_coverage: 80, test_lock: true, results_dir: '.harness/state/test-results' });
+  expect(config.tdd).toEqual({ paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: '.harness/state/test-results' });
   expect(config.multi_file_gate.generated).toEqual([]);
   expect(config.unattended.multi_file_gate).toBe('block');
 });

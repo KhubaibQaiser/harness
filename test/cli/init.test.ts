@@ -248,3 +248,11 @@ test('the jest reporter creates the results folder and writes what the TDD gate 
   const r = readResults(root, join(root, '.harness/state/test-results'));
   expect(r).toEqual([{ file: 'src/a.test.js', status: 'failed', tests: [{ fullName: 'a adds', status: 'failed' }, { fullName: 'a ok', status: 'passed' }], writtenAt: expect.any(Number) }]);
 });
+
+test('vitest without a coverage provider: init says the coverage gate is off and how to turn it on', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const r = await go(root, ['--yes']);
+  expect(r.out).toContain('Coverage gate off for the root package: install @vitest/coverage-v8 to turn on the coverage gate.');
+  expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).not.toContain('enabled: true');
+  expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).toMatch(/coverage_skip:\n {4}- src\/\*\*/);
+});

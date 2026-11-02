@@ -6,11 +6,11 @@ import { makeRepo } from './helpers.js';
 
 const pj = (o: object) => JSON.stringify(o);
 const WHY = 'TDD and coverage support JS/TS (Vitest or Jest) only in this beta.';
-const PATHS = ['checks.tdd', 'checks.multiFile', 'tdd.paths', 'tdd.exempt', 'tdd.diff_coverage', 'unattended.multi_file_gate', 'unattended.require_reason', 'stop.steps', 'stop.base_ref', 'stop.package_manager'];
+const PATHS = ['checks.tdd', 'checks.multiFile', 'tdd.paths', 'tdd.exempt', 'tdd.diff_coverage', 'tdd.coverage_skip', 'unattended.multi_file_gate', 'unattended.require_reason', 'stop.steps', 'stop.base_ref', 'stop.package_manager'];
 
 it('pnpm monorepo preset', () => {
   const f = detect(makeRepo({
-    'package.json': pj({ name: 'root', scripts: { lint: 'eslint .', typecheck: 'tsc', format: 'prettier -w .' }, devDependencies: { vitest: '1' } }),
+    'package.json': pj({ name: 'root', scripts: { lint: 'eslint .', typecheck: 'tsc', format: 'prettier -w .' }, devDependencies: { vitest: '1', '@vitest/coverage-v8': '1' } }),
     'vitest.config.ts': "export default { test: {} };\n",
     'packages/a/vitest.config.ts': "export default { test: {} };\n",
     'pnpm-lock.yaml': '',
@@ -94,7 +94,7 @@ const UNSAFE = "import { defineConfig } from 'vitest/config';\nexport default de
 
 it('a package whose test config cannot be edited safely is left out of tdd.paths, with the why', () => {
   const f = detect(makeRepo({
-    'package.json': pj({ name: 'root' }),
+    'package.json': pj({ name: 'root', devDependencies: { '@vitest/coverage-v8': '1' } }),
     'pnpm-lock.yaml': '',
     'pnpm-workspace.yaml': 'packages:\n  - "packages/*"\n',
     'packages/a/package.json': pj({ name: 'a', scripts: { test: 'vitest' }, devDependencies: { vitest: '1' } }),
@@ -122,4 +122,26 @@ it('no package left with a safe test config: checks.tdd false with that reason',
   const why = 'TDD off for the root package because its test config could not be edited safely; add the printed lines, then add `src/**` to tdd.paths.';
   expect(p.off).toEqual([{ gate: 'TDD', why }, { gate: 'coverage', why }]);
   expect(p.reasons['checks.tdd']).toContain('could not be edited safely');
+});
+
+it('vitest without a coverage provider: TDD on, coverage gate skips that package, with the install hint', () => {
+  const p = preset(detect(makeRepo({
+    'package.json': pj({ name: 'u', scripts: { test: 'vitest run' }, devDependencies: { vitest: '1' } }),
+    'vitest.config.ts': VCFG,
+  })));
+  expect(p.config.checks.tdd).toBe(true);
+  expect(p.config.tdd.paths).toEqual(['src/**']);
+  expect(p.config.tdd.coverage_skip).toEqual(['src/**']);
+  expect(p.off).toEqual([{ gate: 'coverage', why: 'Coverage gate off for the root package: install @vitest/coverage-v8 to turn on the coverage gate.' }]);
+  expect(p.reasons['tdd.coverage_skip']).toMatch(/^[^\n]+\.$/);
+  expect(validateConfig(p.config).ok).toBe(true);
+});
+
+it('vitest with a coverage provider and jest: coverage_skip stays empty', () => {
+  const p = preset(detect(makeRepo({
+    'package.json': pj({ name: 'u', scripts: { test: 'vitest run' }, devDependencies: { vitest: '1', '@vitest/coverage-v8': '1' } }),
+    'vitest.config.ts': VCFG,
+  })));
+  expect(p.config.tdd.coverage_skip).toEqual([]);
+  expect(p.off).toEqual([]);
 });

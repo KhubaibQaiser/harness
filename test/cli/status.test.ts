@@ -70,3 +70,9 @@ test('status: one unsafe package in a monorepo is named while TDD stays on', asy
   expect(r.out).toMatch(/tdd: on/);
   expect(r.out).toContain('TDD off for `packages/b` because its test config could not be edited safely; add the printed lines, then add `packages/b/src/**` to tdd.paths.');
 });
+
+test('status: coverage gate off for a vitest package without a coverage provider, with the install hint', async () => {
+  const r = await go({ 'package.json': pkg('v'), 'package-lock.json': '{}', 'vitest.config.ts': 'export default { test: {} };\n' });
+  expect(r.out).toMatch(/tdd: on/);
+  expect(r.out).toContain('Coverage gate off for the root package: install @vitest/coverage-v8 to turn on the coverage gate.');
+});

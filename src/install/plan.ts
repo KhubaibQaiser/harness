@@ -28,7 +28,8 @@ export function planChanges(
   const put = (rel: string, after: string, blocks: string[] = [], mode?: number) => {
     const before = read(rel);
     if (before === null) changes.push({ kind: 'create', rel, content: after, ...(mode ? { mode } : {}), ...(blocks.length ? { blocks } : {}) });
-    else if (before !== after) changes.push({ kind: 'update', rel, before, after, blocks });
+    // A CRLF checkout of an LF file (core.autocrlf) is unchanged; merged files already keep the file's own EOL.
+    else if (before.replace(/\r\n/g, '\n') !== after.replace(/\r\n/g, '\n')) changes.push({ kind: 'update', rel, before, after, blocks });
   };
 
   put('.harness/hooks/dispatch.mjs', readFileSync(join(ctx.distDir, 'hooks', 'dispatch.mjs'), 'utf8'), [], 0o755);

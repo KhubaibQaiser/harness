@@ -9,7 +9,7 @@ import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { planChanges } from '../install/plan.js';
-import { sha256 } from '../install/text.js';
+import { hashText, matchesHash } from '../install/text.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -84,7 +84,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 
   const entry = (rel: string) => m!.files.find((f) => f.rel === rel);
   const merged = (rel: string) => entry(rel)?.kind === 'update' || !!entry(rel)?.blocks?.length;
-  const editedRels = changes.filter((c) => c.kind === 'update' && entry(c.rel) && entry(c.rel)!.hash !== sha256(c.before)).map((c) => c.rel);
+  const editedRels = changes.filter((c) => c.kind === 'update' && entry(c.rel) && !matchesHash(c.before, entry(c.rel)!.hash)).map((c) => c.rel);
   const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
   const editedOwned = editedRels.filter((r) => !merged(r));
   const editedMerged = editedRels.filter(merged);
@@ -106,11 +106,11 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     if (!c || c.kind === 'delete') return old; // not touched by this update
     const blocks = [...new Set([...(old.blocks ?? []), ...(c.blocks ?? [])])];
     // Keep init's kind (a created file stays deletable) and the pre-init backup uninstall restores.
-    return { rel: old.rel, kind: old.kind, hash: sha256(c.kind === 'create' ? c.content : c.after), ...(blocks.length ? { blocks } : {}), ...(old.backup ? { backup: old.backup } : {}) };
+    return { rel: old.rel, kind: old.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(blocks.length ? { blocks } : {}), ...(old.backup ? { backup: old.backup } : {}) };
   });
   for (const c of changes) {
     if (c.kind === 'delete' || m.files.some((f) => f.rel === c.rel)) continue;
-    files.push({ rel: c.rel, kind: c.kind, hash: sha256(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}) });
+    files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}) });
   }
   const err = commit(changes, { version, createdAt: new Date().toISOString(), ...(m.tddOff ? { tddOff: m.tddOff } : {}), files });
   if (err) return out(err), 1;

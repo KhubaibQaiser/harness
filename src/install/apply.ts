@@ -1,7 +1,7 @@
 import * as nodeFs from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { MANIFEST_REL, ManifestError, readManifest, type Manifest } from './manifest.js';
-import { sha256 } from './text.js';
+import { hashText } from './text.js';
 
 export { readManifest, ManifestError, type Manifest };
 
@@ -75,7 +75,7 @@ export function applyChanges(
     files: changes.map((c) => ({
       rel: c.rel,
       kind: c.kind,
-      hash: sha256(c.kind === 'delete' ? c.before : c.kind === 'create' ? c.content : c.after),
+      hash: hashText(c.kind === 'delete' ? c.before : c.kind === 'create' ? c.content : c.after),
       ...(c.kind === 'update' ? { blocks: c.blocks } : c.kind === 'create' && c.blocks?.length ? { blocks: c.blocks } : {}),
     })),
   };

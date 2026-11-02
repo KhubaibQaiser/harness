@@ -25,7 +25,9 @@ const template = (name: string): string => {
  */
 export function removeBlocks(after: string, blocks: string[]): string {
   let out = after;
-  for (const b of blocks) {
+  for (const block of blocks) {
+    // The checkout may have other line endings than the install that recorded the block (core.autocrlf).
+    const b = [block, block.replace(/\r?\n/g, '\r\n'), block.replace(/\r\n/g, '\n')].find((x) => out.includes(x)) ?? block;
     const last = out.lastIndexOf(b);
     let i = last;
     while (i > 0 && out[i - 1] !== '\n') i = out.lastIndexOf(b, i - 1);

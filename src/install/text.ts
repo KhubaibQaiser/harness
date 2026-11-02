@@ -9,3 +9,7 @@ export function jsonIndentOf(s: string): string | number {
   return m[1].startsWith('\t') ? '\t' : m[1].length;
 }
 export const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
+// Manifest hashes ignore CRLF vs LF: a teammate with core.autocrlf=true checks the installed files out with CRLF.
+export const hashText = (s: string): string => sha256(s.replace(/\r\n/g, '\n'));
+/** True for the LF-normalized hash this version records, and for the exact hash older manifests recorded. */
+export const matchesHash = (s: string, h: string): boolean => hashText(s) === h || sha256(s) === h;

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
@@ -175,4 +175,26 @@ test('jest repo: uninstall removes the reporter and restores the test script byt
   expect((await un(root, ['--yes'])).code).toBe(0);
   expect(existsSync(join(root, '.harness'))).toBe(false);
   expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(files['package.json']);
+});
+
+// A teammate with core.autocrlf=true checks out every installed file with CRLF and has no .harness/backup (gitignored).
+const toCrlf = (root: string) => {
+  const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
+  for (const f of m.files) {
+    const p = join(root, f.rel);
+    if (existsSync(p)) writeFileSync(p, readFileSync(p, 'utf8').replace(/\r?\n/g, '\r\n'));
+  }
+  rmSync(join(root, '.harness/backup'), { recursive: true, force: true });
+};
+
+test('CRLF checkout: uninstall removes the created files and the harness blocks', async () => {
+  const root = await installed();
+  toCrlf(root);
+  const r = await un(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(r.out).not.toContain('because you edited them');
+  expect(r.out).not.toContain('was not found');
+  expect(existsSync(join(root, '.harness'))).toBe(false);
+  expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toBe('# Mine\r\n');
+  expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe('node_modules\r\n');
 });

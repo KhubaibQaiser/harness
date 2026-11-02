@@ -192,3 +192,22 @@ test('update --dry-run prints the plan and writes nothing', async () => {
   expect(r.out).toContain('Dry run: nothing was written.');
   expect(snapshot(root)).toEqual(before);
 });
+
+test('CRLF checkout: update with the same version finds nothing edited and nothing to change', async () => {
+  const root = await installed();
+  const m = readManifest(root)!;
+  for (const f of m.files) writeFileSync(join(root, f.rel), readFileSync(join(root, f.rel), 'utf8').replace(/\r?\n/g, '\r\n'));
+  const r = await up(root, ['--dry-run'], { version: '1.0.0' });
+  expect(r.out).not.toContain('You edited');
+  expect(r.out).toContain('Harness 1.0.0 is up to date.');
+});
+
+test('CRLF checkout: a real update does not call the files edited, and records LF-normalized hashes', async () => {
+  const root = await installed();
+  for (const f of readManifest(root)!.files) writeFileSync(join(root, f.rel), readFileSync(join(root, f.rel), 'utf8').replace(/\r?\n/g, '\r\n'));
+  const r = await up(root, ['--yes'], { distDir: newDist() });
+  expect(r.code).toBe(0);
+  expect(r.out).not.toContain('You edited');
+  const agents = readManifest(root)!.files.find((x) => x.rel === DISPATCH)!;
+  expect(agents.hash).toBe(sha256(readFileSync(join(root, DISPATCH), 'utf8').replace(/\r\n/g, '\n')));
+});

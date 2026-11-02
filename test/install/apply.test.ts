@@ -40,7 +40,7 @@ describe('applyChanges', () => {
     expect(m.version).toBe('1.2.3');
     expect(m.createdAt).toBe('2026-11-01T10:20:30.000Z');
     expect(m.files.map((f) => [f.rel, f.kind])).toEqual([['dir/new.sh', 'create'], ['a.txt', 'update'], ['gone.txt', 'delete']]);
-    expect(m.files[0].hash).toBe(sha256('x\r\n'));
+    expect(m.files[0].hash).toBe(sha256('x\n')); // LF-normalized: a CRLF checkout must hash the same
     expect(m.files[1].blocks).toEqual(['new']);
     const bk = '.harness/backup/2026-11-01T10-20-30.000Z/';
     expect(m.files[1].backup).toBe(bk + 'a.txt');

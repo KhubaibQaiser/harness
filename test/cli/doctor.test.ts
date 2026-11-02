@@ -154,3 +154,10 @@ test('vitest without a coverage provider: doctor gives the install hint, then th
   mkdirSync(join(root, 'node_modules/@vitest/coverage-v8'), { recursive: true });
   expect(run(root, { path: bin('npm') }).out).toMatch(/^fix the coverage gate is off for the root package: run harness update to turn on Vitest coverage, then remove `src\/\*\*` from tdd\.coverage_skip in \.harness\/config\.yaml$/m);
 });
+
+test('CRLF checkout of the dispatcher still matches the manifest', async () => {
+  const root = await installed();
+  const p = join(root, '.harness/hooks/dispatch.mjs');
+  writeFileSync(p, readFileSync(p, 'utf8').replace(/\r?\n/g, '\r\n'));
+  expect(run(root, { path: bin('npm') }).out).toMatch(/^ok dispatcher matches the manifest$/m);
+});

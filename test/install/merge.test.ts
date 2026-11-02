@@ -255,3 +255,9 @@ describe('removeBlocks picks the last occurrence', () => {
     expect(removeBlocks(m.after, m.blocks)).toBe('foo.harness/\nbar\n');
   });
 });
+
+test('removeBlocks tolerates a CRLF checkout of an LF block, and the reverse', async () => {
+  const { removeBlocks } = await import('../../src/install/merge.js');
+  expect(removeBlocks('mine\r\nx\r\ny\r\n', ['x\ny\n'])).toBe('mine\r\n');
+  expect(removeBlocks('mine\nx\ny\n', ['x\r\ny\r\n'])).toBe('mine\n');
+});

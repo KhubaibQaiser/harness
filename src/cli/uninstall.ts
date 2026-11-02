@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
 import { removeBlocks } from '../install/merge.js';
-import { sha256, eolOf, jsonIndentOf, withEol } from '../install/text.js';
+import { matchesHash, eolOf, jsonIndentOf, withEol } from '../install/text.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
@@ -105,11 +105,11 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     }
     const backup = f.backup ? read(join(root, f.backup)) : null;
     if (f.rel === SETTINGS) {
-      if (sha256(cur) === f.hash && f.kind === 'create') {
+      if (matchesHash(cur, f.hash) && f.kind === 'create') {
         changes.push({ kind: 'delete', rel: f.rel, before: cur });
         continue;
       }
-      if (sha256(cur) === f.hash && backup !== null) {
+      if (matchesHash(cur, f.hash) && backup !== null) {
         changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
         continue;
       }
@@ -120,10 +120,10 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       continue;
     }
     if (f.kind === 'create') {
-      if (sha256(cur) === f.hash || force) changes.push({ kind: 'delete', rel: f.rel, before: cur });
+      if (matchesHash(cur, f.hash) || force) changes.push({ kind: 'delete', rel: f.rel, before: cur });
       else kept.push(f.rel);
     } else if (f.kind === 'update') {
-      if (sha256(cur) === f.hash && backup !== null) {
+      if (matchesHash(cur, f.hash) && backup !== null) {
         changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
         continue;
       }

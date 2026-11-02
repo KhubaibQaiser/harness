@@ -99,25 +99,57 @@ const readOwner = (lock: string): { pid?: number; nonce?: string } | null => {
 };
 
 // Stale: the owner process is dead, or there is no readable owner file and the dir is older than 30 s.
-// Returns the owner it judged (null: none readable), so the breaker can check it broke that lock and not a newer one.
-function staleOwner(lock: string): { owner: ReturnType<typeof readOwner> } | false {
+function isStale(lock: string): boolean {
   const o = readOwner(lock);
   if (typeof o?.pid === 'number') {
     try {
       process.kill(o.pid, 0);
       return false;
     } catch (e) {
-      return (e as NodeJS.ErrnoException).code === 'ESRCH' ? { owner: o } : false;
+      return (e as NodeJS.ErrnoException).code === 'ESRCH';
     }
   }
-  return Date.now() - statSync(lock).mtimeMs > 30000 ? { owner: null } : false;
+  return Date.now() - statSync(lock).mtimeMs > 30000;
 }
 
-export type LockOps = { rename: (from: string, to: string) => void };
+export type LockOps = {
+  rename: (from: string, to: string) => void;
+  rm: (p: string, o?: { recursive?: boolean; force?: boolean; maxRetries?: number; retryDelay?: number }) => void;
+  mkdir: (p: string, o?: { recursive?: boolean }) => unknown;
+};
+const REAL_OPS: LockOps = { rename: renameSync, rm: rmSync, mkdir: mkdirSync };
+const BREAK_STALE_MS = 5000;
+
+// Breaks a stale lock with breakers serialised by `<lock>.break`. The lock is judged again under the break lock: only a
+// breaker or the lock's own (live) owner ever removes it, so a lock that was replaced since the first look (a new
+// holder, maybe before its owner file exists) reads as live or young there and is left alone.
+function breakStale(lock: string, nonce: string, ops: LockOps): void {
+  const brk = `${lock}.break`;
+  try {
+    ops.mkdir(brk);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') return;
+    // A breaker died mid-break: clear its break lock (renamed first, so a newer one is never removed by name).
+    if (Date.now() - statSync(brk).mtimeMs > BREAK_STALE_MS) {
+      const old = `${brk}.stale.${nonce}`;
+      ops.rename(brk, old);
+      ops.rm(old, { recursive: true, force: true });
+    }
+    return;
+  }
+  try {
+    if (!isStale(lock)) return;
+    const gone = `${lock}.stale.${nonce}`;
+    ops.rename(lock, gone);
+    ops.rm(gone, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
+  } finally {
+    ops.rm(brk, { recursive: true, force: true });
+  }
+}
 
 // Serialises read-modify-write of a session's state across hook processes via an exclusive, owner-tagged lock directory.
 // Waits up to 2 s (10 ms steps), then runs fn unlocked with a warning. Stop events skip the lock (long-running, only touch stopAttempts).
-export async function withSessionLock<T>(root: string, session: string, fn: () => T | Promise<T>, ops: LockOps = { rename: renameSync }): Promise<T> {
+export async function withSessionLock<T>(root: string, session: string, fn: () => T | Promise<T>, ops: LockOps = REAL_OPS): Promise<T> {
   const lock = `${statePath(root, session).slice(0, -'.json'.length)}.lock`;
   const nonce = randomBytes(8).toString('hex');
   let held = false;
@@ -130,7 +162,7 @@ export async function withSessionLock<T>(root: string, session: string, fn: () =
     }
     for (const deadline = Date.now() + 2000; usable && !held; ) {
       try {
-        mkdirSync(lock);
+        ops.mkdir(lock);
         held = true;
         try {
           writeFileSync(join(lock, 'owner'), JSON.stringify({ pid: process.pid, nonce }));
@@ -143,27 +175,12 @@ export async function withSessionLock<T>(root: string, session: string, fn: () =
           break;
         }
         try {
-          const stale = staleOwner(lock);
-          if (stale) {
-            const gone = `${lock}.stale.${nonce}`;
-            ops.rename(lock, gone); // only the waiter whose rename succeeds proceeds
-            // Two waiters can judge the same dead lock stale; the slower one's rename may then take the live lock
-            // the faster one just made. Not the lock judged: put it back (mkdir-free, so nobody else can slip in first
-            // except through the same check) and keep waiting.
-            if (readOwner(gone)?.nonce !== stale.owner?.nonce) {
-              try {
-                ops.rename(gone, lock);
-              } catch {
-                // a third waiter already made a new lock; the robbed holder's release stays a no-op (nonce check)
-              }
-              continue;
-            }
-            rmSync(gone, { recursive: true, force: true });
-          } else if (Date.now() >= deadline) break;
-          else await new Promise((r) => setTimeout(r, 10));
+          if (isStale(lock)) breakStale(lock, nonce, ops);
         } catch {
-          // lock vanished or another waiter won the rename: retry
+          // lock or break lock vanished meanwhile: look again
         }
+        if (Date.now() >= deadline) break;
+        await new Promise((r) => setTimeout(r, 10));
       }
     }
     if (usable && !held) process.stderr.write('harness: state lock timeout\n');
@@ -173,15 +190,18 @@ export async function withSessionLock<T>(root: string, session: string, fn: () =
     // open, and a half-removed lock of a now-dead owner is what several waiters then break at the same time.
     if (held && readOwner(lock)?.nonce === nonce) {
       const freed = `${lock}.free.${nonce}`;
+      let renamed = false;
       try {
         renameWithRetry(lock, freed, ops.rename);
-        rmSync(freed, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
+        renamed = true;
       } catch {
-        try {
-          rmSync(lock, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
-        } catch {
-          // left behind: its owner is dead once this process exits, so waiters break it as stale
-        }
+        // could not rename: remove it in place (the name is still ours)
+      }
+      try {
+        // After the rename the lock name may already be a new holder's: only ever remove the freed dir then.
+        ops.rm(renamed ? freed : lock, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
+      } catch {
+        // a leftover .free.* dir is harmless; a leftover lock has a dead owner once this process exits (broken as stale)
       }
     }
   }

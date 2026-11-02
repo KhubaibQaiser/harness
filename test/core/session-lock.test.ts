@@ -112,39 +112,97 @@ test('10 parallel dispatcher processes for one session: no lost state updates', 
 // Windows race shapes, reproduced on every OS with injected fs errors (CI run 41377482722 lost 1 of 10 updates).
 const busy = (code: string) => Object.assign(new Error(code), { code });
 
-test('release frees the lock name even when Windows refuses the first removals (a waiter has owner open)', async () => {
+const realOps = { rename: renameSyncReal, rm: rmSync, mkdir: mkdirSync };
+
+test('release: the rename fails every retry, so the lock dir itself is removed', async () => {
   const root = tmp();
-  let fails = 3;
+  const ops = { ...realOps, rename: () => { throw busy('EPERM'); } };
+  expect(await withSessionLock(root, 's', () => 'ok', ops)).toBe('ok');
+  expect(existsSync(lockDir(root))).toBe(false);
+});
+
+test('release: rename succeeds but removing the freed dir fails; the next holder\'s lock is left alone', async () => {
+  const root = tmp();
   const ops = {
-    rename: (a: string, b: string) => {
-      if (fails-- > 0) throw busy('EPERM');
-      renameSyncReal(a, b);
+    ...realOps,
+    rm: (p: string, o?: object) => {
+      if (p.includes('.free.')) {
+        mkLock(root, { pid: process.pid, nonce: 'next' }); // a waiter takes the freed name at once
+        throw busy('EPERM'); // a scanner holds the freed dir past every retry
+      }
+      rmSync(p, o);
     },
   };
   expect(await withSessionLock(root, 's', () => 'ok', ops)).toBe('ok');
-  expect(existsSync(lockDir(root))).toBe(false); // never left behind as a dead-owner lock
+  expect(readFileSync(join(lockDir(root), 'owner'), 'utf8')).toContain('next');
 });
 
-test('a waiter that breaks a stale lock but finds a live lock in its hands puts it back', async () => {
+// Between a waiter's stale judgment and its break, the stale lock was broken by someone else and a new holder made a
+// lock (owner file not written yet). The injection fires at whichever step comes first: taking the break lock, or the rename.
+const swapToFreshLock = (root: string) => {
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    rmSync(lockDir(root), { recursive: true, force: true });
+    mkdirSync(lockDir(root));
+    writeFileSync(join(lockDir(root), 'marker'), 'new holder');
+  };
+};
+
+test('stale owner-less lock: a new holder that has not written its owner file yet is never robbed', async () => {
+  const root = tmp();
+  mkLock(root, undefined, 31000);
+  const swap = swapToFreshLock(root);
+  const ops = {
+    rename: (a: string, b: string) => (b.includes('.stale.') && swap(), renameSyncReal(a, b)),
+    rm: rmSync,
+    mkdir: (p: string, o?: object) => (p.endsWith('.break') && swap(), mkdirSync(p, o)),
+  };
+  await quiet(() => withSessionLock(root, 's', () => 'ran', ops));
+  expect(readFileSync(join(lockDir(root), 'marker'), 'utf8')).toBe('new holder');
+}, 10000);
+
+test('stale dead-owner lock: a new live lock made in the race window is never renamed away', async () => {
   const root = tmp();
   mkLock(root, { pid: await deadPid(), nonce: 'dead' });
-  let raced = false;
-  const ops = {
-    rename: (a: string, b: string) => {
-      if (!raced && b.includes('.stale.')) {
-        // Between this waiter's stale check and its rename, another waiter broke the stale lock and took it.
-        raced = true;
-        rmSync(lockDir(root), { recursive: true, force: true });
-        mkLock(root, { pid: process.pid, nonce: 'other' });
-      }
-      renameSyncReal(a, b);
-    },
+  let swapped = false;
+  const swap = () => {
+    if (swapped) return;
+    swapped = true;
+    rmSync(lockDir(root), { recursive: true, force: true });
+    mkLock(root, { pid: process.pid, nonce: 'other' });
   };
-  let ownerInFn = '';
-  await quiet(() => withSessionLock(root, 's', () => (ownerInFn = readFileSync(join(lockDir(root), 'owner'), 'utf8')), ops));
-  expect(raced).toBe(true);
-  expect(ownerInFn).toContain('other'); // the live lock is back and was never shared: this waiter timed out instead
+  const renames: string[] = [];
+  const ops = {
+    rename: (a: string, b: string) => (b.includes('.stale.') && swap(), renames.push(b), renameSyncReal(a, b)),
+    rm: rmSync,
+    mkdir: (p: string, o?: object) => (p.endsWith('.break') && swap(), mkdirSync(p, o)),
+  };
+  await quiet(() => withSessionLock(root, 's', () => 'ran', ops));
+  expect(renames.filter((r) => r.includes('.stale.'))).toEqual([]); // judged again under the break lock: live, untouched
+  expect(readFileSync(join(lockDir(root), 'owner'), 'utf8')).toContain('other');
 }, 10000);
+
+test('a stale dead-owner lock is still broken quickly through the break lock', async () => {
+  const root = tmp();
+  mkLock(root, { pid: await deadPid(), nonce: 'dead' });
+  const t = Date.now();
+  expect(await withSessionLock(root, 's', () => 'ok')).toBe('ok');
+  expect(Date.now() - t).toBeLessThan(1000);
+  expect(existsSync(`${lockDir(root)}.break`)).toBe(false);
+});
+
+test('an abandoned break lock older than 5 s does not block breaking', async () => {
+  const root = tmp();
+  mkLock(root, { pid: await deadPid(), nonce: 'dead' });
+  const brk = `${lockDir(root)}.break`;
+  mkdirSync(brk);
+  const old = new Date(Date.now() - 6000);
+  utimesSync(brk, old, old);
+  expect(await withSessionLock(root, 's', () => 'ok')).toBe('ok');
+  expect(existsSync(lockDir(root))).toBe(false);
+});
 
 test('readState retries a transient read error instead of starting the session over', () => {
   const root = tmp();

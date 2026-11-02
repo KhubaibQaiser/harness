@@ -128,3 +128,10 @@ test('hook latency runs as its own CI step after the parallel suite, in a projec
   expect(perf.test.fileParallelism).toBe(false);
   expect(cfg.test.projects.find((p: any) => p.test.name === 'unit').test.exclude).toContain('test/perf/**');
 });
+
+test('unit tests get a 20 s timeout on Windows only (slow git/npm spawns there), the default elsewhere', async () => {
+  const cfg = (await import('../../vitest.config.js')).default as any;
+  const unit = cfg.test.projects.find((p: any) => p.test.name === 'unit').test;
+  expect(unit.testTimeout).toBe(process.platform === 'win32' ? 20_000 : undefined);
+  expect(unit.retry).toBeUndefined();
+});

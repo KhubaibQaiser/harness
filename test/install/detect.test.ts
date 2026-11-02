@@ -236,16 +236,18 @@ test('unreadable files become warnings, not throws', () => {
   expect(() => detect('/nonexistent/harness-root')).not.toThrow();
 });
 
+// No git repos: detect needs none here, and 6 git init+commit runs are what made this slow on Windows.
+const NOGIT = { git: false };
 test('vitest coverage provider: from the package deps, the workspace root deps, or node_modules', () => {
   const v = (extra: object = {}) => pj({ name: 'a', devDependencies: { vitest: '1', ...extra } });
-  expect(detect(makeRepo({ 'package.json': v() })).packages[0].noCoverageProvider).toBe(true);
-  expect(detect(makeRepo({ 'package.json': v({ '@vitest/coverage-v8': '1' }) })).packages[0].noCoverageProvider).toBeUndefined();
-  expect(detect(makeRepo({ 'package.json': v({ '@vitest/coverage-istanbul': '1' }) })).packages[0].noCoverageProvider).toBeUndefined();
-  expect(detect(makeRepo({ 'package.json': v(), 'node_modules/@vitest/coverage-v8/package.json': '{}' })).packages[0].noCoverageProvider).toBeUndefined();
+  expect(detect(makeRepo({ 'package.json': v() }, NOGIT)).packages[0].noCoverageProvider).toBe(true);
+  expect(detect(makeRepo({ 'package.json': v({ '@vitest/coverage-v8': '1' }) }, NOGIT)).packages[0].noCoverageProvider).toBeUndefined();
+  expect(detect(makeRepo({ 'package.json': v({ '@vitest/coverage-istanbul': '1' }) }, NOGIT)).packages[0].noCoverageProvider).toBeUndefined();
+  expect(detect(makeRepo({ 'package.json': v(), 'node_modules/@vitest/coverage-v8/package.json': '{}' }, NOGIT)).packages[0].noCoverageProvider).toBeUndefined();
   const ws = detect(makeRepo({
     'package.json': pj({ name: 'root', workspaces: ['packages/*'], devDependencies: { '@vitest/coverage-v8': '1' } }),
     'packages/a/package.json': v(),
-  }));
+  }, NOGIT));
   expect(ws.packages.find((p) => p.dir === 'packages/a')?.noCoverageProvider).toBeUndefined();
-  expect(detect(makeRepo({ 'package.json': pj({ name: 'j', devDependencies: { jest: '1' } }) })).packages[0].noCoverageProvider).toBeUndefined(); // Jest has coverage built in
+  expect(detect(makeRepo({ 'package.json': pj({ name: 'j', devDependencies: { jest: '1' } }) }, NOGIT)).packages[0].noCoverageProvider).toBeUndefined(); // Jest has coverage built in
 });

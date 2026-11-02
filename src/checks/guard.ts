@@ -58,7 +58,7 @@ type Where = { root: string; env: NodeJS.ProcessEnv };
 function terminalCommand(tok: string, sub: string, w: Where): string {
   if (/(^|\/)cli\.m?js$/.test(tok)) {
     const p = tok.replace(/\$\{?(\w+)\}?/g, (m, v: string) => w.env[v] ?? m);
-    const real = /\$/.test(p) ? null : trustedCli(resolve(w.root, p), w.env);
+    const real = /\$/.test(p) ? null : trustedCli(resolve(w.root, p), w.root);
     if (real) return `\`node "${real}" ${sub}\``;
   }
   const recorded = readCliPath(w.root);

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -218,38 +218,56 @@ const fakeCli = (root: string, rel: string) => {
   writeFileSync(p, '');
   return realpathSync.native(p);
 };
-test('P1: a CLI path is printed only from a known install place: node_modules or the plugin folder', () => {
-  const root = mkdtempSync(join(tmpdir(), 'h-guard-p1-'));
+const hintReason = `Only a person can pause TDD: run ${HINT('tdd off')} in your own terminal.`;
+const want = (cli: string) => `Only a person can pause TDD: run \`node "${cli}" tdd off\` in your own terminal.`;
+// Owner rule (round 8): the only trusted CLI is <repo>/node_modules/@khubaibqaiser/harness, by real path inside the repo.
+test('P1: a CLI path is printed only for the repo\'s own node_modules install', () => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'h-guard-p1-')));
   const r = (cmd: string, env: NodeJS.ProcessEnv = {}) => reason(decideCommand(cmd, { ...ctx(), root, env }));
-  const want = (cli: string) => `Only a person can pause TDD: run \`node "${cli}" tdd off\` in your own terminal.`;
   const nm = fakeCli(root, 'node_modules/@khubaibqaiser/harness/dist/cli.mjs');
   expect(r('node ./node_modules/@khubaibqaiser/harness/dist/cli.mjs tdd off')).toBe(want(nm));
+  // pnpm: the package links into node_modules/.pnpm inside the repo
+  const pn = mkdtempSync(join(tmpdir(), 'h-guard-p1pn-'));
+  const store = fakeCli(pn, 'node_modules/.pnpm/@khubaibqaiser+harness@1.0.0/node_modules/@khubaibqaiser/harness/dist/cli.mjs');
+  mkdirSync(join(pn, 'node_modules/@khubaibqaiser'), { recursive: true });
+  symlinkSync(dirname(dirname(store)), join(pn, 'node_modules/@khubaibqaiser/harness'), 'junction');
+  expect(reason(decideCommand('node node_modules/@khubaibqaiser/harness/dist/cli.mjs tdd off', { ...ctx(), root: pn, env: {} }))).toBe(want(store));
+  // untrusted: the plugin folder (even with CLAUDE_PLUGIN_ROOT set), node_modules outside the repo or in a workspace
+  // package, a copy, a symlink from repo node_modules to outside, an unset variable, a bare harness, npx
   const plug = fakeCli(root, 'plug/dist/cli.mjs');
-  expect(r('node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" tdd off', { CLAUDE_PLUGIN_ROOT: dirname(dirname(plug)) })).toBe(want(plug));
-  // anywhere else (a copy the agent made, a source checkout), an unset variable, a bare harness or npx: the plain hint
-  const copy = fakeCli(root, 'tmp/evil/dist/cli.mjs');
-  for (const c of [`node "${copy}" tdd off`, 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" tdd off', 'harness tdd off', 'npx @khubaibqaiser/harness@1.0.0 tdd off'])
-    expect(r(c), c).toBe(`Only a person can pause TDD: run ${HINT('tdd off')} in your own terminal.`);
+  const outside = realpathSync.native(mkdtempSync(join(tmpdir(), 'h-guard-p1out-')));
+  const far = fakeCli(outside, 'node_modules/@khubaibqaiser/harness/dist/cli.mjs');
+  const ws = fakeCli(root, 'packages/a/node_modules/@khubaibqaiser/harness/dist/cli.mjs');
+  const ln = mkdtempSync(join(tmpdir(), 'h-guard-p1ln-'));
+  mkdirSync(join(ln, 'node_modules/@khubaibqaiser'), { recursive: true });
+  symlinkSync(join(outside, 'node_modules/@khubaibqaiser/harness'), join(ln, 'node_modules/@khubaibqaiser/harness'), 'junction');
+  expect(reason(decideCommand('node node_modules/@khubaibqaiser/harness/dist/cli.mjs tdd off', { ...ctx(), root: ln, env: {} }))).toBe(hintReason);
+  for (const [c, env] of [
+    ['node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" tdd off', { CLAUDE_PLUGIN_ROOT: dirname(dirname(plug)) }], [`node "${plug}" tdd off`, {}], [`node "${far}" tdd off`, {}],
+    [`node "${ws}" tdd off`, {}], [`node "${fakeCli(root, 'tmp/evil/dist/cli.mjs')}" tdd off`, {}], ['node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" tdd off', {}],
+    ['harness tdd off', {}], ['npx @khubaibqaiser/harness@1.0.0 tdd off', {}],
+  ] as [string, NodeJS.ProcessEnv][]) expect(r(c, env), c).toBe(hintReason);
 });
-test('P1: only a trusted CLI is recorded, and the recorded path is printed for every form', () => {
-  const root = mkdtempSync(join(tmpdir(), 'h-guard-p1r-'));
+test('P1: only the repo\'s node_modules CLI is recorded, it is re-checked when printed, and every form then names it', () => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'h-guard-p1r-')));
   const r = (cmd: string) => reason(decideCommand(cmd, { ...ctx(), root, env: {} }));
   const nm = fakeCli(root, 'node_modules/@khubaibqaiser/harness/dist/cli.mjs');
-  recordCliPath(root, nm, {});
+  recordCliPath(root, nm);
   expect(readCliPath(root)).toBeNull(); // not installed here: nothing recorded
   mkdirSync(join(root, '.harness'));
-  const copy = fakeCli(root, 'tmp/evil/dist/cli.mjs');
-  recordCliPath(root, copy, {});
-  expect(readCliPath(root)).toBeNull(); // an unknown place is never recorded
-  const plug = fakeCli(root, 'plug/dist/cli.mjs');
-  recordCliPath(root, plug, { CLAUDE_PLUGIN_ROOT: dirname(dirname(plug)) });
-  expect(readCliPath(root)).toBe(plug);
-  recordCliPath(root, nm, {});
+  for (const bad of [fakeCli(root, 'tmp/evil/dist/cli.mjs'), fakeCli(root, 'plug/dist/cli.mjs'), fakeCli(realpathSync.native(mkdtempSync(join(tmpdir(), 'h-guard-p1o-'))), 'node_modules/@khubaibqaiser/harness/dist/cli.mjs')]) {
+    recordCliPath(root, bad);
+    expect(readCliPath(root), bad).toBeNull();
+  }
+  recordCliPath(root, nm);
   expect(readCliPath(root)).toBe(nm);
-  for (const c of ['harness tdd off', 'node "$CLAUDE_PLUGIN_ROOT/dist/cli.mjs" tdd off', 'npx @khubaibqaiser/harness tdd off'])
-    expect(r(c), c).toBe(`Only a person can pause TDD: run \`node "${nm}" tdd off\` in your own terminal.`);
+  for (const c of ['harness tdd off', 'node "$CLAUDE_PLUGIN_ROOT/dist/cli.mjs" tdd off', 'npx @khubaibqaiser/harness tdd off']) expect(r(c), c).toBe(want(nm));
+  // a record that points anywhere else (written by some other means) is ignored when printed
+  writeFileSync(join(root, '.harness/state/cli-path'), fakeCli(root, 'tmp/evil2/dist/cli.mjs'));
+  expect(r('harness tdd off')).toBe(hintReason);
+  writeFileSync(join(root, '.harness/state/cli-path'), nm);
   rmSync(nm); // a recorded path that no longer exists is ignored
-  expect(r('harness tdd off')).toBe(`Only a person can pause TDD: run ${HINT('tdd off')} in your own terminal.`);
+  expect(r('harness tdd off')).toBe(hintReason);
 });
 // R2: more runner forms; flags that take a value are skipped with their value.
 test.each([

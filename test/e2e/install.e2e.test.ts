@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -150,18 +150,25 @@ test('unsafe vitest config: init prints manual lines and doctor names the fix', 
   expect(walk(root)).toEqual(before);
 });
 
-// R5/P1: the CLI records its path only from a known install place, and the dispatcher names only that path.
-test('the tdd off deny names the CLI path only when the CLI ran from the plugin folder; a source checkout gets the hint', () => {
+// Owner rule (round 8): only the repo's own node_modules install is recorded and named; anything else gets the hint.
+test('the tdd off deny names the CLI path only for the repo\'s node_modules install; the plugin folder or a source checkout gets the hint', () => {
   const f = npmVitest();
   const root = repo(f);
-  expect(init(root, f).code).toBe(0); // dist/ of this source checkout: not a known place
+  expect(init(root, f).code).toBe(0); // dist/ of this source checkout: not trusted
   expect(existsSync(join(root, '.harness/state/cli-path'))).toBe(false);
   const deny = () => verdict(pre(root, 'Bash', { command: 'node "$CLAUDE_PLUGIN_ROOT/dist/cli.mjs" tdd off' }));
-  expect(deny().reason).toBe('Only a person can pause TDD: run `harness tdd off` (if harness is not on your PATH: `npx @khubaibqaiser/harness tdd off`, or from a source checkout `node /path/to/harness/dist/cli.mjs tdd off`) in your own terminal.');
-  // The same CLI run as the plugin (its folder is CLAUDE_PLUGIN_ROOT) is recorded and named.
-  const r = spawnSync('node', [CLI, 'status'], { cwd: root, encoding: 'utf8', env: { ...env, CLAUDE_PLUGIN_ROOT: dirname(dirname(CLI)) } });
-  expect(r.status).toBe(0);
-  const cliPath = realpathSync.native(CLI);
+  const hint = 'Only a person can pause TDD: run `harness tdd off` (if harness is not on your PATH: `npx @khubaibqaiser/harness tdd off`, or from a source checkout `node /path/to/harness/dist/cli.mjs tdd off`) in your own terminal.';
+  expect(deny().reason).toBe(hint);
+  // CLAUDE_PLUGIN_ROOT set by the caller is not trusted any more
+  expect(spawnSync('node', [CLI, 'status'], { cwd: root, encoding: 'utf8', env: { ...env, CLAUDE_PLUGIN_ROOT: dirname(dirname(CLI)) } }).status).toBe(0);
+  expect(existsSync(join(root, '.harness/state/cli-path'))).toBe(false);
+  expect(deny().reason).toBe(hint);
+  // The same CLI installed in the repo's node_modules (gitignored there) is recorded and named.
+  const pkg = join(root, 'node_modules/@khubaibqaiser/harness');
+  cpSync(dirname(CLI), join(pkg, 'dist'), { recursive: true });
+  const local = join(pkg, 'dist/cli.mjs');
+  expect(spawnSync('node', [local, 'status'], { cwd: root, encoding: 'utf8', env }).status).toBe(0);
+  const cliPath = realpathSync.native(local);
   expect(readFileSync(join(root, '.harness/state/cli-path'), 'utf8')).toBe(cliPath);
   expect(deny()).toEqual({ decision: 'deny', reason: `Only a person can pause TDD: run \`node "${cliPath}" tdd off\` in your own terminal.` });
 });

@@ -126,7 +126,7 @@ try {
       }
     } else process.exitCode = run(argv, cli);
     // So the guard can tell a person the exact command to run in their own terminal (R5).
-    recordCliPath(repoRoot(process.cwd()), fileURLToPath(import.meta.url), process.env);
+    recordCliPath(repoRoot(process.cwd()), fileURLToPath(import.meta.url));
   }
 } catch (e) {
   console.error(`harness: ${(e as Error).message}`);

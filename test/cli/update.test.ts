@@ -219,3 +219,41 @@ test('update keeps the packages init left out of TDD in the manifest', async () 
   expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
   expect(readManifest(root)!.tddOff).toEqual(['.']);
 });
+
+// A Jest install from before the reporter: `--json --outputFile=...` appended to the test script.
+const oldJestInstall = async () => {
+  const pkg = JSON.stringify({ name: 'app', scripts: { test: 'jest --silent' }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n';
+  const root = makeRepo({ 'package.json': pkg, 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n' });
+  await init(['--yes'], { env: {}, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
+  const oldBlock = ' --json --outputFile=.harness/state/test-results/root.json --coverage';
+  const oldPkg = pkg.replace('"jest --silent"', `"jest --silent${oldBlock}"`);
+  writeFileSync(join(root, 'package.json'), oldPkg);
+  const mp = join(root, '.harness/manifest.json');
+  const m = JSON.parse(readFileSync(mp, 'utf8'));
+  const f = m.files.find((x: { rel: string }) => x.rel === 'package.json');
+  f.blocks = [oldBlock];
+  f.hash = sha256(oldPkg);
+  writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+  return { root, pkg };
+};
+
+test('update migrates the old Jest --json script to the reporter form, and uninstall restores the original', async () => {
+  const { root, pkg } = await oldJestInstall();
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  const script = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts.test;
+  expect(script).toBe('jest --silent --reporters=default --reporters=./.harness/hooks/jest-results.cjs "--modulePathIgnorePatterns=<rootDir>/.harness" --outputFile=.harness/state/test-results/root.json --coverage');
+  expect(r.out).not.toContain('You edited');
+  expect((await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() }))).toBe(0);
+  expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(pkg);
+});
+
+test('migrated Jest script: uninstall without a backup (teammate clone) removes the block cleanly', async () => {
+  const { root, pkg } = await oldJestInstall();
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  realFs.rmSync(join(root, '.harness/backup'), { recursive: true, force: true });
+  let out = '';
+  expect(await uninstall(['--yes'], { env: {}, root, out: (s) => (out += s + '\n'), prompt: fake() })).toBe(0);
+  expect(out).not.toContain('was not found');
+  expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(pkg);
+});

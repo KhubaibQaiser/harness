@@ -104,7 +104,10 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const files: Manifest['files'] = m.files.map((old) => {
     const c = changes.find((x) => x.rel === old.rel);
     if (!c || c.kind === 'delete') return old; // not touched by this update
-    const blocks = [...new Set([...(old.blocks ?? []), ...(c.blocks ?? [])])];
+    // A text block the new content no longer holds (a migrated Jest script) can't be removed later; drop it.
+    // Settings blocks are JSON structures, not text, so they are always kept.
+    const still = (b: string) => old.rel === '.claude/settings.json' || c.kind !== 'update' || c.after.includes(b);
+    const blocks = [...new Set([...(old.blocks ?? []).filter(still), ...(c.blocks ?? [])])];
     // Keep init's kind (a created file stays deletable) and the pre-init backup uninstall restores.
     return { rel: old.rel, kind: old.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(blocks.length ? { blocks } : {}), ...(old.backup ? { backup: old.backup } : {}) };
   });

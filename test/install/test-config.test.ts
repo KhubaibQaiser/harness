@@ -162,3 +162,56 @@ describe('testConfigChange vitest without a coverage provider', () => {
     expect(m.manual.join('\n')).not.toContain('enabled: true');
   });
 });
+
+describe('testConfigChange jest: configs the script flags would break or override', () => {
+  const pj = (s: string, jest?: object) => JSON.stringify({ name: 'demo', scripts: { test: s }, ...(jest ? { jest } : {}) }, null, 2) + '\n';
+  const REP = './.harness/hooks/jest-results.cjs';
+
+  it.each(['jest --config=config/jest.config.js', 'jest --config config/jest.config.js', 'jest -c config/jest.config.js', 'jest --projects a b', 'jest --rootDir=src'])(
+    '%s returns manual (rootDir moves where the reporter resolves)',
+    (s) => {
+      const root = makeRepo({ 'package.json': pj(s) }, { git: false });
+      expect(testConfigChange(jest(s), root, RD)).toHaveProperty('manual');
+    },
+  );
+
+  it('jest.config.js with reporters: manual line with the merged reporters, the rest stays a script flag', () => {
+    const root = makeRepo({ 'package.json': pj('jest'), 'jest.config.js': "module.exports = {\n  reporters: ['default', 'jest-junit'],\n};\n" }, { git: false });
+    const r = testConfigChange(jest('jest', { testConfig: 'jest.config.js' }), root, RD) as { manual: string[] };
+    expect(r.manual).toEqual([
+      `jest.config.js: set \`reporters: ['default', 'jest-junit', '${REP}']\``,
+      `package.json: add \`"--modulePathIgnorePatterns=<rootDir>/.harness" --outputFile=${RD}/root.json --coverage\` to the jest call in the "test" script`,
+    ]);
+  });
+
+  it('package.json jest key with both keys: both merged in the manual lines', () => {
+    const files = { 'package.json': pj('jest', { reporters: ['default'], modulePathIgnorePatterns: ['<rootDir>/dist'] }) };
+    const root = makeRepo(files, { git: false });
+    const r = testConfigChange(jest('jest'), root, RD) as { manual: string[] };
+    expect(r.manual).toEqual([
+      `package.json: set \`"jest": { "reporters": ["default","${REP}"] }\``,
+      `package.json: set \`"jest": { "modulePathIgnorePatterns": ["<rootDir>/dist","<rootDir>/.harness"] }\``,
+      `package.json: add \`--outputFile=${RD}/root.json --coverage\` to the jest call in the "test" script`,
+    ]);
+  });
+
+  it('a jest.config.ts whose reporters is not a literal array gets a plain instruction', () => {
+    const root = makeRepo({ 'package.json': pj('jest'), 'jest.config.ts': 'export default { reporters: base.reporters };\n' }, { git: false });
+    const r = testConfigChange(jest('jest', { testConfig: 'jest.config.ts' }), root, RD) as { manual: string[] };
+    expect(r.manual[0]).toBe(`jest.config.ts: add '${REP}' to \`reporters\``);
+  });
+});
+
+describe('testConfigChange jest: migrating the pre-reporter script', () => {
+  const pj = (s: string) => JSON.stringify({ name: 'demo', scripts: { test: s } }, null, 2) + '\n';
+  it.each([
+    ['jest --silent', ` --json --outputFile=${RD}/root.json --coverage`],
+    ['jest --coverage', ` --json --outputFile=${RD}/root.json`],
+  ])('%s with the old flags becomes the reporter form; removing the new block restores the original', (orig, old) => {
+    const root = makeRepo({ 'package.json': pj(orig + old) }, { git: false });
+    const r = testConfigChange(jest(orig + old), root, RD) as { change: { before: string; after: string; blocks: string[] } };
+    const fresh = testConfigChange(jest(orig), makeRepo({ 'package.json': pj(orig) }, { git: false }), RD) as { change: { after: string } };
+    expect(r.change.after).toBe(fresh.change.after);
+    expect(removeBlocks(r.change.after, r.change.blocks)).toBe(pj(orig));
+  });
+});

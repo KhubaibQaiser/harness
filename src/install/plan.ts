@@ -58,7 +58,8 @@ export function planChanges(
     else ignore(eslint, m);
   }
 
-  if (config.checks.tdd && facts.packages.some((p) => p.test === 'jest')) put(JEST_REPORTER, tpl('hooks', 'jest-results.cjs'));
+  // Also when TDD is off: a left-out Jest package's manual lines point at the reporter.
+  if (facts.packages.some((p) => p.test === 'jest')) put(JEST_REPORTER, tpl('hooks', 'jest-results.cjs'));
   if (config.checks.tdd)
     for (const pkg of facts.packages) {
       const r = testConfigChange(pkg, root, config.tdd.results_dir);

@@ -7,7 +7,7 @@ import { init, type Prompt } from '../../src/cli/init.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import { readManifest } from '../../src/install/apply.js';
 import { lineHunks, revertHunks } from '../../src/install/diff.js';
-import { repoPrettier } from '../../src/install/format.js';
+import { prettierFormat, repoPrettier } from '../../src/install/format.js';
 import { makeRepo } from './helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -101,3 +101,14 @@ test('N1: a file that was not Prettier-clean before is left unformatted; no Pret
   expect(e.formatted).toBeUndefined();
   expect(e.blocks!.length).toBeGreaterThan(0);
 });
+
+test('R3: a Prettier that ignores SIGTERM is killed at the timeout, not waited on', () => {
+  const root = makeRepo({
+    'node_modules/prettier/package.json': JSON.stringify({ name: 'prettier', bin: 'bin/p.cjs' }),
+    'node_modules/prettier/bin/p.cjs': "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);\n",
+  }, { git: false });
+  const bin = repoPrettier(root, 'x.ts')!;
+  const t0 = Date.now();
+  expect(() => prettierFormat(bin, root, 'x.ts', 'x', 500)).toThrow();
+  expect(Date.now() - t0).toBeLessThan(5000);
+}, 15_000);

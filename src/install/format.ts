@@ -21,8 +21,10 @@ export function repoPrettier(root: string, rel: string): string | null {
 }
 
 /** `text` formatted as `rel` by that Prettier, with the repo's own config. No shell; throws on failure or timeout. */
-export function prettierFormat(bin: string, root: string, rel: string, text: string): string {
+// SIGKILL at the timeout: a child that ignores SIGTERM would otherwise keep execFileSync waiting forever.
+// ponytail: only Prettier's own process is killed; Prettier spawns no children, so no tree kill (as the Stop gate has).
+export function prettierFormat(bin: string, root: string, rel: string, text: string, timeoutMs = FORMAT_MS): string {
   return execFileSync(process.execPath, [bin, '--stdin-filepath', resolve(root, rel)], {
-    cwd: root, input: text, encoding: 'utf8', timeout: FORMAT_MS, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024,
+    cwd: root, input: text, encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024,
   });
 }

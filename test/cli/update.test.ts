@@ -65,7 +65,7 @@ test('update re-renders the dispatcher and rewrites the manifest version', async
   expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe(REPO['.gitignore']);
 });
 
-const manifestFails = (): FsLike => { let n = 0; return ({ ...realFs, renameSync: (a: any, b: any) => { if (String(b).endsWith('.harness/manifest.json') && !n++) throw new Error('boom'); realFs.renameSync(a, b); } }) as FsLike; };
+const manifestFails = (): FsLike => { let n = 0; return ({ ...realFs, renameSync: (a: any, b: any) => { if (/[\\/]\.harness[\\/]manifest\.json$/.test(String(b)) && !n++) throw new Error('boom'); realFs.renameSync(a, b); } }) as FsLike; };
 const snapshot = (root: string) => [DISPATCH, '.harness/manifest.json', 'AGENTS.md', '.claude/settings.json'].map((r) => readFileSync(join(root, r), 'utf8'));
 
 test('manifest write failure in update rolls back every file', async () => {

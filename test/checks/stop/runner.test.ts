@@ -36,7 +36,8 @@ test('windows prefers pnpm.cmd over the extensionless shim', () => {
   expect(findOnPath('pnpm.cmd', { PATH: dir }, 'win32')).toBe(join(dir, 'pnpm.cmd'));
 });
 
-test('posix needs an executable file', () => {
+// POSIX only: Windows has no executable bit, and its tmpdir (C:\\...) cannot sit in a `:`-separated PATH.
+test.skipIf(process.platform === 'win32')('posix needs an executable file', () => {
   const dir = mkdtempSync(join(tmpdir(), 'h-path-'));
   writeFileSync(join(dir, 'tool'), '', { mode: 0o755 });
   writeFileSync(join(dir, 'plain'), '', { mode: 0o644 });

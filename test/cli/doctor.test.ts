@@ -25,6 +25,7 @@ const bin = (name: string) => {
   const d = mkdtempSync(join(tmpdir(), 'h-bin-'));
   writeFileSync(join(d, name), '#!/bin/sh\n');
   chmodSync(join(d, name), 0o755);
+  writeFileSync(join(d, `${name}.cmd`), '@echo off\n'); // what findOnPath looks for on Windows
   return d;
 };
 const run = (root: string, o: { claude?: string | null; path?: string } = {}) => {

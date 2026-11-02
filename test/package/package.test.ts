@@ -3,11 +3,17 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
+import { syncCommand } from '../../src/checks/stop/runner.js';
 
 const json = (f: string) => JSON.parse(readFileSync(f, 'utf8'));
 const pkg = json('package.json');
 // The dist/ build is made by `pnpm test`; --ignore-scripts keeps prepack's build output out of --json.
-const packDry = () => JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8' }))[0].files.map((f: { path: string }) => f.path) as string[];
+// npm is npm.cmd on Windows; syncCommand runs it through cmd.exe there.
+const npm = (args: string[], o: { encoding?: 'utf8'; stdio?: 'ignore' }) => {
+  const [file, a, opts] = syncCommand('npm', args);
+  return execFileSync(file, a, { ...opts, ...o });
+};
+const packDry = () => JSON.parse(npm(['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8' }) as string)[0].files.map((f: { path: string }) => f.path) as string[];
 
 test('versions equal: package.json, plugin.json and the marketplace pin', () => {
   const plugin = json('.claude-plugin/plugin.json');
@@ -44,8 +50,9 @@ test('every skill runs the bundled CLI, never npx, and stays under 60 lines', ()
 
 test('packed CLI runs: status in a bare fixture exits 1 with the not-installed message', () => {
   const out = mkdtempSync(join(tmpdir(), 'harness-pack-'));
-  execFileSync('npm', ['pack', '--ignore-scripts', '--pack-destination', out], { stdio: 'ignore' });
-  execFileSync('tar', ['-xzf', join(out, readdirSync(out).find((f) => f.endsWith('.tgz'))!), '-C', out]);
+  npm(['pack', '--ignore-scripts', '--pack-destination', out], { stdio: 'ignore' });
+  // A relative archive name: GNU tar (Git for Windows) reads `C:` in a path as a remote host.
+  execFileSync('tar', ['-xzf', readdirSync(out).find((f) => f.endsWith('.tgz'))!], { cwd: out });
   const cwd = mkdtempSync(join(tmpdir(), 'harness-fx-'));
   const r = spawnSync('node', [join(out, 'package/dist/cli.mjs'), 'status'], { cwd, encoding: 'utf8' });
   expect(r.status).toBe(1);

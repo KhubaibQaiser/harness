@@ -15,11 +15,12 @@ const cfgOf = (over: Partial<HarnessConfig['tdd']> = {}): HarnessConfig => {
   return c;
 };
 const FRESH = Date.now() / 1000;
+const json = (root: string) => JSON.stringify(root).slice(1, -1); // root inside a JSON string: Windows paths have backslashes
 function repo(coverage: Record<string, unknown> | null, { mtime = FRESH + 10, file = 'coverage/coverage-final.json' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'h-dc-'));
   if (coverage) {
     mkdirSync(join(root, file, '..'), { recursive: true });
-    writeFileSync(join(root, file), JSON.stringify(coverage).replaceAll('/ROOT', root));
+    writeFileSync(join(root, file), JSON.stringify(coverage).replaceAll('/ROOT', json(root)));
     utimesSync(join(root, file), mtime, mtime);
   }
   return root;
@@ -62,7 +63,7 @@ test('changedLines: pure deletion hunks (+n,0) add nothing; new files and ranges
 
 test('coveredLines maps absolute keys to repo paths, executable = statement ranges, covered = hit statements', async () => {
   const root = repo(null);
-  const raw = JSON.parse(fx('coverage/coverage-final.json').replaceAll('/ROOT', root));
+  const raw = JSON.parse(fx('coverage/coverage-final.json').replaceAll('/ROOT', json(root)));
   raw['/elsewhere/x.ts'] = raw[`${root}/src/a.ts`];
   const m = coveredLines(raw, root);
   expect([...m.keys()]).toEqual(['src/a.ts']);
@@ -118,7 +119,7 @@ test('merges every report matching coverage_globs; a line covered in any report 
   second['/ROOT/src/a.ts'].s = { 0: 0, 1: 0, 2: 1, 3: 0 };
   const root = repo(istanbul());
   mkdirSync(join(root, 'pkg/coverage'), { recursive: true });
-  writeFileSync(join(root, 'pkg/coverage/coverage-final.json'), JSON.stringify(second).replaceAll('/ROOT', root));
+  writeFileSync(join(root, 'pkg/coverage/coverage-final.json'), JSON.stringify(second).replaceAll('/ROOT', json(root)));
   utimesSync(join(root, 'pkg/coverage/coverage-final.json'), FRESH + 10, FRESH + 10);
   mkdirSync(join(root, 'node_modules/x/coverage'), { recursive: true });
   writeFileSync(join(root, 'node_modules/x/coverage/coverage-final.json'), '{"bad json');

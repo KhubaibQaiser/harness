@@ -8,8 +8,8 @@ import { readEvents } from '../../../src/core/events.js';
 import { readState, writeState } from '../../../src/core/state.js';
 import { type Ctx, detectBaseHead, dispatch, registry } from '../../../src/hooks/dispatch.js';
 
-// Existing tests fake the exec; pretend every binary is on PATH.
-const runStop = (c: Ctx, e: Exec, now?: () => number) => runStopReal(c, e, now, () => '/bin/x');
+// Existing tests fake the exec; pretend every binary is on PATH (found as itself: on Windows the gate execs the found path).
+const runStop = (c: Ctx, e: Exec, now?: () => number) => runStopReal(c, e, now, (cmd) => cmd);
 const ALL = ['format:check', 'lint', 'typecheck', 'test'];
 type Opts = { baseHead?: string; scripts?: string[]; yaml?: string; attempts?: number; hookActive?: boolean };
 const setup = (o: Opts = {}) => {

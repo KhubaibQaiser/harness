@@ -179,7 +179,10 @@ test('shell write into a tdd path is denied when unattended (through the dispatc
 
 test('a throwing guard is denied by the dispatcher (fail closed)', async () => {
   const spy = vi.spyOn(guard, 'run').mockImplementation(() => { throw new Error('boom'); });
-  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: '/nonexistent-harness-root', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  // A cwd under a regular file, so the state write fails on every OS (Windows can create /nonexistent-harness-root).
+  const file = join(mkdtempSync(join(tmpdir(), 'h-guard-')), 'file');
+  writeFileSync(file, '');
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: join(file, 'repo'), tool_name: 'Bash', tool_input: { command: 'ls' } });
   const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   let r;
   let printed = '';

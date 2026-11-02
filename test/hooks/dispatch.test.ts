@@ -169,6 +169,8 @@ test('records baseHead (git HEAD) when the session state is first created', asyn
   const git = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: root, encoding: 'utf8' }).trim();
   git('init', '-q');
   git('commit', '-q', '--allow-empty', '-m', 'one');
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n'); // so the hook prints no config-not-found warning
   const input = JSON.stringify({ session_id: 'bh', cwd: root, hook_event_name: 'UserPromptSubmit', prompt: 'x' });
   await dispatch(input, [], {});
   expect(existsSync(join(root, '.harness/state/bh.json'))).toBe(true);

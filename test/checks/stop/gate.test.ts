@@ -250,7 +250,7 @@ test('unborn HEAD: baseHead is the empty tree, and the first commit is diffed (c
   const { execFileSync, spawnSync } = await import('node:child_process');
   const { appendFileSync } = await import('node:fs');
   const first = async (files: string[], ignore: string) => {
-    const s = setup();
+    const s = setup({ yaml: 'checks:\n  stop: true\n' }); // a config, so the hook prints no config-not-found warning
     const git = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: s.root, encoding: 'utf8' });
     git('init', '-q');
     appendFileSync(join(s.root, '.git/info/exclude'), ignore);

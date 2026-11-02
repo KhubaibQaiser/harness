@@ -158,7 +158,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   const off = gates.filter(([, on]) => !on);
   out('Gates that are off:' + (off.length ? '\n' + off.map(([g]) => `  ${g}: ${why(g)}`).join('\n') : ' none'));
   if (checks.tdd) for (const o of p.tddOff) out(unsafeWhy(o.dir, o.noConfig));
-  if (checks.tdd) for (const d of coverageSkipped(facts, config)) out(coverageWhy(d));
+  if (checks.tdd) for (const p of coverageSkipped(facts, config)) out(coverageWhy(p));
   out(`Commit these files: ${[...plan.changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);
   out('Teammates need nothing else: the hooks are in the repo.');
   return 0;

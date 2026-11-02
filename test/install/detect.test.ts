@@ -251,3 +251,22 @@ test('vitest coverage provider: from the package deps, the workspace root deps, 
   expect(ws.packages.find((p) => p.dir === 'packages/a')?.noCoverageProvider).toBeUndefined();
   expect(detect(makeRepo({ 'package.json': pj({ name: 'j', devDependencies: { jest: '1' } }) }, NOGIT)).packages[0].noCoverageProvider).toBeUndefined(); // Jest has coverage built in
 });
+
+test('jest coverage the gate cannot read: coverageReporters without json, a custom coverageDirectory, or a preset', () => {
+  const j = (jest?: object, files: Record<string, string> = {}) =>
+    detect(makeRepo({ 'package.json': pj({ name: 'j', devDependencies: { jest: '1' }, ...(jest ? { jest } : {}) }), ...files }, NOGIT)).packages[0].coverageUnreadable;
+  expect(j()).toBeUndefined();
+  expect(j({ coverageReporters: ['json', 'text'] })).toBeUndefined();
+  expect(j({ coverageReporters: [['json', {}], 'text'] })).toBeUndefined();
+  expect(j({ coverageDirectory: 'coverage' })).toBeUndefined();
+  expect(j({ coverageReporters: ['text'] })).toBe('`package.json` "jest" sets `coverageReporters` without \'json\'');
+  expect(j({ coverageDirectory: 'out/cov' })).toBe('`package.json` "jest" sets `coverageDirectory`');
+  expect(j({ preset: 'ts-jest' })).toMatch(/uses a preset/);
+  const cfg = (text: string) => j(undefined, { 'jest.config.js': text });
+  expect(cfg('module.exports = { testEnvironment: "node" };\n')).toBeUndefined();
+  expect(cfg("module.exports = { coverageReporters: ['json-summary'] };\n")).toBe("`jest.config.js` sets `coverageReporters` without 'json'");
+  expect(cfg("module.exports = { coverageReporters: ['json'] };\n")).toBeUndefined();
+  expect(cfg("module.exports = { coverageDirectory: '<rootDir>/reports' };\n")).toBe('`jest.config.js` sets `coverageDirectory`');
+  expect(cfg("const base = require('./base');\nmodule.exports = { ...base };\n")).toMatch(/inherits or computes/);
+  expect(cfg("module.exports = { coverageReporters: reporters };\n")).toBe("`jest.config.js` sets `coverageReporters` without 'json'");
+});

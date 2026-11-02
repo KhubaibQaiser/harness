@@ -205,6 +205,38 @@ function jestConfigLines(pkg: PackageFacts, root: string, pkgJson: Record<string
   return out;
 }
 
+/**
+ * Why the coverage gate cannot read a Jest package's coverage, or null. The gate reads `coverage/coverage-final.json`,
+ * which Jest writes only with the `json` reporter (on by default) in the default `coverageDirectory`.
+ */
+export function jestCoverageUnreadable(root: string, dir: string, pkgJson: Record<string, any>, testConfig?: string): string | null {
+  const pjRel = dir === '.' ? 'package.json' : `${dir}/package.json`;
+  const okDir = (v: unknown) => v === undefined || v === 'coverage' || v === './coverage';
+  const j = pkgJson.jest;
+  if (j && typeof j === 'object') {
+    if (j.preset !== undefined) return `\`${pjRel}\` "jest" uses a preset, which may set \`coverageReporters\` or \`coverageDirectory\``;
+    if (!okDir(j.coverageDirectory)) return `\`${pjRel}\` "jest" sets \`coverageDirectory\``;
+    const r = j.coverageReporters;
+    if (r !== undefined && !(Array.isArray(r) && r.some((x) => x === 'json' || (Array.isArray(x) && x[0] === 'json')))) return `\`${pjRel}\` "jest" sets \`coverageReporters\` without 'json'`;
+  }
+  if (!testConfig) return null;
+  const cfgRel = dir === '.' ? testConfig : `${dir}/${testConfig}`;
+  let lf: string;
+  try {
+    lf = readFileSync(join(root, dir, testConfig), 'utf8').replace(/\r\n/g, '\n');
+  } catch {
+    return null;
+  }
+  const obj = jestConfigObject(lf);
+  if (!ownJestConfig(obj)) return /\bcoverage(Reporters|Directory)\b|\bpreset\b|\.\.\./.test(lf) || obj === null ? `\`${cfgRel}\` inherits or computes settings harness cannot read` : null;
+  const d = prop(obj, 'coverageDirectory');
+  if (d && !okDir(strVal(unwrap(d.value)) ?? {})) return `\`${cfgRel}\` sets \`coverageDirectory\``;
+  const r = prop(obj, 'coverageReporters');
+  const arr = r ? unwrap(r.value) : null;
+  if (r && !(arr?.type === 'ArrayExpression' && hasJson(arr))) return `\`${cfgRel}\` sets \`coverageReporters\` without 'json'`;
+  return null;
+}
+
 const oldJestFlags = (path: string) => [` --json --outputFile=${path} --coverage`, ` --json --outputFile=${path}`];
 
 function jestChange(pkg: PackageFacts, root: string, path: string): TestConfigResult {

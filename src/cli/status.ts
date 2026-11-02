@@ -36,7 +36,7 @@ export function status(args: string[], cli: CliEnv): number {
     lines.push(`  ${label}: ${on ? 'on' : `off - ${key === 'tdd' ? tddOffWhy : OFF_CONFIG}`}`);
   }
   if (!config.checks.tdd) lines.push(`  coverage: off - ${tddOffWhy}`);
-  else lines.push(...left.map((w) => `  ${w}`), ...coverageSkipped(facts, config).map((d) => `  ${coverageWhy(d)}`), tddStatus(root));
+  else lines.push(...left.map((w) => `  ${w}`), ...coverageSkipped(facts, config).map((p) => `  ${coverageWhy(p)}`), tddStatus(root));
   lines.push('Last day');
   lines.forEach((l) => out(l));
   return stats(['--days', '1'], cli);

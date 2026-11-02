@@ -268,3 +268,16 @@ test('init leaves out Stop steps whose tool is not on PATH and lists them', asyn
   expect(y).toContain('pytest');
   expect(y).not.toContain('ruff');
 });
+
+test('jest coverageReporters without json: TDD on, coverage gate off for that package, reason printed', async () => {
+  const root = makeRepo({
+    'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' }, jest: { coverageReporters: ['text'] } }, null, 2) + '\n',
+    'package-lock.json': '{}\n',
+    '.gitignore': 'node_modules\n',
+  });
+  const r = await go(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(r.out).toMatch(/^Gates that are on: .*TDD/m);
+  expect(r.out.slice(r.out.indexOf('Gates that are off'))).toContain("Coverage gate off for the root package: `package.json` \"jest\" sets `coverageReporters` without 'json'; the gate reads coverage/coverage-final.json");
+  expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).toMatch(/coverage_skip:\n\s+- src\/\*\*/);
+});

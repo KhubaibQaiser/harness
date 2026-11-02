@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import picomatch from 'picomatch';
 import { parse as parseYaml } from 'yaml';
+import { jestCoverageUnreadable } from './test-config.js';
 
 export interface PackageFacts {
   dir: string;
@@ -12,6 +13,8 @@ export interface PackageFacts {
   testConfig?: string;
   /** Vitest only: neither @vitest/coverage-v8 nor -istanbul is declared or installed, so coverage must stay off. */
   noCoverageProvider?: true;
+  /** Jest only: why the coverage gate cannot read this package's coverage output (its config moves or drops coverage-final.json). */
+  coverageUnreadable?: string;
 }
 export interface Facts {
   root: string;
@@ -123,6 +126,8 @@ function packageFacts(root: string, dir: string, warnings: string[], rootDeps: S
   if (cfg) out.testConfig = cfg;
   const provider = (p: string) => deps.has(p) || rootDeps.has(p) || existsSync(join(root, dir, 'node_modules', p)) || existsSync(join(root, 'node_modules', p));
   if (out.test === 'vitest' && !COVERAGE_PROVIDERS.some(provider)) out.noCoverageProvider = true;
+  const unreadable = out.test === 'jest' ? jestCoverageUnreadable(root, dir, pkg, jestCfg) : null;
+  if (unreadable) out.coverageUnreadable = unreadable;
   return out;
 }
 

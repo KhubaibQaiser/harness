@@ -179,3 +179,17 @@ test('doctor notes that the hooks may see a different PATH than this terminal', 
   expect(r.out).toMatch(/^note Stop steps were checked against this terminal's PATH: Claude Code's hooks may see a different one \(for example when Claude Code starts from the GUI\); if Stop warns that a tool is not on its PATH, make the tool available there$/m);
   expect(r.code).toBe(0);
 });
+
+const JEST_TEXT = { 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' }, jest: { coverageReporters: ['text'] } }, null, 2) + '\n', 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n' };
+test('doctor: a Jest coverage config the gate cannot read is a note when skipped, a fix when it is not', async () => {
+  const root = makeRepo(JEST_TEXT);
+  await init(['--yes'], { env: { PATH: bin('npm') }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') }); return { code, out }; };
+  const a = await run();
+  expect(a.out).toMatch(/^note the coverage gate is off for the root package: `package.json` "jest" sets `coverageReporters` without 'json'/m);
+  const p = join(root, '.harness/config.yaml');
+  writeFileSync(p, readFileSync(p, 'utf8').replace(/coverage_skip:\n\s+- src\/\*\*\n/, 'coverage_skip: []\n'));
+  const b = await run();
+  expect(b.code).toBe(1);
+  expect(b.out).toMatch(/^fix the coverage gate cannot read coverage for the root package/m);
+});

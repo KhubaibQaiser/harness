@@ -8,7 +8,7 @@ import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { matchesHash } from '../install/text.js';
 import { JEST_REPORTER, hasResultsOutput, testConfigChange } from '../install/test-config.js';
-import { COVERAGE_HINT, noConfigFile, offCause, srcGlob } from '../install/preset.js';
+import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
 
@@ -120,12 +120,17 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     else note(`TDD is off for ${whereOf(p.dir)}`, `${addPath}, then run harness update to add the reporter output`);
   }
 
-  if (config.checks.tdd)
-    for (const p of facts.packages.filter((p) => p.test === 'vitest' && config.tdd.coverage_skip.includes(srcGlob(p.dir)))) {
+  if (config.checks.tdd) {
+    const skipped = (p: (typeof facts.packages)[number]) => config.tdd.coverage_skip.includes(srcGlob(p.dir));
+    for (const p of facts.packages.filter((p) => p.test !== 'none' && skipped(p))) {
       const what = `the coverage gate is off for ${whereOf(p.dir)}`;
-      if (p.noCoverageProvider) note(what, COVERAGE_HINT);
-      else fix(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
+      if (noCoverage(p)) note(what, coverageHint(p));
+      else if (p.test === 'vitest') fix(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
     }
+    // A Jest coverage config the gate can't read, in a TDD path: every Stop would block on missing coverage.
+    for (const p of facts.packages.filter((p) => p.coverageUnreadable && config.tdd.paths.includes(srcGlob(p.dir)) && !skipped(p)))
+      fix(`the coverage gate cannot read coverage for ${whereOf(p.dir)} (${p.coverageUnreadable})`, `add \`${srcGlob(p.dir)}\` to tdd.coverage_skip in .harness/config.yaml, or keep 'json' in \`coverageReporters\` and the default \`coverageDirectory\``);
+  }
 
   if (config.checks.tdd) {
     const tddPkgs = facts.packages.filter((p) => p.test !== 'none' && !left.has(p.dir)); // same set update checks

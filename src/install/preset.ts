@@ -1,5 +1,5 @@
 import { defaults, type HarnessConfig, type StopStep } from '../core/config.js';
-import type { Facts } from './detect.js';
+import type { Facts, PackageFacts } from './detect.js';
 import { testConfigChange } from './test-config.js';
 import { findOnPath, resolveStep } from '../checks/stop/runner.js';
 
@@ -8,10 +8,15 @@ export const OFF_WHY = 'TDD and coverage support JS/TS (Vitest or Jest) only in 
 export const srcGlob = (dir: string): string => (dir === '.' || dir === '' ? 'src/**' : `${dir}/src/**`);
 const label = (dir: string) => (dir === '.' || dir === '' ? 'the root package' : `\`${dir}\``);
 export const COVERAGE_HINT = 'install @vitest/coverage-v8 to turn on the coverage gate';
-export const coverageWhy = (dir: string): string => `Coverage gate off for ${label(dir)}: ${COVERAGE_HINT}.`;
-/** Dirs of Vitest packages with no coverage provider that the coverage gate skips (their src/** is in tdd.coverage_skip). */
-export const coverageSkipped = (f: Facts, c: HarnessConfig): string[] =>
-  f.packages.filter((p) => p.noCoverageProvider && c.tdd.coverage_skip.includes(srcGlob(p.dir))).map((p) => p.dir);
+/** The packages whose coverage output the gate can never read: Vitest with no provider, Jest with a coverage config it can't read. */
+export const noCoverage = (p: PackageFacts): boolean => !!(p.noCoverageProvider || p.coverageUnreadable);
+/** What to do so the coverage gate can read a package's coverage. */
+export const coverageHint = (p: PackageFacts): string =>
+  p.coverageUnreadable ? `${p.coverageUnreadable}; the gate reads coverage/coverage-final.json, so keep 'json' in \`coverageReporters\` and the default \`coverageDirectory\`, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip` : COVERAGE_HINT;
+export const coverageWhy = (p: PackageFacts): string => `Coverage gate off for ${label(p.dir)}: ${coverageHint(p)}.`;
+/** Packages the coverage gate skips because it can't read their coverage (their src/** is in tdd.coverage_skip). */
+export const coverageSkipped = (f: Facts, c: HarnessConfig): PackageFacts[] =>
+  f.packages.filter((p) => noCoverage(p) && c.tdd.coverage_skip.includes(srcGlob(p.dir)));
 /** A Vitest package with no config file: init has nothing to edit, so the user creates one. */
 export const noConfigFile = (p: { test: string; testConfig?: string } | undefined): boolean => p?.test === 'vitest' && !p.testConfig;
 export const offCause = (noConfig: boolean): string => (noConfig ? 'it has no Vitest/Jest config file' : 'its test config could not be edited safely');
@@ -58,8 +63,9 @@ export function preset(f: Facts, which: Which = pathWhich): Preset {
   config.checks.tdd = tdd;
   config.checks.multiFile = true;
   config.tdd.paths = jsTested.map((p) => srcGlob(p.dir));
-  // Init leaves Vitest coverage off where no provider is installed, so those packages never have coverage output.
-  const noCov = jsTested.filter((p) => p.noCoverageProvider);
+  // Init leaves Vitest coverage off where no provider is installed, and a Jest coverage config can put the output where
+  // the gate does not look, so those packages never have readable coverage output.
+  const noCov = jsTested.filter(noCoverage);
   config.tdd.coverage_skip = noCov.map((p) => srcGlob(p.dir));
   config.tdd.exempt = EXEMPT;
   config.tdd.diff_coverage = 80;
@@ -92,7 +98,7 @@ export function preset(f: Facts, which: Which = pathWhich): Preset {
   reasons['tdd.exempt'] = 'These files are hard to test first, so TDD skips them.';
   reasons['tdd.diff_coverage'] = 'Changed lines need at least 80% coverage.';
   reasons['tdd.coverage_skip'] = noCov.length
-    ? 'No Vitest coverage provider is installed for these, so changed-line coverage skips them until you install @vitest/coverage-v8.'
+    ? noCov.map((p) => coverageWhy(p)).join(' ') + ' Changed-line coverage skips these until then.'
     : 'Every TDD package can write coverage, so none is skipped.';
   reasons['checks.multiFile'] = 'Asks you once per turn before an agent edits a second source file (test files never count); your approval covers the rest of that turn.';
   reasons['unattended.multi_file_gate'] = 'With no human watching, a multi-file edit is blocked.';
@@ -106,7 +112,7 @@ export function preset(f: Facts, which: Which = pathWhich): Preset {
 
   const why = unsafe.length ? unsafe.join(' ') : OFF_WHY;
   const off = tdd
-    ? [...unsafe.map((w) => ({ gate: 'TDD', why: w })), ...noCov.map((p) => ({ gate: 'coverage', why: coverageWhy(p.dir) }))]
+    ? [...unsafe.map((w) => ({ gate: 'TDD', why: w })), ...noCov.map((p) => ({ gate: 'coverage', why: coverageWhy(p) }))]
     : [{ gate: 'TDD', why }, { gate: 'coverage', why }];
   return { config, reasons, off, tddOff, skippedSteps };
 }

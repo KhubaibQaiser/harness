@@ -17,7 +17,7 @@ const WHAT = {
   'tdd.paths': 'Globs for the files TDD covers.',
   'tdd.exempt': 'Globs inside `tdd.paths` that TDD skips.',
   'tdd.diff_coverage': 'Minimum coverage, in percent, for changed lines.',
-  'tdd.coverage_skip': 'Globs inside `tdd.paths` that changed-line coverage skips. `init` lists a Vitest package here when no coverage provider is installed for it.',
+  'tdd.coverage_skip': 'Globs inside `tdd.paths` that changed-line coverage skips. `init` lists a Vitest package here when no coverage provider is installed for it, and a Jest package whose `coverageReporters` leaves out `json` or whose `coverageDirectory` (or preset) moves the output.',
   'tdd.test_lock': 'Changing a test that was written failing needs your approval until it passes.',
   'tdd.results_dir': 'Where the test reporters write JSON results. Keep it inside `.harness/state`.',
   'multi_file_gate.generated': 'Globs for generated files that the multi-file gate does not count.',

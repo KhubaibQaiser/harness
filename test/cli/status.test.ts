@@ -81,3 +81,8 @@ test('status: a vitest package with no config file says so', async () => {
   const r = await go({ 'package.json': pkg('n'), 'package-lock.json': '{}' });
   expect(r.out).toContain('tdd: off - TDD off for the root package because it has no Vitest/Jest config file; create one with the printed lines, then add `src/**` to tdd.paths.');
 });
+
+test('status names a Jest package whose coverage the gate cannot read', async () => {
+  const r = await go({ 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' }, jest: { coverageDirectory: 'reports' } }), 'package-lock.json': '{}\n' });
+  expect(r.out).toContain('  Coverage gate off for the root package: `package.json` "jest" sets `coverageDirectory`');
+});

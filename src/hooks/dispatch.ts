@@ -15,6 +15,8 @@ import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
 import { isUnattended } from '../core/unattended.js';
+import { toRepoPath } from '../core/paths.js';
+import { editTarget } from './edit-target.js';
 import { emit, parseInput } from './io.js';
 import type { Decision, HookEvent, HookInput } from './types.js';
 
@@ -45,6 +47,9 @@ const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 const CURSOR_KEYS = ['conversation_id', 'generation_id', 'model_id', 'workspace_roots'];
 const NO_ROOT = '/nonexistent-harness-root'; // loadConfig/readState on it yield defaults and a fresh state without touching disk
+const CONFIG = '.harness/config.yaml';
+export const configInvalidWhy = (errors: string[]): string =>
+  `\`${CONFIG}\` is invalid: ${errors.join('; ')}. Harness blocks edits and stopping until a person fixes it, so no gate is off by mistake: ask the user to correct ${CONFIG} (harness doctor checks it).`;
 const warn = (what: string, e: unknown) => process.stderr.write(`harness: ${what} failed: ${String((e as Error)?.message ?? e)}\n`);
 
 type GitRun = (args: string[]) => { status: number | null; stdout: string };
@@ -76,11 +81,13 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   let config: HarnessConfig | undefined;
   let state: SessionState | undefined;
   let unattended = false;
+  let configErrors: string[] = [];
   let fallback = false; // setup failed: the state in hand is not the session's, so it must never be written back
   try {
     root = repoRoot(input.cwd);
     const loaded = loadConfig(root);
     config = loaded.config;
+    configErrors = loaded.errors;
     if (event === 'UserPromptSubmit') for (const w of loaded.warnings) process.stderr.write(`harness: ${w}\n`);
     state = readState(root, input.session_id);
     unattended = isUnattended(input, env);
@@ -131,6 +138,28 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
       warn('event log', e);
     }
   };
+
+  // An invalid config never turns a gate off silently: edits (except to the config itself, which the usual checks
+  // still judge) and Stop fail closed. Stop shares the Stop gate's attempt counter, so the session can still end.
+  if (configErrors.length && !degraded) {
+    const reason = configInvalidWhy(configErrors);
+    if (event === 'Stop') {
+      const attempts = ctx.state.stopAttempts + 1;
+      if (attempts > config!.stop.max_attempts) {
+        ctx.save({ ...ctx.state, stopAttempts: 0 });
+        log('config', 'stop-gave-up', reason);
+        return '';
+      }
+      ctx.save({ ...ctx.state, stopAttempts: attempts });
+      log('config', 'block', reason);
+      return emit(event, { kind: 'block', reason, check: 'config' });
+    }
+    const t = event === 'PreToolUse' ? editTarget(input) : null;
+    if (t !== null && toRepoPath(root, t)?.toLowerCase() !== CONFIG) {
+      log('config', 'deny', reason);
+      return emit(event, { kind: 'deny', reason, check: 'config' });
+    }
+  }
 
   const decisions: Decision[] = [];
   let denied = false; // after the first PreToolUse deny only pure checks run; their findings are logged, not returned

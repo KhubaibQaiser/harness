@@ -204,3 +204,14 @@ test('doctor: a package with working coverage that the user lists in tdd.coverag
   expect(out).toMatch(/^note the coverage gate is off for the root package: it is listed in tdd.coverage_skip/m);
   expect(code).toBe(0);
 });
+
+test.each([
+  ['bad YAML', 'checks:\n  tdd: [\n'], ['top level not a mapping', '- a\n'], ['unknown key', 'checks:\n  tdd_x: true\n'],
+  ['wrong type', 'checks:\n  tdd: "true"\n'], ['out of range', 'stop:\n  max_attempts: 99\n'], ['not a mapping', 'checks: true\n'],
+])('doctor exits 1 on an invalid config (%s)', async (_n, yaml) => {
+  const root = await installed();
+  writeFileSync(join(root, '.harness/config.yaml'), yaml);
+  let out = '';
+  expect(await doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') })).toBe(1);
+  expect(out).toMatch(/^fix `\.harness\/config\.yaml` is (invalid|not valid YAML)/m);
+});

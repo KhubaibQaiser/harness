@@ -180,3 +180,33 @@ test('records baseHead (git HEAD) when the session state is first created', asyn
   await dispatch(input, [], {});
   expect(readState(root, 'bh').baseHead).toBe(head);
 });
+
+// I2: an invalid config fails closed instead of silently falling back to defaults.
+const BAD_CONFIGS: [string, string, RegExp][] = [
+  ['bad YAML', 'checks:\n  tdd: [\n', /not valid YAML \(.*line/],
+  ['top level not a mapping', '- a\n- b\n', /top level must be a mapping/],
+  ['unknown key', 'checks:\n  tdd_x: true\n', /unknown key "checks\.tdd_x"/],
+  ['wrong type', 'checks:\n  tdd: "true"\n', /"checks\.tdd" must be a boolean/],
+  ['out of range', 'stop:\n  max_attempts: 99\n', /"stop\.max_attempts" must be an integer from 1 to 10/],
+  ['not a mapping', 'checks: true\n', /"checks" must be a mapping/],
+];
+const reasonOf = (s: string) => out(s).hookSpecificOutput?.permissionDecisionReason ?? (JSON.parse(s) as { reason?: string }).reason;
+test.each(BAD_CONFIGS)('invalid config (%s): edits deny, the config edit falls through to the checks, Bash runs, Stop blocks then gives up', async (_n, yaml, key) => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-bad-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), yaml);
+  const allowAll = mk('allow-all', { kind: 'allow' });
+  const edit = await dispatch(pre({ cwd: r, tool_input: { file_path: join(r, 'src/a.ts') } }), [allowAll], {});
+  expect(decisionOf(edit)).toBe('deny');
+  expect(reasonOf(edit)).toMatch(key);
+  expect(reasonOf(edit)).toContain('ask the user to correct .harness/config.yaml');
+  // The config file itself: the usual checks decide (here a stand-in for protect).
+  expect(reasonOf(await dispatch(pre({ cwd: r, tool_input: { file_path: join(r, '.harness/config.yaml') } }), [denyAll], {}))).toBe('no');
+  expect(await dispatch(pre({ cwd: r, tool_name: 'Bash', tool_input: { command: 'ls' } }), [allowAll], {})).toBe('');
+  const stop = () => dispatch(JSON.stringify({ hook_event_name: 'Stop', session_id: 's', cwd: r }), [allowAll], {});
+  for (let i = 0; i < 3; i++) expect(reasonOf(await stop())).toMatch(key); // default max_attempts is 3
+  expect(await stop()).toBe('');
+});
+test('a valid config does not trip the invalid-config gate', async () => {
+  expect(await dispatch(pre({ tool_input: { file_path: join(root, 'src/a.ts') } }), [mk('allow-all', { kind: 'allow' })], {})).toBe('');
+});

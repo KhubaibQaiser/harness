@@ -99,3 +99,10 @@ test('numeric keys reject NaN, negatives and non-integers', () => {
   expect(ok.warnings).toEqual([]);
   expect([ok.config.stop.max_attempts, ok.config.stop.timeout_s, ok.config.tdd.diff_coverage]).toEqual([10, 30, 55.5]);
 });
+
+test('errors: only what makes the file invalid; a missing file or an outside results_dir is a warning only', () => {
+  expect(loadConfig(emptyDir()).errors).toEqual([]);
+  expect(loadConfig(dirWith('.harness/config.yaml', 'tdd:\n  results_dir: /tmp/x\n')).errors).toEqual([]);
+  expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: true\n')).errors).toEqual([]);
+  expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: "true"\nbogus: 1\n')).errors).toEqual(['"checks.tdd" must be a boolean', 'unknown key "bogus"']);
+});

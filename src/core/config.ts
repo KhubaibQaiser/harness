@@ -93,26 +93,40 @@ export function overlay(base: Record<string, unknown>, user: Record<string, unkn
   }
 }
 
-export function loadConfig(root: string): { config: HarnessConfig; warnings: string[] } {
+/**
+ * `errors` lists what makes the file invalid (bad YAML, a non-mapping, an unknown, mistyped or out-of-range key); each
+ * is also in `warnings`. The hooks fail closed on them. A missing file is only a warning: harness is not installed.
+ */
+export function loadConfig(root: string): { config: HarnessConfig; warnings: string[]; errors: string[] } {
   const config = defaults();
   const file = join(root, '.harness/config.yaml');
-  if (!existsSync(file)) return { config, warnings: ['config.yaml not found at .harness/config.yaml; using defaults (tdd and multiFile checks are off)'] };
+  if (!existsSync(file)) return { config, warnings: ['config.yaml not found at .harness/config.yaml; using defaults (tdd and multiFile checks are off)'], errors: [] };
   const warnings: string[] = [];
+  const errors: string[] = [];
+  const fail = (warning: string, error: string) => (warnings.push(warning), errors.push(error));
   let user: unknown;
   try {
     user = parse(readFileSync(file, 'utf8'));
   } catch (e) {
-    return { config, warnings: [`config.yaml is invalid YAML; using defaults (${(e as Error).message.split('\n')[0]})`] };
+    const why = (e as Error).message.split('\n')[0];
+    fail(`config.yaml is invalid YAML; using defaults (${why})`, `it is not valid YAML (${why})`);
+    return { config, warnings, errors };
   }
-  if (user == null) return { config, warnings };
-  if (!isObj(user)) return { config, warnings: ['config.yaml is invalid: top level must be a mapping; using defaults'] };
+  if (user == null) return { config, warnings, errors };
+  if (!isObj(user)) {
+    fail('config.yaml is invalid: top level must be a mapping; using defaults', 'its top level must be a mapping of keys');
+    return { config, warnings, errors };
+  }
   const issues: Issue[] = [];
   overlay(config as unknown as Record<string, unknown>, user, '', issues);
-  for (const { path: p, kind, detail } of issues)
-    warnings.push(kind === 'unknown' ? `config: unknown key "${p}" ignored` : kind === 'mapping' ? `config: "${p}" must be a mapping; using default` : `config: "${p}" has an invalid value (${detail}); using default`);
+  for (const { path: p, kind, detail } of issues) {
+    if (kind === 'unknown') fail(`config: unknown key "${p}" ignored`, `unknown key "${p}"`);
+    else if (kind === 'mapping') fail(`config: "${p}" must be a mapping; using default`, `"${p}" must be a mapping`);
+    else fail(`config: "${p}" has an invalid value (${detail}); using default`, `"${p}" ${detail}`);
+  }
   const rel = relative(join(root, '.harness/state'), resolve(root, config.tdd.results_dir));
   if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) warnings.push('tdd.results_dir is outside .harness/state; the agent could forge test results there');
-  return { config, warnings };
+  return { config, warnings, errors };
 }
 
 // For the README generator: every leaf key with its default and the "must be ..." text of its rule (null when only the default's type applies).

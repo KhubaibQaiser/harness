@@ -23,15 +23,31 @@ export function statePath(root: string, session: string): string {
   return join(root, '.harness/state', `${session}.json`);
 }
 
-export function readState(root: string, session: string): SessionState {
+const TRANSIENT = ['EPERM', 'EACCES', 'EBUSY'];
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+export function readState(root: string, session: string, read: (p: string, e: 'utf8') => string = readFileSync): SessionState {
   const fresh: SessionState = { startedAt: Date.now(), files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 };
   const f = statePath(root, session);
-  if (!existsSync(f)) return fresh;
+  let text: string;
+  // Windows: a scanner or another process can hold the file for a moment. Retry, and never answer a read error
+  // with a fresh state: the next write would then drop everything recorded so far.
+  for (let i = 0; ; i++) {
+    try {
+      text = read(f, 'utf8');
+      break;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? '';
+      if (code === 'ENOENT' || code === 'ENOTDIR') return fresh; // no state yet
+      if (i >= 20 || !TRANSIENT.includes(code)) throw e;
+      pause(10);
+    }
+  }
   try {
-    const v: unknown = JSON.parse(readFileSync(f, 'utf8'));
+    const v: unknown = JSON.parse(text);
     return typeof v === 'object' && v !== null && !Array.isArray(v) ? { ...fresh, ...(v as Partial<SessionState>) } : fresh;
   } catch {
-    return fresh;
+    return fresh; // corrupt file: start over (it is rewritten on the first hook)
   }
 }
 
@@ -64,8 +80,8 @@ export function renameWithRetry(from: string, to: string, rename: (a: string, b:
     try {
       return rename(from, to);
     } catch (e) {
-      if (i >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      if (i >= 20 || !TRANSIENT.includes((e as NodeJS.ErrnoException).code ?? '')) throw e;
+      pause(10);
     }
   }
 }
@@ -83,22 +99,25 @@ const readOwner = (lock: string): { pid?: number; nonce?: string } | null => {
 };
 
 // Stale: the owner process is dead, or there is no readable owner file and the dir is older than 30 s.
-function isStale(lock: string): boolean {
+// Returns the owner it judged (null: none readable), so the breaker can check it broke that lock and not a newer one.
+function staleOwner(lock: string): { owner: ReturnType<typeof readOwner> } | false {
   const o = readOwner(lock);
   if (typeof o?.pid === 'number') {
     try {
       process.kill(o.pid, 0);
       return false;
     } catch (e) {
-      return (e as NodeJS.ErrnoException).code === 'ESRCH';
+      return (e as NodeJS.ErrnoException).code === 'ESRCH' ? { owner: o } : false;
     }
   }
-  return Date.now() - statSync(lock).mtimeMs > 30000;
+  return Date.now() - statSync(lock).mtimeMs > 30000 ? { owner: null } : false;
 }
+
+export type LockOps = { rename: (from: string, to: string) => void };
 
 // Serialises read-modify-write of a session's state across hook processes via an exclusive, owner-tagged lock directory.
 // Waits up to 2 s (10 ms steps), then runs fn unlocked with a warning. Stop events skip the lock (long-running, only touch stopAttempts).
-export async function withSessionLock<T>(root: string, session: string, fn: () => T | Promise<T>): Promise<T> {
+export async function withSessionLock<T>(root: string, session: string, fn: () => T | Promise<T>, ops: LockOps = { rename: renameSync }): Promise<T> {
   const lock = `${statePath(root, session).slice(0, -'.json'.length)}.lock`;
   const nonce = randomBytes(8).toString('hex');
   let held = false;
@@ -124,9 +143,21 @@ export async function withSessionLock<T>(root: string, session: string, fn: () =
           break;
         }
         try {
-          if (isStale(lock)) {
+          const stale = staleOwner(lock);
+          if (stale) {
             const gone = `${lock}.stale.${nonce}`;
-            renameSync(lock, gone); // only the waiter whose rename succeeds proceeds
+            ops.rename(lock, gone); // only the waiter whose rename succeeds proceeds
+            // Two waiters can judge the same dead lock stale; the slower one's rename may then take the live lock
+            // the faster one just made. Not the lock judged: put it back (mkdir-free, so nobody else can slip in first
+            // except through the same check) and keep waiting.
+            if (readOwner(gone)?.nonce !== stale.owner?.nonce) {
+              try {
+                ops.rename(gone, lock);
+              } catch {
+                // a third waiter already made a new lock; the robbed holder's release stays a no-op (nonce check)
+              }
+              continue;
+            }
             rmSync(gone, { recursive: true, force: true });
           } else if (Date.now() >= deadline) break;
           else await new Promise((r) => setTimeout(r, 10));
@@ -138,6 +169,20 @@ export async function withSessionLock<T>(root: string, session: string, fn: () =
     if (usable && !held) process.stderr.write('harness: state lock timeout\n');
     return await fn();
   } finally {
-    if (held && readOwner(lock)?.nonce === nonce) rmSync(lock, { recursive: true, force: true });
+    // Rename first, so the lock name is free at once; on Windows removing the dir fails while a waiter has `owner`
+    // open, and a half-removed lock of a now-dead owner is what several waiters then break at the same time.
+    if (held && readOwner(lock)?.nonce === nonce) {
+      const freed = `${lock}.free.${nonce}`;
+      try {
+        renameWithRetry(lock, freed, ops.rename);
+        rmSync(freed, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
+      } catch {
+        try {
+          rmSync(lock, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
+        } catch {
+          // left behind: its owner is dead once this process exits, so waiters break it as stale
+        }
+      }
+    }
   }
 }

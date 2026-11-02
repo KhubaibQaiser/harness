@@ -76,6 +76,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   let config: HarnessConfig | undefined;
   let state: SessionState | undefined;
   let unattended = false;
+  let fallback = false; // setup failed: the state in hand is not the session's, so it must never be written back
   try {
     root = repoRoot(input.cwd);
     const loaded = loadConfig(root);
@@ -85,6 +86,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     unattended = isUnattended(input, env);
   } catch (e) {
     warn('setup', e);
+    fallback = true;
     root = input.cwd;
     try {
       config = loadConfig(NO_ROOT).config;
@@ -99,7 +101,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   if (state) {
     // Fix startedAt at the session's first hook.
     try {
-      if (!stateExists(root, input.session_id)) {
+      if (!fallback && !stateExists(root, input.session_id)) {
         state.baseHead = detectBaseHead(root);
         writeState(root, input.session_id, state);
       }
@@ -118,7 +120,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   const ctx = {
     input, root, config, state, unattended, env, startedAt: PROCESS_START,
     save(s: SessionState) {
-      writeState(root, input.session_id, s);
+      if (!fallback) writeState(root, input.session_id, s);
       ctx.state = s;
     },
   } as Ctx;

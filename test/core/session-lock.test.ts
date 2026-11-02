@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync as renameSyncReal, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { readState, withSessionLock } from '../../src/core/state.js';
+import { readState, withSessionLock, writeState } from '../../src/core/state.js';
 import { dispatch } from '../../src/hooks/dispatch.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'h-lock-'));
@@ -108,3 +108,53 @@ test('10 parallel dispatcher processes for one session: no lost state updates', 
   expect(outs).toEqual(Array(10).fill(''));
   expect(readState(repo, 'par').files.sort()).toEqual(Array.from({ length: 10 }, (_, i) => `f${i}.ts`).sort());
 }, 30000);
+
+// Windows race shapes, reproduced on every OS with injected fs errors (CI run 41377482722 lost 1 of 10 updates).
+const busy = (code: string) => Object.assign(new Error(code), { code });
+
+test('release frees the lock name even when Windows refuses the first removals (a waiter has owner open)', async () => {
+  const root = tmp();
+  let fails = 3;
+  const ops = {
+    rename: (a: string, b: string) => {
+      if (fails-- > 0) throw busy('EPERM');
+      renameSyncReal(a, b);
+    },
+  };
+  expect(await withSessionLock(root, 's', () => 'ok', ops)).toBe('ok');
+  expect(existsSync(lockDir(root))).toBe(false); // never left behind as a dead-owner lock
+});
+
+test('a waiter that breaks a stale lock but finds a live lock in its hands puts it back', async () => {
+  const root = tmp();
+  mkLock(root, { pid: await deadPid(), nonce: 'dead' });
+  let raced = false;
+  const ops = {
+    rename: (a: string, b: string) => {
+      if (!raced && b.includes('.stale.')) {
+        // Between this waiter's stale check and its rename, another waiter broke the stale lock and took it.
+        raced = true;
+        rmSync(lockDir(root), { recursive: true, force: true });
+        mkLock(root, { pid: process.pid, nonce: 'other' });
+      }
+      renameSyncReal(a, b);
+    },
+  };
+  let ownerInFn = '';
+  await quiet(() => withSessionLock(root, 's', () => (ownerInFn = readFileSync(join(lockDir(root), 'owner'), 'utf8')), ops));
+  expect(raced).toBe(true);
+  expect(ownerInFn).toContain('other'); // the live lock is back and was never shared: this waiter timed out instead
+}, 10000);
+
+test('readState retries a transient read error instead of starting the session over', () => {
+  const root = tmp();
+  writeState(root, 's', { ...readState(root, 's'), files: ['kept.ts'] });
+  let fails = 2;
+  const read = (p: string, e: 'utf8') => {
+    if (fails-- > 0) throw busy('EBUSY');
+    return readFileSync(p, e);
+  };
+  expect(readState(root, 's', read).files).toEqual(['kept.ts']);
+  expect(() => readState(root, 's', () => { throw busy('EACCES'); })).toThrow(); // never a silent fresh state
+  expect(readState(root, 'none', () => { throw busy('ENOENT'); }).files).toEqual([]);
+});

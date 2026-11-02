@@ -249,7 +249,8 @@ function jestChange(pkg: PackageFacts, root: string, path: string): TestConfigRe
   // the script is left alone, and the reporter and ignore go in the config, where they merge with what it inherits.
   const inConfig = (where: string): TestConfigResult =>
     manualFor({
-      reporters: `${where}: add '${rep}' to \`reporters\` (keep the reporters it inherits)`,
+      // Followed literally with no reporters set, a bare ['<reporter>'] would drop Jest's console output.
+      reporters: `${where}: add '${rep}' to \`reporters\`, keeping the ones it inherits (if it sets none, use \`['default', '${rep}']\` so Jest keeps its console output)`,
       modulePathIgnorePatterns: `${where}: add '${JEST_IGNORE}' to \`modulePathIgnorePatterns\``,
     });
   if (pkgJson.jest?.rootDir !== undefined) return manualFor();

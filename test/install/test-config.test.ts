@@ -228,7 +228,7 @@ describe('testConfigChange jest: inherited config (base spreads, presets, functi
     const root = makeRepo({ 'package.json': pj(), 'jest.config.js': cfg }, { git: false });
     const r = testConfigChange(jest('jest', { testConfig: 'jest.config.js' }), root, RD) as { manual: string[] };
     expect(r.manual).toEqual([
-      "jest.config.js: add './.harness/hooks/jest-results.cjs' to `reporters` (keep the reporters it inherits)",
+      "jest.config.js: add './.harness/hooks/jest-results.cjs' to `reporters`, keeping the ones it inherits (if it sets none, use `['default', './.harness/hooks/jest-results.cjs']` so Jest keeps its console output)",
       "jest.config.js: add '<rootDir>/.harness' to `modulePathIgnorePatterns`",
       `package.json: add \`--outputFile=${RD}/root.json --coverage\` to the jest call in the "test" script`,
     ]);

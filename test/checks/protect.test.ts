@@ -170,3 +170,14 @@ test('whole-tree pathspecs on Windows: backslashes, .., drive-letter case', () =
   for (const t of ['.', '..', './', ':/']) expect(isWholeTree('/w/repo', t, posix), t).toBe(true);
   for (const t of ['src', '../other']) expect(isWholeTree('/w/repo', t, posix), t).toBe(false);
 });
+
+test.each([
+  `node -e "require('fs').writeFileSync('.harness/state/cli-path', '/tmp/x/dist/cli.mjs')"`,
+  `node --eval "require('fs').writeFileSync('.harness/manifest.json','{}')"`,
+  `python3 -c "open('.harness/config.yaml','w').write('x')"`,
+  `perl -e 'unlink ".harness/hooks/dispatch.mjs"'`,
+  `ruby -e 'File.write(".claude/settings.json", "{}")'`,
+  `bun -e "Bun.write('.harness/state/x', '')"`,
+])('inline interpreter code that names a protected path is denied: %s', (c) => expect(bash(c)).toBe('deny'));
+test.each([`node -e "console.log(1)"`, 'node dist/cli.mjs doctor', `python3 -c "print(1)"`, 'cat .harness/config.yaml'])(
+  'other interpreter use is allowed: %s', (c) => expect(bash(c)).toBe('allow'));

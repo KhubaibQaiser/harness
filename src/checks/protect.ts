@@ -95,6 +95,7 @@ export function shellWriteTargets(cmd: string): string[] {
   return [...cmds.flatMap(fileWriteTargets), ...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv, ...mc.cp, ...gitRestoreTargets(cmds)];
 }
 
+const INLINE_CODE = /(^|[\s;&|(`])(node|nodejs|deno|bun|python3?|perl|ruby|php)(\.exe)?\s+([^;&|\n]*\s)?(-e|-p|-c|-r|--eval|--print|eval|-pe|-ne)(\s|=|$)/;
 const GLOB = /[*?[{]/;
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
@@ -126,6 +127,9 @@ export const protect: Check = {
     if (target !== null) paths = [target];
     else if (tool_name === 'Bash') {
       const cmd = String(tool_input.command ?? '');
+      // Inline interpreter code (node -e, python -c, …) that names a protected path: its writes can't be parsed.
+      // ponytail: textual only; a path built from pieces (".har" + "ness") still gets past.
+      if (INLINE_CODE.test(cmd) && /\.harness[\\/]|\.claude[\\/]settings/i.test(cmd)) return { kind: 'deny', reason: REASON, check: 'protect' };
       const cmds = expand(cmd);
       const mc = moveCopyTargets(cmds);
       const removed = [...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv];

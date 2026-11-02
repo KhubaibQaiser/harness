@@ -1,6 +1,6 @@
 // Harness files and Claude settings are changed by a person; the agent is denied at the tool-call level.
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import nodePath, { resolve } from 'node:path';
 import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
@@ -8,8 +8,8 @@ import { editTarget } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
 import { fileWriteTargets, gitArgs, rmTargets } from './guard.js';
 
-const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/config.yaml', '.claude/settings.json', '.claude/settings.local.json'];
-const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/config.yaml', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
+const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/config.yaml', '.harness/manifest.json', '.claude/settings.json', '.claude/settings.local.json'];
+const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/config.yaml', '.harness/manifest.json', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
 const REASON = 'Harness files and Claude settings are changed by a person, not the agent.';
 
 const segTokens = (cmd: string): string[][] =>
@@ -94,9 +94,10 @@ const isProtectedGlob = (root: string, t: string): boolean => {
   return !!rel && PROTECTED_CONCRETE.some((c) => picomatch(rel, { dot: true })(c));
 };
 // Whole-tree pathspecs restore .harness and .claude too: ".", ":/", the root, or any ancestor of it.
-const isWholeTree = (root: string, t: string): boolean => {
-  const p = resolve(root, t.replace(/^:\//, ''));
-  return resolve(root) === p || resolve(root).startsWith(p.replace(/\/$/, '') + '/');
+// `path` is a test seam for Windows (backslashes, `..`, drive letters, case-insensitive compare).
+export const isWholeTree = (root: string, t: string, path: typeof nodePath = nodePath): boolean => {
+  const rel = path.relative(path.resolve(root, t.replace(/^:[\\/]/, '')), path.resolve(root));
+  return !rel.startsWith('..') && !path.isAbsolute(rel);
 };
 
 // A bare directory (rm -rf .harness/hooks) counts as inside its own glob.

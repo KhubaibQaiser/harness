@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { protect } from '../../src/checks/protect.js';
+import { isWholeTree, protect } from '../../src/checks/protect.js';
+import { posix, win32 } from 'node:path';
 import { loadConfig } from '../../src/core/config.js';
 import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
 
@@ -151,4 +152,21 @@ test('the event log is protected like the state dir', () => {
   for (const tool of ['Write', 'Edit']) expect(edit('.harness/logs/events.jsonl', tool).kind).toBe('deny');
   for (const c of ['rm .harness/logs/events.jsonl', 'rm -rf .harness/logs', 'rm .harness/logs/*', 'echo {} >> .harness/logs/events.jsonl', 'truncate -s 0 .harness/logs/events.jsonl', 'mv .harness/logs/events.jsonl /tmp'])
     expect(bash(c), c).toBe('deny');
+});
+
+test.each(['.harness/manifest.json', '.harness/backup/2026-11-01T00-00-00.000Z/AGENTS.md', '.harness/backup'])('agent write to %s is denied', (p) => {
+  expect(edit(p, 'Write').kind).toBe('deny');
+  expect(bash(`rm -rf ${p}`)).toBe('deny');
+});
+test('globs over the manifest or the backups are denied', () => {
+  expect(bash('rm .harness/manifest.*')).toBe('deny');
+  expect(bash('rm -rf .harness/back*')).toBe('deny');
+});
+
+test('whole-tree pathspecs on Windows: backslashes, .., drive-letter case', () => {
+  const root = 'C:\\work\\repo';
+  for (const t of ['.', '..', '..\\..', '.\\', 'C:\\work', 'c:\\WORK\\repo', ':\\', ':/']) expect(isWholeTree(root, t, win32), t).toBe(true);
+  for (const t of ['src', 'src\\..\\lib', '..\\other']) expect(isWholeTree(root, t, win32), t).toBe(false);
+  for (const t of ['.', '..', './', ':/']) expect(isWholeTree('/w/repo', t, posix), t).toBe(true);
+  for (const t of ['src', '../other']) expect(isWholeTree('/w/repo', t, posix), t).toBe(false);
 });

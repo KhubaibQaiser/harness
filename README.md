@@ -89,7 +89,7 @@ The guard asks you before the agent runs `harness uninstall` in any form (`npx`,
 
 ## Config reference
 
-The file is `.harness/config.yaml`. `init` writes it. If the file is not valid YAML, or has an unknown, mistyped or out-of-range key, harness fails closed: every agent edit is denied and Stop blocks (up to `stop.max_attempts` times), with a message naming the key or line, until a person fixes the file. Bash and reads still run, so `harness doctor` can show every problem; it exits 1 until the file is valid.
+The file is `.harness/config.yaml`. `init` writes it. If the file is not valid YAML, or has an unknown, mistyped or out-of-range key, harness fails closed: every agent edit, including a shell command that writes, moves or deletes a file in the repo, is denied, and Stop blocks (up to `stop.max_attempts` times), with a message naming the key or line, until a person fixes the file. Reads and other shell commands still run, so `harness doctor` can show every problem; it exits 1 until the file is valid.
 
 Defaults are what harness uses when a key is missing. `init` writes recommended values from your repo instead. It sets `checks.tdd`, `checks.multiFile` (for example `checks.multiFile: true`), `tdd.paths`, `tdd.exempt`, `stop.steps`, `stop.base_ref` and, when it finds one, `stop.package_manager`.
 

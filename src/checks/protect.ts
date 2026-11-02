@@ -88,6 +88,13 @@ function switchAsk(cmds: string[], cwd: string): Decision | null {
   return null;
 }
 
+/** Every path a shell command may write, move, delete or restore (bash -c included), as written. */
+export function shellWriteTargets(cmd: string): string[] {
+  const cmds = expand(cmd);
+  const mc = moveCopyTargets(cmds);
+  return [...cmds.flatMap(fileWriteTargets), ...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv, ...mc.cp, ...gitRestoreTargets(cmds)];
+}
+
 const GLOB = /[*?[{]/;
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]

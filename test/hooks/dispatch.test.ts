@@ -209,4 +209,21 @@ test.each(BAD_CONFIGS)('invalid config (%s): edits deny, the config edit falls t
 });
 test('a valid config does not trip the invalid-config gate', async () => {
   expect(await dispatch(pre({ tool_input: { file_path: join(root, 'src/a.ts') } }), [mk('allow-all', { kind: 'allow' })], {})).toBe('');
+  expect(await dispatch(pre({ tool_name: 'Bash', tool_input: { command: 'echo x > src/b.js' } }), [mk('allow-all', { kind: 'allow' })], {})).toBe('');
+});
+// N2: shell writes and deletes are edits too.
+test.each(BAD_CONFIGS)('invalid config (%s): Bash writes, deletes, moves and restores in the repo deny; reads, outside writes and the config pass', async (_n, yaml, key) => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-badsh-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), yaml);
+  const allowAll = mk('allow-all', { kind: 'allow' });
+  const bash = (command: string) => dispatch(pre({ cwd: r, tool_name: 'Bash', tool_input: { command } }), [allowAll], {});
+  for (const c of ['rm src/a.test.js', 'echo x > src/b.js', 'sed -i.bak s/1/2/ src/a.js', 'mv src/a.js src/c.js', 'cp x src/d.js', 'git checkout -- src/a.js', 'git checkout .', 'bash -c "echo x > src/e.js"', 'tee src/f.js < x']) {
+    const out = await bash(c);
+    expect(decisionOf(out), c).toBe('deny');
+    expect(reasonOf(out), c).toMatch(key);
+  }
+  for (const c of ['ls', 'cat src/a.js', 'echo x > /tmp/harness-out.txt', 'echo x > /dev/null', 'harness doctor']) expect(await bash(c), c).toBe('');
+  // a shell write to the config itself is left to the usual checks (protect denies the agent)
+  expect(reasonOf(await dispatch(pre({ cwd: r, tool_name: 'Bash', tool_input: { command: 'echo "version: 1" > .harness/config.yaml' } }), [denyAll], {}))).toBe('no');
 });

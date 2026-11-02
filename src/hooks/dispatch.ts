@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { guard } from '../checks/guard.js';
 import { multiFile } from '../checks/multi-file.js';
-import { protect } from '../checks/protect.js';
+import { protect, shellWriteTargets } from '../checks/protect.js';
 import { redFirst } from '../checks/tdd/red-first.js';
 import { tamper } from '../checks/tdd/tamper.js';
 import { specGate } from '../checks/tdd/spec-gate.js';
@@ -155,7 +156,10 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
       return emit(event, { kind: 'block', reason, check: 'config' });
     }
     const t = event === 'PreToolUse' ? editTarget(input) : null;
-    if (t !== null && toRepoPath(root, t)?.toLowerCase() !== CONFIG) {
+    // Shell writes and deletes count as edits; a target outside the repo, or the config itself, does not.
+    const shell = event === 'PreToolUse' && input.tool_name === 'Bash' ? shellWriteTargets(String(input.tool_input?.command ?? '')) : [];
+    const inRepo = (p: string) => { const rel = toRepoPath(root, p); return rel !== null ? rel.toLowerCase() !== CONFIG : resolve(root, p) === resolve(root); };
+    if ((t !== null && toRepoPath(root, t)?.toLowerCase() !== CONFIG) || shell.some(inRepo)) {
       log('config', 'deny', reason);
       return emit(event, { kind: 'deny', reason, check: 'config' });
     }

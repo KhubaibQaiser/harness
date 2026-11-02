@@ -116,3 +116,15 @@ test('real-frameworks job runs the opt-in e2e on ubuntu with node 22', () => {
   const run = job.steps.find((s: any) => /real-frameworks/.test(s.run ?? ''));
   expect(run.env.HARNESS_E2E_REAL).toBe('1');
 });
+
+test('hook latency runs as its own CI step after the parallel suite, in a project without file parallelism', async () => {
+  const steps = load('ci.yml').jobs.test.steps.map((s: any) => s.run);
+  expect(steps.indexOf('pnpm test:perf')).toBeGreaterThan(steps.indexOf('pnpm test'));
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+  expect(pkg.scripts.test).toMatch(/vitest run --project unit --project e2e$/); // perf is left out of the default run
+  expect(pkg.scripts['test:perf']).toMatch(/vitest run --project perf$/);
+  const cfg = (await import('../../vitest.config.js')).default as any;
+  const perf = cfg.test.projects.find((p: any) => p.test.name === 'perf');
+  expect(perf.test.fileParallelism).toBe(false);
+  expect(cfg.test.projects.find((p: any) => p.test.name === 'unit').test.exclude).toContain('test/perf/**');
+});

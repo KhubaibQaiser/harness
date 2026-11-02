@@ -26,6 +26,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Hook latency (alone, after the parallel suite)
+        run: pnpm test:perf
   security-and-pack:
     runs-on: ubuntu-latest
     steps:

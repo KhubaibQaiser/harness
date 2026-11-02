@@ -27,7 +27,8 @@
   "packageManager": "pnpm@12.15.0",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && vitest run",
+    "test": "node build.mjs && vitest run --project unit --project e2e",
+    "test:perf": "node build.mjs && vitest run --project perf",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "prepack": "node build.mjs"

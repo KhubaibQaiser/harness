@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
@@ -156,6 +157,20 @@ test('planChanges omits unchanged files and decides create vs update', () => {
   expect(kinds['.harness/config.yaml']).toBe('create');
   expect(kinds['.gitignore']).toBe('update');
   expect(kinds['package.json']).toBeUndefined();
+});
+
+test('templates checked out with CRLF are installed with LF', () => {
+  const crlf = mkdtempSync(join(tmpdir(), 'harness-tpl-'));
+  cpSync(templatesDir, crlf, { recursive: true });
+  const files = ['agents/staff-reviewer.md', 'skills/review-rubric/SKILL.md'];
+  for (const f of files) writeFileSync(join(crlf, f), readFileSync(join(templatesDir, f), 'utf8').replace(/\r?\n/g, '\r\n'));
+  const root = makeRepo(NPM_VITEST);
+  const facts = detect(root);
+  const p = planChanges(root, preset(facts).config, facts, { version: '1.2.3', distDir, templatesDir: crlf });
+  for (const [f, rel] of [[files[0], '.claude/agents/staff-reviewer.md'], [files[1], '.claude/skills/review-rubric/SKILL.md']] as const) {
+    const c = p.changes.find((x) => x.rel === rel);
+    expect(c && c.kind === 'create' && c.content, rel).toBe(readFileSync(join(templatesDir, f), 'utf8').replace(/\r\n/g, '\n'));
+  }
 });
 
 test('the hook bundle never contains magicast', () => {

@@ -33,8 +33,10 @@ export function planChanges(
 
   put('.harness/hooks/dispatch.mjs', readFileSync(join(ctx.distDir, 'hooks', 'dispatch.mjs'), 'utf8'), [], 0o755);
   put('.harness/config.yaml', serializeConfig(config, ctx.version));
-  put('.claude/agents/staff-reviewer.md', readFileSync(join(templatesDir, 'agents', 'staff-reviewer.md'), 'utf8'));
-  put('.claude/skills/review-rubric/SKILL.md', readFileSync(join(templatesDir, 'skills', 'review-rubric', 'SKILL.md'), 'utf8'));
+  // LF whatever the package checkout uses (a Windows clone may have CRLF), so the bytes and the manifest hash are the same everywhere.
+  const tpl = (...p: string[]) => readFileSync(join(templatesDir, ...p), 'utf8').replace(/\r\n/g, '\n');
+  put('.claude/agents/staff-reviewer.md', tpl('agents', 'staff-reviewer.md'));
+  put('.claude/skills/review-rubric/SKILL.md', tpl('skills', 'review-rubric', 'SKILL.md'));
 
   const settings = mergeSettings(read('.claude/settings.json'));
   notes.push(...settings.notes);

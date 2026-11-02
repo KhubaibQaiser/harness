@@ -89,7 +89,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   if (touched.length && !dryRun) return out(`Commit or stash these files first, so the update can be undone cleanly: ${touched.join(', ')}.`), 1;
 
   const entry = (rel: string) => m!.files.find((f) => f.rel === rel);
-  const merged = (rel: string) => entry(rel)?.kind === 'update' || !!entry(rel)?.blocks?.length;
+  const merged = (rel: string) => entry(rel)?.kind === 'update' || !!entry(rel)?.blocks?.length || !!entry(rel)?.replace?.length;
   const editedRels = changes.filter((c) => c.kind === 'update' && entry(c.rel) && !matchesHash(c.before, entry(c.rel)!.hash)).map((c) => c.rel);
   const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
   const editedOwned = editedRels.filter((r) => !merged(r));
@@ -122,11 +122,15 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     const edited = c.kind === 'update' && merged(old.rel) && !matchesHash(c.before, old.hash);
     const hash = edited ? old.hash : hashText(c.kind === 'create' ? c.content : c.after);
     // Otherwise keep init's kind (a created file stays deletable) and the pre-init backup uninstall restores.
-    return { rel: old.rel, kind: old.kind, hash, ...(blocks.length ? { blocks } : {}), ...(old.backup && !edited ? { backup: old.backup } : {}) };
+    // Formatted hunks: keep the old ones the new text still holds, then this update's (uninstall undoes them newest first).
+    // ponytail: an old hunk this update reformatted is dropped, so uninstall then leaves that part with a note.
+    const replace = [...(old.replace ?? []).filter((h) => c.kind !== 'update' || c.after.includes(h.from)), ...(c.kind === 'update' ? (c.replace ?? []) : [])];
+    const fmt = { ...(replace.length ? { replace } : {}), ...(old.formatted || (c.kind === 'update' && c.formatted) ? { formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}) };
+    return { rel: old.rel, kind: old.kind, hash, ...(blocks.length ? { blocks } : {}), ...fmt, ...(old.backup && !edited ? { backup: old.backup } : {}) };
   });
   for (const c of changes) {
     if (c.kind === 'delete' || m.files.some((f) => f.rel === c.rel)) continue;
-    files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}) });
+    files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}), ...(c.kind === 'update' && c.replace?.length ? { replace: c.replace, formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}) });
   }
   const err = commit(changes, { version, createdAt: new Date().toISOString(), ...(m.tddOff ? { tddOff: m.tddOff } : {}), files });
   if (err) return out(err), 1;

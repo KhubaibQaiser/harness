@@ -54,3 +54,46 @@ export function unifiedDiff(before: string, after: string, name: string, ctx = 3
   }
   return out.join('\n') + '\n';
 }
+
+export type Hunk = { from: string; to: string };
+
+/**
+ * The line hunks that turn `b` back into `a`, each with `ctx` lines of context: `from` is the text in `b`, `to` the
+ * text in `a`. Both are whole lines (a hunk that does not end the file ends in "\n"), so they match at a line start.
+ */
+export function lineHunks(a: string, b: string, ctx = 1): Hunk[] {
+  const A = a.split('\n'), B = b.split('\n');
+  let p = 0;
+  while (p < A.length && p < B.length && A[p] === B[p]) p++;
+  let q = 0;
+  while (q < A.length - p && q < B.length - p && A[A.length - 1 - q] === B[B.length - 1 - q]) q++;
+  const ops: Op[] = [
+    ...A.slice(0, p).map((s) => ({ t: ' ' as const, s })),
+    ...middle(A.slice(p, A.length - q), B.slice(p, B.length - q)),
+    ...A.slice(A.length - q).map((s) => ({ t: ' ' as const, s })),
+  ];
+  const changed = ops.flatMap((o, i) => (o.t === ' ' ? [] : [i]));
+  const out: Hunk[] = [];
+  for (let k = 0; k < changed.length; ) {
+    let e = k;
+    while (e + 1 < changed.length && changed[e + 1] - changed[e] <= 2 * ctx + 1) e++;
+    const from = Math.max(0, changed[k] - ctx), to = Math.min(ops.length, changed[e] + ctx + 1);
+    const seg = ops.slice(from, to);
+    const end = to < ops.length ? '\n' : '';
+    out.push({ from: seg.filter((o) => o.t !== '-').map((o) => o.s).join('\n') + end, to: seg.filter((o) => o.t !== '+').map((o) => o.s).join('\n') + end });
+    k = e + 1;
+  }
+  return out;
+}
+
+/** Applies hunks backwards (last one first): each `from`, at a line start (the last such match), becomes `to`. Null when one is missing. */
+export function revertHunks(text: string, hunks: Hunk[]): string | null {
+  let out = text;
+  for (const h of [...hunks].reverse()) {
+    let i = out.lastIndexOf(h.from);
+    while (i > 0 && out[i - 1] !== '\n') i = out.lastIndexOf(h.from, i - 1);
+    if (i < 0) return null;
+    out = out.slice(0, i) + h.to + out.slice(i + h.from.length);
+  }
+  return out;
+}

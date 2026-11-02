@@ -4,6 +4,8 @@ import { dirname, join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
 import { removeBlocks } from '../install/merge.js';
+import { revertHunks } from '../install/diff.js';
+import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, jsonIndentOf, withEol } from '../install/text.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { NO_TTY, type Prompt } from './prompt.js';
@@ -132,7 +134,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       else if (r.after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] });
       continue;
     }
-    const merged = !!f.blocks?.length;
+    const merged = !!f.blocks?.length || !!f.replace?.length;
     if (f.kind === 'create' && (matchesHash(cur, f.hash) || (force && !merged))) changes.push({ kind: 'delete', rel: f.rel, before: cur });
     else if (f.kind === 'create' && !merged) kept.push(f.rel);
     else if (f.kind === 'update' && matchesHash(cur, f.hash) && backup !== null) changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
@@ -143,6 +145,20 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
         const next = removeBlocks(after, [b]);
         if (next === after) notes.push(`\`${f.rel}\`: a block harness added was not found; left as is.`);
         after = next;
+      }
+      // A config the repo's Prettier formatted at install: undo the formatted hunks, then format again, as install did.
+      for (const h of [...(f.replace ?? [])].reverse()) {
+        const next = revertHunks(after, [h]);
+        if (next === null) notes.push(`\`${f.rel}\`: a change harness made was not found; left as is.`);
+        else after = next;
+      }
+      const bin = f.formatted && after !== cur ? repoPrettier(root, f.rel) : null;
+      if (bin) {
+        try {
+          after = prettierFormat(bin, root, f.rel, after);
+        } catch (e) {
+          notes.push(`\`${f.rel}\`: Prettier could not format it after the harness part was removed (${String((e as Error).message).split('\n')[0]}).`);
+        }
       }
       // A created file that held only harness's blocks and whitespace is removed whole.
       if (f.kind === 'create' && !after.trim()) changes.push({ kind: 'delete', rel: f.rel, before: cur });

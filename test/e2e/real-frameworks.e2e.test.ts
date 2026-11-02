@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -78,5 +78,35 @@ describe.skipIf(process.env.HARNESS_E2E_REAL !== '1')('real frameworks', () => {
     expect(init.code, init.out).toBe(0);
     expect(init.out).not.toContain('Do these by hand');
     for (const r of check()) expect(r.code, r.out).toBe(0);
+  }, 300_000);
+
+  // N1: inline layouts overflow Prettier's width; init runs the repo's Prettier, and uninstall gives the original back.
+  test('one-line Vitest test object and globalIgnores([...]) ESLint config: clean after init, original after uninstall', () => {
+    const pj = { name: 'real-format-inline', type: 'module', scripts: { test: 'vitest run', 'format:check': 'prettier --check .', lint: 'eslint .' }, devDependencies: { vitest: VITEST, '@vitest/coverage-v8': VITEST, prettier: PRETTIER, eslint: ESLINT, '@eslint/js': ESLINT } };
+    const files = {
+      'package.json': JSON.stringify(pj, null, 2) + '\n',
+      'vitest.config.js': 'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  test: { globals: true },\n});\n',
+      'eslint.config.js': 'import js from "@eslint/js";\nimport { defineConfig, globalIgnores } from "eslint/config";\n\nexport default defineConfig([globalIgnores(["dist/"]), js.configs.recommended]);\n',
+      'src/a.js': 'export const a = () => 1;\n',
+      '.gitignore': 'node_modules\n',
+    };
+    const root = makeRepo(files, { prefix: PREFIX });
+    made.push(root);
+    expect(run(root, 'npm', ['install', '--no-audit', '--no-fund']).code).toBe(0);
+    const check = () => [run(root, 'npx', ['prettier', '--check', '.']), run(root, 'npx', ['eslint', '.'])];
+    for (const r of check()) expect(r.code, r.out).toBe(0);
+    const commit = (m: string) => {
+      run(root, 'git', ['add', '-A']);
+      expect(run(root, 'git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', m]).code).toBe(0);
+    };
+    commit('deps');
+    const init = run(root, 'node', [CLI, 'init', '--yes']);
+    expect(init.code, init.out).toBe(0);
+    expect(init.out).not.toContain('Prettier could not format');
+    for (const r of check()) expect(r.code, r.out).toBe(0);
+    commit('harness');
+    rmSync(join(root, '.harness/backup'), { recursive: true, force: true }); // as on a teammate's clone
+    expect(run(root, 'node', [CLI, 'uninstall', '--yes']).code).toBe(0);
+    for (const f of ['vitest.config.js', 'eslint.config.js'] as const) expect(readFileSync(join(root, f), 'utf8')).toBe(files[f]);
   }, 300_000);
 });

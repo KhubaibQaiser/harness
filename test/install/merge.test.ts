@@ -213,6 +213,12 @@ describe('mergeEslintFlatIgnores', () => {
     // with a global-ignores object later in the array, that one is edited
     expect(mergeEslintFlatIgnores("export default [{ files: ['a'], ignores: ['x'] }, { ignores: ['dist/'] }];\n")!.after).toContain("{ ignores: ['dist/', '.harness/'] }");
   });
+  it('globalIgnores([...]) counts as the global-ignores entry', () => {
+    const src = 'export default defineConfig([globalIgnores(["dist/"]), js.configs.recommended]);\n';
+    const r = mergeEslintFlatIgnores(src)!;
+    expect(r.after).toBe('export default defineConfig([globalIgnores(["dist/", ".harness/"]), js.configs.recommended]);\n');
+    expect(mergeEslintFlatIgnores(r.after)!.blocks).toEqual([]);
+  });
   it('computed eslint config returns null', () => {
     expect(mergeEslintFlatIgnores('export default makeConfig();\n')).toBeNull();
     expect(mergeEslintFlatIgnores("export default [{ ignores: IGN }];\n")).toBeNull();

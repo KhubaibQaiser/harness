@@ -152,6 +152,9 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     }
   }
 
+  for (const f of manifest.files.filter((f) => f.unformatted))
+    note(`Prettier could not format \`${f.rel}\` when harness edited it`, 'a format check may flag it; if you format it by hand, uninstall reports the harness part it cannot find, to remove by hand');
+
   if (config.checks.stop) {
     const scripts = facts.packages.find((p) => p.dir === '.')?.scripts ?? {};
     for (const step of config.stop.steps) {

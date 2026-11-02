@@ -138,7 +138,7 @@ export const mergeGitignore = (before: string | null) => appendLines(before, ['.
 export const mergeIgnoreFile = (before: string | null, entry: '.harness/') => appendLines(before, [entry]);
 
 /**
- * Adds '.harness/' to the flat config's global ignores: an object whose only key is `ignores`. With none, a new
+ * Adds '.harness/' to the flat config's global ignores: an object whose only key is `ignores`, or `globalIgnores([...])`. With none, a new
  * `{ ignores: ['.harness/'] }` entry is appended to the exported array. Null when the config is not a plain array
  * (or the edit would not round-trip). Inserted text uses the file's quote style and layout, so formatters stay clean.
  */
@@ -161,11 +161,13 @@ export function mergeEslintFlatIgnores(before: string): { after: string; blocks:
     const q = quoteOf(lf);
     const entry = requote("'.harness/'", q);
     const keyName = (p: any) => (p.type === 'ObjectProperty' && !p.computed ? (p.key?.name ?? p.key?.value) : null);
-    const global = root.elements.find((e: any) => e?.type === 'ObjectExpression' && e.properties.length === 1 && keyName(e.properties[0]) === 'ignores');
+    // A global-ignores entry: { ignores: [...] } alone, or ESLint's globalIgnores([...]) helper.
+    const isHelper = (e: any) => e?.type === 'CallExpression' && e.callee?.name === 'globalIgnores';
+    const global = root.elements.find((e: any) => (e?.type === 'ObjectExpression' && e.properties.length === 1 && keyName(e.properties[0]) === 'ignores') || isHelper(e));
     let at: number;
     let text: string;
     if (global) {
-      const arr = global.properties[0].value;
+      const arr = isHelper(global) ? global.arguments[0] : global.properties[0].value;
       if (arr?.type !== 'ArrayExpression') return null;
       if (arr.elements.some((el: any) => el?.type === 'StringLiteral' && /^\.harness\/?$/.test(el.value))) return { after: before, blocks: [] };
       const last = arr.elements[arr.elements.length - 1];

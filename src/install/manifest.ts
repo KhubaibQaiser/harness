@@ -6,7 +6,14 @@ export interface Manifest {
   createdAt: string;
   /** Package dirs init left out of tdd.paths because their test config could not be edited safely. */
   tddOff?: string[];
-  files: { rel: string; kind: 'create' | 'update' | 'delete'; hash: string; backup?: string; blocks?: string[] }[];
+  files: {
+    rel: string; kind: 'create' | 'update' | 'delete'; hash: string; backup?: string; blocks?: string[];
+    /** Set when the repo's Prettier formatted harness's edit: the line hunks that undo it (blocks no longer match). */
+    replace?: { from: string; to: string }[];
+    formatted?: true;
+    /** Prettier was found but failed, so the edit was left unformatted. */
+    unformatted?: true;
+  }[];
 }
 
 export const MANIFEST_REL = '.harness/manifest.json';

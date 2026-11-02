@@ -1,13 +1,14 @@
 import * as nodeFs from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { MANIFEST_REL, ManifestError, readManifest, type Manifest } from './manifest.js';
+import type { Hunk } from './diff.js';
 import { hashText } from './text.js';
 
 export { readManifest, ManifestError, type Manifest };
 
 export type Change =
   | { kind: 'create'; rel: string; content: string; mode?: number; blocks?: string[] }
-  | { kind: 'update'; rel: string; before: string; after: string; blocks: string[] }
+  | { kind: 'update'; rel: string; before: string; after: string; blocks: string[]; replace?: Hunk[]; formatted?: true; unformatted?: true }
   | { kind: 'delete'; rel: string; before: string };
 
 export type FsLike = Pick<
@@ -77,6 +78,7 @@ export function applyChanges(
       kind: c.kind,
       hash: hashText(c.kind === 'delete' ? c.before : c.kind === 'create' ? c.content : c.after),
       ...(c.kind === 'update' ? { blocks: c.blocks } : c.kind === 'create' && c.blocks?.length ? { blocks: c.blocks } : {}),
+      ...(c.kind === 'update' ? { ...(c.replace?.length ? { replace: c.replace } : {}), ...(c.formatted ? { formatted: c.formatted } : {}), ...(c.unformatted ? { unformatted: c.unformatted } : {}) } : {}),
     })),
   };
 

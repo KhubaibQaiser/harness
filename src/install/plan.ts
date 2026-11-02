@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import type { HarnessConfig } from '../core/config.js';
 import { serializeConfig } from '../core/config-io.js';
 import type { Change } from './apply.js';
+import { lineHunks, revertHunks } from './diff.js';
+import { prettierFormat, repoPrettier } from './format.js';
 import type { Facts } from './detect.js';
 import { mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings } from './merge.js';
 import { JEST_REPORTER, testConfigChange } from './test-config.js';
@@ -67,5 +69,31 @@ export function planChanges(
       if ('change' in r) changes.push(r.change);
       else if ('manual' in r) manual.push(...r.manual);
     }
+  formatEdits(root, changes, notes);
   return { changes, manual, notes };
+}
+
+const JS = /\.[cm]?[jt]s$/;
+/**
+ * Runs the repo's own Prettier on the JS/TS configs harness edits, so `prettier --check` stays clean. Only a file that
+ * was Prettier-clean before is formatted (anything else would reformat the user's code), and only when the formatted
+ * edit undoes cleanly. A failure leaves the edit unformatted, with a note.
+ */
+function formatEdits(root: string, changes: Change[], notes: string[]): void {
+  for (const c of changes) {
+    if (c.kind !== 'update' || !JS.test(c.rel)) continue;
+    const bin = repoPrettier(root, c.rel);
+    if (!bin) continue;
+    try {
+      if (prettierFormat(bin, root, c.rel, c.before) !== c.before) continue;
+      const after = prettierFormat(bin, root, c.rel, c.after);
+      if (after === c.after) continue;
+      const replace = lineHunks(c.before, after);
+      if (revertHunks(after, replace) !== c.before) throw new Error('the formatted edit does not undo cleanly');
+      Object.assign(c, { after, blocks: [], replace, formatted: true });
+    } catch (e) {
+      c.unformatted = true;
+      notes.push(`Prettier could not format \`${c.rel}\` (${String((e as Error).message).split('\n')[0]}); the edit is left unformatted, so a format check may flag it.`);
+    }
+  }
 }

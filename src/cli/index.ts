@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { appendEvent, readEvents } from '../core/events.js';
 import { repoRoot } from '../core/repo-root.js';
+import { recordCliPath } from '../core/cli-path.js';
 import { init } from './init.js';
 import { uninstall } from './uninstall.js';
 import { update } from './update.js';
@@ -124,6 +125,8 @@ try {
         prompt.close();
       }
     } else process.exitCode = run(argv, cli);
+    // So the guard can tell a person the exact command to run in their own terminal (R5).
+    recordCliPath(repoRoot(process.cwd()), fileURLToPath(import.meta.url));
   }
 } catch (e) {
   console.error(`harness: ${(e as Error).message}`);

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -148,6 +148,18 @@ test('unsafe vitest config: init prints manual lines and doctor names the fix', 
   expect(d.out).toMatch(/note TDD is off for the root package because its test config could not be edited safely: do this by hand/);
   expect(cli(root, 'uninstall', '--yes').code).toBe(0);
   expect(walk(root)).toEqual(before);
+});
+
+// R5: the CLI records where it runs from, and the installed dispatcher names that path instead of a variable or npx.
+test('the tdd off deny names the absolute CLI path the last harness run recorded', () => {
+  const f = npmVitest();
+  const root = repo(f);
+  expect(init(root, f).code).toBe(0);
+  const cliPath = realpathSync(CLI);
+  expect(readFileSync(join(root, '.harness/state/cli-path'), 'utf8')).toBe(cliPath);
+  const d = verdict(pre(root, 'Bash', { command: 'node "$CLAUDE_PLUGIN_ROOT/dist/cli.mjs" tdd off' }));
+  expect(d.decision).toBe('deny');
+  expect(d.reason).toBe(`Only a person can pause TDD: run \`node "${cliPath}" tdd off\` in your own terminal.`);
 });
 
 test('doctor flags tampering and a broken wiring, and update repairs both', () => {

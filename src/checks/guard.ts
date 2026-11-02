@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { findOnPath } from './stop/runner.js';
+import { readCliPath } from '../core/cli-path.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
@@ -20,14 +21,14 @@ const PIP_VALUE_FLAGS = new Set(['-r', '--requirement', '-c', '--constraint', '-
 const JS_ADD = new Set(['add', 'install', 'i']);
 const PY_ADD = new Set(['add', 'install']);
 const REDIRECTION = /\d*[<>]+&?\d*\s*[^\s;&|]*/g;
-const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh', 'command', 'nohup', 'time', 'nice', 'timeout', 'xargs']);
+const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh', 'command', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'pnpx', 'x', 'stdbuf', 'script']);
 const HARNESS_CMD = /(^|\/)harness(@\S+)?$|(^|\/)cli\.m?js$/;
 const PMS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 // Subcommands only a person may run (deny) or that need the person's yes (ask; the dispatcher denies it when
 // unattended), with the arguments (after the subcommand) the agent may still use. `cmd` is how the person runs
 // harness in their own terminal. One place: M3 adds remove, add, sync and update here.
 const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (cmd: string) => string }> = {
-  tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (cmd) => `Only a person can pause TDD: run \`${cmd} tdd off\` in your own terminal.` },
+  tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (cmd) => `Only a person can pause TDD: run \`${cmd} tdd off\` in your own terminal${cmd === 'harness' ? ' with the harness CLI (run any harness command in this repo once so this message can name its path)' : ''}.` },
   uninstall: { kind: 'ask', allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
@@ -39,13 +40,17 @@ type Where = { root: string; env: NodeJS.ProcessEnv };
 function terminalCommand(tok: string, w: Where): string {
   if (/(^|\/)cli\.m?js$/.test(tok)) {
     const p = tok.replace(/\$\{?(\w+)\}?/g, (m, v: string) => w.env[v] ?? m);
-    return `node "${/\$/.test(p) ? p : resolve(w.root, p)}"`;
+    if (!/\$/.test(p)) return `node "${resolve(w.root, p)}"`;
   }
   if (tok === 'harness') {
     const abs = findOnPath('harness', w.env, process.platform);
-    return abs ? `"${abs}"` : 'npx @khubaibqaiser/harness';
+    if (abs) return `"${abs}"`;
   }
-  return `npx ${tok}`; // @khubaibqaiser/harness[@version]
+  // The package is not on npm yet, so npx is a last resort: the CLI path the last harness run here recorded comes first.
+  const recorded = readCliPath(w.root);
+  if (recorded) return `node "${recorded}"`;
+  if (/^@khubaibqaiser\/harness/.test(tok)) return `npx ${tok}`; // as the agent typed it
+  return 'harness'; // the reason then says the path is unknown
 }
 
 function scriptsOf(root: string): Record<string, string> {
@@ -64,6 +69,21 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
   const words = plain.split(/\s+/);
   const hit = (name: string, tok: string): Hit => ({ kind: PERSON_ONLY[name].kind, reason: PERSON_ONLY[name].why(terminalCommand(tok, w)) });
   const hidden: Hit = { kind: 'deny', reason: ANY_WHY };
+  // The harness token at toks[k]: which person-only subcommand it runs, if any. `next` is the separator after it.
+  const judge = (toks: string[], k: number, next: string | undefined): Hit | null => {
+    const rest = toks.slice(k + 1);
+    if (rest[0]?.startsWith('-')) { // no global flags in M1, so flag values cannot be told apart from subcommands
+      for (const [name, rule] of Object.entries(PERSON_ONLY)) {
+        const t = rest.indexOf(name);
+        if (t >= 0 && !rule.allowed(rest.slice(t + 1))) return hit(name, toks[k]);
+      }
+    }
+    const s = rest.findIndex((t) => !t.startsWith('-'));
+    if (s < 0) return /^(\$\(|\(|`)$/.test(next ?? '') ? hidden : null; // subcommand comes from a substitution
+    if (/[$`]/.test(rest[s])) return hidden;
+    if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return hit(rest[s], toks[k]);
+    return null;
+  };
   // eval re-parses its input, so any eval near a harness token and a person-only subcommand is denied.
   if (words.includes('eval') && words.some(isPersonOnly) && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, '')))) return hidden;
   // A lone & separates commands; 2>&1, >&2 and &> are redirections.
@@ -93,20 +113,21 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
     const at = toks[k]?.startsWith('$') && !HARNESS_CMD.test(toks[k]) ? k + 1 : k === 0 && /^[`)]$/.test(parts[i - 1] ?? '') ? 0 : -1;
     if (at >= 0 && isPersonOnly(toks[at]) && !PERSON_ONLY[toks[at]].allowed(toks.slice(at + 1))) return hidden;
     if (!toks[k] || !HARNESS_CMD.test(toks[k])) continue;
-    const rest = toks.slice(k + 1);
-    if (rest[0]?.startsWith('-')) { // no global flags in M1, so flag values cannot be told apart from subcommands
-      for (const [name, rule] of Object.entries(PERSON_ONLY)) {
-        const t = rest.indexOf(name);
-        if (t >= 0 && !rule.allowed(rest.slice(t + 1))) return hit(name, toks[k]);
-      }
+    const r = judge(toks, k, parts[i + 1]);
+    if (r) return r;
+  }
+  // Second pass, quoted text blanked out (prose such as a commit message is not an invocation): a harness token
+  // anywhere in a command, so wrappers whose flags take values (timeout -s KILL 60, pnpm --filter x, find -exec,
+  // script -q /dev/null) can't hide it.
+  const masked = command.replace(/'[^']*'|"[^"]*"/g, ' Q ').replace(/\\/g, '');
+  const mparts = masked.split(/(&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`])/);
+  for (let i = 0; i < mparts.length; i += 2) {
+    const toks = mparts[i].trim().split(/\s+/).filter(Boolean);
+    for (let j = 1; j < toks.length; j++) {
+      if (!HARNESS_CMD.test(toks[j].replace(/^\w+=/, ''))) continue;
+      const r = judge(toks, j, undefined);
+      if (r) return r;
     }
-    const s = rest.findIndex((t) => !t.startsWith('-'));
-    if (s < 0) {
-      if (/^(\$\(|\(|`)$/.test(parts[i + 1] ?? '')) return hidden; // subcommand comes from a substitution
-      continue;
-    }
-    if (/[$`]/.test(rest[s])) return hidden;
-    if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return hit(rest[s], toks[k]);
   }
   return null;
 }

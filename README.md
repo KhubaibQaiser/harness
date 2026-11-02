@@ -171,7 +171,7 @@ harness uninstall
 
 `doctor`, `update` and `uninstall` compare files with `.harness/manifest.json` ignoring CRLF vs LF, so a teammate's checkout with `core.autocrlf=true` is not treated as edited, and the harness blocks are still found and removed.
 
-The guard asks you before the agent runs `harness uninstall` in any form (`npx`, `pnpm dlx`, `bunx`, `node …/cli.mjs`, a global `harness`, behind `command`, `nohup`, `timeout`, `xargs`, or a package script), and denies it in an unattended run; `uninstall --dry-run` needs no approval.
+The guard asks you before the agent runs `harness uninstall` in any form (`npx`, `npm exec`/`npm x`, `pnpm dlx`, `pnpx`, `bunx`/`bun x`, `node …/cli.mjs`, a global `harness`, behind `command`, `nohup`, `timeout`, `nice`, `stdbuf`, `script`, `xargs`, `find -exec` or a package script, wrapper flags with values included), and denies it in an unattended run; `uninstall --dry-run` needs no approval. Harness words inside quotes, such as a commit message, are not treated as a command. When the guard tells you to run a command yourself, it names the absolute path of the harness CLI that last ran in the repo (each CLI run records it in the gitignored `.harness/state/`).
 
 ## Unattended runs and CI
 

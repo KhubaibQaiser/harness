@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -166,8 +166,12 @@ test('the tdd off deny names the CLI path only for the repo\'s node_modules inst
   expect(deny().reason).toBe(hint);
   // The same CLI installed in the repo's node_modules (gitignored there) is recorded and named.
   const pkg = join(root, 'node_modules/@khubaibqaiser/harness');
-  cpSync(dirname(CLI), join(pkg, 'dist'), { recursive: true });
+  // copyFileSync, not cpSync: on Windows with Node 22 the cpSync copy into this temp dir (it holds `ü`) left no file at
+  // the expected path, so the CLI was "not found" (CI run 41516085820; Node 24 passed). Harness itself never uses cpSync.
   const local = join(pkg, 'dist/cli.mjs');
+  mkdirSync(dirname(local), { recursive: true });
+  copyFileSync(CLI, local); // status needs only the bundled cli.mjs
+  expect(existsSync(local), `copy of the CLI missing at ${local}`).toBe(true);
   ran(spawnSync('node', [local, 'status'], { cwd: root, encoding: 'utf8', env }));
   const cliPath = realpathSync.native(local);
   expect(readFileSync(join(root, '.harness/state/cli-path'), 'utf8')).toBe(cliPath);

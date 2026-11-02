@@ -256,3 +256,15 @@ test('vitest without a coverage provider: init says the coverage gate is off and
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).not.toContain('enabled: true');
   expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).toMatch(/coverage_skip:\n {4}- src\/\*\*/);
 });
+
+test('init leaves out Stop steps whose tool is not on PATH and lists them', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'h-bin-'));
+  for (const n of ['pytest', 'pytest.cmd']) writeFileSync(join(bin, n), '#!/bin/sh\n', { mode: 0o755 });
+  const root = makeRepo(PYTHON);
+  const r = await go(root, ['--yes'], fake(), { env: { PATH: bin } });
+  expect(r.code).toBe(0);
+  expect(r.out).toContain('Stop steps left out:\n  ruff: `ruff` is not on PATH. Install it, then add the step to stop.steps.');
+  const y = readFileSync(join(root, '.harness/config.yaml'), 'utf8');
+  expect(y).toContain('pytest');
+  expect(y).not.toContain('ruff');
+});

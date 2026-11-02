@@ -1,6 +1,7 @@
 import { defaults, type HarnessConfig, type StopStep } from '../core/config.js';
 import type { Facts } from './detect.js';
 import { testConfigChange } from './test-config.js';
+import { findOnPath, resolveStep } from '../checks/stop/runner.js';
 
 const EXEMPT = ['**/*.tsx', '**/*.stories.*', '**/index.ts', '**/generated/**', '**/migrations/**'];
 export const OFF_WHY = 'TDD and coverage support JS/TS (Vitest or Jest) only in this beta.';
@@ -27,9 +28,14 @@ export type Preset = {
   off: { gate: string; why: string }[];
   /** Packages left out of tdd.paths because their test config could not be edited safely, with the lines to add by hand. */
   tddOff: { dir: string; manual: string[] }[];
+  /** Stop steps left out because their tool (or the package manager running them) is not on PATH. */
+  skippedSteps: { name: string; why: string }[];
 };
 
-export function preset(f: Facts): Preset {
+export type Which = (cmd: string) => string | null;
+const pathWhich: Which = (cmd) => findOnPath(cmd, process.env, process.platform);
+
+export function preset(f: Facts, which: Which = pathWhich): Preset {
   const config = defaults();
   const reasons: Record<string, string> = {};
   const root = f.packages.find((p) => p.dir === '.' || p.dir === '');
@@ -65,7 +71,14 @@ export function preset(f: Facts): Preset {
   if (py.includes('ruff')) steps.push({ name: 'ruff', run: ['ruff', 'check', '.'] });
   if (py.includes('mypy')) steps.push({ name: 'mypy', run: ['mypy', '.'] });
   if (py.includes('pytest')) steps.push({ name: 'pytest', run: ['pytest'] });
-  config.stop.steps = steps;
+  // A step whose tool is missing would only fail every Stop; leave it out and say so.
+  const skippedSteps: Preset['skippedSteps'] = [];
+  config.stop.steps = steps.filter((s) => {
+    const r = resolveStep(s, f.packageManager, scripts);
+    if (!r || which(r.cmd)) return true;
+    skippedSteps.push({ name: r.label, why: `\`${r.cmd}\` is not on PATH` });
+    return false;
+  });
   config.stop.base_ref = `origin/${f.defaultBranch}`;
   config.stop.package_manager = f.packageManager;
 
@@ -81,9 +94,10 @@ export function preset(f: Facts): Preset {
   reasons['checks.multiFile'] = 'Asks you once per turn before an agent edits a second source file; your approval covers the rest of that turn.';
   reasons['unattended.multi_file_gate'] = 'With no human watching, a multi-file edit is blocked.';
   reasons['unattended.require_reason'] = 'Only used when the unattended gate is allow-log: extra files then need a one-line reason. It has no effect while the gate is block.';
-  reasons['stop.steps'] = steps.length
+  const skipped = skippedSteps.length ? ` Left out because their tool is not on PATH: ${skippedSteps.map((s) => `\`${s.name}\``).join(', ')}.` : '';
+  reasons['stop.steps'] = (config.stop.steps.length
     ? 'These are the checks your repo already defines, in a fixed order.'
-    : 'No lint, typecheck, or test scripts were found, so nothing runs before stopping.';
+    : steps.length ? 'No step can run here, so nothing runs before stopping.' : 'No lint, typecheck, or test scripts were found, so nothing runs before stopping.') + skipped;
   reasons['stop.base_ref'] = `Changes are compared with \`origin/${f.defaultBranch}\`, your default branch.`;
   reasons['stop.package_manager'] = f.packageManager === 'none' ? 'No package manager was found, so scripts run as plain commands.' : `Detected \`${f.packageManager}\` from your lockfile or \`package.json\`.`;
 
@@ -91,5 +105,5 @@ export function preset(f: Facts): Preset {
   const off = tdd
     ? [...unsafe.map((w) => ({ gate: 'TDD', why: w })), ...noCov.map((p) => ({ gate: 'coverage', why: coverageWhy(p.dir) }))]
     : [{ gate: 'TDD', why }, { gate: 'coverage', why }];
-  return { config, reasons, off, tddOff };
+  return { config, reasons, off, tddOff, skippedSteps };
 }

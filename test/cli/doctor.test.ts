@@ -18,7 +18,7 @@ const REPO = {
 const prompt: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
 const installed = async () => {
   const root = makeRepo(REPO);
-  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { PATH: bin('npm') }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   return root;
 };
 const bin = (name: string) => {

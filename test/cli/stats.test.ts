@@ -32,6 +32,8 @@ const lines = [
   ev(3, 'stop', 'block', 'Coverage output at **/coverage/coverage-final.json could not be parsed.'),
   ev(3, 'stop', 'block'),
   ev(3, 'stop', 'context', 'Stop gate timed out after 5s'),
+  ev(3, 'stop', 'context', 'Stop step `lint` was skipped: `ruff` not found.'), // a warning, not a timeout
+  ev(3, 'stop', 'stop-tool-missing', 'lint: ruff'),
   ev(3, 'stop', 'stop-gave-up'),
   ev(3, 'stop', 'stop-no-git', 'git status failed'),
   ev(3, 'stop', 'stop-diff-failed'),
@@ -48,7 +50,7 @@ test('counts the window exactly and skips malformed lines', () => {
   expect(r.out).toContain('stop block: 6');
   expect(r.out).toContain('Overrides\n  tdd paused: 1\n  multi-file approvals: 2\n  allow-log: 1');
   expect(r.out).toContain('Stop failures by step\n  lint: 2\n  test: 1\n  coverage: 2\n  other: 1');
-  expect(r.out).toContain('Gave up and timeouts\n  timeouts: 1\n  stop-gave-up: 1\n  stop-no-git: 1\n  stop-diff-failed: 1\n  coverage-skipped: 1\n  coverage-diff-failed: 1');
+  expect(r.out).toContain('Gave up and timeouts\n  timeouts: 1\n  stop-gave-up: 1\n  stop-no-git: 1\n  stop-diff-failed: 1\n  coverage-skipped: 1\n  coverage-diff-failed: 1\n  stop-tool-missing: 1');
 });
 
 test('--days widens the window', () => {

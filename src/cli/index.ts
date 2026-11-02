@@ -77,8 +77,8 @@ export function stats(args: string[], { root, out }: CliEnv): number {
   if (steps.length) section('Stop failures by step', [...tally(steps)]);
   const stop = (d: string) => count((e) => e.check === 'stop' && e.decision === d);
   section('Gave up and timeouts', [
-    ['timeouts', stop('context')],
-    ...['stop-gave-up', 'stop-no-git', 'stop-diff-failed', 'coverage-skipped', 'coverage-diff-failed'].map((d): [string, number] => [d, stop(d)]),
+    ['timeouts', count((e) => e.check === 'stop' && e.decision === 'context' && (e.reason ?? '').startsWith('Stop gate timed out'))],
+    ...['stop-gave-up', 'stop-no-git', 'stop-diff-failed', 'coverage-skipped', 'coverage-diff-failed', 'stop-tool-missing'].map((d): [string, number] => [d, stop(d)]),
   ]);
   return 0;
 }

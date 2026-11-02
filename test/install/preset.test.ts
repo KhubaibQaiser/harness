@@ -6,6 +6,7 @@ import { makeRepo } from './helpers.js';
 
 const pj = (o: object) => JSON.stringify(o);
 const WHY = 'TDD and coverage support JS/TS (Vitest or Jest) only in this beta.';
+const ALL = (cmd: string) => `/bin/${cmd}`; // every tool resolves
 const PATHS = ['checks.tdd', 'checks.multiFile', 'tdd.paths', 'tdd.exempt', 'tdd.diff_coverage', 'tdd.coverage_skip', 'unattended.multi_file_gate', 'unattended.require_reason', 'stop.steps', 'stop.base_ref', 'stop.package_manager'];
 
 it('pnpm monorepo preset', () => {
@@ -18,7 +19,7 @@ it('pnpm monorepo preset', () => {
     'packages/a/package.json': pj({ name: 'a', scripts: { test: 'vitest' }, devDependencies: { vitest: '1' } }),
     'packages/b/package.json': pj({ name: 'b' }),
   }, { remoteHead: 'main' }));
-  const p = preset(f);
+  const p = preset(f, ALL);
   expect(validateConfig(p.config).ok).toBe(true);
   expect(p.config.checks.tdd).toBe(true);
   expect(p.config.checks.multiFile).toBe(true);
@@ -46,7 +47,7 @@ it.each([
   ['yarn', false, ['yarn', 'workspaces', 'run', 'test']],
   ['bun', false, ['bun', '--filter', '*', 'test']],
 ] as const)('monorepo without root test script suggests recursive test (%s, berry %s)', (pm, berry, run) => {
-  const p = preset(base(pm, berry));
+  const p = preset(base(pm, berry), ALL);
   expect(p.config.stop.steps).toEqual([{ name: 'test', run: [...run] }]);
   expect(p.config.stop.base_ref).toBe('origin/develop');
   expect(validateConfig(p.config).ok).toBe(true);
@@ -55,12 +56,12 @@ it.each([
 it('root test script wins and prefers format:check, type-check fallback', () => {
   const f = base('npm');
   f.packages[0].scripts = { 'format:check': 'a', format: 'b', 'type-check': 'c', test: 'd' };
-  expect(preset(f).config.stop.steps).toEqual(['format:check', 'type-check', 'test']);
+  expect(preset(f, ALL).config.stop.steps).toEqual(['format:check', 'type-check', 'test']);
 });
 
 it('python-only repo: TDD off with the exact why, plus ruff and pytest steps', () => {
   const f = detect(makeRepo({ 'pyproject.toml': '[tool.ruff]\n[tool.pytest.ini_options]\n' }));
-  const p = preset(f);
+  const p = preset(f, ALL);
   expect(f.python.tools).toEqual(['pytest', 'ruff']);
   expect(p.config.checks.tdd).toBe(false);
   expect(p.config.tdd.paths).toEqual([]);
@@ -144,4 +145,20 @@ it('vitest with a coverage provider and jest: coverage_skip stays empty', () => 
   })));
   expect(p.config.tdd.coverage_skip).toEqual([]);
   expect(p.off).toEqual([]);
+});
+
+it('stop steps whose tool does not resolve are left out and listed with why', () => {
+  const f = detect(makeRepo({ 'pyproject.toml': '[tool.ruff]\n[tool.pytest.ini_options]\n' }));
+  const p = preset(f, (cmd) => (cmd === 'pytest' ? '/bin/pytest' : null));
+  expect(p.config.stop.steps).toEqual([{ name: 'pytest', run: ['pytest'] }]);
+  expect(p.skippedSteps).toEqual([{ name: 'ruff', why: '`ruff` is not on PATH' }]);
+  expect(p.reasons['stop.steps']).toMatch(/^[^\n]+\.$/);
+});
+
+it('script steps need the package manager itself to resolve', () => {
+  const f = base('pnpm');
+  f.packages[0].scripts = { lint: 'eslint .', test: 'vitest' };
+  const p = preset(f, () => null);
+  expect(p.config.stop.steps).toEqual([]);
+  expect(p.skippedSteps).toEqual([{ name: 'lint', why: '`pnpm` is not on PATH' }, { name: 'test', why: '`pnpm` is not on PATH' }]);
 });

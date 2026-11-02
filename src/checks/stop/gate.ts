@@ -147,14 +147,23 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     return { kind: 'block', reason: reason.replace('{n}', `${attempts} of ${max}`), check: 'stop' };
   };
   let ran = 0;
+  // A missing tool is the user's setup, not the agent's work: skip the step and warn once per session, never block.
+  const warnings: string[] = [];
+  const done = (d: Decision): Decision => (d.kind === 'allow' && warnings.length ? { kind: 'context', text: warnings.join('\n'), check: 'stop' } : d);
   for (const step of steps) {
     const rs = resolveStep(step, pm, scripts);
     if (!rs) continue;
-    ran++;
     const found = which(rs.cmd);
     if (!found) {
-      return failStep(`Stop step \`${rs.label}\` could not run: \`${rs.cmd}\` not found. Install it or change stop.steps in \`.harness/config.yaml\`.`);
+      const seen = ctx.state.stopToolMissing ?? [];
+      if (!seen.includes(rs.label)) {
+        log('stop-tool-missing', `${rs.label}: ${rs.cmd}`);
+        ctx.save({ ...ctx.state, stopToolMissing: [...seen, rs.label] });
+        warnings.push(`Stop step \`${rs.label}\` was skipped: \`${rs.cmd}\` not found. Install it, or remove the step from stop.steps in \`.harness/config.yaml\`.`);
+      }
+      continue;
     }
+    ran++;
     const remaining = timeout_s * 1000 - (now() - stepsStart);
     // On Windows pass the resolved path so a .cmd shim can be recognised and wrapped.
     const r = remaining > 0 ? await exec(process.platform === 'win32' ? found : rs.cmd, rs.args, remaining) : null;
@@ -171,7 +180,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       ctx.save({ ...ctx.state, stopNothingLogged: true });
     }
     setAttempts(0);
-    return allow;
+    return done(allow);
   }
 
   // Diff coverage runs after every step passes.
@@ -189,7 +198,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     if (d.kind !== 'allow') return d;
   }
   setAttempts(0);
-  return allow;
+  return done(allow);
 }
 
 export const stopGate: Check = {

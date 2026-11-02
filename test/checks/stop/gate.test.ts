@@ -358,24 +358,32 @@ test('command step runs as written and a failure blocks with its label', async (
   expect((d as { reason: string }).reason).toContain('lint failed (attempt 1 of');
 });
 
-test('missing command blocks once with the fix', async () => {
+const MISSING = 'Stop step `lint` was skipped: `ruff` not found. Install it, or remove the step from stop.steps in `.harness/config.yaml`.';
+
+test('missing command does not block: one warning and one stop-tool-missing event per session per step', async () => {
   const s = setup({ yaml: PY });
   const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
-  expect(d).toMatchObject({ kind: 'block' });
-  expect((d as { reason: string }).reason).toBe('Stop step `lint` could not run: `ruff` not found. Install it or change stop.steps in `.harness/config.yaml`.');
+  expect(d).toEqual({ kind: 'context', check: 'stop', text: MISSING });
   expect(s.steps()).toEqual([]);
-  expect(s.saved.at(-1)).toBe(1);
-});
-
-test('missing package manager binary blocks the same way', async () => {
-  const s = setup();
-  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
-  expect((d as { reason: string }).reason).toContain('`pnpm` not found');
-});
-
-test('missing command gives up after max attempts', async () => {
-  const s = setup({ yaml: PY, attempts: 3 });
+  expect(s.ctx.state.stopAttempts).toBe(0);
   expect(await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null)).toEqual({ kind: 'allow' });
+  expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing').map((e) => e.reason)).toEqual(['lint: ruff']);
+});
+
+test('missing tool reaches the user as a Stop systemMessage, not a block', async () => {
+  const s = setup({ yaml: PY });
+  const out = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  const { emit } = await import('../../../src/hooks/io.js');
+  expect(JSON.parse(emit('Stop', out))).toEqual({ systemMessage: MISSING });
+});
+
+test('missing package manager binary is skipped the same way; other steps still run and can block', async () => {
+  const s = setup({ yaml: 'stop:\n  steps:\n    - lint\n    - name: own\n      run: [node, -e, x]\n' });
+  const which = (cmd: string) => (cmd === 'pnpm' ? null : cmd);
+  const d = await runStopReal(s.ctx, s.exec(SRC, 'x'), Date.now, which);
+  expect(d).toMatchObject({ kind: 'block' });
+  expect((d as { reason: string }).reason).toContain('own failed (attempt 1 of');
+  expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing').map((e) => e.reason)).toEqual(['lint: pnpm']);
 });
 
 test('no steps at all: allowed, stop-nothing-to-run logged once per session', async () => {

@@ -10,6 +10,7 @@ import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { planChanges } from '../install/plan.js';
 import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/preset.js';
+import { findOnPath } from '../checks/stop/runner.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -72,7 +73,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
 
   // 2. Detect and preset
   const facts = detect(root);
-  const p = preset(facts);
+  const p = preset(facts, (cmd) => findOnPath(cmd, cli.env, process.platform));
   let config: HarnessConfig = p.config;
   for (const w of facts.warnings) out(`Warning: ${w}`);
   if (opts.config) {
@@ -95,6 +96,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     out('Recommended settings:');
     for (const [k, why] of Object.entries(p.reasons)) out(`  ${k} = ${JSON.stringify(at(config, k))}\n    ${why}`);
     if (p.off.length) out('Off for this repo:\n' + p.off.map((o) => `  ${o.gate}: ${o.why}`).join('\n'));
+    if (p.skippedSteps.length) out('Stop steps left out:\n' + p.skippedSteps.map((s) => `  ${s.name}: ${s.why}. Install it, then add the step to stop.steps.`).join('\n'));
     if (!opts.yes && !opts.dryRun && (await prompt.confirm('Edit any value? (y/N)'))) {
       const next: Record<string, unknown> = { ...config };
       for (const k of Object.keys(config).filter((k) => k !== 'version')) {

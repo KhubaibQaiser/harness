@@ -12,6 +12,7 @@ export interface SessionState {
   stopAttempts: number;
   stopNoGitLogged?: boolean; // stop-no-git already logged this session
   stopNothingLogged?: boolean; // stop-nothing-to-run already logged this session
+  stopToolMissing?: string[]; // Stop steps whose missing tool was already logged and warned about this session
   baseHead?: string; // git HEAD at the session's first hook
 }
 

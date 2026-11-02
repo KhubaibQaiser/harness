@@ -65,6 +65,7 @@ it('python-only repo: TDD off with the exact why, plus ruff and pytest steps', (
   expect(p.off.map((o) => o.gate)).toEqual(['TDD', 'coverage']);
   expect(p.off.every((o) => o.why === WHY)).toBe(true);
   expect(p.config.stop.steps).toEqual([{ name: 'ruff', run: ['ruff', 'check', '.'] }, { name: 'pytest', run: ['pytest'] }]);
+  expect(p.config.stop.package_manager).toBe('none');
   expect(validateConfig(p.config).ok).toBe(true);
 });
 

@@ -37,7 +37,7 @@ export function preset(f: Facts): { config: HarnessConfig; reasons: Record<strin
   if (py.includes('pytest')) steps.push({ name: 'pytest', run: ['pytest'] });
   config.stop.steps = steps;
   config.stop.base_ref = `origin/${f.defaultBranch}`;
-  if (f.packageManager !== 'none') config.stop.package_manager = f.packageManager;
+  config.stop.package_manager = f.packageManager;
 
   reasons['checks.tdd'] = tdd ? 'Found a Vitest or Jest setup, so tests must fail before code is written.' : 'No Vitest or Jest setup found, so this stays off.';
   reasons['tdd.paths'] = tdd ? 'These are the `src` folders of packages with a test setup.' : 'No package has a test setup, so no paths are covered.';

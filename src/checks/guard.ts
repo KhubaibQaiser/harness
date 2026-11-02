@@ -2,8 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
-import { findOnPath } from './stop/runner.js';
-import { readCliPath } from '../core/cli-path.js';
+import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
@@ -21,14 +20,25 @@ const PIP_VALUE_FLAGS = new Set(['-r', '--requirement', '-c', '--constraint', '-
 const JS_ADD = new Set(['add', 'install', 'i']);
 const PY_ADD = new Set(['add', 'install']);
 const REDIRECTION = /\d*[<>]+&?\d*\s*[^\s;&|]*/g;
-const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh', 'command', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'pnpx', 'x', 'stdbuf', 'script']);
+const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bun', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh', 'command', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'pnpx', 'x', 'stdbuf', 'script']);
 const HARNESS_CMD = /(^|\/)harness(@\S+)?$|(^|\/)cli\.m?js$/;
+// Flags of a wrapper whose value is the next word, so that word is not the command.
+const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
+  timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
+  nice: new Set(['-n', '--adjustment']),
+  env: new Set(['-u', '--unset', '-C', '--chdir']),
+  sudo: new Set(['-u', '--user', '-g', '--group', '-C', '-D', '-h', '-p', '-r', '-t', '-U']),
+  xargs: new Set(['-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a']),
+  stdbuf: new Set(['-i', '-o', '-e']),
+  npx: new Set(['-p', '--package', ...VALUE_FLAGS]),
+  ...Object.fromEntries(['npm', 'pnpm', 'yarn', 'bun', 'bunx', 'pnpx', 'exec', 'dlx', 'x'].map((n) => [n, VALUE_FLAGS])),
+};
 const PMS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 // Subcommands only a person may run (deny) or that need the person's yes (ask; the dispatcher denies it when
-// unattended), with the arguments (after the subcommand) the agent may still use. `cmd` is how the person runs
-// harness in their own terminal. One place: M3 adds remove, add, sync and update here.
-const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (cmd: string) => string }> = {
-  tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (cmd) => `Only a person can pause TDD: run \`${cmd} tdd off\` in your own terminal${cmd === 'harness' ? ' with the harness CLI (run any harness command in this repo once so this message can name its path)' : ''}.` },
+// unattended), with the arguments (after the subcommand) the agent may still use. `run(sub)` is how the person runs
+// `harness <sub>` in their own terminal. One place: M3 adds remove, add, sync and update here.
+const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (run: (sub: string) => string) => string }> = {
+  tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (run) => `Only a person can pause TDD: run ${run('tdd off')} in your own terminal.` },
   uninstall: { kind: 'ask', allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
@@ -36,21 +46,20 @@ const ANY_WHY = 'Only a person can change or remove the harness gates: run the h
 type Hit = { kind: 'deny' | 'ask'; reason: string };
 type Where = { root: string; env: NodeJS.ProcessEnv };
 
-/** The command that runs the same harness in the person's own terminal: an absolute path, never a variable. */
-function terminalCommand(tok: string, w: Where): string {
+/**
+ * How the person runs `harness <sub>` in their own terminal, in backticks: a trusted CLI path (the typed one, or the
+ * one recorded by the last trusted harness run here), else plain `harness <sub>` with the other ways to run it.
+ * Never a path from an unknown place: the agent could have written it.
+ */
+function terminalCommand(tok: string, sub: string, w: Where): string {
   if (/(^|\/)cli\.m?js$/.test(tok)) {
     const p = tok.replace(/\$\{?(\w+)\}?/g, (m, v: string) => w.env[v] ?? m);
-    if (!/\$/.test(p)) return `node "${resolve(w.root, p)}"`;
+    const real = /\$/.test(p) ? null : trustedCli(resolve(w.root, p), w.env);
+    if (real) return `\`node "${real}" ${sub}\``;
   }
-  if (tok === 'harness') {
-    const abs = findOnPath('harness', w.env, process.platform);
-    if (abs) return `"${abs}"`;
-  }
-  // The package is not on npm yet, so npx is a last resort: the CLI path the last harness run here recorded comes first.
   const recorded = readCliPath(w.root);
-  if (recorded) return `node "${recorded}"`;
-  if (/^@khubaibqaiser\/harness/.test(tok)) return `npx ${tok}`; // as the agent typed it
-  return 'harness'; // the reason then says the path is unknown
+  if (recorded) return `\`node "${recorded}" ${sub}\``;
+  return `\`harness ${sub}\` (if harness is not on your PATH: \`npx @khubaibqaiser/harness ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
 }
 
 function scriptsOf(root: string): Record<string, string> {
@@ -63,11 +72,11 @@ function scriptsOf(root: string): Record<string, string> {
 }
 
 // Why a harness invocation (in command position) needs the person, or null when the agent may run it.
-// ponytail: runner flag values (pnpm --filter x, timeout -s KILL) are not understood; `harness` after one is missed.
+// ponytail: a wrapper flag value not listed in WRAPPER_VALUE_FLAGS is read as the command, which then isn't harness.
 function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
   const plain = command.replace(/['"\\]/g, ''); // quotes and escapes must not hide the words
   const words = plain.split(/\s+/);
-  const hit = (name: string, tok: string): Hit => ({ kind: PERSON_ONLY[name].kind, reason: PERSON_ONLY[name].why(terminalCommand(tok, w)) });
+  const hit = (name: string, tok: string): Hit => ({ kind: PERSON_ONLY[name].kind, reason: PERSON_ONLY[name].why((sub) => terminalCommand(tok, sub, w)) });
   const hidden: Hit = { kind: 'deny', reason: ANY_WHY };
   // The harness token at toks[k]: which person-only subcommand it runs, if any. `next` is the separator after it.
   const judge = (toks: string[], k: number, next: string | undefined): Hit | null => {
@@ -102,11 +111,26 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
         if (r) return r;
       }
     }
-    let k = 0;
-    while (k < toks.length && (RUNNERS.has(toks[k]) || toks[k].startsWith('-') || /^\w+=/.test(toks[k]) || (k > 0 && /^\d+(\.\d+)?[smhd]?$/.test(toks[k])))) {
-      const val = toks[k].replace(/^\w+=/, '');
-      if (val !== toks[k] && HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
-      k += toks[k] === '-u' ? 2 : 1; // env -u NAME: the next token is a variable name
+    // Walk to where a command runs: past wrappers, their flags and the values those flags take, a timeout's
+    // duration, script's FILE, and into find -exec. Words anywhere else (echo, grep, rg, git args) are not commands.
+    let k = 0, wrapper = '', scriptFile = false;
+    while (k < toks.length) {
+      const t = toks[k];
+      if (t === 'find') {
+        const e = toks.findIndex((x, i) => i > k && /^-(exec|execdir|ok|okdir)$/.test(x));
+        if (e < 0) break;
+        [k, wrapper] = [e + 1, ''];
+      } else if (RUNNERS.has(t)) [k, wrapper, scriptFile] = [k + 1, t, t === 'script'];
+      else if (/^\w+=/.test(t)) {
+        const val = t.replace(/^\w+=/, '');
+        if (HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
+        k++;
+      } else if (t.startsWith('-')) {
+        if (t === '-c') scriptFile = false; // script -c COMMAND
+        k += WRAPPER_VALUE_FLAGS[wrapper]?.has(t) ? 2 : 1;
+      } else if (k > 0 && /^\d+(\.\d+)?[smhd]?$/.test(t)) k++; // timeout 60, timeout 1m
+      else if (scriptFile) [k, scriptFile] = [k + 1, false]; // script [-q] FILE COMMAND (BSD form)
+      else break;
     }
     // $X tdd …, `…` tdd … or $(…) tdd …: the command name is hidden in a variable or substitution.
     // Whatever the hidden command is, the allowed arguments stay allowed.
@@ -115,19 +139,6 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
     if (!toks[k] || !HARNESS_CMD.test(toks[k])) continue;
     const r = judge(toks, k, parts[i + 1]);
     if (r) return r;
-  }
-  // Second pass, quoted text blanked out (prose such as a commit message is not an invocation): a harness token
-  // anywhere in a command, so wrappers whose flags take values (timeout -s KILL 60, pnpm --filter x, find -exec,
-  // script -q /dev/null) can't hide it.
-  const masked = command.replace(/'[^']*'|"[^"]*"/g, ' Q ').replace(/\\/g, '');
-  const mparts = masked.split(/(&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`])/);
-  for (let i = 0; i < mparts.length; i += 2) {
-    const toks = mparts[i].trim().split(/\s+/).filter(Boolean);
-    for (let j = 1; j < toks.length; j++) {
-      if (!HARNESS_CMD.test(toks[j].replace(/^\w+=/, ''))) continue;
-      const r = judge(toks, j, undefined);
-      if (r) return r;
-    }
   }
   return null;
 }

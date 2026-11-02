@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -160,7 +160,7 @@ test.each(['harness tdd off', 'npx @khubaibqaiser/harness tdd off', 'pnpm harnes
   'agent running %s is denied', (cmd) => {
     const d = decideCommand(cmd, ctx());
     expect(d.kind).toBe('deny');
-    expect(reason(d)).toMatch(/^Only a person can pause TDD: run `(node "\/.*"|"\/.*"|npx @khubaibqaiser\/harness\S*|harness) tdd off` in your own terminal( with the harness CLI \(.*\))?\.$/);
+    expect(reason(d)).toBe(`Only a person can pause TDD: run ${HINT('tdd off')} in your own terminal.`);
     expect(reason(d)).not.toContain('$');
   });
 test.each([
@@ -208,37 +208,45 @@ test('npm/pnpm/yarn/bun run <script>: a script that runs harness is judged with 
   for (const c of ['npm run rm -- --yes', 'pnpm rm']) expect(k(c), c).toBe('ask');
   for (const c of ['npm run h -- tdd status', 'npm run rm -- --dry-run', 'npm run t', 'pnpm t -- --watch']) expect(k(c), c).toBe('allow');
 });
-test('N4: the reason names a command that works in the person\'s terminal: an absolute path, never a variable', () => {
-  const root = mkdtempSync(join(tmpdir(), 'h-guard-n4-'));
+const HINT = (sub: string) => `\`harness ${sub}\` (if harness is not on your PATH: \`npx @khubaibqaiser/harness ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
+const fakeCli = (root: string, rel: string) => {
+  const p = join(root, ...rel.split('/'));
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, '');
+  return realpathSync.native(p);
+};
+test('P1: a CLI path is printed only from a known install place: node_modules or the plugin folder', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-p1-'));
   const r = (cmd: string, env: NodeJS.ProcessEnv = {}) => reason(decideCommand(cmd, { ...ctx(), root, env }));
-  expect(r('node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" tdd off', { CLAUDE_PLUGIN_ROOT: '/opt/plug' })).toBe('Only a person can pause TDD: run `node "/opt/plug/dist/cli.mjs" tdd off` in your own terminal.');
-  expect(r('node ./node_modules/@khubaibqaiser/harness/dist/cli.mjs tdd off')).toBe(`Only a person can pause TDD: run \`node "${join(root, 'node_modules/@khubaibqaiser/harness/dist/cli.mjs')}" tdd off\` in your own terminal.`);
-  expect(r('npx @khubaibqaiser/harness@1.0.0 tdd off')).toContain('run `npx @khubaibqaiser/harness@1.0.0 tdd off`');
+  const want = (cli: string) => `Only a person can pause TDD: run \`node "${cli}" tdd off\` in your own terminal.`;
+  const nm = fakeCli(root, 'node_modules/@khubaibqaiser/harness/dist/cli.mjs');
+  expect(r('node ./node_modules/@khubaibqaiser/harness/dist/cli.mjs tdd off')).toBe(want(nm));
+  const plug = fakeCli(root, 'plug/dist/cli.mjs');
+  expect(r('node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" tdd off', { CLAUDE_PLUGIN_ROOT: dirname(dirname(plug)) })).toBe(want(plug));
+  // anywhere else (a copy the agent made, a source checkout), an unset variable, a bare harness or npx: the plain hint
+  const copy = fakeCli(root, 'tmp/evil/dist/cli.mjs');
+  for (const c of [`node "${copy}" tdd off`, 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" tdd off', 'harness tdd off', 'npx @khubaibqaiser/harness@1.0.0 tdd off'])
+    expect(r(c), c).toBe(`Only a person can pause TDD: run ${HINT('tdd off')} in your own terminal.`);
 });
-test('R5: an unexpanded variable or an unknown harness falls back to the CLI path the last harness run recorded, never npx', () => {
-  const root = mkdtempSync(join(tmpdir(), 'h-guard-r5-'));
-  const r = (cmd: string, env: NodeJS.ProcessEnv = { PATH: '' }) => reason(decideCommand(cmd, { ...ctx(), root, env }));
-  // nothing recorded yet: no variable, no npx, and say how to get the path
-  for (const c of ['node "$CLAUDE_PLUGIN_ROOT/dist/cli.mjs" tdd off', 'harness tdd off']) {
-    expect(r(c)).not.toMatch(/\$|npx/);
-    expect(r(c)).toContain('run any harness command in this repo once so this message can name its path');
-  }
-  const cli = join(root, 'plug', 'dist', 'cli.mjs');
-  mkdirSync(dirname(cli), { recursive: true });
-  writeFileSync(cli, '');
-  recordCliPath(root, cli);
+test('P1: only a trusted CLI is recorded, and the recorded path is printed for every form', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-p1r-'));
+  const r = (cmd: string) => reason(decideCommand(cmd, { ...ctx(), root, env: {} }));
+  const nm = fakeCli(root, 'node_modules/@khubaibqaiser/harness/dist/cli.mjs');
+  recordCliPath(root, nm, {});
   expect(readCliPath(root)).toBeNull(); // not installed here: nothing recorded
   mkdirSync(join(root, '.harness'));
-  recordCliPath(root, cli);
-  expect(readCliPath(root)).toBe(cli);
-  const want = `Only a person can pause TDD: run \`node "${cli}" tdd off\` in your own terminal.`;
-  expect(r('node "$CLAUDE_PLUGIN_ROOT/dist/cli.mjs" tdd off')).toBe(want);
-  expect(r('node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" tdd off')).toBe(want);
-  expect(r('harness tdd off')).toBe(want);
-  expect(r('npx @khubaibqaiser/harness tdd off')).toBe(want);
-  // a recorded path that no longer exists is ignored
-  rmSync(cli);
-  expect(r('harness tdd off')).not.toContain(cli);
+  const copy = fakeCli(root, 'tmp/evil/dist/cli.mjs');
+  recordCliPath(root, copy, {});
+  expect(readCliPath(root)).toBeNull(); // an unknown place is never recorded
+  const plug = fakeCli(root, 'plug/dist/cli.mjs');
+  recordCliPath(root, plug, { CLAUDE_PLUGIN_ROOT: dirname(dirname(plug)) });
+  expect(readCliPath(root)).toBe(plug);
+  recordCliPath(root, nm, {});
+  expect(readCliPath(root)).toBe(nm);
+  for (const c of ['harness tdd off', 'node "$CLAUDE_PLUGIN_ROOT/dist/cli.mjs" tdd off', 'npx @khubaibqaiser/harness tdd off'])
+    expect(r(c), c).toBe(`Only a person can pause TDD: run \`node "${nm}" tdd off\` in your own terminal.`);
+  rmSync(nm); // a recorded path that no longer exists is ignored
+  expect(r('harness tdd off')).toBe(`Only a person can pause TDD: run ${HINT('tdd off')} in your own terminal.`);
 });
 // R2: more runner forms; flags that take a value are skipped with their value.
 test.each([
@@ -376,3 +384,18 @@ test('uninstall asks when someone is watching; unattended (CI, bypassPermissions
   expect(await decision({ permission_mode: 'bypassPermissions' }, {})).toBe('deny');
   expect(await decision({ permission_mode: 'dontAsk' }, {})).toBe('deny');
 });
+
+// P2: a word is unquoted where a command runs, behind any wrapper the walk sees past.
+test.each([
+  'find . -exec harness "uninstall" ;', 'find . -execdir harness "uninstall" --yes ;', "timeout -s KILL 60 harness 'uninstall' --yes",
+  'nice -n 5 harness "uninstall"', 'sh -c "harness uninstall --yes"', "script -c 'harness uninstall --yes' /dev/null",
+  'script -q /dev/null harness "uninstall" --yes', 'npx -p @khubaibqaiser/harness harness "uninstall"', 'sudo -u me harness "uninstall" --yes',
+  'xargs -I {} harness "uninstall" {}', 'env -C /x harness "uninstall"',
+])('P2: %s asks the person', (cmd) => expect(kind(cmd)).toBe('ask'));
+test.each(['script -q /dev/null harness "tdd" off', 'find . -exec harness "tdd" "off" ;', "timeout -k 5 60 harness 'tdd' off"])(
+  'P2: %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
+// P3: harness words in argument positions are not commands.
+test.each([
+  'rg harness tdd', 'ls ~/code/harness tdd', 'git log -- harness tdd', 'echo harness uninstall', 'grep -rn harness uninstall',
+  'cat harness uninstall', 'find . -name harness -print', 'npm view @khubaibqaiser/harness version',
+])('P3: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));

@@ -156,7 +156,7 @@ test.each(['harness tdd off', 'npx @khubaibqaiser/harness tdd off', 'pnpm harnes
   'agent running %s is denied', (cmd) => {
     const d = decideCommand(cmd, ctx());
     expect(d.kind).toBe('deny');
-    expect(reason(d)).toBe('Only a person can pause TDD: run "harness tdd off" in your own terminal.');
+    expect(reason(d)).toMatch(/^Only a person can pause TDD: run `(node "\/.*"|"\/.*"|npx @khubaibqaiser\/harness\S*) tdd off` in your own terminal\.$/);
   });
 test.each([
   'harness tdd "off"', 'harness "tdd" off', 'harness tdd o\\ff', 'harness tdd o""ff',
@@ -178,17 +178,38 @@ test.each([
 ])('tdd invocation bypass %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
 test.each(['harness tdd on', 'harness tdd status', 'npx @khubaibqaiser/harness tdd status', 'pnpm harness tdd status'])('%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 
-const UNINSTALL_WHY = 'Only a person can uninstall the harness: run "harness uninstall" in your own terminal (the agent may run "harness uninstall --dry-run").';
+const UNINSTALL_WHY = 'Confirm: the agent is uninstalling the harness, which removes every gate';
 test.each([
   'harness uninstall', 'harness uninstall --yes', 'harness uninstall --yes --force', 'harness uninstall --dry-run --yes',
   'npx @khubaibqaiser/harness uninstall --yes', 'npx -y @khubaibqaiser/harness@latest uninstall --yes', 'npm exec @khubaibqaiser/harness -- uninstall --yes',
   'pnpm dlx @khubaibqaiser/harness uninstall --yes', 'yarn dlx @khubaibqaiser/harness uninstall --yes', 'bunx @khubaibqaiser/harness uninstall --yes',
-  'node "/Users/x/.claude/plugins/cache/harness/dist/cli.mjs" uninstall --yes', 'node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs uninstall --yes',
+  'node "/Users/x/.claude/plugins/cache/harness/dist/cli.mjs" uninstall --yes', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" uninstall --yes',
   'ls && harness uninstall --yes', 'harness --cwd /x uninstall', 'harness "uninstall" --yes',
-])('agent running %s is denied', (cmd) => {
+  // N3: wrappers
+  'command harness uninstall --yes', 'nohup harness uninstall --yes', 'timeout 60 harness uninstall --yes', 'timeout 1m harness uninstall --yes',
+  'nice -n 5 harness uninstall --yes', 'time harness uninstall --yes', 'xargs harness uninstall <<< --yes',
+])('agent running %s asks the person', (cmd) => {
   const d = decideCommand(cmd, ctx());
-  expect(d.kind).toBe('deny');
+  expect(d.kind).toBe('ask');
   expect(reason(d)).toBe(UNINSTALL_WHY);
+});
+test.each(['command harness tdd off', 'nohup harness tdd off', 'timeout 60 harness tdd off', 'xargs harness tdd <<< off', 'X=harness; $X uninstall --yes', 'eval "harness uninstall --yes"'])(
+  'wrapped or hidden %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
+test('npm/pnpm/yarn/bun run <script>: a script that runs harness is judged with its arguments', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-scripts-'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { h: 'harness', off: 'harness tdd off', rm: 'node ./dist/cli.mjs uninstall', t: 'vitest run' } }));
+  const k = (cmd: string) => decideCommand(cmd, { ...ctx(), root }).kind;
+  for (const c of ['npm run h -- tdd off', 'pnpm h tdd off', 'yarn off', 'bun run off', 'npm run-script off']) expect(k(c), c).toBe('deny');
+  for (const c of ['npm run rm -- --yes', 'pnpm rm']) expect(k(c), c).toBe('ask');
+  for (const c of ['npm run h -- tdd status', 'npm run rm -- --dry-run', 'npm run t', 'pnpm t -- --watch']) expect(k(c), c).toBe('allow');
+});
+test('N4: the reason names a command that works in the person\'s terminal: an absolute path, never a variable', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-n4-'));
+  const r = (cmd: string, env: NodeJS.ProcessEnv = {}) => reason(decideCommand(cmd, { ...ctx(), root, env }));
+  expect(r('node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" tdd off', { CLAUDE_PLUGIN_ROOT: '/opt/plug' })).toBe('Only a person can pause TDD: run `node "/opt/plug/dist/cli.mjs" tdd off` in your own terminal.');
+  expect(r('node ./node_modules/@khubaibqaiser/harness/dist/cli.mjs tdd off')).toBe(`Only a person can pause TDD: run \`node "${join(root, 'node_modules/@khubaibqaiser/harness/dist/cli.mjs')}" tdd off\` in your own terminal.`);
+  expect(r('npx @khubaibqaiser/harness@1.0.0 tdd off')).toContain('run `npx @khubaibqaiser/harness@1.0.0 tdd off`');
+  expect(r('harness tdd off', { PATH: '' })).toContain('run `npx @khubaibqaiser/harness tdd off`');
 });
 test.each(['harness uninstall --dry-run', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" uninstall --dry-run', 'npx @khubaibqaiser/harness uninstall --dry-run', 'harness status', 'harness doctor', 'git commit -m "uninstall the old hook"'])(
   '%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
@@ -303,4 +324,17 @@ test('git global options do not hide checkout, restore or the discard-all ask', 
   expect(fileWriteTargets('git --no-pager -c x=1 restore a.ts')).toEqual(['a.ts']);
   expect(kind('git -C . checkout .')).toBe('ask');
   expect(kind('git --no-pager restore .')).toBe('ask');
+});
+
+test('uninstall asks when someone is watching; unattended (CI, bypassPermissions, dontAsk) it is denied', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-un-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  const raw = (o: Record<string, unknown> = {}) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'harness uninstall --yes' }, ...o });
+  const decision = async (o: Record<string, unknown>, env: NodeJS.ProcessEnv) => JSON.parse(await dispatch(raw(o), registry, env)).hookSpecificOutput.permissionDecision;
+  expect(await decision({}, {})).toBe('ask');
+  expect(await decision({ permission_mode: 'acceptEdits' }, {})).toBe('ask');
+  expect(await decision({}, { CI: 'true' })).toBe('deny');
+  expect(await decision({ permission_mode: 'bypassPermissions' }, {})).toBe('deny');
+  expect(await decision({ permission_mode: 'dontAsk' }, {})).toBe('deny');
 });

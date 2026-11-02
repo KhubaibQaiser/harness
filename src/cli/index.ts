@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { appendEvent, readEvents } from '../core/events.js';
 import { repoRoot } from '../core/repo-root.js';
@@ -37,7 +37,8 @@ function tdd(sub: string | undefined, { root, env, out }: CliEnv): number {
   if (sub !== 'off') return out(USAGE), 2;
   if (env.CLAUDECODE) {
     log(root, 'refused');
-    out('Run harness tdd off from a plain terminal, not inside Claude Code.');
+    const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
+    out(`Run harness tdd off from a plain terminal, not inside Claude Code: ${self} tdd off`);
     return 1;
   }
   if (!pauseTdd(root)) return out(tddStatus(root)), 0;

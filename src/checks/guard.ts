@@ -1,5 +1,8 @@
 // Agent guard, ported from fitness-app scripts/agent-hooks/guard.mjs. A seatbelt, not a sandbox.
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
+import { findOnPath } from './stop/runner.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
@@ -17,53 +20,93 @@ const PIP_VALUE_FLAGS = new Set(['-r', '--requirement', '-c', '--constraint', '-
 const JS_ADD = new Set(['add', 'install', 'i']);
 const PY_ADD = new Set(['add', 'install']);
 const REDIRECTION = /\d*[<>]+&?\d*\s*[^\s;&|]*/g;
-const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh']);
+const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh', 'command', 'nohup', 'time', 'nice', 'timeout', 'xargs']);
 const HARNESS_CMD = /(^|\/)harness(@\S+)?$|(^|\/)cli\.m?js$/;
-// Subcommands only a person may run, with the arguments (after the subcommand) the agent may still use.
-// One place: M3 adds remove, add, sync and update here.
-const PERSON_ONLY: Record<string, { allowed: (args: string[]) => boolean; why: string }> = {
-  tdd: { allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: 'Only a person can pause TDD: run "harness tdd off" in your own terminal.' },
-  uninstall: { allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: 'Only a person can uninstall the harness: run "harness uninstall" in your own terminal (the agent may run "harness uninstall --dry-run").' },
+const PMS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+// Subcommands only a person may run (deny) or that need the person's yes (ask; the dispatcher denies it when
+// unattended), with the arguments (after the subcommand) the agent may still use. `cmd` is how the person runs
+// harness in their own terminal. One place: M3 adds remove, add, sync and update here.
+const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (cmd: string) => string }> = {
+  tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (cmd) => `Only a person can pause TDD: run \`${cmd} tdd off\` in your own terminal.` },
+  uninstall: { kind: 'ask', allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
 const ANY_WHY = 'Only a person can change or remove the harness gates: run the harness command in your own terminal.';
-// Returns why a harness invocation (in command position) must be run by a person, or null when the agent may run it.
-// ponytail: runner flag values (pnpm --filter x) are not understood; `harness` after one is missed.
-function personOnlyInvocation(command: string): string | null {
+type Hit = { kind: 'deny' | 'ask'; reason: string };
+type Where = { root: string; env: NodeJS.ProcessEnv };
+
+/** The command that runs the same harness in the person's own terminal: an absolute path, never a variable. */
+function terminalCommand(tok: string, w: Where): string {
+  if (/(^|\/)cli\.m?js$/.test(tok)) {
+    const p = tok.replace(/\$\{?(\w+)\}?/g, (m, v: string) => w.env[v] ?? m);
+    return `node "${/\$/.test(p) ? p : resolve(w.root, p)}"`;
+  }
+  if (tok === 'harness') {
+    const abs = findOnPath('harness', w.env, process.platform);
+    return abs ? `"${abs}"` : 'npx @khubaibqaiser/harness';
+  }
+  return `npx ${tok}`; // @khubaibqaiser/harness[@version]
+}
+
+function scriptsOf(root: string): Record<string, string> {
+  try {
+    const s = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts;
+    return s && typeof s === 'object' ? s : {};
+  } catch {
+    return {};
+  }
+}
+
+// Why a harness invocation (in command position) needs the person, or null when the agent may run it.
+// ponytail: runner flag values (pnpm --filter x, timeout -s KILL) are not understood; `harness` after one is missed.
+function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
   const plain = command.replace(/['"\\]/g, ''); // quotes and escapes must not hide the words
   const words = plain.split(/\s+/);
+  const hit = (name: string, tok: string): Hit => ({ kind: PERSON_ONLY[name].kind, reason: PERSON_ONLY[name].why(terminalCommand(tok, w)) });
+  const hidden: Hit = { kind: 'deny', reason: ANY_WHY };
   // eval re-parses its input, so any eval near a harness token and a person-only subcommand is denied.
-  const named = words.find(isPersonOnly);
-  if (words.includes('eval') && named && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, '')))) return PERSON_ONLY[named].why;
+  if (words.includes('eval') && words.some(isPersonOnly) && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, '')))) return hidden;
   // A lone & separates commands; 2>&1, >&2 and &> are redirections.
   const parts = plain.split(/(&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`])/);
   for (let i = 0; i < parts.length; i += 2) {
     const toks = parts[i].trim().split(/\s+/).filter(Boolean);
+    // npm run <script> -- args, or pnpm/yarn/bun <script>: judge the script text with the args appended.
+    const pm = toks.findIndex((t) => PMS.has(t));
+    if (pm >= 0 && depth < 3) {
+      let j = pm + 1;
+      while (toks[j]?.startsWith('-')) j++;
+      if (toks[j] === 'run' || toks[j] === 'run-script') j++;
+      const script = scriptsOf(w.root)[toks[j] ?? ''];
+      if (typeof script === 'string') {
+        const r = personOnlyInvocation(`${script} ${toks.slice(j + 1).filter((t) => t !== '--').join(' ')}`, w, depth + 1);
+        if (r) return r;
+      }
+    }
     let k = 0;
-    while (k < toks.length && (RUNNERS.has(toks[k]) || toks[k].startsWith('-') || /^\w+=/.test(toks[k]))) {
+    while (k < toks.length && (RUNNERS.has(toks[k]) || toks[k].startsWith('-') || /^\w+=/.test(toks[k]) || (k > 0 && /^\d+(\.\d+)?[smhd]?$/.test(toks[k])))) {
       const val = toks[k].replace(/^\w+=/, '');
       if (val !== toks[k] && HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
       k += toks[k] === '-u' ? 2 : 1; // env -u NAME: the next token is a variable name
     }
     // $X tdd …, `…` tdd … or $(…) tdd …: the command name is hidden in a variable or substitution.
     // Whatever the hidden command is, the allowed arguments stay allowed.
-    const hidden = toks[k]?.startsWith('$') ? k + 1 : k === 0 && /^[`)]$/.test(parts[i - 1] ?? '') ? 0 : -1;
-    if (hidden >= 0 && isPersonOnly(toks[hidden]) && !PERSON_ONLY[toks[hidden]].allowed(toks.slice(hidden + 1))) return PERSON_ONLY[toks[hidden]].why;
+    const at = toks[k]?.startsWith('$') && !HARNESS_CMD.test(toks[k]) ? k + 1 : k === 0 && /^[`)]$/.test(parts[i - 1] ?? '') ? 0 : -1;
+    if (at >= 0 && isPersonOnly(toks[at]) && !PERSON_ONLY[toks[at]].allowed(toks.slice(at + 1))) return hidden;
     if (!toks[k] || !HARNESS_CMD.test(toks[k])) continue;
     const rest = toks.slice(k + 1);
     if (rest[0]?.startsWith('-')) { // no global flags in M1, so flag values cannot be told apart from subcommands
       for (const [name, rule] of Object.entries(PERSON_ONLY)) {
         const t = rest.indexOf(name);
-        if (t >= 0 && !rule.allowed(rest.slice(t + 1))) return rule.why;
+        if (t >= 0 && !rule.allowed(rest.slice(t + 1))) return hit(name, toks[k]);
       }
     }
     const s = rest.findIndex((t) => !t.startsWith('-'));
     if (s < 0) {
-      if (/^(\$\(|\(|`)$/.test(parts[i + 1] ?? '')) return ANY_WHY; // subcommand comes from a substitution
+      if (/^(\$\(|\(|`)$/.test(parts[i + 1] ?? '')) return hidden; // subcommand comes from a substitution
       continue;
     }
-    if (/[$`]/.test(rest[s])) return ANY_WHY;
-    if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return PERSON_ONLY[rest[s]].why;
+    if (/[$`]/.test(rest[s])) return hidden;
+    if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return hit(rest[s], toks[k]);
   }
   return null;
 }
@@ -285,8 +328,8 @@ export function decideCommand(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const tokens = command.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');
-  const personOnly = personOnlyInvocation(command);
-  if (personOnly) return { kind: 'deny', reason: personOnly, check: 'guard' };
+  const personOnly = personOnlyInvocation(command, ctx);
+  if (personOnly) return personOnly.kind === 'deny' ? { kind: 'deny', reason: personOnly.reason, check: 'guard' } : toDecision(['ask', personOnly.reason]);
   const tddPaths = ctx.config?.checks.tdd ? ctx.config.tdd.paths : [];
   const inTdd = (t: string) => {
     const rel = tddPaths.length > 0 ? toRepoPath(ctx.root, t) : null;

@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { MANIFEST_REL, ManifestError, readManifest, type Manifest } from './manifest.js';
 import type { Hunk } from './diff.js';
 import { hashText } from './text.js';
+import { renameWithRetry } from '../core/atomic.js';
 
 export { readManifest, ManifestError, type Manifest };
 
@@ -123,7 +124,7 @@ export function applyChanges(
       fs.writeFileSync(target + TMP, s.content);
       const mode = s.mode ?? modes.get(s.rel);
       if (mode !== undefined && process.platform !== 'win32') fs.chmodSync(target + TMP, mode);
-      fs.renameSync(target + TMP, target);
+      renameWithRetry(target + TMP, target, (a, b) => fs.renameSync(a, b));
     }
   } catch (cause) {
     const failed: string[] = [];
@@ -134,7 +135,7 @@ export function applyChanges(
           // temp + rename so a read-only target does not block the restore
           fs.copyFileSync(b, abs(rel) + TMP);
           if (process.platform !== 'win32') fs.chmodSync(abs(rel) + TMP, modes.get(rel)!);
-          fs.renameSync(abs(rel) + TMP, abs(rel));
+          renameWithRetry(abs(rel) + TMP, abs(rel), (a, b) => fs.renameSync(a, b));
         } else fs.rmSync(abs(rel), { force: true });
       } catch {
         failed.push(rel);

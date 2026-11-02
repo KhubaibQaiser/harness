@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync as renameSyncReal, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, onTestFinished, test } from 'vitest';
+import { RETRY } from '../../src/core/atomic.js';
 import { readState, withSessionLock, writeState } from '../../src/core/state.js';
 import { dispatch } from '../../src/hooks/dispatch.js';
 
@@ -205,6 +206,9 @@ test('an abandoned break lock older than 5 s does not block breaking', async () 
 });
 
 test('readState retries a transient read error instead of starting the session over', () => {
+  const saved = { ...RETRY };
+  Object.assign(RETRY, { platform: 'win32', sleep: () => {} }); // the Windows rule, on every OS
+  onTestFinished(() => void Object.assign(RETRY, saved));
   const root = tmp();
   writeState(root, 's', { ...readState(root, 's'), files: ['kept.ts'] });
   let fails = 2;

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { writeAtomic } from './atomic.js';
 import { join } from 'node:path';
 
 // Where the repo's own harness CLI last ran from (gitignored, protected state), so the guard can name a runnable
@@ -30,7 +31,7 @@ export function recordCliPath(root: string, cli: string): void {
     const real = trustedCli(cli, root);
     if (!existsSync(join(root, '.harness')) || !real) return; // not installed, or not the repo's own CLI
     mkdirSync(join(root, '.harness/state'), { recursive: true });
-    writeFileSync(join(root, REL), real);
+    writeAtomic(join(root, REL), real);
   } catch {} // best effort: the guard then names no path
 }
 

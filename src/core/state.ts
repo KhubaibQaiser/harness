@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { renameWithRetry, retryTransient, writeAtomic } from './atomic.js';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -24,8 +25,6 @@ export function statePath(root: string, session: string): string {
   return join(root, '.harness/state', `${session}.json`);
 }
 
-const TRANSIENT = ['EPERM', 'EACCES', 'EBUSY'];
-const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 export function readState(root: string, session: string, read: (p: string, e: 'utf8') => string = readFileSync): SessionState {
   const fresh: SessionState = { startedAt: Date.now(), files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 };
@@ -33,16 +32,12 @@ export function readState(root: string, session: string, read: (p: string, e: 'u
   let text: string;
   // Windows: a scanner or another process can hold the file for a moment. Retry, and never answer a read error
   // with a fresh state: the next write would then drop everything recorded so far.
-  for (let i = 0; ; i++) {
-    try {
-      text = read(f, 'utf8');
-      break;
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code ?? '';
-      if (code === 'ENOENT' || code === 'ENOTDIR') return fresh; // no state yet
-      if (i >= 20 || !TRANSIENT.includes(code)) throw e;
-      pause(10);
-    }
+  try {
+    text = retryTransient(() => read(f, 'utf8'));
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code ?? '';
+    if (code === 'ENOENT' || code === 'ENOTDIR') return fresh; // no state yet
+    throw e;
   }
   try {
     const v: unknown = JSON.parse(text);
@@ -65,27 +60,10 @@ export function stateExists(root: string, session: string): boolean {
 export function writeState(root: string, session: string, s: SessionState): void {
   const f = statePath(root, session);
   mkdirSync(join(root, '.harness/state'), { recursive: true });
-  const tmp = `${f}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(s));
-  try {
-    renameWithRetry(tmp, f);
-  } catch (e) {
-    rmSync(tmp, { force: true });
-    throw e;
-  }
+  writeAtomic(f, JSON.stringify(s));
 }
 
-// Windows refuses a rename onto a file another process has open (EPERM/EACCES/EBUSY) for a moment; retry ~200 ms.
-export function renameWithRetry(from: string, to: string, rename: (a: string, b: string) => void = renameSync): void {
-  for (let i = 0; ; i++) {
-    try {
-      return rename(from, to);
-    } catch (e) {
-      if (i >= 20 || !TRANSIENT.includes((e as NodeJS.ErrnoException).code ?? '')) throw e;
-      pause(10);
-    }
-  }
-}
+export { renameWithRetry }; // kept for existing importers
 
 export function clearTurn(root: string, session: string): void {
   writeState(root, session, { ...readState(root, session), files: [], approved: false, reasonDenied: [], stopAttempts: 0 });

@@ -94,11 +94,54 @@ function switchAsk(cmds: string[], cwd: string): Decision | null {
   return null;
 }
 
+const base = (t: string) => t.split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, '');
+const DELETERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'truncate', 'mv']);
+/**
+ * Targets of touch, find -delete/-exec rm (its start paths), tar extract (-C/--directory) and create (-f), unzip -d
+ * and rsync's destination. ponytail: tar's key letters are read only from its first argument.
+ */
+function moreWriteTargets(cmds: string[]): string[] {
+  const out: string[] = [];
+  for (const toks of cmds.flatMap(segTokens)) {
+    const i = toks.findIndex((t) => ['touch', 'find', 'tar', 'unzip', 'rsync'].includes(base(t)));
+    if (i < 0) continue;
+    const args = toks.slice(i + 1);
+    const name = base(toks[i]);
+    // `-C DIR`, `--directory DIR` or `--directory=DIR`. ponytail: an attached `-CDIR` is not read.
+    const valueOf = (short: string, long: string): string[] =>
+      args.flatMap((t, j) => (t === short || t === long ? [args[j + 1] ?? ''] : t.startsWith(long + '=') ? [t.slice(long.length + 1)] : []));
+    if (name === 'touch') {
+      for (let j = 0; j < args.length; j++) {
+        if (/^-[tdr]$/.test(args[j])) j++;
+        else if (!args[j].startsWith('-')) out.push(args[j]);
+      }
+    } else if (name === 'find') {
+      const deletes = args.includes('-delete') || args.some((t, j) => /^-(exec|execdir|ok|okdir)$/.test(t) && DELETERS.has(base(args[j + 1] ?? '')));
+      const starts = args.slice(0, Math.max(0, args.findIndex((t) => /^[-(!]/.test(t)))).filter(Boolean);
+      if (deletes) out.push(...(starts.length ? starts : ['.']));
+    } else if (name === 'tar') {
+      const key = args[0] ?? '';
+      const keyLetters = /^-?[a-zA-Z]+$/.test(key) && !key.startsWith('--') ? key.replace(/^-/, '') : '';
+      const has = (letter: string, long: string) => keyLetters.includes(letter) || args.includes('-' + letter) || args.includes(long);
+      if (has('x', '--extract') || args.includes('--get')) out.push(...valueOf('-C', '--directory'));
+      if (has('c', '--create') || has('r', '--append') || has('u', '--update')) {
+        out.push(...valueOf('-f', '--file'));
+        if (keyLetters.includes('f')) out.push(args[1] ?? ''); // tar -czf OUT …
+      }
+    } else if (name === 'unzip') out.push(...valueOf('-d', '--directory'));
+    else if (name === 'rsync') {
+      const pos = args.filter((t) => !t.startsWith('-'));
+      if (pos.length >= 2) out.push(pos[pos.length - 1]);
+    }
+  }
+  return out.filter(Boolean);
+}
+
 /** Every path a shell command may write, move, delete or restore (bash -c included), as written. */
 export function shellWriteTargets(cmd: string): string[] {
   const cmds = expand(cmd);
   const mc = moveCopyTargets(cmds);
-  return [...cmds.flatMap(fileWriteTargets), ...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv, ...mc.cp, ...gitRestoreTargets(cmds)];
+  return [...cmds.flatMap(fileWriteTargets), ...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv, ...mc.cp, ...gitRestoreTargets(cmds), ...moreWriteTargets(cmds)];
 }
 
 // Interpreters and the options that make their next word inline code. Only the interpreter's own options, before its
@@ -175,7 +218,7 @@ export const protect: Check = {
       const git = gitRestoreTargets(cmds);
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
-      paths = [...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git];
+      paths = [...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)];
       if (!paths.some((p) => p && isProtected(root, p))) return switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
     }
     return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };

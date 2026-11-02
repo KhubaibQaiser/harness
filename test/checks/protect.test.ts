@@ -235,3 +235,20 @@ test.each([
   'node --require ./node_modules/x/register.js src/a.ts', 'node --import ./node_modules/tsx/dist/esm/index.mjs src/a.ts', 'python3 -m pytest -c node_modules/x.ini',
   'python3 node_modules/x/run.py -c a', 'node node_modules/.bin/vitest run', 'perl node_modules/x/a.pl -e x', 'bun node_modules/.bin/x -e y',
 ])('running a file from node_modules is not inline code: %s', (c) => expect(bash(c)).toBe('allow'));
+
+// Round 8: more shell writers name their target.
+test.each([
+  'touch packages/a/node_modules/x', 'touch -d 2020-01-01 node_modules/x', "find node_modules -name '*.log' -delete", 'find ./node_modules/x -type f -exec rm {} ;',
+  'find packages/a/node_modules -execdir rm -f {} +', 'tar -xzf pkg.tgz -C node_modules/', 'tar xzf pkg.tgz --directory=node_modules/x', 'tar -x -f pkg.tgz --directory node_modules',
+  'tar -czf node_modules/x.tgz src', 'unzip pkg.zip -d node_modules/x', 'rsync -a dist/ node_modules/@khubaibqaiser/harness/dist/', 'install -m 644 a.js node_modules/x/a.js',
+  'dd if=a of=node_modules/x bs=1',
+])('writer into node_modules is denied: %s', (c) => {
+  const d = run('Bash', { command: c });
+  expect(d.kind, c).toBe('deny');
+  expect(d.reason, c).toBe(NM_REASON);
+});
+test.each(['touch .harness/state/x', 'find .harness/logs -delete', 'tar -xf a.tgz -C .harness/hooks'])('writer into harness files is denied: %s', (c) => expect(bash(c)).toBe('deny'));
+test.each([
+  "find node_modules -name '*.d.ts'", 'tar -czf out.tgz -C node_modules x', 'tar -tzf node_modules/x.tgz', 'rsync -a node_modules/x/ /tmp/x/', 'unzip -l node_modules/x.zip',
+  'touch src/a.ts', 'find src -name "*.tmp" -delete',
+])('reading node_modules, or writing elsewhere, is allowed: %s', (c) => expect(bash(c)).toBe('allow'));

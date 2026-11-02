@@ -275,3 +275,15 @@ test.each([
 ])('F5: inline code through a runner is denied: %s', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
 test.each(['npx tsx src/a.ts', 'tsx node_modules/x/run.ts -e y', 'ts-node -P tsconfig.json src/a.ts', 'npx ts-node --project node_modules/x/tsconfig.json src/a.ts'])(
   'F5: running a file is allowed: %s', (c) => expect(bash(c)).toBe('allow'));
+
+// Round 10 F6: protected names count only inside the inline code itself, and only as a path segment.
+test.each([
+  `cd node_modules/foo && node -e "console.log(process.cwd())"`, `ls node_modules; node -p "1+1"`, `cat .harness/config.yaml && node -p "process.version"`,
+  `node -p "require('./package.json').version" > node_modules.txt`, 'echo node -e x node_modules', `node -e "console.log('my_node_modules_x')"`,
+  `node -e "console.log(1)" && cat .claude/settings.json`, `python3 -c "print(1)"; ls node_modules`,
+])('F6: %s is allowed', (c) => expect(bash(c)).toBe('allow'));
+test.each([
+  `node -e "require('fs').writeFileSync('node_modules/x','y')" > out.txt`, `ls; node -e "require('fs').rmSync('node_modules')"`, `bash -c "node -e \\"require('fs').rmSync('node_modules/x')\\""`,
+  `node --eval="require('fs').rmSync('node_modules/x')"`, `node -e "a(); require('fs').rmSync('node_modules/x')"`,
+])('F6: inline code that names node_modules is still denied: %s', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
+test('F6: a redirect into node_modules/ is still denied', () => expect(run('Bash', { command: `node -p "1" > node_modules/x.txt` }).reason).toBe(NM_REASON));

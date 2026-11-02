@@ -6,7 +6,8 @@ import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
-import { fileWriteTargets, gitArgs, rmTargets } from './guard.js';
+import { commandStart, fileWriteTargets, gitArgs, rmTargets } from './guard.js';
+import { commandName, cPayloads, segments, unquote, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/config.yaml', '.harness/manifest.json', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/config.yaml', '.harness/manifest.json', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
@@ -160,23 +161,38 @@ const INTERPRETERS: Record<string, Interp> = {
   perl: { inline: /^-[a-zA-Z]*[eE]$/, value: new Set(['-I', '-M', '-m']) }, ruby: { inline: /^-[a-zA-Z]*e$/, value: new Set(['-r', '-I', '-C']) },
   php: { inline: /^-r$/, value: new Set(['-c', '-d']) },
 };
-/** True when the command runs inline interpreter code (bash -c payloads included). The interpreter may be named by a path. */
-function runsInlineCode(cmd: string): boolean {
-  for (const toks of expand(cmd).flatMap(segTokens)) {
-    for (let i = 0; i < toks.length; i++) {
-      const it = INTERPRETERS[toks[i].split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, '')];
-      if (!it) continue;
-      for (let j = i + 1; j < toks.length; j++) {
-        const t = toks[j];
-        if (!t.startsWith('-')) { if (it.sub && t === it.sub) return true; break; } // the script or subcommand
-        if (it.inline.test(t)) return true;
-        if (it.stop?.has(t)) break;
-        if (it.value?.has(t)) j++;
+/**
+ * The inline code a command runs, with the arguments that invocation passes to it (the code may write them, as perl -i
+ * or node -e "…" "$1" can), up to the end of that command or a redirection. `-c` payloads are read too. The
+ * interpreter may be named by a path, and may sit behind any runner (npx, pnpm exec, env, timeout, …).
+ */
+function inlineCode(cmd: string, depth = 0): string[] {
+  const out: string[] = [];
+  for (const seg of segments(cmd)) {
+    const ws = words(seg);
+    // The interpreter must be where a command runs (after the guard's wrappers and runners), not an echo argument.
+    const i = commandStart(ws.map((w) => w.replace(/["']/g, '')), (name) => Object.hasOwn(INTERPRETERS, name));
+    const it = i < ws.length ? INTERPRETERS[commandName(ws[i])] : undefined;
+    if (it) {
+      for (let j = i + 1; j < ws.length; j++) {
+        const t = unquote(ws[j]);
+        const code = !t.startsWith('-') ? (it.sub && t === it.sub ? j + 1 : -1) : it.inline.test(t) ? (/=/.test(t) ? j : j + 1) : -2;
+        if (code === -2) { if (it.stop?.has(t)) break; if (it.value?.has(t)) j++; continue; }
+        if (code === -1) break; // the script or subcommand: not inline code
+        const end = ws.findIndex((x, k) => k >= code && /^\d*[<>]/.test(x));
+        const args = ws.slice(code, end < 0 ? ws.length : end).map(unquote);
+        if (code === j) args[0] = t.slice(t.indexOf('=') + 1); // --eval=CODE
+        out.push(args.join(' '));
+        break;
       }
     }
   }
-  return false;
+  if (depth < 3) for (const p of cPayloads(cmd)) out.push(...inlineCode(p, depth + 1));
+  return out;
 }
+// A protected name as a path segment (not node_modules.txt or my_node_modules).
+const NM_SEG = /(^|[\\/'"`\s(,=:])node_modules([\\/'"`\s),;:]|$)/i;
+const H_SEG = /(^|[\\/'"`\s(,=:])(\.harness|\.claude[\\/]settings[^\\/'"`\s),;:]*)([\\/'"`\s),;:]|$)/i;
 const GLOB = /[*?[{]/;
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
@@ -211,12 +227,12 @@ export const protect: Check = {
     else if (tool_name === 'Bash') {
       const cmd = String(tool_input.command ?? '');
       // A text match can't tell a read from a write, so inline code that names these paths is denied whatever it does.
-      const inline = runsInlineCode(cmd);
-      if (inline && /\bnode_modules\b/i.test(cmd)) return { kind: 'deny', reason: NM_INLINE, check: 'protect' };
+      const code = inlineCode(cmd);
+      if (code.some((c) => NM_SEG.test(c))) return { kind: 'deny', reason: NM_INLINE, check: 'protect' };
       if (shellWriteTargets(cmd).some((t) => t && inNodeModules(root, t))) return nm;
       // Inline interpreter code (node -e, python -c, …) that names a protected path: its writes can't be parsed.
       // ponytail: textual only; a path built from pieces (".har" + "ness") still gets past.
-      if (inline && /\.harness\b|\.claude[\\/]settings/i.test(cmd)) return { kind: 'deny', reason: H_INLINE, check: 'protect' };
+      if (code.some((c) => H_SEG.test(c))) return { kind: 'deny', reason: H_INLINE, check: 'protect' };
       const cmds = expand(cmd);
       const mc = moveCopyTargets(cmds);
       const removed = [...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv];

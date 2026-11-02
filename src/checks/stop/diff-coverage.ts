@@ -26,7 +26,7 @@ export function changedLines(diffText: string): Map<string, Set<number>> {
   const out = new Map<string, Set<number>>();
   let file: string | null = null;
   let inHunk = false; // header lines (`+++ `) only count before a file's first hunk; `+++ i;` can be added content
-  for (const l of diffText.split('\n')) {
+  for (const l of diffText.split(/\r?\n/)) {
     if (l.startsWith('diff --git ')) file = null, inHunk = false;
     else if (!inHunk && l.startsWith('+++ ')) {
       const p = l.slice(4).split('\t')[0].replace(/^"|"$/g, ''); // git may append a tab (+ timestamp) to paths with spaces

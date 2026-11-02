@@ -49,6 +49,12 @@ test('changedLines parses the real sample diff: added and modified lines, deleti
   expect([...m.get('src/a.ts')!]).toEqual([3, 5, 6]);
 });
 
+test('changedLines reads CRLF diff output the same as LF', async () => {
+  const m = changedLines(fx('diff/sample.diff').replace(/\r?\n/g, '\r\n'));
+  expect([...m.keys()]).toEqual(['src/a.ts']);
+  expect([...m.get('src/a.ts')!]).toEqual([3, 5, 6]);
+});
+
 test('changedLines: pure deletion hunks (+n,0) add nothing; new files and ranges work', async () => {
   const d = 'diff --git a/n.ts b/n.ts\n--- /dev/null\n+++ b/n.ts\n@@ -0,0 +1,3 @@\n+a\n+b\n+c\n@@ -9,2 +11,0 @@\n-x\n-y\n';
   expect([...changedLines(d).get('n.ts')!]).toEqual([1, 2, 3]);

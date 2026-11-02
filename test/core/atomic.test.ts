@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { RETRY, renameWithRetry, retryTransient, writeAtomic } from '../../src/core/atomic.js';
+import { RETRY, renameWithRetry, resetRetryBudget, retryTransient, writeAtomic } from '../../src/core/atomic.js';
 import { applyChanges, type FsLike } from '../../src/install/apply.js';
 import { recordCliPath } from '../../src/core/cli-path.js';
 
@@ -13,6 +13,7 @@ let slept: number[] = [];
 // Windows behaviour on every OS: the platform and the sleep are seams.
 beforeEach(() => {
   slept = [];
+  resetRetryBudget();
   Object.assign(RETRY, { platform: 'win32', sleep: (ms: number) => void slept.push(ms) });
 });
 afterEach(() => void Object.assign(RETRY, saved));
@@ -80,4 +81,32 @@ test('recording the CLI path never throws, even when every write fails', () => {
   writeFileSync(cli, '');
   realFs.mkdirSync(join(root, '.harness/state/cli-path'), { recursive: true }); // a directory where the file goes: the write fails
   expect(() => recordCliPath(root, cli)).not.toThrow();
+});
+
+// Round 12 N5: one retry budget per process (a hook), well under the 10 s hook timeout.
+test('all retries in one process share a total wait budget, then errors are thrown at once', () => {
+  resetRetryBudget(300);
+  const always = () => { throw err('EPERM'); };
+  expect(() => renameWithRetry('a', 'b', always)).toThrow('EPERM');
+  const first = slept.reduce((a, b) => a + b, 0);
+  expect(first).toBeLessThanOrEqual(300);
+  slept = [];
+  let n = 0;
+  expect(() => renameWithRetry('a', 'b', () => { n++; throw err('EPERM'); })).toThrow('EPERM');
+  expect(n).toBe(1); // budget spent: no more waiting
+  resetRetryBudget();
+});
+test('the default budget is 3 s per process', () => {
+  resetRetryBudget();
+  for (let i = 0; i < 5; i++) expect(() => renameWithRetry('a', 'b', () => { throw err('EPERM'); })).toThrow();
+  expect(slept.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(3000);
+  resetRetryBudget();
+});
+// N6: a failed temp write leaves no temp file.
+test('writeAtomic removes its temp file when writing it fails', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'h-atomic-w-'));
+  const f = join(dir, 'x.json');
+  const broken = { ...realFs, writeFileSync: (p: realFs.PathOrFileDescriptor, d: string | NodeJS.ArrayBufferView) => { realFs.writeFileSync(p, String(d).slice(0, 3)); throw err('ENOSPC'); } };
+  expect(() => writeAtomic(f, '{"a":1}', broken)).toThrow('ENOSPC');
+  expect(readdirSync(dir)).toEqual([]);
 });

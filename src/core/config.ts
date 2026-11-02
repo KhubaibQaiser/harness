@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { retryTransient } from './atomic.js';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 
@@ -97,7 +98,7 @@ export function overlay(base: Record<string, unknown>, user: Record<string, unkn
  * `errors` lists what makes the file invalid (bad YAML, a non-mapping, an unknown, mistyped or out-of-range key); each
  * is also in `warnings`. The hooks fail closed on them. A missing file is only a warning: harness is not installed.
  */
-export function loadConfig(root: string): { config: HarnessConfig; warnings: string[]; errors: string[] } {
+export function loadConfig(root: string, read: (p: string, e: 'utf8') => string = readFileSync): { config: HarnessConfig; warnings: string[]; errors: string[] } {
   const config = defaults();
   const file = join(root, '.harness/config.yaml');
   if (!existsSync(file)) return { config, warnings: ['config.yaml not found at .harness/config.yaml; using defaults (tdd and multiFile checks are off)'], errors: [] };
@@ -105,8 +106,17 @@ export function loadConfig(root: string): { config: HarnessConfig; warnings: str
   const errors: string[] = [];
   const fail = (warning: string, error: string) => (warnings.push(warning), errors.push(error));
   let user: unknown;
+  let text: string;
   try {
-    user = parse(readFileSync(file, 'utf8'));
+    text = retryTransient(() => read(file, 'utf8'));
+  } catch (e) {
+    // A read error is not a bad config: say what happened (still fail closed: the gates can't know the settings).
+    const why = (e as Error).message.split('\n')[0];
+    fail(`config.yaml could not be read; using defaults (${why})`, `it could not be read (${why}); try again`);
+    return { config, warnings, errors };
+  }
+  try {
+    user = parse(text);
   } catch (e) {
     const why = (e as Error).message.split('\n')[0];
     fail(`config.yaml is invalid YAML; using defaults (${why})`, `it is not valid YAML (${why})`);

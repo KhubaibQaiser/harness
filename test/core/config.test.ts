@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -105,4 +105,20 @@ test('errors: only what makes the file invalid; a missing file or an outside res
   expect(loadConfig(dirWith('.harness/config.yaml', 'tdd:\n  results_dir: /tmp/x\n')).errors).toEqual([]);
   expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: true\n')).errors).toEqual([]);
   expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: "true"\nbogus: 1\n')).errors).toEqual(['"checks.tdd" must be a boolean', 'unknown key "bogus"']);
+});
+
+test('N5: a config that cannot be read is reported as a read error, not as invalid YAML', async () => {
+  const d = dirWith('.harness/config.yaml', 'checks:\n  tdd: true\n');
+  const { RETRY } = await import('../../src/core/atomic.js');
+  const saved = { ...RETRY };
+  Object.assign(RETRY, { platform: 'win32', sleep: () => {} });
+  try {
+    const r = loadConfig(d, () => { throw Object.assign(new Error('EPERM: operation not permitted, open'), { code: 'EPERM' }); });
+    expect(r.errors.join(' ')).toMatch(/could not be read \(EPERM/);
+    expect(r.errors.join(' ')).not.toMatch(/YAML/);
+    let n = 0;
+    expect(loadConfig(d, (p) => { if (n++ < 2) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); return readFileSync(p, 'utf8'); }).errors).toEqual([]);
+  } finally {
+    Object.assign(RETRY, saved);
+  }
 });

@@ -1,7 +1,8 @@
 import * as realFs from 'node:fs';
-import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 import { ApplyError, ManifestError, applyChanges, readManifest, type Change, type FsLike } from '../../src/install/apply.js';
 import { sha256 } from '../../src/install/text.js';
 import { makeRepo } from './helpers.js';
@@ -219,4 +220,27 @@ describe('applyChanges', () => {
       '`.harness/manifest.json` is unreadable. Restore it from git or delete `.harness/` and run harness init again.',
     );
   });
+});
+
+test('N5: a manifest that cannot be read is a read error, never "unreadable, delete .harness/"', async () => {
+  const { RETRY } = await import('../../src/core/atomic.js');
+  const saved = { ...RETRY };
+  Object.assign(RETRY, { platform: 'win32', sleep: () => {} });
+  const root = mkdtempSync(join(tmpdir(), 'h-mf-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ version: '1', createdAt: 'x', files: [] }));
+  const eperm = () => { throw Object.assign(new Error('EPERM: operation not permitted, open'), { code: 'EPERM' }); };
+  try {
+    let e: unknown;
+    try { readManifest(root, eperm); } catch (x) { e = x; }
+    expect(e).toBeInstanceOf(ManifestError);
+    expect((e as Error).message).toMatch(/could not be read \(EPERM/);
+    expect((e as Error).message).not.toMatch(/delete/);
+    let n = 0;
+    expect(readManifest(root, (p) => { if (n++ < 2) eperm(); return readFileSync(p, 'utf8'); })!.version).toBe('1');
+    writeFileSync(join(root, '.harness/manifest.json'), '{bad');
+    expect(() => readManifest(root)).toThrow(/unreadable/); // a real parse error keeps its message
+  } finally {
+    Object.assign(RETRY, saved);
+  }
 });

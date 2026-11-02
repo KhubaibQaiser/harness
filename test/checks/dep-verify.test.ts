@@ -148,3 +148,15 @@ test('lookup budget starts at process start', () => {
   now = 9000;
   expect(reason(verifyPackages(['a1'], { root: repo(), now: NOW, lookup, startedAt: 0, clock: () => now }))).toBe('"a1": could not verify on the registry');
 });
+
+test('names outside the npm name grammar are denied without a lookup (no shell metacharacters reach npm.cmd)', () => {
+  const bad = ['a&calc', 'a|b', '%PATH%', 'x^y', 'a"b', "a'b", '"&calc&"', 'a<b', 'a>b', '_under', '@scope/', '@/x', 'a b', 'a'.repeat(215)];
+  for (const n of bad) {
+    let looked = false;
+    const d = run([n], () => ((looked = true), OLD));
+    expect(d.kind, n).toBe('deny');
+    expect(reason(d), n).toContain('is not a valid npm package name');
+    expect(looked, n).toBe(false);
+  }
+  for (const n of ['lodash', '@types/node', 'JSONStream', 'lodash.merge', 'a-b_c~d', '7zip-bin', 'react@18.3.1', '@scope/pkg@^1']) expect(run([n], () => OLD).kind, n).toBe('ask');
+});

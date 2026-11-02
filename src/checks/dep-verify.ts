@@ -20,6 +20,11 @@ const MIN_AGE_DAYS = 14;
 const UNRESOLVABLE = /^(file:|link:|workspace:|git\+|github:|https?:\/\/|[./])/;
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
 const UNVERIFIED = (n: string) => `"${n}": could not verify on the registry`;
+// npm's name grammar (legacy names may have capitals). Checked before any lookup: on Windows the name reaches npm.cmd,
+// which re-parses its arguments with cmd.exe, so a name with & | % ^ " < > could run a command before anyone approves.
+const SEG = '[A-Za-z0-9][A-Za-z0-9._~-]*';
+const NPM_NAME = new RegExp(`^(@${SEG}/)?${SEG}$`);
+export const validNpmName = (n: string): boolean => n.length <= 214 && NPM_NAME.test(n);
 
 // ponytail: npm output is read as JSON text; a changed npm format falls to 'error' (an ask), never a silent allow.
 export function parseNpmView(stdout: string, stderr: string): Lookup {
@@ -33,6 +38,7 @@ export function parseNpmView(stdout: string, stderr: string): Lookup {
 }
 
 export function defaultLookup(name: string, timeoutMs = 5000): Lookup {
+  if (!validNpmName(name)) return 'error'; // never hand a non-name to the shell
   try {
     const [file, args, opts] = syncCommand('npm', ['view', name, 'time.created', '--json']);
     return parseNpmView(String(execFileSync(file, args, { ...opts, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] })), '');
@@ -95,6 +101,7 @@ export function verifyPackages(specs: string[], opts: VerifyOpts): Decision {
     if (names.includes(name)) continue;
     names.push(name);
     if (UNRESOLVABLE.test(spec)) { asks.push(UNVERIFIED(spec)); continue; }
+    if (!validNpmName(name)) { denies.push(`"${name}" is not a valid npm package name, so it was not looked up.`); continue; }
     const remaining = budget - (clock() - (opts.startedAt ?? start));
     if (remaining <= 0) { asks.push(UNVERIFIED(name)); continue; }
     const found = opts.lookup(name, Math.min(5000, remaining));

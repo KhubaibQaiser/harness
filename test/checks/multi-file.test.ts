@@ -466,3 +466,20 @@ test('require_reason: an entry is searched once; no reason by then logs reason-n
   expect(t.log().filter((e) => e.decision === 'reason-not-found' || e.decision === 'reason-found-late').map((e) => [e.decision, e.files])).toEqual([['reason-not-found', ['b.ts']]]);
   expect(readState(t.root, 's').lateReasons ?? []).toEqual([]);
 });
+
+test('require_reason: Stop clears the handled late reasons under the lock, keeping what other hooks wrote meanwhile', async () => {
+  const { loadConfig } = await import('../../src/core/config.js');
+  const t = reasonSetup([rec('user', Date.now() - 60_000, 'task')]);
+  const A = { ts: new Date(Date.now() - 5000).toISOString(), rel: 'a.ts' };
+  const B = { ts: new Date().toISOString(), rel: 'b.ts' };
+  const stale = { ...readState(t.root, 's'), lateReasons: [A] }; // Stop's snapshot, taken before the other hook ran
+  writeState(t.root, 's', { ...stale, files: ['x.ts'], lateReasons: [A, B] }); // a locked hook ran during Stop
+  const ctx: any = {
+    input: { session_id: 's', cwd: t.root, hook_event_name: 'Stop', transcript_path: join(t.root, 't.jsonl') },
+    root: t.root, config: loadConfig(t.root).config, state: stale, unattended: true, env: {},
+    save(s: any) { writeState(t.root, 's', s); ctx.state = s; },
+  };
+  expect(await multiFile.run(ctx)).toEqual({ kind: 'allow' });
+  expect(readState(t.root, 's')).toMatchObject({ files: ['x.ts'], lateReasons: [B] });
+  expect(t.log().filter((e) => e.decision === 'reason-not-found').map((e) => e.of)).toEqual([A.ts]);
+});

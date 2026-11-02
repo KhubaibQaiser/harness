@@ -98,7 +98,8 @@ export function shellWriteTargets(cmd: string): string[] {
   return [...cmds.flatMap(fileWriteTargets), ...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv, ...mc.cp, ...gitRestoreTargets(cmds)];
 }
 
-const INLINE_CODE = /(^|[\s;&|(`])(node|nodejs|deno|bun|python3?|perl|ruby|php)(\.exe)?\s+([^;&|\n]*\s)?(-e|-p|-c|-r|--eval|--print|eval|-pe|-ne)(\s|=|$)/;
+// The interpreter may be named by a path (/usr/bin/node, C:\\nodejs\\node.exe, quoted) and in any case.
+const INLINE_CODE = /(^|[\s;&|(`\\/"'])(node|nodejs|deno|bun|python3?|perl|ruby|php)(\.exe)?["']?\s+([^;&|\n]*\s)?(-e|-p|-c|-r|--eval|--print|eval|-pe|-ne)(\s|=|$)/i;
 const GLOB = /[*?[{]/;
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]

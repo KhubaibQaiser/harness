@@ -206,3 +206,11 @@ test.each([
 });
 test.each(['cat node_modules/x/package.json', 'ls node_modules', 'cp node_modules/x/a.js /tmp/a.js', 'pnpm install', 'npm ci', 'echo x > /tmp/node_modules/x.js', 'grep -r foo node_modules'])(
   'reading node_modules, an install, or a path outside the repo is not this rule: %s', (c) => expect(bash(c)).toBe('allow'));
+
+// Round 7: interpreters named by a Windows path or in another case still count.
+test.each([
+  `C:\\nodejs\\node.exe -e "require('fs').writeFileSync('.harness/state/x', '')"`,
+  `/usr/local/bin/node -e "require('fs').writeFileSync('.harness/manifest.json','{}')"`,
+  `"C:\\Program Files\\nodejs\\node.exe" -e "require('fs').rmSync('node_modules/x', { recursive: true })"`,
+  `NODE.EXE -e "require('fs').writeFileSync('.harness\\\\state\\\\x', '')"`,
+])('inline interpreter by path or case is denied: %s', (c) => expect(bash(c)).toBe('deny'));

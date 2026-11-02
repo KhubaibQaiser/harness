@@ -198,7 +198,6 @@ test.each([
   'mv a.js node_modules/x/a.js', 'mv node_modules/x/a.js a.js', 'cp -r dist node_modules/@khubaibqaiser/harness/dist', 'rm -rf node_modules',
   'rm -rf node_modules/x', 'rm node_modules/*', 'rm -rf packages/*/node_modules', 'git checkout -- node_modules/x/a.js', 'bash -c "echo x > node_modules/y.js"',
   'truncate -s 0 node_modules/x.js', 'ln -s /tmp/evil node_modules/x',
-  `node -e "require('fs').writeFileSync('node_modules/@khubaibqaiser/harness/dist/cli.mjs', '')"`, `python3 -c "open('node_modules/x.js','w')"`,
 ])('shell write into node_modules is denied: %s', (c) => {
   const d = run('Bash', { command: c });
   expect(d.kind, c).toBe('deny');
@@ -214,3 +213,25 @@ test.each([
   `"C:\\Program Files\\nodejs\\node.exe" -e "require('fs').rmSync('node_modules/x', { recursive: true })"`,
   `NODE.EXE -e "require('fs').writeFileSync('.harness\\\\state\\\\x', '')"`,
 ])('inline interpreter by path or case is denied: %s', (c) => expect(bash(c)).toBe('deny'));
+
+// Round 8: only the interpreter's own flags before its first argument are inline code, and the reason says why.
+const NM_INLINE = 'Inline code (node -e, python -c and the like) that names node_modules is denied: it may write there, and a text match cannot tell a read from a write. node_modules is managed by the package manager: change package.json and run an install instead.';
+const H_INLINE = 'Inline code (node -e, python -c and the like) that names harness files or Claude settings is denied: it may write them, and a text match cannot tell a read from a write. Harness files and Claude settings are changed by a person, not the agent.';
+test.each([
+  `node -e "require('fs').writeFileSync('node_modules/@khubaibqaiser/harness/dist/cli.mjs', '')"`, `python3 -c "open('node_modules/x.js','w')"`,
+  `node -e "console.log(require('./node_modules/vitest/package.json').version)"`, `node --eval="require('./node_modules/x')"`, `node -r ./setup.js -e "require('node_modules/x')"`,
+  `perl -pi -e 's/a/b/' node_modules/x.js`, `ruby -e 'File.write("node_modules/x", "")'`, `php -r "unlink('node_modules/x');"`, `deno eval "Deno.removeSync('node_modules/x')"`,
+  `timeout 5 node -e "require('fs').rmSync('node_modules', { recursive: true })"`,
+])('inline code naming node_modules is denied with the inline reason: %s', (c) => {
+  const d = run('Bash', { command: c });
+  expect(d.kind, c).toBe('deny');
+  expect(d.reason, c).toBe(NM_INLINE);
+});
+test('inline code naming harness files is denied with the inline reason', () => {
+  expect(run('Bash', { command: `node -e "require('fs').writeFileSync('.harness/manifest.json','{}')"` }).reason).toBe(H_INLINE);
+});
+test.each([
+  'node ./node_modules/.bin/jest -c jest.config.js', 'node node_modules/typescript/bin/tsc -p tsconfig.json', 'node -r ./node_modules/tsx/dist/cjs/index.cjs src/a.ts',
+  'node --require ./node_modules/x/register.js src/a.ts', 'node --import ./node_modules/tsx/dist/esm/index.mjs src/a.ts', 'python3 -m pytest -c node_modules/x.ini',
+  'python3 node_modules/x/run.py -c a', 'node node_modules/.bin/vitest run', 'perl node_modules/x/a.pl -e x', 'bun node_modules/.bin/x -e y',
+])('running a file from node_modules is not inline code: %s', (c) => expect(bash(c)).toBe('allow'));

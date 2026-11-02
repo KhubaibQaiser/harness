@@ -12,6 +12,9 @@ const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**',
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/config.yaml', '.harness/manifest.json', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
 const REASON = 'Harness files and Claude settings are changed by a person, not the agent.';
 const NM_REASON = 'node_modules is managed by the package manager, not edited by hand: change package.json and run an install instead.';
+const INLINE_WHY = 'Inline code (node -e, python -c and the like) that names';
+const NM_INLINE = `${INLINE_WHY} node_modules is denied: it may write there, and a text match cannot tell a read from a write. node_modules is managed by the package manager: change package.json and run an install instead.`;
+const H_INLINE = `${INLINE_WHY} harness files or Claude settings is denied: it may write them, and a text match cannot tell a read from a write. ${REASON}`;
 // Owner rule: nobody edits node_modules directly. Installs still go through the guard's install gate.
 const inNodeModules = (root: string, p: string): boolean => !!toRepoPath(root, p)?.toLowerCase().split('/').includes('node_modules');
 
@@ -98,8 +101,34 @@ export function shellWriteTargets(cmd: string): string[] {
   return [...cmds.flatMap(fileWriteTargets), ...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv, ...mc.cp, ...gitRestoreTargets(cmds)];
 }
 
-// The interpreter may be named by a path (/usr/bin/node, C:\\nodejs\\node.exe, quoted) and in any case.
-const INLINE_CODE = /(^|[\s;&|(`\\/"'])(node|nodejs|deno|bun|python3?|perl|ruby|php)(\.exe)?["']?\s+([^;&|\n]*\s)?(-e|-p|-c|-r|--eval|--print|eval|-pe|-ne)(\s|=|$)/i;
+// Interpreters and the options that make their next word inline code. Only the interpreter's own options, before its
+// first argument (the script it runs), count: `node node_modules/.bin/jest -c x` runs a file, `node -e '…'` is code.
+type Interp = { inline: RegExp; value?: Set<string>; stop?: Set<string>; sub?: string };
+const NODE: Interp = { inline: /^(-e|--eval|-p|--print)(=|$)/, value: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--input-type', '--env-file', '--title']) };
+const PY: Interp = { inline: /^-[a-zA-Z]*c$/, value: new Set(['-W', '-X']), stop: new Set(['-m']) };
+const INTERPRETERS: Record<string, Interp> = {
+  node: NODE, nodejs: NODE, bun: { ...NODE, value: new Set(['-r', '--preload', '--cwd', '--config']) },
+  python: PY, python3: PY, deno: { inline: /^$/, sub: 'eval' },
+  perl: { inline: /^-[a-zA-Z]*[eE]$/, value: new Set(['-I', '-M', '-m']) }, ruby: { inline: /^-[a-zA-Z]*e$/, value: new Set(['-r', '-I', '-C']) },
+  php: { inline: /^-r$/, value: new Set(['-c', '-d']) },
+};
+/** True when the command runs inline interpreter code (bash -c payloads included). The interpreter may be named by a path. */
+function runsInlineCode(cmd: string): boolean {
+  for (const toks of expand(cmd).flatMap(segTokens)) {
+    for (let i = 0; i < toks.length; i++) {
+      const it = INTERPRETERS[toks[i].split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, '')];
+      if (!it) continue;
+      for (let j = i + 1; j < toks.length; j++) {
+        const t = toks[j];
+        if (!t.startsWith('-')) { if (it.sub && t === it.sub) return true; break; } // the script or subcommand
+        if (it.inline.test(t)) return true;
+        if (it.stop?.has(t)) break;
+        if (it.value?.has(t)) j++;
+      }
+    }
+  }
+  return false;
+}
 const GLOB = /[*?[{]/;
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
@@ -133,11 +162,13 @@ export const protect: Check = {
     if (target !== null) paths = [target];
     else if (tool_name === 'Bash') {
       const cmd = String(tool_input.command ?? '');
-      if (INLINE_CODE.test(cmd) && /node_modules[\\/]/i.test(cmd)) return nm;
+      // A text match can't tell a read from a write, so inline code that names these paths is denied whatever it does.
+      const inline = runsInlineCode(cmd);
+      if (inline && /\bnode_modules\b/i.test(cmd)) return { kind: 'deny', reason: NM_INLINE, check: 'protect' };
       if (shellWriteTargets(cmd).some((t) => t && inNodeModules(root, t))) return nm;
       // Inline interpreter code (node -e, python -c, …) that names a protected path: its writes can't be parsed.
       // ponytail: textual only; a path built from pieces (".har" + "ness") still gets past.
-      if (INLINE_CODE.test(cmd) && /\.harness[\\/]|\.claude[\\/]settings/i.test(cmd)) return { kind: 'deny', reason: REASON, check: 'protect' };
+      if (inline && /\.harness\b|\.claude[\\/]settings/i.test(cmd)) return { kind: 'deny', reason: H_INLINE, check: 'protect' };
       const cmds = expand(cmd);
       const mc = moveCopyTargets(cmds);
       const removed = [...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv];

@@ -55,7 +55,7 @@ Installs of any kind (JS or Python) are denied by default. To allow them, run th
 
 Where a gate is off for the repo's stack, `init` and `status` say so in plain words.
 
-TDD needs a JSON test reporter and coverage output. `init` shows the edit to your Vitest config or Jest `test` script in its plan, and writes nothing until you confirm or pass `--yes`. If a test config can't be edited safely, `init` prints the lines to add under "Do these by hand:". That list also holds the ESLint ignore line when `init` can't add `.harness/` itself. The TDD gate reads its results from those settings, so add the lines before you rely on TDD for that package. Until they are added, the red-first check can deny edits under `tdd.paths`. `harness doctor` also lists them.
+TDD needs a JSON test reporter and coverage output. `init` shows the edit to your Vitest config or Jest `test` script in its plan, and writes nothing until you confirm or pass `--yes`. If a package's test config can't be edited safely (or it has none), `init` prints the lines to add under "Do these by hand:" and leaves that package's `src/**` out of `tdd.paths`, so TDD is off for it. If no package is left, `checks.tdd` is `false`. `status` names each such package and why. `harness doctor` repeats the lines until they are in the config, then tells you to add `<package>/src/**` to `tdd.paths`. Harness never rewrites that config later. The "Do these by hand:" list also holds the ESLint ignore line when `init` can't add `.harness/` itself.
 
 ## Commands
 

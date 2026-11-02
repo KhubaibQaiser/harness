@@ -7,7 +7,8 @@ import { MIN_CLAUDE_CODE } from '../core/min-claude.js';
 import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { sha256 } from '../install/text.js';
-import { testConfigChange } from '../install/test-config.js';
+import { hasResultsOutput, testConfigChange } from '../install/test-config.js';
+import { srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
 
@@ -99,12 +100,24 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const config = v.config;
   const facts = detect(root);
 
+  const whereOf = (dir: string) => (dir === '.' ? 'the root package' : `\`${dir}\``);
+  // Packages init left out of TDD (test config not safely editable) and still out of it. Doctor never edits their config.
+  const left = new Set((manifest.tddOff ?? []).filter((d) => !(config.checks.tdd && config.tdd.paths.includes(srcGlob(d)))));
+  for (const p of facts.packages.filter((p) => left.has(p.dir) && p.test !== 'none')) {
+    const glob = `\`${srcGlob(p.dir)}\``;
+    const addPath = `${config.checks.tdd ? 'add' : 'set checks.tdd to true and add'} ${glob} to tdd.paths in .harness/config.yaml`;
+    const r = testConfigChange(p, root, config.tdd.results_dir);
+    if (hasResultsOutput(p, root, config.tdd.results_dir)) fix(`TDD is off for ${whereOf(p.dir)}`, addPath);
+    else if ('manual' in r) fix(`TDD is off for ${whereOf(p.dir)} because its test config could not be edited safely`, `do this by hand: ${r.manual.join(' ')}; then ${addPath}`);
+    else fix(`TDD is off for ${whereOf(p.dir)}`, `${addPath}, then run harness update to add the reporter output`);
+  }
+
   if (config.checks.tdd) {
-    const tddPkgs = facts.packages.filter((p) => p.test !== 'none'); // same set update checks
+    const tddPkgs = facts.packages.filter((p) => p.test !== 'none' && !left.has(p.dir)); // same set update checks
     for (const p of tddPkgs) {
       const r = testConfigChange(p, root, config.tdd.results_dir);
-      const where = p.dir === '.' ? 'the root package' : `\`${p.dir}\``;
-      if ('none' in r) ok(`${p.test} reporter output is set up for ${where}`);
+      const where = whereOf(p.dir);
+      if ('none' in r || ('manual' in r && hasResultsOutput(p, root, config.tdd.results_dir))) ok(`${p.test} reporter output is set up for ${where}`);
       else if ('change' in r) fix(`\`${r.change.rel}\` lacks the JSON reporter output the TDD gate reads`, 'run harness update to add it');
       else fix(`the ${p.test} reporter output is not set up for ${where}`, `do this by hand: ${r.manual.join(' ')}`);
     }

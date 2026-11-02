@@ -155,6 +155,21 @@ function jestChange(pkg: PackageFacts, root: string, path: string): TestConfigRe
   return { change: { kind: 'update', rel, before, after, blocks: [add] } };
 }
 
+/** True when the package already writes its results file: set up as init would, or by hand in a config init cannot edit. */
+export function hasResultsOutput(pkg: PackageFacts, root: string, resultsDir: string): boolean {
+  const r = testConfigChange(pkg, root, resultsDir);
+  if ('none' in r) return true;
+  if ('change' in r) return false;
+  const path = resultPath(pkg, root, resultsDir);
+  const file = pkg.test === 'vitest' ? pkg.testConfig : pkg.test === 'jest' ? 'package.json' : undefined;
+  if (!file) return false;
+  try {
+    return readFileSync(join(root, pkg.dir, file), 'utf8').includes(path);
+  } catch {
+    return false;
+  }
+}
+
 export function testConfigChange(pkg: PackageFacts, root: string, resultsDir: string): TestConfigResult {
   if (pkg.test === 'none') return { none: true };
   const path = resultPath(pkg, root, resultsDir);

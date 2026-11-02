@@ -11,6 +11,8 @@ const PATHS = ['checks.tdd', 'checks.multiFile', 'tdd.paths', 'tdd.exempt', 'tdd
 it('pnpm monorepo preset', () => {
   const f = detect(makeRepo({
     'package.json': pj({ name: 'root', scripts: { lint: 'eslint .', typecheck: 'tsc', format: 'prettier -w .' }, devDependencies: { vitest: '1' } }),
+    'vitest.config.ts': "export default { test: {} };\n",
+    'packages/a/vitest.config.ts': "export default { test: {} };\n",
     'pnpm-lock.yaml': '',
     'pnpm-workspace.yaml': 'packages:\n  - "packages/*"\n',
     'packages/a/package.json': pj({ name: 'a', scripts: { test: 'vitest' }, devDependencies: { vitest: '1' } }),
@@ -85,4 +87,39 @@ it('every config path the preset sets has a reason', () => {
       expect(reasons[k]).not.toMatch(/please/i);
     }
   }
+});
+
+const VCFG = "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: {} });\n";
+const UNSAFE = "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: { root: './src' } });\n";
+
+it('a package whose test config cannot be edited safely is left out of tdd.paths, with the why', () => {
+  const f = detect(makeRepo({
+    'package.json': pj({ name: 'root' }),
+    'pnpm-lock.yaml': '',
+    'pnpm-workspace.yaml': 'packages:\n  - "packages/*"\n',
+    'packages/a/package.json': pj({ name: 'a', scripts: { test: 'vitest' }, devDependencies: { vitest: '1' } }),
+    'packages/a/vitest.config.ts': VCFG,
+    'packages/b/package.json': pj({ name: 'b', scripts: { test: 'vitest' }, devDependencies: { vitest: '1' } }),
+    'packages/b/vitest.config.ts': UNSAFE,
+  }));
+  const p = preset(f);
+  expect(p.config.checks.tdd).toBe(true);
+  expect(p.config.tdd.paths).toEqual(['packages/a/src/**']);
+  expect(p.tddOff.map((o) => o.dir)).toEqual(['packages/b']);
+  expect(p.tddOff[0].manual.join('\n')).toContain('outputFile');
+  expect(p.off).toEqual([{ gate: 'TDD', why: 'TDD off for `packages/b` because its test config could not be edited safely; add the printed lines, then add `packages/b/src/**` to tdd.paths.' }]);
+  expect(validateConfig(p.config).ok).toBe(true);
+});
+
+it('no package left with a safe test config: checks.tdd false with that reason', () => {
+  const p = preset(detect(makeRepo({
+    'package.json': pj({ name: 'u', scripts: { test: 'vitest run' }, devDependencies: { vitest: '1' } }),
+    'vitest.config.ts': UNSAFE,
+  })));
+  expect(p.config.checks.tdd).toBe(false);
+  expect(p.config.tdd.paths).toEqual([]);
+  expect(p.tddOff.map((o) => o.dir)).toEqual(['.']);
+  const why = 'TDD off for the root package because its test config could not be edited safely; add the printed lines, then add `src/**` to tdd.paths.';
+  expect(p.off).toEqual([{ gate: 'TDD', why }, { gate: 'coverage', why }]);
+  expect(p.reasons['checks.tdd']).toContain('could not be edited safely');
 });

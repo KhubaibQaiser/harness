@@ -9,7 +9,7 @@ import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { planChanges } from '../install/plan.js';
-import { preset } from '../install/preset.js';
+import { preset, unsafeWhy } from '../install/preset.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -130,7 +130,9 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     out(`  ${c.kind} ${c.rel}`);
     if (c.kind === 'update') out(unifiedDiff(c.before, c.after, c.rel).trimEnd());
   }
-  if (plan.manual.length) out('Do these by hand:\n' + plan.manual.map((l) => `  ${l}`).join('\n'));
+  // With checks.tdd off the plan skips test configs, but the left-out packages still need their lines.
+  const manual = [...new Set([...plan.manual, ...p.tddOff.flatMap((o) => o.manual)])];
+  if (manual.length) out('Do these by hand:\n' + manual.map((l) => `  ${l}`).join('\n'));
   for (const n of plan.notes) out(`Note: ${n}`);
   if (opts.dryRun) {
     if (touched.length) out(`These files have uncommitted changes; commit or stash them before applying: ${touched.join(', ')}.`);
@@ -140,7 +142,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
 
   // 5. Apply
   try {
-    applyChanges(root, plan.changes, cli.version);
+    applyChanges(root, plan.changes, cli.version, undefined, undefined, { tddOff: p.tddOff.map((o) => o.dir) });
   } catch (e) {
     if (e instanceof ApplyError) return out(e.message), 1;
     throw e;
@@ -153,6 +155,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   out('Gates that are on: ' + gates.filter(([, on]) => on).map(([g]) => g).join(', '));
   const off = gates.filter(([, on]) => !on);
   out('Gates that are off:' + (off.length ? '\n' + off.map(([g]) => `  ${g}: ${why(g)}`).join('\n') : ' none'));
+  if (checks.tdd) for (const o of p.tddOff) out(unsafeWhy(o.dir));
   out(`Commit these files: ${[...plan.changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);
   out('Teammates need nothing else: the hooks are in the repo.');
   return 0;

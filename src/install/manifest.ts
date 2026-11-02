@@ -4,6 +4,8 @@ import { join } from 'node:path';
 export interface Manifest {
   version: string;
   createdAt: string;
+  /** Package dirs init left out of tdd.paths because their test config could not be edited safely. */
+  tddOff?: string[];
   files: { rel: string; kind: 'create' | 'update' | 'delete'; hash: string; backup?: string; blocks?: string[] }[];
 }
 

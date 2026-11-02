@@ -31,7 +31,7 @@ export function applyChanges(
   now: () => Date = () => new Date(),
   fs: FsLike = nodeFs,
   /** `manifest`: write this instead of the computed one, as the transaction's last step (rolled back with the files). */
-  opts: { writeManifest?: boolean; manifest?: Manifest } = {},
+  opts: { writeManifest?: boolean; manifest?: Manifest; tddOff?: string[] } = {},
 ): Manifest {
   const abs = (rel: string) => join(root, ...rel.split('/'));
   const createdAt = now().toISOString();
@@ -71,6 +71,7 @@ export function applyChanges(
   const manifest: Manifest = {
     version,
     createdAt,
+    ...(opts.tddOff?.length ? { tddOff: opts.tddOff } : {}),
     files: changes.map((c) => ({
       rel: c.rel,
       kind: c.kind,

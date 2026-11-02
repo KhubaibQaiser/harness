@@ -29,6 +29,7 @@ test('status shows gates on and not-installed', async () => {
   const r = await go({
     'package.json': JSON.stringify({ name: 'a', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^1' } }),
     'package-lock.json': '{}',
+    'vitest.config.ts': 'export default { test: {} };\n',
   });
   expect(r.out).toMatch(/tdd: on/);
   expect(r.out).toMatch(/guard: on/);
@@ -45,4 +46,27 @@ test('status prints config warnings before the gates', async () => {
   status([], { root, env: {}, out: (s) => (out += s + '\n') });
   expect(out).toMatch(/^warn config: unknown key "bogus" ignored$/m);
   expect(out.indexOf('warn ')).toBeLessThan(out.indexOf('Gates'));
+});
+
+const UNSAFE = "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: { root: './src' } });\n";
+const pkg = (name: string) => JSON.stringify({ name, scripts: { test: 'vitest run' }, devDependencies: { vitest: '^1' } });
+
+test('status: TDD off for a package whose test config could not be edited safely', async () => {
+  const r = await go({ 'package.json': pkg('u'), 'package-lock.json': '{}', 'vitest.config.ts': UNSAFE });
+  const why = 'TDD off for the root package because its test config could not be edited safely; add the printed lines, then add `src/**` to tdd.paths.';
+  expect(r.out).toContain(`tdd: off - ${why}`);
+  expect(r.out).toContain(`coverage: off - ${why}`);
+});
+
+test('status: one unsafe package in a monorepo is named while TDD stays on', async () => {
+  const r = await go({
+    'package.json': JSON.stringify({ name: 'root', workspaces: ['packages/*'] }),
+    'package-lock.json': '{}',
+    'packages/a/package.json': pkg('a'),
+    'packages/a/vitest.config.ts': "export default { test: {} };\n",
+    'packages/b/package.json': pkg('b'),
+    'packages/b/vitest.config.ts': UNSAFE,
+  });
+  expect(r.out).toMatch(/tdd: on/);
+  expect(r.out).toContain('TDD off for `packages/b` because its test config could not be edited safely; add the printed lines, then add `packages/b/src/**` to tdd.paths.');
 });

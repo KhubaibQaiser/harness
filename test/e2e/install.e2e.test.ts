@@ -145,7 +145,7 @@ test('unsafe vitest config: init prints manual lines and doctor names the fix', 
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toBe(f.files['vitest.config.ts']);
   const d = cli(root, 'doctor');
   expect(d.code).toBe(1);
-  expect(d.out).toMatch(/fix .*reporter output is not set up.*do this by hand/);
+  expect(d.out).toMatch(/fix TDD is off for the root package because its test config could not be edited safely: do this by hand/);
   expect(cli(root, 'uninstall', '--yes').code).toBe(0);
   expect(walk(root)).toEqual(before);
 });
@@ -180,11 +180,12 @@ test('doctor flags tampering and a broken wiring, and update repairs both', () =
   expect(c.code).toBe(0);
 });
 
-// Spec 5.4: "keep TDD off for that package". Today checks.tdd stays on, so red-first would deny every edit until the
-// lines are added by hand. Needs a design decision (see the task report); this flips to a plain test once decided.
-test.fails('unsafe vitest config: TDD is off in status', () => {
+// The package is left out of tdd.paths, so red-first never denies edits whose results can never be written.
+test('unsafe vitest config: TDD is off in status and red-first allows edits', () => {
   const f = unsafeVitest();
   const root = repo(f);
   expect(init(root, f).code).toBe(0);
-  expect(cli(root, 'status').out).toMatch(/tdd: off/);
+  expect(cli(root, 'status').out).toMatch(/tdd: off - TDD off for the root package because its test config could not be edited safely/);
+  expect(hook(root, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })).toBeNull();
+  expect(edit(root, 'src/a.ts').decision).toBe('allow');
 });

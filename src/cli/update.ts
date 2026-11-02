@@ -112,7 +112,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     if (c.kind === 'delete' || m.files.some((f) => f.rel === c.rel)) continue;
     files.push({ rel: c.rel, kind: c.kind, hash: sha256(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}) });
   }
-  const err = commit(changes, { version, createdAt: new Date().toISOString(), files });
+  const err = commit(changes, { version, createdAt: new Date().toISOString(), ...(m.tddOff ? { tddOff: m.tddOff } : {}), files });
   if (err) return out(err), 1;
 
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : 'Updated'} \`${c.rel}\``);

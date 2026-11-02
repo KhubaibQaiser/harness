@@ -1,7 +1,7 @@
 import { loadConfig } from '../core/config.js';
 import { readManifest, ManifestError } from '../install/apply.js';
 import { detect } from '../install/detect.js';
-import { OFF_WHY } from '../install/preset.js';
+import { OFF_WHY, srcGlob, unsafeWhy } from '../install/preset.js';
 import { stats, tddStatus, type CliEnv } from './index.js';
 
 declare const __HARNESS_VERSION__: string;
@@ -26,13 +26,16 @@ export function status(args: string[], cli: CliEnv): number {
 
   const { config, warnings } = loadConfig(root);
   const noJs = !detect(root).packages.some((p) => p.test !== 'none');
+  // Packages init left out of TDD that are still out of it.
+  const left = (m.tddOff ?? []).filter((d) => !(config.checks.tdd && config.tdd.paths.includes(srcGlob(d)))).map(unsafeWhy);
+  const tddOffWhy = noJs ? OFF_WHY : left.length ? left.join(' ') : OFF_CONFIG;
   const lines = [...warnings.map((w) => `warn ${w}`), `Harness ${VERSION} (installed ${m.version})`, 'Gates'];
   for (const [label, key] of GATES) {
     const on = config.checks[key];
-    lines.push(`  ${label}: ${on ? 'on' : `off - ${key === 'tdd' && noJs ? OFF_WHY : OFF_CONFIG}`}`);
+    lines.push(`  ${label}: ${on ? 'on' : `off - ${key === 'tdd' ? tddOffWhy : OFF_CONFIG}`}`);
   }
-  if (!config.checks.tdd) lines.push(`  coverage: off - ${noJs ? OFF_WHY : OFF_CONFIG}`);
-  else lines.push(tddStatus(root));
+  if (!config.checks.tdd) lines.push(`  coverage: off - ${tddOffWhy}`);
+  else lines.push(...left.map((w) => `  ${w}`), tddStatus(root));
   lines.push('Last day');
   lines.forEach((l) => out(l));
   return stats(['--days', '1'], cli);

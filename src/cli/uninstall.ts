@@ -158,6 +158,12 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     return out('Dry run: nothing was written.'), 0;
   }
 
+  // Asked first: with .harness/ kept, its .gitignore lines stay too, so logs, state and backups stay untracked.
+  const deleteHarness = yes || (await prompt.confirm('Delete .harness/ including logs? (y/N)'));
+  if (!deleteHarness && changes.some((c) => c.rel === '.gitignore')) {
+    changes.splice(changes.findIndex((c) => c.rel === '.gitignore'), 1);
+    notes.push('Kept the `.harness/` lines in `.gitignore`, so its logs, state and backups stay out of git.');
+  }
   if (changes.length) {
     try {
       applyChanges(root, changes, m.version, undefined, cli.fs, { writeManifest: false });
@@ -178,7 +184,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
 
   // Edited files are kept like any other user edit, but harness is fully uninstalled either way: the manifest always
   // goes, so init, status and doctor see a repo without harness.
-  if (yes || (await prompt.confirm('Delete .harness/ including logs? (y/N)'))) {
+  if (deleteHarness) {
     pruneExcept(join(root, '.harness'), kept.map((k) => join(root, k)));
     out(kept.some((k) => k.startsWith('.harness/')) ? 'Removed `.harness/` except the edited files.' : 'Removed `.harness/`.');
   } else {

@@ -116,6 +116,10 @@ test('asks before deleting .harness and keeps logs on no', async () => {
   expect(r.code).toBe(0);
   expect(existsSync(join(root, '.harness/logs.txt'))).toBe(true);
   expect(existsSync(join(root, '.harness/manifest.json'))).toBe(false);
+  // N8: the .gitignore lines stay, so nothing left in .harness/ shows up for git add -A
+  expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.harness/backup/');
+  expect(r.out).toContain('Kept the `.harness/` lines in `.gitignore`');
+  expect(git(root, 'status', '--porcelain', '--', '.harness/backup', '.harness/logs', '.harness/state')).toBe('');
 });
 
 test('never removes a non-empty parent directory', async () => {

@@ -59,20 +59,34 @@ function tddInvocationDenied(command: string): boolean {
 }
 const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');
 
+// Long names (no leading dot) whose Win32 8.3 short name could stand for a protected file or dir.
+const SHORT_STEMS = ['env', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa', 'credentials', 'netrc', 'pgpass', 'ssh', 'gnupg', 'aws'];
+// ponytail: 8.3 names can't be mapped back exactly (Windows hashes them after a few collisions), so any `~<digit>`
+// segment whose stem could be the start of a protected name is denied; a false deny needs a short-name path.
+function shortNameOfProtected(seg: string): boolean {
+  const m = /^([^~]{1,6})~\d+(?:\.([^.]{1,3}))?$/.exec(seg);
+  if (!m) return false;
+  if (m[2] && ['tfs', 'tfv', 'key', 'pem', 'p12', 'pfx'].includes(m[2])) return true;
+  const stem = /^..[0-9a-f]{4}$/.test(m[1]) ? m[1].slice(0, 2) : m[1]; // hashed form: 2 chars of the name, then 4 hex
+  return SHORT_STEMS.some((s) => s.startsWith(stem) || stem.startsWith(s));
+}
+
 const sensitivePath = (p: string): boolean => {
   if (!p) return false;
-  // Backslashes as separators: Windows paths (C:\proj\...) must match the same rules.
-  // Then per segment: lowercase (macOS and Windows file systems ignore case), drop an NTFS stream (`.env::$DATA`) and
-  // the trailing dots and spaces Win32 strips (`.env.` opens `.env`). Stricter than POSIX needs, never looser.
-  const s = String(p)
-    .replace(/^['"]|['"]$/g, '')
-    .replace(/\\/g, '/')
-    .replace(/^~(?=\/|$)/, '$HOME')
-    .toLowerCase()
-    .split('/')
-    .map((seg, i) => (i === 0 && /^[a-z]:$/.test(seg) ? seg : seg.replace(/:.*$/, '').replace(/[. ]+$/, '')))
-    .join('/');
-  const base = s.split('/').pop() ?? '';
+  // Backslashes as separators: Windows paths (C:\proj\...) must match the same rules. Lowercase: macOS and Windows file
+  // systems ignore case. A leading `host:` (scp) or `C:` (Win32 drive-relative) hides the real path, so the part after
+  // it is checked too.
+  const raw = String(p).replace(/^['"]|['"]$/g, '').replace(/\\/g, '/').replace(/^~(?=\/|$)/, '$HOME').toLowerCase();
+  const afterColon = /^[^/]*?:/.test(raw) ? raw.replace(/^[^/]*?:/, '') : null;
+  return [raw, ...(afterColon !== null ? [afterColon] : [])].some(sensitiveForm);
+};
+
+function sensitiveForm(form: string): boolean {
+  // Per segment: drop an NTFS stream (`x::$DATA`) and the trailing dots and spaces Win32 strips (`x.` opens `x`).
+  const segs = form.split('/').map((seg, i) => (i === 0 && /^[a-z]:$/.test(seg) ? seg : seg.replace(/:.*$/, '').replace(/[. ]+$/, '')));
+  if (segs.some(shortNameOfProtected)) return true;
+  const s = segs.join('/');
+  const base = segs[segs.length - 1] ?? '';
   if (/^\.env(\..+)?$/.test(base)) return !SAFE_EXAMPLE.test(base);
   if (/(^|\/)\.(ssh|gnupg)\//.test(s) && !/\.pub$/.test(base)) return true;
   if (/(^|\/)\.aws\/(credentials|config)$/.test(s)) return true;
@@ -81,7 +95,7 @@ const sensitivePath = (p: string): boolean => {
   if (/^\.(netrc|pgpass)$/.test(base)) return true;
   if (/\.tfstate(\..+)?$/.test(base) || /\.tfvars$/.test(base)) return true;
   return false;
-};
+}
 
 const DENY: [RegExp, string][] = [
   [/\bgit\s+push\b[^;&|\n]*(\s--force(?!-with-lease)(\s|=|$)|\s-f(\s|$))/, 'force push (use --force-with-lease, and only on your own branch)'],

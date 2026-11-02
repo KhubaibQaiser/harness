@@ -9,6 +9,7 @@ import { ApplyError, ManifestError, applyChanges, readManifest } from '../instal
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
+import { stampHarnessFiles } from '../core/harness-files.js';
 import { planChanges } from '../install/plan.js';
 import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/preset.js';
 import { findOnPath } from '../checks/stop/runner.js';
@@ -151,6 +152,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     if (e instanceof ApplyError) return out(e.message), 1;
     throw e;
   }
+  stampHarnessFiles(root); // change detection: these writes are harness's own
 
   // 6. Report
   const checks = config.checks as Record<string, boolean>;

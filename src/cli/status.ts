@@ -1,4 +1,5 @@
 import { loadConfig } from '../core/config.js';
+import { lastHarnessFilesChange } from '../core/events.js';
 import { readManifest, ManifestError } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { OFF_WHY, coverageSkipped, coverageWhy, noConfigFile, srcGlob, unsafeWhy } from '../install/preset.js';
@@ -37,6 +38,8 @@ export function status(args: string[], cli: CliEnv): number {
   }
   if (!config.checks.tdd) lines.push(`  coverage: off - ${tddOffWhy}`);
   else lines.push(...left.map((w) => `  ${w}`), ...coverageSkipped(facts, config).map((p) => `  ${coverageWhy(p)}`), tddStatus(root));
+  const changed = lastHarnessFilesChange(root);
+  if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
   lines.push('Last day');
   lines.forEach((l) => out(l));
   return stats(['--days', '1'], cli);

@@ -367,3 +367,16 @@ test('migrated Jest script: uninstall keeps a user edit to package.json made bef
   expect((await un(root)).code).toBe(0);
   expect(readFileSync(p, 'utf8')).toBe(pkg.replace('"name": "app",', '"name": "app",\n  "private": true,'));
 });
+
+test('change detection: files that update writes do not trigger a block at the next Stop', async () => {
+  const { dispatch } = await import('../../src/hooks/dispatch.js');
+  const root = await installed();
+  const hook = (event: string) => dispatch(JSON.stringify({ hook_event_name: event, session_id: 'cd', cwd: root, tool_name: 'Read', tool_input: { file_path: join(root, 'x') } }), [], {});
+  await hook('PreToolUse'); // session snapshot
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readFileSync(join(root, DISPATCH), 'utf8')).toContain('// v2');
+  expect(await hook('Stop')).toBe('');
+  // a change after the update is still seen
+  writeFileSync(join(root, DISPATCH), 'tampered\n');
+  expect(JSON.parse(await hook('Stop')).reason).toContain(`\`${DISPATCH}\``);
+});

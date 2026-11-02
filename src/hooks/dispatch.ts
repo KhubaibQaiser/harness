@@ -15,6 +15,7 @@ import { appendEvent } from '../core/events.js';
 import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
+import { changedFiles, readStamp, snapshotHarnessFiles } from '../core/harness-files.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
 import { editTarget } from './edit-target.js';
@@ -140,6 +141,41 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     }
   };
 
+  // Change detection, the backstop for every route the path checks can't see (a script, an unparsed command): the
+  // session's first hook snapshots harness's own files; Stop and UserPromptSubmit compare. Stop blocks once per change
+  // set (the snapshot is then renewed, and the block counts within stop.max_attempts); a prompt gets a notice. Changes
+  // the harness CLI made are stamped by it and don't count.
+  let notice = '';
+  if (state && !fallback) {
+    try {
+      const prev = ctx.state.harnessFiles;
+      if (!prev) ctx.save({ ...ctx.state, harnessFiles: snapshotHarnessFiles(root) });
+      else if (event === 'Stop' || event === 'UserPromptSubmit') {
+        const cur = snapshotHarnessFiles(root);
+        const files = changedFiles(prev, cur);
+        const stamp = files.length ? readStamp(root) : null;
+        if (files.length && stamp && !changedFiles(stamp, cur).length) ctx.save({ ...ctx.state, harnessFiles: cur });
+        else if (files.length) {
+          log('harness-files', 'harness-files-changed', files.join(', '));
+          const why = filesChangedWhy(files);
+          const attempts = ctx.state.stopAttempts + 1;
+          if (event === 'UserPromptSubmit') {
+            ctx.save({ ...ctx.state, harnessFiles: cur });
+            notice = why;
+          } else if (attempts > (config?.stop.max_attempts ?? 3)) {
+            ctx.save({ ...ctx.state, harnessFiles: cur, stopAttempts: 0 });
+            log('harness-files', 'stop-gave-up', why);
+          } else {
+            ctx.save({ ...ctx.state, harnessFiles: cur, stopAttempts: attempts });
+            return emit(event, { kind: 'block', reason: why, check: 'harness-files' });
+          }
+        }
+      }
+    } catch (e) {
+      warn('harness-files', e);
+    }
+  }
+
   // An invalid config never turns a gate off silently: edits (except to the config itself, which the usual checks
   // still judge) and Stop fail closed. Stop shares the Stop gate's attempt counter, so the session can still end.
   if (configErrors.length && !degraded) {
@@ -208,9 +244,20 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
 
   const win =
     decisions.find((d) => d.kind === 'deny' || d.kind === 'block') ?? decisions.find((d) => d.kind === 'ask');
-  if (win) return emit(event, win);
   const ctxs = decisions.flatMap((d) => (d.kind === 'context' ? [d.text] : []));
-  return ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), check: 'context' }) : '';
+  const out = win ? emit(event, win) : ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), check: 'context' }) : '';
+  return notice ? withNotice(event, out, notice) : out;
+}
+
+const filesChangedWhy = (files: string[]): string =>
+  `Harness files changed during this session: ${files.map((f) => `\`${f}\``).join(', ')}. Tell the person now and ask them to review the change with \`git diff -- .harness .claude/settings.json\` (any command or script can change these files, not only an edit). Harness says this once per change.`;
+/** Adds a notice the person sees (systemMessage) and the model gets (additionalContext) to a hook's JSON output. */
+function withNotice(event: string, out: string, notice: string): string {
+  const o = out ? JSON.parse(out) : {};
+  o.systemMessage = [o.systemMessage, notice].filter(Boolean).join('\n');
+  const extra = o.hookSpecificOutput?.additionalContext;
+  o.hookSpecificOutput = { ...o.hookSpecificOutput, hookEventName: event, additionalContext: [extra, notice].filter(Boolean).join('\n') };
+  return JSON.stringify(o);
 }
 
 async function main(): Promise<void> {

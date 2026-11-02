@@ -31,3 +31,13 @@ export function readEvents(root: string): HarnessEvent[] {
   }
   return out;
 }
+
+/** The last time change detection saw harness's own files change during a session, if ever. */
+export function lastHarnessFilesChange(root: string): { ts: string; files: string[] } | null {
+  try {
+    const e = readEvents(root).filter((x) => x.decision === 'harness-files-changed').pop();
+    return e ? { ts: e.ts, files: (e.reason ?? '').split(', ').filter(Boolean) } : null;
+  } catch {
+    return null;
+  }
+}

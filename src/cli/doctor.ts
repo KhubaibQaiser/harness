@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { validateConfig } from '../core/config-io.js';
 import { MIN_CLAUDE_CODE } from '../core/min-claude.js';
+import { lastHarnessFilesChange } from '../core/events.js';
 import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { matchesHash } from '../install/text.js';
@@ -152,6 +153,8 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     }
   }
 
+  const changed = lastHarnessFilesChange(root);
+  if (changed) note(`harness files changed during a session at ${changed.ts}: ${changed.files.map((f) => `\`${f}\``).join(', ')}`, 'review the change with git diff -- .harness .claude/settings.json');
   for (const f of manifest.files.filter((f) => f.unformatted))
     note(`Prettier could not format \`${f.rel}\` when harness edited it`, 'a format check may flag it; if you format it by hand, uninstall reports the harness part it cannot find, to remove by hand');
 

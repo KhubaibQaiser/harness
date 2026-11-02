@@ -8,6 +8,7 @@ import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, jsonIndentOf, withEol } from '../install/text.js';
 import { MANIFEST_REL } from '../install/manifest.js';
+import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -207,6 +208,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     // Keep the logs but mark harness as uninstalled so init can run again.
     rmSync(join(root, MANIFEST_REL), { force: true });
     out('Kept `.harness/` (manifest removed).');
+    stampHarnessFiles(root); // change detection: these writes are harness's own
   }
   if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run harness init to install again.`);
   return 0;

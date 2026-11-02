@@ -8,6 +8,7 @@ import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, typ
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
+import { stampHarnessFiles } from '../core/harness-files.js';
 import { planChanges } from '../install/plan.js';
 import { removeBlocks } from '../install/merge.js';
 import { hashText, matchesHash } from '../install/text.js';
@@ -81,6 +82,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     if (dryRun) return out(m.version === version ? `Harness ${version} is up to date.` : `Harness files already match ${version}. Dry run: nothing was written.`), 0;
     if (m.version === version) return out(`Harness ${version} is up to date.`), 0;
     const err = commit([], { ...m, version });
+    if (!err) stampHarnessFiles(root);
     return out(err ?? `Harness files already match ${version}. Manifest version updated from ${m.version}.`), err ? 1 : 0;
   }
 
@@ -134,6 +136,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   }
   const err = commit(changes, { version, createdAt: new Date().toISOString(), ...(m.tddOff ? { tddOff: m.tddOff } : {}), files });
   if (err) return out(err), 1;
+  stampHarnessFiles(root); // change detection: these writes are harness's own
 
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : 'Updated'} \`${c.rel}\``);
   out(`Harness updated to ${version}. Commit these files: ${[...changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);

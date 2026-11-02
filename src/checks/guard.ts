@@ -21,7 +21,11 @@ const JS_ADD = new Set(['add', 'install', 'i']);
 const PY_ADD = new Set(['add', 'install']);
 const REDIRECTION = /\d*[<>]+&?\d*\s*[^\s;&|]*/g;
 const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bun', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh', 'command', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'pnpx', 'x', 'stdbuf', 'script']);
-const HARNESS_CMD = /(^|\/)harness(@\S+)?$|(^|\/)cli\.m?js$/;
+// Matched on text whose backslashes became slashes (see personOnlyInvocation). Windows shims (harness.cmd) and any case
+// count: Windows and macOS file systems ignore case.
+const HARNESS_CMD = /(^|\/)harness(@\S+)?(\.(cmd|ps1|bat|exe))?$|(^|\/)cli\.m?js$/i;
+/** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
+const runnerName = (t: string): string => t.split('/').pop()!.toLowerCase().replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
@@ -74,7 +78,12 @@ function scriptsOf(root: string): Record<string, string> {
 // Why a harness invocation (in command position) needs the person, or null when the agent may run it.
 // ponytail: a wrapper flag value not listed in WRAPPER_VALUE_FLAGS is read as the command, which then isn't harness.
 function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
-  const plain = command.replace(/['"\\]/g, ''); // quotes and escapes must not hide the words
+  // A backslash is an escape in a POSIX shell (harn\\ess -> harness) and a path separator on Windows
+  // (C:\\x\\cli.mjs): judge the command both ways.
+  return walkInvocation(command.replace(/['"\\]/g, ''), w, depth) ?? walkInvocation(command.replace(/['"]/g, '').replace(/\\/g, '/'), w, depth);
+}
+
+function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
   const words = plain.split(/\s+/);
   const hit = (name: string, tok: string): Hit => ({ kind: PERSON_ONLY[name].kind, reason: PERSON_ONLY[name].why((sub) => terminalCommand(tok, sub, w)) });
   const hidden: Hit = { kind: 'deny', reason: ANY_WHY };
@@ -100,7 +109,7 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
   for (let i = 0; i < parts.length; i += 2) {
     const toks = parts[i].trim().split(/\s+/).filter(Boolean);
     // npm run <script> -- args, or pnpm/yarn/bun <script>: judge the script text with the args appended.
-    const pm = toks.findIndex((t) => PMS.has(t));
+    const pm = toks.findIndex((t) => PMS.has(runnerName(t)));
     if (pm >= 0 && depth < 3) {
       let j = pm + 1;
       while (toks[j]?.startsWith('-')) j++;
@@ -120,7 +129,7 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
         const e = toks.findIndex((x, i) => i > k && /^-(exec|execdir|ok|okdir)$/.test(x));
         if (e < 0) break;
         [k, wrapper] = [e + 1, ''];
-      } else if (RUNNERS.has(t)) [k, wrapper, scriptFile] = [k + 1, t, t === 'script'];
+      } else if (RUNNERS.has(runnerName(t))) [k, wrapper, scriptFile] = [k + 1, runnerName(t), runnerName(t) === 'script'];
       else if (/^\w+=/.test(t)) {
         const val = t.replace(/^\w+=/, '');
         if (HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
@@ -217,7 +226,8 @@ export const rmTargets = (cmd: string): { recursive: boolean; targets: string[] 
 const checkRm = (cmd: string): Verdict | undefined => {
   for (const { recursive, targets } of rmTargets(cmd)) {
     if (!recursive) continue;
-    if (targets.some((t) => /^(\/|~|\$HOME|\/\*|~\/\*|\.|\.\.|\*|\.\/\*)$/.test(t))) return ['deny', 'recursive delete of root, home, current or parent directory'];
+    // Windows too: a drive root (C:\, C:/, Git Bash's /c/) and the user profile.
+    if (targets.some((t) => /^(\/|~|\$HOME|\/\*|~\/\*|\.|\.\.|\*|\.\/\*|[a-zA-Z]:[\\/]?\*?|\/[a-zA-Z]\/?\*?|\$USERPROFILE|%USERPROFILE%)$/.test(t))) return ['deny', 'recursive delete of root, home, current or parent directory'];
     if (!targets.every((t) => SAFE_RM_TARGETS.test(t))) return ['ask', 'recursive delete outside build and cache folders'];
   }
   return undefined;

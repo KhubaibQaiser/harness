@@ -461,3 +461,12 @@ test.each([
 ])('F2a: %s asks (uninstall)', (cmd) => expect(kind(cmd)).toBe('ask'));
 test.each([`sh -c 'node "./my dir/cli.mjs" tdd off'`, `bash -c "node './my dir/cli.mjs' tdd off"`])('F2a: %s is denied (tdd off)', (cmd) => expect(kind(cmd)).toBe('deny'));
 test.each([`sh -c "node './my dir/cli.mjs' uninstall --dry-run"`, `bash -c "echo 'harness uninstall' in a dir"`])('F2a: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+
+// Round 12 N2: shell options with values and -- before or after -c.
+test.each([`bash -o pipefail -c 'harness uninstall --yes'`, `bash -O extglob -c "node './my dir/cli.mjs' uninstall --yes"`, `bash -c -- "node './my dir/cli.mjs' uninstall --yes"`, `bash +o history -c 'harness uninstall --yes'`])(
+  'N2: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));
+// N4: harness fed to a shell on stdin.
+test.each([`echo 'harness uninstall --yes' | bash`, `printf 'harness uninstall --yes\\n' | sh`, `bash -s <<< 'harness uninstall --yes'`, "bash <<'EOF'\nharness uninstall --yes\nEOF"])(
+  'N4: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));
+test.each([`echo 'harness tdd off' | bash`, "sh <<EOF\nharness tdd off\nEOF"])('N4: %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
+test.each([`echo 'harness uninstall' | cat`, `echo 'harness status' | bash`])('N4: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));

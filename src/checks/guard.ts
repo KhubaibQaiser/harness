@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
-import { cPayloads } from '../core/shell-words.js';
+import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
@@ -119,8 +119,12 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
     walkInvocation(command.replace(/['"]/g, '').replace(/\\/g, '/'), w, depth) ??
     walkInvocation(grouped(command, true), w, depth) ??
     walkInvocation(grouped(command, false), w, depth) ??
-    // A -c payload is a command line of its own: judge it with all the readings (a spaced path inside it is one word).
-    (depth < 3 ? cPayloads(command).reduce<Hit | null>((hit, p) => hit ?? personOnlyInvocation(p, w, depth + 1), null) : null)
+    // A -c payload, or a program fed to a shell on stdin (echo … | bash, <<<, a here-document), is a command line of
+    // its own: judge it with all the readings (a spaced path inside it is one word).
+    (depth < 3
+      ? [...cPayloads(command), ...stdinPrograms(command, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
+          .reduce<Hit | null>((hit, p) => hit ?? personOnlyInvocation(p, w, depth + 1), null)
+      : null)
   );
 }
 

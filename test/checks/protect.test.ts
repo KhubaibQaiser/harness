@@ -287,3 +287,25 @@ test.each([
   `node --eval="require('fs').rmSync('node_modules/x')"`, `node -e "a(); require('fs').rmSync('node_modules/x')"`,
 ])('F6: inline code that names node_modules is still denied: %s', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
 test('F6: a redirect into node_modules/ is still denied', () => expect(run('Bash', { command: `node -p "1" > node_modules/x.txt` }).reason).toBe(NM_REASON));
+
+// Round 12 A: the basic rule finds an interpreter with an inline-code option at any word, whatever wraps it.
+test.each([
+  `cross-env FOO=1 node -e "require('fs').rmSync('node_modules', { recursive: true })"`, `dotenv -- node -e "require('fs').rmSync('node_modules/x')"`,
+  `nvm exec 22 node -e "require('fs').rmSync('node_modules/x')"`, `watch -n1 node -e "require('fs').rmSync('node_modules/x')"`,
+  `env -S "node -e \\"require('fs').rmSync('node_modules/x')\\""`, `npx -y node@22 -e "require('fs').rmSync('node_modules/x')"`,
+  `some-unknown-wrapper --flag value python3 -c "open('node_modules/x','w')"`,
+])('N1/N7: inline code behind any wrapper is denied: %s', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
+test(`N1: ionice -c3 node -e writing the harness config is denied`, () => {
+  expect(run('Bash', { command: `ionice -c3 node -e "require('fs').writeFileSync('.harness/config.yaml','x')"` }).reason).toBe(H_INLINE);
+});
+// N3: $'…' quoting does not desync the reader; odd quoting fails toward checking.
+test.each([`echo $'a\\'' ; node -e "require('fs').writeFileSync('.harness/config.yaml','x')"`, `echo "unterminated ; node -e "require('fs').writeFileSync('.harness/config.yaml','x')"`])(
+  'N3: %s is denied', (c) => expect(bash(c)).toBe('deny'));
+// N4: code fed to a shell or interpreter on stdin.
+test.each([
+  `echo 'rm -rf node_modules' | bash`, `printf 'rm -rf node_modules/x\\n' | sh`, `bash -s <<< 'rm -rf node_modules'`,
+  "node <<'EOF'\nrequire('fs').rmSync('node_modules', { recursive: true })\nEOF", "bash <<EOF\necho x > .harness/config.yaml\nEOF",
+  `echo "require('fs').writeFileSync('.harness/config.yaml','x')" | node`,
+])('N4: stdin code naming a protected path is denied: %s', (c) => expect(bash(c)).toBe('deny'));
+test.each([`echo 'ls node_modules' | bash`, `echo hi | node -e "process.stdin.pipe(process.stdout)"`, "cat <<'EOF'\nnode_modules\nEOF", `echo node_modules | grep x`])(
+  'N4: %s is allowed', (c) => expect(bash(c)).toBe('allow'));

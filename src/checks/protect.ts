@@ -7,7 +7,7 @@ import type { Check } from '../hooks/dispatch.js';
 import { editTarget } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, fileWriteTargets, gitArgs, rmTargets } from './guard.js';
-import { commandName, cPayloads, segments, unquote, words } from '../core/shell-words.js';
+import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/config.yaml', '.harness/manifest.json', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/config.yaml', '.harness/manifest.json', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
@@ -168,28 +168,39 @@ const INTERPRETERS: Record<string, Interp> = {
  */
 function inlineCode(cmd: string, depth = 0): string[] {
   const out: string[] = [];
+  // Quoting that doesn't balance may have split the command wrongly: check all of it, not less.
+  if (!balanced(cmd)) out.push(cmd);
   for (const seg of segments(cmd)) {
     const ws = words(seg);
-    // The interpreter must be where a command runs (after the guard's wrappers and runners), not an echo argument.
-    const i = commandStart(ws.map((w) => w.replace(/["']/g, '')), (name) => Object.hasOwn(INTERPRETERS, name));
-    const it = i < ws.length ? INTERPRETERS[commandName(ws[i])] : undefined;
-    if (it) {
+    // The basic rule: an interpreter word with an inline-code option, at any word, whatever wraps it (cross-env,
+    // dotenv --, nvm exec, ionice …). The arguments it passes to the code count only when it is where the command
+    // runs, so `echo node -e x node_modules` is just an echo.
+    const start = commandStart(ws.map((w) => w.replace(/["']/g, '')), (name) => Object.hasOwn(INTERPRETERS, name));
+    for (let i = 0; i < ws.length; i++) {
+      const it = INTERPRETERS[commandName(ws[i])];
+      if (!it) continue;
       for (let j = i + 1; j < ws.length; j++) {
         const t = unquote(ws[j]);
         const code = !t.startsWith('-') ? (it.sub && t === it.sub ? j + 1 : -1) : it.inline.test(t) ? (/=/.test(t) ? j : j + 1) : -2;
         if (code === -2) { if (it.stop?.has(t)) break; if (it.value?.has(t)) j++; continue; }
         if (code === -1) break; // the script or subcommand: not inline code
         const end = ws.findIndex((x, k) => k >= code && /^\d*[<>]/.test(x));
-        const args = ws.slice(code, end < 0 ? ws.length : end).map(unquote);
+        const args = ws.slice(code, i === start ? (end < 0 ? ws.length : end) : code + 1).map(unquote);
         if (code === j) args[0] = t.slice(t.indexOf('=') + 1); // --eval=CODE
         out.push(args.join(' '));
         break;
       }
     }
   }
-  if (depth < 3) for (const p of cPayloads(cmd)) out.push(...inlineCode(p, depth + 1));
+  if (depth < 3) {
+    for (const p of cPayloads(cmd)) out.push(...inlineCode(p, depth + 1));
+    // A program fed on stdin to an interpreter (echo … | node, node <<'EOF') is inline code; to a shell, a command line.
+    for (const p of stdinProgramsOf(cmd)) out.push(...(SHELLS.has(p.name) ? inlineCode(p.text, depth + 1) : [p.text]));
+  }
   return out;
 }
+const stdinProgramsOf = (cmd: string) =>
+  stdinPrograms(cmd, (ws) => commandStart(ws, (n) => SHELLS.has(n) || Object.hasOwn(INTERPRETERS, n))).filter((p) => SHELLS.has(p.name) || Object.hasOwn(INTERPRETERS, p.name));
 // A protected name as a path segment (not node_modules.txt or my_node_modules).
 const NM_SEG = /(^|[\\/'"`\s(,=:])node_modules([\\/'"`\s),;:]|$)/i;
 const H_SEG = /(^|[\\/'"`\s(,=:])(\.harness|\.claude[\\/]settings[^\\/'"`\s),;:]*)([\\/'"`\s),;:]|$)/i;
@@ -216,7 +227,8 @@ export const protect: Check = {
   events: ['PreToolUse'],
   failClosed: true,
   pure: true,
-  run({ input, root, config }) {
+  run(ctx) {
+    const { input, root, config } = ctx;
     if (config?.checks.protect === false) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = input;
     let paths: string[] = [];
@@ -226,6 +238,11 @@ export const protect: Check = {
     if (target !== null) paths = [target];
     else if (tool_name === 'Bash') {
       const cmd = String(tool_input.command ?? '');
+      // A program fed to a shell on stdin is a command line of its own (echo 'rm -rf node_modules' | bash).
+      for (const p of stdinProgramsOf(cmd).filter((p) => SHELLS.has(p.name))) {
+        const d = protect.run({ ...ctx, input: { ...input, tool_input: { command: p.text } } }) as Decision;
+        if (d.kind === 'deny') return d;
+      }
       // A text match can't tell a read from a write, so inline code that names these paths is denied whatever it does.
       const code = inlineCode(cmd);
       if (code.some((c) => NM_SEG.test(c))) return { kind: 'deny', reason: NM_INLINE, check: 'protect' };

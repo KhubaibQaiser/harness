@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -26,7 +26,7 @@ const kind = (d: { permissionDecision: string }) => d.permissionDecision;
 test('registered after specGate, not fail-closed, right events', () => {
   expect(registry.map((c) => c.name)).toEqual(['guard', 'protect', 'redFirst', 'tamper', 'testLock', 'specGate', 'multiFile', 'stopGate']);
   expect(multiFile.failClosed).toBeFalsy();
-  expect(multiFile.events).toEqual(['UserPromptSubmit', 'PreToolUse', 'PostToolUse']);
+  expect(multiFile.events).toEqual(['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']);
 });
 
 test('first file allowed, second asks with the message', async () => {
@@ -394,4 +394,59 @@ test('PostToolUse records the file after an accepted ask', async () => {
   expect(kind(await t.edit('b.ts'))).toBe('ask');
   await t.post('b.ts');
   expect(readState(t.root, 's').files).toEqual(['a.ts', 'b.ts']);
+});
+
+// Record order from the live run (session 6a1913da): the assistant message holding both the reason text and the Edit is
+// appended to the transcript only after that Edit's PreToolUse hook returned (a file-history-delta stamped later sits
+// before it), so the hook logged "no reason given". Once flushed, Stop or the next prompt finds it.
+const at = (ms: number) => new Date(ms).toISOString();
+const rec = (type: string, ms: number, content: unknown, extra: object = {}) => ({ type, timestamp: at(ms), message: { role: type, content }, ...extra });
+const live = async (finish: 'Stop' | 'UserPromptSubmit') => {
+  const t0 = Date.now() - 60_000;
+  const onDisk = [
+    rec('user', t0, 'Add a docstring to main() in app/main.py and to helper() in app/util.py'),
+    rec('assistant', t0 + 1000, [{ type: 'text', text: 'Files I plan to change: `app/main.py` and `app/util.py`.' }]),
+    rec('assistant', t0 + 2000, [{ type: 'text', text: 'Fails as expected. Now the docstrings:' }]),
+    rec('assistant', t0 + 3000, [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: 'app/main.py' } }]),
+    rec('user', t0 + 3100, [{ type: 'tool_result', tool_use_id: 'e1', content: 'PreToolUse:Edit hook error: State why each extra file is necessary', is_error: true }]),
+  ];
+  const t = reasonSetup(onDisk);
+  await t.post('app/a.py');
+  expect(kind(await t.edit2('app/main.py'))).toBe('deny'); // reason-required
+  const reasonAt = Date.now(); // the model writes the reason, then the Edit, in one message
+  expect(kind(await t.edit2('app/main.py'))).toBe('allow'); // PreToolUse: that message is not on disk yet
+  const allowLog = t.log().find((e) => e.decision === 'allow-log')!;
+  expect(allowLog.reason).toBe('app/main.py: no reason given');
+  const flushed = [
+    { type: 'file-history-delta', timestamp: at(Date.now()) }, // stamped after the hook, written before the message
+    rec('assistant', reasonAt, [{ type: 'text', text: '- app/main.py because the user asked for a docstring on main() there.' }]),
+    rec('assistant', reasonAt + 1, [{ type: 'tool_use', id: 'e2', name: 'Edit', input: { file_path: 'app/main.py' } }]),
+    rec('user', reasonAt + 50, [{ type: 'tool_result', tool_use_id: 'e2', content: 'ok' }]),
+    ...(finish === 'UserPromptSubmit' ? [rec('user', Date.now() + 1000, 'next task')] : []), // the new prompt may already be on disk
+  ];
+  appendFileSync(join(t.root, 't.jsonl'), flushed.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  await t.send({ hook_event_name: finish, transcript_path: join(t.root, 't.jsonl'), ...(finish === 'UserPromptSubmit' ? { prompt: 'next task' } : {}) });
+  await t.send({ hook_event_name: finish, transcript_path: join(t.root, 't.jsonl'), ...(finish === 'UserPromptSubmit' ? { prompt: 'again' } : {}) });
+  return { t, allowLog };
+};
+
+test.each(['Stop', 'UserPromptSubmit'] as const)('require_reason: a reason flushed after PreToolUse is logged as reason-found-late at %s, once', async (finish) => {
+  const { t, allowLog } = await live(finish);
+  const late = t.log().filter((e) => e.decision === 'reason-found-late');
+  expect(late).toEqual([expect.objectContaining({ files: ['app/main.py'], reason: 'app/main.py: - app/main.py because the user asked for a docstring on main() there.', of: allowLog.ts })]);
+});
+
+test('require_reason: a reason from an earlier turn is not taken as a late reason', async () => {
+  const t0 = Date.now() - 60_000;
+  const t = reasonSetup([
+    rec('user', t0, 'first task'),
+    rec('assistant', t0 + 1000, [{ type: 'text', text: 'b.ts because of the first task' }]),
+    rec('user', t0 + 2000, 'second task'),
+    rec('assistant', t0 + 3000, [{ type: 'text', text: 'just editing' }]),
+  ]);
+  await t.post('a.ts');
+  await t.edit2('b.ts');
+  await t.edit2('b.ts');
+  await t.send({ hook_event_name: 'Stop', transcript_path: join(t.root, 't.jsonl') });
+  expect(t.log().filter((e) => e.decision === 'reason-found-late')).toEqual([]);
 });

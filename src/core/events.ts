@@ -9,6 +9,7 @@ export interface HarnessEvent {
   reason?: string;
   files?: string[];
   co?: true; // denied alongside an earlier deny on the same call
+  of?: string; // reason-found-late: the ts of the allow-log event it completes
 }
 
 const file = (root: string) => join(root, '.harness/logs/events.jsonl');

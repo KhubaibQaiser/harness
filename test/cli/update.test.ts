@@ -257,3 +257,16 @@ test('migrated Jest script: uninstall without a backup (teammate clone) removes 
   expect(out).not.toContain('was not found');
   expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(pkg);
 });
+
+test('CRLF checkout: a multi-line block still in the file stays in the manifest after update', async () => {
+  const root = await installed();
+  // AGENTS.md lost the harness block (so update changes it) but still holds another recorded block, now with CRLF.
+  writeFileSync(join(root, 'AGENTS.md'), '# Mine\r\nkept line 1\r\nkept line 2\r\n');
+  const mp = join(root, '.harness/manifest.json');
+  const m = JSON.parse(readFileSync(mp, 'utf8'));
+  const f = m.files.find((x: { rel: string }) => x.rel === 'AGENTS.md');
+  f.blocks = [...f.blocks, 'kept line 1\nkept line 2\n'];
+  writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readManifest(root)!.files.find((x) => x.rel === 'AGENTS.md')!.blocks).toContain('kept line 1\nkept line 2\n');
+});

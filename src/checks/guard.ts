@@ -56,6 +56,7 @@ type Where = { root: string; env: NodeJS.ProcessEnv };
  * Never a path from an unknown place: the agent could have written it.
  */
 function terminalCommand(tok: string, sub: string, w: Where): string {
+  tok = tok.split(KEPT_SPACE).join(' ');
   if (/(^|\/)cli\.m?js$/.test(tok)) {
     const p = tok.replace(/\$\{?(\w+)\}?/g, (m, v: string) => w.env[v] ?? m);
     const real = /\$/.test(p) ? null : trustedCli(resolve(w.root, p), w.root);
@@ -80,7 +81,32 @@ function scriptsOf(root: string): Record<string, string> {
 function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
   // A backslash is an escape in a POSIX shell (harn\\ess -> harness) and a path separator on Windows
   // (C:\\x\\cli.mjs): judge the command both ways.
-  return walkInvocation(command.replace(/['"\\]/g, ''), w, depth) ?? walkInvocation(command.replace(/['"]/g, '').replace(/\\/g, '/'), w, depth);
+  // Then again with a quoted or escaped space kept inside its word, so a path such as "C:\\Users\\John Smith\\…\\cli.mjs"
+  // or ./my\\ dir/cli.mjs stays one word. (The ungrouped readings still see a command inside quotes: sh -c "harness …".)
+  return (
+    walkInvocation(command.replace(/['"\\]/g, ''), w, depth) ??
+    walkInvocation(command.replace(/['"]/g, '').replace(/\\/g, '/'), w, depth) ??
+    walkInvocation(grouped(command, true), w, depth) ??
+    walkInvocation(grouped(command, false), w, depth)
+  );
+}
+
+const KEPT_SPACE = '\u0001'; // a space inside a word: not matched by \s, turned back into a space when printed
+/** Quotes removed, spaces inside quotes (and `\\ ` when backslash escapes) kept in the word; other backslashes dropped
+ *  (escape reading) or made `/` (Windows reading). */
+function grouped(command: string, escapes: boolean): string {
+  let out = '';
+  let quote = '';
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (quote) {
+      if (c === quote) quote = '';
+      else out += c === ' ' ? KEPT_SPACE : c === '\\' ? (escapes ? '' : '/') : c;
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === '\\' && escapes) out += command[i + 1] === ' ' ? (i++, KEPT_SPACE) : '';
+    else out += c === '\\' ? '/' : c;
+  }
+  return out;
 }
 
 function walkInvocation(plain: string, w: Where, depth: number): Hit | null {

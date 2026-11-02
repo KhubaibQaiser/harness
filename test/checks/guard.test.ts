@@ -440,3 +440,15 @@ test.each([
 ])('Windows form %s asks (uninstall)', (cmd) => expect(kind(cmd)).toBe('ask'));
 test.each(['node "C:\\x\\dist\\cli.mjs" uninstall --dry-run', 'harness.cmd tdd status', 'type C:\\x\\harness\\notes.txt', 'dir C:\\code\\harness tdd'])(
   'Windows form %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+
+// Round 9 F2: a quoted or escaped path with a space is one word, on POSIX and Windows.
+test.each([
+  'node "./my dir/cli.mjs" uninstall --yes', "node './my dir/dist/cli.mjs' uninstall --yes", 'node ./my\\ dir/cli.mjs uninstall --yes',
+  'node "C:\\Users\\John Smith\\AppData\\Roaming\\npm\\node_modules\\@khubaibqaiser\\harness\\dist\\cli.mjs" uninstall --yes',
+  '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\John Smith\\dist\\cli.mjs" uninstall --yes', '"/Users/John Smith/bin/harness" uninstall --yes',
+  'timeout 60 node "/tmp/a b/dist/cli.mjs" uninstall --yes',
+])('F2: %s asks (uninstall)', (cmd) => expect(kind(cmd)).toBe('ask'));
+test.each(['node "./my dir/cli.mjs" tdd off', 'node ./my\\ dir/cli.mjs tdd off', 'node "C:\\Users\\John Smith\\dist\\cli.mjs" tdd off', '"/opt/my tools/harness" tdd off'])(
+  'F2: %s is denied (tdd off)', (cmd) => expect(kind(cmd)).toBe('deny'));
+test.each(['node "./my dir/cli.mjs" uninstall --dry-run', 'node "./my dir/cli.mjs" tdd status', 'git commit -m "harness uninstall in my dir"', 'echo "./my dir/cli.mjs uninstall"'])(
+  'F2: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));

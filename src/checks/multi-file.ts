@@ -3,19 +3,20 @@
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { appendEvent } from '../core/events.js';
-import { matches, pairKey, toRepoPath } from '../core/paths.js';
+import { isAnyTestFile, matches, pairKey, toRepoPath } from '../core/paths.js';
 import { clearTurn } from '../core/state.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import { editTarget } from '../hooks/edit-target.js';
 
 const LOCKS = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb'];
 
-// Repo-relative path of a counted edit, or null for other tools, outside-root, snapshots, lockfiles and generated files.
+// Repo-relative path of a counted edit, or null for other tools, outside-root, tests, snapshots, lockfiles and generated files.
+// Tests never count: writing the test, then the code, is one change.
 function target(ctx: Ctx): string | null {
   const p = editTarget(ctx.input);
   if (p === null) return null;
   const rel = toRepoPath(ctx.root, p);
-  if (rel === null || /(^|\/)__snapshots__\//.test(rel) || rel.endsWith('.snap') || LOCKS.includes(basename(rel)) || matches(rel, ctx.config.multi_file_gate.generated)) return null;
+  if (rel === null || isAnyTestFile(rel) || /(^|\/)__snapshots__\//.test(rel) || rel.endsWith('.snap') || LOCKS.includes(basename(rel)) || matches(rel, ctx.config.multi_file_gate.generated)) return null;
   return rel;
 }
 

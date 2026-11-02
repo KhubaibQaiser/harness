@@ -44,10 +44,33 @@ test('ask lists several touched files joined by ", " and the asked edit is not r
   await t.post('src/b.ts');
   await t.prompt();
   await t.post('a.ts');
-  await t.post('a.test.ts'); // same unit, second path
+  await t.post('a.test.ts'); // a test: never recorded, so never listed under Touched
   await t.edit('c.ts'); // ask, unrecorded
-  expect(readState(t.root, 's').files).toEqual(['a.ts', 'a.test.ts']);
-  expect((await t.edit('c.ts')).permissionDecisionReason).toContain('Touched: a.ts, a.test.ts. Next: c.ts.');
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+  expect((await t.edit('c.ts')).permissionDecisionReason).toContain('Touched: a.ts. Next: c.ts.');
+});
+
+test.each([
+  ['tests/test_docstrings.py', 'app/main.py', 'tests/sub/test_more.py'],
+  ['app/main_test.py', 'app/main.py', 'app/util_test.py'],
+  ['tests/helpers.py', 'app/main.py', 'pkg/tests/conftest.py'],
+  ['conftest.py', 'app/main.py', 'test_top.py'],
+  ['src/__tests__/other.ts', 'src/a.ts', 'lib/b.test.tsx'],
+  ['src/other.spec.ts', 'src/a.ts', 'src/__tests__/x.js'],
+])('a test file never counts as a unit: %s then %s is one unit', async (test, src, test2) => {
+  const t = setup();
+  expect(kind(await t.edit(test))).toBe('allow');
+  await t.post(test);
+  expect(kind(await t.edit(src))).toBe('allow');
+  await t.post(src);
+  expect(kind(await t.edit(test2))).toBe('allow'); // another test after the source
+  expect(readState(t.root, 's')).toMatchObject({ files: [src], approved: false });
+});
+
+test('python source files still count: two of them ask', async () => {
+  const t = setup();
+  await t.post('app/main.py');
+  expect(kind(await t.edit('app/util.py'))).toBe('ask');
 });
 
 test('source and its test count as one, either order', async () => {

@@ -91,7 +91,7 @@ export function preset(f: Facts, which: Which = pathWhich): Preset {
   reasons['tdd.coverage_skip'] = noCov.length
     ? 'No Vitest coverage provider is installed for these, so changed-line coverage skips them until you install @vitest/coverage-v8.'
     : 'Every TDD package can write coverage, so none is skipped.';
-  reasons['checks.multiFile'] = 'Asks you once per turn before an agent edits a second source file; your approval covers the rest of that turn.';
+  reasons['checks.multiFile'] = 'Asks you once per turn before an agent edits a second source file (test files never count); your approval covers the rest of that turn.';
   reasons['unattended.multi_file_gate'] = 'With no human watching, a multi-file edit is blocked.';
   reasons['unattended.require_reason'] = 'Only used when the unattended gate is allow-log: extra files then need a one-line reason. It has no effect while the gate is block.';
   const skipped = skippedSteps.length ? ` Left out because their tool is not on PATH: ${skippedSteps.map((s) => `\`${s.name}\``).join(', ')}.` : '';

@@ -179,7 +179,7 @@ test('the hook bundle never contains magicast', () => {
 
 test('preset reasons describe the multi-file gate and require_reason accurately', () => {
   const r = preset(detect(makeRepo(NPM_VITEST))).reasons;
-  expect(r['checks.multiFile']).toBe('Asks you once per turn before an agent edits a second source file; your approval covers the rest of that turn.');
+  expect(r['checks.multiFile']).toBe('Asks you once per turn before an agent edits a second source file (test files never count); your approval covers the rest of that turn.');
   expect(r['unattended.require_reason']).toBe('Only used when the unattended gate is allow-log: extra files then need a one-line reason. It has no effect while the gate is block.');
 });
 

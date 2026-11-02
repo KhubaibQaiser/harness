@@ -30,7 +30,7 @@ test('versions equal: package.json, plugin.json and the marketplace pin', () => 
 
 test('package is public, unlicensed and runs the build on prepack', () => {
   expect(pkg.private).toBeUndefined();
-  expect(pkg.license).toBe('UNLICENSED');
+  expect(pkg.license).toBe('Apache-2.0');
   expect(pkg.publishConfig).toEqual({ access: 'public' });
   expect(pkg.scripts.prepack).toContain('build');
 });

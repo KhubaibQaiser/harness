@@ -268,7 +268,7 @@ The spec's order of work (§11) starts after the beta fix wave.
 | `review-rubric` | own-skill | `files: [{ from: skills/review-rubric/SKILL.md, to: .claude/skills/review-rubric/SKILL.md }]` | default |
 | `agents-md` | rule | `merge: [agents-md]` (AGENTS.md block and CLAUDE.md import) | default |
 
-Own items use `license: UNLICENSED` and `min_claude_code: 2.1.285` (`MIN_CLAUDE_CODE`). `why`, `cost` and `applies_when: { always: true }` come from the beta spec §3 table and 2026-10-30 §9. No new claims are added.
+Own items use `license: Apache-2.0` and `min_claude_code: 2.1.285` (`MIN_CLAUDE_CODE`). `why`, `cost` and `applies_when: { always: true }` come from the beta spec §3 table and 2026-10-30 §9. No new claims are added.
 
 - [ ] **Step 1: Write the failing test** `every own item maps to an existing check, template or merge`:
   - each `checks` key is in `defaults().checks`;

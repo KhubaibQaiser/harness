@@ -45,9 +45,9 @@ Asks you once per turn before the agent edits a second source file. Your yes cov
 
 Before the agent may stop, harness runs the steps in `stop.steps`: script names run with your package manager, or `{ name, run }` commands for any language. In a JS/TS repo with TDD on, it then checks that changed lines (against `stop.base_ref`) have at least `tdd.diff_coverage` percent coverage. A failing step blocks the stop and shows the end of its output, up to `stop.max_attempts` times.
 
-### Review agent
+### Review agent (experimental)
 
-`init` also adds a `staff-reviewer` agent (`.claude/agents/staff-reviewer.md`) and its `review-rubric` skill (`.claude/skills/review-rubric/SKILL.md`). The agent reviews a diff you give it in a fresh context and reports findings. It cannot edit files.
+Experimental: it has not had live review runs yet. `init` also adds a `staff-reviewer` agent (`.claude/agents/staff-reviewer.md`) and its `review-rubric` skill (`.claude/skills/review-rubric/SKILL.md`). The agent reviews a diff you give it in a fresh context and reports findings. It cannot edit files.
 
 ### What each repo gets
 
@@ -333,4 +333,4 @@ Open a GitHub issue in the private repo `KhubaibQaiser/harness`. Say what you ra
 
 ## License
 
-All rights reserved. See [LICENSE](LICENSE). No license is granted to use, copy, modify or distribute this software without written permission.
+Apache License 2.0. See [LICENSE](LICENSE).

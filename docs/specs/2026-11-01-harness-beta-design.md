@@ -236,7 +236,7 @@ Every item below runs in CI unless marked otherwise.
   - push release tags
   - add test users as collaborators
 - **Package metadata:**
-  - `license: UNLICENSED`, with a `LICENSE` file stating all rights reserved
+  - `license: Apache-2.0`, with the Apache License 2.0 text in `LICENSE` (owner decision 2026-11-02; was UNLICENSED)
   - `files` limited to `dist/`, `plugin/` and `templates/`
   - `engines.node >= 22.11.0`
   - no runtime dependencies (everything is bundled)

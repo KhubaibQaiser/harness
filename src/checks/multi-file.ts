@@ -2,7 +2,7 @@
 // ponytail: Bash writes are not counted in M1 (spec 9b).
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
-import { appendEvent, readEvents } from '../core/events.js';
+import { appendEvent } from '../core/events.js';
 import { isAnyTestFile, matches, pairKey, toRepoPath } from '../core/paths.js';
 import { clearTurn } from '../core/state.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
@@ -30,11 +30,11 @@ function hasName(line: string, name: string): boolean {
   return false;
 }
 
-// Reason line for `rel` from assistant text after the last real user prompt; null = none found, undefined = transcript unreadable.
-// With `before` (epoch ms), only records stamped at or before it count, ordered by their timestamps: Claude Code appends
-// an assistant message (text and tool_use) only after PreToolUse returns, so file order is not the order they happened in.
+type Rec = { at: number; prompt: boolean; texts: string[] };
+
+// The transcript's user prompts and assistant text, or undefined when unreadable.
 // ponytail: the transcript JSONL format is not a documented stable API; unknown shapes are skipped and an unreadable file fails open.
-function findReason(path: unknown, rel: string, before?: number): string | null | undefined {
+function readTranscript(path: unknown): Rec[] | undefined {
   if (typeof path !== 'string' || !path) return undefined;
   let raw: string;
   try {
@@ -42,7 +42,7 @@ function findReason(path: unknown, rel: string, before?: number): string | null 
   } catch {
     return undefined;
   }
-  const recs: { at: number; prompt: boolean; texts: string[] }[] = [];
+  const recs: Rec[] = [];
   for (const line of raw.split('\n')) {
     let o: unknown;
     try {
@@ -53,7 +53,6 @@ function findReason(path: unknown, rel: string, before?: number): string | null 
     const rec = obj(o);
     const c = obj(rec.message).content;
     const at = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN;
-    if (before !== undefined && !(at <= before)) continue;
     if (rec.type === 'user') {
       if (typeof c === 'string' || (Array.isArray(c) && c.some((b) => obj(b).type !== 'tool_result'))) recs.push({ at, prompt: true, texts: [] });
     } else if (rec.type === 'assistant' && Array.isArray(c)) {
@@ -61,7 +60,14 @@ function findReason(path: unknown, rel: string, before?: number): string | null 
       if (texts.length) recs.push({ at, prompt: false, texts });
     }
   }
-  if (before !== undefined) recs.sort((a, b) => a.at - b.at); // stable: equal stamps keep file order
+  return recs;
+}
+
+// Reason line for `rel` in assistant text after the last real user prompt; null = none found.
+// With `before` (epoch ms), only records stamped at or before it count, ordered by their timestamps: Claude Code appends
+// an assistant message (text and tool_use) only after PreToolUse returns, so file order is not the order they happened in.
+function reasonIn(all: Rec[], rel: string, before?: number): string | null {
+  const recs = before === undefined ? all : all.filter((r) => r.at <= before).sort((a, b) => a.at - b.at); // stable sort
   let texts: string[] = [];
   for (const r of recs) texts = r.prompt ? [] : [...texts, ...r.texts];
   const name = basename(rel).toLowerCase();
@@ -69,21 +75,23 @@ function findReason(path: unknown, rel: string, before?: number): string | null 
   return null;
 }
 
-const NO_REASON = ': no reason given';
+const NO_REASON = 'no reason given';
 
-// The reason is often written in the same message as the edit, which is on disk only after PreToolUse. Once the
-// transcript is flushed (Stop, the next prompt), find it for each "no reason given" this session and log it.
+// The reason is often written in the same message as the edit, which is on disk only after PreToolUse. At the next
+// Stop or prompt the transcript is flushed: look once for each "no reason given" this session recorded, and log the result.
 function reasonsFoundLate(ctx: Ctx): void {
   const { root, input } = ctx;
-  if (!ctx.config.checks.multiFile || !ctx.config.unattended.require_reason || typeof input.transcript_path !== 'string') return;
-  const mine = readEvents(root).filter((e) => e.session === input.session_id && e.check === 'multi-file');
-  const done = new Set(mine.filter((e) => e.decision === 'reason-found-late').map((e) => e.of));
-  for (const e of mine) {
-    if (e.decision !== 'allow-log' || !e.reason?.endsWith(NO_REASON) || done.has(e.ts)) continue;
-    const rel = e.reason.slice(0, -NO_REASON.length);
-    const line = findReason(input.transcript_path, rel, Date.parse(e.ts));
-    if (line) appendEvent(root, { ts: new Date().toISOString(), session: input.session_id, check: 'multi-file', decision: 'reason-found-late', files: [rel], reason: `${rel}: ${line}`, of: e.ts });
+  const pending = ctx.state.lateReasons ?? [];
+  if (!pending.length) return;
+  const recs = readTranscript(input.transcript_path);
+  for (const p of pending) {
+    const line = recs && reasonIn(recs, p.rel, Date.parse(p.ts));
+    appendEvent(root, {
+      ts: new Date().toISOString(), session: input.session_id, check: 'multi-file', files: [p.rel], of: p.ts,
+      ...(line ? { decision: 'reason-found-late', reason: `${p.rel}: ${line}` } : { decision: 'reason-not-found', reason: `${p.rel}: ${recs ? NO_REASON : 'transcript unreadable'}` }),
+    });
   }
+  ctx.save({ ...ctx.state, lateReasons: [] });
 }
 
 export const multiFile: Check = {
@@ -131,18 +139,21 @@ export const multiFile: Check = {
       if (mode === 'allow-log') {
         let why: string | undefined;
         if (ctx.config.unattended.require_reason) {
-          const found = findReason(ctx.input.transcript_path, rel);
+          const recs = readTranscript(ctx.input.transcript_path);
+          const found = recs === undefined ? undefined : reasonIn(recs, rel);
           const denied = ctx.state.reasonDenied ?? [];
           if (found === undefined) why = 'transcript unreadable';
           else if (found !== null) why = found;
-          else if (denied.includes(rel)) why = NO_REASON.slice(2);
+          else if (denied.includes(rel)) why = NO_REASON;
           else {
             ctx.save({ ...ctx.state, reasonDenied: [...denied, rel] });
             appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'reason-required', files: [...files, rel] });
             return { kind: 'deny', reason: 'State why each extra file is necessary, then retry. Write one line per file: "<file> because <reason>".', check: 'multi-file' };
           }
         }
-        appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'allow-log', files: [...files, rel], ...(why ? { reason: `${rel}: ${why}` } : {}) });
+        const ts = new Date().toISOString();
+        if (why === NO_REASON) ctx.save({ ...ctx.state, lateReasons: [...(ctx.state.lateReasons ?? []), { ts, rel }] });
+        appendEvent(ctx.root, { ts, session, check: 'multi-file', decision: 'allow-log', files: [...files, rel], ...(why ? { reason: `${rel}: ${why}` } : {}) });
       }
       return { kind: 'allow' };
     }

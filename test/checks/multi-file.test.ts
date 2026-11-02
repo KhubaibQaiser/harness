@@ -450,3 +450,19 @@ test('require_reason: a reason from an earlier turn is not taken as a late reaso
   await t.send({ hook_event_name: 'Stop', transcript_path: join(t.root, 't.jsonl') });
   expect(t.log().filter((e) => e.decision === 'reason-found-late')).toEqual([]);
 });
+
+test('require_reason: an entry is searched once; no reason by then logs reason-not-found and it is never searched again', async () => {
+  const t0 = Date.now() - 60_000;
+  const t = reasonSetup([rec('user', t0, 'task'), rec('assistant', t0 + 1000, [{ type: 'text', text: 'just editing' }])]);
+  await t.post('a.ts');
+  await t.edit2('b.ts');
+  await t.edit2('b.ts'); // allow-log: no reason given
+  const path = join(t.root, 't.jsonl');
+  await t.send({ hook_event_name: 'Stop', transcript_path: path });
+  // A reason that turns up even later is not looked for: the next Stop after the entry is enough.
+  appendFileSync(path, JSON.stringify(rec('assistant', t0 + 2000, [{ type: 'text', text: 'b.ts because late' }])) + '\n');
+  await t.send({ hook_event_name: 'Stop', transcript_path: path });
+  await t.send({ hook_event_name: 'UserPromptSubmit', prompt: 'x', transcript_path: path });
+  expect(t.log().filter((e) => e.decision === 'reason-not-found' || e.decision === 'reason-found-late').map((e) => [e.decision, e.files])).toEqual([['reason-not-found', ['b.ts']]]);
+  expect(readState(t.root, 's').lateReasons ?? []).toEqual([]);
+});

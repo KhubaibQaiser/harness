@@ -8,7 +8,7 @@ import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { sha256 } from '../install/text.js';
 import { testConfigChange } from '../install/test-config.js';
-import { findOnPath, resolveStep } from '../checks/stop/runner.js';
+import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
 
 export type DoctorDeps = { claudeVersion?: () => string | null };
@@ -24,7 +24,8 @@ const older = (a: number[], b: number[]) => {
 
 function claudeVersion(): string | null {
   try {
-    const v = execFileSync('claude', ['--version'], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const [file, args, opts] = syncCommand('claude', ['--version']);
+    const v = execFileSync(file, args, { ...opts, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
     return /\d+\.\d+\.\d+/.exec(v)?.[0] ?? null;
   } catch {
     return null;

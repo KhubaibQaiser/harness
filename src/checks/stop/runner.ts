@@ -44,3 +44,11 @@ export function winCmdLine(file: string, args: string[]): string {
   const arg = (a: string) => `"${a.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`.replace(META, '^$1');
   return `"${[file.replace(META, '^$1'), ...args.map(arg)].join(' ')}"`;
 }
+
+// execFileSync arguments that also work for Windows .cmd shims (npm; claude from npm -g), which Node won't spawn directly.
+export function syncCommand(cmd: string, args: string[], platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): [string, string[], { windowsVerbatimArguments?: boolean }] {
+  if (platform !== 'win32') return [cmd, args, {}];
+  const found = findOnPath(cmd, env, platform);
+  if (!found || !/\.(cmd|bat)$/i.test(found)) return [found ?? cmd, args, {}];
+  return [env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', winCmdLine(found, args)], { windowsVerbatimArguments: true }];
+}

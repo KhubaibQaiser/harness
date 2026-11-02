@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { findOnPath, resolveStep, winCmdLine } from '../../../src/checks/stop/runner.js';
+import { findOnPath, resolveStep, syncCommand, winCmdLine } from '../../../src/checks/stop/runner.js';
 
 test('script step per package manager', () => {
   for (const pm of ['npm', 'pnpm', 'yarn', 'bun'] as const) {
@@ -58,4 +58,15 @@ test('winCmdLine quotes for cmd.exe', () => {
   expect(winCmdLine(f, ['a^b'])).toBe('"C:\\x\\pnpm.cmd ^"a^^b^""');
   expect(winCmdLine('C:\\Program Files\\n\\p.cmd', [])).toBe('"C:\\Program^ Files\\n\\p.cmd"');
   expect(winCmdLine(f, ['dir\\'])).toBe('"C:\\x\\pnpm.cmd ^"dir\\\\^""');
+});
+
+test('syncCommand runs Windows .cmd shims through cmd.exe and leaves other commands as they are', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'h-path-'));
+  writeFileSync(join(dir, 'npm.cmd'), '');
+  writeFileSync(join(dir, 'claude.exe'), '');
+  const env = { PATH: dir, PATHEXT: '.EXE;.CMD', ComSpec: 'C:\\Windows\\system32\\cmd.exe' };
+  expect(syncCommand('npm', ['view', 'a&b'], 'win32', env)).toEqual(['C:\\Windows\\system32\\cmd.exe', ['/d', '/s', '/c', winCmdLine(join(dir, 'npm.cmd'), ['view', 'a&b'])], { windowsVerbatimArguments: true }]);
+  expect(syncCommand('claude', ['--version'], 'win32', env)).toEqual([join(dir, 'claude.exe'), ['--version'], {}]);
+  expect(syncCommand('nope', ['x'], 'win32', env)).toEqual(['nope', ['x'], {}]);
+  expect(syncCommand('npm', ['view'], 'linux', env)).toEqual(['npm', ['view'], {}]);
 });

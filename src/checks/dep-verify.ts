@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Decision } from '../hooks/types.js';
+import { syncCommand } from './stop/runner.js';
 
 type Lookup = { exists: boolean; created?: string } | 'error';
 export interface VerifyOpts {
@@ -33,7 +34,8 @@ export function parseNpmView(stdout: string, stderr: string): Lookup {
 
 export function defaultLookup(name: string, timeoutMs = 5000): Lookup {
   try {
-    return parseNpmView(String(execFileSync('npm', ['view', name, 'time.created', '--json'], { timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] })), '');
+    const [file, args, opts] = syncCommand('npm', ['view', name, 'time.created', '--json']);
+    return parseNpmView(String(execFileSync(file, args, { ...opts, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] })), '');
   } catch (e) {
     const err = e as { stdout?: unknown; stderr?: unknown };
     return parseNpmView(String(err.stdout ?? ''), String(err.stderr ?? ''));

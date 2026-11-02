@@ -2,6 +2,12 @@
 
 Status: owner-approved design, 2026-11-02. Amends `docs/specs/2026-11-01-harness-beta-design.md` (which listed the interview, catalog, recommend, `sync`/`add`/`remove`/`why` and committing during init as out of the beta) and builds on `docs/specs/2026-10-30-harness-design.md` §§7, 8, 9a. Where this spec and the 2026-10-30 spec differ, this one wins.
 
+**Amendment, 2026-11-02 (owner answers to the planning questions in `docs/plans/2026-11-02-recommend.md`):**
+- Plugins are pinned to a commit through one inline `settings` marketplace, `harness-pins` (plan Q2). `init` and `sync` run `claude plugin install <id> --scope project` for the person running them, and `doctor` prints that command for teammates (plan Q1).
+- §5 "full seed list": this release ships only the own items that exist today. The 22 unbuilt own items, and the 6 `discouraged` items that have no reason yet, are left out and listed in the release notes until the owner writes their reasons (plan Q3, Q5).
+- Hosted MCP servers may use `license: vendor-terms` with an `unpinned` reason (plan Q4). `CLAUDECODE` set in IDE terminals is a known limit (plan Q6).
+- Plan decisions recorded here so they don't read as drift: the compact catalog in §4.3 also carries `kind`, `stance_reason`, `conflicts_with` and `requires`, and `.harness/facts.json` is written at apply rather than at scan, so a cancelled `init` leaves no file (§4.1).
+
 ## 1. Goal
 
 Make `/harness:init` set up a workflow that fits each project, not only gates. It interviews the user, writes a product summary, recommends items from a closed catalog with reasons, lets the user pick, installs the picks into the repo so teammates get them, writes an audit report with a roadmap, and offers to commit, push and open a PR.

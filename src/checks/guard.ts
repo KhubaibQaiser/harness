@@ -61,7 +61,8 @@ const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');
 
 const sensitivePath = (p: string): boolean => {
   if (!p) return false;
-  const s = String(p).replace(/^['"]|['"]$/g, '').replace(/^~(?=\/|$)/, '$HOME');
+  // Backslashes as separators: Windows paths (C:\proj\...) must match the same rules.
+  const s = String(p).replace(/^['"]|['"]$/g, '').replace(/\\/g, '/').replace(/^~(?=\/|$)/, '$HOME');
   const base = s.split('/').pop() ?? '';
   if (/^\.env(\..+)?$/.test(base)) return !SAFE_EXAMPLE.test(base);
   if (/(^|\/)\.(ssh|gnupg)\//.test(s) && !/\.pub$/.test(base)) return true;

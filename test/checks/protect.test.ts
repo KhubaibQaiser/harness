@@ -309,3 +309,9 @@ test.each([
 ])('N4: stdin code naming a protected path is denied: %s', (c) => expect(bash(c)).toBe('deny'));
 test.each([`echo 'ls node_modules' | bash`, `echo hi | node -e "process.stdin.pipe(process.stdout)"`, "cat <<'EOF'\nnode_modules\nEOF", `echo node_modules | grep x`])(
   'N4: %s is allowed', (c) => expect(bash(c)).toBe('allow'));
+
+// Round 14 D1: env -S strings are split with env's own rules, so `(` is an ordinary character.
+test.each([`env -S "node -e require('fs').rmSync('node_modules')"`, `env --split-string="node -p require('fs').rmSync('node_modules/x')"`, `env -S 'node -e "require(\\"fs\\").rmSync(\\"node_modules\\")"'`])(
+  'D1: %s is denied', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
+test(`D1: env -S naming .harness is denied`, () => expect(run('Bash', { command: `env --split-string="node -p require('fs').rmSync('.harness')"` }).reason).toBe(H_INLINE));
+test.each([`env -S "node -p 1+1"`, `env -S "FOO=1 node src/a.js"`])('D1: %s is allowed', (c) => expect(bash(c)).toBe('allow'));

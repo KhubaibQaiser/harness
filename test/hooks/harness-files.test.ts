@@ -26,8 +26,11 @@ const parsed = (s: string) => (s ? JSON.parse(s) : null);
 test('snapshot covers config, manifest, every hooks file and the Claude settings files that exist', () => {
   const root = repo();
   writeFileSync(join(root, '.harness/hooks/jest-results.cjs'), 'x');
+  writeFileSync(join(root, '.claude/settings.json'), '{"permissions":{"deny":["Mine"]}}');
   expect(Object.keys(snapshotHarnessFiles(root)).sort()).toEqual(['.claude/settings.json', '.harness/config.yaml', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/manifest.json']);
-  writeFileSync(join(root, '.claude/settings.local.json'), '{}');
+  writeFileSync(join(root, '.claude/settings.local.json'), '{"permissions":{"allow":["Bash(ls)"]}}');
+  expect(Object.keys(snapshotHarnessFiles(root))).not.toContain('.claude/settings.local.json'); // nothing harness relies on
+  writeFileSync(join(root, '.claude/settings.local.json'), '{"disableAllHooks":true}');
   expect(Object.keys(snapshotHarnessFiles(root))).toContain('.claude/settings.local.json');
 });
 
@@ -48,7 +51,7 @@ test('a harness file changed mid-session: Stop blocks once naming it, logs it, a
 test('a removed or added file counts; unattended runs block the same way', async () => {
   const root = repo();
   await hook(root, 'PreToolUse', { CI: 'true' });
-  writeFileSync(join(root, '.claude/settings.local.json'), '{"x":1}');
+  writeFileSync(join(root, '.claude/settings.local.json'), '{"disableAllHooks":true}');
   const out = parsed(await hook(root, 'Stop', { CI: 'true' }));
   expect(out.decision).toBe('block');
   expect(out.reason).toContain('`.claude/settings.local.json`');
@@ -57,7 +60,7 @@ test('a removed or added file counts; unattended runs block the same way', async
 test('UserPromptSubmit shows the person a systemMessage and gives the model the same context', async () => {
   const root = repo();
   await hook(root, 'PreToolUse');
-  writeFileSync(join(root, '.claude/settings.json'), '{"hooks":{}}\n');
+  writeFileSync(join(root, '.claude/settings.json'), '{"disableAllHooks":true}\n');
   const out = parsed(await hook(root, 'UserPromptSubmit'));
   expect(out.systemMessage).toContain('`.claude/settings.json`');
   expect(out.hookSpecificOutput).toMatchObject({ hookEventName: 'UserPromptSubmit' });
@@ -95,4 +98,74 @@ test('status and doctor show the last change event', async () => {
   let d = '';
   doctor([], { root, env: {}, out: (l) => (d += l + '\n') });
   expect(d).toMatch(/^note harness files changed during a session at .*: `\.harness\/config\.yaml`/m);
+});
+
+// Round 14 D2: a change between sessions is reported at the next session's first prompt and its Stop.
+test('a change made between sessions is reported at the first prompt and blocks the next Stop once', async () => {
+  const root = repo();
+  await hook(root, 'UserPromptSubmit', {}, 's2');
+  expect(await hook(root, 'Stop', {}, 's2')).toBe('');
+  await hook(root, 'SessionEnd', {}, 's2');
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: false\n'); // no session open
+  const p = parsed(await hook(root, 'UserPromptSubmit', {}, 's3'));
+  expect(p.systemMessage).toContain('`.harness/config.yaml`');
+  expect(p.hookSpecificOutput.additionalContext).toContain('`.harness/config.yaml`');
+  expect(parsed(await hook(root, 'Stop', {}, 's3')).reason).toContain('`.harness/config.yaml`');
+  expect(await hook(root, 'Stop', {}, 's3')).toBe('');
+  expect(readEvents(root).filter((e) => e.decision === 'harness-files-changed')).toHaveLength(1); // one event per change set
+});
+test('a change after the last Stop of a session, before it ends, is reported in the next session', async () => {
+  const root = repo();
+  await hook(root, 'UserPromptSubmit', {}, 'a');
+  await hook(root, 'Stop', {}, 'a');
+  writeFileSync(join(root, '.harness/hooks/dispatch.mjs'), '// late\n');
+  await hook(root, 'SessionEnd', {}, 'a');
+  expect(parsed(await hook(root, 'Stop', {}, 'b')).reason).toContain('`.harness/hooks/dispatch.mjs`');
+});
+test('a fresh clone (no last-seen snapshot) starts from the files at the first hook', async () => {
+  const root = repo();
+  expect(await hook(root, 'UserPromptSubmit', {}, 'fresh')).toBe('');
+  expect(await hook(root, 'Stop', {}, 'fresh')).toBe('');
+});
+// D3: only what harness relies on in the Claude settings files counts.
+const DENY = 'Read(./secrets/**)';
+const HOOKS = { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node "${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"' }] }] }, permissions: { deny: [DENY] } };
+const MANIFEST = JSON.stringify({ version: '1', createdAt: 'x', files: [{ rel: '.claude/settings.json', kind: 'create', hash: 'x', blocks: [JSON.stringify({ deny: DENY })] }] });
+test('an "Always allow" write to the settings does not trigger; removing a harness hook or deny rule does', async () => {
+  const root = repo();
+  writeFileSync(join(root, '.harness/manifest.json'), MANIFEST);
+  writeFileSync(join(root, '.claude/settings.json'), JSON.stringify(HOOKS, null, 2));
+  await hook(root, 'PreToolUse');
+  writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(pnpm test)'] } }));
+  writeFileSync(join(root, '.claude/settings.json'), JSON.stringify({ ...HOOKS, permissions: { allow: ['Bash(ls)'], deny: [DENY, 'Mine'] }, model: 'x' }, null, 2));
+  expect(await hook(root, 'Stop')).toBe('');
+  writeFileSync(join(root, '.claude/settings.json'), JSON.stringify({ ...HOOKS, permissions: { deny: [] } }));
+  expect(parsed(await hook(root, 'Stop')).reason).toContain('`.claude/settings.json`');
+  writeFileSync(join(root, '.claude/settings.json'), JSON.stringify({ permissions: { deny: [] } }));
+  expect(parsed(await hook(root, 'Stop')).reason).toContain('`.claude/settings.json`'); // the hook entry removed
+  writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify({ disableAllHooks: true }));
+  expect(parsed(await hook(root, 'Stop')).reason).toContain('`.claude/settings.local.json`');
+});
+// D4: line endings don't count; the message names the session's start commit, and a moved HEAD.
+test('a CRLF-only rewrite does not trigger', async () => {
+  const root = repo('checks:\n  guard: true\n');
+  await hook(root, 'PreToolUse');
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\r\n  guard: true\r\n');
+  expect(await hook(root, 'Stop')).toBe('');
+});
+test('the message names the start commit and says when HEAD moved', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const root = repo();
+  const git = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@e', ...a], { cwd: root, encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'one');
+  const start = git('rev-parse', 'HEAD');
+  await hook(root, 'PreToolUse', {}, 'g');
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: false\n');
+  git('commit', '-q', '-am', 'two');
+  const r = parsed(await hook(root, 'Stop', {}, 'g')).reason as string;
+  expect(r).toContain(`git diff ${start.slice(0, 12)} -- .harness .claude/settings.json`);
+  expect(r).toContain('git diff -- .harness .claude/settings.json');
+  expect(r).toMatch(/HEAD moved since the session started .*branch switch/);
 });

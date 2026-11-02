@@ -78,6 +78,29 @@ export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'script']);
 export const commandName = (word: string): string =>
   word.replace(/["']/g, '').split(/[\\/]/).pop()!.toLowerCase().replace(/\.(exe|cmd|ps1|bat)$/, '').replace(/^([^@]+)@.*$/, '$1'); // backslashes are separators here
 
+/**
+ * An `env -S` string as env splits it: whitespace separates words; '…' and "…" group (backslash escapes inside "…"
+ * and outside quotes); `(`, `;` and the like are ordinary characters. Returned as a command line whose words are
+ * single-quoted, so the shell-rule reader keeps them whole.
+ */
+export function envSplit(str: string): string {
+  const out: string[] = [];
+  let cur: string | null = null;
+  let quote = '';
+  for (let i = 0; i < str.length; i++) {
+    const c = str[i];
+    if (quote === "'") { if (c === "'") quote = ''; else cur += c; continue; }
+    if (quote === '"') { if (c === '"') quote = ''; else if (c === '\\' && i + 1 < str.length) cur += str[++i]; else cur += c; continue; }
+    if (/\s/.test(c)) { if (cur !== null) out.push(cur); cur = null; continue; }
+    cur ??= '';
+    if (c === "'" || c === '"') quote = c;
+    else if (c === '\\' && i + 1 < str.length) cur += str[++i];
+    else cur += c;
+  }
+  if (cur !== null) out.push(cur);
+  return out.map((w) => `'${w.replace(/'/g, "'\\''")}'`).join(' ');
+}
+
 // Shell options whose value is the next word: bash -o pipefail, -O extglob, +o history.
 const SHELL_VALUE = /^[-+][oO]$/;
 /** The commands that `sh -c`, `bash -c`, `script -c` (and the like) and `env -S` run, unquoted, wherever they appear. */
@@ -90,9 +113,9 @@ export function cPayloads(cmd: string): string[] {
       if (name === 'env') {
         for (let j = i + 1; j < ws.length && ws[j].startsWith('-'); j++) {
           const w = unquote(ws[j]);
-          if (w === '-S' || w === '--split-string') { if (ws[j + 1] !== undefined) out.push(unquote(ws[j + 1])); break; }
-          if (w.startsWith('--split-string=')) { out.push(w.slice(15)); break; }
-          if (/^-S./.test(w)) { out.push(w.slice(2)); break; }
+          if (w === '-S' || w === '--split-string') { if (ws[j + 1] !== undefined) out.push(envSplit(unquote(ws[j + 1]))); break; }
+          if (w.startsWith('--split-string=')) { out.push(envSplit(w.slice(15))); break; }
+          if (/^-S./.test(w)) { out.push(envSplit(w.slice(2))); break; }
         }
       }
       if (!SHELLS.has(name)) continue;

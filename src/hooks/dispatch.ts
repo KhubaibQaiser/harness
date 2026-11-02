@@ -15,7 +15,7 @@ import { appendEvent } from '../core/events.js';
 import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
-import { changedFiles, readStamp, snapshotHarnessFiles } from '../core/harness-files.js';
+import { changedFiles, gitHead, readRepoSnapshot, recordLastSeen, snapshotHarnessFiles } from '../core/harness-files.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
 import { editTarget } from './edit-target.js';
@@ -141,35 +141,44 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     }
   };
 
-  // Change detection, the backstop for every route the path checks can't see (a script, an unparsed command): the
-  // session's first hook snapshots harness's own files; Stop and UserPromptSubmit compare. Stop blocks once per change
-  // set (the snapshot is then renewed, and the block counts within stop.max_attempts); a prompt gets a notice. Changes
-  // the harness CLI made are stamped by it and don't count.
+  // Change detection, the backstop behind the path checks: a session's baseline is the repo's last-seen snapshot (or,
+  // on a fresh clone, the files at its first hook). A change shows at the next prompt (a notice, once) and blocks the
+  // next Stop once (the snapshot is then renewed, and the block counts within stop.max_attempts). Each Stop and
+  // SessionEnd records what the session has accounted for as the next session's baseline, so a change between
+  // sessions is reported too. Changes the harness CLI made match its own record and don't count.
   let notice = '';
   if (state && !fallback) {
     try {
-      const prev = ctx.state.harnessFiles;
-      if (!prev) ctx.save({ ...ctx.state, harnessFiles: snapshotHarnessFiles(root) });
-      else if (event === 'Stop' || event === 'UserPromptSubmit') {
+      if (!ctx.state.harnessFiles) {
+        const seen = readRepoSnapshot(root).lastSeen;
+        ctx.save({ ...ctx.state, harnessFiles: seen?.files ?? snapshotHarnessFiles(root), harnessHead: seen ? seen.head : ctx.state.baseHead });
+      }
+      if (event === 'Stop' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
+        const prev = ctx.state.harnessFiles!;
         const cur = snapshotHarnessFiles(root);
         const files = changedFiles(prev, cur);
-        const stamp = files.length ? readStamp(root) : null;
-        if (files.length && stamp && !changedFiles(stamp, cur).length) ctx.save({ ...ctx.state, harnessFiles: cur });
-        else if (files.length) {
-          log('harness-files', 'harness-files-changed', files.join(', '));
-          const why = filesChangedWhy(files);
+        const cli = files.length ? readRepoSnapshot(root).cli : undefined;
+        if (files.length && cli && !changedFiles(cli.files, cur).length) ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: gitHead(root), harnessNoticed: undefined });
+        else if (files.length && event !== 'SessionEnd') {
+          const key = JSON.stringify(files.map((f) => [f, cur[f] ?? null]));
+          if (ctx.state.harnessNoticed !== key) log('harness-files', 'harness-files-changed', files.join(', '));
+          const head = gitHead(root);
+          const why = filesChangedWhy(files, ctx.state.harnessHead, head);
           const attempts = ctx.state.stopAttempts + 1;
           if (event === 'UserPromptSubmit') {
-            ctx.save({ ...ctx.state, harnessFiles: cur });
-            notice = why;
+            if (ctx.state.harnessNoticed !== key) notice = why;
+            ctx.save({ ...ctx.state, harnessNoticed: key });
           } else if (attempts > (config?.stop.max_attempts ?? 3)) {
-            ctx.save({ ...ctx.state, harnessFiles: cur, stopAttempts: 0 });
+            ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: head, harnessNoticed: undefined, stopAttempts: 0 });
             log('harness-files', 'stop-gave-up', why);
           } else {
-            ctx.save({ ...ctx.state, harnessFiles: cur, stopAttempts: attempts });
+            ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: head, harnessNoticed: undefined, stopAttempts: attempts });
+            recordLastSeen(root, cur, head);
             return emit(event, { kind: 'block', reason: why, check: 'harness-files' });
           }
         }
+        // What this session has accounted for (not an unreported change) is where the next session starts.
+        if (event === 'Stop' || event === 'SessionEnd') recordLastSeen(root, ctx.state.harnessFiles!, ctx.state.harnessHead);
       }
     } catch (e) {
       warn('harness-files', e);
@@ -249,8 +258,15 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   return notice ? withNotice(event, out, notice) : out;
 }
 
-const filesChangedWhy = (files: string[]): string =>
-  `Harness files changed during this session: ${files.map((f) => `\`${f}\``).join(', ')}. Tell the person now and ask them to review the change with \`git diff -- .harness .claude/settings.json\` (any command or script can change these files, not only an edit). Harness says this once per change.`;
+function filesChangedWhy(files: string[], startHead: string | undefined, head: string | undefined): string {
+  const list = files.map((f) => `\`${f}\``).join(', ');
+  const short = (h: string) => h.slice(0, 12);
+  const review = startHead
+    ? `\`git diff ${short(startHead)} -- .harness .claude/settings.json\` (everything since the session started), and \`git diff -- .harness .claude/settings.json\` for what is not committed`
+    : '`git diff -- .harness .claude/settings.json`';
+  const moved = startHead && head && head !== startHead ? ` HEAD moved since the session started (${short(startHead)} -> ${short(head)}): a branch switch, a pull or a commit can explain the change.` : '';
+  return `Harness files changed since harness last checked them: ${list}. Tell the person now and ask them to review the change with ${review} (any command or script can change these files, not only an edit).${moved} Harness says this once per change.`;
+}
 /** Adds a notice the person sees (systemMessage) and the model gets (additionalContext) to a hook's JSON output. */
 function withNotice(event: string, out: string, notice: string): string {
   const o = out ? JSON.parse(out) : {};

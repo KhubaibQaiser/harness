@@ -17,6 +17,8 @@ export interface SessionState {
   stopToolMissing?: string[]; // Stop steps whose missing tool was already logged and warned about this session
   baseHead?: string; // git HEAD at the session's first hook
   harnessFiles?: Record<string, string>; // sha-256 of harness's own files: the session's change-detection snapshot
+  harnessHead?: string; // HEAD when that snapshot was taken
+  harnessNoticed?: string; // the change set already shown at a prompt (Stop still blocks once)
 }
 
 export const isSafeSessionId = (id: string): boolean => /^[A-Za-z0-9._-]+$/.test(id) && id !== '.' && id !== '..';

@@ -470,3 +470,5 @@ test.each([`echo 'harness uninstall --yes' | bash`, `printf 'harness uninstall -
   'N4: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));
 test.each([`echo 'harness tdd off' | bash`, "sh <<EOF\nharness tdd off\nEOF"])('N4: %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
 test.each([`echo 'harness uninstall' | cat`, `echo 'harness status' | bash`])('N4: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+
+test.each([`env -S "harness uninstall --yes"`, `env --split-string='node ./my\\ dir/cli.mjs uninstall --yes'`])('D1: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));

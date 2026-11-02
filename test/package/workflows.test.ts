@@ -38,6 +38,17 @@ test('publish waits for a manual run on a tag; a tag push alone only checks', ()
   expect(rel.jobs.ci.if).toBeUndefined();
 });
 
+test('release runs one at a time and publishes only a commit on main', () => {
+  const rel = load('release.yml');
+  expect(rel.concurrency).toEqual({ group: 'release', 'cancel-in-progress': false });
+  const steps = rel.jobs.publish.steps;
+  expect(steps[0].with['fetch-depth']).toBe(0);
+  const i = steps.findIndex((s: any) => /git merge-base --is-ancestor "\$GITHUB_SHA" origin\/main/.test(s.run ?? ''));
+  expect(i).toBeGreaterThan(0);
+  expect(steps[i].run).toContain('exit 1');
+  expect(i).toBeLessThan(steps.findIndex((s: any) => /npm publish/.test(s.run ?? '')));
+});
+
 test('release has no --provenance flag', () => {
   const lines = raw('release.yml').split('\n').filter((l) => !l.trim().startsWith('#'));
   expect(lines.join('\n')).not.toContain('--provenance');

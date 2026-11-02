@@ -173,6 +173,21 @@ test.each([
 ])('tdd invocation bypass %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
 test.each(['harness tdd on', 'harness tdd status', 'npx @khubaibqaiser/harness tdd status', 'pnpm harness tdd status'])('%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 
+const UNINSTALL_WHY = 'Only a person can uninstall the harness: run "harness uninstall" in your own terminal (the agent may run "harness uninstall --dry-run").';
+test.each([
+  'harness uninstall', 'harness uninstall --yes', 'harness uninstall --yes --force', 'harness uninstall --dry-run --yes',
+  'npx @khubaibqaiser/harness uninstall --yes', 'npx -y @khubaibqaiser/harness@latest uninstall --yes', 'npm exec @khubaibqaiser/harness -- uninstall --yes',
+  'pnpm dlx @khubaibqaiser/harness uninstall --yes', 'yarn dlx @khubaibqaiser/harness uninstall --yes', 'bunx @khubaibqaiser/harness uninstall --yes',
+  'node "/Users/x/.claude/plugins/cache/harness/dist/cli.mjs" uninstall --yes', 'node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs uninstall --yes',
+  'ls && harness uninstall --yes', 'harness --cwd /x uninstall', 'harness "uninstall" --yes',
+])('agent running %s is denied', (cmd) => {
+  const d = decideCommand(cmd, ctx());
+  expect(d.kind).toBe('deny');
+  expect(reason(d)).toBe(UNINSTALL_WHY);
+});
+test.each(['harness uninstall --dry-run', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" uninstall --dry-run', 'npx @khubaibqaiser/harness uninstall --dry-run', 'harness status', 'harness doctor', 'git commit -m "uninstall the old hook"'])(
+  '%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+
 const tdd = { tddPaths: ['packages/core/src/**'] };
 test('shell write into a tdd path asks', () => {
   expect(kind("sed -i 's/a/b/' packages/core/src/x.ts", tdd)).toBe('ask');

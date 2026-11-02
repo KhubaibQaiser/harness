@@ -17,16 +17,24 @@ const PIP_VALUE_FLAGS = new Set(['-r', '--requirement', '-c', '--constraint', '-
 const JS_ADD = new Set(['add', 'install', 'i']);
 const PY_ADD = new Set(['add', 'install']);
 const REDIRECTION = /\d*[<>]+&?\d*\s*[^\s;&|]*/g;
-const RUNNERS = new Set(['npx', 'pnpm', 'exec', 'yarn', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh']);
+const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh']);
 const HARNESS_CMD = /(^|\/)harness(@\S+)?$|(^|\/)cli\.m?js$/;
-const TDD_OFF_WHY = 'Only a person can pause TDD: run "harness tdd off" in your own terminal.';
-// Allowlist: a harness invocation (in command position) may only run `tdd on` or `tdd status`.
+// Subcommands only a person may run, with the arguments (after the subcommand) the agent may still use.
+// One place: M3 adds remove, add, sync and update here.
+const PERSON_ONLY: Record<string, { allowed: (args: string[]) => boolean; why: string }> = {
+  tdd: { allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: 'Only a person can pause TDD: run "harness tdd off" in your own terminal.' },
+  uninstall: { allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: 'Only a person can uninstall the harness: run "harness uninstall" in your own terminal (the agent may run "harness uninstall --dry-run").' },
+};
+const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
+const ANY_WHY = 'Only a person can change or remove the harness gates: run the harness command in your own terminal.';
+// Returns why a harness invocation (in command position) must be run by a person, or null when the agent may run it.
 // ponytail: runner flag values (pnpm --filter x) are not understood; `harness` after one is missed.
-function tddInvocationDenied(command: string): boolean {
+function personOnlyInvocation(command: string): string | null {
   const plain = command.replace(/['"\\]/g, ''); // quotes and escapes must not hide the words
   const words = plain.split(/\s+/);
-  // eval re-parses its input, so any eval near a harness token and tdd is denied.
-  if (words.includes('eval') && words.includes('tdd') && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, '')))) return true;
+  // eval re-parses its input, so any eval near a harness token and a person-only subcommand is denied.
+  const named = words.find(isPersonOnly);
+  if (words.includes('eval') && named && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, '')))) return PERSON_ONLY[named].why;
   // A lone & separates commands; 2>&1, >&2 and &> are redirections.
   const parts = plain.split(/(&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`])/);
   for (let i = 0; i < parts.length; i += 2) {
@@ -38,24 +46,26 @@ function tddInvocationDenied(command: string): boolean {
       k += toks[k] === '-u' ? 2 : 1; // env -u NAME: the next token is a variable name
     }
     // $X tdd …, `…` tdd … or $(…) tdd …: the command name is hidden in a variable or substitution.
-    if ((toks[k]?.startsWith('$') && toks[k + 1] === 'tdd') || (k === 0 && toks[0] === 'tdd' && /^[`)]$/.test(parts[i - 1] ?? ''))) return true;
+    // Whatever the hidden command is, the allowed arguments stay allowed.
+    const hidden = toks[k]?.startsWith('$') ? k + 1 : k === 0 && /^[`)]$/.test(parts[i - 1] ?? '') ? 0 : -1;
+    if (hidden >= 0 && isPersonOnly(toks[hidden]) && !PERSON_ONLY[toks[hidden]].allowed(toks.slice(hidden + 1))) return PERSON_ONLY[toks[hidden]].why;
     if (!toks[k] || !HARNESS_CMD.test(toks[k])) continue;
     const rest = toks.slice(k + 1);
     if (rest[0]?.startsWith('-')) { // no global flags in M1, so flag values cannot be told apart from subcommands
-      const t = rest.indexOf('tdd');
-      if (t >= 0 && rest[t + 1] !== 'on' && rest[t + 1] !== 'status') return true;
+      for (const [name, rule] of Object.entries(PERSON_ONLY)) {
+        const t = rest.indexOf(name);
+        if (t >= 0 && !rule.allowed(rest.slice(t + 1))) return rule.why;
+      }
     }
-    const sub = toks.slice(k + 1).find((t) => !t.startsWith('-'));
-    if (sub === undefined) {
-      if (/^(\$\(|\(|`)$/.test(parts[i + 1] ?? '')) return true; // subcommand comes from a substitution
+    const s = rest.findIndex((t) => !t.startsWith('-'));
+    if (s < 0) {
+      if (/^(\$\(|\(|`)$/.test(parts[i + 1] ?? '')) return ANY_WHY; // subcommand comes from a substitution
       continue;
     }
-    if (/[$`]/.test(sub)) return true;
-    if (sub !== 'tdd') continue;
-    const arg = toks.slice(k + 1).filter((t) => !t.startsWith('-'))[1];
-    if (arg !== 'on' && arg !== 'status') return true;
+    if (/[$`]/.test(rest[s])) return ANY_WHY;
+    if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return PERSON_ONLY[rest[s]].why;
   }
-  return false;
+  return null;
 }
 const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');
 
@@ -275,7 +285,8 @@ export function decideCommand(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const tokens = command.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');
-  if (tddInvocationDenied(command)) return { kind: 'deny', reason: TDD_OFF_WHY, check: 'guard' };
+  const personOnly = personOnlyInvocation(command);
+  if (personOnly) return { kind: 'deny', reason: personOnly, check: 'guard' };
   const tddPaths = ctx.config?.checks.tdd ? ctx.config.tdd.paths : [];
   const inTdd = (t: string) => {
     const rel = tddPaths.length > 0 ? toRepoPath(ctx.root, t) : null;

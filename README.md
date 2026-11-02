@@ -81,7 +81,7 @@ Run these as `npx @khubaibqaiser/harness <command>`, or as `harness <command>` i
 
 `doctor`, `update` and `uninstall` compare files with `.harness/manifest.json` ignoring CRLF vs LF, so a teammate's checkout with `core.autocrlf=true` is not treated as edited, and the harness blocks are still found and removed.
 
-`tdd off` is refused inside Claude Code. It prints "Run harness tdd off from a plain terminal, not inside Claude Code." Only a person can run it, in a plain terminal.
+The guard denies the agent `harness uninstall` in any form (`npx`, `pnpm dlx`, `bunx`, `node …/cli.mjs`, a global `harness`); only `uninstall --dry-run` is allowed, so `/harness:uninstall` previews and then asks you to run it. `tdd off` is refused inside Claude Code. It prints "Run harness tdd off from a plain terminal, not inside Claude Code." Only a person can run it, in a plain terminal.
 
 `init`, `update` and `uninstall` need a terminal to answer prompts. Without one, pass `--yes` (add `--config <file>` for `init`), or `--dry-run` to preview.
 

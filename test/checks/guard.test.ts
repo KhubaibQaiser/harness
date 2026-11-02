@@ -452,3 +452,12 @@ test.each(['node "./my dir/cli.mjs" tdd off', 'node ./my\\ dir/cli.mjs tdd off',
   'F2: %s is denied (tdd off)', (cmd) => expect(kind(cmd)).toBe('deny'));
 test.each(['node "./my dir/cli.mjs" uninstall --dry-run', 'node "./my dir/cli.mjs" tdd status', 'git commit -m "harness uninstall in my dir"', 'echo "./my dir/cli.mjs uninstall"'])(
   'F2: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+
+// Round 10 F2a: -c payloads are judged again with the same readings, so a spaced path inside one is one word.
+test.each([
+  `sh -c "node './my dir/cli.mjs' uninstall --yes"`, `bash -c "node \\"./my dir/cli.mjs\\" uninstall --yes"`, `sh -c 'node ./my\\ dir/cli.mjs uninstall --yes'`,
+  `zsh -c "node 'C:\\Users\\John Smith\\dist\\cli.mjs' uninstall --yes"`, `script -q -c "node './my dir/cli.mjs' uninstall --yes" /dev/null`,
+  `find . -maxdepth 0 -exec sh -c "node './my dir/cli.mjs' uninstall --yes" ;`, `sh -c "sh -c \\"node './my dir/cli.mjs' uninstall --yes\\""`,
+])('F2a: %s asks (uninstall)', (cmd) => expect(kind(cmd)).toBe('ask'));
+test.each([`sh -c 'node "./my dir/cli.mjs" tdd off'`, `bash -c "node './my dir/cli.mjs' tdd off"`])('F2a: %s is denied (tdd off)', (cmd) => expect(kind(cmd)).toBe('deny'));
+test.each([`sh -c "node './my dir/cli.mjs' uninstall --dry-run"`, `bash -c "echo 'harness uninstall' in a dir"`])('F2a: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
+import { cPayloads } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
@@ -25,7 +26,7 @@ const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bun', 'bu
 // count: Windows and macOS file systems ignore case.
 const HARNESS_CMD = /(^|\/)harness(@\S+)?(\.(cmd|ps1|bat|exe))?$|(^|\/)cli\.m?js$/i;
 /** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
-const runnerName = (t: string): string => t.split('/').pop()!.toLowerCase().replace(/\.(cmd|ps1|bat|exe)$/, '');
+const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
@@ -67,6 +68,36 @@ function terminalCommand(tok: string, sub: string, w: Where): string {
   return `\`harness ${sub}\` (if harness is not on your PATH: \`npx @khubaibqaiser/harness ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
 }
 
+/**
+ * Where a command runs in a segment's words: past wrappers, their flags and the values those flags take, a timeout's
+ * duration, script's FILE, and into find -exec. Words anywhere else (echo, grep, rg, git args) are not commands.
+ * `stop` ends the walk at a name that is a runner here but the command for the caller (protect's interpreters).
+ * A `CMD=harness` assignment is rewritten in place to its value, so the caller sees the harness word.
+ */
+export function commandStart(toks: string[], stop: (name: string) => boolean = () => false): number {
+  let k = 0, wrapper = '', scriptFile = false;
+  while (k < toks.length) {
+    const t = toks[k];
+    if (stop(runnerName(t))) break;
+    if (t === 'find') {
+      const e = toks.findIndex((x, i) => i > k && /^-(exec|execdir|ok|okdir)$/.test(x));
+      if (e < 0) break;
+      [k, wrapper] = [e + 1, ''];
+    } else if (RUNNERS.has(runnerName(t))) [k, wrapper, scriptFile] = [k + 1, runnerName(t), runnerName(t) === 'script'];
+    else if (/^\w+=/.test(t)) {
+      const val = t.replace(/^\w+=/, '');
+      if (HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
+      k++;
+    } else if (t.startsWith('-')) {
+      if (t === '-c') scriptFile = false; // script -c COMMAND
+      k += WRAPPER_VALUE_FLAGS[wrapper]?.has(t) ? 2 : 1;
+    } else if (k > 0 && /^\d+(\.\d+)?[smhd]?$/.test(t)) k++; // timeout 60, timeout 1m
+    else if (scriptFile) [k, scriptFile] = [k + 1, false]; // script [-q] FILE COMMAND (BSD form)
+    else break;
+  }
+  return k;
+}
+
 function scriptsOf(root: string): Record<string, string> {
   try {
     const s = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts;
@@ -87,7 +118,9 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
     walkInvocation(command.replace(/['"\\]/g, ''), w, depth) ??
     walkInvocation(command.replace(/['"]/g, '').replace(/\\/g, '/'), w, depth) ??
     walkInvocation(grouped(command, true), w, depth) ??
-    walkInvocation(grouped(command, false), w, depth)
+    walkInvocation(grouped(command, false), w, depth) ??
+    // A -c payload is a command line of its own: judge it with all the readings (a spaced path inside it is one word).
+    (depth < 3 ? cPayloads(command).reduce<Hit | null>((hit, p) => hit ?? personOnlyInvocation(p, w, depth + 1), null) : null)
   );
 }
 
@@ -146,27 +179,7 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
         if (r) return r;
       }
     }
-    // Walk to where a command runs: past wrappers, their flags and the values those flags take, a timeout's
-    // duration, script's FILE, and into find -exec. Words anywhere else (echo, grep, rg, git args) are not commands.
-    let k = 0, wrapper = '', scriptFile = false;
-    while (k < toks.length) {
-      const t = toks[k];
-      if (t === 'find') {
-        const e = toks.findIndex((x, i) => i > k && /^-(exec|execdir|ok|okdir)$/.test(x));
-        if (e < 0) break;
-        [k, wrapper] = [e + 1, ''];
-      } else if (RUNNERS.has(runnerName(t))) [k, wrapper, scriptFile] = [k + 1, runnerName(t), runnerName(t) === 'script'];
-      else if (/^\w+=/.test(t)) {
-        const val = t.replace(/^\w+=/, '');
-        if (HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
-        k++;
-      } else if (t.startsWith('-')) {
-        if (t === '-c') scriptFile = false; // script -c COMMAND
-        k += WRAPPER_VALUE_FLAGS[wrapper]?.has(t) ? 2 : 1;
-      } else if (k > 0 && /^\d+(\.\d+)?[smhd]?$/.test(t)) k++; // timeout 60, timeout 1m
-      else if (scriptFile) [k, scriptFile] = [k + 1, false]; // script [-q] FILE COMMAND (BSD form)
-      else break;
-    }
+    const k = commandStart(toks);
     // $X tdd …, `…` tdd … or $(…) tdd …: the command name is hidden in a variable or substitution.
     // Whatever the hidden command is, the allowed arguments stay allowed.
     const at = toks[k]?.startsWith('$') && !HARNESS_CMD.test(toks[k]) ? k + 1 : k === 0 && /^[`)]$/.test(parts[i - 1] ?? '') ? 0 : -1;

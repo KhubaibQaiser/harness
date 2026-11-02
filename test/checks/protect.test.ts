@@ -252,3 +252,26 @@ test.each([
   "find node_modules -name '*.d.ts'", 'tar -czf out.tgz -C node_modules x', 'tar -tzf node_modules/x.tgz', 'rsync -a node_modules/x/ /tmp/x/', 'unzip -l node_modules/x.zip',
   'touch src/a.ts', 'find src -name "*.tmp" -delete',
 ])('reading node_modules, or writing elsewhere, is allowed: %s', (c) => expect(bash(c)).toBe('allow'));
+
+// Round 9 F3: combined short options are inline code too.
+test.each([
+  `node -pe "require('fs').writeFileSync('node_modules/x','y')"`, `node -ep "require('fs').rmSync('node_modules/x')"`, `node -e="require('fs').writeFileSync('node_modules/x','y')"`,
+  `python -Bc "open('node_modules/x','w')"`, `python3 -Ic "open('node_modules/x','w')"`, `perl -ne 'unlink "node_modules/x"' a`, `perl -pie 's/a/b/' node_modules/x.js`,
+  `ruby -ne 'File.delete("node_modules/x")' a`, `bun -pe "Bun.write('node_modules/x','')"`,
+])('F3: combined inline options naming node_modules are denied: %s', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
+test.each([`node -pe "require('fs').writeFileSync('.harness/config.yaml','y')"`, `perl -ne 'print' .harness/config.yaml`, `python -Bc "open('.claude/settings.json','w')"`])(
+  'F3: combined inline options naming harness files are denied: %s', (c) => expect(run('Bash', { command: c }).reason).toBe(H_INLINE));
+// F4: rsync options after the paths are not the destination.
+test.each(['rsync -av src/ /tmp/dst/ --exclude node_modules', 'rsync -av src/ /tmp/dst/ --exclude=node_modules', 'rsync -av -e ssh src/ host:/dst/ --exclude .harness',
+  'rsync src/ /tmp/dst/ --filter "- node_modules"', 'rsync -a --exclude-from node_modules/.ignore src/ /tmp/dst/'])(
+  'F4: %s is allowed', (c) => expect(bash(c)).toBe('allow'));
+test.each(['rsync -av src/ node_modules/x/ --exclude .git', 'rsync -e ssh -av host:/src/ node_modules/x/'])('F4: %s is denied', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_REASON));
+// F5: inline code through other runners and TypeScript runners.
+test.each([
+  `npx tsx -e "require('fs').rmSync('node_modules', { recursive: true })"`, `tsx -e "require('fs').writeFileSync('node_modules/x','')"`, `ts-node -e "require('fs').writeFileSync('node_modules/x','')"`,
+  `ts-node -pe "require('fs').writeFileSync('node_modules/x','')"`, `npx node -e "require('fs').writeFileSync('node_modules/x','')"`, `pnpm exec node -e "require('fs').writeFileSync('node_modules/x','')"`,
+  `bunx tsx -e "require('fs').writeFileSync('node_modules/x','')"`, `pnpm dlx tsx --eval "require('fs').writeFileSync('node_modules/x','')"`, `timeout 5 deno eval "Deno.removeSync('node_modules/x')"`,
+  `env FOO=1 node -e "require('fs').writeFileSync('node_modules/x','')"`,
+])('F5: inline code through a runner is denied: %s', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
+test.each(['npx tsx src/a.ts', 'tsx node_modules/x/run.ts -e y', 'ts-node -P tsconfig.json src/a.ts', 'npx ts-node --project node_modules/x/tsconfig.json src/a.ts'])(
+  'F5: running a file is allowed: %s', (c) => expect(bash(c)).toBe('allow'));

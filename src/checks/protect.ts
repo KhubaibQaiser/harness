@@ -95,6 +95,7 @@ function switchAsk(cmds: string[], cwd: string): Decision | null {
 }
 
 const base = (t: string) => t.split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, '');
+const RSYNC_VALUE = new Set(['-e', '--rsh', '--exclude', '--include', '--filter', '-f', '--exclude-from', '--include-from', '--files-from', '--log-file', '--partial-dir', '-T', '--temp-dir', '--backup-dir', '--compare-dest', '--copy-dest', '--link-dest', '--chmod', '--chown', '--port', '--password-file', '--bwlimit', '--timeout', '--max-size', '--min-size', '-B', '--block-size', '--suffix', '-M', '--remote-option', '--rsync-path']);
 const DELETERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'truncate', 'mv']);
 /**
  * Targets of touch, find -delete/-exec rm (its start paths), tar extract (-C/--directory) and create (-f), unzip -d
@@ -130,7 +131,8 @@ function moreWriteTargets(cmds: string[]): string[] {
       }
     } else if (name === 'unzip') out.push(...valueOf('-d', '--directory'));
     else if (name === 'rsync') {
-      const pos = args.filter((t) => !t.startsWith('-'));
+      // Options may follow the paths, and some take the next word (--exclude node_modules, -e ssh).
+      const pos = args.filter((t, j) => !t.startsWith('-') && !RSYNC_VALUE.has(args[j - 1] ?? ''));
       if (pos.length >= 2) out.push(pos[pos.length - 1]);
     }
   }
@@ -147,10 +149,13 @@ export function shellWriteTargets(cmd: string): string[] {
 // Interpreters and the options that make their next word inline code. Only the interpreter's own options, before its
 // first argument (the script it runs), count: `node node_modules/.bin/jest -c x` runs a file, `node -e '…'` is code.
 type Interp = { inline: RegExp; value?: Set<string>; stop?: Set<string>; sub?: string };
-const NODE: Interp = { inline: /^(-e|--eval|-p|--print)(=|$)/, value: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--input-type', '--env-file', '--title']) };
+// node -pe and -ep are clusters of -p and -e.
+const NODE: Interp = { inline: /^(-[a-zA-Z]*[ep][a-zA-Z]*|--eval|--print)(=|$)/, value: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--input-type', '--env-file', '--title']) };
 const PY: Interp = { inline: /^-[a-zA-Z]*c$/, value: new Set(['-W', '-X']), stop: new Set(['-m']) };
 const INTERPRETERS: Record<string, Interp> = {
   node: NODE, nodejs: NODE, bun: { ...NODE, value: new Set(['-r', '--preload', '--cwd', '--config']) },
+  tsx: { ...NODE, value: new Set([...NODE.value!, '--tsconfig']) },
+  'ts-node': { inline: NODE.inline, value: new Set(['-P', '--project', '-r', '--require', '-O', '--compiler-options', '-C', '--compiler', '-I', '--ignore', '--cwd']) },
   python: PY, python3: PY, deno: { inline: /^$/, sub: 'eval' },
   perl: { inline: /^-[a-zA-Z]*[eE]$/, value: new Set(['-I', '-M', '-m']) }, ruby: { inline: /^-[a-zA-Z]*e$/, value: new Set(['-r', '-I', '-C']) },
   php: { inline: /^-r$/, value: new Set(['-c', '-d']) },

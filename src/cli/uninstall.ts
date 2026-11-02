@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, rmSync, rmdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
 import { removeBlocks } from '../install/merge.js';
@@ -69,6 +69,19 @@ function removeFromSettings(current: string, f: Manifest['files'][number], origi
   }
   const eol = eolOf(current);
   return { after: withEol(JSON.stringify(s, null, jsonIndentOf(current)), eol) + (/\n$/.test(current) ? eol : ''), empty: !Object.keys(s).length };
+}
+
+const list = (rels: string[]) => rels.map((k) => `\`${k}\``).join(', ');
+
+/** Deletes everything under `dir` except the `keep` files (absolute paths) and the folders that hold them. */
+function pruneExcept(dir: string, keep: string[]): void {
+  for (const e of (() => { try { return readdirSync(dir, { withFileTypes: true }); } catch { return []; } })()) {
+    const p = join(dir, e.name);
+    if (keep.includes(p)) continue;
+    if (e.isDirectory() && keep.some((k) => k.startsWith(p + sep))) pruneExcept(p, keep);
+    else rmSync(p, { recursive: true, force: true });
+  }
+  try { rmdirSync(dir); } catch {} // only when nothing was kept in it
 }
 
 export async function uninstall(args: string[], cli: UninstallEnv): Promise<number> {
@@ -140,16 +153,14 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   if (dryRun) {
     for (const c of changes) out(`Would ${c.kind === 'delete' ? 'remove' : 'restore'} \`${c.rel}\``);
     for (const n of notes) out(`Note: ${n}`);
-    if (kept.length) out(`Would keep ${kept.map((k) => `\`${k}\``).join(', ')} because you edited them (--force removes them too).`);
-    else out('With --yes, `.harness/` is deleted too, including its logs.');
+    if (kept.length) out(`Would keep ${list(kept)} because you edited them (--force removes them too).`);
+    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length ? ', except the edited files above' : ''}.`);
     return out('Dry run: nothing was written.'), 0;
   }
 
-  // Keep a manifest that lists only the kept files, so a second run with --force can still reach them.
-  const keptManifest: Manifest | undefined = kept.length ? { ...m, files: m.files.filter((f) => kept.includes(f.rel)) } : undefined;
-  if (changes.length || keptManifest) {
+  if (changes.length) {
     try {
-      applyChanges(root, changes, m.version, undefined, cli.fs, keptManifest ? { manifest: keptManifest } : { writeManifest: false });
+      applyChanges(root, changes, m.version, undefined, cli.fs, { writeManifest: false });
     } catch (e) {
       if (e instanceof ApplyError) return out(e.message), 1;
       throw e;
@@ -165,15 +176,16 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} \`${c.rel}\``);
   for (const n of notes) out(`Note: ${n}`);
 
-  if (kept.length) {
-    out(`Kept ${kept.map((k) => `\`${k}\``).join(', ')} because you edited them. Run harness uninstall --force to remove them too.`);
-  } else if (yes || (await prompt.confirm('Delete .harness/ including logs? (y/N)'))) {
-    rmSync(join(root, '.harness'), { recursive: true, force: true });
-    out('Removed `.harness/`.');
+  // Edited files are kept like any other user edit, but harness is fully uninstalled either way: the manifest always
+  // goes, so init, status and doctor see a repo without harness.
+  if (yes || (await prompt.confirm('Delete .harness/ including logs? (y/N)'))) {
+    pruneExcept(join(root, '.harness'), kept.map((k) => join(root, k)));
+    out(kept.some((k) => k.startsWith('.harness/')) ? 'Removed `.harness/` except the edited files.' : 'Removed `.harness/`.');
   } else {
     // Keep the logs but mark harness as uninstalled so init can run again.
     rmSync(join(root, MANIFEST_REL), { force: true });
     out('Kept `.harness/` (manifest removed).');
   }
+  if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run harness init to install again.`);
   return 0;
 }

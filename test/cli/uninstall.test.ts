@@ -1,11 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { init, type Prompt } from '../../src/cli/init.js';
 import { uninstall } from '../../src/cli/uninstall.js';
+import { status } from '../../src/cli/status.js';
+import { doctor } from '../../src/cli/doctor.js';
 import { makeRepo } from '../install/helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -129,17 +131,34 @@ test('bad flag prints usage, exit 2', async () => {
   expect(r.code).toBe(2);
 });
 
-test('kept file: manifest keeps only kept entries and --force removes them on a second run', async () => {
+test('edited config.yaml: fully uninstalled, the edited file kept, and init, status and doctor agree', async () => {
   const root = await installed();
   const p = join(root, '.harness/config.yaml');
-  writeFileSync(p, 'edited\n');
+  writeFileSync(p, readFileSync(p, 'utf8') + '# mine\n');
   const prompt = fake();
   const r = await un(root, ['--yes'], prompt);
+  expect(r.code).toBe(0);
   expect(prompt.asked).toEqual([]);
-  expect(r.out).toContain('Run harness uninstall --force');
-  expect(JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8')).files.map((f: { rel: string }) => f.rel)).toEqual(['.harness/config.yaml']);
-  const r2 = await un(root, ['--yes', '--force']);
-  expect(r2.code).toBe(0);
+  expect(r.out).toContain('Kept `.harness/config.yaml` because you edited them. Harness no longer tracks them');
+  expect(readFileSync(p, 'utf8')).toContain('# mine');
+  // Everything else is gone: no manifest, hooks, backups, logs or settings.
+  expect(readdirSync(join(root, '.harness'))).toEqual(['config.yaml']);
+  expect(existsSync(join(root, '.claude'))).toBe(false);
+  expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe(REPO['.gitignore']);
+  const quiet = { env: {}, root, out: () => {} };
+  expect(status([], quiet)).toBe(1); // not installed
+  expect(await doctor([], quiet)).toBe(1);
+  git(root, 'add', '-A');
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'kept config');
+  let out = '';
+  expect(await init(['--yes'], { ...base, root, out: (s) => (out += s), prompt: fake() })).toBe(0); // installs again
+  expect(out).not.toContain('already installed');
+});
+
+test('edited config.yaml, --force: removed with the rest', async () => {
+  const root = await installed();
+  writeFileSync(join(root, '.harness/config.yaml'), 'edited\n');
+  expect((await un(root, ['--yes', '--force'])).code).toBe(0);
   expect(existsSync(join(root, '.harness'))).toBe(false);
 });
 

@@ -85,13 +85,14 @@ test('manifest write failure in update rolls back every file', async () => {
   expect(snapshot(root)).toEqual(before);
 });
 
-test('manifest write failure in uninstall (kept path) rolls back every file', async () => {
+test('a write failure in uninstall rolls back every file and keeps the manifest', async () => {
   const root = await installed();
   const p = join(root, DISPATCH);
   writeFileSync(p, readFileSync(p, 'utf8') + '// mine\n'); // edited created file -> kept
   const before = snapshot(root);
   let out = '';
-  const code = await uninstall(['--yes'], { env: {}, root, out: (s) => (out += s), prompt: fake(), fs: manifestFails() });
+  const agentsFails = (): FsLike => ({ ...realFs, renameSync: (a: any, b: any) => { if (/[\\/]AGENTS\.md$/.test(String(b))) throw new Error('boom'); realFs.renameSync(a, b); } }) as FsLike;
+  const code = await uninstall(['--yes'], { env: {}, root, out: (s) => (out += s), prompt: fake(), fs: agentsFails() });
   expect(code).toBe(1);
   expect(snapshot(root)).toEqual(before);
 });

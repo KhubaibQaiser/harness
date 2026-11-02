@@ -144,7 +144,7 @@ function breakStale(lock: string, nonce: string, ops: LockOps): void {
     ops.rename(lock, gone);
     ops.rm(gone, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
   } finally {
-    ops.rm(brk, { recursive: true, force: true });
+    ops.rm(brk, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 }); // a leftover blocks breaking for 5 s
   }
 }
 

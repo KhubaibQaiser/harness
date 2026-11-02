@@ -216,3 +216,13 @@ test('readState retries a transient read error instead of starting the session o
   expect(() => readState(root, 's', () => { throw busy('EACCES'); })).toThrow(); // never a silent fresh state
   expect(readState(root, 'none', () => { throw busy('ENOENT'); }).files).toEqual([]);
 });
+
+test('the break lock is removed with retries, like the release (a transient Windows EPERM must not block breaking for 5 s)', async () => {
+  const root = tmp();
+  mkLock(root, { pid: await deadPid(), nonce: 'dead' });
+  const calls: { p: string; o?: { maxRetries?: number } }[] = [];
+  const ops = { ...realOps, rm: (p: string, o?: object) => (calls.push({ p, o }), rmSync(p, o)) };
+  expect(await withSessionLock(root, 's', () => 'ok', ops)).toBe('ok');
+  const brk = calls.find((c) => c.p.endsWith('.break'));
+  expect(brk?.o?.maxRetries).toBeGreaterThan(0);
+});

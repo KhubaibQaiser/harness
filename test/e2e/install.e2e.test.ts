@@ -187,6 +187,22 @@ test('doctor flags tampering and a broken wiring, and update repairs both', () =
   expect(c.code).toBe(0);
 });
 
+// Claude Code runs the settings command string through a shell (Git Bash on Windows), with CLAUDE_PROJECT_DIR set.
+test('the settings hook command runs through a shell from a repo path with a space and a non-ASCII letter', () => {
+  const f = npmVitest();
+  const root = repo(f);
+  expect(root).toMatch(/ .*ü/);
+  expect(init(root, f).code).toBe(0);
+  const s = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'));
+  const command: string = s.hooks.PreToolUse[0].hooks[0].command;
+  expect(command).toContain('${CLAUDE_PROJECT_DIR}');
+  const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's1', cwd: root, tool_name: 'Write', tool_input: { file_path: join(root, '.claude/settings.json'), content: '{}' } });
+  const r = spawnSync(command, { cwd: root, encoding: 'utf8', env: { ...env, CLAUDE_PROJECT_DIR: root }, input, shell: process.platform === 'win32' ? 'bash' : '/bin/sh' });
+  expect(r.stderr).toBe('');
+  expect(r.status).toBe(0);
+  expect(verdict(JSON.parse(r.stdout)).decision).toBe('deny'); // protect answered, so the dispatcher ran
+});
+
 // The package is left out of tdd.paths, so red-first never denies edits whose results can never be written.
 test('unsafe vitest config: TDD is off in status and red-first allows edits', () => {
   const f = unsafeVitest();

@@ -211,3 +211,11 @@ test('CRLF checkout: a real update does not call the files edited, and records L
   const agents = readManifest(root)!.files.find((x) => x.rel === DISPATCH)!;
   expect(agents.hash).toBe(sha256(readFileSync(join(root, DISPATCH), 'utf8').replace(/\r\n/g, '\n')));
 });
+
+test('update keeps the packages init left out of TDD in the manifest', async () => {
+  const root = makeRepo({ ...REPO, 'vitest.config.ts': "export default { test: { root: './src' } };\n" });
+  await init(['--yes'], { env: {}, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
+  expect(readManifest(root)!.tddOff).toEqual(['.']);
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readManifest(root)!.tddOff).toEqual(['.']);
+});

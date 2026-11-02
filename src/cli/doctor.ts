@@ -13,6 +13,7 @@ import { JEST_REPORTER, hasResultsOutput, testConfigChange } from '../install/te
 import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
+import { dirtyPaths } from './init.js';
 
 export type DoctorDeps = { claudeVersion?: () => string | null };
 
@@ -83,13 +84,17 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
 
   const entry = manifest.files.find((f) => f.rel === DISPATCH);
   const disp = readText(join(root, DISPATCH));
-  if (disp === null) fix(`\`${DISPATCH}\` is missing`, 'run harness update to restore it');
-  else if (!entry || !matchesHash(disp, entry.hash)) fix(`\`${DISPATCH}\` does not match the installed version`, 'run harness update to restore it');
+  // update refuses uncommitted changes to the files it rewrites, so say so up front.
+  let dirty: string[] = [];
+  try { dirty = dirtyPaths(root); } catch {}
+  const restore = (rel: string) => (dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))) ? 'commit or stash your changes, then run harness update to restore it' : 'run harness update to restore it');
+  if (disp === null) fix(`\`${DISPATCH}\` is missing`, restore(DISPATCH));
+  else if (!entry || !matchesHash(disp, entry.hash)) fix(`\`${DISPATCH}\` does not match the installed version`, restore(DISPATCH));
   else ok('dispatcher matches the manifest');
   const rep = manifest.files.find((f) => f.rel === JEST_REPORTER);
   if (rep) {
     const cur = readText(join(root, JEST_REPORTER));
-    if (cur === null || !matchesHash(cur, rep.hash)) fix(`\`${JEST_REPORTER}\` is ${cur === null ? 'missing' : 'not the installed version'}`, 'run harness update to restore it');
+    if (cur === null || !matchesHash(cur, rep.hash)) fix(`\`${JEST_REPORTER}\` is ${cur === null ? 'missing' : 'not the installed version'}`, restore(JEST_REPORTER));
     else ok('Jest reporter matches the manifest');
   }
 

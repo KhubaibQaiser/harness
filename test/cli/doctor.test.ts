@@ -140,7 +140,7 @@ test('jest repo: doctor checks the installed reporter against the manifest', asy
   expect(run(root, { path: bin('npm') }).out).toMatch(/^ok Jest reporter matches the manifest$/m);
   writeFileSync(join(root, '.harness/hooks/jest-results.cjs'), '// edited\n');
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/^fix `\.harness\/hooks\/jest-results\.cjs` is not the installed version: run harness update to restore it$/m);
+  expect(r.out).toMatch(/^fix `\.harness\/hooks\/jest-results\.cjs` is not the installed version: commit or stash your changes, then run harness update to restore it$/m);
   expect(r.code).toBe(1);
 });
 
@@ -232,4 +232,17 @@ test('doctor: a format or lint Stop step that would check the .harness/ files is
   expect(b.out).not.toMatch(/runs ESLint/);
   expect(b.out).toMatch(/^fix Stop step `format:check` runs Prettier, which checks the committed `\.harness\/` files: add `\.harness\/` to `\.prettierignore`/m);
   expect(b.code).toBe(1);
+});
+
+test('N6: the restore advice says to commit or stash first when the file has uncommitted changes', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const root = await installed();
+  const g = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@e', ...a], { cwd: root });
+  g('add', '-A'); g('commit', '-q', '-m', 'harness');
+  const p = join(root, '.harness/hooks/dispatch.mjs');
+  writeFileSync(p, readFileSync(p, 'utf8') + '\n// tampered\n');
+  const run = async () => { let out = ''; await doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') }); return out; };
+  expect(await run()).toMatch(/does not match the installed version: commit or stash your changes, then run harness update to restore it$/m);
+  g('commit', '-q', '-am', 'tampered');
+  expect(await run()).toMatch(/does not match the installed version: run harness update to restore it$/m);
 });

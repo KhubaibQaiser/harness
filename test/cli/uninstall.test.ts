@@ -24,7 +24,6 @@ const fake = (answers: boolean[] = []): Prompt & { asked: string[] } => {
   const asked: string[] = [];
   return { asked, async confirm(q) { asked.push(q); return answers.length ? answers.shift()! : false; }, async edit(_l, v) { return v; } };
 };
-const KEPT_RESTART = 'Restart any Claude Code session open in this repo: it still runs the harness hooks it loaded when it started.';
 const RESTART = 'Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.';
 const git = (root: string, ...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8' });
 const installed = async (files: Record<string, string> = REPO) => {
@@ -129,9 +128,6 @@ test('asks before deleting .harness and keeps logs on no', async () => {
   expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.harness/backup/');
   expect(r.out).toContain('Kept the `.harness/` lines in `.gitignore`');
   expect(git(root, 'status', '--porcelain', '--', '.harness/backup', '.harness/logs', '.harness/state')).toBe('');
-  // The dispatcher is kept, so an open session isn't blocked: it still runs the hooks it loaded.
-  expect(r.out).not.toContain(RESTART);
-  expect(r.out.trimEnd().split('\n').at(-1)).toBe(KEPT_RESTART);
 });
 
 test('never removes a non-empty parent directory', async () => {

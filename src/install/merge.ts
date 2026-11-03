@@ -18,6 +18,7 @@ const template = (name: string): string => {
   if (!existsSync(p)) throw new MergeError(`template ${name} not found at ${p}`);
   return readFileSync(p, 'utf8');
 };
+export const settingsFragment = (): any => JSON.parse(template('settings.fragment.json'));
 
 /**
  * Removes each text block from `after`: the last occurrence that starts at a line boundary, else the
@@ -83,7 +84,7 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
   if (s.permissions !== undefined && !isObj(s.permissions)) bad('"permissions" must be an object');
   if (s.permissions?.deny !== undefined && !Array.isArray(s.permissions.deny)) bad('"permissions.deny" must be an array');
 
-  const frag = JSON.parse(template('settings.fragment.json'));
+  const frag = settingsFragment();
   const blocks: string[] = [];
   const dropped: string[] = [];
   const notes: string[] = [];

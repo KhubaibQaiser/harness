@@ -71,7 +71,7 @@ Where a gate is off for the repo's stack, `init` and `status` say so in plain wo
 
 - Node 22.11 or newer
 - git, and a git repo to install into
-- Claude Code 2.1.285 or newer. Older versions are untested with these hooks.
+- Claude Code 2.1.314 or newer. Older versions are untested with these hooks.
 - On Windows, CI runs the tests, but live Claude Code use is untested (see [Known limits](#known-limits)).
 
 ## Quick start

@@ -2,19 +2,23 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { buildSync } from 'esbuild';
 import { expect, test } from 'vitest';
 import { clearTurn, isSafeSessionId, readState, writeState } from '../../src/core/state.js';
 
-const stateTs = join(process.cwd(), 'src/core/state.ts');
 const root = mkdtempSync(join(tmpdir(), 'h-st-'));
+// Child processes import state.ts bundled with its imports (plain node can't resolve the .js specifiers to .ts).
+const stateTs = join(root, 'state.mjs');
+buildSync({ entryPoints: [join(process.cwd(), 'src/core/state.ts')], bundle: true, format: 'esm', platform: 'node', outfile: stateTs, logLevel: 'silent' });
 
 function runChildWrite(r: string, session: string, i: number): Promise<void> {
-  const code = `import { readState, writeState } from ${JSON.stringify(stateTs)};
+  const code = `import { readState, writeState } from ${JSON.stringify(pathToFileURL(stateTs).href)};
 const s = readState(${JSON.stringify(r)}, ${JSON.stringify(session)});
 s.files = Array.from({ length: 2000 }, (_, k) => 'f' + ${i} + '-' + k);
 writeState(${JSON.stringify(r)}, ${JSON.stringify(session)}, s);`;
   return new Promise((res, rej) =>
-    execFile(process.execPath, ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', code], (err, _o, se) =>
+    execFile(process.execPath, ['--no-warnings', '--input-type=module', '-e', code], (err, _o, se) =>
       err ? rej(new Error(se)) : res(),
     ),
   );
@@ -58,3 +62,5 @@ test('isSafeSessionId rejects traversal and odd characters', () => {
   for (const id of ['', '.', '..', 'a/b', 'a b', '../x']) expect(isSafeSessionId(id)).toBe(false);
   for (const id of ['abc-1_2.3', '.hidden', '...']) expect(isSafeSessionId(id)).toBe(true);
 });
+
+// renameWithRetry and the Windows retry rule are tested in test/core/atomic.test.ts.

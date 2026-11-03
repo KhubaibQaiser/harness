@@ -1,30 +1,45 @@
-# .harness/config.yaml - every key shown with its default.
-checks:
-  guard: true       # block dangerous commands
-  protect: true     # protect sensitive paths
-  depVerify: true   # verify new dependencies
-  multiFile: false  # needs config: multi-file edit gate
-  tdd: false        # needs config: red-first TDD enforcement
-  stop: true        # run verification steps before stopping
+# .harness/config.yaml — written by harness init <version>. Edit freely; run harness doctor after.
 
+# Config schema version.
+version: 1
+
+# Which checks run.
+checks:
+  guard: true
+  protect: true
+  depVerify: true
+  multiFile: false
+  tdd: false
+  stop: true
+
+# Red-first TDD enforcement (needs checks.tdd).
 tdd:
-  paths: []         # globs of source files under TDD
-  exempt: []        # globs exempt from TDD
-  diff_coverage: 80 # minimum % coverage on changed lines
-  test_lock: true   # lock tests once they are red
+  paths: []
+  exempt: []
+  diff_coverage: 80
+  coverage_skip: []
+  test_lock: true
   results_dir: .harness/state/test-results
 
+# Multi-file edit gate (needs checks.multiFile).
 multi_file_gate:
-  generated: []     # globs of generated files to ignore
+  generated: []
 
+# Behaviour when no human is watching.
 unattended:
-  multi_file_gate: block   # block | allow-log | off
-  require_reason: false    # allow-log only: each extra file needs a "<file> because <reason>" line
+  multi_file_gate: block
+  require_reason: false
 
+# Verification steps that must pass before the agent may stop.
 stop:
-  steps: [format:check, lint, typecheck, test]
+  steps:
+    - format:check
+    - lint
+    - typecheck
+    - test
   package_manager: pnpm
   max_attempts: 3
   timeout_s: 540
   base_ref: origin/main
-  coverage_globs: ['**/coverage/coverage-final.json']
+  coverage_globs:
+    - "**/coverage/coverage-final.json"

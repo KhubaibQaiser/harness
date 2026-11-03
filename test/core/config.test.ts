@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -26,7 +26,7 @@ test('missing config yields defaults, a warning, and tdd/multiFile disabled', ()
     base_ref: 'origin/main',
     coverage_globs: ['**/coverage/coverage-final.json'],
   });
-  expect(config.tdd).toEqual({ paths: [], exempt: [], diff_coverage: 80, test_lock: true, results_dir: '.harness/state/test-results' });
+  expect(config.tdd).toEqual({ paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: '.harness/state/test-results' });
   expect(config.multi_file_gate.generated).toEqual([]);
   expect(config.unattended.multi_file_gate).toBe('block');
 });
@@ -75,4 +75,50 @@ test('unattended.require_reason defaults false and loads without warning', () =>
   const r = loadConfig(dirWith('.harness/config.yaml', 'unattended:\n  require_reason: true\n'));
   expect(r.config.unattended.require_reason).toBe(true);
   expect(r.warnings).toEqual([]);
+});
+
+test('numeric keys reject NaN, negatives and non-integers', () => {
+  const cases: [string, string, number][] = [
+    ['stop.max_attempts', '-1', 3],
+    ['stop.max_attempts', '11', 3],
+    ['stop.max_attempts', '2.5', 3],
+    ['stop.timeout_s', '.nan', 540],
+    ['stop.timeout_s', '29', 540],
+    ['stop.timeout_s', '551', 540],
+    ['tdd.diff_coverage', '101', 80],
+    ['tdd.diff_coverage', '-1', 80],
+    ['tdd.diff_coverage', '.nan', 80],
+  ];
+  for (const [key, val, dflt] of cases) {
+    const [a, b] = key.split('.');
+    const { config, warnings } = loadConfig(dirWith('.harness/config.yaml', `${a}:\n  ${b}: ${val}\n`));
+    expect((config as never as Record<string, Record<string, number>>)[a][b]).toBe(dflt);
+    expect(warnings.join('\n')).toContain(key);
+  }
+  const ok = loadConfig(dirWith('.harness/config.yaml', 'stop:\n  max_attempts: 10\n  timeout_s: 30\ntdd:\n  diff_coverage: 55.5\n'));
+  expect(ok.warnings).toEqual([]);
+  expect([ok.config.stop.max_attempts, ok.config.stop.timeout_s, ok.config.tdd.diff_coverage]).toEqual([10, 30, 55.5]);
+});
+
+test('errors: only what makes the file invalid; a missing file or an outside results_dir is a warning only', () => {
+  expect(loadConfig(emptyDir()).errors).toEqual([]);
+  expect(loadConfig(dirWith('.harness/config.yaml', 'tdd:\n  results_dir: /tmp/x\n')).errors).toEqual([]);
+  expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: true\n')).errors).toEqual([]);
+  expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: "true"\nbogus: 1\n')).errors).toEqual(['"checks.tdd" must be a boolean', 'unknown key "bogus"']);
+});
+
+test('N5: a config that cannot be read is reported as a read error, not as invalid YAML', async () => {
+  const d = dirWith('.harness/config.yaml', 'checks:\n  tdd: true\n');
+  const { RETRY } = await import('../../src/core/atomic.js');
+  const saved = { ...RETRY };
+  Object.assign(RETRY, { platform: 'win32', sleep: () => {} });
+  try {
+    const r = loadConfig(d, () => { throw Object.assign(new Error('EPERM: operation not permitted, open'), { code: 'EPERM' }); });
+    expect(r.errors.join(' ')).toMatch(/could not be read \(EPERM/);
+    expect(r.errors.join(' ')).not.toMatch(/YAML/);
+    let n = 0;
+    expect(loadConfig(d, (p) => { if (n++ < 2) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); return readFileSync(p, 'utf8'); }).errors).toEqual([]);
+  } finally {
+    Object.assign(RETRY, saved);
+  }
 });

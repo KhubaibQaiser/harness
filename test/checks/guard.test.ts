@@ -476,3 +476,23 @@ test.each([`env -S "harness uninstall --yes"`, `env --split-string='node ./my\\ 
 test.each([`env -iS "harness uninstall --yes"`, `env -vS 'harness uninstall --yes'`, `env -i -S "harness uninstall --yes"`, `env -iS"harness uninstall --yes"`])('E1: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));
 
 test.each([`env -a x harness uninstall --yes`, `env -a foo harness uninstall --yes`, `env --chdir /tmp harness uninstall --yes`, `env --argv0 x harness uninstall --yes`, `env -u FOO -S "harness uninstall --yes"`, `env -C . -S "harness uninstall --yes"`])('F1: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));
+
+// G1: a short-option cluster ending in a wrapper's value flag (-iu NAME, -vs SIG) skips that value, for every wrapper.
+const G1_ASK = [
+  'env -iu FOO harness uninstall --yes', 'env -iC . harness uninstall --yes', 'env -ia foo harness uninstall --yes', 'env -0iu A harness uninstall --yes',
+  'timeout -vs KILL 60 harness uninstall --yes', 'timeout -vk 5 60 harness uninstall --yes', 'sudo -Eu root harness uninstall --yes', 'sudo -Hg wheel harness uninstall --yes',
+  'xargs -0I {} harness uninstall {}', 'xargs -rn 1 harness uninstall', 'npx -yp @khubaibqaiser/harness harness uninstall --yes',
+];
+test.each(G1_ASK)('G1: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));
+test.each(['env -iu FOO harness tdd off', 'timeout -vs KILL 60 harness tdd off'])('G1: %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
+test('G1: the cluster forms are denied unattended (through the dispatcher)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-g1-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  for (const command of G1_ASK) {
+    const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command } });
+    expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision, command).toBe('ask');
+    expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision, command).toBe('deny');
+  }
+});
+test.each(['env -iu FOO harness uninstall --dry-run', 'timeout -vs KILL 60 harness tdd status'])('G1: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));

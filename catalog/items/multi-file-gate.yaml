@@ -1,0 +1,19 @@
+id: multi-file-gate
+kind: own-hook
+title: Multi-file gate
+source:
+  type: own
+  checks: [multiFile]
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when:
+  always: true
+cost:
+  context: none
+  setup: none
+stance: optional
+why: >-
+  Before an agent edits a second source file in one turn, you are asked once; approval covers the rest of the turn. Includes the unattended reason requirement.
+evidence:
+  - docs/specs/2026-11-01-harness-beta-design.md#3-what-each-repo-gets
+  - docs/specs/2026-10-30-harness-design.md#9b-multi-file-gate-and-unattended-runs

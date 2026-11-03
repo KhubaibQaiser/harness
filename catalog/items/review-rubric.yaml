@@ -1,0 +1,21 @@
+id: review-rubric
+kind: own-skill
+title: Review rubric
+source:
+  type: own
+  files:
+    - from: skills/review-rubric/SKILL.md
+      to: .claude/skills/review-rubric/SKILL.md
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when:
+  always: true
+cost:
+  context: low
+  setup: none
+stance: default
+why: >-
+  Staff-level review questions (correctness, failure modes, security, performance, accessibility, SEO, operability, design principles, simplicity), the evidence rule and severity rules. Usable by the main session too.
+evidence:
+  - docs/specs/2026-11-01-harness-beta-design.md#3-what-each-repo-gets
+  - docs/specs/2026-10-30-harness-design.md#9a-the-staff-level-persona

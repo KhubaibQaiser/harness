@@ -1,1 +1,44 @@
-[]
+- id: post-edit-format
+  reason: not built yet (this release ships existing own items only)
+- id: gitleaks-commit
+  reason: not built yet (this release ships existing own items only)
+- id: session-context
+  reason: not built yet (this release ships existing own items only)
+- id: researcher
+  reason: not built yet (this release ships existing own items only)
+- id: ui-verify
+  reason: not built yet (this release ships existing own items only)
+- id: seo-audit
+  reason: not built yet (this release ships existing own items only)
+- id: webgl-landing
+  reason: not built yet (this release ships existing own items only)
+- id: rn-a11y
+  reason: not built yet (this release ships existing own items only)
+- id: perf-budget
+  reason: not built yet (this release ships existing own items only)
+- id: adr
+  reason: not built yet (this release ships existing own items only)
+- id: pr-ship
+  reason: not built yet (this release ships existing own items only)
+- id: session-structure
+  reason: not built yet (this release ships existing own items only)
+- id: ci-tdd
+  reason: not built yet (this release ships existing own items only)
+- id: harness-integrity
+  reason: not built yet (this release ships existing own items only)
+- id: lefthook-baseline
+  reason: not built yet (this release ships existing own items only)
+- id: claude-code-action
+  reason: not built yet (this release ships existing own items only)
+- id: harness-devdep
+  reason: not built yet (this release ships existing own items only)
+- id: config-change-guard
+  reason: in the core install since platform enforcement; not a selectable item
+- id: sandbox-settings
+  reason: in the core install since platform enforcement; not a selectable item
+- id: harness-review
+  reason: part of the PR reviewer (M2)
+- id: pr-create-trigger
+  reason: part of the PR reviewer (M2)
+- id: ui-verifier
+  reason: part of the PR reviewer (M2)

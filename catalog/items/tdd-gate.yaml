@@ -1,0 +1,19 @@
+id: tdd-gate
+kind: own-hook
+title: TDD gate
+source:
+  type: own
+  checks: [tdd]
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when:
+  always: true
+cost:
+  context: none
+  setup: low
+stance: optional
+why: >-
+  No logic ships without a test that failed first, and tests cannot be weakened to pass. Covers red-first TDD, test-lock, tamper check and changed-line coverage for JS/TS repos.
+evidence:
+  - docs/specs/2026-11-01-harness-beta-design.md#3-what-each-repo-gets
+  - docs/specs/2026-10-30-harness-design.md#9c-tdd-harness

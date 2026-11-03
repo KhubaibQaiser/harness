@@ -164,7 +164,10 @@ test('--self-test prints ok and the Node version without reading stdin', async (
   const c = spawn(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs'), '--self-test'], { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
   let stdout = '';
   c.stdout.on('data', (d) => (stdout += d));
-  const [code, signal] = await new Promise<[number | null, string | null]>((res) => c.on('close', (cd, sg) => res([cd, sg])));
+  const [code, signal] = await new Promise<[number | null, string | null]>((res, rej) => {
+    c.on('error', rej); // a spawn failure (EMFILE) fails the test instead of going uncaught
+    c.on('close', (cd, sg) => res([cd, sg]));
+  });
   expect(signal).toBeNull();
   expect(code).toBe(0);
   expect(stdout).toMatch(/^ok v\d+\.\d+\.\d+\n?$/);
@@ -263,4 +266,13 @@ test.each(BAD_CONFIGS)('invalid config (%s): Bash writes, deletes, moves and res
   for (const c of ['ls', 'cat src/a.js', 'echo x > /tmp/harness-out.txt', 'echo x > /dev/null', 'harness doctor']) expect(await bash(c), c).toBe('');
   // a shell write to the config itself is left to the usual checks (protect denies the agent)
   expect(reasonOf(await dispatch(pre({ cwd: r, tool_name: 'Bash', tool_input: { command: 'echo "version: 1" > .harness/config.yaml' } }), [denyAll], {}))).toBe('no');
+});
+
+test('invalid config: a PowerShell shell write in the repo is denied by config', async () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-badps-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks: true\n');
+  const o = out(await dispatch(pre({ cwd: r, tool_name: 'PowerShell', tool_input: { command: 'echo x > src/a.ts' } }), [mk('allow-all', { kind: 'allow' })], {}));
+  expect(o.hookSpecificOutput?.permissionDecision).toBe('deny');
+  expect(o.hookSpecificOutput?.permissionDecisionReason).toContain('ask the user to correct .harness/config.yaml');
 });

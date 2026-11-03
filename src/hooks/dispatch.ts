@@ -19,7 +19,7 @@ import { repoRoot } from '../core/repo-root.js';
 import { changedFiles, gitHead, readRepoSnapshot, recordLastSeen, snapshotHarnessFiles, type Snapshot } from '../core/harness-files.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
-import { editTarget } from './edit-target.js';
+import { editTarget, isShell } from './edit-target.js';
 import { emit, parseInput } from './io.js';
 import type { Decision, HookEvent, HookInput } from './types.js';
 
@@ -232,7 +232,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     }
     const t = event === 'PreToolUse' ? editTarget(input) : null;
     // Shell writes and deletes count as edits; a target outside the repo, or the config itself, does not.
-    const shell = event === 'PreToolUse' && input.tool_name === 'Bash' ? shellWriteTargets(String(input.tool_input?.command ?? '')) : [];
+    const shell = event === 'PreToolUse' && isShell(input.tool_name) ? shellWriteTargets(String(input.tool_input?.command ?? '')) : [];
     const inRepo = (p: string) => { const rel = toRepoPath(root, p); return rel !== null ? rel.toLowerCase() !== CONFIG : resolve(root, p) === resolve(root); };
     if ((t !== null && toRepoPath(root, t)?.toLowerCase() !== CONFIG) || shell.some(inRepo)) {
       log('config', 'deny', reason);

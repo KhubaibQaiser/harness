@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { toRepoPath } from '../../core/paths.js';
 import type { Check } from '../../hooks/dispatch.js';
-import { editTarget } from '../../hooks/edit-target.js';
+import { editTarget, isShell } from '../../hooks/edit-target.js';
 import { fileWriteTargets } from '../guard.js';
 import { newestFresh, readResults, resultsDir } from './results.js';
 import { afterContent } from './tamper.js';
@@ -28,7 +28,7 @@ export const specGate: Check = {
     if (!ctx.config.checks.tdd) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = ctx.input;
     const deny = (reason: string) => ({ kind: 'deny' as const, reason, check: 'spec-gate' });
-    if (tool_name === 'Bash') {
+    if (isShell(tool_name)) {
       const cmd = tool_input.command;
       const hit = typeof cmd === 'string' && fileWriteTargets(cmd).some((t) => toRepoPath(ctx.root, t) === FILE);
       return hit ? deny('Edit features.json with the Edit or Write tool so the spec gate can check it.') : { kind: 'allow' };

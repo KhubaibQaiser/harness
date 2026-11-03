@@ -498,3 +498,22 @@ test('G1: the cluster forms are denied unattended (through the dispatcher)', asy
 test.each(['env -iu FOO harness uninstall --dry-run', 'timeout -vs KILL 60 harness tdd status'])('G1: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 // A value flag before the end of a cluster takes the rest as its value (getopt), so the next word is the command.
 test.each(['env -uC harness uninstall --yes', 'env -uS harness uninstall --yes', 'timeout -sKILL 60 harness uninstall --yes', 'sudo -uroot harness uninstall --yes'])('G1: %s (attached value) asks', (cmd) => expect(kind(cmd)).toBe('ask'));
+
+test('PowerShell and Monitor go through the command rules', async () => {
+  for (const tool of ['PowerShell', 'Monitor']) expect(await run(tool, { command: 'git push --force origin x' }), tool).toMatchObject({ kind: 'deny', check: 'guard' });
+  expect(await run('PowerShell', { command: 'cat .env' })).toMatchObject({ kind: 'deny' });
+});
+test('PowerShell command naming .harness, .claude or .env asks; plain ones pass', async () => {
+  for (const command of ['Get-Content .harness/config.yaml', 'Set-Content .CLAUDE/settings.json x', "[System.Environment]::GetEnvironmentVariable('X')"])
+    expect(await run('PowerShell', { command }), command).toMatchObject({ kind: 'ask', check: 'guard', reason: 'Harness does not parse PowerShell, so a PowerShell command that names .harness, .claude or .env needs your approval.' });
+  for (const command of ['$env:PATH', 'Write-Output hi']) expect(await run('PowerShell', { command }), command).toEqual({ kind: 'allow' });
+  expect(await run('Bash', { command: 'ls .harness' })).toEqual({ kind: 'allow' }); // the path rule is PowerShell only
+});
+test('the PowerShell ask is a deny when unattended', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-ps-'));
+  mkdirSync(join(root, '.harness'));
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, permission_mode: 'bypassPermissions', tool_name: 'PowerShell', tool_input: { command: 'Get-Content .harness/config.yaml' } });
+  const o = JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput;
+  expect(o.permissionDecision).toBe('deny');
+  expect(o.permissionDecisionReason).toMatch(/^Unattended run: /);
+});

@@ -5,6 +5,7 @@ import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js'
 import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
+import { isShell } from '../hooks/edit-target.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -472,7 +473,14 @@ export const guard: Check = {
   run(ctx) {
     if (ctx.config?.checks.guard === false) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = ctx.input;
-    if (tool_name === 'Bash') return decideCommand(String(tool_input.command ?? ''), ctx);
+    if (isShell(tool_name)) {
+      const cmd = String(tool_input.command ?? '');
+      const d = decideCommand(cmd, ctx);
+      // Harness does not parse PowerShell, so any mention of its own paths needs a person.
+      if (tool_name === 'PowerShell' && d.kind === 'allow' && /\.harness|\.claude|\.env/i.test(cmd))
+        return { kind: 'ask', reason: 'Harness does not parse PowerShell, so a PowerShell command that names .harness, .claude or .env needs your approval.', check: 'guard' };
+      return d;
+    }
     if (tool_name === 'Read') return decidePaths([String(tool_input.file_path ?? tool_input.path ?? '')]);
     if (tool_name === 'Grep') {
       // ponytail: each brace alternative is checked as written and with its wildcards dropped; `.e*v` is still missed.

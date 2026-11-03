@@ -134,3 +134,9 @@ test('newestFresh keeps the newest fresh result per file and drops stale ones', 
   const m = newestFresh([r('a', 'failed', 200), r('a', 'passed', 300), r('b', 'failed', 50), r('c', 'failed', 100)], 100);
   expect([...m.entries()].map(([k, v]) => [k, v.status])).toEqual([['a', 'passed'], ['c', 'failed']]);
 });
+
+test('a PowerShell input naming a locked test file is allowed (no shell detection)', async () => {
+  const s = setup();
+  writeState(s.root, 's', { ...s.st(), lockedTests: [T] });
+  expect((await s.call('PreToolUse', T, [testLock], 'PowerShell', { command: `Set-Content ${T} x` })).permissionDecision).toBe('allow');
+});

@@ -4,7 +4,7 @@ import nodePath, { resolve } from 'node:path';
 import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
-import { editTarget } from '../hooks/edit-target.js';
+import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, fileWriteTargets, gitArgs, rmTargets } from './guard.js';
 import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
@@ -236,7 +236,7 @@ export const protect: Check = {
     const nm = { kind: 'deny' as const, reason: NM_REASON, check: 'protect' };
     if (target !== null && inNodeModules(root, target)) return nm;
     if (target !== null) paths = [target];
-    else if (tool_name === 'Bash') {
+    else if (isShell(tool_name)) {
       const cmd = String(tool_input.command ?? '');
       // A program fed to a shell on stdin is a command line of its own (echo 'rm -rf node_modules' | bash).
       for (const p of stdinProgramsOf(cmd).filter((p) => SHELLS.has(p.name))) {

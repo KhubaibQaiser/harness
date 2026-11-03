@@ -336,3 +336,8 @@ test('F1: denied attended and unattended (through the dispatcher)', async () => 
   const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: `env -u FOO -S "node -e require('fs').rmSync('node_modules')"` } });
   for (const env of [{}, { CI: 'true' }]) expect(JSON.parse(await dispatch(raw, registry, env)).hookSpecificOutput.permissionDecision).toBe('deny');
 });
+
+test('PowerShell and Monitor writes to harness files are denied', () => {
+  expect(run('PowerShell', { command: 'echo x > .harness/state/a.json' }).kind).toBe('deny');
+  expect(run('Monitor', { command: 'tail -f log > .claude/settings.json' }).kind).toBe('deny');
+});

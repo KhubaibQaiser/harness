@@ -181,3 +181,8 @@ test('a deny is logged under the kebab-case id spec-gate', async () => {
   const ev = readFileSync(join(s.root, '.harness/logs/events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   expect(ev.at(-1)).toMatchObject({ check: 'spec-gate', decision: 'deny' });
 });
+
+test('PowerShell writes to features.json are denied with the Bash message', async () => {
+  const s = setup();
+  expect(await s.call('PowerShell', { command: 'echo {} > features.json' })).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'Edit features.json with the Edit or Write tool so the spec gate can check it.' });
+});

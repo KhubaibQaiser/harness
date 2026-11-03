@@ -1,0 +1,16 @@
+id: code-review
+kind: plugin
+title: "Code Review"
+source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":"plugins/code-review","plugin":"code-review","sha":"a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"low"}
+stance: discouraged
+stance_reason: "built-in /code-review"
+why: "Automated code review for pull requests using multiple specialized agents with confidence-based scoring."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/code-review/.claude-plugin/plugin.json"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/code-review/LICENSE (Apache-2.0)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/code-review/README.md (/code-review command, 4 parallel agents; commands only, no hooks)"
+  - "audit.html: \"you already have the built-in /code-review and your own reviewer agent.\""

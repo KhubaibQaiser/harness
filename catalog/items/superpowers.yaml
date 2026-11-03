@@ -1,0 +1,18 @@
+id: superpowers
+kind: plugin
+title: "Superpowers"
+source: {"type":"github","repo":"obra/superpowers","plugin":"superpowers","sha":"2ce8aa15d05bd57213e6f746f953aafb7ded7a8b"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "7.0.1"
+applies_when: {"always":true}
+cost: {"context":"medium","setup":"low"}
+stance: default
+side_effects: ["installs-hook","telemetry-on-by-default"]
+why: "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques."
+evidence:
+  - "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/.claude-plugin/plugin.json"
+  - "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/README.md (How it works: a complete software development methodology; skills trigger automatically, so it needs no special command: always)"
+  - "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/hooks/hooks.json (SessionStart hook on startup|clear|compact runs hooks/session-start, which injects the full using-superpowers skill inside EXTREMELY_IMPORTANT tags: installs-hook, context medium)"
+  - "audit.html: \"superpowers, ponytail, postman, caveman, engineering and design packs all load into every session\" (instruction overload)"
+  - "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/README.md section \"Visual companion telemetry\": the optional visual companion loads a logo from the vendor website by default, which includes the Superpowers version; opt out with SUPERPOWERS_DISABLE_TELEMETRY (telemetry-on-by-default, only when that optional feature is used)"

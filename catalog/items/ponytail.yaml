@@ -1,0 +1,18 @@
+id: ponytail
+kind: plugin
+title: "Ponytail"
+source: {"type":"github","repo":"DietrichGebert/ponytail","plugin":"ponytail","sha":"96608e078b2d5ea607c5c3b8b5a54d1c1fba6846"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "5.3.3"
+applies_when: {"always":true}
+cost: {"context":"medium","setup":"low"}
+stance: optional
+side_effects: ["installs-hook"]
+why: "Lazy senior dev mode that forces the simplest, shortest solution that actually works: YAGNI, stdlib first, no unrequested abstractions."
+evidence:
+  - "https://github.com/DietrichGebert/ponytail/blob/96608e078b2d5ea607c5c3b8b5a54d1c1fba6846/.claude-plugin/plugin.json"
+  - "https://github.com/DietrichGebert/ponytail/blob/96608e078b2d5ea607c5c3b8b5a54d1c1fba6846/hooks/claude-codex-hooks.json (SessionStart, SubagentStart and UserPromptSubmit hooks: installs-hook)"
+  - "https://github.com/DietrichGebert/ponytail/blob/96608e078b2d5ea607c5c3b8b5a54d1c1fba6846/hooks/ponytail-activate.js (header: \"Emits ponytail ruleset as hidden SessionStart context\" on every session start: context medium)"
+  - "https://github.com/DietrichGebert/ponytail/blob/96608e078b2d5ea607c5c3b8b5a54d1c1fba6846/README.md (\"Active every session\"; the task board stays on your machine in ~/.config/ponytail/band/ unless a webhook is set)"
+  - "audit.html: \"Keep it, but call it when you want it, so it stops loading at the start of every session.\""

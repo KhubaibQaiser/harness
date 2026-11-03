@@ -1,0 +1,14 @@
+id: claude-md-management
+kind: plugin
+title: "CLAUDE.md Management"
+source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":"plugins/claude-md-management","plugin":"claude-md-management","sha":"a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"low"}
+stance: optional
+why: "Tools to maintain and improve CLAUDE.md files: audit quality, capture session learnings, and keep project memory current."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/claude-md-management/.claude-plugin/plugin.json"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/claude-md-management/LICENSE (Apache-2.0)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/claude-md-management/README.md (a skill and a /revise-claude-md command; no hooks; works on any repo with a CLAUDE.md: always)"

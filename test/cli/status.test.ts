@@ -1,10 +1,12 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { init, type Prompt } from '../../src/cli/init.js';
 import { status } from '../../src/cli/status.js';
+import { appendEvent } from '../../src/core/events.js';
+import { writeHookEnv } from '../../src/core/hook-env.js';
 import { makeRepo } from '../install/helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -85,4 +87,46 @@ test('status: a vitest package with no config file says so', async () => {
 test('status names a Jest package whose coverage the gate cannot read', async () => {
   const r = await go({ 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' }, jest: { coverageDirectory: 'reports' } }), 'package-lock.json': '{}\n' });
   expect(r.out).toContain('  Coverage gate off for the root package: `package.json` "jest" sets `coverageDirectory`');
+});
+
+const installedAt = async () => {
+  const root = makeRepo({ a: 'b' });
+  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  return root;
+};
+const show = (root: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv = {}) => {
+  let out = '';
+  status([], { root, env, out: (s) => (out += s + '\n') }, { platform });
+  return out;
+};
+
+test('status shows the sandbox mode per platform', async () => {
+  const root = await installedAt();
+  expect(show(root, 'darwin')).toMatch(/^Enforcement: sandbox unattended \(macOS: available\)$/m);
+  expect(show(root, 'linux')).toMatch(/^Enforcement: sandbox unattended \(Linux: available\)$/m);
+  const p = join(root, '.harness/config.yaml');
+  writeFileSync(p, readFileSync(p, 'utf8').replace('sandbox: unattended', 'sandbox: always'));
+  expect(show(root, 'linux', { WSL_DISTRO_NAME: 'Ubuntu' })).toMatch(/^Enforcement: sandbox always \(WSL2: available\)$/m);
+  expect(show(root, 'win32')).toMatch(/^Enforcement: sandbox always \(native Windows: not available\)$/m);
+});
+
+test('status shows the hook failure line', async () => {
+  const out = show(await installedAt(), 'darwin');
+  expect(out).toMatch(/^Hook failure: blocks tool calls and prompts; the Stop gate fails open$/m);
+  expect(out.indexOf('Hook failure')).toBeGreaterThan(out.indexOf('Gates'));
+  expect(out.indexOf('Hook failure')).toBeLessThan(out.indexOf('Last day'));
+});
+
+test('status shows the hook Node or not recorded yet', async () => {
+  const root = await installedAt();
+  expect(show(root, 'darwin')).toMatch(/^Hooks run Node: not recorded yet$/m);
+  writeHookEnv(root, new Date('2026-11-02T10:00:00.000Z'));
+  expect(show(root, 'darwin')).toContain(`Hooks run Node ${process.version} (2026-11-02T10:00:00.000Z)\n`);
+});
+
+test('status shows the last blocked settings change', async () => {
+  const root = await installedAt();
+  expect(show(root, 'darwin')).not.toContain('Last blocked settings change');
+  appendEvent(root, { ts: '2026-11-02T00:00:00.000Z', session: 's', check: 'config-change', decision: 'config-change-blocked', reason: '.claude/settings.json: hooks' });
+  expect(show(root, 'darwin')).toMatch(/^Last blocked settings change: 2026-11-02T00:00:00\.000Z \(\.claude\/settings\.json: hooks\)$/m);
 });

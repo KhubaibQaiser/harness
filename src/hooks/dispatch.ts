@@ -15,7 +15,7 @@ import { appendEvent } from '../core/events.js';
 import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
-import { changedFiles, gitHead, readRepoSnapshot, recordLastSeen, snapshotHarnessFiles } from '../core/harness-files.js';
+import { changedFiles, gitHead, readRepoSnapshot, recordLastSeen, snapshotHarnessFiles, type Snapshot } from '../core/harness-files.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
 import { editTarget } from './edit-target.js';
@@ -156,7 +156,26 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
       if (event === 'Stop' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
         const prev = ctx.state.harnessFiles!;
         const cur = snapshotHarnessFiles(root);
-        const files = changedFiles(prev, cur);
+        // A change shown at a prompt that is no longer as shown (undone, or changed again) before the Stop that would
+        // account for it: report that at this Stop, once. At SessionEnd, the shown state is what the next session
+        // starts from, so it reports the undoing.
+        const noticed: [string, string | null][] | null = ctx.state.harnessNoticed ? JSON.parse(ctx.state.harnessNoticed) : null;
+        const gone = !!noticed && noticed.some(([f, h]) => (cur[f] ?? null) !== h);
+        const shown: Snapshot = { ...prev };
+        for (const [f, h] of noticed ?? []) if (h === null) delete shown[f]; else shown[f] = h;
+        if (gone && event === 'Stop') {
+          const changed = [...new Set([...noticed!.map(([f]) => f), ...changedFiles(shown, cur)])].sort();
+          log('harness-files', 'harness-files-changed', changed.join(', '));
+          const head = gitHead(root);
+          const why = `The change to ${noticed!.map(([f]) => `\`${f}\``).join(', ')} shown at the last prompt is no longer there: something changed these files again before this Stop, possibly undoing the person's edit. ${filesChangedWhy(changed, ctx.state.harnessHead, head)}`;
+          const attempts = ctx.state.stopAttempts + 1;
+          const over = attempts > (config?.stop.max_attempts ?? 3);
+          ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: head, harnessNoticed: undefined, stopAttempts: over ? 0 : attempts });
+          recordLastSeen(root, cur, head);
+          if (over) log('harness-files', 'stop-gave-up', why);
+          else return emit(event, { kind: 'block', reason: why, check: 'harness-files' });
+        }
+        const files = event === 'SessionEnd' && noticed ? [] : changedFiles(ctx.state.harnessFiles!, cur);
         const cli = files.length ? readRepoSnapshot(root).cli : undefined;
         if (files.length && cli && !changedFiles(cli.files, cur).length) ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: gitHead(root), harnessNoticed: undefined });
         else if (files.length && event !== 'SessionEnd') {
@@ -178,7 +197,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
           }
         }
         // What this session has accounted for (not an unreported change) is where the next session starts.
-        if (event === 'Stop' || event === 'SessionEnd') recordLastSeen(root, ctx.state.harnessFiles!, ctx.state.harnessHead);
+        if (event === 'Stop' || event === 'SessionEnd') recordLastSeen(root, event === 'SessionEnd' && noticed ? shown : ctx.state.harnessFiles!, ctx.state.harnessHead);
       }
     } catch (e) {
       warn('harness-files', e);

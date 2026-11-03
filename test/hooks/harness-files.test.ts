@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -168,4 +168,44 @@ test('the message names the start commit and says when HEAD moved', async () => 
   expect(r).toContain(`git diff ${start.slice(0, 12)} -- .harness .claude/settings.json`);
   expect(r).toContain('git diff -- .harness .claude/settings.json');
   expect(r).toMatch(/HEAD moved since the session started .*branch switch/);
+});
+
+// Round 16 F2: a change shown at a prompt, then undone before the next Stop, is reported at that Stop.
+test('a change shown at a prompt and undone before the next Stop is reported once', async () => {
+  const root = repo();
+  await hook(root, 'UserPromptSubmit', {}, 'f2');
+  expect(await hook(root, 'Stop', {}, 'f2')).toBe('');
+  const cfg = join(root, '.harness/config.yaml');
+  const before = readFileSync(cfg, 'utf8');
+  writeFileSync(cfg, 'checks:\n  guard: false\n'); // the person's edit between turns
+  expect(parsed(await hook(root, 'UserPromptSubmit', {}, 'f2')).systemMessage).toContain('`.harness/config.yaml`');
+  writeFileSync(cfg, before); // a script restores the previous config during the turn
+  const r = parsed(await hook(root, 'Stop', {}, 'f2'));
+  expect(r.decision).toBe('block');
+  expect(r.reason).toContain('`.harness/config.yaml`');
+  expect(r.reason).toMatch(/shown at the last prompt is no longer there/);
+  expect(await hook(root, 'Stop', {}, 'f2')).toBe('');
+  expect(await hook(root, 'UserPromptSubmit', {}, 'f2')).toBe('');
+  expect(readEvents(root).filter((e) => e.decision === 'harness-files-changed')).toHaveLength(2); // the edit, then its undoing
+});
+test('a change shown at a prompt and still there blocks the Stop once, with the usual message', async () => {
+  const root = repo();
+  await hook(root, 'PreToolUse', {}, 'f2b');
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: false\n');
+  await hook(root, 'UserPromptSubmit', {}, 'f2b');
+  const r = parsed(await hook(root, 'Stop', {}, 'f2b'));
+  expect(r.reason).not.toMatch(/no longer there/);
+  expect(await hook(root, 'Stop', {}, 'f2b')).toBe('');
+});
+test('a change shown at a prompt and undone before the session ends is reported in the next session', async () => {
+  const root = repo();
+  await hook(root, 'UserPromptSubmit', {}, 'f2c');
+  await hook(root, 'Stop', {}, 'f2c');
+  const cfg = join(root, '.harness/config.yaml');
+  const before = readFileSync(cfg, 'utf8');
+  writeFileSync(cfg, 'checks:\n  guard: false\n');
+  await hook(root, 'UserPromptSubmit', {}, 'f2c');
+  writeFileSync(cfg, before);
+  await hook(root, 'SessionEnd', {}, 'f2c');
+  expect(parsed(await hook(root, 'Stop', {}, 'f2d')).reason).toContain('`.harness/config.yaml`');
 });

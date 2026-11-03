@@ -1,6 +1,6 @@
 # PR size: design spec
 
-- Status: draft for owner review. The strength, limit and counting decisions are made (section 1). Section 12 lists the open questions; each is marked **open** and has a recommended option. The owner decides them.
+- Status: owner-approved design. The 2026-11-02 decisions are in section 1. The owner's answers of 2026-11-03 to the spec's questions are in section 12. Nothing is open.
 - Date: 2026-11-03
 - Owner: khubaibqaiser
 - Inputs: [`../research/2026-11-02-pr-size.md`](../research/2026-11-02-pr-size.md) (the evidence and the owner decisions), [`2026-11-03-platform-enforcement-design.md`](2026-11-03-platform-enforcement-design.md) ("PE"), and the code on `feature/pe-6-config-change`: `src/checks/guard.ts`, `src/core/config.ts`, `src/checks/multi-file.ts`, `src/hooks/dispatch.ts`.
@@ -14,7 +14,7 @@
 | D1 | **Guide, plus an ask at PR time.** The `pr-ship` skill plans the split. The guard asks when the agent runs `gh pr create` over the limit. Unattended runs are refused. |
 | D2 | **Limit.** Aim for 200 changed lines or fewer. Ask above 400 changed lines or above 20 files. Configurable per repo. |
 | D3 | **Counting.** Tests count. Everything counts except lockfiles and non-critical ignore files (`.gitignore`, `.prettierignore`, `.dockerignore` and the like). |
-| D4 | **Open for this spec.** Whether snapshots, `multi_file_gate.generated` paths and whole-file deletions count (section 12, O1 to O3). |
+| D4 | **Left to this spec:** whether snapshots, `multi_file_gate.generated` paths and whole-file deletions count. The owner decided these on 2026-11-03 (section 12, O1 to O3). |
 
 ## 2. Scope
 
@@ -54,7 +54,7 @@ A push counts, so a PR can't be opened small and grown later. Detection uses no 
 
 ## 4. Measuring
 
-Lives in `src/checks/pr-size.ts` as `measure(root, { base, head }, config)`. Every git call is `spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: 2000 })`, as `detectBaseHead` does. There is no shell. The whole measurement stops after 6 s in total, inside the 10 s hook timeout. Any failure gives "unmeasurable" with a one-line reason (section 6).
+Lives in `src/checks/pr-size.ts` as `measure(root, { base, head }, config)`. Every git call is `spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: 2000 })`, as `detectBaseHead` does. There is no shell. The whole measurement stops after 6 s in total, inside the 10 s hook timeout. Any failure gives "unmeasured" with a one-line reason (section 6).
 
 **The base.**
 1. The create's `--base` value.
@@ -67,13 +67,13 @@ For a push it is the recorded base.
 
 **The head.** The create's `--head` value as `refs/heads/<name>`, then `refs/remotes/origin/<name>`. Otherwise `HEAD`. Only committed work counts. The working tree and untracked files are not in the PR, so they are not counted (unlike the diff-coverage step).
 
-**Trust boundary.** Base and head come from the agent's command text. A name must match `^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$` and must not contain `..`. Otherwise it is unmeasurable ("not a plain branch name"). So a value such as `--output=/tmp/x` never reaches git as an option. Each name is resolved to a commit with `git rev-parse --verify --quiet --end-of-options <ref>^{commit}` (`--end-of-options` needs git 2.24 or later). Only the resolved SHAs are passed to `diff`.
+**Trust boundary.** Base and head come from the agent's command text. A name must match `^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$` and must not contain `..`. Otherwise the PR is unmeasured ("not a plain branch name"). So a value such as `--output=/tmp/x` never reaches git as an option. Each name is resolved to a commit with `git rev-parse --verify --quiet --end-of-options <ref>^{commit}` (`--end-of-options` needs git 2.24 or later). Only the resolved SHAs are passed to `diff`.
 
 **The diff.** GitHub's PR diff is the three-dot comparison, from the merge base to the head:
 
 ```
 git -c core.quotePath=false diff --numstat -z -M --no-ext-diff --no-textconv <baseSha>...<headSha>
-git -c core.quotePath=false diff --name-status -z --diff-filter=D --no-ext-diff <baseSha>...<headSha>   # only if O3 needs it
+git -c core.quotePath=false diff --name-status -z --diff-filter=D --no-ext-diff <baseSha>...<headSha>   # whole-file deletions (section 5)
 ```
 
 With `-z`, a numstat entry is `added\tdeleted\tpath\0`. For a rename it is `added\tdeleted\t\0old\0new\0`. Binary files show `-` for both counts.
@@ -86,7 +86,9 @@ With `-z`, a numstat entry is `added\tdeleted\tpath\0`. For a rename it is `adde
 - **Binary** files count as one file and 0 lines.
 - **A pure rename** counts as one file with its numstat lines (0 when the content is unchanged).
 - **Merge commits** on the branch need no rule: the three-dot diff is the net change.
-- **Snapshots, generated paths and whole-file deletions:** open (O1 to O3). Until the owner decides, the build counts them like any other file.
+- **Snapshots are not counted** (O1). The `exclude` default holds `**/__snapshots__/**` and `**/*.snap`.
+- **Generated paths are not counted** (O2). A path that matches `multi_file_gate.generated` is skipped. This is read from that same key, so the repo has one list of generated paths.
+- **A whole-file deletion counts as 1 file and 0 lines** (O3). The deleted files come from the `--diff-filter=D` call in section 4.
 
 ## 6. Decision
 
@@ -98,9 +100,10 @@ The PR is **over** when lines > `pr_size.max_lines` or files > `pr_size.max_file
 | Over the limit, PR create | ask (10.1) | deny (10.2) |
 | Over the limit, push to a recorded branch that grows past its record (more lines or more files than recorded) | ask (10.1) | deny (10.2) |
 | Over the limit, push that doesn't grow it | allow (the person already approved this size) | allow |
-| Unmeasurable | ask (10.3); open, O5 | deny, through the dispatcher's existing ask-to-deny |
+| Unmeasured (no base, git missing, timeout, a name that isn't a plain branch name) | allow with a note (10.3), and log `pr-size-unmeasured` (O5) | the same |
 
-- The check is `pr-size`. It is registered after `guard` in `registry` and runs on PreToolUse (decide) and PostToolUse (record). It has `failClosed: true`, like the guard, so a thrown error denies. It is `pure` at PreToolUse: it runs read-only git and writes nothing.
+- The check is `pr-size`. It is registered after `guard` in `registry` and runs on PreToolUse (decide) and PostToolUse (record). It has `failClosed: true`, like the guard, so a thrown error denies. It is `pure` at PreToolUse: it runs read-only git and writes only to the event log.
+- **Unmeasured.** The check appends a `pr-size-unmeasured` event (`check: 'pr-size'`, with the reason) and returns a `context` decision carrying the 10.3 note. The command runs. A `context` decision is never an ask, so the dispatcher's ask-to-deny doesn't touch it, and unattended runs are allowed too.
 - `checks.prSize: false` turns it off. `checks.guard: false` leaves it on, because it is its own check.
 - When one command has several PR creates or pushes, each is measured, and the first one over the limit decides.
 - A command with no PR create and no push never spawns git, so the PE latency budget is unchanged.
@@ -125,7 +128,7 @@ pr_size:
 | `pr_size.max_files` | `20` | must be an integer from 1 to 10000 |
 | `pr_size.exclude` | the list below | must be a list of strings (by the type of its default) |
 
-- `exclude` default, lockfiles: `**/pnpm-lock.yaml`, `**/package-lock.json`, `**/npm-shrinkwrap.json`, `**/yarn.lock`, `**/bun.lock`, `**/bun.lockb`, `**/Cargo.lock`, `**/poetry.lock`, `**/uv.lock`, `**/Pipfile.lock`, `**/Gemfile.lock`, `**/composer.lock`, `**/go.sum`. Ignore files: per O4.
+- `exclude` default, lockfiles: `**/pnpm-lock.yaml`, `**/package-lock.json`, `**/npm-shrinkwrap.json`, `**/yarn.lock`, `**/bun.lock`, `**/bun.lockb`, `**/Cargo.lock`, `**/poetry.lock`, `**/uv.lock`, `**/Pipfile.lock`, `**/Gemfile.lock`, `**/composer.lock`, `**/go.sum`. Ignore files (O4): `**/.!(npm|harness)ignore`. That is every `.*ignore` file except `.npmignore` and `.harnessignore`; one picomatch extglob, so the list needs no negation. Snapshots (O1): `**/__snapshots__/**`, `**/*.snap`.
 - **Cross-key rule:** `target_lines` greater than `max_lines` is an error. It is checked in `loadConfig` after the overlay, as `tdd.results_dir` is. As with any invalid key, the config is then invalid and the hooks fail closed.
 - A list set in the config replaces the whole default list, as the overlay does for every list. The README says so: a repo that adds one glob must keep the defaults it wants.
 - An existing config without `pr_size` gets the defaults through the overlay, so no migration is needed. `config.example.yaml`, `serializeConfig` and the generated README config table gain the keys.
@@ -139,7 +142,7 @@ pr_size:
 { "base": "origin/main", "head": "HEAD", "lines": 512, "files": 14, "target_lines": 200, "max_lines": 400, "max_files": 20, "over": true, "top": [{ "path": "src/a.ts", "lines": 210 }], "excluded": ["pnpm-lock.yaml"] }
 ```
 
-It exits 0 within the limit, 1 over the limit, and 2 when unmeasurable (with `"error"`). It sits next to `--self-test` (PE §3.1). It is read-only and reads no stdin. It lives in the repo's hook bundle, so the skill can run it in every clone, including cloud sessions, where the plugin's CLI isn't loaded. The base and head flags go through the same name rule as section 4.
+It exits 0 within the limit, 1 over the limit, and 2 when unmeasured (with `"error"`). It sits next to `--self-test` (PE §3.1). It is read-only and reads no stdin. It lives in the repo's hook bundle, so the skill can run it in every clone, including cloud sessions, where the plugin's CLI isn't loaded. The base and head flags go through the same name rule as section 4.
 
 ## 9. `pr-ship` skill
 
@@ -171,9 +174,9 @@ For a push, the first sentence becomes: "this push grows the pull request for `f
 
 > Blocked by pr-size: this pull request is 512 changed lines in 14 files against `origin/main`, over the limit of 400 lines or 20 files, and no person is here to approve it. Split it with the pr-ship skill into stacked PRs of about 200 lines each, opening each with `--base` set to the branch before it. If a piece can't go under the limit, stop and report it.
 
-### 10.3 Unmeasurable (attended; unattended gets the dispatcher's deny)
+### 10.3 Unmeasured (attended and unattended: a note, the command runs)
 
-> Confirm: harness couldn't measure this pull request (`<reason>`, for example "base `feat/a` not found; fetch it first"), so it can't check the size limit of 400 lines or 20 files.
+> Note from pr-size: harness couldn't measure this pull request (`<reason>`, for example "base `feat/a` not found; fetch it first"), so its size against the limit of 400 lines or 20 files wasn't checked. To check it yourself, run `node .harness/hooks/dispatch.mjs --pr-size --base <base>`.
 
 ## 11. Tests
 
@@ -182,14 +185,15 @@ For a push, the first sentence becomes: "this push grows the pull request for `f
 - **Detection, positive:** plain; absolute path; `gh.exe`; `env GH_TOKEN=x gh …`; `timeout 60 gh …`; `nohup`; `cd x && gh …`; `bash -c "gh pr create"`; `echo 'gh pr create' | sh`; a here-string; an `npm run ship` script; `$GH pr create`; `eval`; `gh pr -R o/r create`; Monitor and PowerShell text.
 - **Detection, negative:** `echo`, `grep`, `git commit -m` with the words in an argument; `gh pr view`, `gh pr list`, `gh pr edit`.
 - **Base and head** (temporary git repos): `--base`, `--base=`, `-B`; `origin/HEAD` set and unset (falls back to `stop.base_ref`); a stacked base that is remote, local only, or missing; `--head owner:branch`; a detached HEAD.
-- **Trust boundary:** `--base=--output=x`, `..`, `-x` and a 300-character name are unmeasurable, and git is never called with them (assert through an injected `run`).
-- **Counting:** a lockfile and each default ignore file excluded; a test file counted; a binary as 1 file and 0 lines; a pure rename; a path with spaces and non-ASCII characters (`-z`); working-tree and untracked changes not counted; a merge from the base not counted. O1 to O3 as decided.
+- **Trust boundary:** `--base=--output=x`, `..`, `-x` and a 300-character name are unmeasured (allowed with the note), and git is never called with them (assert through an injected `run`).
+- **Counting:** a lockfile and each default ignore file excluded; a test file counted; a binary as 1 file and 0 lines; a pure rename; a path with spaces and non-ASCII characters (`-z`); working-tree and untracked changes not counted; a merge from the base not counted. Snapshots (`__snapshots__/`, `*.snap`) are not counted. A `multi_file_gate.generated` path is not counted. A whole-file deletion is 1 file and 0 lines. `.gitignore`, `.prettierignore`, `.dockerignore`, `.eslintignore` and a nested `pkg/.gitignore` are excluded; `.npmignore` and `.harnessignore` are counted.
 - **Thresholds:** 400 lines allows and 401 asks; 20 files allows and 21 asks; custom limits; `checks.prSize: false` allows.
-- **Unattended:** the 10.2 copy; unmeasurable becomes `Unattended run: …`.
+- **Unattended:** the 10.2 copy.
+- **Unmeasured:** a missing base, git not on PATH, and a timeout each allow, attended and unattended. Each returns the 10.3 note as context and appends one `pr-size-unmeasured` event with the reason. None asks or denies.
 - **Push:** the record is written at PostToolUse after a create and after a push; a recorded branch that grows past the limit asks; one that doesn't grow allows; an unrecorded branch allows; refspecs `HEAD:feat`, `+feat`, `-u origin feat`, and `--all`.
 - **Config:** defaults; out-of-range and non-integer values; `target_lines` above `max_lines` is invalid; an unknown `pr_size` key; the generated README table.
 - **`--pr-size` entry:** JSON shape and exit codes 0, 1 and 2.
-- **Timing:** an injected `run` that times out gives unmeasurable within the 6 s budget. `test/perf` still passes; a non-PR command spawns no git.
+- **Timing:** an injected `run` that times out gives unmeasured within the 6 s budget. `test/perf` still passes; a non-PR command spawns no git.
 - **Skill template:** the frontmatter has `name` and `description`, and `init` installs it and `uninstall` removes it byte-identically.
 
 **Live (gated: costs money; run only with the owner's approval, as one batch, after the offline suite passes):**
@@ -197,15 +201,16 @@ For a push, the first sentence becomes: "this push grows the pull request for `f
 2. The same with `claude -p` (unattended): denied with the 10.2 copy.
 3. `/pr-ship` plans a split of that branch; the owner judges the plan. Nothing is pushed.
 
-## 12. Open questions (owner decides)
+## 12. Decisions (owner, 2026-11-03)
 
-| # | Question | Options | Recommended |
-|---|---|---|---|
-| O1 | **Open.** Do snapshots (`__snapshots__/`, `*.snap`) count? | (a) count like any file; (b) exclude: add `**/__snapshots__/**` and `**/*.snap` to the `exclude` default; (c) count the file but not its lines | **(b).** A snapshot changes with the code that caused it and can't be split from it, so counting it makes asks that the split can't fix. The multi-file gate already skips snapshots. The ask copy lists them under "Not counted", so the reviewer still sees them. |
-| O2 | **Open.** Do `multi_file_gate.generated` paths count? | (a) count; (b) exclude, reading that key so there is one list of generated paths; (c) a separate `pr_size.generated` key | **(b).** Google counts trusted generated changes as small. The person already named these paths, and the agent can't edit the config. |
-| O3 | **Open.** Do whole-file deletions count? | (a) count lines and file; (b) count the file, not its deleted lines; (c) count neither | **(b).** Deleted lines are quick to review (Google treats deleting a file as small), but each deleted file is a decision the reviewer checks. This uses the second `--diff-filter=D` call in section 4. |
-| O4 | **Open.** Which ignore files are "non-critical"? | (a) every `**/.*ignore`; (b) every `**/.*ignore` except `.npmignore` and `.harnessignore`; (c) only `.gitignore`, `.prettierignore` and `.dockerignore` | **(b).** `.npmignore` changes what gets published, and `.harnessignore` changes what harness reads, so a reviewer should see both. The others only steer tools. |
-| O5 | **Open.** What happens when the PR can't be measured (no base ref, git missing, timeout)? | (a) ask, which is a deny when unattended; (b) allow and log `pr-size-unmeasurable` | **(a).** It matches `failClosed` and D1's "unattended runs are refused". The cost is an ask in a repo that has never fetched its base. |
+The owner answered every question the first draft left open. None is open.
+
+- **O1. Snapshots are not counted.** `__snapshots__/` and `*.snap` are in the `exclude` default (sections 5 and 7).
+- **O2. `multi_file_gate.generated` paths are not counted.** The check reads that same key; there is no `pr_size` copy of it (section 5).
+- **O3. A whole-file deletion counts as 1 file and 0 lines** (section 5).
+- **O4. Every `.*ignore` file is excluded except `.npmignore` and `.harnessignore`.** The default glob is `**/.!(npm|harness)ignore` (section 7).
+- **O5. A PR that can't be measured is allowed with a note.** The check logs `pr-size-unmeasured` and shows the 10.3 note. It doesn't ask and doesn't deny, attended or unattended (section 6). The draft recommended an ask; the owner chose this instead.
+- **`checks.prSize` is on by default** (section 7).
 
 ## 13. Known limits (README)
 
@@ -216,4 +221,5 @@ For a push, the first sentence becomes: "this push grows the pull request for `f
 - A pushed branch is assumed to have the same name on the remote, unless the refspec names it.
 - `gh pr edit --base` can change a PR's size after it was opened; that isn't checked.
 - Size is lines and files, not complexity. 200 lines in one file and 200 across 20 files score the same on lines.
+- A PR that can't be measured (no base ref, git missing, a timeout) is allowed with only a note and a `pr-size-unmeasured` event, unattended runs included (O5). A repo that never fetches its base is never size-checked.
 - `gh`'s own choice of default base beyond the remote's default branch isn't mirrored (unverified).

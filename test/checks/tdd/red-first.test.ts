@@ -67,12 +67,20 @@ test('blocked again once related tests pass (strict)', async () => {
   expect(d.permissionDecisionReason).toBe(`Red first: ${T} is passing. Add or change a test so it fails, run it, then edit ${A}.`);
 });
 
-test('stale failing result from before the session is ignored, with the No test message at the existing path', async () => {
+test('existing test without a fresh failure asks to run it', async () => {
+  const t = setup();
+  t.result('packages/core/src/money.test.ts', 'failed', t.startedAt - 1000);
+  const d = await t.edit('packages/core/src/money.ts');
+  expect(d.permissionDecision).toBe('deny');
+  expect(d.permissionDecisionReason).toBe('Run the test for `money.ts` and see it fail first, then edit.');
+});
+
+test('stale failing result from before the session is ignored, with the run-it message', async () => {
   const t = setup();
   t.result(T, 'failed', t.startedAt - 1000);
   const d = await t.edit(A);
   expect(d.permissionDecision).toBe('deny');
-  expect(d.permissionDecisionReason).toBe(`No test for ${A}. Write a failing test first (e.g. ${T}), run it, then edit.`);
+  expect(d.permissionDecisionReason).toBe('Run the test for `a.ts` and see it fail first, then edit.');
 });
 
 test('only the newest fresh result per test file counts', async () => {
@@ -115,4 +123,19 @@ test('writtenAt equal to startedAt counts as fresh', async () => {
   const t = setup();
   t.result(T, 'failed', t.startedAt);
   expect((await t.edit(A)).permissionDecision).toBe('allow');
+});
+
+test('test file on disk with no results gives the run-it message', async () => {
+  const t = setup();
+  mkdirSync(join(t.root, 'packages/core/src'), { recursive: true });
+  writeFileSync(join(t.root, 'packages/core/src/money.test.ts'), '');
+  expect((await t.edit('packages/core/src/money.ts')).permissionDecisionReason).toBe('Run the test for `money.ts` and see it fail first, then edit.');
+  mkdirSync(join(t.root, 'packages/core/src/__tests__'), { recursive: true });
+  writeFileSync(join(t.root, 'packages/core/src/__tests__/tax.ts'), '');
+  expect((await t.edit('packages/core/src/tax.ts')).permissionDecisionReason).toBe('Run the test for `tax.ts` and see it fail first, then edit.');
+});
+
+test('no test file anywhere keeps No test for', async () => {
+  const d = await setup().edit('packages/core/src/none.ts');
+  expect(d.permissionDecisionReason).toBe('No test for packages/core/src/none.ts. Write a failing test first (e.g. packages/core/src/none.test.ts), run it, then edit.');
 });

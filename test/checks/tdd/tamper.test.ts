@@ -207,3 +207,9 @@ test('package.json thresholds are compared from parsed JSON, even on one line wi
 test('a selection value that starts on the next line is compared', () => {
   expect(tamperFindings('include:\n  ["src/**"]', 'include:\n  ["src/a/**"]', 'vitest.config.ts')).toEqual(['test selection changed (include)']);
 });
+
+test('NotebookEdit is read via notebook_path and allowed: afterContent leaves notebook content unchanged', async () => {
+  const t = setup(undefined, { [T]: SUITE });
+  const d = await t.run('NotebookEdit', { notebook_path: join(t.root, T), new_source: 'x' });
+  expect(d.permissionDecision).toBe('allow');
+});

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { readResults, relatedTests, type TestFileResult } from '../../../src/checks/tdd/results.js';
 
-const fx = (n: string) => readFileSync(join(import.meta.dirname, '../../fixtures/results', n), 'utf8').replaceAll('/ROOT', root);
+const fx = (n: string) => readFileSync(join(import.meta.dirname, '../../fixtures/results', n), 'utf8').replaceAll('/ROOT', JSON.stringify(root).slice(1, -1)); // JSON-escaped: Windows paths have backslashes
 const root = mkdtempSync(join(tmpdir(), 'res-'));
 const dir = (files: Record<string, string>) => {
   const d = mkdtempSync(join(root, 'd-'));

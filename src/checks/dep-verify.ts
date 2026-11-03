@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Decision } from '../hooks/types.js';
+import { syncCommand } from './stop/runner.js';
 
 type Lookup = { exists: boolean; created?: string } | 'error';
 export interface VerifyOpts {
@@ -10,14 +11,22 @@ export interface VerifyOpts {
   now: Date;
   lookup: (name: string, timeoutMs?: number) => Lookup;
   deadlineMs?: number; // total lookup budget; must fit inside the hook timeout (10 s)
+  startedAt?: number; // clock() reading the budget counts from (process start); defaults to this call
   clock?: () => number;
 }
 
 const DAY = 86400000;
 const MIN_AGE_DAYS = 14;
-const UNRESOLVABLE = /^(file:|link:|workspace:|git\+|github:|https?:\/\/|[./])/;
+// Specs that are not registry names: protocols, URLs, paths, tarballs, git remotes and user/repo (GitHub) shorthand.
+const UNRESOLVABLE = /^(file:|link:|workspace:|jsr:|git\+|git:|git@|ssh:|github:|gitlab:|bitbucket:|gist:|https?:\/\/|[./])|\.(tgz|tar\.gz|tar)$|^[^@/][^/]*\/[^/]+$/;
+const SHELL_META = /[&|<>^%"'`;$!()\s]/;
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
 const UNVERIFIED = (n: string) => `"${n}": could not verify on the registry`;
+// npm's name grammar (legacy names may have capitals). Checked before any lookup: on Windows the name reaches npm.cmd,
+// which re-parses its arguments with cmd.exe, so a name with & | % ^ " < > could run a command before anyone approves.
+const SEG = '[A-Za-z0-9][A-Za-z0-9._~-]*';
+const NPM_NAME = new RegExp(`^(@${SEG}/)?${SEG}$`);
+export const validNpmName = (n: string): boolean => n.length <= 214 && NPM_NAME.test(n);
 
 // ponytail: npm output is read as JSON text; a changed npm format falls to 'error' (an ask), never a silent allow.
 export function parseNpmView(stdout: string, stderr: string): Lookup {
@@ -31,8 +40,10 @@ export function parseNpmView(stdout: string, stderr: string): Lookup {
 }
 
 export function defaultLookup(name: string, timeoutMs = 5000): Lookup {
+  if (!validNpmName(name)) return 'error'; // never hand a non-name to the shell
   try {
-    return parseNpmView(String(execFileSync('npm', ['view', name, 'time.created', '--json'], { timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] })), '');
+    const [file, args, opts] = syncCommand('npm', ['view', name, 'time.created', '--json']);
+    return parseNpmView(String(execFileSync(file, args, { ...opts, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] })), '');
   } catch (e) {
     const err = e as { stdout?: unknown; stderr?: unknown };
     return parseNpmView(String(err.stdout ?? ''), String(err.stderr ?? ''));
@@ -85,14 +96,19 @@ export function verifyPackages(specs: string[], opts: VerifyOpts): Decision {
   const asks: string[] = [];
   const clock = opts.clock ?? Date.now;
   const start = clock();
-  const budget = opts.deadlineMs ?? 7000;
+  const budget = opts.deadlineMs ?? 9000;
   const names: string[] = [];
   for (const spec of specs) {
     const name = UNRESOLVABLE.test(spec) ? spec : stripVersion(spec);
     if (names.includes(name)) continue;
     names.push(name);
-    if (UNRESOLVABLE.test(spec)) { asks.push(UNVERIFIED(spec)); continue; }
-    const remaining = budget - (clock() - start);
+    if (UNRESOLVABLE.test(spec)) {
+      if (SHELL_META.test(spec)) denies.push(`"${spec}" contains shell metacharacters, so it was not looked up.`);
+      else asks.push(UNVERIFIED(spec));
+      continue;
+    }
+    if (!validNpmName(name)) { denies.push(`"${name}" is not a valid npm package name, so it was not looked up.`); continue; }
+    const remaining = budget - (clock() - (opts.startedAt ?? start));
     if (remaining <= 0) { asks.push(UNVERIFIED(name)); continue; }
     const found = opts.lookup(name, Math.min(5000, remaining));
     if (found === 'error') { asks.push(UNVERIFIED(name)); continue; }

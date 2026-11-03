@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -26,7 +26,7 @@ const kind = (d: { permissionDecision: string }) => d.permissionDecision;
 test('registered after specGate, not fail-closed, right events', () => {
   expect(registry.map((c) => c.name)).toEqual(['guard', 'protect', 'redFirst', 'tamper', 'testLock', 'specGate', 'multiFile', 'stopGate']);
   expect(multiFile.failClosed).toBeFalsy();
-  expect(multiFile.events).toEqual(['UserPromptSubmit', 'PreToolUse', 'PostToolUse']);
+  expect(multiFile.events).toEqual(['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']);
 });
 
 test('first file allowed, second asks with the message', async () => {
@@ -44,10 +44,33 @@ test('ask lists several touched files joined by ", " and the asked edit is not r
   await t.post('src/b.ts');
   await t.prompt();
   await t.post('a.ts');
-  await t.post('a.test.ts'); // same unit, second path
+  await t.post('a.test.ts'); // a test: never recorded, so never listed under Touched
   await t.edit('c.ts'); // ask, unrecorded
-  expect(readState(t.root, 's').files).toEqual(['a.ts', 'a.test.ts']);
-  expect((await t.edit('c.ts')).permissionDecisionReason).toContain('Touched: a.ts, a.test.ts. Next: c.ts.');
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+  expect((await t.edit('c.ts')).permissionDecisionReason).toContain('Touched: a.ts. Next: c.ts.');
+});
+
+test.each([
+  ['tests/test_docstrings.py', 'app/main.py', 'tests/sub/test_more.py'],
+  ['app/main_test.py', 'app/main.py', 'app/util_test.py'],
+  ['tests/helpers.py', 'app/main.py', 'pkg/tests/conftest.py'],
+  ['conftest.py', 'app/main.py', 'test_top.py'],
+  ['src/__tests__/other.ts', 'src/a.ts', 'lib/b.test.tsx'],
+  ['src/other.spec.ts', 'src/a.ts', 'src/__tests__/x.js'],
+])('a test file never counts as a unit: %s then %s is one unit', async (test, src, test2) => {
+  const t = setup();
+  expect(kind(await t.edit(test))).toBe('allow');
+  await t.post(test);
+  expect(kind(await t.edit(src))).toBe('allow');
+  await t.post(src);
+  expect(kind(await t.edit(test2))).toBe('allow'); // another test after the source
+  expect(readState(t.root, 's')).toMatchObject({ files: [src], approved: false });
+});
+
+test('python source files still count: two of them ask', async () => {
+  const t = setup();
+  await t.post('app/main.py');
+  expect(kind(await t.edit('app/util.py'))).toBe('ask');
 });
 
 test('source and its test count as one, either order', async () => {
@@ -160,30 +183,26 @@ test('end to end through the real registry: two edits, a prompt, then the third 
   expect(await pre('d.ts')).not.toBe('');
 });
 
-test('PreToolUse records an allowed edit, so a parallel second Pre asks', async () => {
-  const t = setup();
-  expect(kind(await t.edit('a.ts'))).toBe('allow');
-  expect(readState(t.root, 's').files).toEqual(['a.ts']);
-  expect(kind(await t.edit('b.ts'))).toBe('ask');
-});
-
 test('an asked edit is not recorded: retrying a allows, b asks again', async () => {
   const t = setup();
   await t.edit('a.ts');
+  await t.post('a.ts');
   expect(kind(await t.edit('b.ts'))).toBe('ask');
   expect(kind(await t.edit('a.ts'))).toBe('allow');
   expect(kind(await t.edit('b.ts'))).toBe('ask');
   expect(readState(t.root, 's').files).toEqual(['a.ts']);
 });
 
-test('allow-log appends only when a unit is newly recorded, not on repeated Pre', async () => {
+test('allow-log appends once per Pre of a new unit, not for recorded units', async () => {
   const t = setup('allow-log');
   const env = { CI: 'true' };
   await t.edit('a.ts', 'Edit', env);
+  await t.post('a.ts');
   await t.edit('b.ts', 'Edit', env);
+  await t.post('b.ts');
   await t.edit('b.ts', 'Edit', env);
   await t.edit('b.test.ts', 'Edit', env);
-  expect(readEvents(t.root).filter((e) => e.check === 'multi-file').map((e) => e.files)).toEqual([['a.ts', 'b.ts']]);
+  expect(readEvents(t.root).filter((e) => e.check === 'multi-file' && e.decision === 'allow-log').map((e) => e.files)).toEqual([['a.ts', 'b.ts']]);
 });
 
 // --- unattended.require_reason ---
@@ -346,4 +365,121 @@ test('a new prompt resets the turn (stop attempts too) even with checks.multiFil
   writeState(t.root, 's', { ...readState(t.root, 's'), stopAttempts: 2 });
   await t.prompt();
   expect(readState(t.root, 's').stopAttempts).toBe(0);
+});
+
+test('allowed Pre records the file before Post', async () => {
+  const t = setup();
+  expect(kind(await t.edit('a.ts'))).toBe('allow');
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+});
+
+test('parallel edits: two PreToolUse for different files before any PostToolUse, the second asks', async () => {
+  const t = setup();
+  expect(kind(await t.edit('a.ts'))).toBe('allow');
+  expect(kind(await t.edit('b.ts'))).toBe('ask');
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+});
+
+test('a declined ask does not record the file', async () => {
+  const t = setup();
+  await t.edit('a.ts');
+  expect(kind(await t.edit('b.ts'))).toBe('ask'); // declined: no PostToolUse follows
+  expect(readState(t.root, 's').files).toEqual(['a.ts']);
+  expect(kind(await t.edit('c.ts'))).toBe('ask');
+});
+
+test('PostToolUse records the file after an accepted ask', async () => {
+  const t = setup();
+  await t.edit('a.ts');
+  expect(kind(await t.edit('b.ts'))).toBe('ask');
+  await t.post('b.ts');
+  expect(readState(t.root, 's').files).toEqual(['a.ts', 'b.ts']);
+});
+
+// Record order from the live run (session 6a1913da): the assistant message holding both the reason text and the Edit is
+// appended to the transcript only after that Edit's PreToolUse hook returned (a file-history-delta stamped later sits
+// before it), so the hook logged "no reason given". Once flushed, Stop or the next prompt finds it.
+const at = (ms: number) => new Date(ms).toISOString();
+const rec = (type: string, ms: number, content: unknown, extra: object = {}) => ({ type, timestamp: at(ms), message: { role: type, content }, ...extra });
+const live = async (finish: 'Stop' | 'UserPromptSubmit') => {
+  const t0 = Date.now() - 60_000;
+  const onDisk = [
+    rec('user', t0, 'Add a docstring to main() in app/main.py and to helper() in app/util.py'),
+    rec('assistant', t0 + 1000, [{ type: 'text', text: 'Files I plan to change: `app/main.py` and `app/util.py`.' }]),
+    rec('assistant', t0 + 2000, [{ type: 'text', text: 'Fails as expected. Now the docstrings:' }]),
+    rec('assistant', t0 + 3000, [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: 'app/main.py' } }]),
+    rec('user', t0 + 3100, [{ type: 'tool_result', tool_use_id: 'e1', content: 'PreToolUse:Edit hook error: State why each extra file is necessary', is_error: true }]),
+  ];
+  const t = reasonSetup(onDisk);
+  await t.post('app/a.py');
+  expect(kind(await t.edit2('app/main.py'))).toBe('deny'); // reason-required
+  const reasonAt = Date.now(); // the model writes the reason, then the Edit, in one message
+  expect(kind(await t.edit2('app/main.py'))).toBe('allow'); // PreToolUse: that message is not on disk yet
+  const allowLog = t.log().find((e) => e.decision === 'allow-log')!;
+  expect(allowLog.reason).toBe('app/main.py: no reason given');
+  const flushed = [
+    { type: 'file-history-delta', timestamp: at(Date.now()) }, // stamped after the hook, written before the message
+    rec('assistant', reasonAt, [{ type: 'text', text: '- app/main.py because the user asked for a docstring on main() there.' }]),
+    rec('assistant', reasonAt + 1, [{ type: 'tool_use', id: 'e2', name: 'Edit', input: { file_path: 'app/main.py' } }]),
+    rec('user', reasonAt + 50, [{ type: 'tool_result', tool_use_id: 'e2', content: 'ok' }]),
+    ...(finish === 'UserPromptSubmit' ? [rec('user', Date.now() + 1000, 'next task')] : []), // the new prompt may already be on disk
+  ];
+  appendFileSync(join(t.root, 't.jsonl'), flushed.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  await t.send({ hook_event_name: finish, transcript_path: join(t.root, 't.jsonl'), ...(finish === 'UserPromptSubmit' ? { prompt: 'next task' } : {}) });
+  await t.send({ hook_event_name: finish, transcript_path: join(t.root, 't.jsonl'), ...(finish === 'UserPromptSubmit' ? { prompt: 'again' } : {}) });
+  return { t, allowLog };
+};
+
+test.each(['Stop', 'UserPromptSubmit'] as const)('require_reason: a reason flushed after PreToolUse is logged as reason-found-late at %s, once', async (finish) => {
+  const { t, allowLog } = await live(finish);
+  const late = t.log().filter((e) => e.decision === 'reason-found-late');
+  expect(late).toEqual([expect.objectContaining({ files: ['app/main.py'], reason: 'app/main.py: - app/main.py because the user asked for a docstring on main() there.', of: allowLog.ts })]);
+});
+
+test('require_reason: a reason from an earlier turn is not taken as a late reason', async () => {
+  const t0 = Date.now() - 60_000;
+  const t = reasonSetup([
+    rec('user', t0, 'first task'),
+    rec('assistant', t0 + 1000, [{ type: 'text', text: 'b.ts because of the first task' }]),
+    rec('user', t0 + 2000, 'second task'),
+    rec('assistant', t0 + 3000, [{ type: 'text', text: 'just editing' }]),
+  ]);
+  await t.post('a.ts');
+  await t.edit2('b.ts');
+  await t.edit2('b.ts');
+  await t.send({ hook_event_name: 'Stop', transcript_path: join(t.root, 't.jsonl') });
+  expect(t.log().filter((e) => e.decision === 'reason-found-late')).toEqual([]);
+});
+
+test('require_reason: an entry is searched once; no reason by then logs reason-not-found and it is never searched again', async () => {
+  const t0 = Date.now() - 60_000;
+  const t = reasonSetup([rec('user', t0, 'task'), rec('assistant', t0 + 1000, [{ type: 'text', text: 'just editing' }])]);
+  await t.post('a.ts');
+  await t.edit2('b.ts');
+  await t.edit2('b.ts'); // allow-log: no reason given
+  const path = join(t.root, 't.jsonl');
+  await t.send({ hook_event_name: 'Stop', transcript_path: path });
+  // A reason that turns up even later is not looked for: the next Stop after the entry is enough.
+  appendFileSync(path, JSON.stringify(rec('assistant', t0 + 2000, [{ type: 'text', text: 'b.ts because late' }])) + '\n');
+  await t.send({ hook_event_name: 'Stop', transcript_path: path });
+  await t.send({ hook_event_name: 'UserPromptSubmit', prompt: 'x', transcript_path: path });
+  expect(t.log().filter((e) => e.decision === 'reason-not-found' || e.decision === 'reason-found-late').map((e) => [e.decision, e.files])).toEqual([['reason-not-found', ['b.ts']]]);
+  expect(readState(t.root, 's').lateReasons ?? []).toEqual([]);
+});
+
+test('require_reason: Stop clears the handled late reasons under the lock, keeping what other hooks wrote meanwhile', async () => {
+  const { loadConfig } = await import('../../src/core/config.js');
+  const t = reasonSetup([rec('user', Date.now() - 60_000, 'task')]);
+  const A = { ts: new Date(Date.now() - 5000).toISOString(), rel: 'a.ts' };
+  const B = { ts: new Date().toISOString(), rel: 'b.ts' };
+  const stale = { ...readState(t.root, 's'), lateReasons: [A] }; // Stop's snapshot, taken before the other hook ran
+  writeState(t.root, 's', { ...stale, files: ['x.ts'], lateReasons: [A, B] }); // a locked hook ran during Stop
+  const ctx: any = {
+    input: { session_id: 's', cwd: t.root, hook_event_name: 'Stop', transcript_path: join(t.root, 't.jsonl') },
+    root: t.root, config: loadConfig(t.root).config, state: stale, unattended: true, env: {},
+    save(s: any) { writeState(t.root, 's', s); ctx.state = s; },
+  };
+  expect(await multiFile.run(ctx)).toEqual({ kind: 'allow' });
+  expect(readState(t.root, 's')).toMatchObject({ files: ['x.ts'], lateReasons: [B] });
+  expect(t.log().filter((e) => e.decision === 'reason-not-found').map((e) => e.of)).toEqual([A.ts]);
 });

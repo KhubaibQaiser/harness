@@ -70,6 +70,10 @@ test('results_dir inside .harness/state is an error', () => {
   mkdirSync(join(root, '.harness'), { recursive: true });
   writeFileSync(join(root, '.harness/config.yaml'), `tdd:\n  results_dir: ${join(root, '.harness/state/x')}\n`);
   expect(loadConfig(root).errors).toContain(msg);
+  writeFileSync(join(root, '.harness/config.yaml'), `tdd:\n  results_dir: ${join(root, '.harness/STATE/x')}\n`);
+  const r = loadConfig(root);
+  expect(r.errors).toContain(msg);
+  expect(r.warnings).toContain(`config: "tdd.results_dir" has an invalid value (must not be inside .harness/state (the sandbox denies it there)); using default`);
 });
 
 test('results_dir outside .harness/results warns', () => {

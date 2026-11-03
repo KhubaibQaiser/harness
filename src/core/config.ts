@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { retryTransient } from './atomic.js';
-import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { join, posix, relative, resolve } from 'node:path';
 import { parse } from 'yaml';
 
 export type StopStep = string | { name: string; run: string[] };
@@ -145,10 +145,15 @@ export function loadConfig(root: string, read: (p: string, e: 'utf8') => string 
     else if (kind === 'mapping') fail(`config: "${p}" must be a mapping; using default`, `"${p}" must be a mapping`);
     else fail(`config: "${p}" has an invalid value (${detail}); using default`, `"${p}" ${detail}`);
   }
-  const abs = resolve(root, config.tdd.results_dir);
-  const outside = (dir: string) => { const r = relative(join(root, dir), abs); return r === '..' || r.startsWith('..' + sep) || isAbsolute(r); };
-  if (!outside('.harness/state')) { const m = `"tdd.results_dir" ${IN_STATE}`; warnings.push(`config: ${m}; using default`); errors.push(m); config.tdd.results_dir = DEFAULT_RESULTS_DIR; } // an absolute path into state (ruling 8)
-  else if (outside('.harness/results')) warnings.push("tdd.results_dir is outside .harness/results: protect doesn't cover it; the agent can write test results there with its file tools");
+  // An absolute path is judged by its repo-relative form, through the same rule as the text check (ruling 8).
+  const rel = relative(root, resolve(root, config.tdd.results_dir)).replace(/\\/g, '/');
+  const inState = resultsDirRule(rel);
+  if (inState) {
+    fail(`config: "tdd.results_dir" has an invalid value (${inState}); using default`, `"tdd.results_dir" ${inState}`);
+    config.tdd.results_dir = DEFAULT_RESULTS_DIR;
+  } else if (rel !== '.harness/results' && !rel.toLowerCase().startsWith('.harness/results/')) {
+    warnings.push("tdd.results_dir is outside .harness/results: protect doesn't cover it; the agent can write test results there with its file tools");
+  }
   return { config, warnings, errors };
 }
 

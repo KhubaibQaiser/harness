@@ -42,3 +42,5 @@
   reason: part of the PR reviewer (M2)
 - id: ui-verifier
   reason: part of the PR reviewer (M2)
+- id: mcp-for-blender
+  reason: PyPI-only package run with uvx; the catalog can pin only npm or remote MCP sources

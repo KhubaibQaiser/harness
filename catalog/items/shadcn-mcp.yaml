@@ -1,0 +1,14 @@
+id: shadcn-mcp
+kind: mcp
+title: "shadcn MCP server"
+source: {"type":"npm","package":"shadcn","version":"4.23.0"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"any_dep":["shadcn","radix-ui","@radix-ui/react-slot"]}
+cost: {"context":"low","setup":"low"}
+stance: optional
+mcp: {"name":"shadcn","config":{"command":"npx","args":["-y","shadcn@4.23.0","mcp"]}}
+why: "Lets AI assistants browse, search and install components from registries using natural language."
+evidence:
+  - "https://github.com/shadcn-ui/ui/blob/4aaea19d9cff3e0908e12a8c1d504b8c5ec34610/apps/v4/content/docs/(root)/mcp.mdx"
+  - "npm view shadcn@4.23.0: license MIT, repository shadcn-ui/ui"

@@ -1,0 +1,18 @@
+id: impeccable
+kind: plugin
+title: "Impeccable"
+source: {"type":"git-subdir","repo":"pbakaus/impeccable","path":"plugin","plugin":"impeccable","sha":"9fadc41729c38fd47d7ae622b501558653f9d2e9"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"project_types":["web"]}
+cost: {"context":"medium","setup":"medium"}
+stance: optional
+side_effects: ["installs-hook","downloads-binary","telemetry-on-by-default"]
+why: "Design fluency for frontend development: one skill with 24 commands (polish, audit, critique and more) and curated anti-pattern detection."
+evidence:
+  - "https://github.com/pbakaus/impeccable/blob/9fadc41729c38fd47d7ae622b501558653f9d2e9/.claude-plugin/marketplace.json"
+  - "https://github.com/pbakaus/impeccable/blob/9fadc41729c38fd47d7ae622b501558653f9d2e9/README.md"
+  - "https://github.com/pbakaus/impeccable/blob/9fadc41729c38fd47d7ae622b501558653f9d2e9/plugin/hooks/hooks.json (SessionStart and PostToolUse Edit|Write hooks run the impeccable hook, whose findings go back to the agent: context medium)"
+  - "https://github.com/pbakaus/impeccable/blob/9fadc41729c38fd47d7ae622b501558653f9d2e9/plugin/skills/impeccable/SKILL.md (long always-listed skill description: context medium)"
+  - "README.md: the skill runs an engine binary that downloads once into ~/.impeccable/bin/ (downloads-binary)"
+  - "README.md Telemetry section: anonymous record of directions shown and picked; disable with npx impeccable telemetry off or DO_NOT_TRACK=1 (telemetry-on-by-default)"

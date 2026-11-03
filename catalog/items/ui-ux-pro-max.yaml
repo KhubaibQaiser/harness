@@ -1,0 +1,14 @@
+id: ui-ux-pro-max
+kind: plugin
+title: "UI/UX Pro Max"
+source: {"type":"github","repo":"nextlevelbuilder/ui-ux-pro-max-skill","plugin":"ui-ux-pro-max","sha":"713eef51b04efc98d6fa565323b495f7c9c89fd4"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "2.15.0"
+applies_when: {"project_types":["web","landing","mobile"]}
+cost: {"context":"low","setup":"low"}
+stance: optional
+why: "Searchable local database of 79 styles, 192 palettes, 74 font pairings, 25 charts and 22 stack guidelines for designing and reviewing UI."
+evidence:
+  - "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/blob/713eef51b04efc98d6fa565323b495f7c9c89fd4/.claude-plugin/plugin.json"
+  - "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/blob/713eef51b04efc98d6fa565323b495f7c9c89fd4/README.md (Python 3.x required for the search script, stdlib only, no network calls)"

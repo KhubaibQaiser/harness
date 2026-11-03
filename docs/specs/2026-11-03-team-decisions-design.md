@@ -1,6 +1,6 @@
 # Team decisions: design spec
 
-- Status: draft for owner review. The owner decisions are made (section 1). Section 14 lists where they conflict with each other, with Claude Code's documented behaviour or with existing specs; each has a recommended option and is marked **open**. The owner decides them.
+- Status: owner-approved design, 2026-11-03. The owner decisions are in section 1; section 14 records the owner's rulings on the conflicts the first draft raised. None is open.
 - Date: 2026-11-03
 - Owner: khubaibqaiser
 - Inputs: [`../research/2026-11-03-memory.md`](../research/2026-11-03-memory.md) (design B; cited as "R"), [`2026-11-03-platform-enforcement-design.md`](2026-11-03-platform-enforcement-design.md) ("PE"), [`2026-11-02-harness-recommend-design.md`](2026-11-02-harness-recommend-design.md) ("M3"), `2026-11-03-pr-size-design.md` on `docs/pr-size-spec`, and the code on `feature/pe-7-doctor-status`: `templates/agents-block.md`, `src/install/merge.ts` (`mergeAgents`), `src/checks/guard.ts` (`PERSON_ONLY`), `src/checks/protect.ts`, `src/checks/stop/gate.ts`, `src/checks/multi-file.ts` (`readTranscript`), `src/core/harness-files.ts`, `src/install/manifest.ts`, `src/cli/uninstall.ts`, `src/core/unattended.ts`.
@@ -10,7 +10,7 @@
 
 | # | Decision |
 |---|---|
-| D1 | **Scope:** team-shared decisions only. Personal memory stays in Claude Code's auto memory. Harness never reads the home folder for memory and leaves auto memory alone. |
+| D1 | **Scope:** team-shared decisions only. Personal memory stays in Claude Code's auto memory. Harness never reads the home folder for memory and leaves auto memory alone. The one narrow exception: the quote check (7.1) reads the current session's transcript, only to compare the draft against it; nothing from it is stored or copied (C2). |
 | D2 | **Location:** `docs/decisions/`, one file per decision. Frontmatter links it to repo paths. |
 | D3 | **Loading:** generated `.claude/rules/` files, one per decision, that Claude Code loads when linked paths are touched. AGENTS.md gets one pointer line. The cap is configurable, default 20 lines. |
 | D4 | **Writers:** the agent drafts through `harness remember`; the guard asks the person for each write (denied when unattended); the PR reviews it. |
@@ -97,6 +97,8 @@ Source: `docs/decisions/2026-11-03-validate-env-with-zod.md`, confirmed 2026-11-
 ### 4.2 The cap (`decisions.max_lines`, default 20)
 
 The cap limits the **content lines of one generated rule file**: every line after the closing `---` of its frontmatter, including the header, the generated comment and the `Source:` line. That is the text Claude Code adds to context when the rule loads. There is no always-loaded index (C1).
+
+Generated decision rules count toward harness's always-loaded context budget only when they have no `paths`; path-scoped rules load on demand. The context-budget spec owns that budget and its 2,000-token default (an owner decision). Every decision needs `paths` (3.2, O1), so today no generated rule counts toward it.
 
 - `add` refuses a draft whose rule would exceed the cap: `harness remember: the rule would be <n> lines; the cap is <cap> (decisions.max_lines). Shorten --rule or --why.`
 - A hand-edited decision whose rule would exceed the cap is **oversized**. Its rule keeps the first `cap - 1` lines, then `Cut to <cap> lines: read docs/decisions/<id>.md for the rest.` `doctor` and `check` report it (section 9).
@@ -233,7 +235,7 @@ The harness-files snapshot (`harness-files.ts`) gains the generated rule files l
 
 ### 7.1 Quote detection (D9)
 
-Runs in the guard (6.1), at PreToolUse, because only a hook gets `transcript_path`.
+Runs in the guard (6.1), at PreToolUse, because only a hook gets `transcript_path`. It reads only the current session's transcript, only to compare the draft against it, and stores or copies nothing from it (C2). The excerpt in the deny or ask is the draft's own words; the event the dispatcher logs for that deny or ask says `quotes tool output` and leaves the excerpt out.
 
 1. Read the transcript with the reader in `multi-file.ts` (`readTranscript`), extended to collect the text of every `tool_result` block (string content and `text` blocks). These are the outputs of Bash, Read, Grep, WebFetch, WebSearch, MCP tools and subagents, so `gh pr view` text, web pages and file contents all count. The person's typed prompts and the agent's own text do not.
 2. Read at most the last 8 MB of the transcript.
@@ -311,7 +313,7 @@ It adds `It is expired (last confirmed <date>).` or `Its path <glob> no longer m
 | State | Test |
 |---|---|
 | dead | a `paths` glob matches no file in `git ls-files -z` (one call for all decisions) |
-| changed | `git diff --name-only -z <ref> HEAD`, filtered by the decision's globs, is not empty. `<ref>` is `verified_at`; if that commit is not in the clone, the last commit that touched the decision file (`git log -1 --format=%H -- <file>`). The decision file itself doesn't count (C4, C5) |
+| changed | `git diff --name-only -z <ref> HEAD`, filtered by the decision's globs, is not empty. `<ref>` is the later of `verified_at` and the last commit that touched the decision file (`git log -1 --format=%H -- <file>`): the file's commit when `verified_at` is its ancestor (`git merge-base --is-ancestor`) or is not in the clone, otherwise `verified_at`. The decision file itself doesn't count (C4, C5) |
 | expired | `verified_on` is more than `decisions.expiry_days` days before today (UTC) |
 | oversized | its rule would exceed `decisions.max_lines` (4.2) |
 
@@ -362,12 +364,12 @@ decisions:
 - **Sync:** add, change, retire, supersede, expire (injected clock), delete a decision file; a foreign `harness-decision-*.md` stops sync; a manifest conflict resolved by sync; dry-run writes nothing.
 - **CLI:** every subcommand's output copy and exit code; unattended env refusal; `CLAUDECODE` with `checks.guard: false` refusal; the TTY prompt and `--yes`; the `-2` id suffix; `--supersedes`; `confirm` on a dead path refuses; nothing staged in git.
 - **Guard:** `remember add` asks, `list`/`check`/`--dry-run` allowed; wrappers (`npx @khubaibqaiser/harness remember add`, `bash -c`, `env X=1`); the not-literal deny for `$`, backticks, `$(`, stdin; unattended deny plus one `decision-candidate` event; the ask copy for each subcommand.
-- **Quote detection:** fixture transcripts with tool results from Bash, WebFetch, Read and an Agent result; an 8-word quote denies, 7 words passes; case, punctuation, NFKC and zero-width variants still match; a URL counts; text from the person's prompt doesn't; an unreadable transcript counts; `--quoted` turns the deny into the warning ask; the 8 MB tail.
+- **Quote detection:** fixture transcripts with tool results from Bash, WebFetch, Read and an Agent result; an 8-word quote denies, 7 words passes; case, punctuation, NFKC and zero-width variants still match; a URL counts; text from the person's prompt doesn't; an unreadable transcript counts; `--quoted` turns the deny into the warning ask; the 8 MB tail; the logged event holds no excerpt and nothing from the transcript is written anywhere (C2).
 - **Secrets:** one positive and one near-miss per pattern; redaction in the candidate log.
 - **Protect:** Edit, Write and shell writes to a generated rule, to an existing decision and to a new file in `docs/decisions/` deny; an existing non-decision file there is allowed; `rm -rf docs` denies; Read allowed; everything allowed with `checks.decisions: false`; no deny rule added to the settings fragment.
 - **Change detection:** a script-rewritten rule file is reported; a CLI sync is not.
 - **Stop:** each P and A pattern, with a negative sample per pattern; once per session; suppressed after `remember add`, with `nudge: false`, when unattended (logged instead); held over when the gate blocks; the warning lists only decisions linked to changed files.
-- **Staleness:** temporary git repos for dead, changed, expired and the missing-`verified_at` fallback (a squash-merged branch); git timeout gives the note.
+- **Staleness:** temporary git repos for dead, changed, expired and the missing-`verified_at` fallback (a squash-merged branch); a decision committed with its code is not changed (C5); git timeout gives the note.
 - **Doctor and status:** every line in section 9.
 - **e2e byte-identity:** `init` → `remember add` ×2 → `retire` → `uninstall` restores every harness-written file and leaves `docs/decisions/`; `init` → `uninstall` unchanged by this feature.
 - **Config:** defaults, ranges, the generated README table.
@@ -403,26 +405,28 @@ decisions:
 - A `/harness:remember` skill. The AGENTS.md line and `--help` tell the agent how to call the CLI.
 - Personal-data detection; non-English nudge signals; decisions shared across repos; Cursor and OpenCode.
 
-## 14. Conflicts and open points (owner decides)
+## 14. Decisions after review (owner, 2026-11-03)
 
-| # | Conflict | Between | Recommended |
-|---|---|---|---|
-| C1 | **Open.** D3 sets an "index cap", but per-path rules plus one pointer line leave no index to cap. | D3 with itself | Apply the cap to each generated rule's content lines (4.2). Alternative: a generated `docs/decisions/INDEX.md` that nothing loads, capped at 20 lines. |
-| C2 | **Open.** D1 says harness never reads the home folder for memory. Quote detection (D9) reads `transcript_path`, which lives under `~/.claude/projects/`. | D1 and D9 | Allow it: it reads the current session's transcript for safety, not memory, and `multi-file.ts` already does. Say so in the README. |
-| C3 | **Open.** D6 expiry has no effect by itself: rules are committed files, and harness writes only when a person runs a write subcommand. | D6 and D3 | `sync` leaves expired decisions out; `doctor`, `check` and Stop say they expired. |
-| C4 | **Open.** `verified_at` is the commit current when the draft is written. After a squash merge or rebase that commit may not exist in other clones. | D6 and git workflows | Fall back to the decision file's last commit (section 9). |
-| C5 | **Open.** A decision written with its code in one PR: the code commits come after `verified_at`, so the decision reads as "changed" as soon as it lands. | D6 with itself | Use the later of `verified_at` and the decision file's last commit as `<ref>`; `verified_at` stays the record. Otherwise confirm once after merge. |
-| C6 | **Open.** Recording each rule in the committed manifest makes concurrent decision PRs conflict on `.harness/manifest.json`. | The task (manifest for byte-identical uninstall) and team use | Keep it, sorted, and make `sync` rebuild the entries (4.4). Alternative: one manifest entry with a glob and the generated header as the ownership mark. |
-| C7 | **Open.** "Uninstall stays byte-identical" can't cover `docs/decisions/`: those files are the team's reviewed content. | The task and D2 | Uninstall leaves them; byte-identity covers harness-written files (4.4). |
-| C8 | **Open.** Many repos already keep ADRs in `docs/decisions/`. Protecting the whole folder would block the agent from them, and validating them would flag them all. | D2 and existing repos | Only files with `schema: harness-decision/1` are decisions; protect covers them and new files (6.2). |
-| C9 | **Open.** Protecting the decisions and rules with permission deny rules would, under the sandbox, also deny the `harness remember` process its own writes. | D4 and PE §2/§4 | Protect check only, no deny rule (6.2), as PE did for `.harness/results/**`. Unverified whether the sandbox lets a command write `.claude/rules/` at all (R5). |
-| C10 | **Open.** The nudge and warning live in the Stop gate's note path, so `checks.stop: false` turns them off too, and a blocked Stop delays them. | D5/D7 and the gate | Accept and document. A separate Stop check can't tell whether another check blocked. |
-| C11 | **Open.** The guard's ask is the only approval inside Claude Code. The PE spec calls the guard a backup ("seatbelt"), and a program the agent writes can call the CLI without the guard seeing it. | D4 and PE §9/§11 | Accept: the PR is the second check (D4). The CLI refuses inside Claude Code when `checks.guard` is off (5). |
-| C12 | **Open.** The 2026-10-30 catalog lists a third-party `remember` item as discouraged ("built-in memory"). A harness command with the same name can confuse users and the recommend step. | This spec and 2026-10-30 §7.3 | Keep `harness remember` (owner's name in D4/D6); the catalog reason for the third-party item says it overlaps both auto memory and harness team decisions. |
-| C13 | **Open.** Claude Code's rules loader is the platform's: harness can't make a rule load for Grep, Bash edits or subagents (R, Claude Code section). D3's "loaded when the linked paths are touched" holds only for the file tools. | D3 and Claude Code docs | Accept as a known limit (12); live check 1 records what loads. |
-| O1 | **Open.** Repo-wide decisions: `**` and `**/*` are refused because such a rule loads on the first file touch, which recreates always-loaded context. | Design choice | Refuse them; repo-wide team rules belong in AGENTS.md or CLAUDE.md through a PR. |
+The owner ruled on every point the first draft raised. None is open.
 
-PE §3.5 froze the guard's regex. Adding `remember` to `PERSON_ONLY` and paths to protect's lists adds no regex, and the guard comment already expects M3 to add table entries, so this spec treats it as compatible. The owner may read PE §14 ("new guard or protect regex") more strictly.
+| # | Point raised | Ruling |
+|---|---|---|
+| C1 | D3 sets an "index cap", but per-path rules plus one pointer line leave no index to cap. | The cap applies to each generated rule's content lines (4.2). |
+| C2 | D1 says harness never reads the home folder; quote detection reads `transcript_path`, under `~/.claude/projects/`. | Allowed as D1's one narrow exception: only the current session's transcript, only to compare the draft; nothing is stored or copied (D1, 7.1). |
+| C3 | D6 expiry has no effect by itself, because rules are committed files. | `sync` leaves expired decisions out; `doctor`, `check` and Stop say they expired. |
+| C4 | `verified_at` may not exist in other clones after a squash merge or rebase. | Fall back to the decision file's last commit (section 9). |
+| C5 | A decision written with its code in one PR reads as "changed" as soon as it lands. | `<ref>` is the later of `verified_at` and the decision file's last commit; `verified_at` stays the record (section 9). |
+| C6 | Recording each rule in the committed manifest makes concurrent decision PRs conflict on `.harness/manifest.json`. | Keep the entries, sorted; `sync` rebuilds them (4.4). |
+| C7 | Byte-identical uninstall can't cover `docs/decisions/`, the team's reviewed content. | Uninstall leaves it; byte-identity covers harness-written files (4.4). |
+| C8 | Repos may already keep ADRs in `docs/decisions/`. | Only files with `schema: harness-decision/1` are decisions; protect covers them and new files (6.2). |
+| C9 | Permission deny rules would, under the sandbox, deny `harness remember` its own writes. | Protect check only, no deny rule (6.2), as PE did for `.harness/results/**`. R5 stays a live check. |
+| C10 | The nudge and warning use the Stop gate's note path, so `checks.stop: false` turns them off and a blocked Stop delays them. | Accepted and documented. |
+| C11 | Inside Claude Code the guard's ask is the only approval, and the guard is a text check. | As designed: the guard's ask plus PR review is enough. When nobody is watching, the sandbox blocks scripts (PE §3.4). |
+| C12 | The 2026-10-30 catalog discourages a third-party `remember` item; the names can be confused. | The name stays `harness remember`. The build updates that catalog item's reason to say it overlaps both auto memory and harness team decisions. |
+| C13 | Rules load only through Claude Code's file tools, not Grep, shell edits or subagents. | Accepted as a known limit (12); live check 1 records what loads. |
+| O1 | Repo-wide globs (`*`, `**`, `**/*`). | Refused; repo-wide team rules belong in AGENTS.md or CLAUDE.md through a PR (3.2). |
+
+PE §3.5 froze the guard's regex. Adding `remember` to `PERSON_ONLY` and paths to protect's lists adds no regex, so this spec is compatible with it.
 
 ## 15. Open risks (unverified)
 
@@ -438,5 +442,5 @@ PE §3.5 froze the guard's regex. Adding `remember` to `PERSON_ONLY` and paths t
 ## 16. Order of work
 
 1. M3 and the PE work are merged.
-2. Plan from this spec after the owner decides section 14, then build: schema and render, sync and manifest, CLI, guard and quote and secret checks, protect and change detection, Stop, doctor and status, config, README.
+2. Plan from this spec, then build: schema and render, sync and manifest, CLI, guard and quote and secret checks, protect and change detection, Stop, doctor and status, config, README.
 3. Live batch, final review, release.

@@ -11,20 +11,12 @@ import { readManifest } from '../../src/install/apply.js';
 import { lineHunks, revertHunks } from '../../src/install/diff.js';
 import { prettierFormat, repoPrettier } from '../../src/install/format.js';
 import { hashText } from '../../src/install/text.js';
-import { makeRepo } from './helpers.js';
+import { makeRepo, withPrettier } from './helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const prompt: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
 const quiet = { env: {}, out: () => {} };
 
-// A stand-in for the repo's Prettier: splits lines over 80 columns at ", ", and fails on FAIL_FORMAT.
-const FAKE = `let s = '';
-process.stdin.on('data', (d) => (s += d)).on('end', () => {
-  if (s.includes('FAIL_FORMAT')) { process.stderr.write('boom\\n'); process.exit(2); }
-  process.stdout.write(s.split('\\n').map((l) => (l.length > 80 ? l.replace(/, /g, ',\\n    ') : l)).join('\\n'));
-});
-`;
-const withPrettier = { 'node_modules/prettier/package.json': JSON.stringify({ name: 'prettier', bin: { prettier: 'bin/prettier.cjs' } }), 'node_modules/prettier/bin/prettier.cjs': FAKE };
 const VITEST = 'export default {\n  test: { globals: true },\n};\n';
 const repo = (files: Record<string, string> = {}) => makeRepo({
   'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^2.0.0', '@vitest/coverage-v8': '^2.0.0' } }, null, 2) + '\n',

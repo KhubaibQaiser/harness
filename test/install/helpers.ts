@@ -58,3 +58,12 @@ export function betaSettings(pre: any): { s: any; blocks: string[] } {
   for (const d of BETA_DENY) if (!s.permissions.deny.includes(d)) s.permissions.deny.push(d), blocks.push(JSON.stringify({ deny: d }));
   return { s, blocks };
 }
+
+// A stand-in for the repo's Prettier: splits lines over 80 columns at ", ", and fails on FAIL_FORMAT.
+const FAKE = `let s = '';
+process.stdin.on('data', (d) => (s += d)).on('end', () => {
+  if (s.includes('FAIL_FORMAT')) { process.stderr.write('boom\\n'); process.exit(2); }
+  process.stdout.write(s.split('\\n').map((l) => (l.length > 80 ? l.replace(/, /g, ',\\n    ') : l)).join('\\n'));
+});
+`;
+export const withPrettier = { 'node_modules/prettier/package.json': JSON.stringify({ name: 'prettier', bin: { prettier: 'bin/prettier.cjs' } }), 'node_modules/prettier/bin/prettier.cjs': FAKE };

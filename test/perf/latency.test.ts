@@ -62,7 +62,9 @@ test('unattended Bash (sandbox-required reads managed settings): harness overhea
   const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'lat', cwd: repo, permission_mode: 'bypassPermissions', tool_name: 'Bash', tool_input: { command: 'ls' } });
   const m = measure(input, (r) => {
     expect(r.status).toBe(0);
-    expect(JSON.parse(String(r.stdout)).hookSpecificOutput.permissionDecision).toBe('deny'); // no sandbox: the check ran to its end
+    // No sandbox: the check ran to its end. Native Windows has none to require (D2), so there it allows.
+    if (process.platform === 'win32') expect(r.stdout).toBe('');
+    else expect(JSON.parse(String(r.stdout)).hookSpecificOutput.permissionDecision).toBe('deny');
   });
   expect(m.overhead, `unattended overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
   expect(m.total, `unattended total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);

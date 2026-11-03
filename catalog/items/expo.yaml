@@ -1,0 +1,18 @@
+id: expo
+kind: plugin
+title: "Expo skills"
+source: {"type":"git-subdir","repo":"expo/skills","path":"plugins/expo","plugin":"expo","sha":"a9e5bd3fa00b4e61f632e43f85da73aee1942582"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"frameworks":["expo"]}
+cost: {"context":"low","setup":"low"}
+stance: optional
+why: "Official Expo skills for building, deploying, upgrading, and debugging Expo apps"
+evidence:
+  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/.claude-plugin/plugin.json (version 1.14.3; the why sentence is its description)"
+  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/LICENSE (MIT) and README.md (License: MIT)"
+  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/.mcp.json (bundles one hosted http MCP server, https://mcp.expo.dev/mcp; deferred tools). There is no hooks directory at the sha"
+  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/README.md (skills/ has 24 directories, in two groups: open-source framework skills, and \"services & paid distribution\" skills for paid Expo Application Services; each of the latter opens with a costs note. Every skill's feedback step runs `npx --yes @expo/agent-cli@latest feedback`, an unpinned fetch, only when feedback is submitted)"
+  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/skills/expo-overview/SKILL.md (the router skill applies when package.json has an `expo` dependency)"
+  - "Source choice: expo/skills is the vendor repo the official marketplace entry points to (it pins d4f484024fec, v1.13.9); the HEAD sha above is newer. The audit install command is `claude plugin install expo@claude-plugins-official`"
+  - "audit.html: \"Covers Expo Router, dev clients, EAS, SDK upgrades, and native UI bridges.\""

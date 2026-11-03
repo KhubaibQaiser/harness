@@ -1,0 +1,21 @@
+id: sourcegraph
+kind: plugin
+title: "Sourcegraph (code search MCP and skill)"
+source: {"type":"github","repo":"sourcegraph-community/sourcegraph-claudecode-plugin","plugin":"sourcegraph","sha":"674a05e2e28677fc3fdce7491063459455ded573"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "0.1.0"
+applies_when: {"always":true}
+cost: {"context":"low","setup":"medium"}
+stance: discouraged
+stance_reason: "duplicates typescript-lsp and local search for single-repo work; needs a Sourcegraph instance."
+why: "Use Sourcegraph MCP from Claude Code for code search, navigation, history, and Deep Search."
+evidence:
+  - "https://github.com/sourcegraph-community/sourcegraph-claudecode-plugin/blob/674a05e2e28677fc3fdce7491063459455ded573/.claude-plugin/plugin.json (version 0.1.0; the why sentence is its description; license field \"MIT\")"
+  - "License: the repo has no LICENSE file and the GitHub license field is null, so the only statement is plugin.json's \"license\": \"MIT\". Recorded on that basis; see the owner note"
+  - "https://github.com/sourcegraph-community/sourcegraph-claudecode-plugin/blob/674a05e2e28677fc3fdce7491063459455ded573/README.md (Prerequisites: \"A Sourcegraph instance with MCP enabled\" and \"A Sourcegraph access token with `mcp` scope\", exported as SOURCEGRAPH_ENDPOINT and SOURCEGRAPH_ACCESS_TOKEN)"
+  - "https://github.com/sourcegraph-community/sourcegraph-claudecode-plugin/blob/674a05e2e28677fc3fdce7491063459455ded573/.mcp.json (http server at ${SOURCEGRAPH_ENDPOINT}/.api/mcp/all with an Authorization token header: your queries go to that instance)"
+  - "https://sourcegraph.com/docs/api/mcp (vendor docs, read 2026-11-04: the MCP server gives access to \"your Sourcegraph instance's\" code search, and is \"Supported on Enterprise plans\". This confirms the Q5 claim that it needs a Sourcegraph instance; the page describes no public or free endpoint)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/.claude-plugin/marketplace.json (entry \"sourcegraph\" points at this repo and sha; there is no sourcegraph-org plugin repo: `gh search repos --owner sourcegraph claude` returned nothing)"
+  - "audit.html: \"Skip serena and sourcegraph, which duplicate the LSP for single-repo work.\""
+  - "applies_when note: the docs name no stack and the vocabulary has no \"has a Sourcegraph instance\" fact, so always; the discouraged stance keeps it from being pushed"

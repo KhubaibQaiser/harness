@@ -13,6 +13,11 @@ const BATCHES: Record<number, string[]> = {
     'claude-code-setup', 'claude-md-management', 'skill-creator', 'hookify', 'session-report', 'dash0',
     'feature-dev', 'pr-review-toolkit',
   ],
+  3: [
+    'typescript-lsp', 'swift-lsp', 'kotlin-lsp', 'context7', 'graphify', 'serena', 'sourcegraph', 'mintlify', 'engineering',
+    'playwright', 'chrome-devtools-mcp', 'webapp-testing',
+    'expo', 'react-native-best-practices', 'maestro-mcp', 'mobile-mcp', 'revenuecat',
+  ],
 };
 
 test.each(Object.entries(BATCHES))('batch %s ids are all in items/ or excluded.yaml', (_n, ids) => {
@@ -34,6 +39,11 @@ const STANCES: Record<number, Record<string, { stance: string; reason?: string }
     'ralph-loop': { stance: 'discouraged', reason: 'use /goal' },
     'feature-dev': { stance: 'discouraged', reason: 'overlaps superpowers; use one process pack.' },
     'pr-review-toolkit': { stance: 'discouraged', reason: 'overlaps the built-in /code-review and the harness reviewer.' },
+  },
+  3: {
+    'typescript-lsp': { stance: 'default' },
+    serena: { stance: 'discouraged', reason: 'duplicates LSP' },
+    sourcegraph: { stance: 'discouraged', reason: 'duplicates typescript-lsp and local search for single-repo work; needs a Sourcegraph instance.' },
   },
 };
 

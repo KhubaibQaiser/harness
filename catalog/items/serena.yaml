@@ -1,0 +1,19 @@
+id: serena
+kind: plugin
+title: "Serena (semantic code analysis MCP)"
+source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":"external_plugins/serena","plugin":"serena","sha":"a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: GPL-3.0-or-later
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"medium"}
+stance: discouraged
+stance_reason: "duplicates LSP"
+why: "Semantic code analysis MCP server providing intelligent code understanding, refactoring suggestions, and codebase navigation through language server protocol integration."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/serena/.claude-plugin/plugin.json (the why sentence is its description verbatim; author Oraios)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/serena/.mcp.json (runs `uvx --from git+https://github.com/oraios/serena serena start-mcp-server`: needs uv, and fetches and runs the upstream default branch at launch, unpinned)"
+  - "https://github.com/oraios/serena/blob/ede329aaf0c824bea75455a2926f01420d7aa620/LICENSE (\"the Serena application under GPL-3.0-or-later\", SolidLSP under MIT; pyproject license GPL-3.0-or-later). The plugin directory here holds only config and carries no LICENSE; the Apache-2.0 root LICENSE of claude-plugins-official covers that config, so the code that runs is GPL-3.0-or-later, which is what is recorded"
+  - "https://github.com/oraios/serena/blob/ede329aaf0c824bea75455a2926f01420d7aa620/README.md (\"Do not install Serena via an MCP or plugin marketplace! They contain outdated and suboptimal installation commands.\")"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/.claude-plugin/marketplace.json (entry \"serena\", tag community-managed)"
+  - "audit.html: \"Skip serena and sourcegraph, which duplicate the LSP for single-repo work.\""
+  - "applies_when note: the docs name no stack, so always"

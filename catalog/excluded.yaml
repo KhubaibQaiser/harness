@@ -50,3 +50,7 @@
   reason: no license; LICENSE is a custom "Community License" with no-commercial-redistribution and no-competing-use clauses, not an SPDX license
 - id: wshobson-agents
   reason: the repo is a marketplace of 94 plugins, not one plugin; there is no single source to pin
+- id: graphify
+  reason: installed from PyPI with `uv tool install graphifyy` then `graphify install`; the repo (Graphify-Labs/graphify) has no Claude Code plugin manifest and is not in the official marketplace, so the catalog has nothing to pin
+- id: maestro-mcp
+  reason: the MCP server is the `maestro mcp` command of the Maestro CLI binary (mobile-dev-inc/Maestro, Apache-2.0); it is neither an npm package nor a hosted server, the repo has no plugin manifest, and the older mobile-dev-inc/maestro-mcp repo is archived

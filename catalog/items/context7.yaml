@@ -1,0 +1,18 @@
+id: context7
+kind: plugin
+title: "Context7 (documentation lookup)"
+source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":"external_plugins/context7","plugin":"context7","sha":"a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"low"}
+stance: optional
+why: "Upstash Context7 MCP server for up-to-date documentation lookup."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/context7/.claude-plugin/plugin.json (the why sentence is the first sentence of its description; author Upstash)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/LICENSE (Apache-2.0, repo root; the plugin directory has no LICENSE of its own and holds only config and a README, the hosted server is Upstash's service; upstash/context7 is MIT)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/context7/.mcp.json (hosted http server https://mcp.context7.com/mcp?client=claude-code-plugin; the plugin runs nothing locally)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/context7/README.md (data flow: the library name and your question go to Context7's hosted server; works anonymously on shared rate limits, CONTEXT7_API_KEY is optional; tools resolve-library-id and query-docs, deferred)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/.claude-plugin/marketplace.json (entry \"context7\", tag community-managed; its description says it works anonymously while plugin.json says \"Authenticate with Context7 when prompted\": the two disagree, anonymous use not tested)"
+  - "audit.html: \"Docs Covered engineering:documentation, context7 mintlify only if you publish a docs site.\""
+  - "applies_when note: the docs name no stack, so always"

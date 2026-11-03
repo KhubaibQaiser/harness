@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { retryTransient } from './atomic.js';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 
 export type StopStep = string | { name: string; run: string[] };
@@ -15,10 +15,13 @@ export interface HarnessConfig {
   stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
 }
 
+export const DEFAULT_RESULTS_DIR = '.harness/results';
+export const LEGACY_RESULTS_DIR = '.harness/state/test-results';
+
 export const defaults = (): HarnessConfig => ({
   version: 1,
   checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true },
-  tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: '.harness/state/test-results' },
+  tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: DEFAULT_RESULTS_DIR },
   multi_file_gate: { generated: [] },
   unattended: { multi_file_gate: 'block', require_reason: false },
   stop: {
@@ -58,7 +61,15 @@ const stepsRule: Rule = (v) => {
   }
   return null;
 };
+const IN_STATE = 'must not be inside .harness/state (the sandbox denies it there)';
+const resultsDirRule: Rule = (v) => {
+  if (v === undefined) return IN_STATE; // the README reads this text
+  if (typeof v !== 'string') return 'must be a string';
+  const p = posix.normalize(v.replace(/\\/g, '/')).toLowerCase();
+  return p === '.harness/state' || p.startsWith('.harness/state/') ? IN_STATE : null;
+};
 const RULES: Record<string, Rule> = {
+  'tdd.results_dir': resultsDirRule,
   version: (v) => (v === 1 ? null : 'must be 1'),
   'stop.max_attempts': num(1, 10, true),
   'stop.timeout_s': num(30, 550, true), // 550 fits the 600 s Stop hook timeout
@@ -134,8 +145,10 @@ export function loadConfig(root: string, read: (p: string, e: 'utf8') => string 
     else if (kind === 'mapping') fail(`config: "${p}" must be a mapping; using default`, `"${p}" must be a mapping`);
     else fail(`config: "${p}" has an invalid value (${detail}); using default`, `"${p}" ${detail}`);
   }
-  const rel = relative(join(root, '.harness/state'), resolve(root, config.tdd.results_dir));
-  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) warnings.push('tdd.results_dir is outside .harness/state; the agent could forge test results there');
+  const abs = resolve(root, config.tdd.results_dir);
+  const outside = (dir: string) => { const r = relative(join(root, dir), abs); return r === '..' || r.startsWith('..' + sep) || isAbsolute(r); };
+  if (!outside('.harness/state')) { const m = `"tdd.results_dir" ${IN_STATE}`; warnings.push(`config: ${m}; using default`); errors.push(m); config.tdd.results_dir = DEFAULT_RESULTS_DIR; } // an absolute path into state (ruling 8)
+  else if (outside('.harness/results')) warnings.push("tdd.results_dir is outside .harness/results: protect doesn't cover it; the agent can write test results there with its file tools");
   return { config, warnings, errors };
 }
 

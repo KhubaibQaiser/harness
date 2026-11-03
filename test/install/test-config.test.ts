@@ -5,7 +5,7 @@ import { removeBlocks } from '../../src/install/merge.js';
 import { testConfigChange } from '../../src/install/test-config.js';
 import { makeRepo } from './helpers.js';
 
-const RD = '.harness/state/test-results';
+const RD = '.harness/results';
 const vt = (over: Partial<PackageFacts> = {}): PackageFacts => ({ dir: '.', name: 'demo', scripts: {}, test: 'vitest', testConfig: 'vitest.config.ts', ...over });
 const jest = (script: string, over: Partial<PackageFacts> = {}): PackageFacts => ({ dir: '.', name: 'demo', scripts: { test: script }, test: 'jest', ...over });
 
@@ -38,7 +38,7 @@ describe('testConfigChange vitest', () => {
 
   it('vite.config with test key edited', () => {
     const c = edit({ 'packages/a/vite.config.ts': "import { defineConfig } from 'vite';\nexport default defineConfig({\n  plugins: [],\n  test: { globals: true },\n});\n" }, vt({ testConfig: 'vite.config.ts', dir: 'packages/a', name: '@s/a' }), 'packages/a/vite.config.ts');
-    expect(c.after).toContain("json: '../../.harness/state/test-results/s__a.json'");
+    expect(c.after).toContain("json: '../../.harness/results/s__a.json'");
     expect(c.after).toContain('globals: true');
   });
 

@@ -236,7 +236,7 @@ const oldJestInstall = async () => {
   const pkg = JSON.stringify({ name: 'app', scripts: { test: 'jest --silent' }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n';
   const root = makeRepo({ 'package.json': pkg, 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n' });
   await init(['--yes'], { env: {}, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
-  const oldBlock = ' --json --outputFile=.harness/state/test-results/root.json --coverage';
+  const oldBlock = ' --json --outputFile=.harness/results/root.json --coverage';
   const oldPkg = pkg.replace('"jest --silent"', `"jest --silent${oldBlock}"`);
   writeFileSync(join(root, 'package.json'), oldPkg);
   const mp = join(root, '.harness/manifest.json');
@@ -254,7 +254,7 @@ test('update migrates the old Jest --json script to the reporter form, and unins
   const r = await up(root, ['--yes']);
   expect(r.code).toBe(0);
   const script = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts.test;
-  expect(script).toBe('jest --silent --reporters=default --reporters=./.harness/hooks/jest-results.cjs "--modulePathIgnorePatterns=<rootDir>/.harness" --outputFile=.harness/state/test-results/root.json --coverage');
+  expect(script).toBe('jest --silent --reporters=default --reporters=./.harness/hooks/jest-results.cjs "--modulePathIgnorePatterns=<rootDir>/.harness" --outputFile=.harness/results/root.json --coverage');
   expect(r.out).not.toContain('You edited');
   expect((await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() }))).toBe(0);
   expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(pkg);

@@ -164,16 +164,20 @@ describe('mergeClaudeMd', () => {
 describe('mergeGitignore / mergeIgnoreFile', () => {
   it('appends the three lines, once', () => {
     const { after, blocks } = mergeGitignore(fx('.gitignore'));
-    expect(after).toBe('node_modules/\ndist/\n.harness/state/\n.harness/logs/\n.harness/backup/\n');
-    expect(blocks).toEqual(['.harness/state/\n.harness/logs/\n.harness/backup/\n']);
+    expect(after).toBe('node_modules/\ndist/\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n');
+    expect(blocks).toEqual(['.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n']);
     expect(mergeGitignore(after)).toEqual({ after, blocks: [] });
   });
   it('null creates; missing newline and CRLF handled; partial adds only missing', () => {
-    expect(mergeGitignore(null).after).toBe('.harness/state/\n.harness/logs/\n.harness/backup/\n');
+    expect(mergeGitignore(null).after).toBe('.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n');
     expect(mergeGitignore('a').blocks[0].startsWith('\n')).toBe(true);
-    expect(mergeGitignore('a').after).toBe('a\n.harness/state/\n.harness/logs/\n.harness/backup/\n');
-    expect(mergeGitignore('a\r\n').after).toBe('a\r\n.harness/state/\r\n.harness/logs/\r\n.harness/backup/\r\n');
-    expect(mergeGitignore('.harness/logs/\n').blocks).toEqual(['.harness/state/\n.harness/backup/\n']);
+    expect(mergeGitignore('a').after).toBe('a\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n');
+    expect(mergeGitignore('a\r\n').after).toBe('a\r\n.harness/state/\r\n.harness/logs/\r\n.harness/backup/\r\n.harness/results/\r\n');
+    expect(mergeGitignore('.harness/logs/\n').blocks).toEqual(['.harness/state/\n.harness/backup/\n.harness/results/\n']);
+  });
+  it('mergeGitignore adds .harness/results/', () => {
+    const r = mergeGitignore('.harness/state/\n.harness/logs/\n.harness/backup/\n');
+    expect(r.blocks).toEqual(['.harness/results/\n']);
   });
   it('ignore file gets .harness/', () => {
     expect(mergeIgnoreFile('dist\n', '.harness/')).toEqual({ after: 'dist\n.harness/\n', blocks: ['.harness/\n'] });

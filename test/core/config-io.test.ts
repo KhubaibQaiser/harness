@@ -20,6 +20,12 @@ test('validateConfig names the path', () => {
   expect(errs({ stop: { max_attempts: 0 } })).toEqual(['stop.max_attempts: must be an integer from 1 to 10']);
 });
 
+test('validateConfig rejects a results_dir inside .harness/state', () => {
+  const msg = 'tdd.results_dir: must not be inside .harness/state (the sandbox denies it there)';
+  for (const d of ['.harness/state/x', './.harness/STATE/x', '.harness\\state\\x']) expect(errs({ tdd: { results_dir: d } })).toEqual([msg]);
+  expect(errs({ tdd: { results_dir: '.harness/results' } })).toEqual([]);
+});
+
 test('validateConfig rejects unknown keys, wrong types, bad enums and bad version', () => {
   expect(errs({ nope: 1 })).toEqual(['nope: unknown key']);
   expect(errs({ checks: { guard: 'yes' } })[0]).toMatch(/^checks\.guard: must be a boolean/);

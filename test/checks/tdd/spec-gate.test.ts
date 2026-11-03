@@ -11,12 +11,12 @@ const feat = (id: string, passes: boolean, criteria: unknown[] | undefined) => (
 const doc = (...f: unknown[]) => JSON.stringify({ features: f });
 const setup = (cfg = 'checks:\n  tdd: true\n') => {
   const root = mkdtempSync(join(tmpdir(), 'h-sg-'));
-  mkdirSync(join(root, '.harness/state/test-results'), { recursive: true });
+  mkdirSync(join(root, '.harness/results'), { recursive: true });
   writeFileSync(join(root, '.harness/config.yaml'), cfg.replaceAll('ROOT', root));
   const startedAt = Math.floor((Date.now() - 10000) / 1000) * 1000;
   writeState(root, 's', { startedAt, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 });
   let n = 0;
-  const result = (file: string, tests: [string, string][], at = Date.now(), dir = '.harness/state/test-results') => {
+  const result = (file: string, tests: [string, string][], at = Date.now(), dir = '.harness/results') => {
     mkdirSync(join(root, dir), { recursive: true });
     const p = join(root, dir, `r${n++}.json`);
     writeFileSync(p, JSON.stringify({ testResults: [{ name: join(root, file), status: 'passed', assertionResults: tests.map(([fullName, status]) => ({ fullName, status })) }] }));
@@ -121,7 +121,7 @@ test('Bash writes to features.json are denied', async () => {
 test('real Vitest fixture fullName format', async () => {
   const s = setup();
   const fx = readFileSync(join(__dirname, '../../fixtures/results/vitest.json'), 'utf8').replaceAll('/ROOT', JSON.stringify(s.root).slice(1, -1)); // JSON-escaped: Windows paths have backslashes
-  writeFileSync(join(s.root, '.harness/state/test-results/fx.json'), fx);
+  writeFileSync(join(s.root, '.harness/results/fx.json'), fx);
   expect((await s.write(doc(feat('f1', true, crit(`${T}::adds`))))).permissionDecision).toBe('allow');
   expect((await s.write(doc(feat('f1', true, crit(`${T}::fails`))))).permissionDecisionReason).toContain('test not passing');
 });

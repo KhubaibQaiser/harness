@@ -58,7 +58,7 @@ describe.skipIf(process.env.HARNESS_E2E_REAL !== '1')('real frameworks', () => {
     expect(t.code, t.out).toBe(0);
     expect(t.out).not.toContain('Haste module naming collision'); // .harness/backup holds a copy of package.json
 
-    const dir = join(root, '.harness/state/test-results');
+    const dir = join(root, '.harness/results');
     expect(existsSync(join(dir, 'root.json'))).toBe(true);
     expect(readResults(root, dir)).toMatchObject([{ file: 'src/a.test.js', status: 'passed', tests: [{ status: 'passed' }] }]);
     expect(existsSync(join(root, 'coverage/coverage-final.json'))).toBe(true);

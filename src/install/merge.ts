@@ -134,7 +134,7 @@ function appendLines(before: string | null, lines: string[]): { after: string; b
   return { after: text + block, blocks: [block] };
 }
 
-export const mergeGitignore = (before: string | null) => appendLines(before, ['.harness/state/', '.harness/logs/', '.harness/backup/']);
+export const mergeGitignore = (before: string | null) => appendLines(before, ['.harness/state/', '.harness/logs/', '.harness/backup/', '.harness/results/']);
 export const mergeIgnoreFile = (before: string | null, entry: '.harness/') => appendLines(before, [entry]);
 
 /**

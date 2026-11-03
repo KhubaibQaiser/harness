@@ -13,5 +13,5 @@ const { makeRepo } = await import('./helpers.js');
 it('edit that fails to parse falls back to manual', () => {
   const root = makeRepo({ 'vitest.config.ts': 'export default { test: {} };\n' }, { git: false });
   const pkg: PackageFacts = { dir: '.', scripts: {}, test: 'vitest', testConfig: 'vitest.config.ts' };
-  expect(testConfigChange(pkg, root, '.harness/state/test-results')).toHaveProperty('manual');
+  expect(testConfigChange(pkg, root, '.harness/results')).toHaveProperty('manual');
 });

@@ -53,7 +53,8 @@ test('ungated PreToolUse: harness overhead over a bare node spawn', () => {
 test('gated PreToolUse with 40 result files: harness overhead over a bare node spawn', () => {
   const repo = mkdtempSync(join(tmpdir(), 'h-lat2-'));
   spawnSync('git', ['init', '-q'], { cwd: repo });
-  mkdirSync(join(repo, '.harness/state/test-results'), { recursive: true });
+  mkdirSync(join(repo, '.harness/results'), { recursive: true });
+  mkdirSync(join(repo, '.harness/state'), { recursive: true });
   writeFileSync(join(repo, '.harness/config.yaml'), 'checks:\n  multiFile: true\n  tdd: true\ntdd:\n  paths: ["packages/**"]\n');
   writeFileSync(join(repo, '.harness/state/lat.json'), JSON.stringify({ startedAt: Date.now() - 60000, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 }));
   const base = JSON.parse(readFileSync(join(import.meta.dirname, '../fixtures/results/vitest.json'), 'utf8'));
@@ -62,7 +63,7 @@ test('gated PreToolUse with 40 result files: harness overhead over a bare node s
     const file = i === 7 ? 'packages/core/src/a.test.ts' : `packages/core/src/f${i}.test.ts`;
     const assertionResults = Array.from({ length: 50 }, (_, k) => ({ ...tpl.assertionResults[0], fullName: `t${k}`, title: `t${k}`, status: i === 7 && k === 0 ? 'failed' : 'passed' }));
     const status = i === 7 ? 'failed' : 'passed';
-    writeFileSync(join(repo, `.harness/state/test-results/r${i}.json`), JSON.stringify({ ...base, testResults: [{ ...tpl, name: join(repo, file), status, assertionResults }] }));
+    writeFileSync(join(repo, `.harness/results/r${i}.json`), JSON.stringify({ ...base, testResults: [{ ...tpl, name: join(repo, file), status, assertionResults }] }));
   }
   const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'lat', cwd: repo, tool_name: 'Edit', tool_input: { file_path: join(repo, 'packages/core/src/a.ts'), old_string: 'a', new_string: 'b' } });
   // tmpdir is used as is (/var on macOS, /private/var for git): the code must handle the symlink.
@@ -73,7 +74,7 @@ test('gated PreToolUse with 40 result files: harness overhead over a bare node s
   expect(m.overhead, `gated overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
   expect(m.total, `gated total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
   // Control: a passing related result must deny, proving the gate ran on this path.
-  const failing = join(repo, '.harness/state/test-results/r7.json');
+  const failing = join(repo, '.harness/results/r7.json');
   writeFileSync(failing, readFileSync(failing, 'utf8').replaceAll('"failed"', '"passed"'));
   const c = spawnSync(process.execPath, [DISPATCH], { input, encoding: 'utf8' });
   expect(JSON.parse(c.stdout).hookSpecificOutput.permissionDecision).toBe('deny');

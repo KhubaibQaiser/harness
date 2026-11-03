@@ -122,9 +122,9 @@ test('package left out of TDD: doctor repeats the manual lines, then names the t
   const root = makeRepo({ ...REPO, 'vitest.config.ts': UNSAFE });
   await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   const a = run(root, { path: bin('npm') });
-  expect(a.out).toMatch(/^note TDD is off for the root package because its test config could not be edited safely: do this by hand: .*outputFile: \{ json: '\.harness\/state\/test-results\/root\.json' \}.*then set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
+  expect(a.out).toMatch(/^note TDD is off for the root package because its test config could not be edited safely: do this by hand: .*outputFile: \{ json: '\.harness\/results\/root\.json' \}.*then set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
   expect(a.code).toBe(0); // a note, not a problem
-  writeFileSync(join(root, 'vitest.config.ts'), "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: { root: './src', reporters: ['default', 'json'], outputFile: { json: '.harness/state/test-results/root.json' } } });\n");
+  writeFileSync(join(root, 'vitest.config.ts'), "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: { root: './src', reporters: ['default', 'json'], outputFile: { json: '.harness/results/root.json' } } });\n");
   const b = run(root, { path: bin('npm') });
   expect(b.out).toMatch(/^note TDD is off for the root package: set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toContain("root: './src'"); // never rewritten

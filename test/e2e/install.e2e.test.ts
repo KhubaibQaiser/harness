@@ -76,7 +76,7 @@ describe('fixture repos', () => {
       const red = edit(root, f.tdd.file);
       expect(red.decision).toBe('deny');
       expect(red.reason).toContain(f.tdd.test);
-      const dir = join(root, '.harness/state/test-results');
+      const dir = join(root, '.harness/results');
       mkdirSync(dir, { recursive: true });
       writeFileSync(
         join(dir, 'e2e.json'),
@@ -141,7 +141,7 @@ test('unsafe vitest config: init prints manual lines and doctor names the fix', 
   const i = init(root, f);
   expect(i.code).toBe(0);
   expect(i.out).toContain('Do these by hand:');
-  expect(i.out).toContain("outputFile: { json: '.harness/state/test-results/root.json' }");
+  expect(i.out).toContain("outputFile: { json: '.harness/results/root.json' }");
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toBe(f.files['vitest.config.ts']);
   const d = cli(root, 'doctor');
   expect(d.code).toBe(0); // a note, not a problem

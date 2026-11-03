@@ -496,3 +496,5 @@ test('G1: the cluster forms are denied unattended (through the dispatcher)', asy
   }
 });
 test.each(['env -iu FOO harness uninstall --dry-run', 'timeout -vs KILL 60 harness tdd status'])('G1: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+// A value flag before the end of a cluster takes the rest as its value (getopt), so the next word is the command.
+test.each(['env -uC harness uninstall --yes', 'env -uS harness uninstall --yes', 'timeout -sKILL 60 harness uninstall --yes', 'sudo -uroot harness uninstall --yes'])('G1: %s (attached value) asks', (cmd) => expect(kind(cmd)).toBe('ask'));

@@ -15,3 +15,5 @@ evidence:
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/hookify/hooks/hooks.json (PreToolUse, PostToolUse, Stop and UserPromptSubmit command hooks run python3: installs-hook)"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/hookify/hooks/userpromptsubmit.py (prints an empty result unless a user rule in .claude/hookify.*.local.md matches: context low)"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/hookify/README.md (Requirements: Python 3.7+)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/.claude-plugin/marketplace.json (entry \"hookify\": the source of the why sentence; plugin.json words it slightly differently)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/hookify/README.md (needs Python 3.7+ and user-written rules; the always applies_when does not capture that)"

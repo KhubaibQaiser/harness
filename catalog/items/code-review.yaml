@@ -13,4 +13,5 @@ evidence:
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/code-review/.claude-plugin/plugin.json"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/code-review/LICENSE (Apache-2.0)"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/code-review/README.md (/code-review command, 4 parallel agents; commands only, no hooks)"
-  - "audit.html: \"you already have the built-in /code-review and your own reviewer agent.\""
+  - "audit.html says the built-in /code-review and your own reviewer agent already cover this (paraphrase)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/code-review/README.md (Requirements: a Git repository with GitHub integration and the GitHub CLI gh installed and authenticated; the always applies_when does not capture that)"

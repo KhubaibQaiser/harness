@@ -13,4 +13,4 @@ evidence:
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/pr-review-toolkit/.claude-plugin/plugin.json"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/pr-review-toolkit/LICENSE (Apache-2.0)"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/pr-review-toolkit/README.md (6 review agents; agents and commands, no hooks)"
-  - "audit.html: \"Overlapping review packs (pr-review-toolkit, code-review plugin)\""
+  - "audit.html lists pr-review-toolkit and the code-review plugin as overlapping review packs (paraphrase)"

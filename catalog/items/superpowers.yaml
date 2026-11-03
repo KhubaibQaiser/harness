@@ -8,7 +8,7 @@ plugin_version: "7.0.1"
 applies_when: {"always":true}
 cost: {"context":"medium","setup":"low"}
 stance: default
-side_effects: ["installs-hook","telemetry-on-by-default"]
+side_effects: ["installs-hook","telemetry-on-by-default","network-service"]
 why: "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques."
 evidence:
   - "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/.claude-plugin/plugin.json"
@@ -16,3 +16,4 @@ evidence:
   - "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/hooks/hooks.json (SessionStart hook on startup|clear|compact runs hooks/session-start, which injects the full using-superpowers skill inside EXTREMELY_IMPORTANT tags: installs-hook, context medium)"
   - "audit.html: \"superpowers, ponytail, postman, caveman, engineering and design packs all load into every session\" (instruction overload)"
   - "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/README.md section \"Visual companion telemetry\": the optional visual companion loads a logo from the vendor website by default, which includes the Superpowers version; opt out with SUPERPOWERS_DISABLE_TELEMETRY (telemetry-on-by-default, only when that optional feature is used)"
+  - "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/skills/brainstorming/visual-companion.md (the optional visual companion runs a local server via scripts/start-server.sh that returns a http://localhost:<port>/?key=... URL and serves HTML to the browser: network-service, only when that optional feature is used)"

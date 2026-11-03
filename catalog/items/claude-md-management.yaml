@@ -12,3 +12,4 @@ evidence:
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/claude-md-management/.claude-plugin/plugin.json"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/claude-md-management/LICENSE (Apache-2.0)"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/claude-md-management/README.md (a skill and a /revise-claude-md command; no hooks; works on any repo with a CLAUDE.md: always)"
+  - "Useful only where a CLAUDE.md exists; the always applies_when does not capture that (README: audits CLAUDE.md files)"

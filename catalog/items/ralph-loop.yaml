@@ -9,7 +9,7 @@ cost: {"context":"low","setup":"low"}
 stance: discouraged
 stance_reason: "use /goal"
 side_effects: ["installs-hook"]
-why: "Continuous self-referential AI loops for iterative development, implementing the Ralph Wiggum technique."
+why: "Continuous self-referential AI loops for interactive iterative development, implementing the Ralph Wiggum technique."
 evidence:
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/ralph-loop/.claude-plugin/plugin.json"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/ralph-loop/LICENSE (Apache-2.0)"

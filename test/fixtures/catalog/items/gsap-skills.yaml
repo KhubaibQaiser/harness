@@ -1,0 +1,18 @@
+# The design spec 7.1 example; `plugin` was added to the source and the sha is a placeholder.
+id: gsap-skills
+kind: plugin
+title: GSAP official skills
+source: { type: github, repo: greensock/gsap-skills, plugin: gsap-skills, sha: 0123456789abcdef0123456789abcdef01234567 }
+license: MIT
+min_claude_code: 2.1.0
+applies_when:
+  any_dep: [gsap]
+  project_types: [landing]
+conflicts_with: []
+requires: []
+cost: { context: low, setup: none }
+stance: optional
+stance_reason: ""
+side_effects: []
+why: Correct ScrollTrigger and timeline usage.
+evidence: [https://github.com/greensock/gsap-skills]

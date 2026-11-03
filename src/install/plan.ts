@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { packageDir } from '../core/package-dir.js';
 import type { HarnessConfig } from '../core/config.js';
 import { serializeConfig } from '../core/config-io.js';
 import type { Change } from './apply.js';
@@ -24,7 +25,7 @@ export function planChanges(
    * `recorded`: the settings blocks the manifest holds, so update replaces harness's own old hook groups in place. */
   ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[] },
 ): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[] } {
-  const templatesDir = ctx.templatesDir ?? join(ctx.distDir, '..', 'templates');
+  const templatesDir = ctx.templatesDir ?? packageDir('templates');
   const changes: Change[] = [];
   const manual: string[] = [];
   const notes: string[] = [];

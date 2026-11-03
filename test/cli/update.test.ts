@@ -613,3 +613,19 @@ test('existing settings: init, beta rewrite, update and uninstall restore the pr
   expect((await un(root)).code).toBe(0);
   expect(readFileSync(join(root, SETTINGS), 'utf8')).toBe(pre);
 });
+
+test('switching to always and back leaves the settings as before', async () => {
+  const root = await installed();
+  const p = join(root, '.claude/settings.json');
+  const cfg = join(root, '.harness/config.yaml');
+  const afterInit = readFileSync(p, 'utf8');
+  writeFileSync(cfg, readFileSync(cfg, 'utf8').replace(/^sandbox: unattended$/m, 'sandbox: always'));
+  commitAll(root);
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  expect(JSON.parse(readFileSync(p, 'utf8')).sandbox).toEqual({ enabled: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false });
+  writeFileSync(cfg, readFileSync(cfg, 'utf8').replace(/^sandbox: always$/m, 'sandbox: unattended'));
+  commitAll(root);
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  expect(readFileSync(p, 'utf8')).toBe(afterInit);
+  expect(readManifest(root)!.files.find((f) => f.rel === '.claude/settings.json')!.blocks!.some((b) => b.startsWith('{"set"'))).toBe(false);
+});

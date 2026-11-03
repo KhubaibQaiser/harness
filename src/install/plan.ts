@@ -43,9 +43,9 @@ export function planChanges(
   put('.claude/agents/staff-reviewer.md', tpl('agents', 'staff-reviewer.md'));
   put('.claude/skills/review-rubric/SKILL.md', tpl('skills', 'review-rubric', 'SKILL.md'));
 
-  const settings = mergeSettings(read('.claude/settings.json'), { sandbox: 'unattended', recorded: ctx.recorded });
+  const settings = mergeSettings(read('.claude/settings.json'), { sandbox: config.sandbox, recorded: ctx.recorded });
   notes.push(...settings.notes);
-  if (settings.blocks.length) { // every dropped group also adds its replacement's block
+  if (settings.blocks.length || settings.dropped.length) { // leaving `always` drops set blocks with no replacement
     put('.claude/settings.json', settings.after, settings.blocks);
     const c = changes.at(-1);
     if (c?.kind === 'update' && c.rel === '.claude/settings.json' && settings.dropped.length) c.dropped = settings.dropped;

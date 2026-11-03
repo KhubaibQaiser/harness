@@ -321,3 +321,61 @@ test('removeBlocks tolerates a CRLF checkout of an LF block, and the reverse', a
   expect(removeBlocks('mine\r\nx\r\ny\r\n', ['x\ny\n'])).toBe('mine\r\n');
   expect(removeBlocks('mine\nx\ny\n', ['x\r\ny\r\n'])).toBe('mine\n');
 });
+
+describe('mergeSettings sandbox', () => {
+  const SB = { enabled: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false };
+  const sets = (blocks: string[]) => blocks.filter((b) => b.startsWith('{"set"'));
+  const run = (before: string | null, sandbox: 'unattended' | 'always' | 'off', recorded?: string[]) => mergeSettings(before, { sandbox, recorded });
+
+  it('always adds the sandbox block and records each key', () => {
+    const r = run('{}\n', 'always');
+    expect(JSON.parse(r.after).sandbox).toEqual(SB);
+    expect(sets(r.blocks)).toEqual([
+      '{"set":["sandbox"],"value":{}}',
+      '{"set":["sandbox","enabled"],"value":true}',
+      '{"set":["sandbox","allowUnsandboxedCommands"],"value":false}',
+      '{"set":["sandbox","autoAllowBashIfSandboxed"],"value":false}',
+    ]);
+    expect(r.notes).toEqual([]);
+  });
+
+  it('always leaves a key the person set, with a note', () => {
+    const r = run(JSON.stringify({ sandbox: { autoAllowBashIfSandboxed: true } }), 'always');
+    expect(JSON.parse(r.after).sandbox).toEqual({ ...SB, autoAllowBashIfSandboxed: true });
+    expect(r.notes).toEqual(['.claude/settings.json: sandbox.autoAllowBashIfSandboxed is already true; left as is (harness would set false).']);
+    expect(sets(r.blocks)).toEqual(['{"set":["sandbox","enabled"],"value":true}', '{"set":["sandbox","allowUnsandboxedCommands"],"value":false}']);
+  });
+
+  it('a non-object sandbox is an error under always', () => {
+    expect(() => run(JSON.stringify({ sandbox: true }), 'always')).toThrow(MergeError);
+    expect(() => run(JSON.stringify({ sandbox: true }), 'always')).toThrow('"sandbox" must be an object');
+  });
+
+  it('unattended and off add no sandbox key', () => {
+    for (const m of ['unattended', 'off'] as const) {
+      const r = run('{}\n', m);
+      expect(JSON.parse(r.after).sandbox).toBeUndefined();
+      expect(sets(r.blocks)).toEqual([]);
+    }
+  });
+
+  it('failIfUnavailable is never written', () => {
+    for (const m of ['unattended', 'always', 'off'] as const) expect(run(null, m).after).not.toContain('failIfUnavailable');
+  });
+
+  it('leaving always removes the recorded keys', () => {
+    const init = run('{"model":"x"}\n', 'always');
+    const rec = sets(init.blocks);
+    const r = run(init.after, 'unattended', init.blocks);
+    expect(JSON.parse(r.after)).not.toHaveProperty('sandbox');
+    expect([...r.dropped].sort()).toEqual([...rec].sort());
+    expect(r.notes).toEqual([]);
+
+    const edited = JSON.parse(init.after);
+    edited.sandbox.enabled = false;
+    const r2 = run(JSON.stringify(edited, null, 2), 'off', init.blocks);
+    expect(JSON.parse(r2.after).sandbox).toEqual({ enabled: false });
+    expect(r2.notes).toEqual(['.claude/settings.json: sandbox.enabled was changed; left as is.']);
+    expect([...r2.dropped].sort()).toEqual([...rec].sort());
+  });
+});

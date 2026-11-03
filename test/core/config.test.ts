@@ -142,3 +142,12 @@ test('N5: a config that cannot be read is reported as a read error, not as inval
     Object.assign(RETRY, saved);
   }
 });
+
+test('sandbox defaults to unattended', () => {
+  expect(loadConfig(emptyDir()).config.sandbox).toBe('unattended');
+  expect(loadConfig(dirWith('.harness/config.yaml', 'sandbox: always\n')).config.sandbox).toBe('always');
+});
+
+test('sandbox: sometimes is an error', () => {
+  expect(loadConfig(dirWith('.harness/config.yaml', 'sandbox: sometimes\n')).errors).toEqual(['"sandbox" must be one of unattended, always, off']);
+});

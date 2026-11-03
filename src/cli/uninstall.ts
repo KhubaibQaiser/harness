@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
-import { removeBlocks } from '../install/merge.js';
+import { removeBlocks, removeSets } from '../install/merge.js';
 import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, jsonIndentOf, withEol } from '../install/text.js';
@@ -26,7 +26,7 @@ const read = (p: string): string | null => {
   }
 };
 
-/** Drops the recorded hook groups and deny rules. Returns null when the file is not a JSON object. */
+/** Drops the recorded hook groups, deny rules and set keys. Returns null when the file is not a JSON object. */
 function removeFromSettings(current: string, f: Manifest['files'][number], original: string | null, notes: string[]): { after: string; empty: boolean } | null {
   let s: any;
   try {
@@ -61,6 +61,7 @@ function removeFromSettings(current: string, f: Manifest['files'][number], origi
       else s.permissions.deny = list.filter((d: unknown) => d !== blk.deny);
     }
   }
+  for (const k of removeSets(s, f.blocks ?? []).changed) notes.push(`\`${SETTINGS}\`: \`${k}\` was changed; left as is.`);
   // Drop keys that harness's removal left empty and that did not exist before init.
   if (isObj(s.hooks)) {
     for (const [ev, v] of Object.entries(s.hooks)) if (Array.isArray(v) && !v.length && !had('hooks', ev)) delete s.hooks[ev];

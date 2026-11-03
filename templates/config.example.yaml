@@ -12,6 +12,9 @@ checks:
   tdd: false
   stop: true
 
+# Claude Code's sandbox: required for unattended runs (unattended), on for everyone (always), or not used (off).
+sandbox: unattended
+
 # Red-first TDD enforcement (needs checks.tdd).
 tdd:
   paths: []

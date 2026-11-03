@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
@@ -232,4 +233,48 @@ test('AGENTS.md created by init and then edited: harness block removed, user tex
     expect(readFileSync(p, 'utf8')).toContain('my rule');
     expect(readFileSync(p, 'utf8')).not.toContain('harness:start');
   }
+});
+
+const alwaysCfg = () => {
+  const p = join(mkdtempSync(join(tmpdir(), 'h-cfg-')), 'config.yaml');
+  writeFileSync(p, 'sandbox: always\n');
+  return p;
+};
+
+test('init with always then uninstall is byte-identical', async () => {
+  const pre = { '.claude/settings.json': JSON.stringify({ sandbox: { network: { allowedDomains: ['x'] } } }, null, 2) + '\n' };
+  for (const files of [REPO, { ...REPO, ...pre }]) {
+    const root = makeRepo(files);
+    const before = hashes(root);
+    await init(['--yes', '--config', alwaysCfg()], { ...base, root, out: () => {}, prompt: fake() });
+    expect(JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).sandbox.enabled).toBe(true);
+    expect((await un(root, ['--yes'])).code).toBe(0);
+    expect(git(root, 'status', '--porcelain')).toBe('');
+    expect(hashes(root)).toEqual(before);
+  }
+});
+
+test("an edited settings file keeps the person's sandbox keys", async () => {
+  const root = makeRepo(REPO);
+  await init(['--yes', '--config', alwaysCfg()], { ...base, root, out: () => {}, prompt: fake() });
+  const p = join(root, '.claude/settings.json');
+  const s = JSON.parse(readFileSync(p, 'utf8'));
+  s.sandbox.network = { allowedDomains: ['x'] };
+  writeFileSync(p, JSON.stringify(s, null, 2) + '\n');
+  const r = await un(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(r.out).not.toContain('was changed');
+  expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ sandbox: { network: { allowedDomains: ['x'] } } });
+});
+
+test('uninstall leaves a changed sandbox key, with a note', async () => {
+  const root = makeRepo(REPO);
+  await init(['--yes', '--config', alwaysCfg()], { ...base, root, out: () => {}, prompt: fake() });
+  const p = join(root, '.claude/settings.json');
+  const s = JSON.parse(readFileSync(p, 'utf8'));
+  s.sandbox.enabled = false;
+  writeFileSync(p, JSON.stringify(s, null, 2) + '\n');
+  const r = await un(root, ['--yes']);
+  expect(r.out).toContain('Note: `.claude/settings.json`: `sandbox.enabled` was changed; left as is.');
+  expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ sandbox: { enabled: false } });
 });

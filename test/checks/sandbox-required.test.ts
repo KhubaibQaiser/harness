@@ -1,7 +1,7 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, onTestFinished, test } from 'vitest';
 import { sandboxRequired, sandboxVerdict } from '../../src/checks/sandbox-required.js';
 import type { SandboxMode } from '../../src/core/config.js';
 import { readEvents } from '../../src/core/events.js';
@@ -26,7 +26,10 @@ describe('sandboxVerdict', () => {
   });
   test('project enabled and no unsandboxed commands allows on darwin', () => expect(v({ layers: layers({ project: CONFIRMED }) })).toBe('allow'));
   test('linux also needs bwrap and socat on PATH', () => {
-    const bin = mkdtempSync(join(tmpdir(), 'h-sb-bin-'));
+    // A relative dir: a linux PATH splits at ':', so a Windows host's drive-letter temp path would not survive the split.
+    mkdirSync('node_modules/.cache', { recursive: true });
+    const bin = mkdtempSync(join('node_modules', '.cache', 'h-sb-bin-'));
+    onTestFinished(() => rmSync(bin, { recursive: true, force: true }));
     const l = layers({ project: CONFIRMED });
     expect(v({ platform: 'linux', layers: l, env: { PATH: bin } })).toBe('deny');
     for (const n of ['bwrap', 'socat']) {

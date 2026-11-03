@@ -348,7 +348,9 @@ test('an old recorded shell-form entry is a run-harness-update fix', async () =>
   const root = await installed(PREFIX);
   recordOld(root, 'PreToolUse', toShell);
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/^ok dispatcher runs$/m); // run through the shell, from a path with a space
+  // Through the platform shell, from a path with a space. cmd.exe does not expand ${CLAUDE_PROJECT_DIR} (a POSIX-shell
+  // form, the known limit that exec form fixes), so on win32 the self-test fails; the update fix below is the point.
+  if (process.platform !== 'win32') expect(r.out).toMatch(/^ok dispatcher runs$/m);
   expect(r.out).toMatch(/^fix `\.claude\/settings\.json` runs the dispatcher through a shell: run harness update$/m);
   expect(r.out).not.toMatch(differs('PreToolUse'));
   expect(r.code).toBe(1);

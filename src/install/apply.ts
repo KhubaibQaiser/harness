@@ -9,7 +9,7 @@ export { readManifest, ManifestError, type Manifest };
 
 export type Change =
   | { kind: 'create'; rel: string; content: string; mode?: number; blocks?: string[] }
-  | { kind: 'update'; rel: string; before: string; after: string; blocks: string[]; replace?: Hunk[]; formatted?: true; unformatted?: true; rename?: { from: string; to: string } }
+  | { kind: 'update'; rel: string; before: string; after: string; blocks: string[]; replace?: Hunk[]; formatted?: true; unformatted?: true; rename?: { from: string; to: string }; dropped?: string[] }
   | { kind: 'delete'; rel: string; before: string };
 
 export type FsLike = Pick<

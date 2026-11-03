@@ -11,7 +11,7 @@ import { uninstall } from '../../src/cli/uninstall.js';
 import { latestVersion } from '../../src/core/registry.js';
 import { readManifest } from '../../src/install/apply.js';
 import { sha256 } from '../../src/install/text.js';
-import { makeRepo } from '../install/helpers.js';
+import { betaSettings, makeRepo } from '../install/helpers.js';
 import { execFileSync } from 'node:child_process';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -549,4 +549,67 @@ test('an uncommitted config stops update when a migration is due', async () => {
   expect(r.code).toBe(1);
   expect(r.out).toContain(`Commit or stash these files first, so the update can be undone cleanly: ${CONFIG}`);
   expect(readFileSync(p, 'utf8')).toBe(before);
+});
+
+/** Makes the installed settings.json and its manifest blocks the beta release's, as an install from that release left them. */
+const betaInstall = (root: string, pre: object) => {
+  const { s, blocks } = betaSettings(pre);
+  const text = JSON.stringify(s, null, 2) + '\n';
+  writeFileSync(join(root, '.claude/settings.json'), text);
+  const mp = join(root, '.harness/manifest.json');
+  const m = JSON.parse(readFileSync(mp, 'utf8'));
+  const f = m.files.find((x: { rel: string }) => x.rel === '.claude/settings.json');
+  f.blocks = blocks;
+  f.hash = sha256(text);
+  writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+  commitAll(root);
+  return blocks;
+};
+const SETTINGS = '.claude/settings.json';
+const settingsBlocks = (root: string) => readManifest(root)!.files.find((f) => f.rel === SETTINGS)!.blocks!;
+
+test('update replaces the beta hook groups and uninstall is byte-identical', async () => {
+  const root = await installed();
+  const fresh = settingsBlocks(root);
+  const beta = betaInstall(root, {});
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  const after = readFileSync(join(root, SETTINGS), 'utf8');
+  const blocks = settingsBlocks(root);
+  expect(blocks.filter((b) => beta.includes(b) && JSON.parse(b).event)).toEqual([]);
+  expect(new Set(blocks)).toEqual(new Set(fresh));
+  expect(JSON.parse(after).hooks.Stop).toHaveLength(1);
+  expect((await un(root)).code).toBe(0);
+  expect(realFs.existsSync(join(root, SETTINGS))).toBe(false);
+});
+
+test('a foreign node exec hook survives init, update and uninstall', async () => {
+  const foreign = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node', args: ['tools/lint-hook.mjs'] }] };
+  const pre = JSON.stringify({ hooks: { PreToolUse: [foreign] } }, null, 2) + '\n';
+  const root = await installed({ ...REPO, [SETTINGS]: pre });
+  expect(JSON.parse(readFileSync(join(root, SETTINGS), 'utf8')).hooks.PreToolUse[0]).toEqual(foreign);
+  betaInstall(root, JSON.parse(pre));
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  const s = JSON.parse(readFileSync(join(root, SETTINGS), 'utf8'));
+  expect(s.hooks.PreToolUse).toHaveLength(2);
+  expect(s.hooks.PreToolUse[0]).toEqual(foreign);
+  expect(s.hooks.PreToolUse[1].hooks[0].args).toEqual(['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs']);
+  // An edit after update makes uninstall remove the recorded blocks one by one instead of restoring the backup.
+  writeFileSync(join(root, SETTINGS), JSON.stringify({ ...s, model: 'x' }, null, 2) + '\n');
+  commitAll(root);
+  const u = await un(root);
+  expect(u.code).toBe(0);
+  expect(u.out).not.toContain('was not found');
+  expect(JSON.parse(readFileSync(join(root, SETTINGS), 'utf8'))).toEqual({ ...JSON.parse(pre), model: 'x' });
+});
+
+test('existing settings: init, beta rewrite, update and uninstall restore the pre-init bytes exactly', async () => {
+  const foreign = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node', args: ['tools/lint-hook.mjs'] }] };
+  const pre = JSON.stringify({ model: 'sonnet', hooks: { PreToolUse: [foreign] } }, null, 2) + '\n';
+  const root = await installed({ ...REPO, [SETTINGS]: pre });
+  betaInstall(root, JSON.parse(pre));
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  expect(JSON.parse(readFileSync(join(root, SETTINGS), 'utf8')).hooks.PreToolUse[0]).toEqual(foreign);
+  expect((await un(root)).code).toBe(0);
+  expect(readFileSync(join(root, SETTINGS), 'utf8')).toBe(pre);
 });

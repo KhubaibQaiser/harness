@@ -33,3 +33,28 @@ export function makeRepo(files: Record<string, string>, opts: { git?: boolean; r
   }
   return root;
 }
+
+/** The beta release's settings fragment: shell-form hooks, five events, eight deny rules. */
+const betaHook = (timeout: number) => ({ type: 'command', command: 'node "${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"', timeout });
+export const BETA_GROUPS: Record<string, object> = {
+  PreToolUse: { matcher: 'Bash|Read|Grep|Edit|Write|MultiEdit|NotebookEdit', hooks: [betaHook(10)] },
+  PostToolUse: { matcher: 'Bash|Edit|Write|MultiEdit|NotebookEdit', hooks: [betaHook(10)] },
+  UserPromptSubmit: { hooks: [betaHook(10)] },
+  Stop: { hooks: [betaHook(600)] },
+  SessionEnd: { hooks: [betaHook(10)] },
+};
+export const BETA_DENY = ['Read(./.env)', 'Read(./.env.*)', 'Read(./**/.env)', 'Read(./**/.env.*)', 'Edit(./.harness/hooks/**)', 'Edit(./.harness/state/**)', 'Edit(./.harness/logs/**)', 'Edit(./.claude/settings.json)'];
+/** `pre` merged with the beta fragment as the beta release did it, and the blocks it recorded. */
+export function betaSettings(pre: any): { s: any; blocks: string[] } {
+  const s = structuredClone(pre);
+  const blocks: string[] = [];
+  s.hooks ??= {};
+  for (const [event, group] of Object.entries(BETA_GROUPS)) {
+    (s.hooks[event] ??= []).push(group);
+    blocks.push(JSON.stringify({ event, group }));
+  }
+  s.permissions ??= {};
+  s.permissions.deny ??= [];
+  for (const d of BETA_DENY) if (!s.permissions.deny.includes(d)) s.permissions.deny.push(d), blocks.push(JSON.stringify({ deny: d }));
+  return { s, blocks };
+}

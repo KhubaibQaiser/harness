@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { parseModule } from 'magicast';
+import type { SandboxMode } from '../core/config.js';
 import { eolOf, jsonIndentOf, quoteOf, requote, withEol } from './text.js';
 
 export class MergeError extends Error {
@@ -41,12 +43,19 @@ const isObj = (v: unknown): v is Record<string, any> => v !== null && typeof v =
 const SETTINGS = '.claude/settings.json';
 const bad = (msg: string): never => { throw new MergeError(`${SETTINGS}: ${msg}`); };
 
+/** A harness hook runs the repo's dispatcher: `command`, or any string in `args`, names it. */
+export const isHarnessHook = (h: unknown): boolean =>
+  isObj(h) && [h.command, ...(Array.isArray(h.args) ? h.args : [])].some((x) => typeof x === 'string' && x.includes('.harness/hooks/dispatch.mjs'));
+
+const parse = (b: string): unknown => { try { return JSON.parse(b); } catch { return null; } };
+
 /**
  * `blocks` for settings are structural, not text (JSON re-serialization changes the bytes):
  * one JSON.stringify string per inserted hook group, `{"event":"Stop","group":{...}}`,
  * and one per inserted deny rule, `{"deny":"Read(./secrets/**)"}`. Uninstall removes them by deep equality.
+ * A harness group equal to a `recorded` block but not to the fragment is replaced at its index; its old block is `dropped`.
  */
-export function mergeSettings(before: string | null): { after: string; blocks: string[]; notes: string[] } {
+export function mergeSettings(before: string | null, opts: { sandbox: SandboxMode; recorded?: string[] }): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
   let s: any;
   try { s = before === null ? {} : JSON.parse(before); } catch (e) { return bad(`is not valid JSON: ${(e as Error).message}`); }
   if (!isObj(s)) bad('must be a JSON object');
@@ -56,29 +65,34 @@ export function mergeSettings(before: string | null): { after: string; blocks: s
 
   const frag = JSON.parse(template('settings.fragment.json'));
   const blocks: string[] = [];
+  const dropped: string[] = [];
   const notes: string[] = [];
   s.hooks ??= {};
-  for (const [ev, groups] of Object.entries<any[]>(frag.hooks)) {
+  // The fragment has one group per event.
+  for (const [ev, [want]] of Object.entries<any[]>(frag.hooks)) {
     if (s.hooks[ev] !== undefined && !Array.isArray(s.hooks[ev])) {
       notes.push(`${SETTINGS}: hooks.${ev} is not an array; left untouched and the harness ${ev} hook was not added.`);
       continue;
     }
     const list: any[] = (s.hooks[ev] ??= []);
-    const have = new Set<string>();
+    let ours = false;
     list.forEach((g, i) => {
       if (!isObj(g) || !Array.isArray(g.hooks)) return void notes.push(`${SETTINGS}: hooks.${ev}[${i}] is not a group with a "hooks" array; left untouched.`);
       g.hooks.forEach((h: unknown, j: number) => {
-        if (isObj(h) && typeof h.command === 'string') have.add(h.command);
-        else notes.push(`${SETTINGS}: hooks.${ev}[${i}].hooks[${j}] is not a command hook; left untouched.`);
+        if (!isObj(h) || typeof h.command !== 'string') notes.push(`${SETTINGS}: hooks.${ev}[${i}].hooks[${j}] is not a command hook; left untouched.`);
       });
+      if (!g.hooks.some(isHarnessHook)) return;
+      ours = true;
+      if (isDeepStrictEqual(g, want)) return;
+      const rec = opts.recorded?.find((b) => isDeepStrictEqual(parse(b), { event: ev, group: g }));
+      if (rec === undefined) return void notes.push(`${SETTINGS}: hooks.${ev}[${i}] is a harness hook you edited; left as is. harness doctor checks it.`);
+      list[i] = want;
+      dropped.push(rec);
+      blocks.push(JSON.stringify({ event: ev, group: want }));
     });
-    for (const g of groups) {
-      const hooks = g.hooks.filter((h: any) => !have.has(h.command));
-      if (!hooks.length) continue;
-      const group = { ...g, hooks };
-      list.push(group);
-      blocks.push(JSON.stringify({ event: ev, group }));
-    }
+    if (ours) continue;
+    list.push(want);
+    blocks.push(JSON.stringify({ event: ev, group: want }));
   }
   s.permissions ??= {};
   s.permissions.deny ??= [];
@@ -89,7 +103,7 @@ export function mergeSettings(before: string | null): { after: string; blocks: s
   }
   const eol = before === null ? '\n' : eolOf(before);
   const tail = before === null || /\n$/.test(before) ? eol : '';
-  return { after: withEol(JSON.stringify(s, null, before === null ? 2 : jsonIndentOf(before)), eol) + tail, blocks, notes };
+  return { after: withEol(JSON.stringify(s, null, before === null ? 2 : jsonIndentOf(before)), eol) + tail, blocks, dropped, notes };
 }
 
 /** Separator to put before an appended block: nothing for an empty file, else finish the last line and add a blank one. */

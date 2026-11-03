@@ -8,7 +8,7 @@ import { lastHarnessFilesChange } from '../core/events.js';
 import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { matchesHash } from '../install/text.js';
-import { mergeEslintFlatIgnores } from '../install/merge.js';
+import { isHarnessHook, mergeEslintFlatIgnores } from '../install/merge.js';
 import { ESLINT } from '../install/plan.js';
 import { JEST_REPORTER, hasResultsOutput, testConfigChange } from '../install/test-config.js';
 import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../install/preset.js';
@@ -19,7 +19,7 @@ import { dirtyPaths } from './init.js';
 export type DoctorDeps = { claudeVersion?: () => string | null };
 
 const DISPATCH = '.harness/hooks/dispatch.mjs';
-const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionEnd'];
+const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd'];
 const NODE_MIN = [22, 11, 0];
 const nums = (v: string) => v.split('.').map(Number);
 const older = (a: number[], b: number[]) => {
@@ -78,10 +78,10 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     settings = st === null ? null : JSON.parse(st);
   } catch {}
   const wired = (ev: string) =>
-    Array.isArray(settings?.hooks?.[ev]) && settings.hooks[ev].some((g: any) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => typeof h?.command === 'string' && h.command.includes(DISPATCH)));
+    Array.isArray(settings?.hooks?.[ev]) && settings.hooks[ev].some((g: any) => Array.isArray(g?.hooks) && g.hooks.some(isHarnessHook));
   const unwired = EVENTS.filter((e) => !wired(e));
   if (unwired.length) fix(`\`.claude/settings.json\` does not run the dispatcher for ${unwired.join(', ')}`, 'run harness update to restore the hooks');
-  else ok('settings run the dispatcher for all 5 hook events');
+  else ok('settings run the dispatcher for all 6 hook events');
 
   const entry = manifest.files.find((f) => f.rel === DISPATCH);
   const disp = readText(join(root, DISPATCH));

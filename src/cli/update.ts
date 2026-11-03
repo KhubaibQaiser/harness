@@ -22,6 +22,7 @@ export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir
 const USAGE = 'Usage: harness update [--yes] [--check] [--dry-run]';
 const PKG = '@khubaibqaiser/harness';
 const CONFIG = '.harness/config.yaml';
+const SETTINGS = '.claude/settings.json';
 
 export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const { out, prompt, version } = cli;
@@ -69,7 +70,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 
   let plan: ReturnType<typeof planChanges>;
   try {
-    plan = planChanges(root, v.config, detect(root), { version, distDir: cli.distDir, templatesDir: cli.templatesDir, legacyDir: LEGACY_RESULTS_DIR });
+    plan = planChanges(root, v.config, detect(root), { version, distDir: cli.distDir, templatesDir: cli.templatesDir, legacyDir: LEGACY_RESULTS_DIR, recorded: m.files.find((f) => f.rel === SETTINGS)?.blocks });
   } catch (e) {
     return out(`Cannot build the update plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
   }
@@ -130,8 +131,8 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     const c = changes.find((x) => x.rel === old.rel);
     if (!c || c.kind === 'delete') return old; // not touched by this update
     // A text block the new content no longer holds (a migrated Jest script) can't be removed later; drop it.
-    // Settings blocks are JSON structures, not text, so they are always kept.
-    const still = (b: string) => old.rel === '.claude/settings.json' || c.kind !== 'update' || removeBlocks(c.after, [b]) !== c.after; // EOL-tolerant, like uninstall's removal
+    // Settings blocks are JSON structures, not text: kept unless the merge replaced that hook group.
+    const still = (b: string) => c.kind !== 'update' || (old.rel === SETTINGS ? !c.dropped?.includes(b) : removeBlocks(c.after, [b]) !== c.after); // EOL-tolerant, like uninstall's removal
     const blocks = [...new Set([...(old.blocks ?? []).filter(still), ...(c.blocks ?? [])])];
     // A merged file the user edited since harness last wrote it: keep the old hash and drop the pre-init backup, so
     // uninstall still sees the edit and removes only harness's blocks (a whole-file restore or delete would lose it).

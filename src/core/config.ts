@@ -5,6 +5,7 @@ import { parse } from 'yaml';
 
 export type StopStep = string | { name: string; run: string[] };
 export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun' | 'none';
+export type SandboxMode = 'unattended' | 'always' | 'off';
 
 export interface HarnessConfig {
   version: 1;

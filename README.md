@@ -334,9 +334,9 @@ The multi-file gate never counts test files: JS/TS `*.test.*`, `*.spec.*` and `_
 
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
 - The `PowerShell(...)` deny rules, and the `Read` and `Edit` rules on PowerShell commands, are unverified until a live check on Windows passes.
-- The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop, R§2).
+- The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop).
 - Native Windows has no sandbox: shell commands are checked by text only, and the guard doesn't parse PowerShell.
-- Interactive sessions under the default `unattended` mode keep the text-check gaps (SEC-3, SEC-6, SEC-9, SEC-11) unless the person uses `/sandbox` or `always`.
+- Interactive sessions under the default `unattended` mode keep the text-check gaps (a `cd` before a write, shell reads of secrets, writes protect doesn't parse, and scripts that turn TDD off) unless the person turns the sandbox on before the session starts or uses `always`.
 - A blocked settings change still sits on disk; the next session loads it. Change detection reports it at the next prompt and Stop.
 - Force-push and push-to-main rules are text rules; branch protection is the real stop.
 - `HARNESS_SANDBOX=1` is the launcher's claim; harness can't see `--settings`.

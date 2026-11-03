@@ -3,6 +3,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { configChange } from '../checks/config-change.js';
 import { guard } from '../checks/guard.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect, shellWriteTargets } from '../checks/protect.js';
@@ -18,7 +19,7 @@ import { writeHookEnv } from '../core/hook-env.js';
 import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
-import { changedFiles, gitHead, readRepoSnapshot, recordLastSeen, snapshotHarnessFiles, type Snapshot } from '../core/harness-files.js';
+import { changedFiles, gitHead, guardedViews, readRepoSnapshot, recordLastSeen, snapshotHarnessFiles, type Snapshot } from '../core/harness-files.js';
 import { managedSettingsPath } from '../core/settings-layers.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
@@ -50,7 +51,7 @@ export interface Check {
 }
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
-export const registry: Check[] = [guard, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, stopGate];
+export const registry: Check[] = [guard, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, configChange, stopGate];
 
 const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
@@ -166,7 +167,18 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   // SessionEnd records what the session has accounted for as the next session's baseline, so a change between
   // sessions is reported too. Changes the harness CLI made match its own record and don't count.
   let notice = '';
+  let pending = ''; // a blocked ConfigChange, shown at this prompt with the change-detection notice
   if (state && !fallback) {
+    try {
+      // ConfigChange's baseline (plan ruling 4): once per session, and only when a check will compare against it.
+      if (!ctx.state.guardedBase && event !== 'ConfigChange' && checks.some((c) => c.events.includes('ConfigChange'))) ctx.save({ ...ctx.state, guardedBase: guardedViews(root, ctx.home), guardedCli: readRepoSnapshot(root).cli?.id });
+      if (event === 'UserPromptSubmit' && ctx.state.pendingNotice) {
+        pending = ctx.state.pendingNotice;
+        ctx.save({ ...ctx.state, pendingNotice: undefined });
+      }
+    } catch (e) {
+      warn('config-change baseline', e);
+    }
     try {
       if (!ctx.state.harnessFiles) {
         const seen = readRepoSnapshot(root).lastSeen;
@@ -295,7 +307,8 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     decisions.find((d) => d.kind === 'deny' || d.kind === 'block') ?? decisions.find((d) => d.kind === 'ask');
   const ctxs = decisions.flatMap((d) => (d.kind === 'context' ? [d.text] : []));
   const out = win ? emit(event, win) : ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), check: 'context' }) : '';
-  return notice ? withNotice(event, out, notice) : out;
+  const all = [pending, notice].filter(Boolean).join('\n');
+  return all ? withNotice(event, out, all) : out;
 }
 
 function filesChangedWhy(files: string[], startHead: string | undefined, head: string | undefined): string {

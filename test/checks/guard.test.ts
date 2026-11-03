@@ -153,9 +153,9 @@ test('dispatcher with the real registry denies a sensitive command end to end', 
   mkdirSync(join(root, '.harness'));
   writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
   const raw = (command: string) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command } });
-  const r = JSON.parse(await dispatch(raw('cat .env'), registry, {}));
+  const r = JSON.parse(await dispatch(raw('cat .env'), registry, {}, { home: root }));
   expect(r.hookSpecificOutput.permissionDecision).toBe('deny');
-  expect(await dispatch(raw('ls'), registry, {})).toBe('');
+  expect(await dispatch(raw('ls'), registry, {}, { home: root })).toBe('');
 });
 
 test.each(['harness tdd off', 'npx @khubaibqaiser/harness tdd off', 'pnpm harness tdd off', 'pnpm exec harness tdd off', 'ls && harness tdd off', 'ls; harness tdd off',
@@ -310,8 +310,8 @@ test('shell write into a tdd path is denied when unattended (through the dispatc
   mkdirSync(join(root, '.harness'));
   writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  tdd: true\ntdd:\n  paths:\n    - "packages/core/src/**"\n');
   const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: "sed -i 's/a/b/' packages/core/src/x.ts" } });
-  expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision).toBe('ask');
-  const r = JSON.parse(await dispatch(raw, registry, { CI: 'true' }));
+  expect(JSON.parse(await dispatch(raw, registry, {}, { home: root })).hookSpecificOutput.permissionDecision).toBe('ask');
+  const r = JSON.parse(await dispatch(raw, registry, { CI: 'true' }, { home: root }));
   expect(r.hookSpecificOutput.permissionDecision).toBe('deny');
   expect(r.hookSpecificOutput.permissionDecisionReason).toMatch(/^Unattended run:/);
 });

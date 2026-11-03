@@ -15,11 +15,13 @@ const CEILING_MS = 1000; // gross-regression guard on the whole spawn
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 
 function measure(input: string, check: (r: ReturnType<typeof spawnSync>) => void): { overhead: number; total: number } {
-  const empty = join(mkdtempSync(join(tmpdir(), 'h-lat-empty-')), 'empty.mjs');
+  const home = mkdtempSync(join(tmpdir(), 'h-lat-empty-')); // also the spawns' home: the hook never reads the real ~/.claude
+  const empty = join(home, 'empty.mjs');
   writeFileSync(empty, '');
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
   const time = (args: string[], stdin?: string) => {
     const t = performance.now();
-    const r = spawnSync(process.execPath, args, { input: stdin, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, args, { input: stdin, encoding: 'utf8', env });
     return { ms: performance.now() - t, r };
   };
   const diffs: number[] = [];

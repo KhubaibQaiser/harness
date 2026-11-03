@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { retryTransient, writeAtomic } from './atomic.js';
@@ -13,7 +13,9 @@ const FIXED = ['.harness/config.yaml', '.harness/manifest.json', '.claude/settin
 const SETTINGS = new Set(['.claude/settings.json', '.claude/settings.local.json']);
 const REPO = '.harness/state/files-snapshot.json';
 export type Snapshot = Record<string, string>; // repo-relative path -> sha-256 fingerprint
-type RepoSnapshot = { lastSeen?: { files: Snapshot; head?: string }; cli?: { files: Snapshot } };
+// cli.settings: the project settings file's fingerprint as the CLI left it, null when absent (ConfigChange's CLI record).
+// cli.id: unique per CLI run, so ConfigChange honours only a record written after the session's baseline.
+type RepoSnapshot = { lastSeen?: { files: Snapshot; head?: string }; cli?: { files: Snapshot; settings?: Record<string, string | null>; id?: string } };
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const lf = (s: string) => s.replace(/\r\n/g, '\n');
@@ -29,7 +31,7 @@ function hooksFiles(root: string, rel = '.harness/hooks'): string[] {
 }
 
 /** The deny rules harness installed, from the manifest's settings blocks; null when unknown (then every rule counts). */
-function harnessDenyRules(root: string): Set<string> | null {
+export function harnessDenyRules(root: string): Set<string> | null {
   try {
     const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
     const f = m.files.find((x: { rel: string }) => x.rel === '.claude/settings.json');
@@ -40,22 +42,69 @@ function harnessDenyRules(root: string): Set<string> | null {
   }
 }
 
+export type GuardedPart = 'hooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'unreadable';
+export type GuardedView = { hooks: [string, unknown[]][]; deny: string[]; disableAllHooks: unknown; sandbox: unknown } | null;
+
 /**
  * Only what harness relies on in a Claude settings file: the hook groups that run its dispatcher, its own deny rules,
- * and disableAllHooks. permissions.allow and the other keys Claude Code writes (an "Always allow" click) don't count.
+ * disableAllHooks and sandbox. permissions.allow and the other keys Claude Code writes (an "Always allow" click) don't
+ * count. An absent file is the empty view; null means the file isn't JSON.
  */
-function settingsFingerprint(text: string, deny: Set<string> | null): string {
+export function guardedView(text: string | null, deny: Set<string> | null): GuardedView {
+  let s;
   try {
-    const s = JSON.parse(text);
-    const hooks = Object.entries(s?.hooks ?? {})
-      .map(([ev, groups]) => [ev, (Array.isArray(groups) ? groups : []).filter((g) => JSON.stringify(g).includes('.harness/hooks/dispatch.mjs'))] as const)
-      .filter(([, g]) => g.length)
-      .sort(([a], [b]) => a.localeCompare(b));
-    const rules = (Array.isArray(s?.permissions?.deny) ? s.permissions.deny : []).filter((d: unknown) => typeof d === 'string' && (!deny || deny.has(d))).sort();
-    return sha(JSON.stringify({ hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null }));
+    s = JSON.parse(text ?? '{}');
   } catch {
-    return sha(lf(text)); // not JSON: any change counts
+    return null;
   }
+  const hooks = Object.entries(s?.hooks ?? {})
+    .map(([ev, groups]): [string, unknown[]] => [ev, (Array.isArray(groups) ? groups : []).filter((g) => JSON.stringify(g).includes('.harness/hooks/dispatch.mjs'))])
+    .filter(([, g]) => g.length)
+    .sort(([a], [b]) => a.localeCompare(b));
+  const rules = (Array.isArray(s?.permissions?.deny) ? s.permissions.deny : []).filter((d: unknown) => typeof d === 'string' && (!deny || deny.has(d))).sort();
+  // sandbox stays undefined when absent, so a file without it keeps the fingerprint it had before sandbox counted.
+  return { hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null, sandbox: s?.sandbox };
+}
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** The guarded parts changed from base to cur. A deny rule counts only when a base rule is gone (removed or narrowed). */
+export function guardedDiff(base: GuardedView, cur: GuardedView): GuardedPart[] {
+  if (!base || !cur) return ['unreadable'];
+  const parts: GuardedPart[] = [];
+  if (!same(base.hooks, cur.hooks)) parts.push('hooks');
+  if (base.deny.some((r) => !cur.deny.includes(r))) parts.push('deny');
+  if (!same(base.disableAllHooks, cur.disableAllHooks)) parts.push('disableAllHooks');
+  if (!same(base.sandbox, cur.sandbox)) parts.push('sandbox');
+  return parts;
+}
+
+export const GUARDED = { user: (home: string) => join(home, '.claude/settings.json'), project: '.claude/settings.json', local: '.claude/settings.local.json' } as const;
+/** The file's text, or null when it doesn't exist; any other read error throws. */
+export function readGuarded(path: string): string | null {
+  try {
+    return retryTransient(() => readFileSync(path, 'utf8'));
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw e;
+  }
+}
+const viewOf = (path: string, deny: Set<string> | null): GuardedView => {
+  try {
+    return guardedView(readGuarded(path), deny);
+  } catch {
+    return null; // unreadable counts like non-JSON
+  }
+};
+/** The guarded views of the user, project and local settings: ConfigChange's session baseline. */
+export function guardedViews(root: string, home: string): Record<'user' | 'project' | 'local', GuardedView> {
+  const deny = harnessDenyRules(root);
+  return { user: viewOf(GUARDED.user(home), deny), project: viewOf(join(root, GUARDED.project), deny), local: viewOf(join(root, GUARDED.local), deny) };
+}
+
+export function settingsFingerprint(text: string, deny: Set<string> | null): string {
+  const v = guardedView(text, deny);
+  return v ? sha(JSON.stringify(v)) : sha(lf(text)); // not JSON: any change counts
 }
 
 const EMPTY_SETTINGS = settingsFingerprint('{}', null);
@@ -118,5 +167,11 @@ export function recordLastSeen(root: string, files: Snapshot, head?: string): vo
 export function stampHarnessFiles(root: string): void {
   const files = snapshotHarnessFiles(root);
   const head = gitHead(root);
-  writeRepoSnapshot(root, { cli: { files }, lastSeen: { files, ...(head ? { head } : {}) } });
+  const deny = harnessDenyRules(root);
+  const settings: Record<string, string | null> = {};
+  try {
+    const text = readGuarded(join(root, GUARDED.project)); // the only settings file the CLI writes
+    settings[GUARDED.project] = text === null ? null : settingsFingerprint(text, deny);
+  } catch {} // unreadable: no record, so no change to it is allowed as the CLI's
+  writeRepoSnapshot(root, { cli: { files, settings, id: randomUUID() }, lastSeen: { files, ...(head ? { head } : {}) } });
 }

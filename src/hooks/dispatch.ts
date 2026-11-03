@@ -15,6 +15,7 @@ import { appendEvent } from '../core/events.js';
 import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
+import { changedFiles, gitHead, readRepoSnapshot, recordLastSeen, snapshotHarnessFiles, type Snapshot } from '../core/harness-files.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
 import { editTarget } from './edit-target.js';
@@ -140,6 +141,69 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     }
   };
 
+  // Change detection, the backstop behind the path checks: a session's baseline is the repo's last-seen snapshot (or,
+  // on a fresh clone, the files at its first hook). A change shows at the next prompt (a notice, once) and blocks the
+  // next Stop once (the snapshot is then renewed, and the block counts within stop.max_attempts). Each Stop and
+  // SessionEnd records what the session has accounted for as the next session's baseline, so a change between
+  // sessions is reported too. Changes the harness CLI made match its own record and don't count.
+  let notice = '';
+  if (state && !fallback) {
+    try {
+      if (!ctx.state.harnessFiles) {
+        const seen = readRepoSnapshot(root).lastSeen;
+        ctx.save({ ...ctx.state, harnessFiles: seen?.files ?? snapshotHarnessFiles(root), harnessHead: seen ? seen.head : ctx.state.baseHead });
+      }
+      if (event === 'Stop' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
+        const prev = ctx.state.harnessFiles!;
+        const cur = snapshotHarnessFiles(root);
+        // A change shown at a prompt that is no longer as shown (undone, or changed again) before the Stop that would
+        // account for it: report that at this Stop, once. At SessionEnd, the shown state is what the next session
+        // starts from, so it reports the undoing.
+        const noticed: [string, string | null][] | null = ctx.state.harnessNoticed ? JSON.parse(ctx.state.harnessNoticed) : null;
+        const gone = !!noticed && noticed.some(([f, h]) => (cur[f] ?? null) !== h);
+        const shown: Snapshot = { ...prev };
+        for (const [f, h] of noticed ?? []) if (h === null) delete shown[f]; else shown[f] = h;
+        if (gone && event === 'Stop') {
+          const changed = [...new Set([...noticed!.map(([f]) => f), ...changedFiles(shown, cur)])].sort();
+          log('harness-files', 'harness-files-changed', changed.join(', '));
+          const head = gitHead(root);
+          const why = `The change to ${noticed!.map(([f]) => `\`${f}\``).join(', ')} shown at the last prompt is no longer there: something changed these files again before this Stop, possibly undoing the person's edit. ${filesChangedWhy(changed, ctx.state.harnessHead, head)}`;
+          const attempts = ctx.state.stopAttempts + 1;
+          const over = attempts > (config?.stop.max_attempts ?? 3);
+          ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: head, harnessNoticed: undefined, stopAttempts: over ? 0 : attempts });
+          recordLastSeen(root, cur, head);
+          if (over) log('harness-files', 'stop-gave-up', why);
+          else return emit(event, { kind: 'block', reason: why, check: 'harness-files' });
+        }
+        const files = event === 'SessionEnd' && noticed ? [] : changedFiles(ctx.state.harnessFiles!, cur);
+        const cli = files.length ? readRepoSnapshot(root).cli : undefined;
+        if (files.length && cli && !changedFiles(cli.files, cur).length) ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: gitHead(root), harnessNoticed: undefined });
+        else if (files.length && event !== 'SessionEnd') {
+          const key = JSON.stringify(files.map((f) => [f, cur[f] ?? null]));
+          if (ctx.state.harnessNoticed !== key) log('harness-files', 'harness-files-changed', files.join(', '));
+          const head = gitHead(root);
+          const why = filesChangedWhy(files, ctx.state.harnessHead, head);
+          const attempts = ctx.state.stopAttempts + 1;
+          if (event === 'UserPromptSubmit') {
+            if (ctx.state.harnessNoticed !== key) notice = why;
+            ctx.save({ ...ctx.state, harnessNoticed: key });
+          } else if (attempts > (config?.stop.max_attempts ?? 3)) {
+            ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: head, harnessNoticed: undefined, stopAttempts: 0 });
+            log('harness-files', 'stop-gave-up', why);
+          } else {
+            ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: head, harnessNoticed: undefined, stopAttempts: attempts });
+            recordLastSeen(root, cur, head);
+            return emit(event, { kind: 'block', reason: why, check: 'harness-files' });
+          }
+        }
+        // What this session has accounted for (not an unreported change) is where the next session starts.
+        if (event === 'Stop' || event === 'SessionEnd') recordLastSeen(root, event === 'SessionEnd' && noticed ? shown : ctx.state.harnessFiles!, ctx.state.harnessHead);
+      }
+    } catch (e) {
+      warn('harness-files', e);
+    }
+  }
+
   // An invalid config never turns a gate off silently: edits (except to the config itself, which the usual checks
   // still judge) and Stop fail closed. Stop shares the Stop gate's attempt counter, so the session can still end.
   if (configErrors.length && !degraded) {
@@ -209,7 +273,26 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   const win =
     decisions.find((d) => d.kind === 'deny' || d.kind === 'block') ?? decisions.find((d) => d.kind === 'ask');
   const ctxs = decisions.flatMap((d) => (d.kind === 'context' ? [d.text] : []));
-  return win ? emit(event, win) : ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), check: 'context' }) : '';
+  const out = win ? emit(event, win) : ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), check: 'context' }) : '';
+  return notice ? withNotice(event, out, notice) : out;
+}
+
+function filesChangedWhy(files: string[], startHead: string | undefined, head: string | undefined): string {
+  const list = files.map((f) => `\`${f}\``).join(', ');
+  const short = (h: string) => h.slice(0, 12);
+  const review = startHead
+    ? `\`git diff ${short(startHead)} -- .harness .claude/settings.json\` (everything since the session started), and \`git diff -- .harness .claude/settings.json\` for what is not committed`
+    : '`git diff -- .harness .claude/settings.json`';
+  const moved = startHead && head && head !== startHead ? ` HEAD moved since the session started (${short(startHead)} -> ${short(head)}): a branch switch, a pull or a commit can explain the change.` : '';
+  return `Harness files changed since harness last checked them: ${list}. Tell the person now and ask them to review the change with ${review} (any command or script can change these files, not only an edit).${moved} Harness says this once per change.`;
+}
+/** Adds a notice the person sees (systemMessage) and the model gets (additionalContext) to a hook's JSON output. */
+function withNotice(event: string, out: string, notice: string): string {
+  const o = out ? JSON.parse(out) : {};
+  o.systemMessage = [o.systemMessage, notice].filter(Boolean).join('\n');
+  const extra = o.hookSpecificOutput?.additionalContext;
+  o.hookSpecificOutput = { ...o.hookSpecificOutput, hookEventName: event, additionalContext: [extra, notice].filter(Boolean).join('\n') };
+  return JSON.stringify(o);
 }
 
 async function main(): Promise<void> {

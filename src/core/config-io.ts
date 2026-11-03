@@ -14,6 +14,7 @@ export function validateConfig(raw: unknown): { ok: true; config: HarnessConfig 
 const SECTIONS: Record<keyof HarnessConfig, string> = {
   version: 'Config schema version.',
   checks: 'Which checks run.',
+  sandbox: "Claude Code's sandbox: required for unattended runs (unattended), on for everyone (always), or not used (off).",
   tdd: 'Red-first TDD enforcement (needs checks.tdd).',
   multi_file_gate: 'Multi-file edit gate (needs checks.multiFile).',
   unattended: 'Behaviour when no human is watching.',

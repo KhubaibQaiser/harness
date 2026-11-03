@@ -49,6 +49,26 @@ export const isHarnessHook = (h: unknown): boolean =>
 
 const parse = (b: string): unknown => { try { return JSON.parse(b); } catch { return null; } };
 
+// The `always` keys. `failIfUnavailable` is never committed: it belongs to the unattended launch's --settings only.
+const SANDBOX = { enabled: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false };
+
+/**
+ * Deletes each recorded `{"set":[...path],"value":v}` key of `s` whose value still deep-equals v, deepest path first, so a
+ * created parent (`value: {}`) goes only once it is empty. Returns those blocks, and the dotted paths of changed values kept.
+ */
+export function removeSets(s: unknown, blocks: string[]): { sets: string[]; changed: string[] } {
+  const sets = blocks.map((b) => [b, parse(b)] as [string, any]).filter(([, p]) => isObj(p) && Array.isArray(p.set) && p.set.length).sort((a, b) => b[1].set.length - a[1].set.length);
+  const changed: string[] = [];
+  for (const [, { set, value }] of sets) {
+    const parent = set.slice(0, -1).reduce((o: unknown, k: string) => (isObj(o) ? o[k] : undefined), s);
+    const k = set.at(-1);
+    if (!isObj(parent) || !Object.hasOwn(parent, k)) continue;
+    if (isDeepStrictEqual(parent[k], value)) delete parent[k];
+    else if (!isObj(value)) changed.push(set.join('.')); // a parent the person added keys to is theirs now: no note
+  }
+  return { sets: sets.map(([b]) => b), changed };
+}
+
 /**
  * `blocks` for settings are structural, not text (JSON re-serialization changes the bytes):
  * one JSON.stringify string per inserted hook group, `{"event":"Stop","group":{...}}`,
@@ -100,6 +120,23 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
     if (s.permissions.deny.includes(d)) continue;
     s.permissions.deny.push(d);
     blocks.push(JSON.stringify({ deny: d }));
+  }
+  if (opts.sandbox === 'always') {
+    if (s.sandbox !== undefined && !isObj(s.sandbox)) bad('"sandbox" must be an object');
+    if (s.sandbox === undefined) {
+      s.sandbox = {};
+      blocks.push(JSON.stringify({ set: ['sandbox'], value: {} }));
+    }
+    for (const [k, v] of Object.entries(SANDBOX)) {
+      if (!Object.hasOwn(s.sandbox, k)) {
+        s.sandbox[k] = v;
+        blocks.push(JSON.stringify({ set: ['sandbox', k], value: v }));
+      } else if (!isDeepStrictEqual(s.sandbox[k], v)) notes.push(`${SETTINGS}: sandbox.${k} is already ${JSON.stringify(s.sandbox[k])}; left as is (harness would set ${JSON.stringify(v)}).`);
+    }
+  } else {
+    const r = removeSets(s, opts.recorded ?? []);
+    dropped.push(...r.sets);
+    for (const p of r.changed) notes.push(`\`${SETTINGS}\`: \`${p}\` was changed; left as is.`);
   }
   const eol = before === null ? '\n' : eolOf(before);
   const tail = before === null || /\n$/.test(before) ? eol : '';

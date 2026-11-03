@@ -24,7 +24,7 @@ const setup = (mode = 'block', extra = '') => {
 const kind = (d: { permissionDecision: string }) => d.permissionDecision;
 
 test('registered after specGate, not fail-closed, right events', () => {
-  expect(registry.map((c) => c.name)).toEqual(['guard', 'protect', 'redFirst', 'tamper', 'testLock', 'specGate', 'multiFile', 'stopGate']);
+  expect(registry.map((c) => c.name)).toEqual(['guard', 'protect', 'sandbox-required', 'redFirst', 'tamper', 'testLock', 'specGate', 'multiFile', 'stopGate']);
   expect(multiFile.failClosed).toBeFalsy();
   expect(multiFile.events).toEqual(['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']);
 });

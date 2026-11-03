@@ -23,7 +23,7 @@ export function planChanges(
   /** `legacyDir`: update's old results folder; a package whose results file still names it is migrated, TDD on or off.
    * `recorded`: the settings blocks the manifest holds, so update replaces harness's own old hook groups in place. */
   ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[] },
-): { changes: Change[]; manual: string[]; notes: string[] } {
+): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[] } {
   const templatesDir = ctx.templatesDir ?? join(ctx.distDir, '..', 'templates');
   const changes: Change[] = [];
   const manual: string[] = [];
@@ -43,9 +43,9 @@ export function planChanges(
   put('.claude/agents/staff-reviewer.md', tpl('agents', 'staff-reviewer.md'));
   put('.claude/skills/review-rubric/SKILL.md', tpl('skills', 'review-rubric', 'SKILL.md'));
 
-  const settings = mergeSettings(read('.claude/settings.json'), { sandbox: 'unattended', recorded: ctx.recorded });
+  const settings = mergeSettings(read('.claude/settings.json'), { sandbox: config.sandbox, recorded: ctx.recorded });
   notes.push(...settings.notes);
-  if (settings.blocks.length) { // every dropped group also adds its replacement's block
+  if (settings.blocks.length || settings.dropped.length) { // leaving `always` drops set blocks with no replacement
     put('.claude/settings.json', settings.after, settings.blocks);
     const c = changes.at(-1);
     if (c?.kind === 'update' && c.rel === '.claude/settings.json' && settings.dropped.length) c.dropped = settings.dropped;
@@ -79,7 +79,7 @@ export function planChanges(
     }
   }
   formatEdits(root, changes, notes);
-  return { changes, manual, notes };
+  return { changes, manual, notes, dropped: settings.dropped };
 }
 
 const JS = /\.[cm]?[jt]s$/;

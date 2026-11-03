@@ -1,10 +1,12 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { guard } from '../checks/guard.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect, shellWriteTargets } from '../checks/protect.js';
+import { sandboxRequired } from '../checks/sandbox-required.js';
 import { redFirst } from '../checks/tdd/red-first.js';
 import { tamper } from '../checks/tdd/tamper.js';
 import { specGate } from '../checks/tdd/spec-gate.js';
@@ -17,6 +19,7 @@ import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
 import { changedFiles, gitHead, readRepoSnapshot, recordLastSeen, snapshotHarnessFiles, type Snapshot } from '../core/harness-files.js';
+import { managedSettingsPath } from '../core/settings-layers.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
 import { editTarget, isShell } from './edit-target.js';
@@ -30,6 +33,9 @@ export interface Ctx {
   state: SessionState;
   unattended: boolean;
   env: NodeJS.ProcessEnv;
+  home: string;
+  platform: NodeJS.Platform;
+  managed: string; // managed-settings.json path; tests point it away from the real system file
   startedAt: number; // process start, for the hook time budget
   save(s: SessionState): void;
 }
@@ -44,7 +50,7 @@ export interface Check {
 }
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
-export const registry: Check[] = [guard, protect, redFirst, tamper, testLock, specGate, multiFile, stopGate];
+export const registry: Check[] = [guard, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, stopGate];
 
 const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
@@ -65,15 +71,17 @@ export function detectBaseHead(root: string, run: GitRun = (args) => spawnSync('
   return any.status === 0 && !any.stdout.trim() ? '4b825dc642cb6eb9a060e54bf8d69288fbee4904' : undefined;
 }
 
-export async function dispatch(raw: string, checks: Check[], env: NodeJS.ProcessEnv): Promise<string> {
+export type DispatchOpts = { home?: string; platform?: NodeJS.Platform; managed?: string };
+
+export async function dispatch(raw: string, checks: Check[], env: NodeJS.ProcessEnv, opts: DispatchOpts = {}): Promise<string> {
   const input = parseInput(raw);
   if (!input || !EVENTS.includes(input.hook_event_name) || !isSafeSessionId(input.session_id)) return '';
-  if (!input.cwd || input.hook_event_name === 'Stop') return dispatchLocked(raw, checks, env);
+  if (!input.cwd || input.hook_event_name === 'Stop') return dispatchLocked(raw, checks, env, opts);
   // One hook at a time per session, so parallel tool calls cannot race on the state file.
-  return withSessionLock(repoRoot(input.cwd), input.session_id, () => dispatchLocked(raw, checks, env));
+  return withSessionLock(repoRoot(input.cwd), input.session_id, () => dispatchLocked(raw, checks, env, opts));
 }
 
-async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessEnv): Promise<string> {
+async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessEnv, opts: DispatchOpts): Promise<string> {
   const input = parseInput(raw);
   if (!input) return '';
   const rec = input as unknown as Record<string, unknown>;
@@ -135,8 +143,10 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     }
   }
 
+  const platform = opts.platform ?? process.platform;
   const ctx = {
     input, root, config, state, unattended, env, startedAt: PROCESS_START,
+    home: opts.home ?? homedir(), platform, managed: opts.managed ?? managedSettingsPath(platform),
     save(s: SessionState) {
       if (!fallback) writeState(root, input.session_id, s);
       ctx.state = s;

@@ -10,6 +10,7 @@ export type SandboxMode = 'unattended' | 'always' | 'off';
 export interface HarnessConfig {
   version: 1;
   checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop', boolean>;
+  sandbox: SandboxMode;
   tdd: { paths: string[]; exempt: string[]; diff_coverage: number; coverage_skip: string[]; test_lock: boolean; results_dir: string };
   multi_file_gate: { generated: string[] };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
@@ -22,6 +23,7 @@ export const LEGACY_RESULTS_DIR = '.harness/state/test-results';
 export const defaults = (): HarnessConfig => ({
   version: 1,
   checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true },
+  sandbox: 'unattended',
   tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: DEFAULT_RESULTS_DIR },
   multi_file_gate: { generated: [] },
   unattended: { multi_file_gate: 'block', require_reason: false },
@@ -78,6 +80,7 @@ const RULES: Record<string, Rule> = {
   'unattended.multi_file_gate': oneOf('block', 'allow-log', 'off'),
   'stop.package_manager': oneOf('npm', 'pnpm', 'yarn', 'bun', 'none'),
   'stop.steps': stepsRule,
+  sandbox: oneOf('unattended', 'always', 'off'),
 };
 
 function problem(p: string, v: unknown, d: unknown): Fail | null {

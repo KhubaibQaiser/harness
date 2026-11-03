@@ -14,6 +14,7 @@ const WHAT = {
   'checks.multiFile': 'Multi-file gate.',
   'checks.tdd': 'Red-first TDD, test-lock and tamper check.',
   'checks.stop': 'Stop gate.',
+  sandbox: '`unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only.',
   'tdd.paths': 'Globs for the files TDD covers.',
   'tdd.exempt': 'Globs inside `tdd.paths` that TDD skips.',
   'tdd.diff_coverage': 'Minimum coverage, in percent, for changed lines.',

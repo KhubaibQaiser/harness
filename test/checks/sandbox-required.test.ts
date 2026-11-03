@@ -6,7 +6,7 @@ import { sandboxRequired, sandboxVerdict } from '../../src/checks/sandbox-requir
 import type { SandboxMode } from '../../src/core/config.js';
 import { readEvents } from '../../src/core/events.js';
 import type { Layer } from '../../src/core/settings-layers.js';
-import { dispatch, registry } from '../../src/hooks/dispatch.js';
+import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
 
 const MSG = "Unattended run without Claude Code's sandbox. Start it with the command in the README (Unattended runs and CI), or set `sandbox: off` in `.harness/config.yaml`.";
 const CONFIRMED = { sandbox: { enabled: true, allowUnsandboxedCommands: false } };
@@ -32,6 +32,7 @@ describe('sandboxVerdict', () => {
     for (const n of ['bwrap', 'socat']) {
       writeFileSync(join(bin, n), '#!/bin/sh\n');
       chmodSync(join(bin, n), 0o755);
+      if (n === 'bwrap') expect(v({ platform: 'linux', layers: l, env: { PATH: bin } }), 'bwrap without socat').toBe('deny');
     }
     expect(v({ platform: 'linux', layers: l, env: { PATH: bin } })).toBe('allow');
   });
@@ -67,8 +68,15 @@ describe('the check', () => {
     const { root, ...opts } = setup();
     const out = JSON.parse(await dispatch(call(root, tool, { command: 'ls' }), [sandboxRequired], {}, { ...opts, platform: 'darwin' }));
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
-    expect(out.hookSpecificOutput.permissionDecisionReason).toContain(MSG);
+    expect(out.hookSpecificOutput.permissionDecisionReason).toBe(MSG);
     expect(readEvents(root).map((e) => [e.check, e.decision])).toEqual([['sandbox-required', 'deny']]);
+  });
+
+  test('a degraded run (no config) still gets the exact deny message', async () => {
+    const { root, home, managed } = setup();
+    const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'ls' } };
+    const ctx = { input, root, home, managed, platform: 'darwin', env: {}, unattended: true, config: undefined, state: undefined, save() {} } as unknown as Ctx;
+    expect(await sandboxRequired.run(ctx)).toEqual({ kind: 'deny', reason: MSG, check: 'sandbox-required' });
   });
 
   test('an unattended Edit is allowed', async () => {

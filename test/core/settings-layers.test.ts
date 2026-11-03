@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
+import { sandboxVerdict } from '../../src/checks/sandbox-required.js';
 import { effective, managedSettingsPath, readSettingsLayers } from '../../src/core/settings-layers.js';
 
 const put = (f: string, text: string) => {
@@ -41,4 +42,25 @@ test('effective takes the first layer that defines the path, even a false one', 
   ];
   expect(effective(layers, ['sandbox', 'enabled'])).toBe(false);
   expect(effective(layers, ['sandbox', 'allowUnsandboxedCommands'])).toBeUndefined();
+});
+
+const CONFIRMED = '{"sandbox":{"enabled":true,"allowUnsandboxedCommands":false}}';
+const withDropIns = (files: Record<string, string>) => {
+  const root = mkdtempSync(join(tmpdir(), 'h-sl-root-'));
+  const home = mkdtempSync(join(tmpdir(), 'h-sl-home-'));
+  const managed = join(root, 'sys/managed-settings.json');
+  put(join(root, '.claude/settings.json'), CONFIRMED);
+  for (const [f, t] of Object.entries(files)) put(join(root, 'sys/managed-settings.d', f), t);
+  return readSettingsLayers(root, home, 'darwin', managed);
+};
+
+test('a managed-settings.d drop-in with enabled false beats a confirmed project layer (deny)', () => {
+  const layers = withDropIns({ '10-off.json': '{"sandbox":{"enabled":false}}', '.hidden.json': '{"sandbox":{"enabled":true}}', 'notes.txt': 'x' });
+  expect(layers.map((l) => l.name)).toEqual(['managed', 'managed', 'local', 'project', 'user']);
+  expect(sandboxVerdict({ mode: 'unattended', unattended: true, platform: 'darwin', env: {}, layers })).toBe('deny');
+});
+
+test('a later drop-in overrides an earlier one', () => {
+  const layers = withDropIns({ '10-a.json': '{"sandbox":{"enabled":true}}', '20-b.json': '{"sandbox":{"enabled":false}}' });
+  expect(effective(layers, ['sandbox', 'enabled'])).toBe(false);
 });

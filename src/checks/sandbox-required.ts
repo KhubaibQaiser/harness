@@ -11,12 +11,13 @@ const MSG = "Unattended run without Claude Code's sandbox. Start it with the com
 export function sandboxVerdict(i: { mode: SandboxMode; unattended: boolean; platform: NodeJS.Platform; env: NodeJS.ProcessEnv; layers: Layer[] }): 'allow' | 'unavailable' | 'deny' {
   if (i.mode === 'off' || !i.unattended) return 'allow';
   if (i.platform === 'win32') return 'unavailable';
+  // HARNESS_SANDBOX=1 stands for the documented `--settings` launch, which a hook can't see. Checked first: it is free.
+  if (i.env.HARNESS_SANDBOX === '1') return 'allow';
   const confirmed =
     effective(i.layers, ['sandbox', 'enabled']) === true &&
     effective(i.layers, ['sandbox', 'allowUnsandboxedCommands']) === false &&
     (i.platform !== 'linux' || (!!findOnPath('bwrap', i.env, i.platform) && !!findOnPath('socat', i.env, i.platform)));
-  // HARNESS_SANDBOX=1 stands for the documented `--settings` launch, which a hook can't see.
-  return confirmed || i.env.HARNESS_SANDBOX === '1' ? 'allow' : 'deny';
+  return confirmed ? 'allow' : 'deny';
 }
 
 export const sandboxRequired: Check = {
@@ -25,13 +26,14 @@ export const sandboxRequired: Check = {
   failClosed: true,
   run(ctx) {
     // Attended calls and non-shell tools return before any file is read.
-    if (!isShell(ctx.input.tool_name) || !ctx.unattended || ctx.config.sandbox === 'off') return { kind: 'allow' };
+    const mode = ctx.config?.sandbox ?? 'unattended'; // degraded (no config): still judged, not a TypeError deny
+    if (!isShell(ctx.input.tool_name) || !ctx.unattended || mode === 'off') return { kind: 'allow' };
     const verdict = sandboxVerdict({
-      mode: ctx.config.sandbox, unattended: ctx.unattended, platform: ctx.platform, env: ctx.env,
-      layers: ctx.platform === 'win32' ? [] : readSettingsLayers(ctx.root, ctx.home, ctx.platform, ctx.managed),
+      mode, unattended: ctx.unattended, platform: ctx.platform, env: ctx.env,
+      layers: ctx.platform === 'win32' || ctx.env.HARNESS_SANDBOX === '1' ? [] : readSettingsLayers(ctx.root, ctx.home, ctx.platform, ctx.managed),
     });
     if (verdict === 'deny') return { kind: 'deny', reason: MSG, check: 'sandbox-required' };
-    if (verdict === 'unavailable' && !ctx.state.sandboxUnavailableLogged) {
+    if (verdict === 'unavailable' && !ctx.state?.sandboxUnavailableLogged) {
       appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'sandbox-required', decision: 'sandbox-unavailable' });
       ctx.save({ ...ctx.state, sandboxUnavailableLogged: true });
     }

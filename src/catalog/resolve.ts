@@ -7,25 +7,32 @@ export function resolvePins(c: Catalog, exec: Exec, only?: string[]): { problems
   const unpinned: { id: string; reason: string }[] = [];
   for (const id of only ?? []) if (!c.items.some((i) => i.id === id)) problems.push(`--only: no catalog item "${id}"`);
   const missing = new Set<string>();
-  const run = (cmd: string, args: string[]): string | null => {
+  // 'absent' is a real 404; anything else non-zero is reported as "could not verify" so a rate limit never reads as a bad pin.
+  const run = (cmd: string, args: string[], what: string, id: string): string | 'absent' | null => {
     const r = exec(cmd, args);
     if (r.missing) return missing.add(cmd), null;
-    return r.status === 0 ? r.stdout.trim() : null;
+    if (r.status === 0) return r.stdout.trim();
+    const err = (r.stderr ?? '').trim();
+    if (/HTTP 404|Not Found|E404/i.test(err)) return 'absent';
+    problems.push(`${id}: could not verify ${what} (${cmd} exited ${r.status})${err ? `: ${err.split('\n')[0]}` : ''}`);
+    return null;
   };
   for (const { id, source: s } of c.items) {
     if (only && !only.includes(id)) continue;
     if (s.type === 'remote') unpinned.push({ id, reason: s.unpinned });
     else if (s.type === 'npm') {
       if (missing.has('npm')) continue;
-      const v = run('npm', ['view', `${s.package}@${s.version}`, 'version']);
-      if (v !== s.version && !missing.has('npm')) problems.push(`${id}: ${s.package}@${s.version} not found on npm`);
+      const v = run('npm', ['view', `${s.package}@${s.version}`, 'version'], `${s.package}@${s.version}`, id);
+      if (v === 'absent' || (v !== null && v !== s.version)) problems.push(`${id}: ${s.package}@${s.version} not found on npm`);
     } else if (s.type === 'github' || s.type === 'git-subdir') {
       if (missing.has('gh')) continue;
-      const sha = run('gh', ['api', `repos/${s.repo}/commits/${s.sha}`, '--jq', '.sha']);
-      if (sha !== s.sha) {
-        if (!missing.has('gh')) problems.push(`${id}: commit ${s.sha} not found in ${s.repo}`);
-      } else if (s.type === 'git-subdir' && run('gh', ['api', `repos/${s.repo}/contents/${s.path}?ref=${s.sha}`, '--jq', '.type']) !== 'dir') {
-        problems.push(`${id}: path ${s.path} is not a directory in ${s.repo} at ${s.sha}`);
+      const sha = run('gh', ['api', `repos/${s.repo}/commits/${s.sha}`, '--jq', '.sha'], `commit ${s.sha} in ${s.repo}`, id);
+      if (sha === null) continue;
+      if (sha !== s.sha) problems.push(`${id}: commit ${s.sha} not found in ${s.repo}`);
+      else if (s.type === 'git-subdir') {
+        const path = s.path.split('/').map(encodeURIComponent).join('/');
+        const t = run('gh', ['api', `repos/${s.repo}/contents/${path}?ref=${s.sha}`, '--jq', '.type'], `path ${s.path} in ${s.repo}`, id);
+        if (t !== null && t !== 'dir') problems.push(`${id}: path ${s.path} is not a directory in ${s.repo} at ${s.sha}`);
       }
     }
   }

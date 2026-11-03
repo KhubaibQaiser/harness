@@ -51,7 +51,7 @@ test('unpinned items are listed with their reason', () => {
 });
 
 test('a 404 names the item and the source', () => {
-  const { exec } = fake(() => ({ status: 1, stdout: '' }));
+  const { exec } = fake(() => ({ status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' }));
   const r = resolvePins(cat(item('gsap-skills', { type: 'github', repo: 'greensock/gsap-skills', plugin: 'g', sha: SHA })), exec);
   expect(r.problems).toEqual([`gsap-skills: commit ${SHA} not found in greensock/gsap-skills`]);
 });
@@ -66,4 +66,20 @@ test('only limits which items are checked and unknown ids are problems', () => {
   const r = resolvePins(cat(gh('a'), gh('b')), exec, ['b', 'zz']);
   expect(calls).toHaveLength(1);
   expect(r.problems).toEqual(['--only: no catalog item "zz"']);
+});
+
+test('a non-404 failure is "could not verify", not "not found"', () => {
+  const { exec } = fake(() => ({ status: 1, stdout: '', stderr: 'HTTP 403: rate limit exceeded\nmore' }));
+  expect(resolvePins(cat(gh('a')), exec).problems).toEqual([`a: could not verify commit ${SHA} in o/r (gh exited 1): HTTP 403: rate limit exceeded`]);
+  const npm = item('m', { type: 'npm', package: 'pkg', version: '1.2.3' });
+  const net = fake(() => ({ status: 1, stdout: '', stderr: 'npm ERR! network timeout' }));
+  expect(resolvePins(cat(npm), net.exec).problems).toEqual(['m: could not verify pkg@1.2.3 (npm exited 1): npm ERR! network timeout']);
+  const gone = fake(() => ({ status: 1, stdout: '', stderr: 'npm ERR! code E404' }));
+  expect(resolvePins(cat(npm), gone.exec).problems).toEqual(['m: pkg@1.2.3 not found on npm']);
+});
+
+test('git-subdir path segments are URL-encoded', () => {
+  const { exec, calls } = fake((_c, a) => ({ status: 0, stdout: a[1].includes('/contents/') ? 'dir' : SHA }));
+  resolvePins(cat(item('p', { type: 'git-subdir', repo: 'o/r', path: 'a b/c?d', plugin: 'p', sha: SHA })), exec);
+  expect(calls[1][2]).toBe(`repos/o/r/contents/a%20b/c%3Fd?ref=${SHA}`);
 });

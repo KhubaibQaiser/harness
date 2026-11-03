@@ -18,7 +18,7 @@ export function catalog(args: string[], { out }: CliEnv, deps: { dir?: string; e
     else if (args[i] === '--only' && args[i + 1] && !args[i + 1].startsWith('--')) only = args[++i].split(',').filter(Boolean);
     else return out(USAGE), 2;
   }
-  if (only && !resolve) return out(USAGE), 2;
+  if (only && (!resolve || !only.length)) return out(USAGE), 2;
   const problems = [...errors, ...checkCatalog(c)];
   let unpinned: { id: string; reason: string }[] = [];
   if (resolve) {

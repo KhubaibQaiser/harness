@@ -59,7 +59,7 @@ test('catalog check --resolve prints unpinned items and --only filters', () => {
   const r = go(['check', '--resolve'], d, () => ({ status: 0, stdout: SHA }));
   expect(r.code).toBe(0);
   expect(r.out).toBe('Unpinned:\n  r: hosted');
-  const bad = go(['check', '--resolve', '--only', 'a'], d, () => ({ status: 1, stdout: '' }));
+  const bad = go(['check', '--resolve', '--only', 'a'], d, () => ({ status: 1, stdout: '', stderr: 'HTTP 404' }));
   expect(bad.code).toBe(1);
   expect(bad.out).toBe(`a: commit ${SHA} not found in o/r`);
 });
@@ -67,12 +67,15 @@ test('catalog check --resolve prints unpinned items and --only filters', () => {
 test('catalog rejects bad arguments', () => {
   expect(go(['check', '--only'], dir({})).code).toBe(2);
   expect(go(['nope'], dir({})).code).toBe(2);
+  expect(go(['check', '--resolve', '--only', ','], dir({}), () => ({ status: 0, stdout: '' })).code).toBe(2);
 });
 
 test('catalog works without CLAUDECODE and through run()', () => {
   const lines: string[] = [];
   expect(run(['catalog'], { root: '/', env: { CLAUDECODE: '1' }, out: (s) => lines.push(s) })).toBe(0);
   expect(JSON.parse(lines[0]).catalog_version).toBe(1);
+  const plain: string[] = [];
+  expect(run(['catalog'], { root: '/', env: {}, out: (s) => plain.push(s) })).toBe(0);
 });
 
 test('HARNESS_CATALOG_DIR is ignored without HARNESS_PLAIN_INIT', () => {

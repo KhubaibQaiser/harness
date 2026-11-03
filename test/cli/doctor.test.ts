@@ -354,6 +354,14 @@ test('an old recorded shell-form entry is a run-harness-update fix', async () =>
   expect(r.code).toBe(1);
 });
 
+test('an old recorded shell-form entry without onFailure gets one update line', async () => {
+  const root = await installed(PREFIX);
+  recordOld(root, 'PreToolUse', (s) => (toShell(s), delete s.hooks.PreToolUse[0].hooks[0].onFailure));
+  const r = run(root, { path: bin('npm') });
+  expect(r.out).toMatch(/through a shell: run harness update$/m);
+  expect(r.out).not.toMatch(/^fix PreToolUse hook has no onFailure/m);
+});
+
 test('a shell-form entry the person wrote is an edit: the differs line only', async () => {
   const root = await installed(PREFIX);
   editSettings(root, toShell);

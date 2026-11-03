@@ -104,6 +104,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const preGroup = groups('PreToolUse')[0];
   const pre = preGroup?.hooks.find(isHarnessHook);
   const shellForm = (h: any) => !Array.isArray(h.args);
+  let shellOld = false; // that line's "run harness update" also covers a missing onFailure on the same group
   const dispMissing = readText(join(root, DISPATCH)) === null; // its own line below; a self-test would only add a second
   if (pre && typeof pre.command === 'string' && !dispMissing) {
     const opts = { env: { ...env, CLAUDE_PROJECT_DIR: root }, encoding: 'utf8', timeout: 5000 } as const;
@@ -112,14 +113,15 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
       : spawnSync(pre.command, [...pre.args.map((a: unknown) => String(a).replaceAll('${CLAUDE_PROJECT_DIR}', root)), '--self-test'], opts);
     if (r.status === 0 && (r.stdout ?? '').startsWith('ok ')) ok('dispatcher runs');
     else fix(`the dispatcher does not run (${(r.stderr ?? '').trim().split('\n')[0] || r.error?.message || `exit code ${r.status}`})`, 'check that node is on the PATH Claude Code gives its hooks, then run harness doctor again');
-    if (shellForm(pre) && kind('PreToolUse', preGroup) === 'old') fix('`.claude/settings.json` runs the dispatcher through a shell', 'run harness update');
+    shellOld = shellForm(pre) && kind('PreToolUse', preGroup) === 'old';
+    if (shellOld) fix('`.claude/settings.json` runs the dispatcher through a shell', 'run harness update');
   }
 
   for (const ev of EVENTS) {
     const gs = groups(ev);
     if (gs.some((g) => kind(ev, g) === 'edited'))
       fix(`\`.claude/settings.json\`: \`hooks.${ev}\` harness hook differs from the one harness installs`, 'undo the edit or delete that group, then run harness update');
-    else if (BLOCKING.includes(ev) && gs.some((g) => kind(ev, g) === 'old' && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure !== 'block')))
+    else if (BLOCKING.includes(ev) && !(ev === 'PreToolUse' && shellOld) && gs.some((g) => kind(ev, g) === 'old' && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure !== 'block')))
       fix(`${ev} hook has no onFailure "block"`, 'run harness update');
   }
 

@@ -2,7 +2,7 @@ import { parseModule } from 'magicast';
 import { describe, expect, it } from 'vitest';
 import type { PackageFacts } from '../../src/install/detect.js';
 import { removeBlocks } from '../../src/install/merge.js';
-import { testConfigChange } from '../../src/install/test-config.js';
+import { resultsRename, testConfigChange } from '../../src/install/test-config.js';
 import { makeRepo } from './helpers.js';
 
 const RD = '.harness/results';
@@ -304,5 +304,19 @@ describe('testConfigChange: migrating the legacy results path', () => {
     expect(testConfigChange(vt(), root, RD, LEGACY)).toEqual(testConfigChange(vt(), root, RD));
     const plain = makeRepo({ 'vitest.config.ts': 'export default { test: {} };\n' }, { git: false });
     expect(testConfigChange(vt(), plain, RD, RD)).toEqual(testConfigChange(vt(), plain, RD));
+  });
+});
+
+describe('resultsRename: whole paths only, and the Jest config', () => {
+  it('a longer path ending in the old one is not the root package path', () => {
+    const before = "export default { test: { outputFile: { json: 'x/.harness/state/test-results/root.json' } } };\n";
+    expect(resultsRename(vt(), makeRepo({ 'vitest.config.ts': before }, { git: false }), RD, '.harness/state/test-results')).toBeNull();
+  });
+
+  it('jest: a path in the Jest config is migrated when package.json has none', () => {
+    const cfg = "module.exports = { outputFile: '.harness/state/test-results/root.json' };\n";
+    const root = makeRepo({ 'package.json': '{ "name": "demo" }\n', 'jest.config.js': cfg }, { git: false });
+    const c = resultsRename(jest('jest', { testConfig: 'jest.config.js' }), root, RD, '.harness/state/test-results');
+    expect(c).toMatchObject({ rel: 'jest.config.js', after: cfg.replace('state/test-results', 'results') });
   });
 });

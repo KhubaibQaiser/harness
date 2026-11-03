@@ -505,3 +505,48 @@ test('a custom results_dir inside .harness/state stops update with the config er
   expect(r.code).toBe(1);
   expect(r.out).toContain('tdd.results_dir: must not be inside .harness/state');
 });
+
+test('a hand-set Jest path in jest.config.js is migrated with recorded hunks and uninstall restores it', async () => {
+  const pkg = JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n';
+  const root = await installed({ 'package.json': pkg, 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n', 'jest.config.js': "module.exports = { reporters: ['default'] };\n" });
+  const hand = `module.exports = { reporters: ['default', './.harness/hooks/jest-results.cjs'], outputFile: '${OLD}/root.json' };\n`;
+  writeFileSync(join(root, 'jest.config.js'), hand);
+  commitAll(root);
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(readFileSync(join(root, 'jest.config.js'), 'utf8')).toBe(hand.replace(OLD, NEW));
+  expect(readManifest(root)!.files.find((x) => x.rel === 'jest.config.js')!.replace?.length).toBeGreaterThan(0);
+  expect(await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() })).toBe(0);
+  expect(readFileSync(join(root, 'jest.config.js'), 'utf8')).toBe(hand);
+});
+
+test('with TDD off, update still migrates the old results_dir and a hand-set Vitest path', async () => {
+  const root = await installed();
+  const cfg = join(root, CONFIG);
+  writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('tdd: true', 'tdd: false').replace(`results_dir: ${NEW}`, `results_dir: ${OLD}`));
+  const hand = `export default { test: { outputFile: { json: '${OLD}/root.json' } } };\n`;
+  writeFileSync(join(root, 'vitest.config.ts'), hand);
+  commitAll(root);
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(readFileSync(cfg, 'utf8')).toContain(`results_dir: ${NEW}\n`);
+  expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toBe(hand.replace(OLD, NEW));
+});
+
+test('init does not migrate an old results path', async () => {
+  const vitest = `export default { test: { outputFile: { json: '${OLD}/root.json' } } };\n`;
+  const root = await installed({ ...REPO, 'vitest.config.ts': vitest });
+  expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toBe(vitest);
+  expect(readManifest(root)!.files.some((x) => x.rel === 'vitest.config.ts')).toBe(false);
+});
+
+test('an uncommitted config stops update when a migration is due', async () => {
+  const root = await oldResultsInstall();
+  const p = join(root, CONFIG);
+  writeFileSync(p, readFileSync(p, 'utf8') + '# mine\n');
+  const before = readFileSync(p, 'utf8');
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`Commit or stash these files first, so the update can be undone cleanly: ${CONFIG}`);
+  expect(readFileSync(p, 'utf8')).toBe(before);
+});

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { LEGACY_RESULTS_DIR } from '../core/config.js';
 import { migrateResultsDir, validateConfig } from '../core/config-io.js';
 import { latestVersion } from '../core/registry.js';
 import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, readManifest, type Manifest } from '../install/apply.js';
@@ -68,7 +69,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 
   let plan: ReturnType<typeof planChanges>;
   try {
-    plan = planChanges(root, v.config, detect(root), { version, distDir: cli.distDir, templatesDir: cli.templatesDir });
+    plan = planChanges(root, v.config, detect(root), { version, distDir: cli.distDir, templatesDir: cli.templatesDir, legacyDir: LEGACY_RESULTS_DIR });
   } catch (e) {
     return out(`Cannot build the update plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
   }

@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LEGACY_RESULTS_DIR, type HarnessConfig } from '../core/config.js';
+import type { HarnessConfig } from '../core/config.js';
 import { serializeConfig } from '../core/config-io.js';
 import type { Change } from './apply.js';
 import { lineHunks, revertHunks } from './diff.js';
 import { prettierFormat, repoPrettier } from './format.js';
 import type { Facts } from './detect.js';
 import { mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings } from './merge.js';
-import { JEST_REPORTER, testConfigChange } from './test-config.js';
+import { JEST_REPORTER, resultsRename, testConfigChange } from './test-config.js';
 
 export const ESLINT = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'];
 
@@ -20,7 +20,8 @@ export function planChanges(
   root: string,
   config: HarnessConfig,
   facts: Facts,
-  ctx: { version: string; distDir: string; templatesDir?: string },
+  /** `legacyDir`: update's old results folder; a package whose results file still names it is migrated, TDD on or off. */
+  ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string },
 ): { changes: Change[]; manual: string[]; notes: string[] } {
   const templatesDir = ctx.templatesDir ?? join(ctx.distDir, '..', 'templates');
   const changes: Change[] = [];
@@ -63,12 +64,15 @@ export function planChanges(
 
   // Also when TDD is off: a left-out Jest package's manual lines point at the reporter.
   if (facts.packages.some((p) => p.test === 'jest')) put(JEST_REPORTER, tpl('hooks', 'jest-results.cjs'));
-  if (config.checks.tdd)
-    for (const pkg of facts.packages) {
-      const r = testConfigChange(pkg, root, config.tdd.results_dir, LEGACY_RESULTS_DIR);
+  for (const pkg of facts.packages) {
+    const rename = ctx.legacyDir === undefined ? null : resultsRename(pkg, root, config.tdd.results_dir, ctx.legacyDir);
+    if (rename) changes.push(rename); // ponytail: one change per package; a rename and another config edit take two update runs
+    else if (config.checks.tdd) {
+      const r = testConfigChange(pkg, root, config.tdd.results_dir);
       if ('change' in r) changes.push(r.change);
       else if ('manual' in r) manual.push(...r.manual);
     }
+  }
   formatEdits(root, changes, notes);
   return { changes, manual, notes };
 }

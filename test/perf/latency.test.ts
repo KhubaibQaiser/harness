@@ -18,7 +18,9 @@ function measure(input: string, check: (r: ReturnType<typeof spawnSync>) => void
   const home = mkdtempSync(join(tmpdir(), 'h-lat-empty-')); // also the spawns' home: the hook never reads the real ~/.claude
   const empty = join(home, 'empty.mjs');
   writeFileSync(empty, '');
-  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.CLAUDE_CONFIG_DIR; // the hook reads its own home only
+  delete env.HARNESS_SANDBOX;
   const time = (args: string[], stdin?: string) => {
     const t = performance.now();
     const r = spawnSync(process.execPath, args, { input: stdin, encoding: 'utf8', env });

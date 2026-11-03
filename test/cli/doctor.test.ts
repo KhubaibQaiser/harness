@@ -312,6 +312,14 @@ test('a dispatcher that cannot run is a fix', async () => {
   expect(r.code).toBe(1);
 });
 
+test('a missing dispatcher gives one line, not also "does not run"', async () => {
+  const root = await installed();
+  rmSync(join(root, '.harness/hooks/dispatch.mjs'));
+  const r = run(root, { path: bin('npm') });
+  expect(r.out).toMatch(/^fix `\.harness\/hooks\/dispatch\.mjs` is missing/m);
+  expect(r.out).not.toContain('the dispatcher does not run');
+});
+
 test('no node on the PATH: the dispatcher does not run', async () => {
   const root = await installed();
   let out = '';
@@ -320,7 +328,7 @@ test('no node on the PATH: the dispatcher does not run', async () => {
   expect(code).toBe(1);
 });
 
-const differs = (ev: string) => new RegExp(`^fix \\.claude/settings\\.json: hooks\\.${ev} harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$`, 'm');
+const differs = (ev: string) => new RegExp(`^fix \`\\.claude/settings\\.json\`: \`hooks\\.${ev}\` harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$`, 'm');
 const toShell = (s: any) => {
   const h = s.hooks.PreToolUse[0].hooks[0];
   h.command = 'node "${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"';
@@ -340,10 +348,20 @@ test('an old recorded shell-form entry is a run-harness-update fix', async () =>
   const root = await installed(PREFIX);
   recordOld(root, 'PreToolUse', toShell);
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/^ok dispatcher runs$/m); // run through the shell, from a path with a space
+  // Through the platform shell, from a path with a space. cmd.exe does not expand ${CLAUDE_PROJECT_DIR} (a POSIX-shell
+  // form, the known limit that exec form fixes), so on win32 the self-test fails; the update fix below is the point.
+  if (process.platform !== 'win32') expect(r.out).toMatch(/^ok dispatcher runs$/m);
   expect(r.out).toMatch(/^fix `\.claude\/settings\.json` runs the dispatcher through a shell: run harness update$/m);
   expect(r.out).not.toMatch(differs('PreToolUse'));
   expect(r.code).toBe(1);
+});
+
+test('an old recorded shell-form entry without onFailure gets one update line', async () => {
+  const root = await installed(PREFIX);
+  recordOld(root, 'PreToolUse', (s) => (toShell(s), delete s.hooks.PreToolUse[0].hooks[0].onFailure));
+  const r = run(root, { path: bin('npm') });
+  expect(r.out).toMatch(/through a shell: run harness update$/m);
+  expect(r.out).not.toMatch(/^fix PreToolUse hook has no onFailure/m);
 });
 
 test('a shell-form entry the person wrote is an edit: the differs line only', async () => {
@@ -378,7 +396,7 @@ test('an edited harness hook group is a fix', async () => {
   const root = await installed();
   editSettings(root, (s) => (s.hooks.Stop[0].hooks[0].timeout = 5));
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/^fix \.claude\/settings\.json: hooks\.Stop harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$/m);
+  expect(r.out).toMatch(/^fix `\.claude\/settings\.json`: `hooks\.Stop` harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$/m);
   expect(r.lines.filter((l) => l.includes('differs'))).toHaveLength(1);
   expect(r.code).toBe(1);
 });

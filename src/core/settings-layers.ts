@@ -27,18 +27,15 @@ const dropIns = (dir: string): string[] => {
 };
 
 // ponytail: MDM profiles, the registry and server-managed settings are not read (a documented known limit).
-/** Claude Code's settings files, highest precedence first. `--settings` sits between managed and local; a hook can't see it. */
-export function readSettingsLayers(root: string, home: string, platform: NodeJS.Platform, managed = managedSettingsPath(platform)): Layer[] {
+/** The managed settings files, highest precedence first. The agent can't write them, so they are read from disk. */
+export function readManagedLayers(managed: string): Layer[] {
   // Drop-ins merge alphabetically after managed-settings.json, so the last one wins: each is a layer, last first.
   const dir = join(dirname(managed), 'managed-settings.d');
-  return [
-    ...dropIns(dir).map((f): Layer => ({ name: 'managed', json: readJson(join(dir, f)) })),
-    { name: 'managed', json: readJson(managed) },
-    { name: 'local', json: readJson(join(root, '.claude/settings.local.json')) },
-    { name: 'project', json: readJson(join(root, '.claude/settings.json')) },
-    { name: 'user', json: readJson(join(home, '.claude/settings.json')) },
-  ];
+  return [...dropIns(dir).map((f): Layer => ({ name: 'managed', json: readJson(join(dir, f)) })), { name: 'managed', json: readJson(managed) }];
 }
+
+/** Claude Code's user settings file: `$CLAUDE_CONFIG_DIR/settings.json` when that is set. */
+export const userSettingsPath = (home: string, env: NodeJS.ProcessEnv): string => join(env.CLAUDE_CONFIG_DIR || join(home, '.claude'), 'settings.json');
 
 /** The value at `path` from the first layer that defines it. */
 export function effective(layers: Layer[], path: string[]): unknown {

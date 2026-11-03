@@ -18,7 +18,9 @@ function measure(input: string, check: (r: ReturnType<typeof spawnSync>) => void
   const home = mkdtempSync(join(tmpdir(), 'h-lat-empty-')); // also the spawns' home: the hook never reads the real ~/.claude
   const empty = join(home, 'empty.mjs');
   writeFileSync(empty, '');
-  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.CLAUDE_CONFIG_DIR; // the hook reads its own home only
+  delete env.HARNESS_SANDBOX;
   const time = (args: string[], stdin?: string) => {
     const t = performance.now();
     const r = spawnSync(process.execPath, args, { input: stdin, encoding: 'utf8', env });
@@ -50,6 +52,22 @@ test('ungated PreToolUse: harness overhead over a bare node spawn', () => {
   });
   expect(m.overhead, `overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
   expect(m.total, `total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
+}, 60000);
+
+test('unattended Bash (sandbox-required reads managed settings): harness overhead over a bare node spawn', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'h-lat3-'));
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  mkdirSync(join(repo, '.harness'));
+  writeFileSync(join(repo, '.harness/config.yaml'), 'checks:\n  guard: true\n  protect: true\n');
+  const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'lat', cwd: repo, permission_mode: 'bypassPermissions', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  const m = measure(input, (r) => {
+    expect(r.status).toBe(0);
+    // No sandbox: the check ran to its end. Native Windows has none to require (D2), so there it allows.
+    if (process.platform === 'win32') expect(r.stdout).toBe('');
+    else expect(JSON.parse(String(r.stdout)).hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+  expect(m.overhead, `unattended overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.total, `unattended total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 
 test('gated PreToolUse with 40 result files: harness overhead over a bare node spawn', () => {

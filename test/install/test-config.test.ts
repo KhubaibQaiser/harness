@@ -313,6 +313,12 @@ describe('resultsRename: whole paths only, and the Jest config', () => {
     expect(resultsRename(vt(), makeRepo({ 'vitest.config.ts': before }, { git: false }), RD, '.harness/state/test-results')).toBeNull();
   });
 
+  it('a ./-prefixed hand-set path is migrated, keeping the prefix', () => {
+    const before = "export default { test: { outputFile: { json: './.harness/state/test-results/root.json' } } };\n";
+    const c = resultsRename(vt(), makeRepo({ 'vitest.config.ts': before }, { git: false }), RD, '.harness/state/test-results');
+    expect(c).toMatchObject({ after: before.replace('state/test-results', 'results') });
+  });
+
   it('jest: a path in the Jest config is migrated when package.json has none', () => {
     const cfg = "module.exports = { outputFile: '.harness/state/test-results/root.json' };\n";
     const root = makeRepo({ 'package.json': '{ "name": "demo" }\n', 'jest.config.js': cfg }, { git: false });

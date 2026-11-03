@@ -1,6 +1,8 @@
 // Builds the old-install fixtures for test/e2e/upgrade.e2e.test.ts from a kept beta build.
 // `node scripts/old-install-fixtures.mjs --beta <scratch>/beta --sha <sha>` writes test/fixtures/old-install/<name>.json:
 // `{ beta, before, installed }`, the repo before and after the beta's `init --yes`, `.git` left out.
+// Regenerating rewrites every fixture, also where the beta's output didn't change (each manifest's `createdAt`),
+// so review the diff for real changes, not the churn.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +13,10 @@ import { build } from 'esbuild';
 
 const { values } = parseArgs({ options: { beta: { type: 'string' }, sha: { type: 'string' } } });
 if (!values.beta || !values.sha) throw new Error('usage: node scripts/old-install-fixtures.mjs --beta <dir> --sha <sha>');
+// The sha is written into every fixture, so it must be the build's: refuse a mismatch, warn when it can't be checked.
+const head = spawnSync('git', ['-C', values.beta, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+if (head.status !== 0) process.stderr.write(`warning: can't check --sha: ${values.beta} is not a git checkout\n`);
+else if (!head.stdout.trim().startsWith(values.sha)) throw new Error(`--sha ${values.sha} is not ${values.beta}'s HEAD (${head.stdout.trim()})`);
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(here, '..', 'test/fixtures/old-install');
 

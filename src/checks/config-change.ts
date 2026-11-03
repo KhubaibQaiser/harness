@@ -8,7 +8,7 @@ import type { Check } from '../hooks/dispatch.js';
 // Source values from the hooks reference (ConfigChange input). policy_settings can't be blocked, and skills aren't guarded.
 const SOURCES: Record<string, 'user' | 'project' | 'local'> = { user_settings: 'user', project_settings: 'project', local_settings: 'local' };
 
-// Spec 3.3 (D6, C5): a mid-session change to harness's hooks, its deny rules, disableAllHooks or sandbox is not applied
+// Spec 3.3 (D6, C5): a mid-session change to harness's hooks, its deny rules, disableAllHooks, sandbox or env is not applied
 // to the running session, measured against the guarded views at the session's first other hook (plan ruling 4).
 export const configChange: Check = {
   name: 'config-change',
@@ -17,13 +17,13 @@ export const configChange: Check = {
   run(ctx) {
     const key = SOURCES[String(ctx.input.source)];
     if (!key) return { kind: 'allow' };
-    const rel = key === 'user' ? '~/.claude/settings.json' : GUARDED[key];
+    const rel = key !== 'user' ? GUARDED[key] : ctx.env.CLAUDE_CONFIG_DIR ? GUARDED.user(ctx.home, ctx.env) : '~/.claude/settings.json';
     const base = ctx.state?.guardedBase;
     const deny = harnessDenyRules(ctx.root);
     let text: string | null = null;
     let cur: GuardedView = null;
     try {
-      text = readGuarded(key === 'user' ? GUARDED.user(ctx.home) : join(ctx.root, rel));
+      text = readGuarded(key === 'user' ? GUARDED.user(ctx.home, ctx.env) : join(ctx.root, rel));
       cur = guardedView(text, deny);
     } catch {} // unreadable: cur stays null
     const parts = base ? guardedDiff(base[key] ?? null, cur) : ['no session baseline'];
@@ -50,7 +50,7 @@ export const configChange: Check = {
     return {
       kind: 'block',
       check: 'config-change',
-      reason: `Harness keeps its hooks, its deny rules, disableAllHooks and the sandbox settings as they were when this session started, so this change to \`${rel}\` (${list}) is not applied to the session.`,
+      reason: `Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and \`env\` as they were when this session started, so this change to \`${rel}\` (${list}) is not applied to the session. Ask the person to make this change outside the session.`,
     };
   },
 };

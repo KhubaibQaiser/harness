@@ -3,7 +3,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readF
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, describe, expect, test } from 'vitest';
 import { MIN_CLAUDE_CODE } from '../../src/core/min-claude.js';
 import { PREFIX, build, cleanup, existingCrlf, noTests, npmVitest, standard, unsafeVitest, type Fixture } from './fixtures.js';
 
@@ -12,7 +12,7 @@ const DISPATCH = '.harness/hooks/dispatch.mjs';
 
 // The suite must behave like an attended session even when CI or a parent agent sets these.
 const env = { ...process.env };
-for (const k of ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE', 'CLAUDECODE']) delete env[k];
+for (const k of ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE', 'CLAUDECODE', 'CLAUDE_CONFIG_DIR', 'HARNESS_SANDBOX']) delete env[k];
 // A claude at the floor first on PATH, so doctor's version line never depends on this machine's Claude Code.
 const shim = mkdtempSync(join(tmpdir(), 'h-e2e-claude-'));
 writeFileSync(join(shim, 'claude'), `#!/bin/sh\necho '${MIN_CLAUDE_CODE} (Claude Code)'\n`, { mode: 0o755 });
@@ -35,6 +35,7 @@ const cli = (root: string, ...args: string[]) => {
 
 // The hooks' home, so ConfigChange's baseline never reads the real ~/.claude.
 const HOME = mkdtempSync(join(tmpdir(), 'h-e2e-home-'));
+afterAll(() => [shim, HOME].forEach(cleanup));
 const hookEnv = { ...env, HOME, USERPROFILE: HOME };
 /** Pipes one hook JSON into the installed dispatcher; returns the parsed decision, or null for "no output". */
 const hook = (root: string, input: Record<string, unknown>) => {

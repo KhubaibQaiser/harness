@@ -357,8 +357,8 @@ export function resultsRename(pkg: PackageFacts, root: string, resultsDir: strin
   const to = resultPath(pkg, root, resultsDir);
   const from = resultPath(pkg, root, legacyDir);
   if (from === to) return null;
-  // Only a whole path counts: `x/.harness/state/test-results/root.json` is not the root package's.
-  const re = new RegExp(`(?<=^|['"=\\s])${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+  // Only a whole path counts, optionally `./`-prefixed: `x/.harness/state/test-results/root.json` is not the root package's.
+  const re = new RegExp(`(?<=(?:^|['"=\\s])(?:\\./)?)${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
   for (const file of pkg.test === 'vitest' ? [pkg.testConfig] : ['package.json', pkg.testConfig]) {
     if (!file) continue;
     const rel = pkg.dir === '.' ? file : `${pkg.dir}/${file}`;

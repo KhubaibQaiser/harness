@@ -45,7 +45,7 @@ test('a project hook removed is blocked, logged, and noticed at the next prompt 
   await prompt(r); // first hook: baseline
   write(join(r.root, '.claude/settings.json'), { ...SETTINGS, hooks: { ConfigChange: [GROUP] } });
   const out = parsed(await change(r, 'project_settings'));
-  expect(out).toEqual({ decision: 'block', reason: 'Harness keeps its hooks, its deny rules, disableAllHooks and the sandbox settings as they were when this session started, so this change to `.claude/settings.json` (hooks) is not applied to the session.' });
+  expect(out).toEqual({ decision: 'block', reason: 'Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and `env` as they were when this session started, so this change to `.claude/settings.json` (hooks) is not applied to the session. Ask the person to make this change outside the session.' });
   expect(readEvents(r.root).filter((e) => e.decision === 'config-change-blocked').map((e) => e.reason)).toEqual(['.claude/settings.json: hooks']);
   expect(lastConfigChangeBlocked(r.root)?.reason).toBe('.claude/settings.json: hooks');
   const notice = 'Harness blocked a change to `.claude/settings.json` (hooks) in this session. The file is still changed on disk, so the next session loads it: review it first.';
@@ -73,6 +73,24 @@ test('disableAllHooks in the user file is blocked', async () => {
   await prompt(r);
   write(join(r.home, '.claude/settings.json'), { disableAllHooks: true });
   expect(parsed(await change(r, 'user_settings')).reason).toContain('this change to `~/.claude/settings.json` (disableAllHooks)');
+});
+
+test('with CLAUDE_CONFIG_DIR set, disableAllHooks in that dir\'s settings is blocked', async () => {
+  const r = repo();
+  const cfg = mkdtempSync(join(tmpdir(), 'h-cc-cfg-'));
+  write(join(cfg, 'settings.json'), {});
+  const env = { CLAUDE_CONFIG_DIR: cfg };
+  const go = (input: Record<string, unknown>) => dispatch(JSON.stringify({ ...input, session_id: 's', cwd: r.root }), registry, env, { home: r.home });
+  await go({ hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+  write(join(cfg, 'settings.json'), { disableAllHooks: true });
+  expect(parsed(await go(FIXTURE.user_settings)).reason).toContain(`this change to \`${join(cfg, 'settings.json')}\` (disableAllHooks)`);
+});
+
+test('an env change in the user file is blocked', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.home, '.claude/settings.json'), { env: { HARNESS_SANDBOX: '1' } });
+  expect(parsed(await change(r, 'user_settings')).reason).toContain('this change to `~/.claude/settings.json` (env)');
 });
 
 test('an "Always allow" click in the local file, and any other source, are allowed', async () => {
@@ -184,7 +202,8 @@ test('a CLI record from before the session never allows restoring its state over
   expect(parsed(await change(r, 'project_settings')).reason).toContain('`.claude/settings.json` (sandbox)');
 });
 
-test('a CLI record accepted mid-session is used up: it no longer covers a blocked change in its other file', async () => {
+// The record's id check (only a CLI run after the baseline counts) is covered by the before-the-session test above.
+test('a CLI record accepted mid-session for the project file does not cover a blocked change in the local file', async () => {
   const r = repo();
   await prompt(r);
   write(join(r.root, '.claude/settings.local.json'), { disableAllHooks: true }); // a script's change, blocked

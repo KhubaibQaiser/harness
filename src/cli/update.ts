@@ -110,7 +110,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
   const editedOwned = editedRels.filter((r) => !merged(r));
   const editedMerged = editedRels.filter(merged);
-  out(`Update ${m.version} -> ${version}:`);
+  out(changes.length ? `Update ${m.version} -> ${version}:` : 'Only the manifest changes.');
   for (const c of changes) {
     out(`  ${c.kind} ${c.rel}`);
     if (c.kind === 'update') out(unifiedDiff(c.before, c.after, c.rel).trimEnd());

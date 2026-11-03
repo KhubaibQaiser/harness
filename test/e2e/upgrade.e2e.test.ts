@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, test } from 'vitest';
+import { afterAll, afterEach, expect, test } from 'vitest';
 import { BETA_GROUPS } from '../install/helpers.js';
 import { PREFIX, cleanup } from './fixtures.js';
 
@@ -20,7 +20,7 @@ interface OldInstall { beta: string; before: Record<string, string>; installed: 
 const names = readdirSync(FIXTURES).filter((n) => n.endsWith('.json')).map((n) => n.slice(0, -5)).sort();
 
 const env = { ...process.env };
-for (const k of ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE', 'CLAUDECODE']) delete env[k];
+for (const k of ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE', 'CLAUDECODE', 'CLAUDE_CONFIG_DIR', 'HARNESS_SANDBOX']) delete env[k];
 const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
 /** env with a fake `claude` printing `version` first on PATH. */
 const withClaude = (version: string) => {
@@ -57,6 +57,7 @@ const walk = (root: string, dir = root, out: Record<string, string> = {}) => {
 };
 
 const HOME = mkdtempSync(join(tmpdir(), 'h-up-home-'));
+afterAll(() => cleanup(HOME));
 const hook = (root: string, input: Record<string, unknown>) => {
   const r = spawnSync('node', [join(root, DISPATCH)], { cwd: root, encoding: 'utf8', env: { ...env, HOME, USERPROFILE: HOME }, input: JSON.stringify({ session_id: 's1', cwd: root, ...input }) });
   expect(r.status, r.stderr).toBe(0);

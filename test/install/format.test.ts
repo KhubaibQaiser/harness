@@ -139,3 +139,24 @@ test('R1: revertHunks matches across line endings and writes the text\'s own', (
   const h = lineHunks('a\n  test: { x },\nb\n', 'a\n  test: {\n    x,\n    y,\n  },\nb\n');
   expect(revertHunks('a\r\n  test: {\r\n    x,\r\n    y,\r\n  },\r\nb\r\n', h)).toBe('a\r\n  test: { x },\r\nb\r\n');
 });
+
+// Real Prettier puts a JSON array that fits on one line; this stand-in does that for one-string arrays.
+const JSON_PRETTIER = { ...withPrettier, 'node_modules/prettier/bin/prettier.cjs': `let s = '';
+process.stdin.on('data', (d) => (s += d)).on('end', () => process.stdout.write(s.replace(/\\[\\n\\s*("[^"\\n]*")\\n\\s*\\]/g, '[$1]')));
+` };
+test("the repo's Prettier formats .claude/settings.json, created or Prettier-clean before; uninstall still undoes it", async () => {
+  const settings = (root: string) => readFileSync(join(root, '.claude/settings.json'), 'utf8');
+  const a = repo(JSON_PRETTIER);
+  await go(a);
+  expect(settings(a)).toContain('"args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"]');
+  expect(readManifest(a)!.files.find((f) => f.rel === '.claude/settings.json')!.blocks!.length).toBeGreaterThan(0);
+  expect((await un(a)).code).toBe(0);
+  expect(existsSync(join(a, '.claude/settings.json'))).toBe(false);
+
+  const mine = '{\n  "model": "opus"\n}\n';
+  const b = repo({ ...JSON_PRETTIER, '.claude/settings.json': mine });
+  await go(b);
+  expect(settings(b)).toContain('"args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"]');
+  expect((await un(b)).code).toBe(0); // the formatted file still matches its recorded hash, so the backup comes back
+  expect(settings(b)).toBe(mine);
+});

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { retryTransient, writeAtomic } from './atomic.js';
+import { userSettingsPath } from './settings-layers.js';
 
 // Change detection, the backstop behind the path checks (owner decision 2026-11-03): when a route the path checks
 // don't parse changed one of harness's own files, the next prompt and Stop say so. A session compares against its
@@ -42,12 +43,12 @@ export function harnessDenyRules(root: string): Set<string> | null {
   }
 }
 
-export type GuardedPart = 'hooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'unreadable';
-export type GuardedView = { hooks: [string, unknown[]][]; deny: string[]; disableAllHooks: unknown; sandbox: unknown } | null;
+export type GuardedPart = 'hooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'env' | 'unreadable';
+export type GuardedView = { hooks: [string, unknown[]][]; deny: string[]; disableAllHooks: unknown; sandbox: unknown; env?: unknown } | null;
 
 /**
  * Only what harness relies on in a Claude settings file: the hook groups that run its dispatcher, its own deny rules,
- * disableAllHooks and sandbox. permissions.allow and the other keys Claude Code writes (an "Always allow" click) don't
+ * disableAllHooks, sandbox and env (it can set the variables the hooks read). permissions.allow and the other keys Claude Code writes (an "Always allow" click) don't
  * count. An absent file is the empty view; null means the file isn't JSON.
  */
 export function guardedView(text: string | null, deny: Set<string> | null): GuardedView {
@@ -62,8 +63,11 @@ export function guardedView(text: string | null, deny: Set<string> | null): Guar
     .filter(([, g]) => g.length)
     .sort(([a], [b]) => a.localeCompare(b));
   const rules = (Array.isArray(s?.permissions?.deny) ? s.permissions.deny : []).filter((d: unknown) => typeof d === 'string' && (!deny || deny.has(d))).sort();
-  // sandbox stays undefined when absent, so a file without it keeps the fingerprint it had before sandbox counted.
-  return { hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null, sandbox: s?.sandbox };
+  // sandbox and env stay undefined when absent, so a file without them keeps the fingerprint it had before they counted.
+  // env keeps each key with a hash of its value: the session state must not hold the secrets env often carries.
+  // ponytail: unsalted sha-256, so a low-entropy value (CI=false) can be guessed from .harness/state; salt it if that matters.
+  const env = s?.env && typeof s.env === 'object' && !Array.isArray(s.env) ? Object.fromEntries(Object.entries(s.env).map(([k, v]) => [k, sha(JSON.stringify(v))])) : s?.env;
+  return { hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null, sandbox: s?.sandbox, env };
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -75,10 +79,11 @@ export function guardedDiff(base: GuardedView, cur: GuardedView): GuardedPart[] 
   if (base.deny.some((r) => !cur.deny.includes(r))) parts.push('deny');
   if (!same(base.disableAllHooks, cur.disableAllHooks)) parts.push('disableAllHooks');
   if (!same(base.sandbox, cur.sandbox)) parts.push('sandbox');
+  if (!same(base.env, cur.env)) parts.push('env');
   return parts;
 }
 
-export const GUARDED = { user: (home: string) => join(home, '.claude/settings.json'), project: '.claude/settings.json', local: '.claude/settings.local.json' } as const;
+export const GUARDED = { user: userSettingsPath, project: '.claude/settings.json', local: '.claude/settings.local.json' } as const;
 /** The file's text, or null when it doesn't exist; any other read error throws. */
 export function readGuarded(path: string): string | null {
   try {
@@ -97,9 +102,9 @@ const viewOf = (path: string, deny: Set<string> | null): GuardedView => {
   }
 };
 /** The guarded views of the user, project and local settings: ConfigChange's session baseline. */
-export function guardedViews(root: string, home: string): Record<'user' | 'project' | 'local', GuardedView> {
+export function guardedViews(root: string, home: string, env: NodeJS.ProcessEnv): Record<'user' | 'project' | 'local', GuardedView> {
   const deny = harnessDenyRules(root);
-  return { user: viewOf(GUARDED.user(home), deny), project: viewOf(join(root, GUARDED.project), deny), local: viewOf(join(root, GUARDED.local), deny) };
+  return { user: viewOf(GUARDED.user(home, env), deny), project: viewOf(join(root, GUARDED.project), deny), local: viewOf(join(root, GUARDED.local), deny) };
 }
 
 export function settingsFingerprint(text: string, deny: Set<string> | null): string {

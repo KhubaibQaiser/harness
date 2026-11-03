@@ -1,7 +1,7 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, onTestFinished, test } from 'vitest';
 import { sandboxRequired, sandboxVerdict } from '../../src/checks/sandbox-required.js';
 import type { SandboxMode } from '../../src/core/config.js';
 import { readEvents } from '../../src/core/events.js';
@@ -26,7 +26,10 @@ describe('sandboxVerdict', () => {
   });
   test('project enabled and no unsandboxed commands allows on darwin', () => expect(v({ layers: layers({ project: CONFIRMED }) })).toBe('allow'));
   test('linux also needs bwrap and socat on PATH', () => {
-    const bin = mkdtempSync(join(tmpdir(), 'h-sb-bin-'));
+    // A relative dir: a linux PATH splits at ':', so a Windows host's drive-letter temp path would not survive the split.
+    mkdirSync('node_modules/.cache', { recursive: true });
+    const bin = mkdtempSync(join('node_modules', '.cache', 'h-sb-bin-'));
+    onTestFinished(() => rmSync(bin, { recursive: true, force: true }));
     const l = layers({ project: CONFIRMED });
     expect(v({ platform: 'linux', layers: l, env: { PATH: bin } })).toBe('deny');
     for (const n of ['bwrap', 'socat']) {
@@ -82,6 +85,61 @@ describe('the check', () => {
   test('an unattended Edit is allowed', async () => {
     const { root, ...opts } = setup();
     expect(await dispatch(call(root, 'Edit', { file_path: 'a.ts' }), [sandboxRequired], {}, { ...opts, platform: 'darwin' })).toBe('');
+  });
+
+  test('C1: a Write to the user settings mid-session does not turn the requirement off', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    const opts = { home, managed, platform: 'darwin' as const };
+    const bash = async () => JSON.parse((await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)) || '{}').hookSpecificOutput?.permissionDecision;
+    const user = join(home, '.claude/settings.json');
+    expect(await bash()).toBe('deny');
+    expect(await dispatch(call(root, 'Write', { file_path: user, content: JSON.stringify(CONFIRMED) }), registry, {}, opts)).toBe('');
+    writeFileSync(user, JSON.stringify(CONFIRMED)); // what the allowed Write does
+    const cc = JSON.stringify({ hook_event_name: 'ConfigChange', session_id: 's', cwd: root, source: 'user_settings', file_path: user });
+    expect(JSON.parse(await dispatch(cc, registry, {}, opts)).decision).toBe('block');
+    expect(await bash()).toBe('deny');
+  });
+
+  test('a sandbox confirmed at the session start allows; managed is still read from disk', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(CONFIRMED));
+    const opts = { home, managed, platform: 'darwin' as const };
+    expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)).toBe('');
+    writeFileSync(managed, JSON.stringify({ sandbox: { enabled: false } }));
+    expect(JSON.parse(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)).hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+
+  test('the user layer is read from CLAUDE_CONFIG_DIR when it is set', async () => {
+    const { root, home, managed } = setup();
+    const cfg = mkdtempSync(join(tmpdir(), 'h-sb-cfg-'));
+    writeFileSync(join(cfg, 'settings.json'), JSON.stringify(CONFIRMED));
+    expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, { CLAUDE_CONFIG_DIR: cfg }, { home, managed, platform: 'darwin' })).toBe('');
+  });
+
+  test('HARNESS_SANDBOX is ignored when a settings file sets it in env', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, '.claude/settings.json'), JSON.stringify({ env: { HARNESS_SANDBOX: '1' } }));
+    const out = await dispatch(call(root, 'Bash', { command: 'ls' }), registry, { HARNESS_SANDBOX: '1' }, { home, managed, platform: 'darwin' });
+    expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+
+  test('without a session baseline, HARNESS_SANDBOX=1 still denies', async () => {
+    const { root, home, managed } = setup();
+    const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'ls' } };
+    const ctx = { input, root, home, managed, platform: 'darwin', env: { HARNESS_SANDBOX: '1' }, unattended: true, config: { sandbox: 'unattended' }, state: {}, save() {} } as unknown as Ctx;
+    expect(await sandboxRequired.run(ctx)).toEqual({ kind: 'deny', reason: MSG, check: 'sandbox-required' });
+  });
+
+  test('without a session baseline it denies, whatever the files on disk say', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(CONFIRMED));
+    const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'ls' } };
+    const ctx = { input, root, home, managed, platform: 'darwin', env: {}, unattended: true, config: { sandbox: 'unattended' }, state: {}, save() {} } as unknown as Ctx;
+    expect(await sandboxRequired.run(ctx)).toEqual({ kind: 'deny', reason: MSG, check: 'sandbox-required' });
   });
 
   test('two unattended win32 calls in one session log one sandbox-unavailable event', async () => {

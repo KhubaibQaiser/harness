@@ -87,9 +87,9 @@ Section 15 records the decisions the owner made after reviewing this spec's firs
 
 ### 3.3 `ConfigChange` (SEC-4, D6)
 
-- **Baseline.** The harness-files snapshot (`src/core/harness-files.ts`) gains, per settings file (user `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json`), a *guarded view*: the hook groups that run the dispatcher, the harness deny rules present in the file (the rules the manifest's `{"deny": …}` blocks record), `disableAllHooks` and the whole `sandbox` object. It is taken with the existing session baseline.
+- **Baseline.** The harness-files snapshot (`src/core/harness-files.ts`) gains, per settings file (user `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json`), a *guarded view*: the hook groups that run the dispatcher, the harness deny rules present in the file (the rules the manifest's `{"deny": …}` blocks record), `disableAllHooks`, the whole `sandbox` object and the `env` keys (each value as a hash). It is taken with the existing session baseline, and `sandbox-required` (3.4) reads the user, project and local sandbox values from it. The user file is `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set.
 - **Decision.** On `ConfigChange` from the user, project or local settings source, the dispatcher reads the changed file and blocks (`decision: "block"`) when its guarded view differs from the baseline's (for deny rules: a harness rule present in the baseline is missing or its text changed, which covers removing and narrowing; an added rule is not a block), unless the file's fingerprint equals the last harness CLI record (`readRepoSnapshot(root).cli`). Any other source, and any change outside the guarded view, is allowed.
-- **After a block.** It logs `config-change-blocked` with the file and the changed parts (`hooks`, `deny`, `disableAllHooks`, `sandbox`) and stores a pending notice in the session state. The next UserPromptSubmit shows it once through the existing `withNotice` (systemMessage plus additionalContext). Claude Code shows nothing itself (R§2 SEC-4).
+- **After a block.** It logs `config-change-blocked` with the file and the changed parts (`hooks`, `deny`, `disableAllHooks`, `sandbox`, `env`) and stores a pending notice in the session state. The next UserPromptSubmit shows it once through the existing `withNotice` (systemMessage plus additionalContext). Claude Code shows nothing itself (R§2 SEC-4).
 - **The file stays changed on disk.** The next session loads it (R§2 SEC-4 limit a). Change detection also reports it at the next prompt and Stop, as today; the two messages are joined into one notice.
 - `ConfigChange` is in the dispatcher's `EVENTS` list already, but no check handles it yet. It is a new check, `config-change`, in the registry.
 
@@ -99,8 +99,8 @@ A new PreToolUse check, `sandbox-required`, `failClosed: true`, for shell tools 
 - `sandbox` config is `off`;
 - the run is attended (`isUnattended` is false);
 - `process.platform === 'win32'` (native Windows has no sandbox: owner decision D2, confirmed on review, §15); it logs `sandbox-unavailable` once per session;
-- the sandbox is confirmed: the effective `sandbox.enabled` is `true` and `sandbox.allowUnsandboxedCommands` is `false`, read with Claude Code's precedence from the managed, local, project and user settings files, and on Linux `bwrap` and `socat` are on the hook's PATH (R§4 A);
-- `HARNESS_SANDBOX=1` is set. Only the person who launches the run can set it: the hook inherits Claude Code's environment, not the agent's shell. It stands for the documented `--settings` launch, which a hook can't see (R§4 B, R2).
+- the sandbox is confirmed: the effective `sandbox.enabled` is `true` and `sandbox.allowUnsandboxedCommands` is `false`, read with Claude Code's precedence from the managed settings files on disk and the local, project and user views in the session baseline (3.3; a file written mid-session doesn't count, and no baseline denies), and on Linux `bwrap` and `socat` are on the hook's PATH (R§4 A);
+- `HARNESS_SANDBOX=1` is set. Only the person who launches the run can set it: the hook inherits Claude Code's environment, not the agent's shell. A `HARNESS_SANDBOX` set by a settings file's `env` (in the session baseline) is ignored. It stands for the documented `--settings` launch, which a hook can't see (R§4 B, R2).
 
 Otherwise it denies: "Unattended run without Claude Code's sandbox. Start it with the command in the README (Unattended runs and CI), or set `sandbox: off` in `.harness/config.yaml`." Only a person can do either, because the config and settings files are denied to the agent.
 
@@ -120,7 +120,7 @@ HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{"enabled":true,"failIf
 
 | `sandbox` | Interactive session | Unattended run | Written to `.claude/settings.json` |
 |---|---|---|---|
-| `unattended` (default) | No sandbox unless the person turns it on (`/sandbox`, or `always`) | Required (3.4) | Nothing |
+| `unattended` (default) | No sandbox unless the person turns it on before the session starts (the settings, the documented `--settings`, or `always`); a mid-session change, `/sandbox` included, takes effect in the next session | Required (3.4) | Nothing |
 | `always` | Sandbox on for everyone using the repo | Required (3.4); confirmed by the committed keys | The `sandbox` block in section 2 |
 | `off` | No sandbox | Not required; text checks only | Nothing |
 
@@ -168,7 +168,7 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 
 - Removes `set` blocks by key path and value. A `sandbox` object left empty that wasn't there before init is removed, like `hooks` and `permissions` today (`uninstall.ts` `had()`).
 - Hook groups are matched by deep equality as today; 6.1 keeps the recorded blocks equal to what is in the file.
-- **Byte-identical:** after `init` → `update` → `uninstall`, and after `init` → `uninstall`, every fixture is byte-identical to before `init` (section 12).
+- **Byte-identical:** after `init` → `update` → `uninstall`, and after `init` → `uninstall`, every fixture is byte-identical to before `init` (section 12). In `always` mode the person edited `.harness/config.yaml` to set the mode, so uninstall keeps that file, like any edited file; everything else is byte-identical.
 
 ## 7. Config
 
@@ -198,8 +198,8 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 | ConfigChange | The last `config-change-blocked` event, as for harness-files changes |
 
 **`status`** adds:
-- `Enforcement: sandbox <mode> (<macOS|Linux|WSL2: available | native Windows: not available>)`
-- `Hook failure: blocks tool calls and prompts; the Stop gate fails open`
+- `Enforcement: sandbox <mode> (<macOS|Linux|WSL2: available | native Windows: not available | <platform>: not checked>)`
+- `Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open` when the PreToolUse, UserPromptSubmit and ConfigChange harness hooks carry `onFailure: "block"`; otherwise ``Hook failure: a harness hook in `.claude/settings.json` lacks `onFailure: "block"`, so a failure may not block; run harness doctor``
 - `Hooks run Node <v> (<ts>)` from `hook-env.json`, or `not recorded yet`
 - The last blocked settings change, if any.
 
@@ -239,9 +239,9 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 
 ## 11. Known limits (README)
 
-- The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop, R§2).
+- The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop).
 - Native Windows has no sandbox: shell commands are checked by text only, and the guard doesn't parse PowerShell.
-- Interactive sessions under the default `unattended` mode keep the text-check gaps (SEC-3, SEC-6, SEC-9, SEC-11) unless the person uses `/sandbox` or `always`.
+- Interactive sessions under the default `unattended` mode keep the text-check gaps (a `cd` before a write, shell reads of secrets, writes protect doesn't parse, and scripts that turn TDD off) unless the person turns the sandbox on before the session starts or uses `always`.
 - A blocked settings change still sits on disk; the next session loads it. Change detection reports it at the next prompt and Stop.
 - Force-push and push-to-main rules are text rules; branch protection is the real stop.
 - `HARNESS_SANDBOX=1` is the launcher's claim; harness can't see `--settings`.
@@ -252,7 +252,7 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 **Offline (unit and e2e; CI on three OSes):**
 - `mergeSettings`: exec form, `onFailure` placement (PreToolUse, UserPromptSubmit, ConfigChange; not Stop, PostToolUse, SessionEnd), matchers, new deny rules; `have` keyed on command plus args (a foreign `node` exec hook survives); replace in place against recorded blocks; an edited group left with a note; `always` adds missing `sandbox` keys only and records `set` blocks; leaving `always` removes them.
 - Uninstall: `set` blocks removed; empty `sandbox` parent dropped only when absent before init.
-- **e2e byte-identity:** fixtures with and without an existing `sandbox` key; modes `unattended` and `always`; an "old install" fixture (previous fragment, old results path in Vitest inline, multi-line and Prettier-formatted configs, and Jest script and config forms) → `update` → `uninstall` gives the pre-init bytes.
+- **e2e byte-identity:** fixtures with and without an existing `sandbox` key; modes `unattended` and `always`; an "old install" fixture (previous fragment, old results path in Vitest inline, multi-line and Prettier-formatted configs, and Jest script and config forms) → `update` → `uninstall` gives the pre-init bytes. In `always` mode, uninstall keeps the person's edited `.harness/config.yaml`, like any edited file.
 - Results migration: `testConfigChange` substitution per framework; manifest blocks and hunks rewritten; config line migrated only for the exact old default; `results_dir` inside `.harness/state` rejected.
 - Dispatcher: a throw on PreToolUse prints a deny; on UserPromptSubmit exits 1; `--self-test`; `hook-env.json` written on UserPromptSubmit.
 - Checks: PowerShell and Monitor inputs through guard, protect, test-lock and spec-gate; the PowerShell path rule (ask, deny unattended).

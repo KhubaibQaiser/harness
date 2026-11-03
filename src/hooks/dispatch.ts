@@ -108,9 +108,9 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     fallback = true;
     root = input.cwd;
     try {
+      unattended = isUnattended(input, env); // first: a later throw must not leave an unattended run judged attended
       config = loadConfig(NO_ROOT).config;
       state = readState(NO_ROOT, input.session_id);
-      unattended = isUnattended(input, env);
     } catch (e2) {
       warn('fallback setup', e2);
       config = undefined; // degraded: only failClosed checks run
@@ -170,8 +170,9 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   let pending = ''; // a blocked ConfigChange, shown at this prompt with the change-detection notice
   if (state && !fallback) {
     try {
-      // ConfigChange's baseline (plan ruling 4): once per session, and only when a check will compare against it.
-      if (!ctx.state.guardedBase && event !== 'ConfigChange' && checks.some((c) => c.events.includes('ConfigChange'))) ctx.save({ ...ctx.state, guardedBase: guardedViews(root, ctx.home), guardedCli: readRepoSnapshot(root).cli?.id });
+      // ConfigChange's and sandbox-required's baseline (plan ruling 4): once per session, before any check runs, and
+      // only when a check will compare against it.
+      if (!ctx.state.guardedBase && event !== 'ConfigChange' && checks.some((c) => c.events.includes('ConfigChange') || c.name === 'sandbox-required')) ctx.save({ ...ctx.state, guardedBase: guardedViews(root, ctx.home, env), guardedCli: readRepoSnapshot(root).cli?.id });
       if (event === 'UserPromptSubmit' && ctx.state.pendingNotice) {
         pending = ctx.state.pendingNotice;
         ctx.save({ ...ctx.state, pendingNotice: undefined });

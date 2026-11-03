@@ -158,3 +158,21 @@ test('unit tests get one hang budget on every OS (process spawns make wall time 
   expect(unit.hookTimeout).toBe(30_000);
   expect(unit.retry).toBeUndefined();
 });
+
+test('ci runs the offline catalog check after pnpm build', () => {
+  const runs = load('ci.yml').jobs.catalog.steps.map((s: any) => s.run).filter(Boolean);
+  expect(runs).toEqual(['pnpm install --frozen-lockfile', 'pnpm build', 'node dist/cli.mjs catalog check']);
+});
+
+test('catalog-pins runs weekly and on catalog changes with --resolve', () => {
+  const w = load('catalog-pins.yml');
+  expect(w.on.schedule).toEqual([{ cron: '0 6 * * 1' }]);
+  expect(w.on.push.paths).toEqual(['catalog/**']);
+  expect(w.on).toHaveProperty('workflow_dispatch');
+  expect(w.permissions).toEqual({ contents: 'read' });
+  const steps = allSteps('catalog-pins.yml');
+  const runs = steps.map((s: any) => s.run).filter(Boolean);
+  expect(runs.indexOf('pnpm build')).toBeGreaterThan(-1);
+  expect(runs.indexOf('node dist/cli.mjs catalog check --resolve')).toBeGreaterThan(runs.indexOf('pnpm build'));
+  expect(steps.find((s: any) => s.run === 'node dist/cli.mjs catalog check --resolve').env).toEqual({ GH_TOKEN: '${{ github.token }}' });
+});

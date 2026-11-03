@@ -413,7 +413,11 @@ describe.each([['init', 'installing', 'writes'], ['update', 'updating', 'rewrite
     expect(d.kind).toBe('ask');
     expect(reason(d)).toBe(WHY);
   });
+  test.each([['--check --yes'], ['--dry-run --yes'], ['--yes --check'], ['--yes --dry-run']])('mixed %s still asks', (args) => {
+    for (const run of [`node "/x/dist/cli.mjs"`, 'pnpm harness', 'npx @khubaibqaiser/harness', 'harness']) expect(kind(`${run} ${sub} ${args}`), `${run} ${sub} ${args}`).toBe('ask');
+  });
   test('--dry-run is allowed', () => expect(kind(`harness ${sub} --dry-run`)).toBe('allow'));
+  test('--dry-run --check is allowed', () => expect(kind(`harness ${sub} --dry-run --check`)).toBe('allow'));
   test('hidden subcommand is denied', () => expect(kind(`H=${sub}; harness $H --yes`)).toBe('deny'));
 });
 test('update --check is allowed', () => expect(kind('harness update --check')).toBe('allow'));

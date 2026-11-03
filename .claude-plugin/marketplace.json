@@ -1,0 +1,12 @@
+{
+  "name": "harness",
+  "owner": { "name": "khubaibqaiser" },
+  "description": "Private beta marketplace for the harness Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "harness",
+      "description": "Hook harness for Claude Code: red-first TDD, multi-file edit gate and verified stops.",
+      "source": { "source": "npm", "package": "@khubaibqaiser/harness", "version": "0.1.0-beta.0" }
+    }
+  ]
+}

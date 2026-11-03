@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { mkdirSync, mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -59,7 +60,7 @@ test('on clears the pause and logs resumed', () => {
 test('off refuses inside Claude Code', () => {
   const root = mk();
   const r = cli(root, ['tdd', 'off'], { CLAUDECODE: '1' });
-  expect(r).toEqual({ code: 1, out: 'Run harness tdd off from a plain terminal, not inside Claude Code.' });
+  expect(r).toEqual({ code: 1, out: `Run harness tdd off from a plain terminal, not inside Claude Code: node "${resolve(process.argv[1])}" tdd off` });
   expect(pauseStatus(root)).toBe('off');
   expect(readEvents(root).map((e) => `${e.check}/${e.decision}`)).toEqual(['tdd/refused']);
 });

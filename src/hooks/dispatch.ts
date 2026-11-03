@@ -12,6 +12,7 @@ import { stopGate } from '../checks/stop/gate.js';
 import { testLock } from '../checks/tdd/test-lock.js';
 import { type HarnessConfig, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
+import { writeHookEnv } from '../core/hook-env.js';
 import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
@@ -124,6 +125,14 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     else if (state && config) bindPause(root, input.session_id, state.startedAt);
   } catch (e) {
     warn('tdd pause', e);
+  }
+
+  if (event === 'UserPromptSubmit' && !fallback) {
+    try {
+      writeHookEnv(root);
+    } catch (e) {
+      warn('hook env', e);
+    }
   }
 
   const ctx = {
@@ -297,15 +306,41 @@ function withNotice(event: string, out: string, notice: string): string {
   return JSON.stringify(o);
 }
 
-async function main(): Promise<void> {
-  let out = '';
+/** Runs one hook. A failure denies a PreToolUse call (exit 0) and exits 1 for any other event, so a broken dispatcher never reads as an allow. */
+export async function runHook(raw: string, run: (raw: string) => Promise<string>): Promise<{ out: string; code: 0 | 1 }> {
+  let message: string;
   try {
-    out = await dispatch(readFileSync(0, 'utf8'), registry, process.env);
+    if (!parseInput(raw)) throw new Error('unreadable hook input');
+    return { out: await run(raw), code: 0 };
   } catch (e) {
-    process.stderr.write(`harness: dispatcher failed: ${(e as Error).message}\n`);
+    message = String((e as Error)?.message ?? e);
   }
+  process.stderr.write(`harness: dispatcher failed: ${message}\n`);
+  let event: unknown;
+  try {
+    event = (JSON.parse(raw) as { hook_event_name?: unknown } | null)?.hook_event_name;
+  } catch {
+    // unparseable: no event to name
+  }
+  return event === 'PreToolUse'
+    ? { out: emit('PreToolUse', { kind: 'deny', reason: `harness dispatcher failed: ${message}`, check: 'dispatcher' }), code: 0 }
+    : { out: '', code: 1 };
+}
+
+async function main(): Promise<void> {
+  if (process.argv.includes('--self-test')) {
+    process.stdout.write(`ok ${process.version}\n`);
+    return;
+  }
+  let raw = '';
+  try {
+    raw = readFileSync(0, 'utf8');
+  } catch {
+    // no readable stdin: runHook exits 1 on the empty input
+  }
+  const { out, code } = await runHook(raw, (r) => dispatch(r, registry, process.env));
   if (out) process.stdout.write(out);
-  process.exitCode = 0;
+  process.exitCode = code;
 }
 
 // Run only as the process entry (also true for the bundled dist file), so tests can import `dispatch`.
@@ -313,5 +348,5 @@ const entry = process.argv[1];
 try {
   if (entry && import.meta.url === pathToFileURL(realpathSync(entry)).href) void main();
 } catch {
-  // unresolvable entry path: stay silent, exit 0
+  process.exitCode = 1; // unresolvable entry path
 }

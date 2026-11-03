@@ -1,11 +1,12 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { readEvents } from '../../src/core/events.js';
 import { isSafeSessionId, readState, statePath } from '../../src/core/state.js';
-import { type Check, dispatch } from '../../src/hooks/dispatch.js';
+import { readHookEnv } from '../../src/core/hook-env.js';
+import { type Check, dispatch, runHook } from '../../src/hooks/dispatch.js';
 import type { Decision, HookEvent } from '../../src/hooks/types.js';
 
 const root = mkdtempSync(join(tmpdir(), 'h-dp-'));
@@ -151,12 +152,48 @@ test('corrupt state file is rewritten on first hook', async () => {
   await dispatch(pre({ cwd: r }), [], {});
   expect(() => JSON.parse(readFileSync(statePath(r, 's'), 'utf8'))).not.toThrow();
 });
-test('bundle exits 0 with empty stdout for empty and garbage stdin', () => {
+test('bundle exits 1 with empty stdout for empty and garbage stdin', () => {
   for (const input of ['', 'garbage{']) {
     const r = spawnSync(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs')], { input, encoding: 'utf8' });
-    expect(r.status).toBe(0);
+    expect(r.status).toBe(1);
     expect(r.stdout).toBe('');
   }
+});
+test('--self-test prints ok and the Node version without reading stdin', async () => {
+  // stdin stays open and is never written to or ended: a read of it would hang until the timeout kills the child
+  const c = spawn(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs'), '--self-test'], { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
+  let stdout = '';
+  c.stdout.on('data', (d) => (stdout += d));
+  const [code, signal] = await new Promise<[number | null, string | null]>((res) => c.on('close', (cd, sg) => res([cd, sg])));
+  expect(signal).toBeNull();
+  expect(code).toBe(0);
+  expect(stdout).toMatch(/^ok v\d+\.\d+\.\d+\n?$/);
+});
+
+const boom = async (): Promise<string> => { throw new Error('bad'); };
+test('runHook: a throw on PreToolUse prints a deny', async () => {
+  const r = await runHook(pre(), boom);
+  expect(r.code).toBe(0);
+  expect(out(r.out).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'harness dispatcher failed: bad' });
+});
+test('runHook: a throw on UserPromptSubmit or ConfigChange exits 1 with no output', async () => {
+  for (const e of ['UserPromptSubmit', 'ConfigChange']) expect(await runHook(payload({ hook_event_name: e }), boom)).toEqual({ out: '', code: 1 });
+});
+test('runHook: unparseable stdin exits 1, fields missing on PreToolUse denies, unknown event is silent', async () => {
+  for (const raw of ['', 'garbage{']) expect(await runHook(raw, async () => 'x')).toEqual({ out: '', code: 1 });
+  const miss = await runHook('{"hook_event_name":"PreToolUse"}', (r) => dispatch(r, [], {}));
+  expect(miss.code).toBe(0);
+  expect(decisionOf(miss.out)).toBe('deny');
+  expect(await runHook(JSON.stringify({ hook_event_name: 'Nope', session_id: 's', cwd: root }), (r) => dispatch(r, [], {}))).toEqual({ out: '', code: 0 });
+});
+test('UserPromptSubmit writes hook-env.json, PreToolUse alone does not', async () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-env-'));
+  await dispatch(pre({ cwd: r }), [], {});
+  expect(readHookEnv(r)).toBeNull();
+  await dispatch(payload({ cwd: r, hook_event_name: 'UserPromptSubmit' }), [], {});
+  const e = readHookEnv(r)!;
+  expect([e.node, e.execPath, e.platform]).toEqual([process.version, process.execPath, process.platform]);
+  expect(new Date(e.ts).toISOString()).toBe(e.ts);
 });
 
 test('records baseHead (git HEAD) when the session state is first created', async () => {

@@ -326,7 +326,8 @@ Goal: no logic ships without a test that failed first; tests can't be weakened t
 ## 9d. Hook runtime
 
 - One dispatcher script per event (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`, `SessionStart`, `ConfigChange`) runs all enabled checks in-process, so an edit costs one Node start, not one per check.
-- Target: under 150 ms per `PreToolUse` on a typical laptop, measured in CI.
+- Target: the harness adds under 100 ms (200 ms on Windows) per `PreToolUse` on top of a bare Node start, measured in CI as the median of paired differences against an empty `node` spawn, with a 1 s ceiling on the whole spawn.
+  - Amended 2026-11-02: the original "under 150 ms per `PreToolUse`" timed the whole spawn, which follows machine load and Node start-up rather than harness code.
 - A throwing check fails open with a visible warning, except agent-guard deny rules and `config-change-guard`, which fail closed.
 - Each item declares `min_claude_code`; a weekly CI job in this repo runs all hook tests against the latest Claude Code release to catch schema drift.
 

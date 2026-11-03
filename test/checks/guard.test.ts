@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { readCliPath, recordCliPath } from '../../src/core/cli-path.js';
 import { decideCommand, decidePaths, fileWriteTargets, guard } from '../../src/checks/guard.js';
 import { loadConfig } from '../../src/core/config.js';
@@ -406,6 +406,31 @@ test('uninstall asks when someone is watching; unattended (CI, bypassPermissions
   expect(await decision({ permission_mode: 'dontAsk' }, {})).toBe('deny');
 });
 
+describe.each([['init', 'installing', 'writes'], ['update', 'updating', 'rewrites']])('%s asks the person', (sub, ing, verb) => {
+  const WHY = `Confirm: the agent is ${ing} the harness, which ${verb} its hooks, rules and settings`;
+  test.each([`node "/x/dist/cli.mjs" ${sub} --yes`, `pnpm harness ${sub} --yes`, `npx @khubaibqaiser/harness ${sub} --yes`, `harness ${sub}`])('%s', (cmd) => {
+    const d = decideCommand(cmd, ctx());
+    expect(d.kind).toBe('ask');
+    expect(reason(d)).toBe(WHY);
+  });
+  test.each([['--check --yes'], ['--dry-run --yes'], ['--yes --check'], ['--yes --dry-run']])('mixed %s still asks', (args) => {
+    for (const run of [`node "/x/dist/cli.mjs"`, 'pnpm harness', 'npx @khubaibqaiser/harness', 'harness']) expect(kind(`${run} ${sub} ${args}`), `${run} ${sub} ${args}`).toBe('ask');
+  });
+  test('--dry-run is allowed', () => expect(kind(`harness ${sub} --dry-run`)).toBe('allow'));
+  test('--dry-run --check is allowed', () => expect(kind(`harness ${sub} --dry-run --check`)).toBe('allow'));
+  test('hidden subcommand is denied', () => expect(kind(`H=${sub}; harness $H --yes`)).toBe('deny'));
+});
+test('update --check is allowed', () => expect(kind('harness update --check')).toBe('allow'));
+test('update --yes is denied with the Unattended prefix under dontAsk', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-up-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, permission_mode: 'dontAsk', tool_name: 'Bash', tool_input: { command: 'harness update --yes' } });
+  const o = JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput;
+  expect(o.permissionDecision).toBe('deny');
+  expect(o.permissionDecisionReason).toMatch(/^Unattended run: /);
+});
+
 // P2: a word is unquoted where a command runs, behind any wrapper the walk sees past.
 test.each([
   'find . -exec harness "uninstall" ;', 'find . -execdir harness "uninstall" --yes ;', "timeout -s KILL 60 harness 'uninstall' --yes",
@@ -498,3 +523,24 @@ test('G1: the cluster forms are denied unattended (through the dispatcher)', asy
 test.each(['env -iu FOO harness uninstall --dry-run', 'timeout -vs KILL 60 harness tdd status'])('G1: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 // A value flag before the end of a cluster takes the rest as its value (getopt), so the next word is the command.
 test.each(['env -uC harness uninstall --yes', 'env -uS harness uninstall --yes', 'timeout -sKILL 60 harness uninstall --yes', 'sudo -uroot harness uninstall --yes'])('G1: %s (attached value) asks', (cmd) => expect(kind(cmd)).toBe('ask'));
+
+test('PowerShell and Monitor go through the command rules', async () => {
+  for (const tool of ['PowerShell', 'Monitor']) expect(await run(tool, { command: 'git push --force origin x' }), tool).toMatchObject({ kind: 'deny', check: 'guard' });
+  expect(await run('PowerShell', { command: 'cat .env' })).toMatchObject({
+    kind: 'deny', check: 'guard', reason: 'Blocked by guard: touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state). If this is intended, ask the user to run it manually.',
+  });
+});
+test('PowerShell command naming .harness, .claude or .env asks; plain ones pass', async () => {
+  for (const command of ['Get-Content .harness/config.yaml', 'Set-Content .CLAUDE/settings.json x', "[System.Environment]::GetEnvironmentVariable('X')"])
+    expect(await run('PowerShell', { command }), command).toMatchObject({ kind: 'ask', check: 'guard', reason: 'Harness does not parse PowerShell, so a PowerShell command that names .harness, .claude or .env needs your approval.' });
+  for (const command of ['$env:PATH', 'Write-Output hi']) expect(await run('PowerShell', { command }), command).toEqual({ kind: 'allow' });
+  expect(await run('Bash', { command: 'ls .harness' })).toEqual({ kind: 'allow' }); // the path rule is PowerShell only
+});
+test('the PowerShell ask is a deny when unattended', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-ps-'));
+  mkdirSync(join(root, '.harness'));
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, permission_mode: 'bypassPermissions', tool_name: 'PowerShell', tool_input: { command: 'Get-Content .harness/config.yaml' } });
+  const o = JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput;
+  expect(o.permissionDecision).toBe('deny');
+  expect(o.permissionDecisionReason).toBe('Unattended run: Harness does not parse PowerShell, so a PowerShell command that names .harness, .claude or .env needs your approval.');
+});

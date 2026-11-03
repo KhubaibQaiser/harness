@@ -5,6 +5,7 @@ import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js'
 import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
+import { isShell } from '../hooks/edit-target.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -52,10 +53,13 @@ const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
 const PMS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 // Subcommands only a person may run (deny) or that need the person's yes (ask; the dispatcher denies it when
 // unattended), with the arguments (after the subcommand) the agent may still use. `run(sub)` is how the person runs
-// `harness <sub>` in their own terminal. One place: M3 adds remove, add, sync and update here.
+// `harness <sub>` in their own terminal. One place: M3 adds remove, add and sync here.
+const DRY_OR_CHECK = (a: string[]) => a.length > 0 && a.every((t) => t === '--dry-run' || t === '--check');
 const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (run: (sub: string) => string) => string }> = {
   tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (run) => `Only a person can pause TDD: run ${run('tdd off')} in your own terminal.` },
   uninstall: { kind: 'ask', allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
+  init: { kind: 'ask', allowed: DRY_OR_CHECK, why: () => 'the agent is installing the harness, which writes its hooks, rules and settings' },
+  update: { kind: 'ask', allowed: DRY_OR_CHECK, why: () => 'the agent is updating the harness, which rewrites its hooks, rules and settings' },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
 const ANY_WHY = 'Only a person can change or remove the harness gates: run the harness command in your own terminal.';
@@ -472,7 +476,14 @@ export const guard: Check = {
   run(ctx) {
     if (ctx.config?.checks.guard === false) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = ctx.input;
-    if (tool_name === 'Bash') return decideCommand(String(tool_input.command ?? ''), ctx);
+    if (isShell(tool_name)) {
+      const cmd = String(tool_input.command ?? '');
+      const d = decideCommand(cmd, ctx);
+      // Harness does not parse PowerShell, so any mention of its own paths needs a person.
+      if (tool_name === 'PowerShell' && d.kind === 'allow' && /\.harness|\.claude|\.env/i.test(cmd))
+        return { kind: 'ask', reason: 'Harness does not parse PowerShell, so a PowerShell command that names .harness, .claude or .env needs your approval.', check: 'guard' };
+      return d;
+    }
     if (tool_name === 'Read') return decidePaths([String(tool_input.file_path ?? tool_input.path ?? '')]);
     if (tool_name === 'Grep') {
       // ponytail: each brace alternative is checked as written and with its wildcards dropped; `.e*v` is still missed.

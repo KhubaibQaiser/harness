@@ -52,6 +52,20 @@ test('ungated PreToolUse: harness overhead over a bare node spawn', () => {
   expect(m.total, `total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 
+test('unattended Bash (sandbox-required reads managed settings): harness overhead over a bare node spawn', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'h-lat3-'));
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  mkdirSync(join(repo, '.harness'));
+  writeFileSync(join(repo, '.harness/config.yaml'), 'checks:\n  guard: true\n  protect: true\n');
+  const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'lat', cwd: repo, permission_mode: 'bypassPermissions', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  const m = measure(input, (r) => {
+    expect(r.status).toBe(0);
+    expect(JSON.parse(String(r.stdout)).hookSpecificOutput.permissionDecision).toBe('deny'); // no sandbox: the check ran to its end
+  });
+  expect(m.overhead, `unattended overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.total, `unattended total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
+}, 60000);
+
 test('gated PreToolUse with 40 result files: harness overhead over a bare node spawn', () => {
   const repo = mkdtempSync(join(tmpdir(), 'h-lat2-'));
   spawnSync('git', ['init', '-q'], { cwd: repo });

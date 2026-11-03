@@ -81,7 +81,7 @@ Section 15 records the decisions the owner made after reviewing this spec's firs
 
 ### 3.2 PowerShell and Monitor (SEC-2, MON-1)
 
-- A helper `isShell(tool_name)` returns true for `Bash`, `PowerShell` and `Monitor`. Every `tool_name === 'Bash'` test in `dispatch.ts`, `guard.ts`, `protect.ts` and `spec-gate.ts`, and the PostToolUse test-run detection in `test-lock.ts`, uses it. Monitor and PowerShell carry the command in `tool_input.command` (R§2 SEC-2); Monitor's `tool_name` is unverified (R5).
+- A helper `isShell(tool_name)` returns true for `Bash`, `PowerShell` and `Monitor`. Every `tool_name === 'Bash'` test in `dispatch.ts`, `guard.ts`, `protect.ts` and `spec-gate.ts` uses it. `test-lock.ts` has no test-run detection of its own: it reads the results files. Monitor and PowerShell carry the command in `tool_input.command` (R§2 SEC-2); Monitor's `tool_name` is unverified (R5).
 - The guard and protect run their existing word rules on PowerShell text. They don't parse PowerShell syntax.
 - **PowerShell path rule.** A PowerShell command whose text contains, case-insensitively, `.harness`, `.claude` or `.env` asks; in an unattended run it is denied (the dispatcher already turns an ask into a deny). This is the review's SEC-2 fix.
 

@@ -24,6 +24,7 @@ const fake = (answers: boolean[] = []): Prompt & { asked: string[] } => {
   const asked: string[] = [];
   return { asked, async confirm(q) { asked.push(q); return answers.length ? answers.shift()! : false; }, async edit(_l, v) { return v; } };
 };
+const RESTART = 'Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.';
 const git = (root: string, ...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8' });
 const installed = async (files: Record<string, string> = REPO) => {
   const root = makeRepo(files);
@@ -48,6 +49,12 @@ test('init then uninstall leaves the repo byte-identical', async () => {
   expect(hashes(root)).toEqual(before);
   expect(existsSync(join(root, '.harness'))).toBe(false);
   expect(existsSync(join(root, '.claude'))).toBe(false);
+});
+
+test('uninstall tells you to restart open Claude Code sessions, whose hooks still point at the removed dispatcher', async () => {
+  const r = await un(await installed(), ['--yes']);
+  expect(r.code).toBe(0);
+  expect(r.out.trimEnd().split('\n').at(-1)).toBe(RESTART);
 });
 
 test('user-edited AGENTS.md outside the block keeps their edit', async () => {

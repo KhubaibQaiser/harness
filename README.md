@@ -2,6 +2,8 @@
 
 Harness is a set of Claude Code hooks that check what an agent does in your repo. It blocks secret reads and risky shell commands, protects its own files, asks before an agent spreads one change across many files, enforces red-first TDD for JS/TS, and runs your format, lint, typecheck and test commands before the agent may stop. It installs into any git repo, as a Claude Code plugin or with a CLI, and commits its hooks into the repo so every teammate gets the same rules.
 
+Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, and in every session with `sandbox: always`. Elsewhere, and on native Windows always, the guard and protect checks are a seatbelt.
+
 Status: private beta, version `0.1.0-beta.0`. See [Project status](#project-status).
 
 ## Why it exists
@@ -10,10 +12,10 @@ Rules written in `CLAUDE.md` or `AGENTS.md` are advice. An agent can skip "write
 
 ## How it works, and how it differs
 
-- **Hooks, not prompts.** The rules run as `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` and `SessionEnd` hooks. `AGENTS.md` gets a short block that explains the rules, but the hooks enforce them.
+- **Hooks, not prompts.** The rules run as `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `ConfigChange`, `Stop` and `SessionEnd` hooks. `AGENTS.md` gets a short block that explains the rules, but the hooks enforce them.
 - **Deterministic.** The hooks call no model. They read the tool call, your test results, coverage files and `git diff`, and decide from those.
 - **Tests decide, not the agent.** The TDD gate reads JSON results that your own Vitest or Jest run writes. A source edit needs a fresh failing test from this session.
-- **Fails closed where it matters.** If `.harness/config.yaml` is invalid, agent edits are denied and Stop blocks until a person fixes it. The guard and protected-path checks deny the call if they crash.
+- **Fails closed where it matters.** If the dispatcher can't start, times out or crashes, Claude Code blocks the tool call, the prompt or the settings change (`onFailure: "block"`). The Stop gate fails open if its process can't run. If `.harness/config.yaml` is invalid, agent edits are denied and Stop blocks until a person fixes it. The guard and protected-path checks deny the call if they crash.
 - **Repo-level.** `init` writes plain files into the repo (`.harness/`, `.claude/settings.json`, `AGENTS.md`). Commit them, and the hooks run for anyone who opens the repo in Claude Code, with or without the plugin.
 - **Local-first.** Events go to `.harness/logs/events.jsonl` in the repo. Nothing is sent anywhere, except an npm registry lookup for a package name when you allow an install, and `update --check`.
 - **Reversible.** `init` backs up every file it changes and records every edit in `.harness/manifest.json`. `uninstall` removes exactly what the manifest lists and restores your files.
@@ -154,7 +156,7 @@ Run these as `npx @khubaibqaiser/harness <command>` once released, as `node /pat
 | `.claude/settings.json` | Created or merged. Adds the hook entries and `permissions.deny` rules for `.env` reads and edits to harness files. Hooks from other tools are kept. |
 | `AGENTS.md` | Created or merged. Adds a block between `<!-- harness:start -->` and `<!-- harness:end -->` that explains the rules. |
 | `CLAUDE.md` | Created as `@AGENTS.md`, or that line is appended, unless it already imports `AGENTS.md`. |
-| `.gitignore` | Adds `.harness/state/`, `.harness/logs/` and `.harness/backup/`. |
+| `.gitignore` | Adds `.harness/state/`, `.harness/logs/`, `.harness/backup/` and `.harness/results/`. |
 | `.claude/agents/staff-reviewer.md`, `.claude/skills/review-rubric/SKILL.md` | Created. The review agent and its rubric. |
 | `.prettierignore`, `.eslintignore`, ESLint flat config | Adds `.harness/` so your format and lint steps skip the harness files. |
 | `.harness/hooks/jest-results.cjs` | Created in a repo with Jest. A small reporter that writes JSON results. |
@@ -163,6 +165,8 @@ Run these as `npx @khubaibqaiser/harness <command>` once released, as `node /pat
 Before any write, `init` backs up every file it will change into `.harness/backup/`. If a step fails, it restores the backups, deletes what it created and exits non-zero. Edits keep each file's line endings, trailing newline and JSON indentation.
 
 ## Uninstall
+
+Close open Claude Code sessions in the repo first. An open session keeps hooks that point at the removed dispatcher, and with `onFailure: "block"` every call blocks until it restarts.
 
 ```bash
 harness uninstall --dry-run
@@ -189,6 +193,49 @@ In an unattended run, every hook question becomes a deny, because nobody can ans
 With `unattended.require_reason`, an extra file without a reason line is denied once, and the retry is allowed and logged as "no reason given". Claude Code writes a message to the transcript only after the hook for its tool call has run, so a reason written in the same message as the edit isn't visible yet. At Stop and at the next prompt, harness reads the transcript once more and logs `reason-found-late` with the line it finds, or `reason-not-found`.
 
 Hooks run with the user's permissions, so they are a seatbelt, not a sandbox. Use CI and branch protection to enforce rules for everyone.
+
+### Start unattended runs in the sandbox
+
+With the default `sandbox: unattended`, an unattended shell command is denied unless Claude Code's sandbox is on. Start the run like this:
+
+```sh
+HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false}}'
+```
+
+`--settings` sits above the project and local settings, and `failIfUnavailable` makes the run exit instead of running unsandboxed. A hook can't see `--settings`, so `HARNESS_SANDBOX=1` is your claim that the run was started this way. Only the person who launches the run can set it: the hooks inherit Claude Code's environment, not the agent's shell. Set it only together with the `--settings` above.
+
+Without the variable, harness also accepts the sandbox when the settings files (managed, local, project, user) turn on `sandbox.enabled` with `allowUnsandboxedCommands: false`, and on Linux `bwrap` and `socat` are on the hooks' PATH. Native Windows has no sandbox, so its unattended runs keep the text checks. To run unattended without the sandbox, set `sandbox: off` in `.harness/config.yaml`.
+
+In an interactive session under `unattended`, the sandbox is off unless you turn it on. Turn on `/sandbox` before the session starts working: a sandbox change made mid-session is blocked by the `ConfigChange` hook and applies from the next session. With `sandbox: always`, `update` writes the sandbox block into `.claude/settings.json` for everyone. Its network allowlist starts empty, so the first `npm install` or HTTPS `git push` prompts, and on macOS `git push` over SSH fails inside the sandbox. To allow a host, add it to `sandbox.network.allowedDomains` in `.claude/settings.json` yourself, outside a session.
+
+## Windows
+
+Native Windows has no sandbox. It gets the hooks, the permission rules and the text checks. The guard does not parse PowerShell: it runs its word rules on PowerShell text, and a PowerShell command that names `.harness`, `.claude` or `.env` asks, or is denied in an unattended run. The `PowerShell(...)` deny rules, and the `Read` and `Edit` rules on PowerShell commands, are unverified in live Claude Code. WSL2 gets the full sandbox.
+
+## Force push
+
+Turn on GitHub branch protection for your default branch. Harness's force-push and push-to-main rules are text rules, so a command they don't recognise gets past them.
+
+## Managed settings (optional)
+
+An admin can turn the sandbox on for every repo on a machine with managed settings. `init` never writes this file.
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "allowUnsandboxedCommands": false
+  }
+}
+```
+
+The file goes at:
+
+- macOS: `/Library/Application Support/ClaudeCode/managed-settings.json`
+- Linux and WSL2: `/etc/claude-code/managed-settings.json`
+- Windows: `C:\Program Files\ClaudeCode\managed-settings.json`
+
+Drop-in files in a `managed-settings.d/` folder next to it count too. Leave harness's hooks out of managed settings: a managed hook runs in every repo, and with `onFailure: "block"` it would block every repo without harness.
 
 ## Allowing installs
 
@@ -286,6 +333,18 @@ The multi-file gate never counts test files: JS/TS `*.test.*`, `*.spec.*` and `_
 ## Known limits
 
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
+- The `PowerShell(...)` deny rules, and the `Read` and `Edit` rules on PowerShell commands, are unverified until a live check on Windows passes.
+- The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop, R§2).
+- Native Windows has no sandbox: shell commands are checked by text only, and the guard doesn't parse PowerShell.
+- Interactive sessions under the default `unattended` mode keep the text-check gaps (SEC-3, SEC-6, SEC-9, SEC-11) unless the person uses `/sandbox` or `always`.
+- A blocked settings change still sits on disk; the next session loads it. Change detection reports it at the next prompt and Stop.
+- Force-push and push-to-main rules are text rules; branch protection is the real stop.
+- `HARNESS_SANDBOX=1` is the launcher's claim; harness can't see `--settings`.
+- Results in `.harness/results/` can be forged by a program the agent runs.
+- A flow-style `tdd: { results_dir: … }` isn't migrated by `update`; edit that one line by hand.
+- MDM, registry and server-managed settings aren't read by `sandbox-required`. Only `managed-settings.json` and the `managed-settings.d/` drop-ins are read.
+- A script that rewrites `.harness/state` can forge the CLI record. Protect covers file tools and named shell writes, and the sandbox denies it when unattended.
+- Settings changes made mid-session through the harness CLI apply only to `.claude/settings.json`.
 - TDD and coverage gates for JS/TS only. Other repos get every other gate.
 - No npm provenance while the repo is private.
 - Cloud Claude Code sessions don't load repo-enabled plugins. The committed hooks still run there, but `/harness:*` skills don't.

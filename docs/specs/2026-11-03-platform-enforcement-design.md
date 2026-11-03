@@ -13,15 +13,15 @@
 | D1 | Approach B. Platform hooks and permission rules are always on. The regex and text checks stay as a backup. |
 | D2 | Sandbox mode, default `unattended`: required in CI and unattended runs, optional when a person is watching. Native Windows has no sandbox; it keeps hooks, rules and text checks, and the docs say so plainly. |
 | D3 | Test results move to `.harness/results/`. The rest of `.harness/state/**` stays fully denied, including to the sandbox. |
-| D4 | `onFailure: "block"` on every matched PreToolUse tool and on UserPromptSubmit. `doctor` checks that the hooks' Node and shell work. Stop can't use `onFailure`, so the Stop gate still fails open: a known limit. |
+| D4 | `onFailure: "block"` on every matched PreToolUse tool, on UserPromptSubmit and on ConfigChange (ConfigChange added on review, §15). `doctor` checks that the hooks' Node and shell work. Stop can't use `onFailure`, so the Stop gate still fails open: a known limit. |
 | D5 | `MIN_CLAUDE_CODE` = 2.1.314. `doctor` fails below it. |
-| D6 | A `ConfigChange` hook blocks only changes to harness's own hook entries, `disableAllHooks` and the `sandbox` settings. It logs an event and shows a notice at the next prompt. Other edits, such as "Always allow" clicks, stay free. |
+| D6 | A `ConfigChange` hook blocks only changes to harness's own hook entries, harness's own deny rules (removing or narrowing them; added on review, §15), `disableAllHooks` and the `sandbox` settings. It logs an event and shows a notice at the next prompt. Other edits, such as "Always allow" clicks, stay free. |
 | D7 | `autoAllowBashIfSandboxed: false` wherever harness turns the sandbox on, so no existing prompt disappears. |
 | D8 | Keep the force-push guard. Add deny rules for the Bash and PowerShell force-push and push-to-main forms. The README recommends GitHub branch protection as the real stop. |
 | D9 | Managed settings: the README documents an optional snippet only. `init` stays repo-only; uninstall stays byte-identical. |
 | D10 | Add the PowerShell tool to the hook matchers (SEC-2). |
 
-Section 15 lists the points where these decisions conflict with each other or with the docs.
+Section 15 records the decisions the owner made after reviewing this spec's first draft.
 
 ## 2. Settings fragment
 
@@ -35,7 +35,7 @@ Section 15 lists the points where these decisions conflict with each other or wi
     "PostToolUse": [{ "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit",
       "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10, "onFailure": "block" }] }],
-    "ConfigChange": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] }],
+    "ConfigChange": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10, "onFailure": "block" }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 600 }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] }]
   },
@@ -57,7 +57,7 @@ Section 15 lists the points where these decisions conflict with each other or wi
 ```
 
 - **Exec form** (`command` + `args`, needs 2.1.139, R§3): no shell sits between Claude Code and Node, so a missing shell or a quoting problem can't be the failure (R§4 shared parts).
-- **`onFailure: "block"`** only on PreToolUse and UserPromptSubmit (D4). Stop, PostToolUse and SessionEnd don't get it. `ConfigChange` doesn't either, pending C1 (section 15).
+- **`onFailure: "block"`** on PreToolUse, UserPromptSubmit and ConfigChange (D4). A ConfigChange hook that fails then blocks the change instead of letting it through. Stop, PostToolUse and SessionEnd don't get it.
 - **`Monitor`** is in the PreToolUse matcher because from 2.1.314 Bash-matching hooks see Monitor commands (R§2 MON-1). It is not in PostToolUse: Monitor runs long, and no PostToolUse check needs it.
 - **No `.harness/results/**` deny rule.** Deny rules merge into the sandbox (R§1), and the agent's test runs must write there (D3).
 - **Push rules** are text rules too (R§2 SEC-5): `git -C . push`, `-uf` clusters and a bare `git push` from `main` still pass them. `main`/`master` match the guard's list (CON-3 is out of scope).
@@ -74,7 +74,7 @@ Section 15 lists the points where these decisions conflict with each other or wi
 
 ### 3.1 Failure handling (SEC-1, CON-1, DX-1)
 
-- `dispatch.ts` `main()`: a top-level throw or unparseable stdin on PreToolUse prints a deny (`harness dispatcher failed: <message>`); on every other event it sets `process.exitCode = 1`. Exit 1 is neither 0 nor 2, so `onFailure` applies on UserPromptSubmit (R§2 SEC-1). The current `exitCode = 0` goes.
+- `dispatch.ts` `main()`: a top-level throw or unparseable stdin on PreToolUse prints a deny (`harness dispatcher failed: <message>`); on every other event it sets `process.exitCode = 1`. Exit 1 is neither 0 nor 2, so `onFailure` applies on UserPromptSubmit and ConfigChange (R§2 SEC-1). The current `exitCode = 0` goes.
 - An entry-path that can't be resolved also exits 1 (today it exits 0 silently).
 - **Hook environment record.** On every UserPromptSubmit the dispatcher writes `.harness/state/hook-env.json`: `{ ts, node: process.version, execPath: process.execPath, platform: process.platform }`. Hooks run outside the sandbox (R§2 SEC-13), so the write is allowed. `doctor` and `status` read it (section 8).
 - **Self-test.** `node .harness/hooks/dispatch.mjs --self-test` prints `ok <node version>` and exits 0 without reading stdin.
@@ -87,9 +87,9 @@ Section 15 lists the points where these decisions conflict with each other or wi
 
 ### 3.3 `ConfigChange` (SEC-4, D6)
 
-- **Baseline.** The harness-files snapshot (`src/core/harness-files.ts`) gains, per settings file (user `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json`), a *guarded view* hash: the hook groups that run the dispatcher, `disableAllHooks` and the whole `sandbox` object. It is taken with the existing session baseline.
-- **Decision.** On `ConfigChange` from the user, project or local settings source, the dispatcher reads the changed file and blocks (`decision: "block"`) when its guarded view differs from the baseline's, unless the file's fingerprint equals the last harness CLI record (`readRepoSnapshot(root).cli`). Any other source, and any change outside the guarded view, is allowed.
-- **After a block.** It logs `config-change-blocked` with the file and the changed parts (`hooks`, `disableAllHooks`, `sandbox`) and stores a pending notice in the session state. The next UserPromptSubmit shows it once through the existing `withNotice` (systemMessage plus additionalContext). Claude Code shows nothing itself (R§2 SEC-4).
+- **Baseline.** The harness-files snapshot (`src/core/harness-files.ts`) gains, per settings file (user `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json`), a *guarded view*: the hook groups that run the dispatcher, the harness deny rules present in the file (the rules the manifest's `{"deny": …}` blocks record), `disableAllHooks` and the whole `sandbox` object. It is taken with the existing session baseline.
+- **Decision.** On `ConfigChange` from the user, project or local settings source, the dispatcher reads the changed file and blocks (`decision: "block"`) when its guarded view differs from the baseline's (for deny rules: a harness rule present in the baseline is missing or its text changed, which covers removing and narrowing; an added rule is not a block), unless the file's fingerprint equals the last harness CLI record (`readRepoSnapshot(root).cli`). Any other source, and any change outside the guarded view, is allowed.
+- **After a block.** It logs `config-change-blocked` with the file and the changed parts (`hooks`, `deny`, `disableAllHooks`, `sandbox`) and stores a pending notice in the session state. The next UserPromptSubmit shows it once through the existing `withNotice` (systemMessage plus additionalContext). Claude Code shows nothing itself (R§2 SEC-4).
 - **The file stays changed on disk.** The next session loads it (R§2 SEC-4 limit a). Change detection also reports it at the next prompt and Stop, as today; the two messages are joined into one notice.
 - `ConfigChange` is in the dispatcher's `EVENTS` list already, but no check handles it yet. It is a new check, `config-change`, in the registry.
 
@@ -98,7 +98,7 @@ Section 15 lists the points where these decisions conflict with each other or wi
 A new PreToolUse check, `sandbox-required`, `failClosed: true`, for shell tools (`isShell`). It allows when any of these is true:
 - `sandbox` config is `off`;
 - the run is attended (`isUnattended` is false);
-- `process.platform === 'win32'` (native Windows has no sandbox, D2); it logs `sandbox-unavailable` once per session;
+- `process.platform === 'win32'` (native Windows has no sandbox: owner decision D2, confirmed on review, §15); it logs `sandbox-unavailable` once per session;
 - the sandbox is confirmed: the effective `sandbox.enabled` is `true` and `sandbox.allowUnsandboxedCommands` is `false`, read with Claude Code's precedence from the managed, local, project and user settings files, and on Linux `bwrap` and `socat` are on the hook's PATH (R§4 A);
 - `HARNESS_SANDBOX=1` is set. Only the person who launches the run can set it: the hook inherits Claude Code's environment, not the agent's shell. It stands for the documented `--settings` launch, which a hook can't see (R§4 B, R2).
 
@@ -191,7 +191,7 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 | Claude Code version | `fix Claude Code <v> is older than 2.1.314: update Claude Code` (unchanged form, new floor) |
 | Hook-side Node | From `hook-env.json`: `ok hooks run Node <v>`; `fix hooks run Node <v>, older than 22.11: …`; with no record, `note no hook has run here yet: start a Claude Code session, send a prompt, then run harness doctor again` |
 | Dispatcher runs | Spawns the PreToolUse hook exactly as `settings.json` defines it (exec form, no shell) with `--self-test`: `ok dispatcher runs`, or `fix the dispatcher does not run (<stderr>): …`. A harness entry still in shell form is run through the platform shell and gets `fix … run harness update` |
-| Hook shape | `fix PreToolUse/UserPromptSubmit hook has no onFailure "block": run harness update` (also when the person edited the group) |
+| Hook shape | `fix PreToolUse/UserPromptSubmit/ConfigChange hook has no onFailure "block": run harness update` (also when the person edited the group) |
 | Wired events | Now 6 events, including `ConfigChange`; matches `args` as well as `command` |
 | Sandbox | `ok sandbox: unattended (required for unattended runs)`; on native Windows `note no sandbox on native Windows: hooks, permission rules and text checks only`; on Linux under `unattended`/`always` without `bwrap` or `socat`: `note` for `unattended`, `fix` for `always` |
 | Results path | `fix <pkg> writes test results under .harness/state, which the sandbox denies: run harness update` |
@@ -223,13 +223,13 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 | SEC-1 Stop gate | Known limit | Fails open | Same | Same |
 | SEC-2 PowerShell unmatched | Matcher + 3.2 path rule + PowerShell deny rules | Closed; sandbox also covers PowerShell | Guard backup (no PowerShell parsing) | Guard backup |
 | SEC-3 `cd` + write | Sandbox write deny (Edit rules) | Closed | Edit rules on recognised commands + protect backup; partly open | Same as unsandboxed |
-| SEC-4 detection switched off | Platform: `ConfigChange` (3.3); sandbox; guard `PERSON_ONLY` (3.5) | Closed for the running session | Running session closed; next session loads the change (limit) | Same as unsandboxed |
+| SEC-4 detection switched off | Platform: `ConfigChange` with `onFailure: "block"` (3.3); sandbox; guard `PERSON_ONLY` (3.5) | Closed for the running session | Running session closed; next session loads the change (limit) | Same as unsandboxed |
 | SEC-5 force push / push to main | Deny rules + guard backup; branch protection recommended | Partly (text rules) | Same | Same |
 | SEC-6 shell secret reads | Sandbox read deny (Read rules) | Closed | Read rules on recognised commands + guard backup; partly open | Same as unsandboxed |
 | SEC-7 install gate | Sandbox network allowlist | Partly: prompts, or refused in `dontAsk`; allowed in `bypassPermissions` (R§2) | Guard backup; open as in the review | Same |
 | SEC-8 test script / vite config | Known limit (out of scope, section 14) | Open | Open | Open |
 | SEC-9 protect write gaps | Sandbox write deny | Closed (`chmod` unverified, R4) | Protect backup; open | Same |
-| SEC-10 deny baseline | Rules (section 2) | Closed | Closed for file tools and recognised commands | Same |
+| SEC-10 deny baseline | Rules (section 2); `ConfigChange` blocks removing or narrowing them mid-session (3.3) | Closed | Closed for file tools and recognised commands; removal blocked for the running session | Same |
 | SEC-11 `tdd off` by script | Sandbox write deny on `.harness/state/**` | Closed | Env check backup; open | Same |
 | SEC-12 user settings | Sandbox protects `~/.claude`; `ConfigChange` covers `disableAllHooks`/`sandbox` in user settings | Closed for shell writes | File tools: open (limit) | Same |
 | SEC-13 `.npmrc` | Known limit here (code fix, out of scope) | Open | Open | Open |
@@ -242,7 +242,7 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 - The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop, R§2).
 - Native Windows has no sandbox: shell commands are checked by text only, and the guard doesn't parse PowerShell.
 - Interactive sessions under the default `unattended` mode keep the text-check gaps (SEC-3, SEC-6, SEC-9, SEC-11) unless the person uses `/sandbox` or `always`.
-- A blocked settings change still sits on disk; the next session loads it. Removing harness's deny rules is not blocked mid-session (D6); change detection reports it.
+- A blocked settings change still sits on disk; the next session loads it. Change detection reports it at the next prompt and Stop.
 - Force-push and push-to-main rules are text rules; branch protection is the real stop.
 - `HARNESS_SANDBOX=1` is the launcher's claim; harness can't see `--settings`.
 - Results in `.harness/results/` can be forged by a program the agent runs.
@@ -250,13 +250,13 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 ## 12. Test strategy
 
 **Offline (unit and e2e; CI on three OSes):**
-- `mergeSettings`: exec form, `onFailure` placement, matchers, new deny rules; `have` keyed on command plus args (a foreign `node` exec hook survives); replace in place against recorded blocks; an edited group left with a note; `always` adds missing `sandbox` keys only and records `set` blocks; leaving `always` removes them.
+- `mergeSettings`: exec form, `onFailure` placement (PreToolUse, UserPromptSubmit, ConfigChange; not Stop, PostToolUse, SessionEnd), matchers, new deny rules; `have` keyed on command plus args (a foreign `node` exec hook survives); replace in place against recorded blocks; an edited group left with a note; `always` adds missing `sandbox` keys only and records `set` blocks; leaving `always` removes them.
 - Uninstall: `set` blocks removed; empty `sandbox` parent dropped only when absent before init.
 - **e2e byte-identity:** fixtures with and without an existing `sandbox` key; modes `unattended` and `always`; an "old install" fixture (previous fragment, old results path in Vitest inline, multi-line and Prettier-formatted configs, and Jest script and config forms) → `update` → `uninstall` gives the pre-init bytes.
 - Results migration: `testConfigChange` substitution per framework; manifest blocks and hunks rewritten; config line migrated only for the exact old default; `results_dir` inside `.harness/state` rejected.
 - Dispatcher: a throw on PreToolUse prints a deny; on UserPromptSubmit exits 1; `--self-test`; `hook-env.json` written on UserPromptSubmit.
 - Checks: PowerShell and Monitor inputs through guard, protect, test-lock and spec-gate; the PowerShell path rule (ask, deny unattended).
-- `config-change`: recorded inputs per source; block on a removed or changed harness group, `disableAllHooks`, any `sandbox` change; allow on `permissions.allow` and on a CLI-recorded change; event logged; notice shown once at the next prompt.
+- `config-change`: recorded inputs per source; block on a removed or changed harness group, a removed or changed harness deny rule, `disableAllHooks`, any `sandbox` change; allow on `permissions.allow`, on an added deny rule, on removing a deny rule harness didn't install, and on a CLI-recorded change; event logged; notice shown once at the next prompt.
 - `sandbox-required`: each allow condition and the deny, with platform, env and settings files injected; precedence across managed, local, project and user.
 - `doctor`/`status`: version 2.1.313 → `fix` and exit 1; hook-env missing, old, OK; self-test failing; shell-form entry; Linux without `bwrap`; win32 note.
 - The latency budget test (`test/perf`) still passes with the new checks.
@@ -265,7 +265,7 @@ What offline tests can't prove: anything Claude Code itself does with these sett
 
 **Live (gated: costs money; run only with the owner's approval, as one batch, after the offline suite passes):**
 1. `ConfigChange` fires for a Bash-written `.claude/settings.local.json` and a block keeps `disableAllHooks: true` out of the running session (R1).
-2. `onFailure: "block"` blocks a PreToolUse call and a prompt when `dispatch.mjs` is `chmod 000` and when `node` is missing from the hooks' PATH.
+2. `onFailure: "block"` blocks a PreToolUse call, a prompt and a settings change when `dispatch.mjs` is `chmod 000` and when `node` is missing from the hooks' PATH.
 3. Exec-form `args` expand `${CLAUDE_PROJECT_DIR}` (R7).
 4. With `--settings` sandbox on: `cat .en*`, `cd .claude && echo {} > settings.local.json`, `chmod 000 .harness/hooks/dispatch.mjs`, `harness tdd off` all fail; `pnpm test` writes `.harness/results/` (R3, R4).
 5. A Monitor command reaches the PreToolUse hook; record its `tool_name` (R5).
@@ -297,10 +297,12 @@ What offline tests can't prove: anything Claude Code itself does with these sett
 - `permissions.blockWritesOutsideWorkingDirectories` and a deny rule for `~/.claude/settings*.json` (SEC-12 file tools).
 - A ground-truth corpus for guard and protect (TEST-1) and a headless schema-drift job (TEST-3).
 
-## 15. Conflicts for the owner to confirm
+## 15. Decisions after review (2026-11-03)
 
-- **C1. `onFailure` on `ConfigChange`.** D4 names PreToolUse and UserPromptSubmit only. R§2 SEC-4 adds `onFailure: "block"` to the `ConfigChange` entry. Without it, a `ConfigChange` hook that fails lets the change through. This spec follows D4; adding it is a one-word change.
-- **C2. Native Windows unattended.** R§4 B makes unattended native-Windows runs fail closed for shell commands. D2 says native Windows keeps hooks, rules and text checks. This spec follows D2: unattended native-Windows runs are allowed, with text checks only, and the check logs `sandbox-unavailable`.
-- **C3. "Node and shell" in D4.** Approach B's shared parts use the exec form, so no shell runs the hooks. This spec checks the shell only for a harness entry still in shell form.
-- **C4. `doctor` already fails below the floor.** R§3 says `doctor` only warns (`doctor.ts:72`). On `origin/ci/beta-7-workflows` and `feature/beta`, that line is a `fix`, which exits 1. D5 then only changes the version. When `claude` isn't found, `doctor` still prints `ok`.
-- **C5. Deny-rule removal under D6.** D6 blocks only hooks, `disableAllHooks` and `sandbox`. Removing harness's deny rules mid-session isn't blocked, though change detection reports it. Listed as a known limit.
+The owner ruled on the points the first draft raised. None is open.
+
+- **C1. `onFailure` on `ConfigChange`: block.** The ConfigChange entry gets `onFailure: "block"` (D4, section 2). The research's SEC-4 closure assumed it.
+- **C2. Native Windows unattended: allow with text checks.** The research's approach B would fail these runs closed. D2 stands: unattended native-Windows runs are allowed with hooks, rules and text checks, and `sandbox-required` logs `sandbox-unavailable` (3.4).
+- **C3. "Node and shell" in D4: as resolved.** Hooks use the exec form, so no shell runs them. `doctor` checks the shell only for a harness entry still in shell form (section 8).
+- **C4. `doctor` below the floor: as resolved.** The research said `doctor` only warns (`doctor.ts:72`). That line is already a `fix`, which exits 1, so D5 changes only the version. When `claude` isn't found, `doctor` still prints `ok`.
+- **C5. Deny-rule removal: block.** `ConfigChange` also blocks removing or narrowing harness's own deny rules, measured against the session baseline. A change the harness CLI recorded is still allowed (D6, 3.3).

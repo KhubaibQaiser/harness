@@ -42,7 +42,8 @@ export const sandboxRequired: Check = {
     // A settings file's env can set HARNESS_SANDBOX for the hooks; only the launcher's counts, so then it is ignored.
     const set = Object.values(ctx.state?.guardedBase ?? {}).some((v) => typeof v?.env === 'object' && v.env !== null && 'HARNESS_SANDBOX' in v.env);
     const env = set ? { ...ctx.env, HARNESS_SANDBOX: undefined } : ctx.env;
-    const layers = ctx.platform === 'win32' || env.HARNESS_SANDBOX === '1' ? [] : sessionLayers(ctx);
+    // No baseline denies before the HARNESS_SANDBOX shortcut: without it, a settings env's HARNESS_SANDBOX can't be ruled out.
+    const layers = ctx.platform === 'win32' ? [] : !ctx.state?.guardedBase ? null : env.HARNESS_SANDBOX === '1' ? [] : sessionLayers(ctx);
     const verdict = layers ? sandboxVerdict({ mode, unattended: ctx.unattended, platform: ctx.platform, env, layers }) : 'deny';
     if (verdict === 'deny') return { kind: 'deny', reason: MSG, check: 'sandbox-required' };
     if (verdict === 'unavailable' && !ctx.state?.sandboxUnavailableLogged) {

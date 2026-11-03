@@ -123,6 +123,13 @@ describe('the check', () => {
     expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny');
   });
 
+  test('without a session baseline, HARNESS_SANDBOX=1 still denies', async () => {
+    const { root, home, managed } = setup();
+    const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'ls' } };
+    const ctx = { input, root, home, managed, platform: 'darwin', env: { HARNESS_SANDBOX: '1' }, unattended: true, config: { sandbox: 'unattended' }, state: {}, save() {} } as unknown as Ctx;
+    expect(await sandboxRequired.run(ctx)).toEqual({ kind: 'deny', reason: MSG, check: 'sandbox-required' });
+  });
+
   test('without a session baseline it denies, whatever the files on disk say', async () => {
     const { root, home, managed } = setup();
     mkdirSync(join(home, '.claude'));

@@ -65,6 +65,7 @@ export function guardedView(text: string | null, deny: Set<string> | null): Guar
   const rules = (Array.isArray(s?.permissions?.deny) ? s.permissions.deny : []).filter((d: unknown) => typeof d === 'string' && (!deny || deny.has(d))).sort();
   // sandbox and env stay undefined when absent, so a file without them keeps the fingerprint it had before they counted.
   // env keeps each key with a hash of its value: the session state must not hold the secrets env often carries.
+  // ponytail: unsalted sha-256, so a low-entropy value (CI=false) can be guessed from .harness/state; salt it if that matters.
   const env = s?.env && typeof s.env === 'object' && !Array.isArray(s.env) ? Object.fromEntries(Object.entries(s.env).map(([k, v]) => [k, sha(JSON.stringify(v))])) : s?.env;
   return { hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null, sandbox: s?.sandbox, env };
 }

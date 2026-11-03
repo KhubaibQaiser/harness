@@ -315,3 +315,9 @@ test.each([`env -S "node -e require('fs').rmSync('node_modules')"`, `env --split
   'D1: %s is denied', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
 test(`D1: env -S naming .harness is denied`, () => expect(run('Bash', { command: `env --split-string="node -p require('fs').rmSync('.harness')"` }).reason).toBe(H_INLINE));
 test.each([`env -S "node -p 1+1"`, `env -S "FOO=1 node src/a.js"`])('D1: %s is allowed', (c) => expect(bash(c)).toBe('allow'));
+
+// Round 15 E1: -S at the end of a short-option cluster, spaced or attached.
+test.each([
+  `env -iS "node -e require('fs').rmSync('node_modules')"`, `env -vS "node -e require('fs').rmSync('node_modules')"`, `env -i -S "node -e require('fs').rmSync('node_modules')"`,
+  `env -iS"node -e require('fs').rmSync('node_modules')"`, `env -0vS 'node -p require("fs").rmSync("node_modules/x")'`,
+])('E1: %s is denied', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));

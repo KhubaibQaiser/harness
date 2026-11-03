@@ -113,9 +113,11 @@ export function cPayloads(cmd: string): string[] {
       if (name === 'env') {
         for (let j = i + 1; j < ws.length && ws[j].startsWith('-'); j++) {
           const w = unquote(ws[j]);
-          if (w === '-S' || w === '--split-string') { if (ws[j + 1] !== undefined) out.push(envSplit(unquote(ws[j + 1]))); break; }
+          // -S, also at the end of a short-option cluster (-iS, -vS), with the string as the next word or attached.
+          if (/^-[a-zA-Z0]*S$/.test(w) || w === '--split-string') { if (ws[j + 1] !== undefined) out.push(envSplit(unquote(ws[j + 1]))); break; }
           if (w.startsWith('--split-string=')) { out.push(envSplit(w.slice(15))); break; }
-          if (/^-S./.test(w)) { out.push(envSplit(w.slice(2))); break; }
+          const attached = /^-[a-zA-RT-Z0]*S(.+)$/.exec(w);
+          if (attached) { out.push(envSplit(attached[1])); break; }
         }
       }
       if (!SHELLS.has(name)) continue;

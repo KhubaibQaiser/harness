@@ -472,3 +472,5 @@ test.each([`echo 'harness tdd off' | bash`, "sh <<EOF\nharness tdd off\nEOF"])('
 test.each([`echo 'harness uninstall' | cat`, `echo 'harness status' | bash`])('N4: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 
 test.each([`env -S "harness uninstall --yes"`, `env --split-string='node ./my\\ dir/cli.mjs uninstall --yes'`])('D1: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));
+
+test.each([`env -iS "harness uninstall --yes"`, `env -vS 'harness uninstall --yes'`, `env -i -S "harness uninstall --yes"`, `env -iS"harness uninstall --yes"`])('E1: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));

@@ -60,6 +60,14 @@ test('checkCatalog cross-item checks', () => {
   expect(checkCatalog(cat(item('a', { requires: ['b'] }), item('b')))).toEqual([]);
 });
 
+test('checkCatalog rejects self-reference', () => {
+  expect(checkCatalog(cat(item('a', { requires: ['a'], conflicts_with: ['a'] })))).toEqual(['a: requires "a": an item cannot list itself', 'a: conflicts_with "a": an item cannot list itself']);
+});
+
+test('excluded ids must look like item ids', () => {
+  expect(loadCatalog(dir({ 'catalog.yaml': 'version: 1\n', 'excluded.yaml': '- { id: Bad_Id, reason: r }\n' })).errors).toEqual(['excluded.yaml[0]: id must be lowercase letters, digits and hyphens']);
+});
+
 test('conflictPairs is symmetric; requiresClosure is transitive', () => {
   const c = cat(item('a', { conflicts_with: ['b'] }), item('b'), item('c'));
   expect(conflictPairs(['a', 'b'], c)).toEqual([['a', 'b']]);

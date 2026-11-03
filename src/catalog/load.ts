@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import { packageDir } from '../core/package-dir.js';
-import { validateItem } from './schema.js';
+import { ID_RE, validateItem } from './schema.js';
 import type { Catalog, CatalogItem } from './schema.js';
 
 export type CompactItem = Pick<CatalogItem, 'id' | 'kind' | 'applies_when' | 'why' | 'cost' | 'stance' | 'stance_reason' | 'conflicts_with' | 'requires'>;
@@ -42,8 +42,9 @@ export function loadCatalog(dir = packageDir('catalog')): { catalog: Catalog; ex
   if (!Array.isArray(list)) errors.push('excluded.yaml: must be a list of { id, reason }');
   else list.forEach((e, i) => {
     if (typeof e?.id !== 'string' || typeof e?.reason !== 'string' || !e.reason.trim()) return void errors.push(`excluded.yaml[${i}]: must be { id, reason } with non-empty strings`);
-    if (excluded.some((x) => x.id === e.id)) errors.push(`duplicate excluded id "${e.id}"`);
-    else excluded.push({ id: e.id, reason: e.reason });
+    if (!ID_RE.test(e.id)) return void errors.push(`excluded.yaml[${i}]: id must be lowercase letters, digits and hyphens`);
+    if (excluded.some((x) => x.id === e.id)) return void errors.push(`duplicate excluded id "${e.id}"`);
+    excluded.push({ id: e.id, reason: e.reason });
     if (files.has(e.id)) errors.push(`"${e.id}" is in both items/ and excluded.yaml`);
   });
   let version = 1;
@@ -61,4 +62,4 @@ export function loadCatalog(dir = packageDir('catalog')): { catalog: Catalog; ex
 export const compactCatalog = (c: Catalog): CompactItem[] =>
   c.items
     .map(({ id, kind, applies_when, why, cost, stance, stance_reason, conflicts_with, requires }) => ({ id, kind, applies_when, why, cost, stance, stance_reason, conflicts_with, requires }))
-    .sort((a, b) => a.id.localeCompare(b.id));
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

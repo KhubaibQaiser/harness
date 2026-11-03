@@ -43,11 +43,14 @@ const LEVELS: Level[] = ['none', 'low', 'medium', 'high'];
 const STANCES: Stance[] = ['default', 'optional', 'discouraged'];
 const PROJECT_TYPES: ProjectType[] = ['web', 'landing', 'mobile', 'api', 'infra', 'library', 'other'];
 const CHECKS = Object.keys(defaults().checks);
+const SOURCE_TYPES = ['own', 'github', 'git-subdir', 'npm', 'remote'];
 const FIT: Record<string, string[]> = { plugin: ['github', 'git-subdir'], 'external-skill': ['github', 'git-subdir'], mcp: ['npm', 'remote'] };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 const strs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+const relPath = (p: unknown): boolean => str(p) && !p.includes('\\') && !p.startsWith('/') && !/(^|\/)\.\.(\/|$)/.test(p);
+export const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 
 export function validateItem(raw: unknown, file: string): { ok: true; item: CatalogItem } | { ok: false; errors: string[] } {
@@ -59,7 +62,7 @@ export function validateItem(raw: unknown, file: string): { ok: true; item: Cata
   if (!isObj(raw)) return { ok: false, errors: [`${file}: must be a YAML mapping`] };
   unknownKeys(raw, ['id', 'kind', 'title', 'source', 'license', 'min_claude_code', 'applies_when', 'conflicts_with', 'requires', 'cost', 'stance', 'stance_reason', 'side_effects', 'why', 'evidence', 'plugin_version', 'mcp'], '');
   for (const k of ['id', 'title', 'license', 'why']) if (!str(raw[k])) err(k, 'must be a non-empty string');
-  if (str(raw.id) && !/^[a-z0-9][a-z0-9-]*$/.test(raw.id)) err('id', 'must be lowercase letters, digits and hyphens');
+  if (str(raw.id) && !ID_RE.test(raw.id)) err('id', 'must be lowercase letters, digits and hyphens');
   if (!KINDS.includes(raw.kind as ItemKind)) err('kind', `must be one of ${KINDS.join(', ')}`);
   if (!str(raw.min_claude_code) || !SEMVER.test(raw.min_claude_code)) err('min_claude_code', 'must be a semver such as 2.1.0');
   if (!STANCES.includes(raw.stance as Stance)) err('stance', `must be one of ${STANCES.join(', ')}`);
@@ -92,11 +95,12 @@ export function validateItem(raw: unknown, file: string): { ok: true; item: Cata
   else sourceErrors(src, (p, m) => err(`source${p}`, m), (o, known) => unknownKeys(o, known, 'source'));
 
   const kind = raw.kind as string;
-  if (isObj(src) && KINDS.includes(kind as ItemKind)) {
+  if (isObj(src) && KINDS.includes(kind as ItemKind) && SOURCE_TYPES.includes(src.type as string)) {
     const ok = FIT[kind] ?? ['own'];
     if (!ok.includes(src.type as string)) err('source.type', `kind ${kind} takes source type ${ok.join(' or ')}`);
   }
   if (kind === 'mcp' && raw.mcp === undefined) err('mcp', 'required for kind mcp');
+  else if (raw.mcp !== undefined && kind !== 'mcp') err('mcp', 'only allowed for kind mcp');
   else if (raw.mcp !== undefined) {
     const m = raw.mcp;
     if (!isObj(m)) err('mcp', 'must be a mapping with name and config');
@@ -118,7 +122,10 @@ function sourceErrors(s: Record<string, unknown>, err: (path: string, msg: strin
     unknown(s, ['type', 'files', 'checks', 'merge']);
     if (s.files !== undefined) {
       if (!Array.isArray(s.files)) err('.files', 'must be a list of { from, to }');
-      else s.files.forEach((f, i) => (isObj(f) && str(f.from) && str(f.to) && Object.keys(f).length === 2) || err(`.files[${i}]`, 'must be { from, to } with non-empty strings'));
+      else s.files.forEach((f, i) => {
+        if (!isObj(f) || Object.keys(f).length !== 2) return err(`.files[${i}]`, 'must be { from, to }');
+        for (const k of ['from', 'to']) if (!relPath(f[k])) err(`.files[${i}].${k}`, 'must be a relative path with / separators and no ..');
+      });
     }
     if (s.checks !== undefined) {
       if (!strs(s.checks)) err('.checks', 'must be a list of check names');

@@ -45,3 +45,15 @@ test('kind and source must fit', () => {
   expect(mut((r) => ((r.kind = 'mcp'), (r.source = plugin), (r.mcp = { name: 'x', config: {} })))).toEqual([]);
   expect(mut((r) => ((r.kind = 'mcp'), (r.source = { type: 'remote', url: 'https://x.dev/mcp', unpinned: 'hosted service' }), (r.mcp = { name: 'x', config: {} })))).toEqual([]);
 });
+
+test('own files paths are repo-relative with forward slashes', () => {
+  for (const bad of ['../x', 'a/../b', '/etc/x', 'a\\b']) {
+    const e = mut((r) => ((r.kind = 'rule'), (r.source = { type: 'own', files: [{ from: bad, to: 'ok' }, { from: 'ok', to: bad }] })));
+    expect(e, bad).toEqual(['gsap-skills.yaml: source.files[0].from: must be a relative path with / separators and no ..', 'gsap-skills.yaml: source.files[1].to: must be a relative path with / separators and no ..']);
+  }
+});
+
+test('mcp key only on kind mcp; an invalid source type is reported once', () => {
+  expect(mut((r) => (r.mcp = { name: 'x', config: {} }))).toEqual(['gsap-skills.yaml: mcp: only allowed for kind mcp']);
+  expect(mut((r) => (r.source = { type: 'zip' }))).toEqual(['gsap-skills.yaml: source.type: must be one of own, github, git-subdir, npm, remote']);
+});

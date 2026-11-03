@@ -10,9 +10,8 @@ export class MergeError extends Error {
   constructor(message: string) { super(message); this.name = 'MergeError'; }
 }
 
-const templatesDir = packageDir('templates');
 const template = (name: string): string => {
-  const p = join(templatesDir, name);
+  const p = join(packageDir('templates'), name);
   if (!existsSync(p)) throw new MergeError(`template ${name} not found at ${p}`);
   return readFileSync(p, 'utf8');
 };

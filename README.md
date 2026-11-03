@@ -73,7 +73,7 @@ Where a gate is off for the repo's stack, `init` and `status` say so in plain wo
 
 - Node 22.11 or newer
 - git, and a git repo to install into
-- Claude Code 2.1.314 or newer. Older versions are untested with these hooks.
+- Claude Code 2.1.314 or newer. `doctor` fails below 2.1.314.
 - On Windows, CI runs the tests, but live Claude Code use is untested (see [Known limits](#known-limits)).
 
 ## Quick start
@@ -345,7 +345,7 @@ The multi-file gate never counts test files: JS/TS `*.test.*`, `*.spec.*` and `_
 - A flow-style `tdd: { results_dir: … }` isn't migrated by `update`; edit that one line by hand.
 - MDM, registry and server-managed settings aren't read by `sandbox-required`. Only `managed-settings.json` and the `managed-settings.d/` drop-ins are read.
 - A script that rewrites `.harness/state` can forge the CLI record. Protect covers file tools and named shell writes, and the sandbox denies it when unattended.
-- Settings changes made mid-session through the harness CLI apply only to `.claude/settings.json`.
+- Mid-session, only the harness CLI's own change to `.claude/settings.json` is let through. A change to the user or local settings, by anyone, applies from the next session.
 - TDD and coverage gates for JS/TS only. Other repos get every other gate.
 - No npm provenance while the repo is private.
 - Cloud Claude Code sessions don't load repo-enabled plugins. The committed hooks still run there, but `/harness:*` skills don't.

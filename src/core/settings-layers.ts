@@ -34,6 +34,9 @@ export function readManagedLayers(managed: string): Layer[] {
   return [...dropIns(dir).map((f): Layer => ({ name: 'managed', json: readJson(join(dir, f)) })), { name: 'managed', json: readJson(managed) }];
 }
 
+/** Claude Code's user settings file: `$CLAUDE_CONFIG_DIR/settings.json` when that is set. */
+export const userSettingsPath = (home: string, env: NodeJS.ProcessEnv): string => join(env.CLAUDE_CONFIG_DIR || join(home, '.claude'), 'settings.json');
+
 /** The value at `path` from the first layer that defines it. */
 export function effective(layers: Layer[], path: string[]): unknown {
   for (const l of layers) {

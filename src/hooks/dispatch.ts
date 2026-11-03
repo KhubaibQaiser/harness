@@ -172,7 +172,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     try {
       // ConfigChange's and sandbox-required's baseline (plan ruling 4): once per session, before any check runs, and
       // only when a check will compare against it.
-      if (!ctx.state.guardedBase && event !== 'ConfigChange' && checks.some((c) => c.events.includes('ConfigChange') || c.name === 'sandbox-required')) ctx.save({ ...ctx.state, guardedBase: guardedViews(root, ctx.home), guardedCli: readRepoSnapshot(root).cli?.id });
+      if (!ctx.state.guardedBase && event !== 'ConfigChange' && checks.some((c) => c.events.includes('ConfigChange') || c.name === 'sandbox-required')) ctx.save({ ...ctx.state, guardedBase: guardedViews(root, ctx.home, env), guardedCli: readRepoSnapshot(root).cli?.id });
       if (event === 'UserPromptSubmit' && ctx.state.pendingNotice) {
         pending = ctx.state.pendingNotice;
         ctx.save({ ...ctx.state, pendingNotice: undefined });

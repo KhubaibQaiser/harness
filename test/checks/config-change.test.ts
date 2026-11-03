@@ -75,6 +75,17 @@ test('disableAllHooks in the user file is blocked', async () => {
   expect(parsed(await change(r, 'user_settings')).reason).toContain('this change to `~/.claude/settings.json` (disableAllHooks)');
 });
 
+test('with CLAUDE_CONFIG_DIR set, disableAllHooks in that dir\'s settings is blocked', async () => {
+  const r = repo();
+  const cfg = mkdtempSync(join(tmpdir(), 'h-cc-cfg-'));
+  write(join(cfg, 'settings.json'), {});
+  const env = { CLAUDE_CONFIG_DIR: cfg };
+  const go = (input: Record<string, unknown>) => dispatch(JSON.stringify({ ...input, session_id: 's', cwd: r.root }), registry, env, { home: r.home });
+  await go({ hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+  write(join(cfg, 'settings.json'), { disableAllHooks: true });
+  expect(parsed(await go(FIXTURE.user_settings)).reason).toContain(`this change to \`${join(cfg, 'settings.json')}\` (disableAllHooks)`);
+});
+
 test('an "Always allow" click in the local file, and any other source, are allowed', async () => {
   const r = repo();
   await prompt(r);

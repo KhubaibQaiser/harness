@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { sandboxVerdict } from '../../src/checks/sandbox-required.js';
-import { effective, managedSettingsPath, readManagedLayers } from '../../src/core/settings-layers.js';
+import { effective, managedSettingsPath, readManagedLayers, userSettingsPath } from '../../src/core/settings-layers.js';
 
 const put = (f: string, text: string) => {
   mkdirSync(join(f, '..'), { recursive: true });
@@ -24,6 +24,11 @@ test('readManagedLayers gives null for non-JSON or missing files', () => {
   expect(readManagedLayers(managed)).toEqual([{ name: 'managed', json: null }]);
   put(managed, '{"a":1}');
   expect(readManagedLayers(managed)).toEqual([{ name: 'managed', json: { a: 1 } }]);
+});
+
+test('userSettingsPath honours CLAUDE_CONFIG_DIR', () => {
+  expect(userSettingsPath('/h', {})).toBe(join('/h', '.claude/settings.json'));
+  expect(userSettingsPath('/h', { CLAUDE_CONFIG_DIR: '/cfg' })).toBe(join('/cfg', 'settings.json'));
 });
 
 test('effective takes the first layer that defines the path, even a false one', () => {

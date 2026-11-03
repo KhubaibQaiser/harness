@@ -17,13 +17,13 @@ export const configChange: Check = {
   run(ctx) {
     const key = SOURCES[String(ctx.input.source)];
     if (!key) return { kind: 'allow' };
-    const rel = key === 'user' ? '~/.claude/settings.json' : GUARDED[key];
+    const rel = key !== 'user' ? GUARDED[key] : ctx.env.CLAUDE_CONFIG_DIR ? GUARDED.user(ctx.home, ctx.env) : '~/.claude/settings.json';
     const base = ctx.state?.guardedBase;
     const deny = harnessDenyRules(ctx.root);
     let text: string | null = null;
     let cur: GuardedView = null;
     try {
-      text = readGuarded(key === 'user' ? GUARDED.user(ctx.home) : join(ctx.root, rel));
+      text = readGuarded(key === 'user' ? GUARDED.user(ctx.home, ctx.env) : join(ctx.root, rel));
       cur = guardedView(text, deny);
     } catch {} // unreadable: cur stays null
     const parts = base ? guardedDiff(base[key] ?? null, cur) : ['no session baseline'];

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { retryTransient, writeAtomic } from './atomic.js';
+import { userSettingsPath } from './settings-layers.js';
 
 // Change detection, the backstop behind the path checks (owner decision 2026-11-03): when a route the path checks
 // don't parse changed one of harness's own files, the next prompt and Stop say so. A session compares against its
@@ -78,7 +79,7 @@ export function guardedDiff(base: GuardedView, cur: GuardedView): GuardedPart[] 
   return parts;
 }
 
-export const GUARDED = { user: (home: string) => join(home, '.claude/settings.json'), project: '.claude/settings.json', local: '.claude/settings.local.json' } as const;
+export const GUARDED = { user: userSettingsPath, project: '.claude/settings.json', local: '.claude/settings.local.json' } as const;
 /** The file's text, or null when it doesn't exist; any other read error throws. */
 export function readGuarded(path: string): string | null {
   try {
@@ -97,9 +98,9 @@ const viewOf = (path: string, deny: Set<string> | null): GuardedView => {
   }
 };
 /** The guarded views of the user, project and local settings: ConfigChange's session baseline. */
-export function guardedViews(root: string, home: string): Record<'user' | 'project' | 'local', GuardedView> {
+export function guardedViews(root: string, home: string, env: NodeJS.ProcessEnv): Record<'user' | 'project' | 'local', GuardedView> {
   const deny = harnessDenyRules(root);
-  return { user: viewOf(GUARDED.user(home), deny), project: viewOf(join(root, GUARDED.project), deny), local: viewOf(join(root, GUARDED.local), deny) };
+  return { user: viewOf(GUARDED.user(home, env), deny), project: viewOf(join(root, GUARDED.project), deny), local: viewOf(join(root, GUARDED.local), deny) };
 }
 
 export function settingsFingerprint(text: string, deny: Set<string> | null): string {

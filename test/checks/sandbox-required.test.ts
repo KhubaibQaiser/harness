@@ -108,6 +108,13 @@ describe('the check', () => {
     expect(JSON.parse(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)).hookSpecificOutput.permissionDecision).toBe('deny');
   });
 
+  test('the user layer is read from CLAUDE_CONFIG_DIR when it is set', async () => {
+    const { root, home, managed } = setup();
+    const cfg = mkdtempSync(join(tmpdir(), 'h-sb-cfg-'));
+    writeFileSync(join(cfg, 'settings.json'), JSON.stringify(CONFIRMED));
+    expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, { CLAUDE_CONFIG_DIR: cfg }, { home, managed, platform: 'darwin' })).toBe('');
+  });
+
   test('without a session baseline it denies, whatever the files on disk say', async () => {
     const { root, home, managed } = setup();
     mkdirSync(join(home, '.claude'));

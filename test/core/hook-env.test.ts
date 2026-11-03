@@ -18,4 +18,6 @@ test('readHookEnv returns null for a missing file and for non-JSON', () => {
   mkdirSync(join(r, '.harness/state'), { recursive: true });
   writeFileSync(join(r, HOOK_ENV_REL), 'nope{');
   expect(readHookEnv(r)).toBeNull();
+  writeFileSync(join(r, HOOK_ENV_REL), '{"node":"v1"}');
+  expect(readHookEnv(r)).toBeNull();
 });

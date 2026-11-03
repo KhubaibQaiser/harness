@@ -16,7 +16,7 @@ export function writeHookEnv(root: string, now: Date = new Date()): void {
 export function readHookEnv(root: string): HookEnv | null {
   try {
     const v = JSON.parse(readFileSync(join(root, HOOK_ENV_REL), 'utf8')) as HookEnv;
-    return v && typeof v === 'object' && typeof v.node === 'string' ? v : null;
+    return v && typeof v === 'object' && [v.ts, v.node, v.execPath, v.platform].every((x) => typeof x === 'string') ? v : null;
   } catch {
     return null;
   }

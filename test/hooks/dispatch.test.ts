@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -159,10 +159,15 @@ test('bundle exits 1 with empty stdout for empty and garbage stdin', () => {
     expect(r.stdout).toBe('');
   }
 });
-test('--self-test prints ok and the Node version without reading stdin', () => {
-  const r = spawnSync(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs'), '--self-test'], { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8', timeout: 5000 });
-  expect(r.stdout).toMatch(/^ok v\d+\.\d+\.\d+\n?$/);
-  expect(r.status).toBe(0);
+test('--self-test prints ok and the Node version without reading stdin', async () => {
+  // stdin stays open and is never written to or ended: a read of it would hang until the timeout kills the child
+  const c = spawn(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs'), '--self-test'], { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
+  let stdout = '';
+  c.stdout.on('data', (d) => (stdout += d));
+  const [code, signal] = await new Promise<[number | null, string | null]>((res) => c.on('close', (cd, sg) => res([cd, sg])));
+  expect(signal).toBeNull();
+  expect(code).toBe(0);
+  expect(stdout).toMatch(/^ok v\d+\.\d+\.\d+\n?$/);
 });
 
 const boom = async (): Promise<string> => { throw new Error('bad'); };

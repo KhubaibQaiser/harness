@@ -128,6 +128,9 @@ test('asks before deleting .harness and keeps logs on no', async () => {
   expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.harness/backup/');
   expect(r.out).toContain('Kept the `.harness/` lines in `.gitignore`');
   expect(git(root, 'status', '--porcelain', '--', '.harness/backup', '.harness/logs', '.harness/state')).toBe('');
+  // The dispatcher is a manifest file, so it goes even when .harness/ is kept: the restart advice still holds.
+  expect(existsSync(join(root, '.harness/hooks/dispatch.mjs'))).toBe(false);
+  expect(r.out.trimEnd().split('\n').at(-1)).toBe(RESTART);
 });
 
 test('never removes a non-empty parent directory', async () => {

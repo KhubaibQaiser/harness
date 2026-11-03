@@ -197,7 +197,7 @@ test('doctor flags tampering and a broken wiring, and update repairs both', () =
   const sp = join(root, '.claude/settings.json');
   const s = JSON.parse(readFileSync(sp, 'utf8'));
   for (const ev of Object.keys(s.hooks))
-    s.hooks[ev] = s.hooks[ev].filter((g: any) => !g.hooks.some((h: any) => h.command.includes(DISPATCH)));
+    s.hooks[ev] = s.hooks[ev].filter((g: any) => !JSON.stringify(g.hooks).includes(DISPATCH));
   writeFileSync(sp, JSON.stringify(s, null, 2) + '\n');
   const b = cli(root, 'doctor');
   expect(b.code).toBe(1);
@@ -215,17 +215,17 @@ test('doctor flags tampering and a broken wiring, and update repairs both', () =
   expect(c.code).toBe(0);
 });
 
-// Claude Code runs the settings command string through a shell (Git Bash on Windows), with CLAUDE_PROJECT_DIR set.
-test('the settings hook command runs through a shell from a repo path with a space and a non-ASCII letter', () => {
+// Claude Code runs the exec-form hook with no shell: `command` with `args`, CLAUDE_PROJECT_DIR substituted.
+test('the exec-form hook runs from a repo path with a space and ü', () => {
   const f = npmVitest();
   const root = repo(f);
   expect(root).toMatch(/ .*ü/);
   expect(init(root, f).code).toBe(0);
   const s = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'));
-  const command: string = s.hooks.PreToolUse[0].hooks[0].command;
-  expect(command).toContain('${CLAUDE_PROJECT_DIR}');
+  const { command, args }: { command: string; args: string[] } = s.hooks.PreToolUse[0].hooks[0];
+  expect(args[0]).toContain('${CLAUDE_PROJECT_DIR}');
   const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's1', cwd: root, tool_name: 'Write', tool_input: { file_path: join(root, '.claude/settings.json'), content: '{}' } });
-  const r = spawnSync(command, { cwd: root, encoding: 'utf8', env: { ...env, CLAUDE_PROJECT_DIR: root }, input, shell: process.platform === 'win32' ? 'bash' : '/bin/sh' });
+  const r = spawnSync(command, args.map((a) => a.replace('${CLAUDE_PROJECT_DIR}', root)), { cwd: root, encoding: 'utf8', env: { ...env, CLAUDE_PROJECT_DIR: root }, input });
   expect(r.stderr).toBe('');
   expect(r.status).toBe(0);
   expect(verdict(JSON.parse(r.stdout)).decision).toBe('deny'); // protect answered, so the dispatcher ran

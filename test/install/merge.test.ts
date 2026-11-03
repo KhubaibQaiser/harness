@@ -1,16 +1,20 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, test } from 'vitest';
+import { BETA_GROUPS, betaSettings } from './helpers.js';
 import { MergeError, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings, removeBlocks } from '../../src/install/merge.js';
 
 const fx = (p: string) => readFileSync(`test/fixtures/install-repo/${p}`, 'utf8');
-const DISPATCH = 'node "${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"';
+const ARGS = ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'];
+const PRE = 'Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit';
+const merge = (before: string | null, recorded?: string[]) => mergeSettings(before, { sandbox: 'unattended', recorded });
+const frag = JSON.parse(readFileSync('templates/settings.fragment.json', 'utf8'));
 const S = '<!-- harness:start -->';
 const E = '<!-- harness:end -->';
 
 describe('mergeSettings', () => {
   it('fixture: other tools hooks kept, dispatcher + deny added, rest kept', () => {
     const before = fx('.claude/settings.json');
-    const { after, blocks, notes } = mergeSettings(before);
+    const { after, blocks, notes } = merge(before);
     const s = JSON.parse(after);
     expect(after.endsWith('}\n')).toBe(true);
     expect(notes).toEqual([]);
@@ -21,69 +25,106 @@ describe('mergeSettings', () => {
     expect(s.permissions.deny).toContain('Edit(./.claude/settings.json)');
     expect(s.permissions.deny.filter((x: string) => x === 'Read(./.env)')).toHaveLength(1);
     expect(after).toContain('scripts/agent-hooks/guard.mjs');
-    expect(s.hooks.PreToolUse.map((g: any) => g.matcher)).toEqual(['Bash', 'Write', 'Bash|Read|Grep|Edit|Write|MultiEdit|NotebookEdit']);
+    expect(s.hooks.PreToolUse.map((g: any) => g.matcher)).toEqual(['Bash', 'Write', PRE]);
     expect(s.hooks.PostToolUse).toHaveLength(2);
     expect(s.hooks.Stop).toHaveLength(2);
-    expect(s.hooks.Stop[1].hooks[0].command).toBe(DISPATCH);
+    expect(s.hooks.Stop[1].hooks[0].args).toEqual(ARGS);
     expect(s.hooks.SessionEnd).toHaveLength(1);
-    // blocks: 5 hook groups + deny rules not already present (7 of 8)
+    // blocks: 6 hook groups + deny rules not already present (29 of 30)
     const parsed = blocks.map((b) => JSON.parse(b));
-    expect(parsed.filter((b) => b.event)).toHaveLength(5);
-    expect(parsed.filter((b) => b.deny)).toHaveLength(7);
-    expect(parsed.find((b) => b.event === 'Stop').group.hooks[0].command).toBe(DISPATCH);
+    expect(parsed.filter((b) => b.event)).toHaveLength(6);
+    expect(parsed.filter((b) => b.deny)).toHaveLength(29);
+    expect(parsed.find((b) => b.event === 'Stop').group.hooks[0].args).toEqual(ARGS);
   });
 
   it('null input creates a settings file', () => {
-    const { after } = mergeSettings(null);
+    const { after } = merge(null);
     expect(JSON.parse(after).hooks.Stop).toHaveLength(1);
     expect(after.endsWith('}\n')).toBe(true);
   });
 
   it('second run: unchanged, no blocks', () => {
-    const first = mergeSettings(fx('.claude/settings.json')).after;
-    const again = mergeSettings(first);
+    const first = merge(fx('.claude/settings.json')).after;
+    const again = merge(first);
     expect(again.after).toBe(first);
     expect(again.blocks).toEqual([]);
   });
 
-  it('hook command quotes a project dir with spaces', () => {
-    const cmd = JSON.parse(mergeSettings(null).after).hooks.Stop[0].hooks[0].command as string;
-    expect(cmd).toBe(DISPATCH);
-    expect(cmd).toContain('"${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"');
-    expect(cmd).not.toContain('\\');
+  it('a fresh file gets 6 group blocks and 30 deny blocks, nothing dropped', () => {
+    const { after, blocks, dropped } = merge(null);
+    const parsed = blocks.map((b) => JSON.parse(b));
+    expect(parsed.filter((b) => b.event)).toHaveLength(6);
+    expect(parsed.filter((b) => b.deny)).toHaveLength(30);
+    expect(dropped).toEqual([]);
+    expect(JSON.parse(after).hooks.Stop[0].hooks[0]).toEqual({ type: 'command', command: 'node', args: ARGS, timeout: 600 });
+  });
+
+  it('a foreign node exec hook survives init, update and uninstall', () => {
+    const foreign = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node', args: ['tools/lint-hook.mjs'] }] };
+    const { after, blocks } = merge(JSON.stringify({ hooks: { PreToolUse: [foreign] } }));
+    const s = JSON.parse(after);
+    expect(s.hooks.PreToolUse).toEqual([foreign, frag.hooks.PreToolUse[0]]);
+    expect(blocks).toContain(JSON.stringify({ event: 'PreToolUse', group: frag.hooks.PreToolUse[0] }));
+  });
+
+  it('beta groups are replaced in place', () => {
+    const user = { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo mine' }] };
+    const beta = betaSettings({ hooks: { PreToolUse: [user] } });
+    const { after, blocks, dropped, notes } = merge(JSON.stringify(beta.s, null, 2) + '\n', beta.blocks);
+    const s = JSON.parse(after);
+    expect(notes).toEqual([]);
+    expect(s.hooks.PreToolUse).toEqual([user, frag.hooks.PreToolUse[0]]);
+    for (const ev of Object.keys(frag.hooks)) expect(s.hooks[ev].at(-1)).toEqual(frag.hooks[ev][0]);
+    for (const ev of ['PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd']) expect(s.hooks[ev]).toHaveLength(1);
+    expect(dropped).toEqual(Object.entries(BETA_GROUPS).map(([event, group]) => JSON.stringify({ event, group })));
+    const parsed = blocks.map((b) => JSON.parse(b));
+    expect(parsed.filter((b) => b.event).map((b) => b.event)).toEqual(Object.keys(frag.hooks));
+    expect(parsed.filter((b) => b.deny)).toHaveLength(22);
+    expect(merge(after, [...beta.blocks.filter((b) => !dropped.includes(b)), ...blocks])).toMatchObject({ after, blocks: [], dropped: [] });
+  });
+
+  it('an edited harness group is left with a note', () => {
+    const beta = betaSettings({});
+    beta.s.hooks.Stop[0] = { hooks: [{ ...beta.s.hooks.Stop[0].hooks[0], timeout: 300 }] };
+    const { after, blocks, dropped, notes } = merge(JSON.stringify(beta.s), beta.blocks);
+    const s = JSON.parse(after);
+    expect(s.hooks.Stop).toEqual([beta.s.hooks.Stop[0]]);
+    expect(notes).toEqual(['.claude/settings.json: hooks.Stop[0] is a harness hook you edited; left as is. harness doctor checks it.']);
+    expect(blocks.map((b) => JSON.parse(b).event)).not.toContain('Stop');
+    expect(dropped).toHaveLength(4);
   });
 
   it('null hook entry noted, not crashed', () => {
     const before = JSON.stringify({ hooks: { Stop: [null, { hooks: [null, { type: 'command', command: 'echo x' }] }, { matcher: 'x', hooks: 'bad' }] } });
-    const { after, notes } = mergeSettings(before);
+    const { after, notes } = merge(before);
     const s = JSON.parse(after);
     expect(notes.length).toBeGreaterThanOrEqual(3);
     expect(notes.join('\n')).toMatch(/Stop/);
     expect(s.hooks.Stop.slice(0, 3)).toEqual(JSON.parse(before).hooks.Stop);
-    expect(s.hooks.Stop[3].hooks[0].command).toBe(DISPATCH);
+    expect(s.hooks.Stop[3].hooks[0].args).toEqual(ARGS);
   });
 
   it('CRLF settings stay CRLF', () => {
     const before = '{\r\n  "model": "x"\r\n}\r\n';
-    const { after } = mergeSettings(before);
+    const { after } = merge(before);
     expect(after).toMatch(/\r\n/);
     expect(after.replace(/\r\n/g, '')).not.toMatch(/[\r\n]/);
     expect(after.endsWith('}\r\n')).toBe(true);
   });
 
   it('tab-indented settings stay tab-indented', () => {
-    const { after } = mergeSettings('{\n\t"model": "x"\n}\n');
+    const { after } = merge('{\n\t"model": "x"\n}\n');
     expect(after).toMatch(/^\t"model": "x",$/m);
     expect(after).not.toMatch(/^ +"/m);
   });
 
   it('no trailing newline stays none', () => {
-    expect(mergeSettings('{"model":"x"}').after.endsWith('}')).toBe(true);
+    expect(merge('{"model":"x"}').after.endsWith('}')).toBe(true);
   });
 
   it('non-array hook event: noted, left untouched, others still added', () => {
     const before = '{"hooks":{"Stop":{"a":1}}}';
-    const { after, notes } = mergeSettings(before);
+    const { after, notes } = merge(before);
     const s = JSON.parse(after);
     expect(s.hooks.Stop).toEqual({ a: 1 });
     expect(notes.join('\n')).toMatch(/hooks\.Stop is not an array/);
@@ -91,8 +132,8 @@ describe('mergeSettings', () => {
   });
 
   it('invalid JSON: MergeError naming the file', () => {
-    expect(() => mergeSettings('{ nope')).toThrow(MergeError);
-    expect(() => mergeSettings('{ nope')).toThrow(/settings\.json/);
+    expect(() => merge('{ nope')).toThrow(MergeError);
+    expect(() => merge('{ nope')).toThrow(/settings\.json/);
   });
 
   test.each([
@@ -101,8 +142,8 @@ describe('mergeSettings', () => {
     ['deny not array', '{"permissions":{"deny":"x"}}', /deny/],
     ['permissions not object', '{"permissions":[]}', /permissions/],
   ])('settings %s: clear MergeError', (_n, json, re) => {
-    expect(() => mergeSettings(json)).toThrow(MergeError);
-    expect(() => mergeSettings(json)).toThrow(re);
+    expect(() => merge(json)).toThrow(MergeError);
+    expect(() => merge(json)).toThrow(re);
   });
 });
 

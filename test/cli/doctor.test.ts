@@ -45,6 +45,7 @@ test('healthy install: all ok, exit 0', async () => {
   expect(r.out).not.toMatch(/^fix /m);
   expect(r.lines.every((l) => l.startsWith('ok ') || l.startsWith('note '))).toBe(true);
   expect(r.lines.length).toBeGreaterThanOrEqual(7);
+  expect(r.out).toMatch(/^ok settings run the dispatcher for all 6 hook events$/m);
   expect(r.code).toBe(0);
 });
 
@@ -78,9 +79,11 @@ test('bad config and unwired event named', async () => {
   const sp = join(root, '.claude/settings.json');
   const s = JSON.parse(readFileSync(sp, 'utf8'));
   delete s.hooks.Stop;
+  delete s.hooks.ConfigChange;
   writeFileSync(sp, JSON.stringify(s));
   const r = run(root, { path: bin('npm') });
   expect(r.out).toMatch(/^fix .*Stop/m);
+  expect(r.out).toMatch(/^fix .*ConfigChange/m);
   expect(r.out).toMatch(/^fix .*bogus/m);
 });
 

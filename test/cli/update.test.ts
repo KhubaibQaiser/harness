@@ -568,7 +568,7 @@ const betaInstall = (root: string, pre: object) => {
 const SETTINGS = '.claude/settings.json';
 const settingsBlocks = (root: string) => readManifest(root)!.files.find((f) => f.rel === SETTINGS)!.blocks!;
 
-test('update replaces the beta hook groups and uninstall is byte-identical', async () => {
+test('update replaces the beta hook groups, and uninstall removes the settings file init created', async () => {
   const root = await installed();
   const fresh = settingsBlocks(root);
   const beta = betaInstall(root, {});
@@ -600,7 +600,7 @@ test('a foreign node exec hook survives init, update and uninstall', async () =>
   const u = await un(root);
   expect(u.code).toBe(0);
   expect(u.out).not.toContain('was not found');
-  expect(JSON.parse(readFileSync(join(root, SETTINGS), 'utf8'))).toEqual({ ...JSON.parse(pre), model: 'x' });
+  expect(readFileSync(join(root, SETTINGS), 'utf8')).toBe(JSON.stringify({ ...JSON.parse(pre), model: 'x' }, null, 2) + '\n'); // exact bytes
 });
 
 test('existing settings: init, beta rewrite, update and uninstall restore the pre-init bytes exactly', async () => {

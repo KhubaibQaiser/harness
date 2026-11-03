@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { writeAtomic } from './atomic.js';
 import { join } from 'node:path';
 
 // .harness/state/tdd-pause.json: { createdAt: ISO string, session?: string }
@@ -22,9 +23,7 @@ export function isPaused(root: string, session: string): boolean {
 
 function writePause(root: string, v: { createdAt: string; session?: string }): void {
   mkdirSync(join(root, '.harness/state'), { recursive: true });
-  const tmp = `${pauseFile(root)}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(v));
-  renameSync(tmp, pauseFile(root));
+  writeAtomic(pauseFile(root), JSON.stringify(v));
 }
 
 // Returns false (and keeps the file) when a pause already exists.

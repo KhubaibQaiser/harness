@@ -26,7 +26,7 @@ export function changedLines(diffText: string): Map<string, Set<number>> {
   const out = new Map<string, Set<number>>();
   let file: string | null = null;
   let inHunk = false; // header lines (`+++ `) only count before a file's first hunk; `+++ i;` can be added content
-  for (const l of diffText.split('\n')) {
+  for (const l of diffText.split(/\r?\n/)) {
     if (l.startsWith('diff --git ')) file = null, inHunk = false;
     else if (!inHunk && l.startsWith('+++ ')) {
       const p = l.slice(4).split('\t')[0].replace(/^"|"$/g, ''); // git may append a tab (+ timestamp) to paths with spaces
@@ -94,16 +94,16 @@ function coverageFiles(root: string, globs: string[], since: number): { fresh: s
 const ok = (r: { status: number | null; timedOut: boolean }) => r.status === 0 && !r.timedOut;
 
 // `since` (epoch seconds) is when the stop gate's steps began; older coverage output is stale and ignored.
-export function diffCoverage(root: string, cfg: HarnessConfig, exec: Exec, opts: { baseHead?: string; since: number }): DiffCoverage {
+export async function diffCoverage(root: string, cfg: HarnessConfig, exec: Exec, opts: { baseHead?: string; since: number }): Promise<DiffCoverage> {
   const result = (problem: DiffCoverage['problem']): DiffCoverage => ({ pct: 100, total: 0, covered: 0, uncovered: [], problem });
-  const mb = exec('git', ['merge-base', 'HEAD', cfg.stop.base_ref], GIT_MS);
+  const mb = await exec('git', ['merge-base', 'HEAD', cfg.stop.base_ref], GIT_MS);
   const base = (ok(mb) ? mb.output.split('\n')[0].trim() : '') || opts.baseHead; // output also carries stderr
   if (!base) return result('no-base');
-  const d = exec('git', ['-c', 'core.quotePath=false', 'diff', '--relative', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', base], GIT_MS);
+  const d = await exec('git', ['-c', 'core.quotePath=false', 'diff', '--relative', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', base], GIT_MS);
   const why = (r: { status: number | null; output: string; timedOut: boolean }) => (r.timedOut ? 'timed out' : (r.output.split('\n').find((x) => x.trim()) ?? `exit ${r.status}`).trim().slice(0, 100));
   if (!ok(d)) return { ...result('diff-failed'), detail: why(d) };
   const changed = changedLines(d.output);
-  const un = exec('git', ['-c', 'core.quotePath=false', 'ls-files', '-z', '--others', '--exclude-standard'], GIT_MS);
+  const un = await exec('git', ['-c', 'core.quotePath=false', 'ls-files', '-z', '--others', '--exclude-standard'], GIT_MS);
   if (!ok(un)) return { ...result('diff-failed'), detail: `untracked files: ${why(un)}` };
   for (const f of un.output.split('\0').filter((x) => x.trim())) {
     try {
@@ -115,8 +115,8 @@ export function diffCoverage(root: string, cfg: HarnessConfig, exec: Exec, opts:
       // unreadable or vanished: nothing to count
     }
   }
-  const { paths, exempt } = cfg.tdd;
-  const scoped = [...changed].filter(([f]) => toRepoPath(root, f) && matches(f, paths) && !matches(f, exempt) && !isTestFile(f));
+  const { paths, exempt, coverage_skip } = cfg.tdd;
+  const scoped = [...changed].filter(([f]) => toRepoPath(root, f) && matches(f, paths) && !matches(f, exempt) && !matches(f, coverage_skip) && !isTestFile(f));
   if (scoped.length === 0) return result(undefined);
 
   const reports = new Map<string, FileLines>();

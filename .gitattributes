@@ -1,0 +1,2 @@
+# LF everywhere, so tests comparing shipped files byte for byte pass on a Windows checkout.
+* text=auto eol=lf

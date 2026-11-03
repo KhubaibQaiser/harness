@@ -2,12 +2,21 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import picomatch from 'picomatch';
 
+// Native realpath gives what git reports: true case (macOS, Windows) and long names for 8.3 short ones (C:\Users\RUNNER~1).
+const real = (p: string): string => {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return realpathSync(p); // some Windows volumes reject the native call
+  }
+};
+
 // Realpath of the deepest existing ancestor, with the not-yet-existing remainder re-appended (new files don't exist yet).
 function realish(p: string): string {
   const rest: string[] = [];
   for (let cur = resolve(p); ; cur = dirname(cur)) {
     try {
-      return join(realpathSync(cur), ...rest.reverse());
+      return join(real(cur), ...rest.reverse());
     } catch {
       if (dirname(cur) === cur) return resolve(p);
       rest.push(basename(cur));
@@ -28,5 +37,8 @@ export function toRepoPath(root: string, p: string): string | null {
 export const matches = (rel: string, globs: string[]): boolean => globs.length > 0 && picomatch(globs, { dot: true })(rel);
 
 export const isTestFile = (rel: string): boolean => /\.(test|spec)\.[^/]+$/.test(rel) || /(^|\/)__tests__\//.test(rel);
+
+/** JS/TS tests (isTestFile) plus Python tests: test_*.py, *_test.py, conftest.py, any .py under a tests/ dir. */
+export const isAnyTestFile = (rel: string): boolean => isTestFile(rel) || /(^|\/)(test_[^/]*|[^/]*_test|conftest)\.py$/.test(rel) || /(^|\/)tests\/(.*\/)?[^/]*\.py$/.test(rel);
 
 export const pairKey = (rel: string): string => rel.replace(/(^|\/)__tests__\//, '$1').replace(/\.(test|spec)(\.[^./]+)$/, '$2');

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -40,4 +40,16 @@ test('toRepoPath resolves symlinks in root and target', () => {
   expect(toRepoPath(link, join(link, 'src/new/deeper/b.ts'))).toBe('src/new/deeper/b.ts'); // not yet existing
   symlinkSync(tmpdir(), join(real, 'repo/out'));
   expect(toRepoPath(join(real, 'repo'), join(real, 'repo/out/x.ts'))).toBeNull(); // in-repo symlink pointing outside
+});
+
+// git reports the canonical root (true case, Windows long names); the file path may come in another spelling
+// (a lowercased path on macOS, an 8.3 short name like C:\Users\RUNNER~1 from %TEMP% on Windows).
+const tmpRoot = mkdtempSync(join(tmpdir(), 'h-Case-'));
+const canonical = realpathSync.native(tmpRoot);
+test('toRepoPath maps a tmpdir-spelled path under the canonical (git) root', () => {
+  expect(toRepoPath(canonical, join(tmpRoot, 'src/a.ts'))).toBe('src/a.ts');
+});
+test.skipIf(!existsSync(canonical.toLowerCase()))('toRepoPath maps a path in another case on a case-insensitive file system', () => {
+  mkdirSync(join(canonical, 'Src'));
+  expect(toRepoPath(canonical, join(canonical.toLowerCase(), 'src/a.ts'))).toBe('Src/a.ts');
 });

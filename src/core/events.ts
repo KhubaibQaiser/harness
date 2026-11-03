@@ -8,6 +8,8 @@ export interface HarnessEvent {
   decision: string;
   reason?: string;
   files?: string[];
+  co?: true; // denied alongside an earlier deny on the same call
+  of?: string; // reason-found-late: the ts of the allow-log event it completes
 }
 
 const file = (root: string) => join(root, '.harness/logs/events.jsonl');
@@ -28,4 +30,14 @@ export function readEvents(root: string): HarnessEvent[] {
     }
   }
   return out;
+}
+
+/** The last time change detection saw harness's own files change during a session, if ever. */
+export function lastHarnessFilesChange(root: string): { ts: string; files: string[] } | null {
+  try {
+    const e = readEvents(root).filter((x) => x.decision === 'harness-files-changed').pop();
+    return e ? { ts: e.ts, files: (e.reason ?? '').split(', ').filter(Boolean) } : null;
+  } catch {
+    return null;
+  }
 }

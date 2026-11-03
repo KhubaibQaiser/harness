@@ -1,18 +1,24 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { retryTransient } from './atomic.js';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 
+export type StopStep = string | { name: string; run: string[] };
+export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun' | 'none';
+
 export interface HarnessConfig {
+  version: 1;
   checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop', boolean>;
-  tdd: { paths: string[]; exempt: string[]; diff_coverage: number; test_lock: boolean; results_dir: string };
+  tdd: { paths: string[]; exempt: string[]; diff_coverage: number; coverage_skip: string[]; test_lock: boolean; results_dir: string };
   multi_file_gate: { generated: string[] };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
-  stop: { steps: string[]; package_manager: string; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
+  stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
 }
 
-const defaults = (): HarnessConfig => ({
+export const defaults = (): HarnessConfig => ({
+  version: 1,
   checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true },
-  tdd: { paths: [], exempt: [], diff_coverage: 80, test_lock: true, results_dir: '.harness/state/test-results' },
+  tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: '.harness/state/test-results' },
   multi_file_gate: { generated: [] },
   unattended: { multi_file_gate: 'block', require_reason: false },
   stop: {
@@ -26,42 +32,126 @@ const defaults = (): HarnessConfig => ({
 });
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const GATE = ['block', 'allow-log', 'off'];
+const isStrs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
-// Overlay `user` onto `base` in place, keeping the default (plus a warning) for unknown or mistyped keys.
-function merge(base: Record<string, unknown>, user: Record<string, unknown>, path: string, warnings: string[]): void {
+// The one table of key rules, shared by loadConfig (lenient) and validateConfig (strict).
+// Keys not listed here are checked by the type of their default. Each rule returns the "must be ..." text, or null if v is fine.
+type Fail = string | { at: string; msg: string }; // `at` is a path suffix such as [1].run
+type Rule = (v: unknown) => Fail | null;
+const num = (min: number, max: number, int: boolean): Rule => (v) =>
+  typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max && (!int || Number.isInteger(v)) ? null : `must be ${int ? 'an integer' : 'a number'} from ${min} to ${max}`;
+const oneOf = (...vals: string[]): Rule => (v) => (vals.includes(v as string) ? null : `must be one of ${vals.join(', ')}`);
+const stepError = (x: unknown, i: number): Fail | null => {
+  if (typeof x === 'string') return null;
+  if (!isObj(x)) return { at: `[${i}]`, msg: 'must be a script name or a { name, run } object' };
+  const extra = Object.keys(x).find((k) => k !== 'name' && k !== 'run'); // Task 4 runs these, so no env/cwd/shell
+  if (extra !== undefined) return { at: `[${i}]`, msg: `unknown key "${extra}"` };
+  if (typeof x.name !== 'string' || x.name === '') return { at: `[${i}].name`, msg: 'must be a non-empty string' };
+  if (!isStrs(x.run) || x.run.length === 0) return { at: `[${i}].run`, msg: 'must be a non-empty array of strings' };
+  return null;
+};
+const stepsRule: Rule = (v) => {
+  if (!Array.isArray(v)) return 'must be a list of script names or { name, run } objects';
+  for (let i = 0; i < v.length; i++) {
+    const e = stepError(v[i], i);
+    if (e) return e;
+  }
+  return null;
+};
+const RULES: Record<string, Rule> = {
+  version: (v) => (v === 1 ? null : 'must be 1'),
+  'stop.max_attempts': num(1, 10, true),
+  'stop.timeout_s': num(30, 550, true), // 550 fits the 600 s Stop hook timeout
+  'tdd.diff_coverage': num(0, 100, false),
+  'unattended.multi_file_gate': oneOf('block', 'allow-log', 'off'),
+  'stop.package_manager': oneOf('npm', 'pnpm', 'yarn', 'bun', 'none'),
+  'stop.steps': stepsRule,
+};
+
+function problem(p: string, v: unknown, d: unknown): Fail | null {
+  const rule = RULES[p];
+  if (rule) return rule(v);
+  if (Array.isArray(d)) return isStrs(v) ? null : 'must be a list of strings';
+  return typeof v === typeof d ? null : `must be ${typeof d === 'boolean' ? 'a boolean' : typeof d === 'number' ? 'a number' : 'a string'}`;
+}
+
+export type Issue = { path: string; kind: 'unknown' | 'mapping' | 'invalid'; detail?: string };
+
+// Overlay `user` onto `base` in place; unknown, mistyped or out-of-range keys keep the default and are reported.
+export function overlay(base: Record<string, unknown>, user: Record<string, unknown>, path: string, issues: Issue[]): void {
   for (const [k, v] of Object.entries(user)) {
     const p = path ? `${path}.${k}` : k;
-    const d = base[k];
-    if (d === undefined) warnings.push(`config: unknown key "${p}" ignored`);
+    const d = Object.hasOwn(base, k) ? base[k] : undefined; // own keys only: no __proto__/constructor lookups
+    if (d === undefined) issues.push({ path: p, kind: 'unknown' });
     else if (isObj(d)) {
-      if (isObj(v)) merge(d, v, p, warnings);
-      else warnings.push(`config: "${p}" must be a mapping; using default`);
-    } else if (Array.isArray(d) ? Array.isArray(v) && v.every((x) => typeof x === 'string') : typeof v === typeof d && (p !== 'unattended.multi_file_gate' || GATE.includes(v as string))) {
-      base[k] = v;
-    } else warnings.push(`config: "${p}" has an invalid value; using default`);
+      if (isObj(v)) overlay(d, v, p, issues);
+      else issues.push({ path: p, kind: 'mapping' });
+    } else {
+      const bad = problem(p, v, d);
+      if (bad) issues.push({ path: typeof bad === 'string' ? p : p + bad.at, kind: 'invalid', detail: typeof bad === 'string' ? bad : bad.msg });
+      else base[k] = v;
+    }
   }
 }
 
-export function loadConfig(root: string): { config: HarnessConfig; warnings: string[] } {
+/**
+ * `errors` lists what makes the file invalid (bad YAML, a non-mapping, an unknown, mistyped or out-of-range key); each
+ * is also in `warnings`. The hooks fail closed on them. A missing file is only a warning: harness is not installed.
+ */
+export function loadConfig(root: string, read: (p: string, e: 'utf8') => string = readFileSync): { config: HarnessConfig; warnings: string[]; errors: string[] } {
   const config = defaults();
   const file = join(root, '.harness/config.yaml');
-  if (!existsSync(file)) return { config, warnings: ['config.yaml not found at .harness/config.yaml; using defaults (tdd and multiFile checks are off)'] };
+  if (!existsSync(file)) return { config, warnings: ['config.yaml not found at .harness/config.yaml; using defaults (tdd and multiFile checks are off)'], errors: [] };
   const warnings: string[] = [];
+  const errors: string[] = [];
+  const fail = (warning: string, error: string) => (warnings.push(warning), errors.push(error));
   let user: unknown;
+  let text: string;
   try {
-    user = parse(readFileSync(file, 'utf8'));
+    text = retryTransient(() => read(file, 'utf8'));
   } catch (e) {
-    return { config, warnings: [`config.yaml is invalid YAML; using defaults (${(e as Error).message.split('\n')[0]})`] };
+    // A read error is not a bad config: say what happened (still fail closed: the gates can't know the settings).
+    const why = (e as Error).message.split('\n')[0];
+    fail(`config.yaml could not be read; using defaults (${why})`, `it could not be read (${why}); try again`);
+    return { config, warnings, errors };
   }
-  if (user == null) return { config, warnings };
-  if (!isObj(user)) return { config, warnings: ['config.yaml is invalid: top level must be a mapping; using defaults'] };
-  merge(config as unknown as Record<string, unknown>, user, '', warnings);
-  if (config.stop.timeout_s > 550) {
-    config.stop.timeout_s = 550;
-    warnings.push('stop.timeout_s capped at 550 to fit the 600 s Stop hook timeout');
+  try {
+    user = parse(text);
+  } catch (e) {
+    const why = (e as Error).message.split('\n')[0];
+    fail(`config.yaml is invalid YAML; using defaults (${why})`, `it is not valid YAML (${why})`);
+    return { config, warnings, errors };
+  }
+  if (user == null) return { config, warnings, errors };
+  if (!isObj(user)) {
+    fail('config.yaml is invalid: top level must be a mapping; using defaults', 'its top level must be a mapping of keys');
+    return { config, warnings, errors };
+  }
+  const issues: Issue[] = [];
+  overlay(config as unknown as Record<string, unknown>, user, '', issues);
+  for (const { path: p, kind, detail } of issues) {
+    if (kind === 'unknown') fail(`config: unknown key "${p}" ignored`, `unknown key "${p}"`);
+    else if (kind === 'mapping') fail(`config: "${p}" must be a mapping; using default`, `"${p}" must be a mapping`);
+    else fail(`config: "${p}" has an invalid value (${detail}); using default`, `"${p}" ${detail}`);
   }
   const rel = relative(join(root, '.harness/state'), resolve(root, config.tdd.results_dir));
   if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) warnings.push('tdd.results_dir is outside .harness/state; the agent could forge test results there');
-  return { config, warnings };
+  return { config, warnings, errors };
+}
+
+// For the README generator: every leaf key with its default and the "must be ..." text of its rule (null when only the default's type applies).
+export function configReference(): { key: string; default: unknown; rule: string | null }[] {
+  const rows: { key: string; default: unknown; rule: string | null }[] = [];
+  const walk = (o: Record<string, unknown>, path: string) => {
+    for (const [k, v] of Object.entries(o)) {
+      const p = path ? `${path}.${k}` : k;
+      if (isObj(v)) walk(v, p);
+      else {
+        const bad = RULES[p]?.(undefined) ?? null; // undefined is never valid, so a rule answers with its message
+        rows.push({ key: p, default: v, rule: bad === null ? null : typeof bad === 'string' ? bad : bad.msg });
+      }
+    }
+  };
+  walk(defaults() as unknown as Record<string, unknown>, '');
+  return rows;
 }

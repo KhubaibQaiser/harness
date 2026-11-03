@@ -31,7 +31,7 @@ const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
   nice: new Set(['-n', '--adjustment']),
-  env: new Set(['-u', '--unset', '-C', '--chdir']),
+  env: new Set(['-u', '--unset', '-C', '--chdir', '-a', '--argv0']),
   sudo: new Set(['-u', '--user', '-g', '--group', '-C', '-D', '-h', '-p', '-r', '-t', '-U']),
   xargs: new Set(['-I', '-n', '-P', '-L', '-s', '-d', '-E', '-a']),
   stdbuf: new Set(['-i', '-o', '-e']),

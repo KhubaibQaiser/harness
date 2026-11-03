@@ -321,3 +321,18 @@ test.each([
   `env -iS "node -e require('fs').rmSync('node_modules')"`, `env -vS "node -e require('fs').rmSync('node_modules')"`, `env -i -S "node -e require('fs').rmSync('node_modules')"`,
   `env -iS"node -e require('fs').rmSync('node_modules')"`, `env -0vS 'node -p require("fs").rmSync("node_modules/x")'`,
 ])('E1: %s is denied', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
+
+// Round 16 F1: env options that take the next word as their value don't end the scan before -S.
+test.each([
+  `env -u FOO -S "node -e require('fs').rmSync('node_modules')"`, `env --unset FOO -S "node -e require('fs').rmSync('node_modules')"`,
+  `env -C . -S "node -e require('fs').rmSync('node_modules')"`, `env --chdir . -S "node -e require('fs').rmSync('node_modules')"`,
+  `env -a x -S "node -e require('fs').rmSync('node_modules')"`, `env --argv0 x -S "node -e require('fs').rmSync('node_modules')"`,
+  `env -iu FOO -S "node -e require('fs').rmSync('node_modules')"`, `env -i -u A -u B -C . -vS "node -e require('fs').rmSync('node_modules')"`,
+])('F1: %s is denied', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));
+test('F1: denied attended and unattended (through the dispatcher)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-pr-f1-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  protect: true\n');
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: `env -u FOO -S "node -e require('fs').rmSync('node_modules')"` } });
+  for (const env of [{}, { CI: 'true' }]) expect(JSON.parse(await dispatch(raw, registry, env)).hookSpecificOutput.permissionDecision).toBe('deny');
+});

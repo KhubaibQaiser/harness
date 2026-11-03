@@ -113,6 +113,9 @@ export function cPayloads(cmd: string): string[] {
       if (name === 'env') {
         for (let j = i + 1; j < ws.length && ws[j].startsWith('-'); j++) {
           const w = unquote(ws[j]);
+          // GNU env's options whose value is the next word: -u/--unset NAME, -C/--chdir DIR, -a/--argv0 ARG (also at
+          // the end of a cluster, -iu NAME). The signal options take their value attached (--block-signal=SIG).
+          if (/^-[a-zA-Z0]*[uCa]$/.test(w) || ['--unset', '--chdir', '--argv0'].includes(w)) { j++; continue; }
           // -S, also at the end of a short-option cluster (-iS, -vS), with the string as the next word or attached.
           if (/^-[a-zA-Z0]*S$/.test(w) || w === '--split-string') { if (ws[j + 1] !== undefined) out.push(envSplit(unquote(ws[j + 1]))); break; }
           if (w.startsWith('--split-string=')) { out.push(envSplit(w.slice(15))); break; }

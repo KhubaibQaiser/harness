@@ -348,8 +348,18 @@ export function hasResultsOutput(pkg: PackageFacts, root: string, resultsDir: st
   }
 }
 
-export function testConfigChange(pkg: PackageFacts, root: string, resultsDir: string): TestConfigResult {
+export function testConfigChange(pkg: PackageFacts, root: string, resultsDir: string, legacyDir?: string): TestConfigResult {
   if (pkg.test === 'none') return { none: true };
   const path = resultPath(pkg, root, resultsDir);
+  const from = legacyDir === undefined ? path : resultPath(pkg, root, legacyDir);
+  const file = pkg.test === 'vitest' ? pkg.testConfig : 'package.json';
+  if (from !== path && file) {
+    // An install from before the results folder moved: swap the old path in place (update migrates it in one run).
+    // ponytail: one change per package; a rename and another config edit take two update runs
+    const rel = pkg.dir === '.' ? file : `${pkg.dir}/${file}`;
+    let before: string | null = null;
+    try { before = readFileSync(join(root, rel), 'utf8'); } catch { /* no file: the existing branches report it */ }
+    if (before?.split(from).length === 2) return { change: { kind: 'update', rel, before, after: before.replace(from, () => path), blocks: [], rename: { from, to: path } } };
+  }
   return pkg.test === 'vitest' ? vitestChange(pkg, root, path) : jestChange(pkg, root, path);
 }

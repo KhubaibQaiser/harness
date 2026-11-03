@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { defaults, loadConfig } from '../../src/core/config.js';
-import { serializeConfig, validateConfig } from '../../src/core/config-io.js';
+import { migrateResultsDir, serializeConfig, validateConfig } from '../../src/core/config-io.js';
 
 const load = (yaml: string) => {
   const d = mkdtempSync(join(tmpdir(), 'h-cfgio-'));
@@ -103,4 +103,12 @@ test('__proto__ and constructor keys are unknown-key errors', () => {
   expect(l.warnings.join()).toMatch(/unknown key "__proto__"[\s\S]*unknown key "constructor"/);
   expect(l.config).toEqual(defaults());
   expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+});
+
+test('migrateResultsDir swaps the old default on its one line, keeping indent, quotes and comment', () => {
+  expect(migrateResultsDir('tdd:\n  results_dir: .harness/state/test-results  # x\n')).toBe('tdd:\n  results_dir: .harness/results  # x\n');
+  expect(migrateResultsDir("tdd:\n  results_dir: '.harness/state/test-results'\n")).toBe("tdd:\n  results_dir: '.harness/results'\n");
+  expect(migrateResultsDir('tdd:\n  results_dir: ".harness/state/test-results"\n')).toBe('tdd:\n  results_dir: ".harness/results"\n');
+  expect(migrateResultsDir('tdd:\n  results_dir: build/results\n')).toBeNull();
+  expect(migrateResultsDir('a:\n  results_dir: .harness/state/test-results\nb:\n  results_dir: .harness/state/test-results\n')).toBeNull();
 });

@@ -151,7 +151,7 @@ export function loadConfig(root: string, read: (p: string, e: 'utf8') => string 
   if (inState) {
     fail(`config: "tdd.results_dir" has an invalid value (${inState}); using default`, `"tdd.results_dir" ${inState}`);
     config.tdd.results_dir = DEFAULT_RESULTS_DIR;
-  } else if (rel !== '.harness/results' && !rel.toLowerCase().startsWith('.harness/results/')) {
+  } else if (rel.toLowerCase() !== '.harness/results' && !rel.toLowerCase().startsWith('.harness/results/')) {
     warnings.push("tdd.results_dir is outside .harness/results: protect doesn't cover it; the agent can write test results there with its file tools");
   }
   return { config, warnings, errors };

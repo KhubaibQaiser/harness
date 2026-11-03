@@ -17,6 +17,15 @@ export interface Manifest {
   }[];
 }
 
+/** The entry with `from` rewritten to `to` in every block and every hunk's `from` (the text in the file); `found` when any held it. */
+export function renameRecorded(entry: Manifest['files'][number], from: string, to: string): { entry: Manifest['files'][number]; found: boolean } {
+  let found = false;
+  const swap = (s: string) => (s.includes(from) ? ((found = true), s.split(from).join(to)) : s);
+  const blocks = entry.blocks?.map(swap);
+  const replace = entry.replace?.map((h) => ({ ...h, from: swap(h.from) }));
+  return { entry: { ...entry, ...(blocks ? { blocks } : {}), ...(replace ? { replace } : {}) }, found };
+}
+
 export const MANIFEST_REL = '.harness/manifest.json';
 
 export class ManifestError extends Error {

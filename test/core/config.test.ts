@@ -82,6 +82,7 @@ test('results_dir outside .harness/results warns', () => {
   expect(w('/tmp/x')).toContain(msg);
   expect(w('build/results')).toContain(msg);
   expect(w('.harness/results/sub')).not.toContain(msg);
+  expect(w('.harness/RESULTS')).not.toContain(msg); // case-insensitive, like the prefix
   expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: true\n')).warnings).not.toContain(msg);
 });
 

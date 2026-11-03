@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { HarnessConfig } from '../core/config.js';
+import { LEGACY_RESULTS_DIR, type HarnessConfig } from '../core/config.js';
 import { serializeConfig } from '../core/config-io.js';
 import type { Change } from './apply.js';
 import { lineHunks, revertHunks } from './diff.js';
@@ -65,7 +65,7 @@ export function planChanges(
   if (facts.packages.some((p) => p.test === 'jest')) put(JEST_REPORTER, tpl('hooks', 'jest-results.cjs'));
   if (config.checks.tdd)
     for (const pkg of facts.packages) {
-      const r = testConfigChange(pkg, root, config.tdd.results_dir);
+      const r = testConfigChange(pkg, root, config.tdd.results_dir, LEGACY_RESULTS_DIR);
       if ('change' in r) changes.push(r.change);
       else if ('manual' in r) manual.push(...r.manual);
     }
@@ -81,7 +81,7 @@ const JS = /\.[cm]?[jt]s$/;
  */
 function formatEdits(root: string, changes: Change[], notes: string[]): void {
   for (const c of changes) {
-    if (c.kind !== 'update' || !JS.test(c.rel)) continue;
+    if (c.kind !== 'update' || c.rename || !JS.test(c.rel)) continue; // a rename is a plain substitution (ruling 6)
     const bin = repoPrettier(root, c.rel);
     if (!bin) continue;
     try {

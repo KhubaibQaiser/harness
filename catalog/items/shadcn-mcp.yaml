@@ -4,7 +4,7 @@ title: "shadcn MCP server"
 source: {"type":"npm","package":"shadcn","version":"4.23.0"}
 license: MIT
 min_claude_code: 2.1.314
-applies_when: {"any_dep":["shadcn","radix-ui","@radix-ui/react-slot"]}
+applies_when: {"any_dep":["shadcn"]}
 cost: {"context":"low","setup":"low"}
 stance: optional
 mcp: {"name":"shadcn","config":{"command":"npx","args":["-y","shadcn@4.23.0","mcp"]}}

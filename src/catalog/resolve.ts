@@ -1,10 +1,10 @@
 import type { Exec } from '../core/exec.js';
 import type { Catalog } from './schema.js';
 
-/** Checks that each pinned source still exists upstream. Remote servers cannot be pinned, so they are listed instead. */
 // The contents API returns an array for a directory, an object for a file.
 const DIR_JQ = 'if type == "array" then "dir" else .type end';
 
+/** Checks that each pinned source still exists upstream. Remote servers cannot be pinned, so they are listed instead. */
 export function resolvePins(c: Catalog, exec: Exec, only?: string[]): { problems: string[]; unpinned: { id: string; reason: string }[] } {
   const problems: string[] = [];
   const unpinned: { id: string; reason: string }[] = [];

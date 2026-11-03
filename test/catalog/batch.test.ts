@@ -19,9 +19,25 @@ test.each(Object.entries(BATCHES))('batch %s ids are all in items/ or excluded.y
   for (const id of ids) expect([id, items.has(id) || out.has(id), items.has(id) && out.has(id)]).toEqual([id, true, false]);
 });
 
-test('stances from the brief', () => {
+// Stances from the brief table; every other batch item is optional.
+const STANCES: Record<number, Record<string, { stance: string; reason?: string }>> = {
+  1: { 'frontend-design': { stance: 'default' }, superdesign: { stance: 'discouraged', reason: 'duplicates Figma' } },
+};
+
+test.each(Object.entries(BATCHES))('batch %s stances and reasons match the brief', (n, ids) => {
   const by = new Map(loadCatalog().catalog.items.map((i) => [i.id, i]));
-  expect(by.get('frontend-design')?.stance).toBe('default');
-  expect(by.get('superdesign')).toMatchObject({ stance: 'discouraged', stance_reason: 'duplicates Figma' });
-  expect(by.get('impeccable')?.side_effects).toEqual(['installs-hook', 'downloads-binary', 'telemetry-on-by-default']);
+  const want = STANCES[Number(n)] ?? {};
+  for (const item of ids.map((id) => by.get(id)).filter((i) => i !== undefined)) {
+    const w = want[item.id] ?? { stance: 'optional' };
+    expect([item.id, item.stance, item.stance_reason]).toEqual([item.id, w.stance, w.reason ?? '']);
+  }
+});
+
+test('impeccable side effects and mcp config shapes', () => {
+  const items = loadCatalog().catalog.items;
+  expect(items.find((i) => i.id === 'impeccable')?.side_effects).toEqual(['installs-hook', 'downloads-binary', 'telemetry-on-by-default']);
+  for (const i of items.filter((x) => x.kind === 'mcp')) {
+    const c = i.mcp!.config;
+    expect(c.command !== undefined || (c.type === 'http' && typeof c.url === 'string'), i.id).toBe(true);
+  }
 });

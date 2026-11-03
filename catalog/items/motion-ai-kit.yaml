@@ -4,7 +4,7 @@ title: "Motion AI Kit (hosted MCP)"
 source: {"type":"remote","url":"https://mcp.motion.dev","unpinned":"hosted service, the vendor controls the version"}
 license: vendor-terms
 min_claude_code: 2.1.314
-applies_when: {"any_dep":["motion","framer-motion"]}
+applies_when: {"any_dep":["motion"]}
 cost: {"context":"low","setup":"low"}
 stance: optional
 mcp: {"name":"motion","config":{"type":"http","url":"https://mcp.motion.dev"}}

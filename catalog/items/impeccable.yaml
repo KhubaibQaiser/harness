@@ -12,7 +12,8 @@ why: "Design fluency for frontend development: one skill with 24 commands (polis
 evidence:
   - "https://github.com/pbakaus/impeccable/blob/9fadc41729c38fd47d7ae622b501558653f9d2e9/.claude-plugin/marketplace.json"
   - "https://github.com/pbakaus/impeccable/blob/9fadc41729c38fd47d7ae622b501558653f9d2e9/README.md"
-  - "https://github.com/pbakaus/impeccable/blob/9fadc41729c38fd47d7ae622b501558653f9d2e9/plugin/hooks/hooks.json (SessionStart and PostToolUse Edit|Write hooks run the impeccable hook, whose findings go back to the agent: context medium)"
+  - "https://github.com/pbakaus/impeccable/blob/9fadc41729c38fd47d7ae622b501558653f9d2e9/plugin/hooks/hooks.json (SessionStart, PostToolUse Edit|Write and Stop hooks run the impeccable hook, whose findings go back to the agent: context medium)"
   - "https://github.com/pbakaus/impeccable/blob/9fadc41729c38fd47d7ae622b501558653f9d2e9/plugin/skills/impeccable/SKILL.md (long always-listed skill description: context medium)"
   - "README.md: the skill runs an engine binary that downloads once into ~/.impeccable/bin/ (downloads-binary)"
+  - "README.md hooks note: installed command hooks run even when the model's own commands are denied, and the first edit can download the engine (setup medium)"
   - "README.md Telemetry section: anonymous record of directions shown and picked; disable with npx impeccable telemetry off or DO_NOT_TRACK=1 (telemetry-on-by-default)"

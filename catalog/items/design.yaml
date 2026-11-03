@@ -10,5 +10,5 @@ stance: optional
 why: "Accelerates design workflows: critique, design system management, UX writing, accessibility audits, research synthesis and dev handoff."
 evidence:
   - "https://github.com/anthropics/knowledge-work-plugins/blob/2574e29377c7173d0cecffef29a6ecbd7f8ccb5d/design/.claude-plugin/plugin.json"
-  - "https://github.com/anthropics/knowledge-work-plugins/blob/2574e29377c7173d0cecffef29a6ecbd7f8ccb5d/design/.mcp.json (bundles 9 MCP servers: slack, figma, linear, asana, atlassian, notion, intercom, google calendar, gmail; 7 skills; context medium)"
-  - "audit.html lists the design and engineering packs under instruction overload"
+  - "https://github.com/anthropics/knowledge-work-plugins/blob/2574e29377c7173d0cecffef29a6ecbd7f8ccb5d/design/.mcp.json (bundles 9 MCP servers: slack, figma, linear, asana, atlassian, notion, intercom, google calendar, gmail; two of them, google calendar and gmail, have an empty url) and 7 skills. The plugin has no always-on text or hooks of its own; context medium rests on the audit line: \"Instruction overload: superpowers, ponytail, postman, caveman, engineering and design packs all load into every session\""
+  - "audit.html#instruction-overload"

@@ -54,7 +54,7 @@ test('catalog check exits 1 and prints each problem', () => {
 });
 
 test('catalog check --resolve prints unpinned items and --only filters', () => {
-  const remote = y('r').replace(/source:.*/, 'source: { type: remote, url: "https://x.dev/m", unpinned: hosted }').replace('kind: plugin', 'kind: mcp') + 'mcp: { name: r, config: {} }\n';
+  const remote = y('r').replace(/source:.*/, 'source: { type: remote, url: "https://x.dev/m", unpinned: hosted }').replace('kind: plugin', 'kind: mcp') + 'mcp: { name: r, config: { command: x } }\n';
   const d = dir({ a: y('a'), r: remote });
   const r = go(['check', '--resolve'], d, () => ({ status: 0, stdout: SHA }));
   expect(r.code).toBe(0);

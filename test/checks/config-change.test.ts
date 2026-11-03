@@ -177,11 +177,11 @@ test('a harness deny rule rewritten narrower is blocked (C5)', async () => {
 
 test('a CLI record from before the session never allows restoring its state over a later edit', async () => {
   const r = repo();
-  stampHarnessFiles(r.root); // init or update records the local file as absent
-  write(join(r.root, '.claude/settings.local.json'), { sandbox: { enabled: true } }); // the person's edit between sessions
+  stampHarnessFiles(r.root); // init or update records the project file
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { enabled: true } }); // the person's edit between sessions
   await prompt(r); // new session: baseline has the sandbox
-  rmSync(join(r.root, '.claude/settings.local.json')); // a script restores the CLI's state
-  expect(parsed(await change(r, 'local_settings')).reason).toContain('`.claude/settings.local.json` (sandbox)');
+  write(join(r.root, '.claude/settings.json'), SETTINGS); // a script restores the CLI's state
+  expect(parsed(await change(r, 'project_settings')).reason).toContain('`.claude/settings.json` (sandbox)');
 });
 
 test('a CLI record accepted mid-session is used up: it no longer covers a blocked change in its other file', async () => {
@@ -193,4 +193,15 @@ test('a CLI record accepted mid-session is used up: it no longer covers a blocke
   stampHarnessFiles(r.root); // its record also holds the local file as it is now
   expect(await change(r, 'project_settings')).toBe('');
   expect(parsed(await change(r, 'local_settings'))?.reason).toContain('`.claude/settings.local.json` (disableAllHooks)');
+});
+
+test('a CLI record never covers the local file: a blocked change recorded mid-session still blocks when it fires first', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.root, '.claude/settings.local.json'), { disableAllHooks: true }); // a script's change, blocked
+  expect(parsed(await change(r, 'local_settings'))?.decision).toBe('block');
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, hooks: { ...SETTINGS.hooks, Stop: [GROUP] } }); // harness update
+  stampHarnessFiles(r.root);
+  expect(parsed(await change(r, 'local_settings'))?.reason).toContain('`.claude/settings.local.json` (disableAllHooks)');
+  expect(await change(r, 'project_settings')).toBe('');
 });

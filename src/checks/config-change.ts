@@ -28,8 +28,9 @@ export const configChange: Check = {
     } catch {} // unreadable: cur stays null
     const parts = base ? guardedDiff(base[key] ?? null, cur) : ['no session baseline'];
     if (!parts.length) return { kind: 'allow' };
-    if (base && key !== 'user' && cur) {
-      // A change the harness CLI recorded (init, update, uninstall) is allowed, and becomes this file's baseline.
+    if (base && rel === GUARDED.project && cur) {
+      // A change the harness CLI recorded (init, update, uninstall) is allowed, and becomes this file's baseline. Only the
+      // project file: the CLI never writes the others, so a record of them would cover a script's earlier change.
       // A file missing from the record never counts as recorded; null records the file as absent. Only a CLI run
       // during this session counts: an older record would let a script restore the CLI's state over a later edit.
       const cli = readRepoSnapshot(ctx.root).cli;

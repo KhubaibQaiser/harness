@@ -13,7 +13,7 @@ const FIXED = ['.harness/config.yaml', '.harness/manifest.json', '.claude/settin
 const SETTINGS = new Set(['.claude/settings.json', '.claude/settings.local.json']);
 const REPO = '.harness/state/files-snapshot.json';
 export type Snapshot = Record<string, string>; // repo-relative path -> sha-256 fingerprint
-// cli.settings: each repo settings file's fingerprint as the CLI left it, null when absent (ConfigChange's CLI record).
+// cli.settings: the project settings file's fingerprint as the CLI left it, null when absent (ConfigChange's CLI record).
 // cli.id: unique per CLI run, so ConfigChange honours only a record written after the session's baseline.
 type RepoSnapshot = { lastSeen?: { files: Snapshot; head?: string }; cli?: { files: Snapshot; settings?: Record<string, string | null>; id?: string } };
 
@@ -169,11 +169,9 @@ export function stampHarnessFiles(root: string): void {
   const head = gitHead(root);
   const deny = harnessDenyRules(root);
   const settings: Record<string, string | null> = {};
-  for (const rel of SETTINGS) {
-    try {
-      const text = readGuarded(join(root, rel));
-      settings[rel] = text === null ? null : settingsFingerprint(text, deny);
-    } catch {} // unreadable: no record, so no change to it is allowed as the CLI's
-  }
+  try {
+    const text = readGuarded(join(root, GUARDED.project)); // the only settings file the CLI writes
+    settings[GUARDED.project] = text === null ? null : settingsFingerprint(text, deny);
+  } catch {} // unreadable: no record, so no change to it is allowed as the CLI's
   writeRepoSnapshot(root, { cli: { files, settings, id: randomUUID() }, lastSeen: { files, ...(head ? { head } : {}) } });
 }

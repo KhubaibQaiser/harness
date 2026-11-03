@@ -629,3 +629,28 @@ test('switching to always and back leaves the settings as before', async () => {
   expect(readFileSync(p, 'utf8')).toBe(afterInit);
   expect(readManifest(root)!.files.find((f) => f.rel === '.claude/settings.json')!.blocks!.some((b) => b.startsWith('{"set"'))).toBe(false);
 });
+
+test('leaving always with only a changed key left drops the set blocks from the manifest', async () => {
+  const root = await installed();
+  const p = join(root, '.claude/settings.json');
+  const cfg = join(root, '.harness/config.yaml');
+  const setMode = (from: string, to: string) => (writeFileSync(cfg, readFileSync(cfg, 'utf8').replace(new RegExp(`^sandbox: ${from}$`, 'm'), `sandbox: ${to}`)), commitAll(root));
+  setMode('unattended', 'always');
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  const s = JSON.parse(readFileSync(p, 'utf8'));
+  s.sandbox = { enabled: false };
+  writeFileSync(p, JSON.stringify(s, null, 2) + '\n');
+  setMode('always', 'unattended');
+  const first = await up(root, ['--yes']);
+  expect(first.code).toBe(0);
+  expect(first.out).toContain('was changed');
+  const sets = () => (readManifest(root)!.files.find((f) => f.rel === '.claude/settings.json')!.blocks ?? []).filter((b) => b.startsWith('{"set"'));
+  expect(sets()).toEqual([]);
+  commitAll(root);
+  const second = await up(root, ['--yes']);
+  expect(second.out).not.toContain('was changed');
+  s.sandbox = { enabled: true };
+  writeFileSync(p, JSON.stringify(s, null, 2) + '\n');
+  await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() });
+  expect(JSON.parse(readFileSync(p, 'utf8')).sandbox).toEqual({ enabled: true });
+});

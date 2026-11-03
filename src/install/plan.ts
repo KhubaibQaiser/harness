@@ -23,7 +23,7 @@ export function planChanges(
   /** `legacyDir`: update's old results folder; a package whose results file still names it is migrated, TDD on or off.
    * `recorded`: the settings blocks the manifest holds, so update replaces harness's own old hook groups in place. */
   ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[] },
-): { changes: Change[]; manual: string[]; notes: string[] } {
+): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[] } {
   const templatesDir = ctx.templatesDir ?? join(ctx.distDir, '..', 'templates');
   const changes: Change[] = [];
   const manual: string[] = [];
@@ -79,7 +79,7 @@ export function planChanges(
     }
   }
   formatEdits(root, changes, notes);
-  return { changes, manual, notes };
+  return { changes, manual, notes, dropped: settings.dropped };
 }
 
 const JS = /\.[cm]?[jt]s$/;

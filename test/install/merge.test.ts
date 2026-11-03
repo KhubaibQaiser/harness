@@ -370,12 +370,17 @@ describe('mergeSettings sandbox', () => {
     expect(JSON.parse(r.after)).not.toHaveProperty('sandbox');
     expect([...r.dropped].sort()).toEqual([...rec].sort());
     expect(r.notes).toEqual([]);
+    const off = run(init.after, 'off', init.blocks);
+    expect(off.after).toBe(r.after);
+    expect(JSON.parse(off.after)).not.toHaveProperty('sandbox');
+    expect([...off.dropped].sort()).toEqual([...rec].sort());
+    expect(off.notes).toEqual([]);
 
     const edited = JSON.parse(init.after);
     edited.sandbox.enabled = false;
     const r2 = run(JSON.stringify(edited, null, 2), 'off', init.blocks);
     expect(JSON.parse(r2.after).sandbox).toEqual({ enabled: false });
-    expect(r2.notes).toEqual(['.claude/settings.json: sandbox.enabled was changed; left as is.']);
+    expect(r2.notes).toEqual(['`.claude/settings.json`: `sandbox.enabled` was changed; left as is.']);
     expect([...r2.dropped].sort()).toEqual([...rec].sort());
   });
 });

@@ -136,7 +136,7 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
   } else {
     const r = removeSets(s, opts.recorded ?? []);
     dropped.push(...r.sets);
-    for (const p of r.changed) notes.push(`${SETTINGS}: ${p} was changed; left as is.`);
+    for (const p of r.changed) notes.push(`\`${SETTINGS}\`: \`${p}\` was changed; left as is.`);
   }
   const eol = before === null ? '\n' : eolOf(before);
   const tail = before === null || /\n$/.test(before) ? eol : '';

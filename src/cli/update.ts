@@ -85,7 +85,14 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
       throw e;
     }
   };
-  if (!changes.length) {
+  // Leaving `always` with no key left to delete changes no bytes, yet its dropped `set` blocks still leave the manifest.
+  const stale = changes.some((c) => c.rel === SETTINGS) ? [] : plan.dropped;
+  const sf = m.files.find((f) => f.rel === SETTINGS);
+  if (stale.length && sf?.blocks) {
+    sf.blocks = sf.blocks.filter((b) => !stale.includes(b));
+    if (!sf.blocks.length) delete sf.blocks;
+  }
+  if (!changes.length && !stale.length) {
     if (dryRun) return out(m.version === version ? `Harness ${version} is up to date.` : `Harness files already match ${version}. Dry run: nothing was written.`), 0;
     if (m.version === version) return out(`Harness ${version} is up to date.`), 0;
     const err = commit([], { ...m, version });
@@ -131,7 +138,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     const c = changes.find((x) => x.rel === old.rel);
     if (!c || c.kind === 'delete') return old; // not touched by this update
     // A text block the new content no longer holds (a migrated Jest script) can't be removed later; drop it.
-    // Settings blocks are JSON structures, not text: kept unless the merge replaced that hook group.
+    // Settings blocks are JSON structures, not text: kept unless the merge dropped them (a replaced hook group, or `set` blocks when leaving `always`).
     const still = (b: string) => c.kind !== 'update' || (old.rel === SETTINGS ? !c.dropped?.includes(b) : removeBlocks(c.after, [b]) !== c.after); // EOL-tolerant, like uninstall's removal
     const blocks = [...new Set([...(old.blocks ?? []).filter(still), ...(c.blocks ?? [])])];
     // A merged file the user edited since harness last wrote it: keep the old hash and drop the pre-init backup, so

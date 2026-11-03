@@ -94,8 +94,15 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   else if (older(nums(he.node.replace(/^v/, '')), NODE_MIN)) fix(`hooks run Node ${he.node}, older than 22.11`, 'install Node 22.11 or newer where Claude Code finds it');
   else ok(`hooks run Node ${he.node}`);
 
+  // Each harness group is the fragment's, an older harness's recorded one (update replaces it), or the person's edit.
+  const frag = settingsFragment().hooks;
+  const recorded = (manifest.files.find((f) => f.rel === '.claude/settings.json')?.blocks ?? []).map((b) => { try { return JSON.parse(b); } catch { return null; } });
+  const kind = (ev: string, g: unknown) =>
+    isDeepStrictEqual(g, frag[ev][0]) ? 'ok' : recorded.some((b) => isDeepStrictEqual(b, { event: ev, group: g })) ? 'old' : 'edited';
+
   // Run the PreToolUse hook as Claude Code would: exec form with no shell, or an old shell-form entry through the shell.
-  const pre = groups('PreToolUse')[0]?.hooks.find(isHarnessHook);
+  const preGroup = groups('PreToolUse')[0];
+  const pre = preGroup?.hooks.find(isHarnessHook);
   const shellForm = (h: any) => !Array.isArray(h.args);
   if (pre && typeof pre.command === 'string') {
     const opts = { env: { ...env, CLAUDE_PROJECT_DIR: root }, encoding: 'utf8', timeout: 5000 } as const;
@@ -104,18 +111,15 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
       : spawnSync(pre.command, [...pre.args.map((a: unknown) => String(a).replaceAll('${CLAUDE_PROJECT_DIR}', root)), '--self-test'], opts);
     if (r.status === 0 && (r.stdout ?? '').startsWith('ok ')) ok('dispatcher runs');
     else fix(`the dispatcher does not run (${(r.stderr ?? '').trim().split('\n')[0] || r.error?.message || `exit code ${r.status}`})`, 'check that node is on the PATH Claude Code gives its hooks, then run harness doctor again');
-    if (shellForm(pre)) fix('`.claude/settings.json` runs the dispatcher through a shell', 'run harness update');
+    if (shellForm(pre) && kind('PreToolUse', preGroup) === 'old') fix('`.claude/settings.json` runs the dispatcher through a shell', 'run harness update');
   }
 
-  const frag = settingsFragment().hooks;
   for (const ev of EVENTS) {
     const gs = groups(ev);
-    const lacks = BLOCKING.includes(ev) && gs.some((g) => g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure !== 'block'));
-    if (lacks) fix(`${ev} hook has no onFailure "block"`, 'run harness update');
-    // A missing onFailure is reported above, and a shell-form entry by the self-test: compare the rest.
-    const strip = (x: unknown) => (lacks ? JSON.parse(JSON.stringify(x, (k, v) => (k === 'onFailure' ? undefined : v))) : x);
-    if (gs.some((g) => !g.hooks.some(shellForm) && !isDeepStrictEqual(strip(g), strip(frag[ev][0]))))
+    if (gs.some((g) => kind(ev, g) === 'edited'))
       fix(`.claude/settings.json: hooks.${ev} harness hook differs from the one harness installs`, 'undo the edit or delete that group, then run harness update');
+    else if (BLOCKING.includes(ev) && gs.some((g) => kind(ev, g) === 'old' && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure !== 'block')))
+      fix(`${ev} hook has no onFailure "block"`, 'run harness update');
   }
 
   const entry = manifest.files.find((f) => f.rel === DISPATCH);
@@ -158,9 +162,12 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   if (missing.length) (mode === 'always' ? fix : note)(`the Linux sandbox needs bwrap and socat (missing: ${missing.join(', ')})`, 'install them');
 
   const whereOf = (dir: string) => (dir === '.' ? 'the root package' : `\`${dir}\``);
+  // resultsRename, not hasResultsOutput: a Jest script with the harness reporter counts as set up for any folder.
+  const legacy = new Set(facts.packages.filter((p) => resultsRename(p, root, config.tdd.results_dir, LEGACY_RESULTS_DIR)).map((p) => p.dir));
+  for (const d of legacy) fix(`${whereOf(d)} writes test results under .harness/state, which the sandbox denies`, 'run harness update');
   // Packages init left out of TDD (test config not safely editable) and still out of it. Doctor never edits their config.
   const left = new Set((manifest.tddOff ?? []).filter((d) => !(config.checks.tdd && config.tdd.paths.includes(srcGlob(d)))));
-  for (const p of facts.packages.filter((p) => left.has(p.dir) && p.test !== 'none')) {
+  for (const p of facts.packages.filter((p) => left.has(p.dir) && p.test !== 'none' && !legacy.has(p.dir))) {
     const glob = `\`${srcGlob(p.dir)}\``;
     const addPath = `${config.checks.tdd ? 'add' : 'set checks.tdd to true and add'} ${glob} to tdd.paths in .harness/config.yaml`;
     const r = testConfigChange(p, root, config.tdd.results_dir);
@@ -184,7 +191,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   }
 
   if (config.checks.tdd) {
-    const tddPkgs = facts.packages.filter((p) => p.test !== 'none' && !left.has(p.dir)); // same set update checks
+    const tddPkgs = facts.packages.filter((p) => p.test !== 'none' && !left.has(p.dir) && !legacy.has(p.dir)); // same set update checks
     for (const p of tddPkgs) {
       const r = testConfigChange(p, root, config.tdd.results_dir);
       const where = whereOf(p.dir);
@@ -193,10 +200,6 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
       else fix(`the ${p.test} reporter output is not set up for ${where}`, `do this by hand: ${r.manual.join(' ')}`);
     }
   }
-
-  // resultsRename, not hasResultsOutput: a Jest script with the harness reporter counts as set up for any folder.
-  for (const p of facts.packages.filter((p) => resultsRename(p, root, config.tdd.results_dir, LEGACY_RESULTS_DIR)))
-    fix(`${whereOf(p.dir)} writes test results under .harness/state, which the sandbox denies`, 'run harness update');
 
   const changed = lastHarnessFilesChange(root);
   if (changed) note(`harness files changed during a session at ${changed.ts}: ${changed.files.map((f) => `\`${f}\``).join(', ')}`, 'review the change with git diff -- .harness .claude/settings.json');

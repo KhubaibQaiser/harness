@@ -108,9 +108,9 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
     fallback = true;
     root = input.cwd;
     try {
+      unattended = isUnattended(input, env); // first: a later throw must not leave an unattended run judged attended
       config = loadConfig(NO_ROOT).config;
       state = readState(NO_ROOT, input.session_id);
-      unattended = isUnattended(input, env);
     } catch (e2) {
       warn('fallback setup', e2);
       config = undefined; // degraded: only failClosed checks run

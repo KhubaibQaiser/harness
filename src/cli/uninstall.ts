@@ -212,5 +212,6 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     stampHarnessFiles(root); // change detection: these writes are harness's own
   }
   if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run harness init to install again.`);
+  out('Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.');
   return 0;
 }

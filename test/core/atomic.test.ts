@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { RETRY, renameWithRetry, resetRetryBudget, retryTransient, writeAtomic } from '../../src/core/atomic.js';
+import { applyChanges, type FsLike } from '../../src/install/apply.js';
 import { recordCliPath } from '../../src/core/cli-path.js';
 
 const err = (code: string) => Object.assign(new Error(`${code}: operation not permitted, rename`), { code });
@@ -61,6 +62,15 @@ test('writeAtomic: a write survives transient rename errors whole; when retries 
   expect(() => writeAtomic(f, '{"new":true}', flaky)).toThrow('EPERM');
   expect(readFileSync(f, 'utf8')).toContain('"files"'); // the last good content, never partial
   expect(readdirSync(dir).filter((x) => x.endsWith('.tmp'))).toEqual([]);
+});
+
+test('applyChanges retries a transient rename of a file it writes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-atomic-apply-'));
+  let fails = 2;
+  const fs = { ...realFs, renameSync: (a: realFs.PathLike, b: realFs.PathLike) => { if (fails-- > 0) throw err('EBUSY'); realFs.renameSync(a, b); } } as FsLike;
+  applyChanges(root, [{ kind: 'create', rel: 'a.txt', content: 'hello\n' }], '1.0.0', undefined, fs);
+  expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('hello\n');
+  expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
 });
 
 test('recording the CLI path never throws, even when every write fails', () => {

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
@@ -212,6 +212,8 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     stampHarnessFiles(root); // change detection: these writes are harness's own
   }
   if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run harness init to install again.`);
-  out('Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.');
+  out(existsSync(join(root, '.harness/hooks/dispatch.mjs'))
+    ? 'Restart any Claude Code session open in this repo: it still runs the harness hooks it loaded when it started.'
+    : 'Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.');
   return 0;
 }

@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { guard } from '../checks/guard.js';
 import { multiFile } from '../checks/multi-file.js';
-import { protect } from '../checks/protect.js';
+import { protect, shellWriteTargets } from '../checks/protect.js';
 import { redFirst } from '../checks/tdd/red-first.js';
 import { tamper } from '../checks/tdd/tamper.js';
 import { specGate } from '../checks/tdd/spec-gate.js';
@@ -15,6 +16,8 @@ import { bindPause, clearPause } from '../core/pause.js';
 import { type SessionState, isSafeSessionId, readState, stateExists, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
 import { isUnattended } from '../core/unattended.js';
+import { toRepoPath } from '../core/paths.js';
+import { editTarget } from './edit-target.js';
 import { emit, parseInput } from './io.js';
 import type { Decision, HookEvent, HookInput } from './types.js';
 
@@ -25,6 +28,7 @@ export interface Ctx {
   state: SessionState;
   unattended: boolean;
   env: NodeJS.ProcessEnv;
+  startedAt: number; // process start, for the hook time budget
   save(s: SessionState): void;
 }
 
@@ -32,15 +36,21 @@ export interface Check {
   name: string;
   events: HookEvent[];
   failClosed?: boolean;
+  pure?: boolean; // never calls ctx.save or writes files other than the event log
   run(ctx: Ctx): Decision | Promise<Decision>;
+  afterAllow?(ctx: Ctx): void; // PreToolUse only: called when the final outcome is a plain allow (no deny or ask from any check)
 }
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
 export const registry: Check[] = [guard, protect, redFirst, tamper, testLock, specGate, multiFile, stopGate];
 
+const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 const CURSOR_KEYS = ['conversation_id', 'generation_id', 'model_id', 'workspace_roots'];
 const NO_ROOT = '/nonexistent-harness-root'; // loadConfig/readState on it yield defaults and a fresh state without touching disk
+const CONFIG = '.harness/config.yaml';
+export const configInvalidWhy = (errors: string[]): string =>
+  `\`${CONFIG}\` is invalid: ${errors.join('; ')}. Harness blocks edits and stopping until a person fixes it, so no gate is off by mistake: ask the user to correct ${CONFIG} (harness doctor checks it).`;
 const warn = (what: string, e: unknown) => process.stderr.write(`harness: ${what} failed: ${String((e as Error)?.message ?? e)}\n`);
 
 type GitRun = (args: string[]) => { status: number | null; stdout: string };
@@ -72,15 +82,19 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   let config: HarnessConfig | undefined;
   let state: SessionState | undefined;
   let unattended = false;
+  let configErrors: string[] = [];
+  let fallback = false; // setup failed: the state in hand is not the session's, so it must never be written back
   try {
     root = repoRoot(input.cwd);
     const loaded = loadConfig(root);
     config = loaded.config;
+    configErrors = loaded.errors;
     if (event === 'UserPromptSubmit') for (const w of loaded.warnings) process.stderr.write(`harness: ${w}\n`);
     state = readState(root, input.session_id);
     unattended = isUnattended(input, env);
   } catch (e) {
     warn('setup', e);
+    fallback = true;
     root = input.cwd;
     try {
       config = loadConfig(NO_ROOT).config;
@@ -95,7 +109,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   if (state) {
     // Fix startedAt at the session's first hook.
     try {
-      if (!stateExists(root, input.session_id)) {
+      if (!fallback && !stateExists(root, input.session_id)) {
         state.baseHead = detectBaseHead(root);
         writeState(root, input.session_id, state);
       }
@@ -112,22 +126,49 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   }
 
   const ctx = {
-    input, root, config, state, unattended, env,
+    input, root, config, state, unattended, env, startedAt: PROCESS_START,
     save(s: SessionState) {
-      writeState(root, input.session_id, s);
+      if (!fallback) writeState(root, input.session_id, s);
       ctx.state = s;
     },
   } as Ctx;
-  const log = (check: string, decision: string, reason?: string) => {
+  const log = (check: string, decision: string, reason?: string, co?: true) => {
     try {
-      appendEvent(root, { ts: new Date().toISOString(), session: input.session_id, check, decision, ...(reason ? { reason } : {}) });
+      appendEvent(root, { ts: new Date().toISOString(), session: input.session_id, check, decision, ...(reason ? { reason } : {}), ...(co ? { co } : {}) });
     } catch (e) {
       warn('event log', e);
     }
   };
 
+  // An invalid config never turns a gate off silently: edits (except to the config itself, which the usual checks
+  // still judge) and Stop fail closed. Stop shares the Stop gate's attempt counter, so the session can still end.
+  if (configErrors.length && !degraded) {
+    const reason = configInvalidWhy(configErrors);
+    if (event === 'Stop') {
+      const attempts = ctx.state.stopAttempts + 1;
+      if (attempts > config!.stop.max_attempts) {
+        ctx.save({ ...ctx.state, stopAttempts: 0 });
+        log('config', 'stop-gave-up', reason);
+        return '';
+      }
+      ctx.save({ ...ctx.state, stopAttempts: attempts });
+      log('config', 'block', reason);
+      return emit(event, { kind: 'block', reason, check: 'config' });
+    }
+    const t = event === 'PreToolUse' ? editTarget(input) : null;
+    // Shell writes and deletes count as edits; a target outside the repo, or the config itself, does not.
+    const shell = event === 'PreToolUse' && input.tool_name === 'Bash' ? shellWriteTargets(String(input.tool_input?.command ?? '')) : [];
+    const inRepo = (p: string) => { const rel = toRepoPath(root, p); return rel !== null ? rel.toLowerCase() !== CONFIG : resolve(root, p) === resolve(root); };
+    if ((t !== null && toRepoPath(root, t)?.toLowerCase() !== CONFIG) || shell.some(inRepo)) {
+      log('config', 'deny', reason);
+      return emit(event, { kind: 'deny', reason, check: 'config' });
+    }
+  }
+
   const decisions: Decision[] = [];
+  let denied = false; // after the first PreToolUse deny only pure checks run; their findings are logged, not returned
   for (const c of checks.filter((c) => c.events.includes(event) && (!degraded || c.failClosed))) {
+    if (denied && !c.pure) continue;
     let d: Decision;
     try {
       const r = await c.run(ctx);
@@ -149,16 +190,26 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
         continue;
       } else if (unattended) d = { kind: 'deny', reason: `Unattended run: ${d.reason}`, check: d.check };
     }
-    log(d.check, d.kind, d.kind === 'context' ? d.text : d.reason);
-    decisions.push(d);
-    if (event === 'PreToolUse' && d.kind === 'deny') break; // later checks (multiFile records) must not see a denied call
+    log(d.check, d.kind, d.kind === 'context' ? d.text : d.reason, denied ? true : undefined);
+    if (!denied) decisions.push(d);
+    if (event === 'PreToolUse' && d.kind === 'deny') denied = true;
+  }
+
+  if (event === 'PreToolUse' && !decisions.some((d) => d.kind === 'deny' || d.kind === 'ask')) {
+    for (const c of checks) {
+      if (!c.afterAllow || !c.events.includes(event) || (degraded && !c.failClosed)) continue;
+      try {
+        c.afterAllow(ctx);
+      } catch (e) {
+        warn(`check ${c.name} afterAllow`, e);
+      }
+    }
   }
 
   const win =
     decisions.find((d) => d.kind === 'deny' || d.kind === 'block') ?? decisions.find((d) => d.kind === 'ask');
-  if (win) return emit(event, win);
   const ctxs = decisions.flatMap((d) => (d.kind === 'context' ? [d.text] : []));
-  return ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), check: 'context' }) : '';
+  return win ? emit(event, win) : ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), check: 'context' }) : '';
 }
 
 async function main(): Promise<void> {

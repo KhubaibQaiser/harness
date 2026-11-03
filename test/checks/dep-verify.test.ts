@@ -87,7 +87,8 @@ test('strips version specifiers before lookup', () => {
 });
 
 test('specs the registry cannot resolve ask without a lookup', () => {
-  const specs = ['file:../x', 'link:../x', 'workspace:*', 'git+https://h/r.git', 'github:o/r', 'https://h/t.tgz', 'http://h/t.tgz', './x', '/abs/x'];
+  const specs = ['file:../x', 'link:../x', 'workspace:*', 'git+https://h/r.git', 'github:o/r', 'https://h/t.tgz', 'http://h/t.tgz', './x', '/abs/x',
+    'user/repo', 'user/repo#main', 'jsr:@std/path', 'gitlab:o/r', 'bitbucket:o/r', 'git://h/r.git', 'git@github.com:x/y.git', 'ssh://git@h/r.git', 'pkg.tgz', 'x.tar.gz'];
   for (const s of specs) {
     const d = run([s], () => { throw new Error('lookup must not run'); });
     expect(d.kind, s).toBe('ask');
@@ -134,4 +135,37 @@ test('lookups stop when the time budget is spent', () => {
   expect(timeouts).toEqual([5000, 3000]);
   expect(d.kind).toBe('ask');
   expect(reason(d)).toBe('"c3": could not verify on the registry');
+});
+
+test('lookup budget starts at process start', () => {
+  let now = 4000; // process started 4000 ms before the first lookup
+  const timeouts: (number | undefined)[] = [];
+  const lookup: Look = (_n, t) => (timeouts.push(t), OLD);
+  verifyPackages(['a1'], { root: repo(), now: NOW, lookup, startedAt: 0, clock: () => now });
+  expect(timeouts).toEqual([5000]);
+  now = 7000; // 7000 spent: only 2000 of the 9000 budget left
+  verifyPackages(['a1'], { root: repo(), now: NOW, lookup, startedAt: 0, clock: () => now });
+  expect(timeouts).toEqual([5000, 2000]);
+  now = 9000;
+  expect(reason(verifyPackages(['a1'], { root: repo(), now: NOW, lookup, startedAt: 0, clock: () => now }))).toBe('"a1": could not verify on the registry');
+});
+
+test('names outside the npm name grammar are denied without a lookup (no shell metacharacters reach npm.cmd)', () => {
+  const bad = ['a&calc', 'a|b', '%PATH%', 'x^y', 'a"b', "a'b", '"&calc&"', 'a<b', 'a>b', '_under', '@scope/', '@/x', 'a b', 'a'.repeat(215)];
+  for (const n of bad) {
+    let looked = false;
+    const d = run([n], () => ((looked = true), OLD));
+    expect(d.kind, n).toBe('deny');
+    expect(reason(d), n).toContain('is not a valid npm package name');
+    expect(looked, n).toBe(false);
+  }
+  for (const n of ['lodash', '@types/node', 'JSONStream', 'lodash.merge', 'a-b_c~d', '7zip-bin', 'react@18.3.1', '@scope/pkg@^1']) expect(run([n], () => OLD).kind, n).toBe('ask');
+});
+
+test('non-registry specs with shell metacharacters are denied, never asked about', () => {
+  for (const s of ['user/repo&calc', 'git+https://h/r.git|x', 'file:../x"&y', 'https://h/%PATH%.tgz']) {
+    const d = run([s], () => { throw new Error('lookup must not run'); });
+    expect(d.kind, s).toBe('deny');
+    expect(reason(d), s).toContain('shell metacharacters');
+  }
 });

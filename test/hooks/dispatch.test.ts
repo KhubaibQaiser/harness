@@ -38,6 +38,24 @@ test('PreToolUse stops running checks at the first deny', async () => {
   await dispatch(pre({ hook_event_name: 'PostToolUse' }), [denyAll, later], {});
   expect(ran).toBe(true);
 });
+const pureDeny = (name: string): Check => ({ ...mk(name, { kind: 'deny', reason: `r-${name}`, check: name }), pure: true });
+test('co-denies are logged', async () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  const res = await dispatch(pre({ cwd: r }), [pureDeny('guard'), pureDeny('protect')], {});
+  expect(out(res).hookSpecificOutput?.permissionDecisionReason).toBe('r-guard');
+  const ev = readEvents(r).filter((e) => e.decision === 'deny');
+  expect(ev).toHaveLength(2);
+  expect(ev[0]!.co).toBeUndefined();
+  expect(ev[1]).toMatchObject({ check: 'protect', co: true });
+});
+test('impure checks do not run after a deny', async () => {
+  let ran = false;
+  const impure: Check = { name: 'impure', events: ['PreToolUse'], run: () => ((ran = true), { kind: 'allow' }) };
+  await dispatch(pre(), [pureDeny('guard'), impure], {});
+  expect(ran).toBe(false);
+});
 test('unattended turns ask into deny with prefix', async () => {
   const r = await dispatch(pre(), [askAll], { CI: 'true' });
   expect(decisionOf(r)).toBe('deny');
@@ -151,6 +169,8 @@ test('records baseHead (git HEAD) when the session state is first created', asyn
   const git = (...a: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: root, encoding: 'utf8' }).trim();
   git('init', '-q');
   git('commit', '-q', '--allow-empty', '-m', 'one');
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n'); // so the hook prints no config-not-found warning
   const input = JSON.stringify({ session_id: 'bh', cwd: root, hook_event_name: 'UserPromptSubmit', prompt: 'x' });
   await dispatch(input, [], {});
   expect(existsSync(join(root, '.harness/state/bh.json'))).toBe(true);
@@ -159,4 +179,51 @@ test('records baseHead (git HEAD) when the session state is first created', asyn
   git('commit', '-q', '--allow-empty', '-m', 'two');
   await dispatch(input, [], {});
   expect(readState(root, 'bh').baseHead).toBe(head);
+});
+
+// I2: an invalid config fails closed instead of silently falling back to defaults.
+const BAD_CONFIGS: [string, string, RegExp][] = [
+  ['bad YAML', 'checks:\n  tdd: [\n', /not valid YAML \(.*line/],
+  ['top level not a mapping', '- a\n- b\n', /top level must be a mapping/],
+  ['unknown key', 'checks:\n  tdd_x: true\n', /unknown key "checks\.tdd_x"/],
+  ['wrong type', 'checks:\n  tdd: "true"\n', /"checks\.tdd" must be a boolean/],
+  ['out of range', 'stop:\n  max_attempts: 99\n', /"stop\.max_attempts" must be an integer from 1 to 10/],
+  ['not a mapping', 'checks: true\n', /"checks" must be a mapping/],
+];
+const reasonOf = (s: string) => out(s).hookSpecificOutput?.permissionDecisionReason ?? (JSON.parse(s) as { reason?: string }).reason;
+test.each(BAD_CONFIGS)('invalid config (%s): edits deny, the config edit falls through to the checks, Bash runs, Stop blocks then gives up', async (_n, yaml, key) => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-bad-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), yaml);
+  const allowAll = mk('allow-all', { kind: 'allow' });
+  const edit = await dispatch(pre({ cwd: r, tool_input: { file_path: join(r, 'src/a.ts') } }), [allowAll], {});
+  expect(decisionOf(edit)).toBe('deny');
+  expect(reasonOf(edit)).toMatch(key);
+  expect(reasonOf(edit)).toContain('ask the user to correct .harness/config.yaml');
+  // The config file itself: the usual checks decide (here a stand-in for protect).
+  expect(reasonOf(await dispatch(pre({ cwd: r, tool_input: { file_path: join(r, '.harness/config.yaml') } }), [denyAll], {}))).toBe('no');
+  expect(await dispatch(pre({ cwd: r, tool_name: 'Bash', tool_input: { command: 'ls' } }), [allowAll], {})).toBe('');
+  const stop = () => dispatch(JSON.stringify({ hook_event_name: 'Stop', session_id: 's', cwd: r }), [allowAll], {});
+  for (let i = 0; i < 3; i++) expect(reasonOf(await stop())).toMatch(key); // default max_attempts is 3
+  expect(await stop()).toBe('');
+});
+test('a valid config does not trip the invalid-config gate', async () => {
+  expect(await dispatch(pre({ tool_input: { file_path: join(root, 'src/a.ts') } }), [mk('allow-all', { kind: 'allow' })], {})).toBe('');
+  expect(await dispatch(pre({ tool_name: 'Bash', tool_input: { command: 'echo x > src/b.js' } }), [mk('allow-all', { kind: 'allow' })], {})).toBe('');
+});
+// N2: shell writes and deletes are edits too.
+test.each(BAD_CONFIGS)('invalid config (%s): Bash writes, deletes, moves and restores in the repo deny; reads, outside writes and the config pass', async (_n, yaml, key) => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-badsh-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), yaml);
+  const allowAll = mk('allow-all', { kind: 'allow' });
+  const bash = (command: string) => dispatch(pre({ cwd: r, tool_name: 'Bash', tool_input: { command } }), [allowAll], {});
+  for (const c of ['rm src/a.test.js', 'echo x > src/b.js', 'sed -i.bak s/1/2/ src/a.js', 'mv src/a.js src/c.js', 'cp x src/d.js', 'git checkout -- src/a.js', 'git checkout .', 'bash -c "echo x > src/e.js"', 'tee src/f.js < x']) {
+    const out = await bash(c);
+    expect(decisionOf(out), c).toBe('deny');
+    expect(reasonOf(out), c).toMatch(key);
+  }
+  for (const c of ['ls', 'cat src/a.js', 'echo x > /tmp/harness-out.txt', 'echo x > /dev/null', 'harness doctor']) expect(await bash(c), c).toBe('');
+  // a shell write to the config itself is left to the usual checks (protect denies the agent)
+  expect(reasonOf(await dispatch(pre({ cwd: r, tool_name: 'Bash', tool_input: { command: 'echo "version: 1" > .harness/config.yaml' } }), [denyAll], {}))).toBe('no');
 });

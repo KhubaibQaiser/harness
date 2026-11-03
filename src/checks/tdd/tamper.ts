@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isTestFile, toRepoPath } from '../../core/paths.js';
 import type { Check } from '../../hooks/dispatch.js';
+import { editTarget } from '../../hooks/edit-target.js';
 import type { HookInput } from '../../hooks/types.js';
 
 type Edit = { old_string?: unknown; new_string?: unknown; replace_all?: unknown };
@@ -136,10 +137,10 @@ export function tamperFindings(before: string, after: string, file: string): str
 export const tamper: Check = {
   name: 'tamper',
   events: ['PreToolUse'],
+  pure: true,
   run(ctx) {
-    const { tool_name, tool_input = {} } = ctx.input;
-    const p = tool_input.file_path;
-    if (!ctx.config.checks.tdd || (tool_name !== 'Edit' && tool_name !== 'Write' && tool_name !== 'MultiEdit') || typeof p !== 'string' || !p) return { kind: 'allow' };
+    const p = editTarget(ctx.input);
+    if (!ctx.config.checks.tdd || p === null) return { kind: 'allow' };
     const rel = toRepoPath(ctx.root, p);
     if (rel === null || !(isTestFile(rel) || CONFIG.test(rel) || PKG.test(rel))) return { kind: 'allow' };
     let before = '';

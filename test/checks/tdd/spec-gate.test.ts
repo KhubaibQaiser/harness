@@ -120,7 +120,7 @@ test('Bash writes to features.json are denied', async () => {
 
 test('real Vitest fixture fullName format', async () => {
   const s = setup();
-  const fx = readFileSync(join(__dirname, '../../fixtures/results/vitest.json'), 'utf8').replaceAll('/ROOT', s.root);
+  const fx = readFileSync(join(__dirname, '../../fixtures/results/vitest.json'), 'utf8').replaceAll('/ROOT', JSON.stringify(s.root).slice(1, -1)); // JSON-escaped: Windows paths have backslashes
   writeFileSync(join(s.root, '.harness/state/test-results/fx.json'), fx);
   expect((await s.write(doc(feat('f1', true, crit(`${T}::adds`))))).permissionDecision).toBe('allow');
   expect((await s.write(doc(feat('f1', true, crit(`${T}::fails`))))).permissionDecisionReason).toContain('test not passing');

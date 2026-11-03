@@ -368,5 +368,48 @@ test('migrated Jest script: uninstall keeps a user edit to package.json made bef
   expect(readFileSync(p, 'utf8')).toBe(pkg.replace('"name": "app",', '"name": "app",\n  "private": true,'));
 });
 
+test('change detection: files that update writes do not trigger a block at the next Stop', async () => {
+  const { dispatch } = await import('../../src/hooks/dispatch.js');
+  const root = await installed();
+  const hook = (event: string) => dispatch(JSON.stringify({ hook_event_name: event, session_id: 'cd', cwd: root, tool_name: 'Read', tool_input: { file_path: join(root, 'x') } }), [], {});
+  await hook('PreToolUse'); // session snapshot
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readFileSync(join(root, DISPATCH), 'utf8')).toContain('// v2');
+  expect(await hook('Stop')).toBe('');
+  // a change after the update is still seen
+  writeFileSync(join(root, DISPATCH), 'tampered\n');
+  expect(JSON.parse(await hook('Stop')).reason).toContain(`\`${DISPATCH}\``);
+});
 
+// Round 15 E2: the CLI's record covers only the change the CLI made; a later revert to it is reported.
+test('change detection: a script restoring the update-time config after a person edit is reported once', async () => {
+  const { dispatch } = await import('../../src/hooks/dispatch.js');
+  const { readEvents } = await import('../../src/core/events.js');
+  const root = await installed();
+  const hook = (event: string) => dispatch(JSON.stringify({ hook_event_name: event, session_id: 'e2', cwd: root, tool_name: 'Read', tool_input: { file_path: join(root, 'x') } }), [], {});
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0); // stamps the CLI record
+  commitAll(root);
+  await hook('PreToolUse');
+  const cfg = join(root, '.harness/config.yaml');
+  const updateTime = readFileSync(cfg, 'utf8');
+  writeFileSync(cfg, updateTime.replace('tdd: true', 'tdd: false')); // the person's edit
+  commitAll(root);
+  expect(JSON.parse(await hook('Stop')).decision).toBe('block');
+  const events = () => readEvents(root).filter((e) => e.decision === 'harness-files-changed').length;
+  const before = events();
+  writeFileSync(cfg, updateTime); // a script restores the update-time config
+  expect(JSON.parse(await hook('Stop')).reason).toContain('`.harness/config.yaml`');
+  expect(await hook('Stop')).toBe('');
+  expect(events() - before).toBe(1);
+});
 
+// Round 15 E3: init writes the CLI record, so a change before the first session is reported.
+test('change detection: a change between init and the first session is reported', async () => {
+  const { dispatch } = await import('../../src/hooks/dispatch.js');
+  const root = await installed();
+  expect(realFs.existsSync(join(root, '.harness/state/files-snapshot.json'))).toBe(true);
+  writeFileSync(join(root, '.harness/config.yaml'), readFileSync(join(root, '.harness/config.yaml'), 'utf8') + '# changed before any session\n');
+  const hook = (event: string) => dispatch(JSON.stringify({ hook_event_name: event, session_id: 'e3', cwd: root, prompt: 'go' }), [], {});
+  expect(JSON.parse(await hook('UserPromptSubmit')).systemMessage).toContain('`.harness/config.yaml`');
+  expect(JSON.parse(await hook('Stop')).decision).toBe('block');
+});

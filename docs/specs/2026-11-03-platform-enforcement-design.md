@@ -120,7 +120,7 @@ HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{"enabled":true,"failIf
 
 | `sandbox` | Interactive session | Unattended run | Written to `.claude/settings.json` |
 |---|---|---|---|
-| `unattended` (default) | No sandbox unless the person turns it on (`/sandbox`, or `always`) | Required (3.4) | Nothing |
+| `unattended` (default) | No sandbox unless the person turns it on before the session starts (the settings, the documented `--settings`, or `always`); a mid-session change, `/sandbox` included, takes effect in the next session | Required (3.4) | Nothing |
 | `always` | Sandbox on for everyone using the repo | Required (3.4); confirmed by the committed keys | The `sandbox` block in section 2 |
 | `off` | No sandbox | Not required; text checks only | Nothing |
 

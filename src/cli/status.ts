@@ -1,5 +1,6 @@
 import { loadConfig } from '../core/config.js';
-import { lastHarnessFilesChange } from '../core/events.js';
+import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
+import { readHookEnv } from '../core/hook-env.js';
 import { readManifest, ManifestError } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { OFF_WHY, coverageSkipped, coverageWhy, noConfigFile, srcGlob, unsafeWhy } from '../install/preset.js';
@@ -13,8 +14,9 @@ const GATES: [string, keyof ReturnType<typeof loadConfig>['config']['checks']][]
   ['guard', 'guard'], ['protect', 'protect'], ['dep-verify', 'depVerify'], ['multi-file', 'multiFile'], ['tdd', 'tdd'], ['stop', 'stop'],
 ];
 
-export function status(args: string[], cli: CliEnv): number {
+export function status(args: string[], cli: CliEnv, deps: { platform?: NodeJS.Platform } = {}): number {
   const { root, out } = cli;
+  const platform = deps.platform ?? process.platform;
   if (args.length) return out('Usage: harness status'), 2;
   let m;
   try {
@@ -38,6 +40,12 @@ export function status(args: string[], cli: CliEnv): number {
   }
   if (!config.checks.tdd) lines.push(`  coverage: off - ${tddOffWhy}`);
   else lines.push(...left.map((w) => `  ${w}`), ...coverageSkipped(facts, config).map((p) => `  ${coverageWhy(p)}`), tddStatus(root));
+  const where = platform === 'darwin' ? 'macOS: available' : platform === 'win32' ? 'native Windows: not available' : cli.env.WSL_DISTRO_NAME ? 'WSL2: available' : 'Linux: available';
+  lines.push(`Enforcement: sandbox ${config.sandbox} (${where})`, 'Hook failure: blocks tool calls and prompts; the Stop gate fails open');
+  const he = readHookEnv(root);
+  lines.push(he ? `Hooks run Node ${he.node} (${he.ts})` : 'Hooks run Node: not recorded yet');
+  const blocked = lastConfigChangeBlocked(root);
+  if (blocked) lines.push(`Last blocked settings change: ${blocked.ts} (${blocked.reason})`);
   const changed = lastHarnessFilesChange(root);
   if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
   lines.push('Last day');

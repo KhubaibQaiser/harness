@@ -80,6 +80,6 @@ jobs:
         with:
           node-version: 22
       # Pinned to MIN_CLAUDE_CODE; validate is offline and needs no login (checked with an empty HOME).
-      - run: npm install -g @anthropic-ai/claude-code@2.1.285
+      - run: npm install -g @anthropic-ai/claude-code@2.1.314
       - name: Validate plugin manifest
         run: claude plugin validate .

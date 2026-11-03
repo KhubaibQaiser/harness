@@ -1,25 +1,30 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { validateConfig } from '../core/config-io.js';
+import { LEGACY_RESULTS_DIR } from '../core/config.js';
+import { readHookEnv } from '../core/hook-env.js';
 import { MIN_CLAUDE_CODE } from '../core/min-claude.js';
-import { lastHarnessFilesChange } from '../core/events.js';
+import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
 import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { matchesHash } from '../install/text.js';
-import { isHarnessHook, mergeEslintFlatIgnores } from '../install/merge.js';
+import { isHarnessHook, mergeEslintFlatIgnores, settingsFragment } from '../install/merge.js';
 import { ESLINT } from '../install/plan.js';
-import { JEST_REPORTER, hasResultsOutput, testConfigChange } from '../install/test-config.js';
+import { JEST_REPORTER, hasResultsOutput, resultsRename, testConfigChange } from '../install/test-config.js';
 import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
 import { dirtyPaths } from './init.js';
 
-export type DoctorDeps = { claudeVersion?: () => string | null };
+export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJS.Platform };
 
 const DISPATCH = '.harness/hooks/dispatch.mjs';
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd'];
+const BLOCKING = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange'];
+const SANDBOX_WHY = { unattended: 'required for unattended runs', always: 'on in every session', off: 'text checks only' };
 const NODE_MIN = [22, 11, 0];
 const nums = (v: string) => v.split('.').map(Number);
 const older = (a: number[], b: number[]) => {
@@ -47,6 +52,7 @@ const readText = (p: string): string | null => {
 
 export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): number {
   const { root, env, out } = cli;
+  const platform = deps.platform ?? process.platform;
   if (args.length) return out('Usage: harness doctor'), 2;
   let manifest;
   try {
@@ -77,11 +83,44 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   try {
     settings = st === null ? null : JSON.parse(st);
   } catch {}
-  const wired = (ev: string) =>
-    Array.isArray(settings?.hooks?.[ev]) && settings.hooks[ev].some((g: any) => Array.isArray(g?.hooks) && g.hooks.some(isHarnessHook));
-  const unwired = EVENTS.filter((e) => !wired(e));
+  const groups = (ev: string): any[] =>
+    (Array.isArray(settings?.hooks?.[ev]) ? settings.hooks[ev] : []).filter((g: any) => Array.isArray(g?.hooks) && g.hooks.some(isHarnessHook));
+  const unwired = EVENTS.filter((e) => !groups(e).length);
   if (unwired.length) fix(`\`.claude/settings.json\` does not run the dispatcher for ${unwired.join(', ')}`, 'run harness update to restore the hooks');
   else ok('settings run the dispatcher for all 6 hook events');
+
+  const he = readHookEnv(root);
+  if (!he) note('no hook has run here yet', 'start a Claude Code session, send a prompt, then run harness doctor again');
+  else if (older(nums(he.node.replace(/^v/, '')), NODE_MIN)) fix(`hooks run Node ${he.node}, older than 22.11`, 'install Node 22.11 or newer where Claude Code finds it');
+  else ok(`hooks run Node ${he.node}`);
+
+  // Each harness group is the fragment's, an older harness's recorded one (update replaces it), or the person's edit.
+  const frag = settingsFragment().hooks;
+  const recorded = (manifest.files.find((f) => f.rel === '.claude/settings.json')?.blocks ?? []).map((b) => { try { return JSON.parse(b); } catch { return null; } });
+  const kind = (ev: string, g: unknown) =>
+    isDeepStrictEqual(g, frag[ev][0]) ? 'ok' : recorded.some((b) => isDeepStrictEqual(b, { event: ev, group: g })) ? 'old' : 'edited';
+
+  // Run the PreToolUse hook as Claude Code would: exec form with no shell, or an old shell-form entry through the shell.
+  const preGroup = groups('PreToolUse')[0];
+  const pre = preGroup?.hooks.find(isHarnessHook);
+  const shellForm = (h: any) => !Array.isArray(h.args);
+  if (pre && typeof pre.command === 'string') {
+    const opts = { env: { ...env, CLAUDE_PROJECT_DIR: root }, encoding: 'utf8', timeout: 5000 } as const;
+    const r = shellForm(pre)
+      ? spawnSync(`${pre.command} --self-test`, { ...opts, shell: true })
+      : spawnSync(pre.command, [...pre.args.map((a: unknown) => String(a).replaceAll('${CLAUDE_PROJECT_DIR}', root)), '--self-test'], opts);
+    if (r.status === 0 && (r.stdout ?? '').startsWith('ok ')) ok('dispatcher runs');
+    else fix(`the dispatcher does not run (${(r.stderr ?? '').trim().split('\n')[0] || r.error?.message || `exit code ${r.status}`})`, 'check that node is on the PATH Claude Code gives its hooks, then run harness doctor again');
+    if (shellForm(pre) && kind('PreToolUse', preGroup) === 'old') fix('`.claude/settings.json` runs the dispatcher through a shell', 'run harness update');
+  }
+
+  for (const ev of EVENTS) {
+    const gs = groups(ev);
+    if (gs.some((g) => kind(ev, g) === 'edited'))
+      fix(`.claude/settings.json: hooks.${ev} harness hook differs from the one harness installs`, 'undo the edit or delete that group, then run harness update');
+    else if (BLOCKING.includes(ev) && gs.some((g) => kind(ev, g) === 'old' && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure !== 'block')))
+      fix(`${ev} hook has no onFailure "block"`, 'run harness update');
+  }
 
   const entry = manifest.files.find((f) => f.rel === DISPATCH);
   const disp = readText(join(root, DISPATCH));
@@ -116,10 +155,19 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const config = v.config;
   const facts = detect(root);
 
+  const mode = config.sandbox;
+  ok(`sandbox: ${mode} (${SANDBOX_WHY[mode]})`);
+  if (mode !== 'off' && platform === 'win32') note('no sandbox on native Windows', 'hooks, permission rules and text checks only');
+  const missing = mode !== 'off' && platform === 'linux' ? ['bwrap', 'socat'].filter((c) => !findOnPath(c, env, platform)) : [];
+  if (missing.length) (mode === 'always' ? fix : note)(`the Linux sandbox needs bwrap and socat (missing: ${missing.join(', ')})`, 'install them');
+
   const whereOf = (dir: string) => (dir === '.' ? 'the root package' : `\`${dir}\``);
+  // resultsRename, not hasResultsOutput: a Jest script with the harness reporter counts as set up for any folder.
+  const legacy = new Set(facts.packages.filter((p) => resultsRename(p, root, config.tdd.results_dir, LEGACY_RESULTS_DIR)).map((p) => p.dir));
+  for (const d of legacy) fix(`${whereOf(d)} writes test results under .harness/state, which the sandbox denies`, 'run harness update');
   // Packages init left out of TDD (test config not safely editable) and still out of it. Doctor never edits their config.
   const left = new Set((manifest.tddOff ?? []).filter((d) => !(config.checks.tdd && config.tdd.paths.includes(srcGlob(d)))));
-  for (const p of facts.packages.filter((p) => left.has(p.dir) && p.test !== 'none')) {
+  for (const p of facts.packages.filter((p) => left.has(p.dir) && p.test !== 'none' && !legacy.has(p.dir))) {
     const glob = `\`${srcGlob(p.dir)}\``;
     const addPath = `${config.checks.tdd ? 'add' : 'set checks.tdd to true and add'} ${glob} to tdd.paths in .harness/config.yaml`;
     const r = testConfigChange(p, root, config.tdd.results_dir);
@@ -143,7 +191,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   }
 
   if (config.checks.tdd) {
-    const tddPkgs = facts.packages.filter((p) => p.test !== 'none' && !left.has(p.dir)); // same set update checks
+    const tddPkgs = facts.packages.filter((p) => p.test !== 'none' && !left.has(p.dir) && !legacy.has(p.dir)); // same set update checks
     for (const p of tddPkgs) {
       const r = testConfigChange(p, root, config.tdd.results_dir);
       const where = whereOf(p.dir);
@@ -155,6 +203,8 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
 
   const changed = lastHarnessFilesChange(root);
   if (changed) note(`harness files changed during a session at ${changed.ts}: ${changed.files.map((f) => `\`${f}\``).join(', ')}`, 'review the change with git diff -- .harness .claude/settings.json');
+  const blocked = lastConfigChangeBlocked(root);
+  if (blocked) note(`harness blocked a settings change at ${blocked.ts} (${blocked.reason})`, 'review the file before the next session');
   for (const f of manifest.files.filter((f) => f.unformatted))
     note(`Prettier could not format \`${f.rel}\` when harness edited it`, 'a format check may flag it; if you format it by hand, uninstall reports the harness part it cannot find, to remove by hand');
 

@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, test } from 'vitest';
+import { MIN_CLAUDE_CODE } from '../../src/core/min-claude.js';
 import { PREFIX, build, cleanup, existingCrlf, noTests, npmVitest, standard, unsafeVitest, type Fixture } from './fixtures.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'cli.mjs');
@@ -12,6 +13,12 @@ const DISPATCH = '.harness/hooks/dispatch.mjs';
 // The suite must behave like an attended session even when CI or a parent agent sets these.
 const env = { ...process.env };
 for (const k of ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE', 'CLAUDECODE']) delete env[k];
+// A claude at the floor first on PATH, so doctor's version line never depends on this machine's Claude Code.
+const shim = mkdtempSync(join(tmpdir(), 'h-e2e-claude-'));
+writeFileSync(join(shim, 'claude'), `#!/bin/sh\necho '${MIN_CLAUDE_CODE} (Claude Code)'\n`, { mode: 0o755 });
+writeFileSync(join(shim, 'claude.cmd'), `@echo ${MIN_CLAUDE_CODE} (Claude Code)\r\n`);
+const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+env[pathKey] = shim + delimiter + (env[pathKey] ?? '');
 
 const made: string[] = [];
 afterEach(() => void made.splice(0).forEach(cleanup));

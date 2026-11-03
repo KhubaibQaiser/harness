@@ -1,4 +1,3 @@
-import { readFileSync as realRead } from 'node:fs';
 import { relative } from 'node:path';
 import picomatch from 'picomatch';
 import { beforeEach, expect, test, vi } from 'vitest';
@@ -111,6 +110,8 @@ test('detect never opens .env files, harnessignored paths or .harness/', () => {
       'apps/web/package.json': dev('next'),
       'apps/web/vitest.config.ts': 'export default {}',
       'fixtures/demo/package.json': dev('express'),
+      'apps/web/jest.config.js': 'module.exports = {}',
+      'apps/web/app.json': pj({ expo: {} }),
       '.env': 'SECRET=1',
       '.env.local': 'SECRET=2',
       'apps/web/.env': 'SECRET=3',
@@ -154,5 +155,27 @@ test('facts json has no absolute paths and is stable', () => {
   expect(keys).toEqual([...keys].sort());
   expect(p.deps).toEqual([...p.deps].sort());
   expect(factsJson(detect(b))).toBe(ja);
-  expect(realRead).toBeTypeOf('function');
+});
+
+test('an ignored file is never opened, root files included', () => {
+  const root = makeRepo(
+    {
+      'package.json': pj({ workspaces: ['apps/*'] }),
+      'apps/web/package.json': dev('next'),
+      'apps/web/vitest.config.ts': 'export default {}',
+      'apps/web/jest.config.js': 'module.exports = {}',
+      'apps/web/app.json': pj({ expo: {} }),
+      'requirements-x.txt': 'pytest\n',
+      'pyproject.toml': '[tool.ruff]\n',
+      '.claude/settings.local.json': pj({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'x.sh' }] }] } }),
+      '.harnessignore': 'requirements-x.txt\npyproject.toml\n.claude/settings.local.json\napps/web/*.config.*\napps/web/app.json\n',
+    },
+    { git: false },
+  );
+  const f = detect(root);
+  const rels = reads.filter((p) => p.startsWith(root)).map((p) => relative(root, p).split('\\').join('/'));
+  for (const gone of ['requirements-x.txt', 'pyproject.toml', '.claude/settings.local.json', 'apps/web/vitest.config.ts', 'apps/web/jest.config.js', 'apps/web/app.json']) expect(rels).not.toContain(gone);
+  expect(f.python.present).toBe(false);
+  expect(f.existing.otherHooks).toEqual([]);
+  expect(f.packages.find((p) => p.dir === 'apps/web')?.testConfig).toBeUndefined();
 });

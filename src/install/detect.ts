@@ -29,18 +29,21 @@ export interface Facts {
   warnings: string[];
   /** Prettier is a dependency of the root or a workspace package. */
   prettier?: true;
-  /** Sorted union of every package's dependency names. */
+  /** Sorted union of every package's dependency names. File checks below are root-only, except app/pages/eas.json/app.json, which are per package. */
   deps: string[];
   apps: { dir: string; kind: 'web' | 'mobile' | 'api' }[];
   frameworks: string[];
   routers: string[];
   testRunners: string[];
+  /** Repo-relative paths. */
   ciFiles: string[];
   docker: boolean;
+  /** Labels (terraform, cdk, pulumi, serverless, sst), not file names. */
   iac: string[];
   dbClients: string[];
   authSdks: string[];
   expo: boolean;
+  /** Labels from the config file stem (vercel, netlify, fly, render, railway, wrangler, amplify). */
   deploy: string[];
   gitHooks: 'lefthook' | 'husky' | 'none';
 }
@@ -53,7 +56,11 @@ const COVERAGE_PROVIDERS = ['@vitest/coverage-v8', '@vitest/coverage-istanbul'];
 const depsOf = (pkg: Record<string, any> | null) => new Set(DEP_FIELDS.flatMap((f) => Object.keys(pkg?.[f] ?? {})));
 
 // Every fs read goes through these so detect never throws; a missing file is silent, any other failure becomes a warning.
+// Set at the top of detect(); read() and list() honour it so a harnessignored path is never opened or listed.
+let ignored: (rel: string) => boolean = () => false;
+
 function read(root: string, rel: string, warnings: string[], skipped: string): string | null {
+  if (ignored(rel)) return null;
   try {
     return readFileSync(join(root, rel), 'utf8');
   } catch (e) {
@@ -64,7 +71,7 @@ function read(root: string, rel: string, warnings: string[], skipped: string): s
 
 function list(root: string, rel: string, warnings: string[], skipped: string): import('node:fs').Dirent[] {
   try {
-    return readdirSync(join(root, rel), { withFileTypes: true });
+    return readdirSync(join(root, rel), { withFileTypes: true }).filter((e) => !ignored(rel ? `${rel}/${e.name}` : e.name));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') warnings.push(`Could not list \`${rel || '.'}\`; ${skipped}. Check its permissions and run init again.`);
     return [];
@@ -180,7 +187,7 @@ function collectCommands(node: unknown, out: string[]): void {
 
 export function detect(root: string): Facts {
   const warnings: string[] = [];
-  const ignored = harnessIgnore(root);
+  ignored = harnessIgnore(root);
   const has = (f: string) => existsSync(join(root, f));
   const rootPkg = readJson(root, 'package.json', warnings, 'its scripts and test framework are skipped');
   const hasPkg = has('package.json');

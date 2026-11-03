@@ -2,7 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Facts } from './detect.js';
 
-/** Every file `detect` may open (repo-relative, picomatch). Everything else is looked at by name only. */
+/** Every file `detect` may open (repo-relative, picomatch). Everything else is looked at by name only. A superset: exclusions (node_modules, .harness/, ignored paths) live in SKIP and harnessIgnore. */
 export const READ_ALLOWLIST = [
   'package.json',
   '**/package.json',
@@ -77,7 +77,7 @@ export function deriveFacts(
 
   return {
     deps,
-    apps: apps.sort((a, b) => a.dir.localeCompare(b.dir)),
+    apps: apps.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0)),
     frameworks: some(FRAMEWORKS),
     routers: [...routers].sort(),
     testRunners: [...some(RUNNERS), ...(python.tools.includes('pytest') ? ['pytest'] : [])].sort(),

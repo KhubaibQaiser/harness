@@ -602,3 +602,14 @@ test('a foreign node exec hook survives init, update and uninstall', async () =>
   expect(u.out).not.toContain('was not found');
   expect(JSON.parse(readFileSync(join(root, SETTINGS), 'utf8'))).toEqual({ ...JSON.parse(pre), model: 'x' });
 });
+
+test('existing settings: init, beta rewrite, update and uninstall restore the pre-init bytes exactly', async () => {
+  const foreign = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node', args: ['tools/lint-hook.mjs'] }] };
+  const pre = JSON.stringify({ model: 'sonnet', hooks: { PreToolUse: [foreign] } }, null, 2) + '\n';
+  const root = await installed({ ...REPO, [SETTINGS]: pre });
+  betaInstall(root, JSON.parse(pre));
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  expect(JSON.parse(readFileSync(join(root, SETTINGS), 'utf8')).hooks.PreToolUse[0]).toEqual(foreign);
+  expect((await un(root)).code).toBe(0);
+  expect(readFileSync(join(root, SETTINGS), 'utf8')).toBe(pre);
+});

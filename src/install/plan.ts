@@ -45,7 +45,7 @@ export function planChanges(
 
   const settings = mergeSettings(read('.claude/settings.json'), { sandbox: 'unattended', recorded: ctx.recorded });
   notes.push(...settings.notes);
-  if (settings.blocks.length || settings.dropped.length) {
+  if (settings.blocks.length) { // every dropped group also adds its replacement's block
     put('.claude/settings.json', settings.after, settings.blocks);
     const c = changes.at(-1);
     if (c?.kind === 'update' && c.rel === '.claude/settings.json' && settings.dropped.length) c.dropped = settings.dropped;

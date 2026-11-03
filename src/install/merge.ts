@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { parseModule } from 'magicast';
+import { packageDir } from '../core/package-dir.js';
 import type { SandboxMode } from '../core/config.js';
 import { eolOf, jsonIndentOf, quoteOf, requote, withEol } from './text.js';
 
@@ -10,11 +10,8 @@ export class MergeError extends Error {
   constructor(message: string) { super(message); this.name = 'MergeError'; }
 }
 
-// Package-local only: source/tests live in <pkg>/src/install, the bundle in <pkg>/dist. Never probes outside the package.
-const modulePath = fileURLToPath(import.meta.url);
-const templatesDir = fileURLToPath(new URL(/[\\/]src[\\/]install[\\/]merge\.[jt]s$/.test(modulePath) ? '../../templates/' : '../templates/', import.meta.url));
 const template = (name: string): string => {
-  const p = join(templatesDir, name);
+  const p = join(packageDir('templates'), name);
   if (!existsSync(p)) throw new MergeError(`template ${name} not found at ${p}`);
   return readFileSync(p, 'utf8');
 };

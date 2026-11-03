@@ -1,7 +1,8 @@
 import { realpathSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { appendEvent, readEvents } from '../core/events.js';
+import { packageDir } from '../core/package-dir.js';
 import { repoRoot } from '../core/repo-root.js';
 import { recordCliPath } from '../core/cli-path.js';
 import { init } from './init.js';
@@ -102,10 +103,10 @@ try {
     const cli: CliEnv = { root: repoRoot(process.cwd()), env: process.env, tty: !!process.stdin.isTTY, out: (s) => console.log(s) };
     const argv = process.argv.slice(2);
     if (argv[0] === 'init') {
-      const distDir = dirname(fileURLToPath(import.meta.url)); // dist/ of the running cli.mjs
+      const distDir = packageDir('dist');
       const prompt = readlinePrompt();
       try {
-        process.exitCode = await init(argv.slice(1), { ...cli, root: process.cwd(), prompt, version: VERSION, templatesDir: join(distDir, '..', 'templates'), distDir });
+        process.exitCode = await init(argv.slice(1), { ...cli, root: process.cwd(), prompt, version: VERSION, templatesDir: packageDir('templates'), distDir });
       } finally {
         prompt.close();
       }
@@ -117,10 +118,10 @@ try {
         prompt.close();
       }
     } else if (argv[0] === 'update') {
-      const distDir = dirname(fileURLToPath(import.meta.url));
+      const distDir = packageDir('dist');
       const prompt = readlinePrompt();
       try {
-        process.exitCode = await update(argv.slice(1), { ...cli, root: process.cwd(), prompt, version: VERSION, templatesDir: join(distDir, '..', 'templates'), distDir });
+        process.exitCode = await update(argv.slice(1), { ...cli, root: process.cwd(), prompt, version: VERSION, templatesDir: packageDir('templates'), distDir });
       } finally {
         prompt.close();
       }

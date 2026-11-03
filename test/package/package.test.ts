@@ -37,7 +37,7 @@ test('package is public, unlicensed and runs the build on prepack', () => {
 
 test('packed files: the plugin and CLI ship, sources and tests do not', () => {
   const files = packDry();
-  for (const f of ['dist/cli.mjs', 'dist/hooks/dispatch.mjs', 'templates/settings.fragment.json', 'skills/init/SKILL.md', '.claude-plugin/plugin.json', 'LICENSE', 'README.md']) expect(files, f).toContain(f);
+  for (const f of ['dist/cli.mjs', 'dist/hooks/dispatch.mjs', 'templates/settings.fragment.json', 'catalog/catalog.yaml', 'skills/init/SKILL.md', '.claude-plugin/plugin.json', 'LICENSE', 'README.md']) expect(files, f).toContain(f);
   expect(files.filter((f) => /^(src|test|\.superpowers)\//.test(f))).toEqual([]);
 }, NPM_TIMEOUT);
 

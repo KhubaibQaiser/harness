@@ -12,6 +12,7 @@
   "files": [
     "dist/",
     "templates/",
+    "catalog/",
     "skills/",
     ".claude-plugin/plugin.json",
     "LICENSE",

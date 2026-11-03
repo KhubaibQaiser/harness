@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -6,7 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import { validateConfig } from '../core/config-io.js';
 import { LEGACY_RESULTS_DIR } from '../core/config.js';
 import { readHookEnv } from '../core/hook-env.js';
-import { MIN_CLAUDE_CODE } from '../core/min-claude.js';
+import { MIN_CLAUDE_CODE, claudeVersion, olderThan } from '../core/min-claude.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
 import { ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
@@ -25,22 +25,7 @@ const DISPATCH = '.harness/hooks/dispatch.mjs';
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd'];
 export const BLOCKING = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange']; // the events whose hook carries onFailure "block"
 const SANDBOX_WHY = { unattended: 'required for unattended runs', always: 'on in every session', off: 'text checks only' };
-const NODE_MIN = [22, 11, 0];
-const nums = (v: string) => v.split('.').map(Number);
-const older = (a: number[], b: number[]) => {
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i];
-  return false;
-};
-
-function claudeVersion(): string | null {
-  try {
-    const [file, args, opts] = syncCommand('claude', ['--version']);
-    const v = execFileSync(file, args, { ...opts, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
-    return /\d+\.\d+\.\d+/.exec(v)?.[0] ?? null;
-  } catch {
-    return null;
-  }
-}
+const NODE_MIN_S = '22.11.0';
 
 const readText = (p: string): string | null => {
   try {
@@ -70,12 +55,12 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const note = (what: string, next: string) => out(`note ${what}: ${next}`);
 
   const node = process.versions.node;
-  if (older(nums(node), NODE_MIN)) fix(`Node ${node} is too old`, 'install Node 22.11 or newer');
+  if (olderThan(node, NODE_MIN_S)) fix(`Node ${node} is too old`, 'install Node 22.11 or newer');
   else ok(`Node ${node}`);
 
   const cv = (deps.claudeVersion ?? claudeVersion)();
   if (cv === null) ok('Claude Code not found: hooks still run when Claude Code is installed');
-  else if (older(nums(cv), nums(MIN_CLAUDE_CODE))) fix(`Claude Code ${cv} is older than ${MIN_CLAUDE_CODE}`, 'update Claude Code');
+  else if (olderThan(cv, MIN_CLAUDE_CODE)) fix(`Claude Code ${cv} is older than ${MIN_CLAUDE_CODE}`, 'update Claude Code');
   else ok(`Claude Code ${cv}`);
 
   let settings: any = null;
@@ -91,7 +76,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
 
   const he = readHookEnv(root);
   if (!he) note('no hook has run here yet', 'start a Claude Code session, send a prompt, then run harness doctor again');
-  else if (older(nums(he.node.replace(/^v/, '')), NODE_MIN)) fix(`hooks run Node ${he.node}, older than 22.11`, 'install Node 22.11 or newer where Claude Code finds it');
+  else if (olderThan(he.node.replace(/^v/, ''), NODE_MIN_S)) fix(`hooks run Node ${he.node}, older than 22.11`, 'install Node 22.11 or newer where Claude Code finds it');
   else ok(`hooks run Node ${he.node}`);
 
   // Each harness group is the fragment's, an older harness's recorded one (update replaces it), or the person's edit.

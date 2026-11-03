@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { retryTransient, writeAtomic } from './atomic.js';
 
@@ -97,13 +97,22 @@ export function readRepoSnapshot(root: string): RepoSnapshot {
 }
 function writeRepoSnapshot(root: string, v: RepoSnapshot): void {
   try {
-    if (existsSync(join(root, '.harness'))) writeAtomic(join(root, REPO), JSON.stringify(v));
+    if (!existsSync(join(root, '.harness'))) return; // not installed
+    mkdirSync(join(root, '.harness/state'), { recursive: true }); // right after init it doesn't exist yet
+    writeAtomic(join(root, REPO), JSON.stringify(v));
   } catch {} // best effort: without it the next session starts from its first hook
 }
 
-/** Hooks: the snapshot this session has now accounted for, as the baseline the next session starts from. */
-export const recordLastSeen = (root: string, files: Snapshot, head?: string): void =>
-  writeRepoSnapshot(root, { ...readRepoSnapshot(root), lastSeen: { files, ...(head ? { head } : {}) } });
+/**
+ * Hooks: the snapshot this session has now accounted for, as the baseline the next session starts from. The CLI's
+ * record covers only the change the CLI made: once the accounted-for files move past it, it is dropped, so a later
+ * script that writes the CLI-time files back is reported like any other change.
+ */
+export function recordLastSeen(root: string, files: Snapshot, head?: string): void {
+  const { cli } = readRepoSnapshot(root);
+  const keep = cli && !changedFiles(cli.files, files).length ? { cli } : {};
+  writeRepoSnapshot(root, { ...keep, lastSeen: { files, ...(head ? { head } : {}) } });
+}
 
 /** Called by init, update and uninstall after they write: what their own changes leave, so the hooks don't report them. */
 export function stampHarnessFiles(root: string): void {

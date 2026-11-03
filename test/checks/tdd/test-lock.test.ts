@@ -138,5 +138,9 @@ test('newestFresh keeps the newest fresh result per file and drops stale ones', 
 test('a PowerShell input naming a locked test file is allowed (no shell detection)', async () => {
   const s = setup();
   writeState(s.root, 's', { ...s.st(), lockedTests: [T] });
-  expect((await s.call('PreToolUse', T, [testLock], 'PowerShell', { command: `Set-Content ${T} x` })).permissionDecision).toBe('allow');
+  // the lock is live: an Edit of the same file under the same state needs approval (ask)
+  expect(await s.call('PreToolUse', T)).toMatchObject({ permissionDecision: 'ask', permissionDecisionReason: MSG });
+  // a pure shell input: a command only, no file_path
+  const raw = JSON.stringify({ session_id: 's', cwd: s.root, hook_event_name: 'PreToolUse', tool_name: 'PowerShell', tool_input: { command: `Set-Content ${T} x` } });
+  expect(await dispatch(raw, [testLock], {})).toBe('');
 });

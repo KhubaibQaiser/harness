@@ -501,7 +501,9 @@ test.each(['env -uC harness uninstall --yes', 'env -uS harness uninstall --yes',
 
 test('PowerShell and Monitor go through the command rules', async () => {
   for (const tool of ['PowerShell', 'Monitor']) expect(await run(tool, { command: 'git push --force origin x' }), tool).toMatchObject({ kind: 'deny', check: 'guard' });
-  expect(await run('PowerShell', { command: 'cat .env' })).toMatchObject({ kind: 'deny' });
+  expect(await run('PowerShell', { command: 'cat .env' })).toMatchObject({
+    kind: 'deny', check: 'guard', reason: 'Blocked by guard: touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state). If this is intended, ask the user to run it manually.',
+  });
 });
 test('PowerShell command naming .harness, .claude or .env asks; plain ones pass', async () => {
   for (const command of ['Get-Content .harness/config.yaml', 'Set-Content .CLAUDE/settings.json x', "[System.Environment]::GetEnvironmentVariable('X')"])
@@ -515,5 +517,5 @@ test('the PowerShell ask is a deny when unattended', async () => {
   const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, permission_mode: 'bypassPermissions', tool_name: 'PowerShell', tool_input: { command: 'Get-Content .harness/config.yaml' } });
   const o = JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput;
   expect(o.permissionDecision).toBe('deny');
-  expect(o.permissionDecisionReason).toMatch(/^Unattended run: /);
+  expect(o.permissionDecisionReason).toBe('Unattended run: Harness does not parse PowerShell, so a PowerShell command that names .harness, .claude or .env needs your approval.');
 });

@@ -90,6 +90,17 @@ const JS = /\.[cm]?[jt]s$/;
  */
 function formatEdits(root: string, changes: Change[], notes: string[]): void {
   for (const c of changes) {
+    // Settings blocks are structural (uninstall removes them by deep equality), so formatting keeps them as they are.
+    if (c.rel === '.claude/settings.json' && (c.kind === 'create' || c.kind === 'update')) {
+      const bin = repoPrettier(root, c.rel);
+      try {
+        if (bin && c.kind === 'create') c.content = prettierFormat(bin, root, c.rel, c.content);
+        else if (bin && c.kind === 'update' && prettierFormat(bin, root, c.rel, c.before) === c.before) c.after = prettierFormat(bin, root, c.rel, c.after);
+      } catch (e) {
+        notes.push(`Prettier could not format \`${c.rel}\` (${String((e as Error).message).split('\n')[0]}); it is left unformatted, so a format check may flag it.`);
+      }
+      continue;
+    }
     if (c.kind !== 'update' || c.rename || !JS.test(c.rel)) continue; // a rename is a plain substitution (ruling 6)
     if (c.rel.startsWith('.harness/')) continue; // harness's own files are written as built: update replacing the dispatcher must not format it
     const bin = repoPrettier(root, c.rel);

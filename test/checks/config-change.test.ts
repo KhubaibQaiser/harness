@@ -131,3 +131,46 @@ test('no baseline blocks', async () => {
   await prompt(r);
   expect(readState(r.root, 's').guardedBase).toEqual(base);
 });
+
+test('a mid-session uninstall is allowed: the CLI records the settings it leaves, absent included', async () => {
+  const r = repo();
+  await prompt(r);
+  rmSync(join(r.root, '.claude/settings.json')); // what uninstall leaves when harness created the file
+  stampHarnessFiles(r.root);
+  expect(await change(r, 'project_settings')).toBe('');
+  expect(readEvents(r.root).some((e) => e.decision === 'config-change-blocked')).toBe(false);
+});
+
+test('a script that strips the project file to {} after the CLI record is blocked', async () => {
+  const r = repo();
+  stampHarnessFiles(r.root); // install-time record of the full settings
+  await prompt(r);
+  write(join(r.root, '.claude/settings.json'), {});
+  expect(parsed(await change(r, 'project_settings')).reason).toContain('`.claude/settings.json` (hooks, deny)');
+});
+
+test('a CLI record for the local file does not let a later script change sandbox there', async () => {
+  const r = repo();
+  write(join(r.root, '.claude/settings.local.json'), { permissions: { allow: ['Bash(ls)'] } });
+  stampHarnessFiles(r.root);
+  await prompt(r);
+  write(join(r.root, '.claude/settings.local.json'), { permissions: { allow: ['Bash(ls)'] }, sandbox: { enabled: false } });
+  expect(parsed(await change(r, 'local_settings')).reason).toContain('`.claude/settings.local.json` (sandbox)');
+});
+
+test('the same blocked change twice leaves the notice once', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, disableAllHooks: true });
+  await change(r, 'project_settings');
+  await change(r, 'project_settings');
+  expect(readState(r.root, 's').pendingNotice).toBe('Harness blocked a change to `.claude/settings.json` (disableAllHooks) in this session. The file is still changed on disk, so the next session loads it: review it first.');
+});
+
+test('a harness deny rule rewritten narrower is blocked (C5)', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, permissions: { deny: ['Bash(git push --force)'] } });
+  expect(parsed(await change(r, 'project_settings')).reason).toContain('`.claude/settings.json` (deny)');
+  expect(lastConfigChangeBlocked(r.root)?.reason).toBe('.claude/settings.json: deny');
+});

@@ -29,10 +29,10 @@ export const configChange: Check = {
     const parts = base ? guardedDiff(base[key] ?? null, cur) : ['no session baseline'];
     if (!parts.length) return { kind: 'allow' };
     if (base && key !== 'user' && cur) {
-      // A change the harness CLI recorded (init, update) is allowed, and becomes this file's baseline.
-      // ponytail: a file the CLI left holding nothing harness relies on isn't in its record, so uninstall mid-session blocks.
-      const recorded = readRepoSnapshot(ctx.root).cli?.files[rel];
-      if (recorded && settingsFingerprint(text ?? '{}', deny) === recorded) {
+      // A change the harness CLI recorded (init, update, uninstall) is allowed, and becomes this file's baseline.
+      // A file missing from the record never counts as recorded; null records the file as absent.
+      const settings = readRepoSnapshot(ctx.root).cli?.settings;
+      if (settings && rel in settings && settings[rel] === (text === null ? null : settingsFingerprint(text, deny))) {
         ctx.save({ ...ctx.state, guardedBase: { ...base, [key]: cur } });
         return { kind: 'allow' };
       }

@@ -115,6 +115,14 @@ describe('the check', () => {
     expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, { CLAUDE_CONFIG_DIR: cfg }, { home, managed, platform: 'darwin' })).toBe('');
   });
 
+  test('HARNESS_SANDBOX is ignored when a settings file sets it in env', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, '.claude/settings.json'), JSON.stringify({ env: { HARNESS_SANDBOX: '1' } }));
+    const out = await dispatch(call(root, 'Bash', { command: 'ls' }), registry, { HARNESS_SANDBOX: '1' }, { home, managed, platform: 'darwin' });
+    expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+
   test('without a session baseline it denies, whatever the files on disk say', async () => {
     const { root, home, managed } = setup();
     mkdirSync(join(home, '.claude'));

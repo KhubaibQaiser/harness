@@ -39,8 +39,11 @@ export const sandboxRequired: Check = {
     // Attended calls and non-shell tools return before any file is read.
     const mode = ctx.config?.sandbox ?? 'unattended'; // degraded (no config): still judged, not a TypeError deny
     if (!isShell(ctx.input.tool_name) || !ctx.unattended || mode === 'off') return { kind: 'allow' };
-    const layers = ctx.platform === 'win32' || ctx.env.HARNESS_SANDBOX === '1' ? [] : sessionLayers(ctx);
-    const verdict = layers ? sandboxVerdict({ mode, unattended: ctx.unattended, platform: ctx.platform, env: ctx.env, layers }) : 'deny';
+    // A settings file's env can set HARNESS_SANDBOX for the hooks; only the launcher's counts, so then it is ignored.
+    const set = Object.values(ctx.state?.guardedBase ?? {}).some((v) => typeof v?.env === 'object' && v.env !== null && 'HARNESS_SANDBOX' in v.env);
+    const env = set ? { ...ctx.env, HARNESS_SANDBOX: undefined } : ctx.env;
+    const layers = ctx.platform === 'win32' || env.HARNESS_SANDBOX === '1' ? [] : sessionLayers(ctx);
+    const verdict = layers ? sandboxVerdict({ mode, unattended: ctx.unattended, platform: ctx.platform, env, layers }) : 'deny';
     if (verdict === 'deny') return { kind: 'deny', reason: MSG, check: 'sandbox-required' };
     if (verdict === 'unavailable' && !ctx.state?.sandboxUnavailableLogged) {
       appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'sandbox-required', decision: 'sandbox-unavailable' });

@@ -43,12 +43,12 @@ export function harnessDenyRules(root: string): Set<string> | null {
   }
 }
 
-export type GuardedPart = 'hooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'unreadable';
-export type GuardedView = { hooks: [string, unknown[]][]; deny: string[]; disableAllHooks: unknown; sandbox: unknown } | null;
+export type GuardedPart = 'hooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'env' | 'unreadable';
+export type GuardedView = { hooks: [string, unknown[]][]; deny: string[]; disableAllHooks: unknown; sandbox: unknown; env?: unknown } | null;
 
 /**
  * Only what harness relies on in a Claude settings file: the hook groups that run its dispatcher, its own deny rules,
- * disableAllHooks and sandbox. permissions.allow and the other keys Claude Code writes (an "Always allow" click) don't
+ * disableAllHooks, sandbox and env (it can set the variables the hooks read). permissions.allow and the other keys Claude Code writes (an "Always allow" click) don't
  * count. An absent file is the empty view; null means the file isn't JSON.
  */
 export function guardedView(text: string | null, deny: Set<string> | null): GuardedView {
@@ -63,8 +63,10 @@ export function guardedView(text: string | null, deny: Set<string> | null): Guar
     .filter(([, g]) => g.length)
     .sort(([a], [b]) => a.localeCompare(b));
   const rules = (Array.isArray(s?.permissions?.deny) ? s.permissions.deny : []).filter((d: unknown) => typeof d === 'string' && (!deny || deny.has(d))).sort();
-  // sandbox stays undefined when absent, so a file without it keeps the fingerprint it had before sandbox counted.
-  return { hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null, sandbox: s?.sandbox };
+  // sandbox and env stay undefined when absent, so a file without them keeps the fingerprint it had before they counted.
+  // env keeps each key with a hash of its value: the session state must not hold the secrets env often carries.
+  const env = s?.env && typeof s.env === 'object' && !Array.isArray(s.env) ? Object.fromEntries(Object.entries(s.env).map(([k, v]) => [k, sha(JSON.stringify(v))])) : s?.env;
+  return { hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null, sandbox: s?.sandbox, env };
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -76,6 +78,7 @@ export function guardedDiff(base: GuardedView, cur: GuardedView): GuardedPart[] 
   if (base.deny.some((r) => !cur.deny.includes(r))) parts.push('deny');
   if (!same(base.disableAllHooks, cur.disableAllHooks)) parts.push('disableAllHooks');
   if (!same(base.sandbox, cur.sandbox)) parts.push('sandbox');
+  if (!same(base.env, cur.env)) parts.push('env');
   return parts;
 }
 

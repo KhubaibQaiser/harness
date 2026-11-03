@@ -8,7 +8,7 @@ import type { Check } from '../hooks/dispatch.js';
 // Source values from the hooks reference (ConfigChange input). policy_settings can't be blocked, and skills aren't guarded.
 const SOURCES: Record<string, 'user' | 'project' | 'local'> = { user_settings: 'user', project_settings: 'project', local_settings: 'local' };
 
-// Spec 3.3 (D6, C5): a mid-session change to harness's hooks, its deny rules, disableAllHooks or sandbox is not applied
+// Spec 3.3 (D6, C5): a mid-session change to harness's hooks, its deny rules, disableAllHooks, sandbox or env is not applied
 // to the running session, measured against the guarded views at the session's first other hook (plan ruling 4).
 export const configChange: Check = {
   name: 'config-change',
@@ -50,7 +50,7 @@ export const configChange: Check = {
     return {
       kind: 'block',
       check: 'config-change',
-      reason: `Harness keeps its hooks, its deny rules, disableAllHooks and the sandbox settings as they were when this session started, so this change to \`${rel}\` (${list}) is not applied to the session.`,
+      reason: `Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and \`env\` as they were when this session started, so this change to \`${rel}\` (${list}) is not applied to the session.`,
     };
   },
 };

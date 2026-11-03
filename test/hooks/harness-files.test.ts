@@ -240,9 +240,23 @@ test('guardedDiff reports only the guarded parts that changed', () => {
   expect(diffOf({ ...BASE, sandbox: { enabled: true, autoAllowBashIfSandboxed: true } })).toEqual(['sandbox']);
   expect(diffOf({ ...BASE, sandbox: undefined })).toEqual(['sandbox']);
   expect(diffOf({ ...BASE, permissions: { ...BASE.permissions, allow: ['Bash(ls)', 'Bash(pwd)'] } })).toEqual([]);
+  expect(diffOf({ ...BASE, env: { HARNESS_SANDBOX: '1' } })).toEqual(['env']);
+  expect(guardedDiff(guardedView('{"env":{"A":"x"}}', null), guardedView('{"env":{"A":"y"}}', null))).toEqual(['env']);
   expect(guardedDiff(guardedView(null, null), guardedView('{}', null))).toEqual([]); // absent is the empty view
   expect(guardedView('{not json', null)).toBeNull();
   expect(guardedDiff(guardedView('{}', null), null)).toEqual(['unreadable']);
+});
+
+test('the guarded view keeps env key names, not values, and leaves the fingerprint alone without env', () => {
+  expect(guardedView('{"env":{"TOKEN":"secret"}}', null)!.env).toEqual({ TOKEN: expect.not.stringContaining('secret') });
+  expect(JSON.stringify(guardedView('{}', null))).not.toContain('env');
+});
+
+test('change detection reports an env change', () => {
+  const root = repo();
+  const before = snapshotHarnessFiles(root)['.claude/settings.json'];
+  writeFileSync(join(root, '.claude/settings.json'), '{"env":{"CI":"false"}}');
+  expect(snapshotHarnessFiles(root)['.claude/settings.json']).not.toBe(before);
 });
 
 test('change detection reports a sandbox change', () => {

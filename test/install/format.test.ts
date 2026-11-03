@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5,9 +6,11 @@ import { describe, expect, test } from 'vitest';
 import { doctor } from '../../src/cli/doctor.js';
 import { init, type Prompt } from '../../src/cli/init.js';
 import { uninstall } from '../../src/cli/uninstall.js';
+import { update } from '../../src/cli/update.js';
 import { readManifest } from '../../src/install/apply.js';
 import { lineHunks, revertHunks } from '../../src/install/diff.js';
 import { prettierFormat, repoPrettier } from '../../src/install/format.js';
+import { hashText } from '../../src/install/text.js';
 import { makeRepo } from './helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -100,6 +103,23 @@ test('N1: a file that was not Prettier-clean before is left unformatted; no Pret
   const e = readManifest(b)!.files.find((f) => f.rel === 'vitest.config.ts')!;
   expect(e.formatted).toBeUndefined();
   expect(e.blocks!.length).toBeGreaterThan(0);
+});
+
+test("update never runs the repo's Prettier on harness's own files: the dispatcher is written as built", async () => {
+  const root = repo(withPrettier);
+  await go(root);
+  // A Prettier-clean old dispatcher, as recorded: update replaces it, and must not format the new one.
+  const placeholder = '// old dispatcher\n';
+  writeFileSync(join(root, '.harness/hooks/dispatch.mjs'), placeholder);
+  const m = readManifest(root)!;
+  m.files.find((f) => f.rel === '.harness/hooks/dispatch.mjs')!.hash = hashText(placeholder);
+  writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify(m, null, 2) + '\n');
+  for (const a of [['add', '-A'], ['commit', '-qm', 'old install']]) execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...a], { cwd: root });
+  let o = '';
+  const code = await update(['--yes'], { ...quiet, root, out: (s) => (o += s + '\n'), prompt, version: '1.0.0', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  expect(code, o).toBe(0);
+  expect(readFileSync(join(root, '.harness/hooks/dispatch.mjs'), 'utf8')).toBe(readFileSync(join(pkgDir, 'dist/hooks/dispatch.mjs'), 'utf8'));
+  expect(readManifest(root)!.files.find((f) => f.rel === '.harness/hooks/dispatch.mjs')!.formatted).toBeUndefined();
 });
 
 test('R3: a Prettier that ignores SIGTERM is killed at the timeout, not waited on', () => {

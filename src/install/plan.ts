@@ -91,6 +91,7 @@ const JS = /\.[cm]?[jt]s$/;
 function formatEdits(root: string, changes: Change[], notes: string[]): void {
   for (const c of changes) {
     if (c.kind !== 'update' || c.rename || !JS.test(c.rel)) continue; // a rename is a plain substitution (ruling 6)
+    if (c.rel.startsWith('.harness/')) continue; // harness's own files are written as built: update replacing the dispatcher must not format it
     const bin = repoPrettier(root, c.rel);
     if (!bin) continue;
     try {

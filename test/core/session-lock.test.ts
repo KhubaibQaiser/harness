@@ -188,9 +188,16 @@ test('stale dead-owner lock: a new live lock made in the race window is never re
 test('a stale dead-owner lock is still broken quickly through the break lock', async () => {
   const root = tmp();
   mkLock(root, { pid: await deadPid(), nonce: 'dead' });
-  const t = Date.now();
-  expect(await withSessionLock(root, 's', () => 'ok')).toBe('ok');
-  expect(Date.now() - t).toBeLessThan(1000);
+  // Broken, not waited out: the 2 s wait ends with the timeout warning. Asserting that, not wall time, is load-proof.
+  let err = '';
+  const orig = process.stderr.write;
+  process.stderr.write = ((s: string) => ((err += s), true)) as typeof process.stderr.write;
+  try {
+    expect(await withSessionLock(root, 's', () => 'ok')).toBe('ok');
+  } finally {
+    process.stderr.write = orig;
+  }
+  expect(err).not.toContain('state lock timeout');
   expect(existsSync(`${lockDir(root)}.break`)).toBe(false);
 });
 

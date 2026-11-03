@@ -84,6 +84,39 @@ describe('the check', () => {
     expect(await dispatch(call(root, 'Edit', { file_path: 'a.ts' }), [sandboxRequired], {}, { ...opts, platform: 'darwin' })).toBe('');
   });
 
+  test('C1: a Write to the user settings mid-session does not turn the requirement off', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    const opts = { home, managed, platform: 'darwin' as const };
+    const bash = async () => JSON.parse((await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)) || '{}').hookSpecificOutput?.permissionDecision;
+    const user = join(home, '.claude/settings.json');
+    expect(await bash()).toBe('deny');
+    expect(await dispatch(call(root, 'Write', { file_path: user, content: JSON.stringify(CONFIRMED) }), registry, {}, opts)).toBe('');
+    writeFileSync(user, JSON.stringify(CONFIRMED)); // what the allowed Write does
+    const cc = JSON.stringify({ hook_event_name: 'ConfigChange', session_id: 's', cwd: root, source: 'user_settings', file_path: user });
+    expect(JSON.parse(await dispatch(cc, registry, {}, opts)).decision).toBe('block');
+    expect(await bash()).toBe('deny');
+  });
+
+  test('a sandbox confirmed at the session start allows; managed is still read from disk', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(CONFIRMED));
+    const opts = { home, managed, platform: 'darwin' as const };
+    expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)).toBe('');
+    writeFileSync(managed, JSON.stringify({ sandbox: { enabled: false } }));
+    expect(JSON.parse(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)).hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+
+  test('without a session baseline it denies, whatever the files on disk say', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(CONFIRMED));
+    const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'ls' } };
+    const ctx = { input, root, home, managed, platform: 'darwin', env: {}, unattended: true, config: { sandbox: 'unattended' }, state: {}, save() {} } as unknown as Ctx;
+    expect(await sandboxRequired.run(ctx)).toEqual({ kind: 'deny', reason: MSG, check: 'sandbox-required' });
+  });
+
   test('two unattended win32 calls in one session log one sandbox-unavailable event', async () => {
     const { root, ...opts } = setup();
     for (let i = 0; i < 2; i++) expect(await dispatch(call(root, 'PowerShell', { command: 'ls' }), [sandboxRequired], {}, { ...opts, platform: 'win32' })).toBe('');

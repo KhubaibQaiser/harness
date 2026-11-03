@@ -1,8 +1,8 @@
 import type { SandboxMode } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
-import { type Layer, effective, readSettingsLayers } from '../core/settings-layers.js';
+import { type Layer, effective, readManagedLayers } from '../core/settings-layers.js';
 import { isShell } from '../hooks/edit-target.js';
-import type { Check } from '../hooks/dispatch.js';
+import type { Check, Ctx } from '../hooks/dispatch.js';
 import { findOnPath } from './stop/runner.js';
 
 const MSG = "Unattended run without Claude Code's sandbox. Start it with the command in the README (Unattended runs and CI), or set `sandbox: off` in `.harness/config.yaml`.";
@@ -20,6 +20,17 @@ export function sandboxVerdict(i: { mode: SandboxMode; unattended: boolean; plat
   return confirmed ? 'allow' : 'deny';
 }
 
+/**
+ * Managed from disk, then local, project and user from the session baseline (`guardedBase`): a settings file the agent
+ * writes mid-session is not applied by Claude Code (ConfigChange blocks it), so it doesn't count here either.
+ * null when there is no baseline. `--settings` sits between managed and local; a hook can't see it.
+ */
+function sessionLayers(ctx: Ctx): Layer[] | null {
+  const base = ctx.state?.guardedBase;
+  if (!base) return null;
+  return [...readManagedLayers(ctx.managed), ...(['local', 'project', 'user'] as const).map((name): Layer => ({ name, json: base[name] }))];
+}
+
 export const sandboxRequired: Check = {
   name: 'sandbox-required',
   events: ['PreToolUse'],
@@ -28,10 +39,8 @@ export const sandboxRequired: Check = {
     // Attended calls and non-shell tools return before any file is read.
     const mode = ctx.config?.sandbox ?? 'unattended'; // degraded (no config): still judged, not a TypeError deny
     if (!isShell(ctx.input.tool_name) || !ctx.unattended || mode === 'off') return { kind: 'allow' };
-    const verdict = sandboxVerdict({
-      mode, unattended: ctx.unattended, platform: ctx.platform, env: ctx.env,
-      layers: ctx.platform === 'win32' || ctx.env.HARNESS_SANDBOX === '1' ? [] : readSettingsLayers(ctx.root, ctx.home, ctx.platform, ctx.managed),
-    });
+    const layers = ctx.platform === 'win32' || ctx.env.HARNESS_SANDBOX === '1' ? [] : sessionLayers(ctx);
+    const verdict = layers ? sandboxVerdict({ mode, unattended: ctx.unattended, platform: ctx.platform, env: ctx.env, layers }) : 'deny';
     if (verdict === 'deny') return { kind: 'deny', reason: MSG, check: 'sandbox-required' };
     if (verdict === 'unavailable' && !ctx.state?.sandboxUnavailableLogged) {
       appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'sandbox-required', decision: 'sandbox-unavailable' });

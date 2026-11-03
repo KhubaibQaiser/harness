@@ -199,7 +199,7 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 
 **`status`** adds:
 - `Enforcement: sandbox <mode> (<macOS|Linux|WSL2: available | native Windows: not available | <platform>: not checked>)`
-- `Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open` when the PreToolUse, UserPromptSubmit and ConfigChange groups are the fragment's; otherwise ``Hook failure: the harness hooks in `.claude/settings.json` differ from the ones harness installs; run harness doctor``
+- `Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open` when the PreToolUse, UserPromptSubmit and ConfigChange harness hooks carry `onFailure: "block"`; otherwise ``Hook failure: a harness hook in `.claude/settings.json` lacks `onFailure: "block"`, so a failure may not block; run harness doctor``
 - `Hooks run Node <v> (<ts>)` from `hook-env.json`, or `not recorded yet`
 - The last blocked settings change, if any.
 

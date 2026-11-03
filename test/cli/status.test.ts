@@ -117,13 +117,13 @@ test('status shows the hook failure line', async () => {
   expect(out.indexOf('Hook failure')).toBeLessThan(out.indexOf('Last day'));
 });
 
-test('status claims blocking hooks only when the blocking groups are the installed ones', async () => {
+test('status claims blocking hooks only when the blocking groups carry onFailure block', async () => {
   const root = await installedAt();
   const p = join(root, '.claude/settings.json');
   writeFileSync(p, readFileSync(p, 'utf8').replaceAll('"onFailure": "block"', '"onFailure": "allow"').replaceAll('"onFailure":"block"', '"onFailure":"allow"'));
   const out = show(root, 'darwin');
   expect(out).not.toContain('Hook failure: blocks');
-  expect(out).toMatch(/^Hook failure: the harness hooks in `\.claude\/settings\.json` differ from the ones harness installs; run harness doctor$/m);
+  expect(out).toMatch(/^Hook failure: a harness hook in `\.claude\/settings\.json` lacks `onFailure: "block"`, so a failure may not block; run harness doctor$/m);
 });
 
 test('status names a platform it has no sandbox facts for', async () => {

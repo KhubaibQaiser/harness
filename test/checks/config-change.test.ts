@@ -202,7 +202,8 @@ test('a CLI record from before the session never allows restoring its state over
   expect(parsed(await change(r, 'project_settings')).reason).toContain('`.claude/settings.json` (sandbox)');
 });
 
-test('a CLI record accepted mid-session is used up: it no longer covers a blocked change in its other file', async () => {
+// The record's id check (only a CLI run after the baseline counts) is covered by the before-the-session test above.
+test('a CLI record accepted mid-session for the project file does not cover a blocked change in the local file', async () => {
   const r = repo();
   await prompt(r);
   write(join(r.root, '.claude/settings.local.json'), { disableAllHooks: true }); // a script's change, blocked

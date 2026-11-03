@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { readCliPath, recordCliPath } from '../../src/core/cli-path.js';
 import { decideCommand, decidePaths, fileWriteTargets, guard } from '../../src/checks/guard.js';
 import { loadConfig } from '../../src/core/config.js';
@@ -404,6 +404,27 @@ test('uninstall asks when someone is watching; unattended (CI, bypassPermissions
   expect(await decision({}, { CI: 'true' })).toBe('deny');
   expect(await decision({ permission_mode: 'bypassPermissions' }, {})).toBe('deny');
   expect(await decision({ permission_mode: 'dontAsk' }, {})).toBe('deny');
+});
+
+describe.each([['init', 'installing', 'writes'], ['update', 'updating', 'rewrites']])('%s asks the person', (sub, ing, verb) => {
+  const WHY = `Confirm: the agent is ${ing} the harness, which ${verb} its hooks, rules and settings`;
+  test.each([`node "/x/dist/cli.mjs" ${sub} --yes`, `pnpm harness ${sub} --yes`, `npx @khubaibqaiser/harness ${sub} --yes`, `harness ${sub}`])('%s', (cmd) => {
+    const d = decideCommand(cmd, ctx());
+    expect(d.kind).toBe('ask');
+    expect(reason(d)).toBe(WHY);
+  });
+  test('--dry-run is allowed', () => expect(kind(`harness ${sub} --dry-run`)).toBe('allow'));
+  test('hidden subcommand is denied', () => expect(kind(`H=${sub}; harness $H --yes`)).toBe('deny'));
+});
+test('update --check is allowed', () => expect(kind('harness update --check')).toBe('allow'));
+test('update --yes is denied with the Unattended prefix under dontAsk', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-up-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, permission_mode: 'dontAsk', tool_name: 'Bash', tool_input: { command: 'harness update --yes' } });
+  const o = JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput;
+  expect(o.permissionDecision).toBe('deny');
+  expect(o.permissionDecisionReason).toMatch(/^Unattended run: /);
 });
 
 // P2: a word is unquoted where a command runs, behind any wrapper the walk sees past.

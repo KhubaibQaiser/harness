@@ -25,6 +25,17 @@ const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bun', 'bu
 // Matched on text whose backslashes became slashes (see personOnlyInvocation). Windows shims (harness.cmd) and any case
 // count: Windows and macOS file systems ignore case.
 const HARNESS_CMD = /(^|\/)harness(@\S+)?(\.(cmd|ps1|bat|exe))?$|(^|\/)cli\.m?js$/i;
+/** True when a wrapper's flag takes the next word as its value: the flag itself (-u, --unset), or a short-option
+ *  cluster whose first value flag is its last letter (-iu NAME, -vs KILL), for every wrapper in WRAPPER_VALUE_FLAGS.
+ *  As in getopt, a value flag earlier in the cluster takes the rest of it as its value (-uC: unset C). */
+const takesValue = (wrapper: string, t: string): boolean => {
+  const flags = WRAPPER_VALUE_FLAGS[wrapper];
+  if (!flags) return false;
+  if (flags.has(t)) return true;
+  if (!/^-[a-zA-Z0-9]{2,}$/.test(t)) return false;
+  const i = [...t.slice(1)].findIndex((c) => flags.has(`-${c}`));
+  return i === t.length - 2;
+};
 /** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
 const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
@@ -90,7 +101,7 @@ export function commandStart(toks: string[], stop: (name: string) => boolean = (
       k++;
     } else if (t.startsWith('-')) {
       if (t === '-c') scriptFile = false; // script -c COMMAND
-      k += WRAPPER_VALUE_FLAGS[wrapper]?.has(t) ? 2 : 1;
+      k += takesValue(wrapper, t) ? 2 : 1;
     } else if (k > 0 && /^\d+(\.\d+)?[smhd]?$/.test(t)) k++; // timeout 60, timeout 1m
     else if (scriptFile) [k, scriptFile] = [k + 1, false]; // script [-q] FILE COMMAND (BSD form)
     else break;

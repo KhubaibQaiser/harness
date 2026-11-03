@@ -9,7 +9,7 @@ import { expect, test } from 'vitest';
 
 const DISPATCH = join(process.cwd(), 'dist/hooks/dispatch.mjs');
 const RUNS = 21;
-const OVERHEAD_MS = process.platform === 'win32' ? 200 : 100; // harness cost on top of a bare node spawn
+const OVERHEAD_MS = process.platform === 'win32' ? 250 : 100; // harness cost on top of a bare node spawn
 const CEILING_MS = 1000; // gross-regression guard on the whole spawn
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;

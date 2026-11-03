@@ -209,3 +209,14 @@ test('a change shown at a prompt and undone before the session ends is reported 
   await hook(root, 'SessionEnd', {}, 'f2c');
   expect(parsed(await hook(root, 'Stop', {}, 'f2d')).reason).toContain('`.harness/config.yaml`');
 });
+test('G2: a change shown at a prompt and still there when the session ends gives the next session a notice and one Stop block', async () => {
+  const root = repo();
+  await hook(root, 'UserPromptSubmit', {}, 'g2a');
+  await hook(root, 'Stop', {}, 'g2a');
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: false\n'); // the person's edit between turns
+  expect(parsed(await hook(root, 'UserPromptSubmit', {}, 'g2a')).systemMessage).toContain('`.harness/config.yaml`');
+  await hook(root, 'SessionEnd', {}, 'g2a'); // the change is still there
+  expect(parsed(await hook(root, 'UserPromptSubmit', {}, 'g2b')).systemMessage).toContain('`.harness/config.yaml`');
+  expect(parsed(await hook(root, 'Stop', {}, 'g2b')).reason).toContain('`.harness/config.yaml`');
+  expect(await hook(root, 'Stop', {}, 'g2b')).toBe('');
+});

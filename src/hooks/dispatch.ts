@@ -157,8 +157,8 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
         const prev = ctx.state.harnessFiles!;
         const cur = snapshotHarnessFiles(root);
         // A change shown at a prompt that is no longer as shown (undone, or changed again) before the Stop that would
-        // account for it: report that at this Stop, once. At SessionEnd, the shown state is what the next session
-        // starts from, so it reports the undoing.
+        // account for it: report that at this Stop, once. At SessionEnd, an undone change makes the shown state the
+        // next session's baseline, so the next session reports the undoing.
         const noticed: [string, string | null][] | null = ctx.state.harnessNoticed ? JSON.parse(ctx.state.harnessNoticed) : null;
         const gone = !!noticed && noticed.some(([f, h]) => (cur[f] ?? null) !== h);
         const shown: Snapshot = { ...prev };
@@ -175,7 +175,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
           if (over) log('harness-files', 'stop-gave-up', why);
           else return emit(event, { kind: 'block', reason: why, check: 'harness-files' });
         }
-        const files = event === 'SessionEnd' && noticed ? [] : changedFiles(ctx.state.harnessFiles!, cur);
+        const files = event === 'SessionEnd' && gone ? [] : changedFiles(ctx.state.harnessFiles!, cur);
         const cli = files.length ? readRepoSnapshot(root).cli : undefined;
         if (files.length && cli && !changedFiles(cli.files, cur).length) ctx.save({ ...ctx.state, harnessFiles: cur, harnessHead: gitHead(root), harnessNoticed: undefined });
         else if (files.length && event !== 'SessionEnd') {
@@ -197,7 +197,9 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
           }
         }
         // What this session has accounted for (not an unreported change) is where the next session starts.
-        if (event === 'Stop' || event === 'SessionEnd') recordLastSeen(root, event === 'SessionEnd' && noticed ? shown : ctx.state.harnessFiles!, ctx.state.harnessHead);
+        // At SessionEnd the shown state becomes the next baseline only when the shown change was undone or changed again
+        // (so the next session reports that); a change still there keeps the old baseline, so the next Stop blocks it.
+        if (event === 'Stop' || event === 'SessionEnd') recordLastSeen(root, event === 'SessionEnd' && gone ? shown : ctx.state.harnessFiles!, ctx.state.harnessHead);
       }
     } catch (e) {
       warn('harness-files', e);

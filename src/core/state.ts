@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import { renameWithRetry, retryTransient, writeAtomic } from './atomic.js';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
+import type { GuardedView } from './harness-files.js';
 
 export interface SessionState {
   startedAt: number;
@@ -20,6 +21,8 @@ export interface SessionState {
   harnessFiles?: Record<string, string>; // sha-256 of harness's own files: the session's change-detection snapshot
   harnessHead?: string; // HEAD when that snapshot was taken
   harnessNoticed?: string; // the change set already shown at a prompt (Stop still blocks once)
+  guardedBase?: Record<string, GuardedView>; // ConfigChange's baseline: the guarded settings views at the first other hook
+  pendingNotice?: string; // a blocked ConfigChange, shown at the next prompt
 }
 
 export const isSafeSessionId = (id: string): boolean => /^[A-Za-z0-9._-]+$/.test(id) && id !== '.' && id !== '..';

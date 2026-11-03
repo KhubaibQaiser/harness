@@ -5,7 +5,7 @@ import { expect, test } from 'vitest';
 import { status } from '../../src/cli/status.js';
 import { doctor } from '../../src/cli/doctor.js';
 import { readEvents } from '../../src/core/events.js';
-import { snapshotHarnessFiles, stampHarnessFiles } from '../../src/core/harness-files.js';
+import { guardedDiff, guardedView, snapshotHarnessFiles, stampHarnessFiles } from '../../src/core/harness-files.js';
 import { dispatch } from '../../src/hooks/dispatch.js';
 
 // Change detection (owner decision 2026-11-03): the backstop for every route the path checks can't see.
@@ -219,4 +219,35 @@ test('G2: a change shown at a prompt and still there when the session ends gives
   expect(parsed(await hook(root, 'UserPromptSubmit', {}, 'g2b')).systemMessage).toContain('`.harness/config.yaml`');
   expect(parsed(await hook(root, 'Stop', {}, 'g2b')).reason).toContain('`.harness/config.yaml`');
   expect(await hook(root, 'Stop', {}, 'g2b')).toBe('');
+});
+
+// ConfigChange's guarded view (spec 3.3, C5): harness's hook groups, its deny rules, disableAllHooks and sandbox.
+const GROUP = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node', args: ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'], onFailure: 'block' }] };
+const FORCE = 'Bash(git push *--force*)';
+const BASE = { hooks: { PreToolUse: [GROUP], Stop: [{ hooks: [{ type: 'command', command: 'node', args: ['.harness/hooks/dispatch.mjs'] }] }] }, permissions: { allow: ['Bash(ls)'], deny: [FORCE, 'Mine'] }, sandbox: { enabled: true } };
+const diffOf = (cur: unknown, deny: Set<string> | null = new Set([FORCE])) =>
+  guardedDiff(guardedView(JSON.stringify(BASE), deny), guardedView(JSON.stringify(cur), deny));
+
+test('guardedDiff reports only the guarded parts that changed', () => {
+  expect(diffOf(BASE)).toEqual([]);
+  expect(diffOf({ ...BASE, hooks: { Stop: BASE.hooks.Stop } })).toEqual(['hooks']); // a dispatcher group removed
+  expect(diffOf({ ...BASE, hooks: { ...BASE.hooks, PreToolUse: [{ ...GROUP, hooks: [{ ...GROUP.hooks[0], onFailure: undefined }] }] } })).toEqual(['hooks']);
+  expect(diffOf({ ...BASE, permissions: { deny: ['Mine'] } })).toEqual(['deny']); // a harness rule removed
+  expect(diffOf({ ...BASE, permissions: { deny: ['Bash(git push --force)', 'Mine'] } })).toEqual(['deny']); // narrowed
+  expect(diffOf({ ...BASE, permissions: { deny: [FORCE, 'Mine', 'Bash(rm *)'] } })).toEqual([]); // added
+  expect(diffOf({ ...BASE, permissions: { deny: [FORCE] } })).toEqual([]); // a rule harness didn't install
+  expect(diffOf({ ...BASE, disableAllHooks: true })).toEqual(['disableAllHooks']);
+  expect(diffOf({ ...BASE, sandbox: { enabled: true, autoAllowBashIfSandboxed: true } })).toEqual(['sandbox']);
+  expect(diffOf({ ...BASE, sandbox: undefined })).toEqual(['sandbox']);
+  expect(diffOf({ ...BASE, permissions: { ...BASE.permissions, allow: ['Bash(ls)', 'Bash(pwd)'] } })).toEqual([]);
+  expect(guardedDiff(guardedView(null, null), guardedView('{}', null))).toEqual([]); // absent is the empty view
+  expect(guardedView('{not json', null)).toBeNull();
+  expect(guardedDiff(guardedView('{}', null), null)).toEqual(['unreadable']);
+});
+
+test('change detection reports a sandbox change', () => {
+  const root = repo();
+  const before = snapshotHarnessFiles(root)['.claude/settings.json'];
+  writeFileSync(join(root, '.claude/settings.json'), '{"sandbox":{"enabled":false}}');
+  expect(snapshotHarnessFiles(root)['.claude/settings.json']).not.toBe(before);
 });

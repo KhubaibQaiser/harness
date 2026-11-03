@@ -26,9 +26,12 @@ const cli = (root: string, ...args: string[]) => {
   return { code: r.status, out: r.stdout + r.stderr };
 };
 
+// The hooks' home, so ConfigChange's baseline never reads the real ~/.claude.
+const HOME = mkdtempSync(join(tmpdir(), 'h-e2e-home-'));
+const hookEnv = { ...env, HOME, USERPROFILE: HOME };
 /** Pipes one hook JSON into the installed dispatcher; returns the parsed decision, or null for "no output". */
 const hook = (root: string, input: Record<string, unknown>) => {
-  const r = spawnSync('node', [join(root, DISPATCH)], { cwd: root, encoding: 'utf8', env, input: JSON.stringify({ session_id: 's1', cwd: root, ...input }) });
+  const r = spawnSync('node', [join(root, DISPATCH)], { cwd: root, encoding: 'utf8', env: hookEnv, input: JSON.stringify({ session_id: 's1', cwd: root, ...input }) });
   expect(r.status).toBe(0);
   return r.stdout ? (JSON.parse(r.stdout) as any) : null;
 };
@@ -225,7 +228,7 @@ test('the exec-form hook runs from a repo path with a space and ü', () => {
   const { command, args }: { command: string; args: string[] } = s.hooks.PreToolUse[0].hooks[0];
   expect(args[0]).toContain('${CLAUDE_PROJECT_DIR}');
   const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's1', cwd: root, tool_name: 'Write', tool_input: { file_path: join(root, '.claude/settings.json'), content: '{}' } });
-  const r = spawnSync(command, args.map((a) => a.replace('${CLAUDE_PROJECT_DIR}', root)), { cwd: root, encoding: 'utf8', env: { ...env, CLAUDE_PROJECT_DIR: root }, input });
+  const r = spawnSync(command, args.map((a) => a.replace('${CLAUDE_PROJECT_DIR}', root)), { cwd: root, encoding: 'utf8', env: { ...hookEnv, CLAUDE_PROJECT_DIR: root }, input });
   expect(r.stderr).toBe('');
   expect(r.status).toBe(0);
   expect(verdict(JSON.parse(r.stdout)).decision).toBe('deny'); // protect answered, so the dispatcher ran

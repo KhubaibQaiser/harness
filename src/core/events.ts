@@ -41,3 +41,13 @@ export function lastHarnessFilesChange(root: string): { ts: string; files: strin
     return null;
   }
 }
+
+/** The last ConfigChange harness blocked, if ever. */
+export function lastConfigChangeBlocked(root: string): { ts: string; reason: string } | null {
+  try {
+    const e = readEvents(root).filter((x) => x.decision === 'config-change-blocked').pop();
+    return e ? { ts: e.ts, reason: e.reason ?? '' } : null;
+  } catch {
+    return null;
+  }
+}

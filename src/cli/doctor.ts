@@ -104,7 +104,8 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const preGroup = groups('PreToolUse')[0];
   const pre = preGroup?.hooks.find(isHarnessHook);
   const shellForm = (h: any) => !Array.isArray(h.args);
-  if (pre && typeof pre.command === 'string') {
+  const dispMissing = readText(join(root, DISPATCH)) === null; // its own line below; a self-test would only add a second
+  if (pre && typeof pre.command === 'string' && !dispMissing) {
     const opts = { env: { ...env, CLAUDE_PROJECT_DIR: root }, encoding: 'utf8', timeout: 5000 } as const;
     const r = shellForm(pre)
       ? spawnSync(`${pre.command} --self-test`, { ...opts, shell: true })

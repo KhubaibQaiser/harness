@@ -312,6 +312,14 @@ test('a dispatcher that cannot run is a fix', async () => {
   expect(r.code).toBe(1);
 });
 
+test('a missing dispatcher gives one line, not also "does not run"', async () => {
+  const root = await installed();
+  rmSync(join(root, '.harness/hooks/dispatch.mjs'));
+  const r = run(root, { path: bin('npm') });
+  expect(r.out).toMatch(/^fix `\.harness\/hooks\/dispatch\.mjs` is missing/m);
+  expect(r.out).not.toContain('the dispatcher does not run');
+});
+
 test('no node on the PATH: the dispatcher does not run', async () => {
   const root = await installed();
   let out = '';

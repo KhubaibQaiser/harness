@@ -35,7 +35,7 @@ export const configChange: Check = {
       const cli = readRepoSnapshot(ctx.root).cli;
       const settings = cli?.id && cli.id !== ctx.state?.guardedCli ? cli.settings : undefined;
       if (settings && rel in settings && settings[rel] === (text === null ? null : settingsFingerprint(text, deny))) {
-        ctx.save({ ...ctx.state, guardedBase: { ...base, [key]: cur } });
+        ctx.save({ ...ctx.state, guardedBase: { ...base, [key]: cur }, guardedCli: cli!.id }); // the record is used up once accepted
         return { kind: 'allow' };
       }
     }

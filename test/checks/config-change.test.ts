@@ -183,3 +183,14 @@ test('a CLI record from before the session never allows restoring its state over
   rmSync(join(r.root, '.claude/settings.local.json')); // a script restores the CLI's state
   expect(parsed(await change(r, 'local_settings')).reason).toContain('`.claude/settings.local.json` (sandbox)');
 });
+
+test('a CLI record accepted mid-session is used up: it no longer covers a blocked change in its other file', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.root, '.claude/settings.local.json'), { disableAllHooks: true }); // a script's change, blocked
+  expect(parsed(await change(r, 'local_settings'))?.decision).toBe('block');
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, hooks: { ...SETTINGS.hooks, Stop: [GROUP] } }); // harness update
+  stampHarnessFiles(r.root); // its record also holds the local file as it is now
+  expect(await change(r, 'project_settings')).toBe('');
+  expect(parsed(await change(r, 'local_settings'))?.reason).toContain('`.claude/settings.local.json` (disableAllHooks)');
+});

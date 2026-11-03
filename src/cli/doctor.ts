@@ -23,7 +23,7 @@ export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJ
 
 const DISPATCH = '.harness/hooks/dispatch.mjs';
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd'];
-const BLOCKING = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange'];
+export const BLOCKING = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange']; // the events whose hook carries onFailure "block"
 const SANDBOX_WHY = { unattended: 'required for unattended runs', always: 'on in every session', off: 'text checks only' };
 const NODE_MIN = [22, 11, 0];
 const nums = (v: string) => v.split('.').map(Number);

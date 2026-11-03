@@ -1,8 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { loadConfig } from '../core/config.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
 import { readHookEnv } from '../core/hook-env.js';
 import { readManifest, ManifestError } from '../install/apply.js';
 import { detect } from '../install/detect.js';
+import { settingsFragment } from '../install/merge.js';
+import { BLOCKING } from './doctor.js';
 import { OFF_WHY, coverageSkipped, coverageWhy, noConfigFile, srcGlob, unsafeWhy } from '../install/preset.js';
 import { stats, tddStatus, type CliEnv } from './index.js';
 
@@ -40,8 +45,13 @@ export function status(args: string[], cli: CliEnv, deps: { platform?: NodeJS.Pl
   }
   if (!config.checks.tdd) lines.push(`  coverage: off - ${tddOffWhy}`);
   else lines.push(...left.map((w) => `  ${w}`), ...coverageSkipped(facts, config).map((p) => `  ${coverageWhy(p)}`), tddStatus(root));
-  const where = platform === 'darwin' ? 'macOS: available' : platform === 'win32' ? 'native Windows: not available' : cli.env.WSL_DISTRO_NAME ? 'WSL2: available' : 'Linux: available';
-  lines.push(`Enforcement: sandbox ${config.sandbox} (${where})`, 'Hook failure: blocks tool calls and prompts; the Stop gate fails open');
+  const where =
+    platform === 'darwin' ? 'macOS: available' : platform === 'win32' ? 'native Windows: not available'
+    : platform !== 'linux' ? `${platform}: not checked` : cli.env.WSL_DISTRO_NAME ? 'WSL2: available' : 'Linux: available';
+  lines.push(`Enforcement: sandbox ${config.sandbox} (${where})`);
+  lines.push(blocksOnFailure(root)
+    ? 'Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open'
+    : 'Hook failure: the harness hooks in `.claude/settings.json` differ from the ones harness installs; run harness doctor');
   const he = readHookEnv(root);
   lines.push(he ? `Hooks run Node ${he.node} (${he.ts})` : 'Hooks run Node: not recorded yet');
   const blocked = lastConfigChangeBlocked(root);
@@ -51,4 +61,16 @@ export function status(args: string[], cli: CliEnv, deps: { platform?: NodeJS.Pl
   lines.push('Last day');
   lines.forEach((l) => out(l));
   return stats(['--days', '1'], cli);
+}
+
+/** Whether each blocking event runs the fragment's own group (with onFailure "block"). */
+function blocksOnFailure(root: string): boolean {
+  let hooks: any;
+  try {
+    hooks = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'))?.hooks;
+  } catch {
+    return false;
+  }
+  const frag = settingsFragment().hooks;
+  return BLOCKING.every((ev) => Array.isArray(hooks?.[ev]) && hooks[ev].some((g: unknown) => isDeepStrictEqual(g, frag[ev][0])));
 }

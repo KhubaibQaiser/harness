@@ -174,3 +174,12 @@ test('a harness deny rule rewritten narrower is blocked (C5)', async () => {
   expect(parsed(await change(r, 'project_settings')).reason).toContain('`.claude/settings.json` (deny)');
   expect(lastConfigChangeBlocked(r.root)?.reason).toBe('.claude/settings.json: deny');
 });
+
+test('a CLI record from before the session never allows restoring its state over a later edit', async () => {
+  const r = repo();
+  stampHarnessFiles(r.root); // init or update records the local file as absent
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { enabled: true } }); // the person's edit between sessions
+  await prompt(r); // new session: baseline has the sandbox
+  rmSync(join(r.root, '.claude/settings.local.json')); // a script restores the CLI's state
+  expect(parsed(await change(r, 'local_settings')).reason).toContain('`.claude/settings.local.json` (sandbox)');
+});

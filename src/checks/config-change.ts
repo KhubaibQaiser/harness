@@ -30,8 +30,10 @@ export const configChange: Check = {
     if (!parts.length) return { kind: 'allow' };
     if (base && key !== 'user' && cur) {
       // A change the harness CLI recorded (init, update, uninstall) is allowed, and becomes this file's baseline.
-      // A file missing from the record never counts as recorded; null records the file as absent.
-      const settings = readRepoSnapshot(ctx.root).cli?.settings;
+      // A file missing from the record never counts as recorded; null records the file as absent. Only a CLI run
+      // during this session counts: an older record would let a script restore the CLI's state over a later edit.
+      const cli = readRepoSnapshot(ctx.root).cli;
+      const settings = cli?.id && cli.id !== ctx.state?.guardedCli ? cli.settings : undefined;
       if (settings && rel in settings && settings[rel] === (text === null ? null : settingsFingerprint(text, deny))) {
         ctx.save({ ...ctx.state, guardedBase: { ...base, [key]: cur } });
         return { kind: 'allow' };

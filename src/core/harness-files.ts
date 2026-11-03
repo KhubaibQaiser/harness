@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { retryTransient, writeAtomic } from './atomic.js';
@@ -14,7 +14,8 @@ const SETTINGS = new Set(['.claude/settings.json', '.claude/settings.local.json'
 const REPO = '.harness/state/files-snapshot.json';
 export type Snapshot = Record<string, string>; // repo-relative path -> sha-256 fingerprint
 // cli.settings: each repo settings file's fingerprint as the CLI left it, null when absent (ConfigChange's CLI record).
-type RepoSnapshot = { lastSeen?: { files: Snapshot; head?: string }; cli?: { files: Snapshot; settings?: Record<string, string | null> } };
+// cli.id: unique per CLI run, so ConfigChange honours only a record written after the session's baseline.
+type RepoSnapshot = { lastSeen?: { files: Snapshot; head?: string }; cli?: { files: Snapshot; settings?: Record<string, string | null>; id?: string } };
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const lf = (s: string) => s.replace(/\r\n/g, '\n');
@@ -174,5 +175,5 @@ export function stampHarnessFiles(root: string): void {
       settings[rel] = text === null ? null : settingsFingerprint(text, deny);
     } catch {} // unreadable: no record, so no change to it is allowed as the CLI's
   }
-  writeRepoSnapshot(root, { cli: { files, settings }, lastSeen: { files, ...(head ? { head } : {}) } });
+  writeRepoSnapshot(root, { cli: { files, settings, id: randomUUID() }, lastSeen: { files, ...(head ? { head } : {}) } });
 }

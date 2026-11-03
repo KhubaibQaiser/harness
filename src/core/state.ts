@@ -22,6 +22,7 @@ export interface SessionState {
   harnessHead?: string; // HEAD when that snapshot was taken
   harnessNoticed?: string; // the change set already shown at a prompt (Stop still blocks once)
   guardedBase?: Record<string, GuardedView>; // ConfigChange's baseline: the guarded settings views at the first other hook
+  guardedCli?: string; // cli.id when guardedBase was taken: only a later CLI record allows a ConfigChange
   pendingNotice?: string; // a blocked ConfigChange, shown at the next prompt
 }
 

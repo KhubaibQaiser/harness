@@ -644,10 +644,14 @@ test('leaving always with only a changed key left drops the set blocks from the 
   const first = await up(root, ['--yes']);
   expect(first.code).toBe(0);
   expect(first.out).toContain('was changed');
+  expect(first.out).toContain('Only the manifest changes.');
+  expect(first.out).not.toMatch(/^Update /m);
   const sets = () => (readManifest(root)!.files.find((f) => f.rel === '.claude/settings.json')!.blocks ?? []).filter((b) => b.startsWith('{"set"'));
   expect(sets()).toEqual([]);
   commitAll(root);
   const second = await up(root, ['--yes']);
+  expect(second.code).toBe(0);
+  expect(second.out).toMatch(/is up to date\.$/m);
   expect(second.out).not.toContain('was changed');
   s.sandbox = { enabled: true };
   writeFileSync(p, JSON.stringify(s, null, 2) + '\n');

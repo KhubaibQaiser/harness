@@ -97,9 +97,11 @@ test(':/ pathspecs and bash -c are seen', () => {
   for (const c of ["git restore ':/.'", 'git restore :/', 'bash -c "git restore ."', 'sh -c "mv a .harness/hooks/dispatch.mjs"']) expect(bash(c), c).toBe('deny');
 });
 
-test('test-results dir is protected from Write and from shell redirects', () => {
-  expect(edit('.harness/state/test-results/x.json', 'Write').kind).toBe('deny');
-  expect(bash('echo {} > .harness/state/test-results/x.json')).toBe('deny');
+test('results dir is protected from Write, shell redirects and rm', () => {
+  expect(edit('.harness/results/x.json', 'Write').kind).toBe('deny');
+  expect(bash('echo {} > .harness/results/x.json')).toBe('deny');
+  expect(bash('rm -rf .harness/results')).toBe('deny');
+  expect(bash('pnpm test')).toBe('allow');
 });
 
 test('a repo reached through a symlinked path is still protected (dispatch, real registry)', async () => {

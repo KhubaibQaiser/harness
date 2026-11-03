@@ -242,11 +242,11 @@ test('the jest reporter creates the results folder and writes what the TDD gate 
   const { readResults } = await import('../../src/checks/tdd/results.js');
   const root = makeRepo({ 'src/a.test.js': '' }, { git: false });
   const Reporter = createRequire(import.meta.url)(join(templatesDir, 'hooks/jest-results.cjs'));
-  const out = join(root, '.harness/state/test-results/root.json');
+  const out = join(root, '.harness/results/root.json');
   new Reporter({ outputFile: out }).onRunComplete(new Set(), {
     testResults: [{ testFilePath: join(root, 'src/a.test.js'), numFailingTests: 1, testResults: [{ fullName: 'a adds', status: 'failed' }, { fullName: 'a ok', status: 'passed' }] }],
   });
-  const r = readResults(root, join(root, '.harness/state/test-results'));
+  const r = readResults(root, join(root, '.harness/results'));
   expect(r).toEqual([{ file: 'src/a.test.js', status: 'failed', tests: [{ fullName: 'a adds', status: 'failed' }, { fullName: 'a ok', status: 'passed' }], writtenAt: expect.any(Number) }]);
 });
 

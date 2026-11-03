@@ -9,13 +9,13 @@ import { dispatch, registry } from '../../../src/hooks/dispatch.js';
 const CFG = 'checks:\n  tdd: true\ntdd:\n  paths: ["packages/**"]\n  exempt: ["packages/ui/**"]\n';
 const setup = (cfg = CFG) => {
   const root = mkdtempSync(join(tmpdir(), 'h-rf-'));
-  mkdirSync(join(root, '.harness/state/test-results'), { recursive: true });
+  mkdirSync(join(root, '.harness/results'), { recursive: true });
   writeFileSync(join(root, '.harness/config.yaml'), cfg);
   const startedAt = Math.floor((Date.now() - 10000) / 1000) * 1000; // whole seconds so utimes round-trips exactly
   writeState(root, 's', { startedAt, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 });
   let n = 0;
   const result = (file: string, status: 'passed' | 'failed', at = Date.now()) => {
-    const p = join(root, '.harness/state/test-results', `r${n++}.json`);
+    const p = join(root, '.harness/results', `r${n++}.json`);
     const a = status === 'failed' ? 'failed' : 'passed';
     writeFileSync(p, JSON.stringify({ testResults: [{ name: join(root, file), status, assertionResults: [{ fullName: 't', status: a }] }] }));
     utimesSync(p, at / 1000, at / 1000);

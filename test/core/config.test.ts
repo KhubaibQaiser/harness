@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { loadConfig } from '../../src/core/config.js';
+import { configReference, loadConfig } from '../../src/core/config.js';
 
 const emptyDir = () => mkdtempSync(join(tmpdir(), 'h-cfg-'));
 function dirWith(rel: string, body: string) {
@@ -26,7 +26,7 @@ test('missing config yields defaults, a warning, and tdd/multiFile disabled', ()
     base_ref: 'origin/main',
     coverage_globs: ['**/coverage/coverage-final.json'],
   });
-  expect(config.tdd).toEqual({ paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: '.harness/state/test-results' });
+  expect(config.tdd).toEqual({ paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: '.harness/results' });
   expect(config.multi_file_gate.generated).toEqual([]);
   expect(config.unattended.multi_file_gate).toBe('block');
 });
@@ -61,13 +61,33 @@ test('wrongly typed or unknown values warn and fall back to the default', () => 
   expect(warnings.join('\n')).toMatch(/bogus/);
 });
 
-test('warns when tdd.results_dir is outside .harness/state', () => {
-  const msg = 'tdd.results_dir is outside .harness/state; the agent could forge test results there';
+test('results_dir inside .harness/state is an error', () => {
+  const msg = '"tdd.results_dir" must not be inside .harness/state (the sandbox denies it there)';
+  const e = (dir: string, root = dirWith('.harness/config.yaml', `tdd:\n  results_dir: ${dir}\n`)) => loadConfig(root).errors;
+  expect(e('.harness/state/x')).toContain(msg);
+  expect(e('./.harness/STATE/x')).toContain(msg);
+  const root = emptyDir();
+  mkdirSync(join(root, '.harness'), { recursive: true });
+  writeFileSync(join(root, '.harness/config.yaml'), `tdd:\n  results_dir: ${join(root, '.harness/state/x')}\n`);
+  expect(loadConfig(root).errors).toContain(msg);
+  writeFileSync(join(root, '.harness/config.yaml'), `tdd:\n  results_dir: ${join(root, '.harness/STATE/x')}\n`);
+  const r = loadConfig(root);
+  expect(r.errors).toContain(msg);
+  expect(r.warnings).toContain(`config: "tdd.results_dir" has an invalid value (must not be inside .harness/state (the sandbox denies it there)); using default`);
+});
+
+test('results_dir outside .harness/results warns', () => {
+  const msg = "tdd.results_dir is outside .harness/results: protect doesn't cover it; the agent can write test results there with its file tools";
   const w = (dir: string) => loadConfig(dirWith('.harness/config.yaml', `tdd:\n  results_dir: ${dir}\n`)).warnings;
-  expect(w('coverage/results')).toContain(msg);
-  expect(w('../x')).toContain(msg);
-  expect(w('.harness/state/other')).not.toContain(msg);
+  expect(w('/tmp/x')).toContain(msg);
+  expect(w('build/results')).toContain(msg);
+  expect(w('.harness/results/sub')).not.toContain(msg);
+  expect(w('.harness/RESULTS')).not.toContain(msg); // case-insensitive, like the prefix
   expect(loadConfig(dirWith('.harness/config.yaml', 'checks:\n  tdd: true\n')).warnings).not.toContain(msg);
+});
+
+test('configReference lists the results_dir rule', () => {
+  expect(configReference().find((r) => r.key === 'tdd.results_dir')?.rule).toBe('must not be inside .harness/state (the sandbox denies it there)');
 });
 
 test('unattended.require_reason defaults false and loads without warning', () => {

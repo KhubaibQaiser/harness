@@ -19,7 +19,7 @@ tdd:
   diff_coverage: 80
   coverage_skip: []
   test_lock: true
-  results_dir: .harness/state/test-results
+  results_dir: .harness/results
 
 # Multi-file edit gate (needs checks.multiFile).
 multi_file_gate:

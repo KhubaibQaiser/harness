@@ -348,8 +348,34 @@ export function hasResultsOutput(pkg: PackageFacts, root: string, resultsDir: st
   }
 }
 
-export function testConfigChange(pkg: PackageFacts, root: string, resultsDir: string): TestConfigResult {
+/**
+ * An install from before the results folder moved: the old result path swapped in place in the package's results file
+ * (the Vitest config; for Jest, package.json, then its Jest config), when that file holds it exactly once. Else null.
+ */
+export function resultsRename(pkg: PackageFacts, root: string, resultsDir: string, legacyDir: string): Change | null {
+  if (pkg.test === 'none') return null;
+  const to = resultPath(pkg, root, resultsDir);
+  const from = resultPath(pkg, root, legacyDir);
+  if (from === to) return null;
+  // Only a whole path counts: `x/.harness/state/test-results/root.json` is not the root package's.
+  const re = new RegExp(`(?<=^|['"=\\s])${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+  for (const file of pkg.test === 'vitest' ? [pkg.testConfig] : ['package.json', pkg.testConfig]) {
+    if (!file) continue;
+    const rel = pkg.dir === '.' ? file : `${pkg.dir}/${file}`;
+    let before: string;
+    try { before = readFileSync(join(root, rel), 'utf8'); } catch { continue; }
+    const hits = [...before.matchAll(re)];
+    if (hits.length !== 1) continue;
+    const at = hits[0].index!;
+    return { kind: 'update', rel, before, after: before.slice(0, at) + to + before.slice(at + from.length), blocks: [], rename: { from, to } };
+  }
+  return null;
+}
+
+export function testConfigChange(pkg: PackageFacts, root: string, resultsDir: string, legacyDir?: string): TestConfigResult {
   if (pkg.test === 'none') return { none: true };
+  const rename = legacyDir === undefined ? null : resultsRename(pkg, root, resultsDir, legacyDir);
+  if (rename) return { change: rename };
   const path = resultPath(pkg, root, resultsDir);
   return pkg.test === 'vitest' ? vitestChange(pkg, root, path) : jestChange(pkg, root, path);
 }

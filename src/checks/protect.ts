@@ -9,8 +9,8 @@ import type { Decision } from '../hooks/types.js';
 import { commandStart, fileWriteTargets, gitArgs, rmTargets } from './guard.js';
 import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
 
-const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/config.yaml', '.harness/manifest.json', '.claude/settings.json', '.claude/settings.local.json'];
-const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/config.yaml', '.harness/manifest.json', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
+const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.claude/settings.json', '.claude/settings.local.json'];
+const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
 const REASON = 'Harness files and Claude settings are changed by a person, not the agent.';
 const NM_REASON = 'node_modules is managed by the package manager, not edited by hand: change package.json and run an install instead.';
 const INLINE_WHY = 'Inline code (node -e, python -c and the like) that names';

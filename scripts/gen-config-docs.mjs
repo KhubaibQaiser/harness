@@ -19,7 +19,7 @@ const WHAT = {
   'tdd.diff_coverage': 'Minimum coverage, in percent, for changed lines.',
   'tdd.coverage_skip': 'Globs inside `tdd.paths` that changed-line coverage skips. `init` lists a Vitest package here when no coverage provider is installed for it, and a Jest package whose `coverageReporters` leaves out `json` or whose `coverageDirectory` (or preset) moves the output.',
   'tdd.test_lock': 'Changing a test that was written failing needs your approval until it passes.',
-  'tdd.results_dir': 'Where the test reporters write JSON results. Keep it inside `.harness/state`.',
+  'tdd.results_dir': 'Where the test reporters write JSON results. Keep it inside `.harness/results`, which protect covers.',
   'multi_file_gate.generated': 'Globs for generated files that the multi-file gate does not count.',
   'unattended.multi_file_gate': 'What the multi-file gate does when no human is watching.',
   'unattended.require_reason': 'With `allow-log`, extra files need a one-line reason. No effect while the gate is `block`.',

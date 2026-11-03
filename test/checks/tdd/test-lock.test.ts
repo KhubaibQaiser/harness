@@ -12,7 +12,7 @@ const T = 'src/a.test.ts';
 const MSG = `${T} was written as a failing test. Changing it while making it pass needs your approval.`;
 const setup = (cfg = CFG, env: NodeJS.ProcessEnv = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'h-tl-'));
-  mkdirSync(join(root, '.harness/state/test-results'), { recursive: true });
+  mkdirSync(join(root, '.harness/results'), { recursive: true });
   writeFileSync(join(root, '.harness/config.yaml'), cfg);
   mkdirSync(join(root, 'src'), { recursive: true });
   writeFileSync(join(root, T), "it('a', () => {\n  expect(1 + 1).toBe(2);\n});\n");
@@ -20,7 +20,7 @@ const setup = (cfg = CFG, env: NodeJS.ProcessEnv = {}) => {
   writeState(root, 's', { startedAt, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 });
   let n = 0;
   const result = (file: string, status: 'passed' | 'failed', at = Date.now()) => {
-    const p = join(root, '.harness/state/test-results', `r${n++}.json`);
+    const p = join(root, '.harness/results', `r${n++}.json`);
     writeFileSync(p, JSON.stringify({ testResults: [{ name: join(root, file), status, assertionResults: [{ fullName: 't', status }] }] }));
     utimesSync(p, at / 1000, at / 1000);
   };

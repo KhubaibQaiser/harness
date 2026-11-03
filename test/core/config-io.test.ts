@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { defaults, loadConfig } from '../../src/core/config.js';
-import { serializeConfig, validateConfig } from '../../src/core/config-io.js';
+import { migrateResultsDir, serializeConfig, validateConfig } from '../../src/core/config-io.js';
 
 const load = (yaml: string) => {
   const d = mkdtempSync(join(tmpdir(), 'h-cfgio-'));
@@ -18,6 +18,12 @@ const errs = (raw: unknown) => {
 
 test('validateConfig names the path', () => {
   expect(errs({ stop: { max_attempts: 0 } })).toEqual(['stop.max_attempts: must be an integer from 1 to 10']);
+});
+
+test('validateConfig rejects a results_dir inside .harness/state', () => {
+  const msg = 'tdd.results_dir: must not be inside .harness/state (the sandbox denies it there)';
+  for (const d of ['.harness/state/x', './.harness/STATE/x', '.harness\\state\\x']) expect(errs({ tdd: { results_dir: d } })).toEqual([msg]);
+  expect(errs({ tdd: { results_dir: '.harness/results' } })).toEqual([]);
 });
 
 test('validateConfig rejects unknown keys, wrong types, bad enums and bad version', () => {
@@ -97,4 +103,12 @@ test('__proto__ and constructor keys are unknown-key errors', () => {
   expect(l.warnings.join()).toMatch(/unknown key "__proto__"[\s\S]*unknown key "constructor"/);
   expect(l.config).toEqual(defaults());
   expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+});
+
+test('migrateResultsDir swaps the old default on its one line, keeping indent, quotes and comment', () => {
+  expect(migrateResultsDir('tdd:\n  results_dir: .harness/state/test-results  # x\n')).toBe('tdd:\n  results_dir: .harness/results  # x\n');
+  expect(migrateResultsDir("tdd:\n  results_dir: '.harness/state/test-results'\n")).toBe("tdd:\n  results_dir: '.harness/results'\n");
+  expect(migrateResultsDir('tdd:\n  results_dir: ".harness/state/test-results"\n')).toBe('tdd:\n  results_dir: ".harness/results"\n');
+  expect(migrateResultsDir('tdd:\n  results_dir: build/results\n')).toBeNull();
+  expect(migrateResultsDir('a:\n  results_dir: .harness/state/test-results\nb:\n  results_dir: .harness/state/test-results\n')).toBeNull();
 });

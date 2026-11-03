@@ -2,12 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { validateConfig } from '../core/config-io.js';
+import { LEGACY_RESULTS_DIR } from '../core/config.js';
+import { migrateResultsDir, validateConfig } from '../core/config-io.js';
 import { latestVersion } from '../core/registry.js';
-import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Manifest } from '../install/apply.js';
+import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, readManifest, type Manifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
-import { unifiedDiff } from '../install/diff.js';
-import { MANIFEST_REL } from '../install/manifest.js';
+import { lineHunks, unifiedDiff } from '../install/diff.js';
+import { MANIFEST_REL, renameRecorded } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { planChanges } from '../install/plan.js';
 import { removeBlocks } from '../install/merge.js';
@@ -52,9 +53,14 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run harness init to install it.'), 1;
 
   // Strict validation: update plans from this config, so a mistake in it should stop us, not be skipped silently.
+  // The old default results_dir is now a config error, so it is migrated first (ruling 9): a one-line edit, not a rewrite.
   let raw: unknown;
+  let migrated: Change | null = null;
   try {
-    raw = parseYaml(readFileSync(join(root, CONFIG), 'utf8'));
+    const text = readFileSync(join(root, CONFIG), 'utf8');
+    const after = migrateResultsDir(text);
+    if (after !== null) migrated = { kind: 'update', rel: CONFIG, before: text, after, blocks: [] };
+    raw = parseYaml(after ?? text);
   } catch (e) {
     return out(`Could not read \`${CONFIG}\`: ${(e as Error).message}\nNext step: run harness doctor.`), 1;
   }
@@ -63,11 +69,11 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 
   let plan: ReturnType<typeof planChanges>;
   try {
-    plan = planChanges(root, v.config, detect(root), { version, distDir: cli.distDir, templatesDir: cli.templatesDir });
+    plan = planChanges(root, v.config, detect(root), { version, distDir: cli.distDir, templatesDir: cli.templatesDir, legacyDir: LEGACY_RESULTS_DIR });
   } catch (e) {
     return out(`Cannot build the update plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
   }
-  const changes = plan.changes.filter((c) => c.rel !== CONFIG); // the user owns the config after init
+  const changes = [...(migrated ? [migrated] : []), ...plan.changes.filter((c) => c.rel !== CONFIG)]; // the user owns the config after init
 
   const commit = (cs: typeof changes, manifest: Manifest) => {
     try {
@@ -92,7 +98,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 
   const entry = (rel: string) => m!.files.find((f) => f.rel === rel);
   const merged = (rel: string) => entry(rel)?.kind === 'update' || !!entry(rel)?.blocks?.length || !!entry(rel)?.replace?.length;
-  const editedRels = changes.filter((c) => c.kind === 'update' && entry(c.rel) && !matchesHash(c.before, entry(c.rel)!.hash)).map((c) => c.rel);
+  const editedRels = changes.filter((c) => c.kind === 'update' && c.rel !== CONFIG && entry(c.rel) && !matchesHash(c.before, entry(c.rel)!.hash)).map((c) => c.rel);
   const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
   const editedOwned = editedRels.filter((r) => !merged(r));
   const editedMerged = editedRels.filter(merged);
@@ -112,6 +118,14 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   if (!yes && !(await prompt.confirm('Apply these changes? (y/N)'))) return out('Cancelled. Nothing was written.'), 0;
 
   // One transaction: the files and the merged manifest commit together or roll back together.
+  // A moved results path: rewrite it in what the manifest recorded, else record the swap as hunks uninstall reverts (ruling 7).
+  for (const c of changes) {
+    if (c.kind !== 'update' || !c.rename) continue;
+    const old = entry(c.rel);
+    const r = old && renameRecorded(old, c.rename.from, c.rename.to);
+    if (r && r.found) m.files[m.files.indexOf(old)] = r.entry;
+    else c.replace = lineHunks(c.before, c.after);
+  }
   const files: Manifest['files'] = m.files.map((old) => {
     const c = changes.find((x) => x.rel === old.rel);
     if (!c || c.kind === 'delete') return old; // not touched by this update
@@ -122,7 +136,8 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     // A merged file the user edited since harness last wrote it: keep the old hash and drop the pre-init backup, so
     // uninstall still sees the edit and removes only harness's blocks (a whole-file restore or delete would lose it).
     const edited = c.kind === 'update' && merged(old.rel) && !matchesHash(c.before, old.hash);
-    const hash = edited ? old.hash : hashText(c.kind === 'create' ? c.content : c.after);
+    const keep = edited || (old.rel === CONFIG && !matchesHash(c.kind === 'update' ? c.before : '', old.hash)); // an edited config keeps its hash
+    const hash = keep ? old.hash : hashText(c.kind === 'create' ? c.content : c.after);
     // Otherwise keep init's kind (a created file stays deletable) and the pre-init backup uninstall restores.
     // Formatted hunks: keep the old ones the new text still holds, then this update's (uninstall undoes them newest first).
     // ponytail: an old hunk this update reformatted is dropped, so uninstall then leaves that part with a note.
@@ -132,7 +147,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   });
   for (const c of changes) {
     if (c.kind === 'delete' || m.files.some((f) => f.rel === c.rel)) continue;
-    files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}), ...(c.kind === 'update' && c.replace?.length ? { replace: c.replace, formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}) });
+    files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}), ...(c.kind === 'update' && c.replace?.length ? { replace: c.replace } : {}), ...(c.kind === 'update' && c.formatted ? { formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}) });
   }
   const err = commit(changes, { version, createdAt: new Date().toISOString(), ...(m.tddOff ? { tddOff: m.tddOff } : {}), files });
   if (err) return out(err), 1;

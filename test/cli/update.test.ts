@@ -236,7 +236,7 @@ const oldJestInstall = async () => {
   const pkg = JSON.stringify({ name: 'app', scripts: { test: 'jest --silent' }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n';
   const root = makeRepo({ 'package.json': pkg, 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n' });
   await init(['--yes'], { env: {}, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
-  const oldBlock = ' --json --outputFile=.harness/state/test-results/root.json --coverage';
+  const oldBlock = ' --json --outputFile=.harness/results/root.json --coverage';
   const oldPkg = pkg.replace('"jest --silent"', `"jest --silent${oldBlock}"`);
   writeFileSync(join(root, 'package.json'), oldPkg);
   const mp = join(root, '.harness/manifest.json');
@@ -254,7 +254,7 @@ test('update migrates the old Jest --json script to the reporter form, and unins
   const r = await up(root, ['--yes']);
   expect(r.code).toBe(0);
   const script = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts.test;
-  expect(script).toBe('jest --silent --reporters=default --reporters=./.harness/hooks/jest-results.cjs "--modulePathIgnorePatterns=<rootDir>/.harness" --outputFile=.harness/state/test-results/root.json --coverage');
+  expect(script).toBe('jest --silent --reporters=default --reporters=./.harness/hooks/jest-results.cjs "--modulePathIgnorePatterns=<rootDir>/.harness" --outputFile=.harness/results/root.json --coverage');
   expect(r.out).not.toContain('You edited');
   expect((await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() }))).toBe(0);
   expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(pkg);
@@ -412,4 +412,141 @@ test('change detection: a change between init and the first session is reported'
   const hook = (event: string) => dispatch(JSON.stringify({ hook_event_name: event, session_id: 'e3', cwd: root, prompt: 'go' }), [], {});
   expect(JSON.parse(await hook('UserPromptSubmit')).systemMessage).toContain('`.harness/config.yaml`');
   expect(JSON.parse(await hook('Stop')).decision).toBe('block');
+});
+
+// An install from before .harness/results: the config, the Vitest path and the manifest all name the old folder.
+const OLD = '.harness/state/test-results', NEW = '.harness/results';
+const CONFIG = '.harness/config.yaml';
+const oldResultsInstall = async () => {
+  const root = await installed();
+  const mp = join(root, '.harness/manifest.json');
+  const m = JSON.parse(readFileSync(mp, 'utf8'));
+  for (const rel of [CONFIG, 'vitest.config.ts']) {
+    const text = readFileSync(join(root, rel), 'utf8').replace(`${NEW}`, OLD);
+    writeFileSync(join(root, rel), text);
+    const f = m.files.find((x: { rel: string }) => x.rel === rel);
+    f.hash = sha256(text);
+    if (f.blocks) f.blocks = f.blocks.map((b: string) => b.replace(NEW, OLD));
+  }
+  writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+  realFs.mkdirSync(join(root, OLD), { recursive: true });
+  writeFileSync(join(root, OLD, 'root.json'), '{}\n');
+  commitAll(root);
+  return root;
+};
+
+test('update migrates the old results_dir before validating', async () => {
+  const root = await oldResultsInstall();
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(r.out).toContain(`-  results_dir: ${OLD}\n+  results_dir: ${NEW}`);
+  expect(readFileSync(join(root, CONFIG), 'utf8')).toContain(`results_dir: ${NEW}\n`);
+  expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toContain(`'${NEW}/root.json'`);
+  const m = readManifest(root)!;
+  const blocks = m.files.find((x) => x.rel === 'vitest.config.ts')!.blocks!;
+  expect(blocks.join('')).toContain(`${NEW}/root.json`);
+  expect(blocks.join('')).not.toContain(OLD);
+  expect(m.files.find((x) => x.rel === CONFIG)!.hash).toBe(sha256(readFileSync(join(root, CONFIG), 'utf8')));
+  expect(realFs.existsSync(join(root, OLD, 'root.json'))).toBe(true);
+  expect(await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() })).toBe(0);
+  for (const [rel, text] of Object.entries(REPO)) expect(readFileSync(join(root, rel), 'utf8'), rel).toBe(text);
+});
+
+test('an edited config keeps its old manifest hash', async () => {
+  const root = await oldResultsInstall();
+  const p = join(root, CONFIG);
+  writeFileSync(p, readFileSync(p, 'utf8') + '# mine\n');
+  commitAll(root);
+  const hash = readManifest(root)!.files.find((x) => x.rel === CONFIG)!.hash;
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(readFileSync(p, 'utf8')).toContain(`results_dir: ${NEW}\n`);
+  expect(readManifest(root)!.files.find((x) => x.rel === CONFIG)!.hash).toBe(hash);
+  expect(r.out).not.toContain('You edited');
+});
+
+test('a hand-set Jest path is migrated with recorded hunks and uninstall restores it', async () => {
+  // jest.reporters in package.json makes init print manual lines; the person then applied them with the old path.
+  const pkg = (script: string, reporters: string[]) => JSON.stringify({ name: 'app', scripts: { test: script }, jest: { reporters }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n';
+  const root = await installed({ 'package.json': pkg('jest', ['default']), 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n' });
+  expect(readManifest(root)!.files.some((x) => x.rel === 'package.json')).toBe(false);
+  const hand = pkg(`jest "--modulePathIgnorePatterns=<rootDir>/.harness" --outputFile=${OLD}/root.json --coverage`, ['default', './.harness/hooks/jest-results.cjs']);
+  writeFileSync(join(root, 'package.json'), hand);
+  const cfg = join(root, CONFIG);
+  writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('tdd: false', 'tdd: true')); // and turned TDD on
+  commitAll(root);
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(hand.replace(OLD, NEW));
+  const f = readManifest(root)!.files.find((x) => x.rel === 'package.json')!;
+  expect(f.replace?.length).toBeGreaterThan(0);
+  expect(f.formatted).toBeUndefined();
+  expect(await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() })).toBe(0);
+  expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(hand);
+});
+
+test('a custom results_dir is left alone', async () => {
+  const root = await installed();
+  const p = join(root, CONFIG);
+  writeFileSync(p, readFileSync(p, 'utf8').replace(`results_dir: ${NEW}`, 'results_dir: build/results'));
+  commitAll(root);
+  const r = await up(root, ['--yes'], { distDir: newDist() });
+  expect(r.code).toBe(0);
+  expect(readFileSync(p, 'utf8')).toContain('results_dir: build/results\n');
+  expect(r.out).not.toContain(`update ${CONFIG}`);
+});
+
+test('a custom results_dir inside .harness/state stops update with the config error', async () => {
+  const root = await installed();
+  const p = join(root, CONFIG);
+  writeFileSync(p, readFileSync(p, 'utf8').replace(`results_dir: ${NEW}`, 'results_dir: .harness/state/x'));
+  commitAll(root);
+  const r = await up(root, ['--yes'], { distDir: newDist() });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('tdd.results_dir: must not be inside .harness/state');
+});
+
+test('a hand-set Jest path in jest.config.js is migrated with recorded hunks and uninstall restores it', async () => {
+  const pkg = JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n';
+  const root = await installed({ 'package.json': pkg, 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n', 'jest.config.js': "module.exports = { reporters: ['default'] };\n" });
+  const hand = `module.exports = { reporters: ['default', './.harness/hooks/jest-results.cjs'], outputFile: '${OLD}/root.json' };\n`;
+  writeFileSync(join(root, 'jest.config.js'), hand);
+  commitAll(root);
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(readFileSync(join(root, 'jest.config.js'), 'utf8')).toBe(hand.replace(OLD, NEW));
+  expect(readManifest(root)!.files.find((x) => x.rel === 'jest.config.js')!.replace?.length).toBeGreaterThan(0);
+  expect(await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() })).toBe(0);
+  expect(readFileSync(join(root, 'jest.config.js'), 'utf8')).toBe(hand);
+});
+
+test('with TDD off, update still migrates the old results_dir and a hand-set Vitest path', async () => {
+  const root = await installed();
+  const cfg = join(root, CONFIG);
+  writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('tdd: true', 'tdd: false').replace(`results_dir: ${NEW}`, `results_dir: ${OLD}`));
+  const hand = `export default { test: { outputFile: { json: '${OLD}/root.json' } } };\n`;
+  writeFileSync(join(root, 'vitest.config.ts'), hand);
+  commitAll(root);
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(readFileSync(cfg, 'utf8')).toContain(`results_dir: ${NEW}\n`);
+  expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toBe(hand.replace(OLD, NEW));
+});
+
+test('init does not migrate an old results path', async () => {
+  const vitest = `export default { test: { outputFile: { json: '${OLD}/root.json' } } };\n`;
+  const root = await installed({ ...REPO, 'vitest.config.ts': vitest });
+  expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toBe(vitest);
+  expect(readManifest(root)!.files.some((x) => x.rel === 'vitest.config.ts')).toBe(false);
+});
+
+test('an uncommitted config stops update when a migration is due', async () => {
+  const root = await oldResultsInstall();
+  const p = join(root, CONFIG);
+  writeFileSync(p, readFileSync(p, 'utf8') + '# mine\n');
+  const before = readFileSync(p, 'utf8');
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`Commit or stash these files first, so the update can be undone cleanly: ${CONFIG}`);
+  expect(readFileSync(p, 'utf8')).toBe(before);
 });

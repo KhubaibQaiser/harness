@@ -1,6 +1,6 @@
 // Jest reporter installed by harness (do not edit; harness update replaces it).
 // Writes each test file's result to Jest's --outputFile, which the harness TDD gate reads. Unlike --json, it creates
-// the folder first: .harness/state/ is gitignored, so it never exists on a fresh clone.
+// the folder first: .harness/results/ is gitignored, so it never exists on a fresh clone.
 const { mkdirSync, renameSync, writeFileSync } = require('node:fs');
 const { dirname, resolve } = require('node:path');
 

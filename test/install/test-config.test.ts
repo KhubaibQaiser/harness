@@ -2,10 +2,10 @@ import { parseModule } from 'magicast';
 import { describe, expect, it } from 'vitest';
 import type { PackageFacts } from '../../src/install/detect.js';
 import { removeBlocks } from '../../src/install/merge.js';
-import { testConfigChange } from '../../src/install/test-config.js';
+import { resultsRename, testConfigChange } from '../../src/install/test-config.js';
 import { makeRepo } from './helpers.js';
 
-const RD = '.harness/state/test-results';
+const RD = '.harness/results';
 const vt = (over: Partial<PackageFacts> = {}): PackageFacts => ({ dir: '.', name: 'demo', scripts: {}, test: 'vitest', testConfig: 'vitest.config.ts', ...over });
 const jest = (script: string, over: Partial<PackageFacts> = {}): PackageFacts => ({ dir: '.', name: 'demo', scripts: { test: script }, test: 'jest', ...over });
 
@@ -38,7 +38,7 @@ describe('testConfigChange vitest', () => {
 
   it('vite.config with test key edited', () => {
     const c = edit({ 'packages/a/vite.config.ts': "import { defineConfig } from 'vite';\nexport default defineConfig({\n  plugins: [],\n  test: { globals: true },\n});\n" }, vt({ testConfig: 'vite.config.ts', dir: 'packages/a', name: '@s/a' }), 'packages/a/vite.config.ts');
-    expect(c.after).toContain("json: '../../.harness/state/test-results/s__a.json'");
+    expect(c.after).toContain("json: '../../.harness/results/s__a.json'");
     expect(c.after).toContain('globals: true');
   });
 
@@ -272,5 +272,51 @@ describe('testConfigChange vitest: quote style and layout', () => {
     expect(c.after).toContain('    reporters: ["default", "json"],\n');
     expect(c.after).toContain(`    outputFile: { json: "${RD}/root.json" },\n`);
     expect(c.after).not.toContain("'");
+  });
+});
+
+describe('testConfigChange: migrating the legacy results path', () => {
+  const LEGACY = '.harness/state/test-results';
+  const migrate = (files: Record<string, string>, pkg: PackageFacts, legacy = LEGACY) => testConfigChange(pkg, makeRepo(files, { git: false }), RD, legacy);
+
+  it('vitest root package: the old path becomes the new one', () => {
+    const before = "export default { test: { outputFile: { json: '.harness/state/test-results/root.json' } } };\n";
+    expect(migrate({ 'vitest.config.ts': before }, vt())).toEqual({ change: { kind: 'update', rel: 'vitest.config.ts', before, after: before.replace('.harness/state/test-results/root.json', '.harness/results/root.json'), blocks: [], rename: { from: '.harness/state/test-results/root.json', to: '.harness/results/root.json' } } });
+  });
+
+  it('monorepo package: the relative path is substituted', () => {
+    const r = migrate({ 'packages/a/vitest.config.ts': "export default { test: { outputFile: { json: '../../.harness/state/test-results/a.json' } } };\n" }, vt({ dir: 'packages/a', name: 'a' })) as { change: { rel: string; after: string } };
+    expect(r.change.rel).toBe('packages/a/vitest.config.ts');
+    expect(r.change.after).toContain("'../../.harness/results/a.json'");
+  });
+
+  it('jest: the --outputFile in package.json is substituted', () => {
+    const pj = JSON.stringify({ name: 'demo', scripts: { test: 'jest --reporters=./.harness/hooks/jest-results.cjs --outputFile=.harness/state/test-results/root.json' } }, null, 2) + '\n';
+    const r = migrate({ 'package.json': pj }, jest('x')) as { change: { rel: string; after: string; rename: unknown } };
+    expect(r.change.rel).toBe('package.json');
+    expect(r.change.after).toBe(pj.replace('.harness/state/test-results/', '.harness/results/'));
+    expect(r.change.rename).toEqual({ from: '.harness/state/test-results/root.json', to: '.harness/results/root.json' });
+  });
+
+  it('the old path twice, or legacyDir equal to resultsDir, gives the existing result', () => {
+    const twice = "export default { test: { outputFile: { json: '.harness/state/test-results/root.json' } } }; // .harness/state/test-results/root.json\n";
+    const root = makeRepo({ 'vitest.config.ts': twice }, { git: false });
+    expect(testConfigChange(vt(), root, RD, LEGACY)).toEqual(testConfigChange(vt(), root, RD));
+    const plain = makeRepo({ 'vitest.config.ts': 'export default { test: {} };\n' }, { git: false });
+    expect(testConfigChange(vt(), plain, RD, RD)).toEqual(testConfigChange(vt(), plain, RD));
+  });
+});
+
+describe('resultsRename: whole paths only, and the Jest config', () => {
+  it('a longer path ending in the old one is not the root package path', () => {
+    const before = "export default { test: { outputFile: { json: 'x/.harness/state/test-results/root.json' } } };\n";
+    expect(resultsRename(vt(), makeRepo({ 'vitest.config.ts': before }, { git: false }), RD, '.harness/state/test-results')).toBeNull();
+  });
+
+  it('jest: a path in the Jest config is migrated when package.json has none', () => {
+    const cfg = "module.exports = { outputFile: '.harness/state/test-results/root.json' };\n";
+    const root = makeRepo({ 'package.json': '{ "name": "demo" }\n', 'jest.config.js': cfg }, { git: false });
+    const c = resultsRename(jest('jest', { testConfig: 'jest.config.js' }), root, RD, '.harness/state/test-results');
+    expect(c).toMatchObject({ rel: 'jest.config.js', after: cfg.replace('state/test-results', 'results') });
   });
 });

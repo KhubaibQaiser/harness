@@ -117,7 +117,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   for (const ev of EVENTS) {
     const gs = groups(ev);
     if (gs.some((g) => kind(ev, g) === 'edited'))
-      fix(`.claude/settings.json: hooks.${ev} harness hook differs from the one harness installs`, 'undo the edit or delete that group, then run harness update');
+      fix(`\`.claude/settings.json\`: \`hooks.${ev}\` harness hook differs from the one harness installs`, 'undo the edit or delete that group, then run harness update');
     else if (BLOCKING.includes(ev) && gs.some((g) => kind(ev, g) === 'old' && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure !== 'block')))
       fix(`${ev} hook has no onFailure "block"`, 'run harness update');
   }

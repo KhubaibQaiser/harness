@@ -50,7 +50,7 @@ export const configChange: Check = {
     return {
       kind: 'block',
       check: 'config-change',
-      reason: `Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and \`env\` as they were when this session started, so this change to \`${rel}\` (${list}) is not applied to the session.`,
+      reason: `Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and \`env\` as they were when this session started, so this change to \`${rel}\` (${list}) is not applied to the session. Ask the person to make this change outside the session.`,
     };
   },
 };

@@ -320,7 +320,7 @@ test('no node on the PATH: the dispatcher does not run', async () => {
   expect(code).toBe(1);
 });
 
-const differs = (ev: string) => new RegExp(`^fix \\.claude/settings\\.json: hooks\\.${ev} harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$`, 'm');
+const differs = (ev: string) => new RegExp(`^fix \`\\.claude/settings\\.json\`: \`hooks\\.${ev}\` harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$`, 'm');
 const toShell = (s: any) => {
   const h = s.hooks.PreToolUse[0].hooks[0];
   h.command = 'node "${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"';
@@ -378,7 +378,7 @@ test('an edited harness hook group is a fix', async () => {
   const root = await installed();
   editSettings(root, (s) => (s.hooks.Stop[0].hooks[0].timeout = 5));
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/^fix \.claude\/settings\.json: hooks\.Stop harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$/m);
+  expect(r.out).toMatch(/^fix `\.claude\/settings\.json`: `hooks\.Stop` harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$/m);
   expect(r.lines.filter((l) => l.includes('differs'))).toHaveLength(1);
   expect(r.code).toBe(1);
 });

@@ -45,7 +45,7 @@ test('a project hook removed is blocked, logged, and noticed at the next prompt 
   await prompt(r); // first hook: baseline
   write(join(r.root, '.claude/settings.json'), { ...SETTINGS, hooks: { ConfigChange: [GROUP] } });
   const out = parsed(await change(r, 'project_settings'));
-  expect(out).toEqual({ decision: 'block', reason: 'Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and `env` as they were when this session started, so this change to `.claude/settings.json` (hooks) is not applied to the session.' });
+  expect(out).toEqual({ decision: 'block', reason: 'Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and `env` as they were when this session started, so this change to `.claude/settings.json` (hooks) is not applied to the session. Ask the person to make this change outside the session.' });
   expect(readEvents(r.root).filter((e) => e.decision === 'config-change-blocked').map((e) => e.reason)).toEqual(['.claude/settings.json: hooks']);
   expect(lastConfigChangeBlocked(r.root)?.reason).toBe('.claude/settings.json: hooks');
   const notice = 'Harness blocked a change to `.claude/settings.json` (hooks) in this session. The file is still changed on disk, so the next session loads it: review it first.';

@@ -168,7 +168,7 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 
 - Removes `set` blocks by key path and value. A `sandbox` object left empty that wasn't there before init is removed, like `hooks` and `permissions` today (`uninstall.ts` `had()`).
 - Hook groups are matched by deep equality as today; 6.1 keeps the recorded blocks equal to what is in the file.
-- **Byte-identical:** after `init` → `update` → `uninstall`, and after `init` → `uninstall`, every fixture is byte-identical to before `init` (section 12).
+- **Byte-identical:** after `init` → `update` → `uninstall`, and after `init` → `uninstall`, every fixture is byte-identical to before `init` (section 12). In `always` mode the person edited `.harness/config.yaml` to set the mode, so uninstall keeps that file, like any edited file; everything else is byte-identical.
 
 ## 7. Config
 
@@ -252,7 +252,7 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 **Offline (unit and e2e; CI on three OSes):**
 - `mergeSettings`: exec form, `onFailure` placement (PreToolUse, UserPromptSubmit, ConfigChange; not Stop, PostToolUse, SessionEnd), matchers, new deny rules; `have` keyed on command plus args (a foreign `node` exec hook survives); replace in place against recorded blocks; an edited group left with a note; `always` adds missing `sandbox` keys only and records `set` blocks; leaving `always` removes them.
 - Uninstall: `set` blocks removed; empty `sandbox` parent dropped only when absent before init.
-- **e2e byte-identity:** fixtures with and without an existing `sandbox` key; modes `unattended` and `always`; an "old install" fixture (previous fragment, old results path in Vitest inline, multi-line and Prettier-formatted configs, and Jest script and config forms) → `update` → `uninstall` gives the pre-init bytes.
+- **e2e byte-identity:** fixtures with and without an existing `sandbox` key; modes `unattended` and `always`; an "old install" fixture (previous fragment, old results path in Vitest inline, multi-line and Prettier-formatted configs, and Jest script and config forms) → `update` → `uninstall` gives the pre-init bytes. In `always` mode, uninstall keeps the person's edited `.harness/config.yaml`, like any edited file.
 - Results migration: `testConfigChange` substitution per framework; manifest blocks and hunks rewritten; config line migrated only for the exact old default; `results_dir` inside `.harness/state` rejected.
 - Dispatcher: a throw on PreToolUse prints a deny; on UserPromptSubmit exits 1; `--self-test`; `hook-env.json` written on UserPromptSubmit.
 - Checks: PowerShell and Monitor inputs through guard, protect, test-lock and spec-gate; the PowerShell path rule (ask, deny unattended).

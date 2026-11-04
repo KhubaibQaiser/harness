@@ -78,3 +78,23 @@ test('answersToConfig leaves sandbox and results_dir alone', () => {
   expect(c.tdd.paths).toEqual(['web/**']);
   expect(base.apps).toEqual([]);
 });
+
+test('echoed input is escaped, never raw', () => {
+  const esc = '\u001b[31m';
+  const e = errs(answers({ apps: [app({ dir: `x${esc}` })], [`k${esc}`]: 1, project: { ...answers().project, [`p${esc}`]: 1 } }));
+  expect(e.length).toBeGreaterThanOrEqual(3);
+  for (const line of e) expect(line).not.toContain('\u001b');
+  expect(e.join('\n')).toContain('\\u001b');
+});
+
+test('every project, tdd and unattended key is required', () => {
+  const { domain: _d, ...project } = answers().project;
+  expect(errs(answers({ project }))).toEqual(['project.domain: required']);
+  expect(errs(answers({ tdd: { paths: [] } }))).toEqual(['tdd.diff_coverage: required']);
+  expect(errs(answers({ unattended: { require_reason: false } }))).toEqual(['unattended.multi_file_gate: required']);
+});
+
+test('dotenv check is per segment: .env and .env.local rejected, .environments passes', () => {
+  for (const p of ['.env', '.env.local', 'web/.env.production']) expect(errs(answers({ scope: { paths: [p] } })), p).toHaveLength(1);
+  expect(errs(answers({ scope: { paths: ['.environments/a'] } }))).toEqual([]);
+});

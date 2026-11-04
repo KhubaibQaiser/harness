@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { retryTransient } from './atomic.js';
 import { join, posix, relative, resolve } from 'node:path';
 import { parse } from 'yaml';
-import type { ProjectType } from '../catalog/schema.js';
+import { PROJECT_TYPES, type ProjectType } from '../catalog/schema.js';
 
 export type StopStep = string | { name: string; run: string[] };
 export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun' | 'none';
@@ -82,6 +82,8 @@ export const defaults = (): HarnessConfig => ({
   },
 });
 
+/** Control characters in user-supplied keys become \\uXXXX, so an error line can't drive the terminal. */
+export const esc = (s: string): string => JSON.stringify(s).slice(1, -1);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStrs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
@@ -114,7 +116,7 @@ const prefix = (r: Fail, at: string): Fail => (typeof r === 'string' ? { at, msg
 const objRule = (spec: Record<string, Rule>): Rule => (v) => {
   if (!isObj(v)) return 'must be a mapping';
   const extra = Object.keys(v).find((k) => !Object.hasOwn(spec, k));
-  if (extra !== undefined) return { at: `.${extra}`, msg: 'unknown key' };
+  if (extra !== undefined) return { at: `.${esc(extra)}`, msg: 'unknown key' };
   for (const [k, r] of Object.entries(spec)) {
     const bad = r(v[k]);
     if (bad) return prefix(bad, `.${k}`);
@@ -150,7 +152,6 @@ const appRule = objRule({
   login: objRule({ needed: bool, credentials: objRule({ file: relPathProblem, keys: names, env: names }), login_url: str, post_login: str }),
 });
 const itemRule = objRule({ id: (v) => (typeof v === 'string' && v !== '' ? null : 'must be a non-empty string'), include: oneOf('recommended', 'optional'), selected: bool, reason: str, addresses: strs, pin: str });
-const PROJECT_TYPES = ['web', 'landing', 'mobile', 'api', 'infra', 'library', 'other'];
 const IN_STATE = 'must not be inside .harness/state (the sandbox denies it there)';
 const resultsDirRule: Rule = (v) => {
   if (v === undefined) return IN_STATE; // the README reads this text
@@ -187,7 +188,7 @@ export type Issue = { path: string; kind: 'unknown' | 'mapping' | 'invalid'; det
 // Overlay `user` onto `base` in place; unknown, mistyped or out-of-range keys keep the default and are reported.
 export function overlay(base: Record<string, unknown>, user: Record<string, unknown>, path: string, issues: Issue[]): void {
   for (const [k, v] of Object.entries(user)) {
-    const p = path ? `${path}.${k}` : k;
+    const p = path ? `${path}.${esc(k)}` : esc(k);
     const d = Object.hasOwn(base, k) ? base[k] : undefined; // own keys only: no __proto__/constructor lookups
     if (d === undefined) issues.push({ path: p, kind: 'unknown' });
     else if (isObj(d)) {

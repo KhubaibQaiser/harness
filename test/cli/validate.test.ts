@@ -38,3 +38,8 @@ test('validate product reports errors; bad usage and unreadable or non-JSON file
   expect(go(['validate', 'answers', '/nonexistent/a.json'], root).code).toBe(2);
   expect(go(['validate', 'answers', file('a.json', '{nope')], root).code).toBe(2);
 });
+
+test('an unreadable file name is escaped in the error', () => {
+  const r = go(['validate', 'answers', '/nonexistent/a\u001b[31m.json'], root);
+  expect(r.lines.join()).not.toContain('\u001b');
+});

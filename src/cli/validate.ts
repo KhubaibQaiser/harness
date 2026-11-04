@@ -14,7 +14,7 @@ export function validate(args: string[], { root, out }: CliEnv): number {
   try {
     text = readFileSync(file, 'utf8');
   } catch (e) {
-    return out(`${what}: could not read ${file} (${(e as NodeJS.ErrnoException).code ?? 'error'})`), 2;
+    return out(`${what}: could not read ${JSON.stringify(file)}(${(e as NodeJS.ErrnoException).code ?? 'error'})`), 2;
   }
   let errors: string[];
   if (what === 'product') errors = validateProduct(text);

@@ -1,6 +1,6 @@
 import { harnessIgnore } from '../install/harnessignore.js';
 import type { Facts } from '../install/detect.js';
-import { type App, type HarnessConfig, relPathProblem } from '../core/config.js';
+import { type App, defaults, esc, type HarnessConfig, relPathProblem } from '../core/config.js';
 import { validateConfig } from '../core/config-io.js';
 
 export interface Answers {
@@ -19,7 +19,7 @@ function pathProblem(p: unknown, ignored: (rel: string) => boolean): string | nu
   const bad = relPathProblem(p);
   if (bad) return `${JSON.stringify(p)} ${bad}`;
   const segs = p.split('/');
-  if (segs.some((s) => /^\.env/i.test(s) || /\.env$/i.test(s))) return `${JSON.stringify(p)} must not be a dotenv file`;
+  if (segs.some((s) => /^\.env(\..*)?$/i.test(s) || /\.env$/i.test(s)))return `${JSON.stringify(p)} must not be a dotenv file`;
   if (/^(\.\/)*\.harness(\/|$)/i.test(p)) return `${JSON.stringify(p)} must not be inside .harness/`;
   if (ignored(p.replace(/^(\.\/)+/, ''))) return `${JSON.stringify(p)} is ignored by .harnessignore`;
   return null;
@@ -29,7 +29,7 @@ export function validateAnswers(raw: unknown, facts: Facts): { ok: true; answers
   if (!isObj(raw)) return { ok: false, errors: ['answers: must be a mapping'] };
   const errors: string[] = [];
   const ignored = harnessIgnore(facts.root);
-  for (const k of Object.keys(raw)) if (!['scope', 'project', 'apps', 'unattended', 'tdd'].includes(k)) errors.push(`${k}: unknown key`);
+  for (const k of Object.keys(raw)) if (!['scope', 'project', 'apps', 'unattended', 'tdd'].includes(k)) errors.push(`${esc(k)}: unknown key`);
 
   const paths = (list: unknown, at: string) => {
     if (!Array.isArray(list)) return errors.push(`${at}: must be a list of paths`);
@@ -46,18 +46,28 @@ export function validateAnswers(raw: unknown, facts: Facts): { ok: true; answers
   const tdd = raw.tdd;
   for (const k of ['project', 'unattended', 'tdd'] as const) if (!isObj(raw[k])) errors.push(`${k}: must be a mapping`);
   if (isObj(tdd)) {
-    for (const k of Object.keys(tdd)) if (k !== 'paths' && k !== 'diff_coverage') errors.push(`tdd.${k}: unknown key`);
+    for (const k of Object.keys(tdd)) if (k !== 'paths' && k !== 'diff_coverage') errors.push(`tdd.${esc(k)}: unknown key`);
     paths(tdd.paths, 'tdd.paths');
   }
+  // The interview always writes full objects, so a missing key is an error rather than a silent default.
+  const missing: string[] = [];
+  const need = (k: 'project' | 'unattended' | 'tdd', keys: string[]) => {
+    if (isObj(raw[k])) for (const n of keys) if (!Object.hasOwn(raw[k], n)) missing.push(`${k}.${n}`);
+  };
+  const d = defaults();
+  need('project', Object.keys(d.project).filter((n) => n !== 'scope_paths'));
+  need('unattended', Object.keys(d.unattended));
+  need('tdd', ['paths', 'diff_coverage']);
+  errors.push(...missing.map((m) => `${m}: required`));
   const project = isObj(raw.project) ? { ...raw.project, scope_paths: [] } : {};
   const v = validateConfig({ project, apps: raw.apps, unattended: raw.unattended, tdd: isObj(tdd) ? { paths: tdd.paths, diff_coverage: tdd.diff_coverage } : {} });
-  if (!v.ok) errors.push(...v.errors);
+  if (!v.ok) errors.push(...v.errors.filter((e) => !missing.some((m) => e.startsWith(`${m}:`))));
   else if (isObj(raw.project) && 'scope_paths' in raw.project) errors.push('project.scope_paths: unknown key');
 
   if (Array.isArray(raw.apps)) {
     const dirs = new Set(facts.apps.map((a) => a.dir));
     raw.apps.forEach((a, i) => {
-      if (isObj(a) && typeof a.dir === 'string' && !dirs.has(a.dir)) errors.push(`apps[${i}].dir: no app at "${a.dir}" in this repo`);
+      if (isObj(a) && typeof a.dir === 'string' && !dirs.has(a.dir)) errors.push(`apps[${i}].dir: no app at ${JSON.stringify(a.dir)} in this repo`);
     });
   }
   if (errors.length) return { ok: false, errors };

@@ -108,10 +108,28 @@ export function validateItem(raw: unknown, file: string): { ok: true; item: Cata
       unknownKeys(m, ['name', 'config'], 'mcp');
       if (!str(m.name)) err('mcp.name', 'must be a non-empty string');
       if (!isObj(m.config)) err('mcp.config', 'must be a mapping');
+      else configErrors(m.config, err);
     }
   }
   if (errors.length) return { ok: false, errors };
   return { ok: true, item: { conflicts_with: [], requires: [], evidence: [], side_effects: [], ...raw, stance_reason: reason } as unknown as CatalogItem };
+}
+
+/** A stdio server is { command, args?, env? }; a remote one is { type: http | sse, url, headers? }. */
+function configErrors(c: Record<string, unknown>, err: (path: string, msg: string) => void): void {
+  const map = (k: string) => c[k] === undefined || (isObj(c[k]) && Object.values(c[k] as object).every((v) => typeof v === 'string')) || err(`mcp.config.${k}`, 'must be a mapping of strings');
+  if (c.command !== undefined) {
+    for (const k of Object.keys(c)) if (!['command', 'args', 'env'].includes(k)) err('mcp.config', `unknown key "${k}"`);
+    if (!str(c.command)) err('mcp.config.command', 'must be a non-empty string');
+    if (c.args !== undefined && !strs(c.args)) err('mcp.config.args', 'must be a list of strings');
+    map('env');
+  } else if (c.url !== undefined || c.type !== undefined) {
+    for (const k of Object.keys(c)) if (!['type', 'url', 'headers'].includes(k)) err('mcp.config', `unknown key "${k}"`);
+    if (c.type === undefined) err('mcp.config', 'a url server needs type http or sse');
+    else if (c.type !== 'http' && c.type !== 'sse') err('mcp.config.type', 'must be http or sse');
+    if (!str(c.url) || !/^https:\/\//.test(c.url)) err('mcp.config.url', 'must be an https URL');
+    map('headers');
+  } else err('mcp.config', 'must have command (stdio) or type and url (remote)');
 }
 
 function sourceErrors(s: Record<string, unknown>, err: (path: string, msg: string) => void, unknown: (o: Record<string, unknown>, known: string[]) => void): void {

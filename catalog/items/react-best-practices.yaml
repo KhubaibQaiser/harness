@@ -1,0 +1,13 @@
+id: react-best-practices
+kind: external-skill
+title: "React best practices"
+source: {"type":"git-subdir","repo":"vercel-labs/agent-skills","path":"skills/react-best-practices","plugin":"react-best-practices","sha":"1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"frameworks":["react","next"]}
+cost: {"context":"low","setup":"low"}
+stance: optional
+why: "React and Next.js performance optimization guidelines from Vercel Engineering, as 70 rules across 8 categories."
+evidence:
+  - "https://github.com/vercel-labs/agent-skills/blob/1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62/skills/react-best-practices/SKILL.md"
+  - "https://github.com/vercel-labs/agent-skills/blob/1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62/README.md (License section: MIT)"

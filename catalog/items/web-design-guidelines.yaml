@@ -1,0 +1,14 @@
+id: web-design-guidelines
+kind: external-skill
+title: "Web design guidelines"
+source: {"type":"git-subdir","repo":"vercel-labs/agent-skills","path":"skills/web-design-guidelines","plugin":"web-design-guidelines","sha":"1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"project_types":["web","landing"]}
+cost: {"context":"low","setup":"low"}
+stance: optional
+why: "Reviews UI code for Web Interface Guidelines compliance, covering accessibility, UX and best practices."
+evidence:
+  - "https://github.com/vercel-labs/agent-skills/blob/1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62/skills/web-design-guidelines/SKILL.md"
+  - "https://github.com/vercel-labs/agent-skills/blob/1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62/README.md (License section: MIT)"
+  - "SKILL.md fetches the latest guidelines from raw.githubusercontent.com/vercel-labs/web-interface-guidelines at review time"

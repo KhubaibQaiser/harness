@@ -1,0 +1,16 @@
+id: superdesign
+kind: plugin
+title: "Superdesign"
+source: {"type":"github","repo":"superdesigndev/superdesign-skill","plugin":"superdesign","sha":"f9f05cd988c247dce6c072eaf9ac6b162f2ffc4b"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "0.6.0"
+applies_when: {"project_types":["web","landing"]}
+cost: {"context":"low","setup":"low"}
+stance: discouraged
+stance_reason: "duplicates Figma"
+why: "Designs or redesigns frontend UI and marketing graphics on the Superdesign infinite canvas."
+evidence:
+  - "https://github.com/superdesigndev/superdesign-skill/blob/f9f05cd988c247dce6c072eaf9ac6b162f2ffc4b/.claude-plugin/plugin.json"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/.claude-plugin/marketplace.json"
+  - "audit.html#superdesign"

@@ -1,0 +1,16 @@
+id: motion-ai-kit
+kind: mcp
+title: "Motion AI Kit (hosted MCP)"
+source: {"type":"remote","url":"https://mcp.motion.dev","unpinned":"hosted service, the vendor controls the version"}
+license: vendor-terms
+min_claude_code: 2.1.314
+applies_when: {"any_dep":["motion"]}
+cost: {"context":"low","setup":"low"}
+stance: optional
+mcp: {"name":"motion","config":{"type":"http","url":"https://mcp.motion.dev"}}
+why: "Suite of animation tools that helps agents write production-grade animations, with searchable Motion documentation."
+evidence:
+  - "https://github.com/motiondivision/ai-kit/blob/1e424943582cbbdb6e3f410687e39f96451447bb/README.md"
+  - "https://github.com/motiondivision/ai-kit/blob/1e424943582cbbdb6e3f410687e39f96451447bb/plugins/motion/mcp.json"
+  - "https://motion.dev/docs/ai-kit (documentation search is free, no token or account required; Motion+ features need sign-in)"
+  - "https://motion.dev/terms"

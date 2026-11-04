@@ -42,8 +42,8 @@ test('kind and source must fit', () => {
   expect(mut((r) => (r.source = plugin))).toEqual(['gsap-skills.yaml: source.type: kind plugin takes source type github or git-subdir']);
   expect(mut((r) => (r.kind = 'mcp'))).toEqual(['gsap-skills.yaml: source.type: kind mcp takes source type npm or remote', 'gsap-skills.yaml: mcp: required for kind mcp']);
   expect(mut((r) => (r.kind = 'own-skill'))).toEqual(['gsap-skills.yaml: source.type: kind own-skill takes source type own']);
-  expect(mut((r) => ((r.kind = 'mcp'), (r.source = plugin), (r.mcp = { name: 'x', config: {} })))).toEqual([]);
-  expect(mut((r) => ((r.kind = 'mcp'), (r.source = { type: 'remote', url: 'https://x.dev/mcp', unpinned: 'hosted service' }), (r.mcp = { name: 'x', config: {} })))).toEqual([]);
+  expect(mut((r) => ((r.kind = 'mcp'), (r.source = plugin), (r.mcp = { name: 'x', config: { command: 'npx' } })))).toEqual([]);
+  expect(mut((r) => ((r.kind = 'mcp'), (r.source = { type: 'remote', url: 'https://x.dev/mcp', unpinned: 'hosted service' }), (r.mcp = { name: 'x', config: { type: 'http', url: 'https://x.dev/mcp' } })))).toEqual([]);
 });
 
 test('own files paths are repo-relative with forward slashes', () => {
@@ -56,4 +56,18 @@ test('own files paths are repo-relative with forward slashes', () => {
 test('mcp key only on kind mcp; an invalid source type is reported once', () => {
   expect(mut((r) => (r.mcp = { name: 'x', config: {} }))).toEqual(['gsap-skills.yaml: mcp: only allowed for kind mcp']);
   expect(mut((r) => (r.source = { type: 'zip' }))).toEqual(['gsap-skills.yaml: source.type: must be one of own, github, git-subdir, npm, remote']);
+});
+
+test('mcp.config is a stdio command or a typed remote server', () => {
+  const src = { type: 'npm', package: 'x', version: '1.0.0' };
+  const cfg = (config: unknown) => mut((r) => ((r.kind = 'mcp'), (r.source = src), (r.mcp = { name: 'x', config })));
+  expect(cfg({ command: 'npx', args: ['-y', 'x@1.0.0'], env: { A: '${A}' } })).toEqual([]);
+  expect(cfg({ type: 'sse', url: 'https://x.dev/sse', headers: { H: 'v' } })).toEqual([]);
+  expect(cfg({ url: 'https://x.dev/mcp' })).toEqual(['gsap-skills.yaml: mcp.config: a url server needs type http or sse']);
+  expect(cfg({})).toEqual(['gsap-skills.yaml: mcp.config: must have command (stdio) or type and url (remote)']);
+  expect(cfg({ command: 'npx', args: 'x' })).toEqual(['gsap-skills.yaml: mcp.config.args: must be a list of strings']);
+  expect(cfg({ command: 'npx', env: { A: 1 } })).toEqual(['gsap-skills.yaml: mcp.config.env: must be a mapping of strings']);
+  expect(cfg({ type: 'http', url: 'x.dev' })).toEqual(['gsap-skills.yaml: mcp.config.url: must be an https URL']);
+  expect(cfg({ type: 'http', url: 'https://x.dev', headers: [] })).toEqual(['gsap-skills.yaml: mcp.config.headers: must be a mapping of strings']);
+  expect(cfg({ command: 'npx', foo: 1 })).toEqual(['gsap-skills.yaml: mcp.config: unknown key "foo"']);
 });

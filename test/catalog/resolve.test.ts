@@ -26,7 +26,7 @@ test('github pin resolves', () => {
 test('git-subdir pin also checks the path', () => {
   const { exec, calls } = fake((_c, a) => ({ status: 0, stdout: a[1].includes('/contents/') ? 'dir\n' : SHA }));
   const r = resolvePins(cat(item('p', { type: 'git-subdir', repo: 'o/r', path: 'plugins/p', plugin: 'p', sha: SHA })), exec);
-  expect(calls[1]).toEqual(['gh', 'api', `repos/o/r/contents/plugins/p?ref=${SHA}`, '--jq', '.type']);
+  expect(calls[1]).toEqual(['gh', 'api', `repos/o/r/contents/plugins/p?ref=${SHA}`, '--jq', 'if type == "array" then "dir" else .type end']);
   expect(r.problems).toEqual([]);
 });
 

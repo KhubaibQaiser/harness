@@ -1,6 +1,9 @@
 import type { Exec } from '../core/exec.js';
 import type { Catalog } from './schema.js';
 
+// The contents API returns an array for a directory, an object for a file.
+const DIR_JQ = 'if type == "array" then "dir" else .type end';
+
 /** Checks that each pinned source still exists upstream. Remote servers cannot be pinned, so they are listed instead. */
 export function resolvePins(c: Catalog, exec: Exec, only?: string[]): { problems: string[]; unpinned: { id: string; reason: string }[] } {
   const problems: string[] = [];
@@ -31,7 +34,7 @@ export function resolvePins(c: Catalog, exec: Exec, only?: string[]): { problems
       if (sha !== s.sha) problems.push(`${id}: commit ${s.sha} not found in ${s.repo}`);
       else if (s.type === 'git-subdir') {
         const path = s.path.split('/').map(encodeURIComponent).join('/');
-        const t = run('gh', ['api', `repos/${s.repo}/contents/${path}?ref=${s.sha}`, '--jq', '.type'], `path ${s.path} in ${s.repo}`, id);
+        const t = run('gh', ['api', `repos/${s.repo}/contents/${path}?ref=${s.sha}`, '--jq', DIR_JQ], `path ${s.path} in ${s.repo}`, id);
         if (t !== null && t !== 'dir') problems.push(`${id}: path ${s.path} is not a directory in ${s.repo} at ${s.sha}`);
       }
     }

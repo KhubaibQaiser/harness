@@ -1,18 +1,20 @@
 id: expo
 kind: plugin
 title: "Expo skills"
-source: {"type":"git-subdir","repo":"expo/skills","path":"plugins/expo","plugin":"expo","sha":"a9e5bd3fa00b4e61f632e43f85da73aee1942582"}
+source: {"type":"git-subdir","repo":"expo/skills","path":"plugins/expo","plugin":"expo","sha":"d4f484024fec15196bfd3c272e953e3f983972cf"}
 license: MIT
 min_claude_code: 2.1.314
 applies_when: {"frameworks":["expo"]}
 cost: {"context":"low","setup":"low"}
 stance: optional
+side_effects: ["installs-hook"]
 why: "Official Expo skills for building, deploying, upgrading, and debugging Expo apps"
 evidence:
-  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/.claude-plugin/plugin.json (version 1.14.3; the why sentence is its description)"
-  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/LICENSE (MIT) and README.md (License: MIT)"
-  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/.mcp.json (bundles one hosted http MCP server, https://mcp.expo.dev/mcp; deferred tools). There is no hooks directory at the sha"
-  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/README.md (skills/ has 24 directories, in two groups: open-source framework skills, and \"services & paid distribution\" skills for paid Expo Application Services; each of the latter opens with a costs note. Every skill's feedback step runs `npx --yes @expo/agent-cli@latest feedback`, an unpinned fetch, only when feedback is submitted)"
-  - "https://github.com/expo/skills/blob/a9e5bd3fa00b4e61f632e43f85da73aee1942582/plugins/expo/skills/expo-overview/SKILL.md (the router skill applies when package.json has an `expo` dependency)"
-  - "Source choice: expo/skills is the vendor repo the official marketplace entry points to (it pins d4f484024fec, v1.13.9); the HEAD sha above is newer. The audit install command is `claude plugin install expo@claude-plugins-official`"
+  - "https://github.com/expo/skills/blob/d4f484024fec15196bfd3c272e953e3f983972cf/plugins/expo/.claude-plugin/plugin.json (version 1.13.9; the why sentence is its description)"
+  - "https://github.com/expo/skills/blob/d4f484024fec15196bfd3c272e953e3f983972cf/plugins/expo/LICENSE (MIT) and README.md (License: MIT)"
+  - "https://github.com/expo/skills/blob/d4f484024fec15196bfd3c272e953e3f983972cf/plugins/expo/.mcp.json (bundles one hosted http MCP server, https://mcp.expo.dev/mcp; deferred tools)"
+  - "https://github.com/expo/skills/blob/d4f484024fec15196bfd3c272e953e3f983972cf/plugins/expo/hooks/hooks.json (PostToolUse on Skill and UserPromptExpansion command hooks run `node skills/expo-skill-feedback/scripts/skill-event.cjs --detach --quiet`: installs-hook). skill-event.cjs and telemetry_common.cjs: the script sends a skill_invoked event to PostHog only when telemetry is opted in (DEFAULT_ON = false; EXPO_SKILLS_TELEMETRY=1 or ~/.expo-skills/opt-in turns it on; DO_NOT_TRACK or CI turns it off), and prints nothing to the model, so telemetry-on-by-default is not recorded and context stays low"
+  - "https://github.com/expo/skills/blob/d4f484024fec15196bfd3c272e953e3f983972cf/plugins/expo/README.md (skills/ has 24 directories, in two groups: open-source framework skills, and \"services & paid distribution\" skills for paid Expo Application Services; each of the latter opens with a costs note. Every skill's feedback step runs `npx --yes @expo/agent-cli@latest feedback`, an unpinned fetch, only when feedback is submitted)"
+  - "https://github.com/expo/skills/blob/d4f484024fec15196bfd3c272e953e3f983972cf/plugins/expo/skills/expo-overview/SKILL.md (the router skill applies when package.json has an `expo` dependency)"
+  - "Source choice (owner ruling): the sha is the one the official marketplace entry pins in anthropics/claude-plugins-official at a2e251d9b97b (v1.13.9, which has the hooks above; upstream HEAD, 1.14.3, has no hooks directory). The audit install command is `claude plugin install expo@claude-plugins-official`"
   - "audit.html: \"Covers Expo Router, dev clients, EAS, SDK upgrades, and native UI bridges.\""

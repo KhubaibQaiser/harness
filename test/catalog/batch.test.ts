@@ -41,7 +41,6 @@ const STANCES: Record<number, Record<string, { stance: string; reason?: string }
     'pr-review-toolkit': { stance: 'discouraged', reason: 'overlaps the built-in /code-review and the harness reviewer.' },
   },
   3: {
-    serena: { stance: 'discouraged', reason: 'duplicates LSP' },
   },
 };
 

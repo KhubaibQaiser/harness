@@ -78,12 +78,12 @@ test('validate picks: ok, then retry then stop with the raw output saved', () =>
   expect(r.lines.at(-1)).toBe(`Recommend output failed validation twice. Raw output is in \`.harness/debug/${name}\`. Stopping.`);
 });
 
-test('validate report: finalizes the sentence on ok; second failure saves the report', () => {
+test('validate report: read-only on ok; second failure saves the report', () => {
   const picks = file('picks.json', good);
   const md = '## Findings\nf1\n## Roadmap\n30 60 90\n## Deliberate exclusions\nx\n## Limits\ny\n';
   const rf = file('report.md', md);
   expect(rec(['validate', 'report', rf, '--picks', picks]).code).toBe(0);
-  expect(readFileSync(rf, 'utf8')).toContain("Hooks run with the user's permissions.");
+  expect(readFileSync(rf, 'utf8')).toBe(md);
   const r2 = makeRepo({ 'package.json': '{}' }, { git: false });
   const r = rec(['validate', 'report', file('r.md', 'nope'), '--picks', picks, '--attempt', '2'], r2);
   expect(r.code).toBe(1);
@@ -95,4 +95,13 @@ test('validate picks/report: bad usage exits 2', () => {
   expect(go(['validate', 'picks', 'x'], root).code).toBe(2);
   expect(go(['validate', 'report', 'x', '--picks', 'y', '--attempt', '3'], root).code).toBe(2);
   expect(go(['validate', 'picks', '/nonexistent', '--answers', '/nonexistent'], root).code).toBe(2);
+});
+
+test('attempt 2 with an invalid answers file saves the picks and stops', () => {
+  const r2 = makeRepo({ 'package.json': '{}' }, { git: false });
+  const r = rec(['validate', 'picks', file('picks.json', good), '--answers', file('a.json', '{}'), '--attempt', '2'], r2);
+  expect(r.code).toBe(1);
+  expect(r.lines.at(-1)).toMatch(/^Recommend output failed validation twice\. Raw output is in `\.harness\/debug\/picks-.*\.txt`\. Stopping\.$/);
+  const [name] = readdirSync(join(r2, '.harness/debug'));
+  expect(readFileSync(join(r2, '.harness/debug', name), 'utf8')).toBe(good);
 });

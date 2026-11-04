@@ -26,3 +26,4 @@ test('finalizeReport adds the sentence once, under Limits', () => {
   expect(once.indexOf(S)).toBeLessThan(once.indexOf('## Deliberate exclusions'));
   expect(finalizeReport(once)).toBe(once);
 });
+test('finding id f1 is not satisfied by f10', () => expect(validateReport(md().replace('f1:', 'f10:'), p)).toEqual(['report: finding "f1" is not in "## Findings"']));

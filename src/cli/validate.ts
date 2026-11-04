@@ -2,9 +2,8 @@ import { readFileSync } from 'node:fs';
 import { validateAnswers } from '../ai/answers.js';
 import { saveDebug } from '../ai/debug.js';
 import { type Picks, validatePicks } from '../ai/picks.js';
-import { finalizeReport, validateReport } from '../ai/report.js';
+import { validateReport } from '../ai/report.js';
 import { loadCatalog } from '../catalog/load.js';
-import { writeAtomic } from '../core/atomic.js';
 import { packageDir } from '../core/package-dir.js';
 import { validateProduct } from '../ai/product.js';
 import { detect } from '../install/detect.js';
@@ -70,28 +69,23 @@ function recommend(args: string[], root: string, out: (l: string) => void): numb
   const sideRaw = json(side as string);
 
   let errors: string[];
-  let final: string | undefined;
   if (what === 'picks') {
     const a = validateAnswers(sideRaw, detect(root));
-    if (!a.ok) return out('answers: the answers file is not valid; run harness validate answers first'), a.errors.forEach((e) => out(e)), 2;
     const raw = json(text as string);
     const { catalog, errors: ce } = loadCatalog(packageDir('catalog'));
-    if (ce.length) return ce.forEach((e) => out(`catalog: ${e}`)), 2;
-    if (raw === undefined) errors = ['picks: not valid JSON'];
+    if (!a.ok) errors = ['answers: the answers file is not valid; run harness validate answers first', ...a.errors];
+    else if (ce.length) errors = ce.map((e) => `catalog: ${e}`);
+    else if (raw === undefined) errors = ['picks: not valid JSON'];
     else {
       const r = validatePicks(raw, catalog, a.answers);
       errors = r.ok ? [] : r.errors;
     }
   } else {
     const fs = (sideRaw as Picks | undefined)?.findings;
-    if (!Array.isArray(fs) || !fs.every((x) => typeof x?.id === 'string')) return out('picks: the picks file is not valid; run harness validate picks first'), 2;
-    errors = validateReport(text as string, sideRaw as Picks);
-    if (!errors.length) final = finalizeReport(text as string);
+    if (!Array.isArray(fs) || !fs.every((x) => typeof x?.id === 'string')) errors = ['picks: the picks file is not valid; run harness validate picks first'];
+    else errors = validateReport(text as string, sideRaw as Picks);
   }
-  if (!errors.length) {
-    if (final !== undefined && final !== text) writeAtomic(file, final);
-    return out('ok'), 0;
-  }
+  if (!errors.length) return out('ok'), 0; // read-only: finalizeReport is applied by init
   for (const e of errors) out(e);
   if (attempt < 2) return 2;
   const rel = saveDebug(root, what, text as string);

@@ -48,7 +48,7 @@ export function validatePicks(raw: unknown, c: Catalog, a: Answers): { ok: true;
       else p.addresses.forEach((f, j) => findingIds.has(f) || errors.push(`items[${i}].addresses[${j}]: unknown finding ${q(f)}`));
       if (p.no_alternative !== undefined && typeof p.no_alternative !== 'string') errors.push(`items[${i}].no_alternative: must be a string`);
       if (it?.stance === 'discouraged' && !a.project.named_items.includes(it.id) && !text(p.no_alternative))
-        errors.push(`items[${i}]: ${q(it.id)} is discouraged (${it.stance_reason}); propose it only when the user names it or no alternative fits, and say why in no_alternative`);
+        errors.push(`items[${i}]: ${q(it.id)} is discouraged (${esc(it.stance_reason)}); propose it only when the user names it or no alternative fits, and say why in no_alternative`);
     });
     for (const [x, y] of conflictPairs([...seen], c)) errors.push(`items: ${q(x)} conflicts with ${q(y)}`);
   }

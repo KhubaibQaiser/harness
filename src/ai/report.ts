@@ -17,7 +17,7 @@ export function validateReport(md: string, p: Picks): string[] {
   const road = section(md, 'Roadmap');
   if (road !== null) for (const d of [30, 60, 90]) if (!new RegExp(`\\b${d}\\b`).test(road)) errors.push(`report: "## Roadmap" must mention ${d} days`);
   const found = section(md, 'Findings');
-  if (found !== null) for (const f of p.findings) if (!found.includes(f.id)) errors.push(`report: finding ${JSON.stringify(f.id)} is not in "## Findings"`);
+  if (found !== null) for (const f of p.findings) if (!new RegExp(`(?<![\\w-])${f.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(found)) errors.push(`report: finding ${JSON.stringify(f.id)} is not in "## Findings"`);
   return errors;
 }
 

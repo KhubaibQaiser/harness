@@ -84,7 +84,7 @@ test('claude too old or missing', async () => {
   const old = run(root, { claude: '2.0.0', path: bin('npm') });
   expect(old.out).toMatch(/^fix Claude Code 2\.0\.0 .*update Claude Code/m);
   const none = run(root, { claude: null, path: bin('npm') });
-  expect(none.out).toMatch(/^ok Claude Code not found: hooks still run when Claude Code is installed/m);
+  expect(none.out).toMatch(/^ok Claude Code not found \(or `claude --version` did not answer\): hooks still run when Claude Code is installed/m);
 });
 
 test('bad config and unwired event named', async () => {

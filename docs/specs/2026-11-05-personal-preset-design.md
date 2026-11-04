@@ -1,6 +1,6 @@
 # Personal preset: design spec
 
-- Status: draft for the owner's review. The owner decisions are in section 1: Q1 to Q9 and F1 to F12 came from the interview, and O1 to O12 answered the first draft's open questions. Section 13 lists what is still open.
+- Status: draft for the owner's review. The owner decisions are in section 1: Q1 to Q9 and F1 to F12 came from the interview, O1 to O12 answered the first draft's open questions, and C2 and C3 answered the second draft's. Section 13 lists the checks left for planning.
 - Date: 2026-11-05
 - Owner: khubaibqaiser
 - Inputs: the owner interview of 2026-11-05 (Q1 to Q9, then the frontend architecture interview) and the owner's answers to the draft (O1 to O12). The code on main: `src/catalog/schema.ts`, `src/catalog/load.ts`, `src/catalog/check.ts`, `src/install/facts.ts`, `src/install/select.ts`, `src/install/merge.ts` (`mergeAgents`), `src/budget/measure.ts`, `src/cli/git.ts`, `src/checks/guard.ts` (`PERSON_ONLY`), `skills/init/{SKILL,interview}.md`, and [`2026-11-03-pr-size-design.md`](2026-11-03-pr-size-design.md) ("PR-size").
@@ -31,6 +31,8 @@
 | O10 | **PR-size first.** The PR-size feature (already specced) is built before the preset, and the preset reuses it. |
 | O11 | **Unattended.** In unattended runs, a commit that adds an AI trailer is denied. |
 | O12 | **Attribution setting.** The preset sets Claude Code's attribution setting in `.claude/settings.json`, merged like the other harness blocks and shown in the preview. The key name is checked against the Claude Code docs during planning. |
+| C2 | **Global scope.** A global install includes the core rules, the personalised skills and the attribution setting at user scope (`~/.claude/settings.json`). The git checks stay per repo. |
+| C3 | **Telemetry.** `DO_NOT_TRACK=1` goes in the repo's `.claude/settings.json` `env`. It applies to the whole session, and the README says so. |
 
 **Frontend answers** (the owner's words or choices; quotes are verbatim):
 
@@ -176,11 +178,11 @@ The preset's own text is about 12% to 17% of the 2000-token budget (estimate). T
 
 ## 6. Third-party picks
 
-- **Impeccable.** Its catalog side effects stay as they are: `installs-hook`, `downloads-binary` and `telemetry-on-by-default`. The preset turns telemetry off by merging `"env": { "DO_NOT_TRACK": "1" }` into `.claude/settings.json` as a recorded block, shown in the preview. Claude Code passes this env to every command in the session, so other tools that honour `DO_NOT_TRACK` stop sending telemetry too. The README says so.
+- **Impeccable.** Its catalog side effects stay as they are: `installs-hook`, `downloads-binary` and `telemetry-on-by-default`. The preset turns telemetry off by merging `"env": { "DO_NOT_TRACK": "1" }` into `.claude/settings.json` as a recorded block, shown in the preview. Claude Code passes this env to every command in the session, so other tools that honour `DO_NOT_TRACK` stop sending telemetry too. The README says so (C3).
 - **taste-skill.** It's in `catalog/items/taste-skill.yaml` today (pinned at `12af471`, `license: MIT`, `applies_when: project_types: [landing]`). It joins the preselect only when all three of these hold:
   1. `harness vet Leonxlnx/taste-skill` passes at the pinned sha, and the owner accepts any high findings;
   2. the licence check confirms MIT with no commercial-use restriction at that sha (one listing mentions one), and the item records the evidence;
-  3. the conflict check (section 13, C1) finds that Impeccable and taste-skill don't conflict and keeping both makes sense.
+  3. the planning-time conflict check (section 13, C1) finds that Impeccable and taste-skill don't conflict and keeping both makes sense.
 
   If any of these fails, the preset ships with Impeccable alone.
 - **Asking wins.** The core block's first line overrides taste-skill's "just apply taste decisions" text. A test checks that the line is in the core template.
@@ -244,7 +246,7 @@ Own skills at `.claude/skills/<name>/SKILL.md`, from `catalog/presets/khubaib-fr
 - A repo-level preset installs through `/harness:init` or `/harness:update` with that preset chosen (section 4).
 - A global preset installs with `harness preset install <dir> --global`, which first prints a preview with every global path and its diff. The skill asks a separate yes for each global write. `--dry-run` writes nothing.
 - The global manifest uses the repo manifest's file and block records, so `harness uninstall --global` removes exactly what was written and leaves `~/.claude/` byte-identical. The existing guard ask on `uninstall` already covers `--global`. `preset install` is added to `PERSON_ONLY` as an ask.
-- Git enforcement (the guard asks and `harness git` checks) needs harness's hooks, which are installed per repo. What a global preset does about git is open (section 13, C2).
+- A global install carries the core rules, the skills and the attribution setting at user scope (C2). Git enforcement (the guard asks and the `harness git` checks) stays per repo, because it needs harness's hooks, which are installed per repo.
 
 **Validated:**
 - everything in section 3's checks;
@@ -310,11 +312,11 @@ All numbers are estimates.
 - **AI cost:** installing a preset adds no AI step. A builder run is one interview plus drafting in the person's own session, with no subagent. The runtime cost is the always-loaded text in section 5.
 - **Build order:** PR-size lands first (O10), so the PR-size warning needs no count of its own.
 
-## 13. Still open
+## 13. Planning-time checks
 
-| # | Item | Options | Recommendation |
+These two are checks to run during planning, not open owner questions. Their results go to the owner.
+
+| # | Check | How | Then |
 |---|---|---|---|
-| C1 | **Check, not a question:** conflict analysis of Impeccable and taste-skill. Both give design direction, and taste-skill tells the agent to apply taste decisions on its own. | Run it during planning, after `harness vet` on taste-skill: compare their skills, hooks and commands for overlap, and test both together on one fixture repo. | Do it in planning. The result goes to the owner, who decides whether taste-skill joins (O5). |
-| C2 | What a global preset does about git rules and third-party picks, since hooks and the attribution block are per repo. | (a) global carries the core block, skills and the attribution setting in `~/.claude/settings.json`, and git checks stay repo-level; (b) global also installs the picks at user scope with `claude plugin install --scope user`; (c) global is core block and skills only. | (a): the attribution setting works at user scope, and the guard needs repo hooks anyway. |
-| C3 | `DO_NOT_TRACK=1` in `.claude/settings.json` applies to every tool in the session, not just Impeccable. | (a) keep it session-wide and say so in the README; (b) run Impeccable's `npx impeccable telemetry off` once instead, which changes a file outside the repo. | (a): one recorded block that removes exactly, with no command to run. |
-| C4 | taste-skill's catalog entry targets `landing` repos only, but O5 pairs it with Impeccable, which targets `web`. | (a) keep `landing`; (b) widen it to `web` and `landing` in the preset's preselect. | Decide after C1, because it depends on whether both are kept. |
+| C1 | **Planning-time check:** conflict analysis of Impeccable and taste-skill. Both give design direction, and taste-skill tells the agent to apply taste decisions on its own. | After `harness vet` on taste-skill, compare their skills, hooks and commands for overlap, and run both together on one fixture repo. | The owner decides whether taste-skill joins (O5). |
+| C4 | **Planning-time check:** taste-skill's catalog entry targets `landing` repos only, while Impeccable targets `web`. | Once C1 is done, compare which repos each item should apply to. | The owner picks `landing` only, or `web` and `landing`, for taste-skill in the preselect. |

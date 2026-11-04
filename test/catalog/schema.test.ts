@@ -71,3 +71,11 @@ test('mcp.config is a stdio command or a typed remote server', () => {
   expect(cfg({ type: 'http', url: 'https://x.dev', headers: [] })).toEqual(['gsap-skills.yaml: mcp.config.headers: must be a mapping of strings']);
   expect(cfg({ command: 'npx', foo: 1 })).toEqual(['gsap-skills.yaml: mcp.config: unknown key "foo"']);
 });
+
+test('lsp_servers is a non-empty mapping, only on kind plugin', () => {
+  const lsp = { sourcekit: { command: 'sourcekit-lsp', extensionToLanguage: { '.swift': 'swift' } } };
+  expect(mut((r) => (r.lsp_servers = lsp))).toEqual([]);
+  expect(mut((r) => (r.lsp_servers = {}))).toEqual(['gsap-skills.yaml: lsp_servers: must be a non-empty mapping of server name to config']);
+  expect(mut((r) => (r.lsp_servers = ['x']))).toEqual(['gsap-skills.yaml: lsp_servers: must be a non-empty mapping of server name to config']);
+  expect(mut((r) => ((r.kind = 'external-skill'), (r.lsp_servers = lsp)))).toEqual(['gsap-skills.yaml: lsp_servers: only allowed for kind plugin']);
+});

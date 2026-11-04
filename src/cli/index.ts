@@ -11,6 +11,7 @@ import { update } from './update.js';
 import { readlinePrompt } from './prompt.js';
 import { doctor } from './doctor.js';
 import { status } from './status.js';
+import { catalog } from './catalog.js';
 import { pauseStatus, pauseTdd, resumeTdd } from '../core/pause.js';
 
 export interface CliEnv {
@@ -23,7 +24,7 @@ export interface CliEnv {
 
 declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force] [--dry-run]\n       harness update [--yes] [--check] [--dry-run]\n       harness doctor\n       harness status';
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force] [--dry-run]\n       harness update [--yes] [--check] [--dry-run]\n       harness doctor\n       harness status\n       harness catalog [check [--resolve] [--only <id,...>]]';
 const DAY = 86_400_000;
 
 export function tddStatus(root: string): string {
@@ -92,6 +93,7 @@ export function run(argv: string[], cli: CliEnv): number {
   if (cmd === 'stats') return stats(rest, cli);
   if (cmd === 'doctor') return doctor(rest, cli);
   if (cmd === 'status') return status(rest, cli);
+  if (cmd === 'catalog') return catalog(rest, cli);
   cli.out(USAGE);
   return 2;
 }

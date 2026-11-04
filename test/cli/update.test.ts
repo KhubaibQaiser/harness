@@ -1,10 +1,12 @@
 import * as realFs from 'node:fs';
 import type { FsLike } from '../../src/install/apply.js';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import { init, type Prompt } from '../../src/cli/init.js';
 import { update } from '../../src/cli/update.js';
 import { uninstall } from '../../src/cli/uninstall.js';
@@ -834,4 +836,102 @@ test('update on an unchanged selection asks before installing plugins unless --y
   expect(yes.out).toContain('1 plugin(s) not installed.');
   expect(yes.out).not.toContain('Files applied');
   expect((await run(['--install-plugins', '--yes'], [])).calls).toHaveLength(1);
+});
+
+// Task 21: update re-recommends when the catalog or the facts change.
+const reFlags = (ids: string[]) => {
+  const d = mkdtempSync(join(tmpdir(), 'harness-upd-re-'));
+  const w = (n: string, t: string) => (writeFileSync(join(d, n), t), join(d, n));
+  return [
+    '--answers', w('a.json', JSON.stringify({ scope: { paths: ['src'] }, project: { type: 'library', domain: 'tools', compliance: [], data_handling: '', team_size: 1, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [] }, apps: [], unattended: { multi_file_gate: 'block', require_reason: false }, tdd: { paths: ['src/**'], diff_coverage: 80 } })),
+    '--product', w('p.md', ['Purpose', 'Users', 'Core features', 'Constraints', 'Non-goals', 'Sources'].map((s) => `## ${s}\nx\n`).join('\n')),
+    '--picks', w('k.json', JSON.stringify({ catalog_version: 1, findings: [], items: ids.map((id) => ({ id, include: 'recommended', reason: 'r', addresses: [] })) })),
+    '--report', w('r.md', '## Findings\n\n## Roadmap\n30 days, 60 days, 90 days.\n\n## Deliberate exclusions\nnone\n\n## Limits\nx\n'),
+    '--choose', ids.join(','),
+  ];
+};
+const upAi = async (root: string, args: string[]) => {
+  let out = '';
+  const code = await update(args, { env: { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null });
+  return { code, out };
+};
+/** Every file under root (ignored ones too, .git aside): path, size and content hash. */
+const tree = (root: string): string[] =>
+  (readdirSync(root, { recursive: true, withFileTypes: true }) as import('node:fs').Dirent[])
+    .filter((e) => e.isFile() && !(e.parentPath ?? (e as any).path).includes(`${root}/.git`))
+    .map((e) => { const f = join(e.parentPath ?? (e as any).path, e.name); const b = readFileSync(f); return `${f} ${b.length} ${createHash('sha256').update(b).digest('hex')}`; })
+    .sort();
+const planOf = async (root: string) => {
+  const r = await upAi(root, ['--plan']);
+  return { code: r.code, ...JSON.parse(r.out) };
+};
+
+test('update --plan writes nothing and says to recommend when the catalog version differs', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  const before = tree(root);
+  const p = await planOf(root);
+  expect(p).toMatchObject({ code: 0, recommend: true, reask: [], delta: { changed: [], retired: [], conflicting: [] } });
+  expect(tree(root)).toEqual(before);
+});
+
+test('update --plan: no change means no re-recommend', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  expect((await upAi(root, [...reFlags(OWN_IDS), '--yes'])).code).toBe(0);
+  commitAll(root);
+  expect(await planOf(root)).toMatchObject({ recommend: false, reask: [] });
+});
+
+test('update --plan: missing facts.json means recommend and nothing re-asked', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  expect((await upAi(root, [...reFlags(OWN_IDS), '--yes'])).code).toBe(0);
+  rmSync(join(root, '.harness/facts.json'));
+  expect(await planOf(root)).toMatchObject({ recommend: true, reask: [] });
+});
+
+test('update --plan: only contradicted keys are re-asked', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  expect((await upAi(root, [...reFlags(OWN_IDS), '--yes'])).code).toBe(0);
+  const f = join(root, '.harness/facts.json');
+  writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, 'utf8')), deploy: ['vercel'] }, null, 2) + '\n');
+  expect(await planOf(root)).toMatchObject({ recommend: true, reask: ['project.deploy_target'] });
+});
+
+test('update: retired items are removed with a line saying why; new picks are listed', async () => {
+  const root = aiInstalled(REPO, [...OWN_IDS, 'impeccable']);
+  const c = join(root, '.harness/config.yaml');
+  writeFileSync(c, readFileSync(c, 'utf8').replace('id: impeccable', 'id: gone-item'));
+  commitAll(root);
+  const r = await upAi(root, [...reFlags([...OWN_IDS, 'mobile-mcp']), '--dry-run']);
+  expect(r.out).toContain('gone-item: retired from the catalog, removed.');
+  expect(r.out).toContain('New: mobile-mcp');
+  const plain = await upAi(root, ['--dry-run']);
+  expect(plain.out).toContain('gone-item: retired from the catalog, removed.');
+});
+
+test('update --plan: a facts.json of the wrong shape counts as missing', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  expect((await upAi(root, [...reFlags(OWN_IDS), '--yes'])).code).toBe(0);
+  writeFileSync(join(root, '.harness/facts.json'), '{}\n');
+  expect(await planOf(root)).toMatchObject({ code: 0, recommend: true, reask: [] });
+});
+
+test('partial answers change only the given keys, and config.yaml comments survive', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  const c = join(root, '.harness/config.yaml');
+  writeFileSync(c, '# my note\n' + readFileSync(c, 'utf8'));
+  commitAll(root);
+  const before = parseYaml(readFileSync(c, 'utf8')) as any;
+  const part = join(mkdtempSync(join(tmpdir(), 'harness-upd-part-')), 'a.json');
+  writeFileSync(part, JSON.stringify({ project: { deploy_target: 'vercel' } }));
+  const flags = reFlags(OWN_IDS).slice(2);
+  const r = await upAi(root, ['--answers', part, ...flags, '--yes']);
+  expect(r.code).toBe(0);
+  const text = readFileSync(c, 'utf8');
+  const after = parseYaml(text) as any;
+  expect(after.project.deploy_target).toBe('vercel');
+  expect(after.project).toEqual({ ...before.project, deploy_target: 'vercel' });
+  expect(after.apps).toEqual(before.apps);
+  expect(after.unattended).toEqual(before.unattended);
+  expect(after.tdd).toEqual(before.tdd);
+  expect(text).toContain('# my note');
 });

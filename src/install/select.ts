@@ -56,7 +56,7 @@ export function resolveSelection(chosen: string[], c: Catalog, claudeVersion: st
   return { ids, notices: [...addedNotices, ...notices], errors: conflictPairs(ids, c).map(([a, b]) => `${a} and ${b} conflict; pick one.`) };
 }
 
-const pinOf = (s: object): string => ((s as OutsideSource & { sha?: string; version?: string }).sha ?? (s as { version?: string }).version ?? '');
+export const pinOf = (s: object): string => ((s as OutsideSource & { sha?: string; version?: string }).sha ?? (s as { version?: string }).version ?? '');
 
 /** Every pick (selected when chosen) plus every id that requires pulled in. */
 export function toSelected(p: Picks, ids: string[], c: Catalog): Selected[] {

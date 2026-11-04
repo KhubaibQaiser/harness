@@ -64,18 +64,28 @@ export function takeAiFlags(args: string[]): { ai: AiArgs; rest: string[] } | nu
 
 /** The usage error for the first AI input that is missing (all of them are needed together), or null. */
 export const missingAi = (cmd: string, ai: AiArgs): string | null => {
-  const f = VALUE_FLAGS.find((k) => ai[k] === undefined);
+  const f = VALUE_FLAGS.find((k) => ai[k] === undefined && !(cmd === 'update' && k === 'answers')); // update merges a partial answers file
   return f ? `${cmd}: --${f} ${f === 'choose' ? '<id,...>' : '<file>'} is required inside Claude Code` : null;
 };
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Lays a partial answers file over the existing answers; `project`, `unattended` and `tdd` merge one level deep. */
+function overlayAnswers(base: Record<string, unknown>, part: Record<string, unknown>): Record<string, unknown> {
+  const m: Record<string, unknown> = { ...base, ...part };
+  for (const k of ['project', 'unattended', 'tdd']) if (isObj(part[k])) m[k] = { ...(isObj(base[k]) ? base[k] : {}), ...part[k] };
+  return m;
+}
 
 export interface AiInputs { answers: Answers; picks: Picks; ids: string[]; notices: string[]; files: { picks: string; report: string; product: string }; catalog: Catalog }
 
 /** Reads and validates the AI step's files against the facts and the real catalog, then resolves --choose. */
-export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null): { ok: true; in: AiInputs } | { ok: false; errors: string[]; code: number } {
+export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null, base?: Record<string, unknown>): { ok: true; in: AiInputs } | { ok: false; errors: string[]; code: number } {
   const cat = loadCatalog();
   if (cat.errors.length) return { ok: false, errors: [...cat.errors, 'The catalog has errors; stopped. Run harness catalog validate.'], code: 1 };
   const text: Record<string, string> = {};
   for (const k of ['answers', 'product', 'picks', 'report'] as const) {
+    if (k === 'answers' && base && ai.answers === undefined) { text.answers = '{}'; continue; }
     try {
       text[k] = readFileSync(ai[k]!, 'utf8');
     } catch (e) {
@@ -91,7 +101,9 @@ export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null)
   };
   const pa = parsed('answers');
   if ('err' in pa) return { ok: false, errors: [pa.err], code: 2 };
-  const a = validateAnswers(pa.v, facts);
+  // update: the file holds only the re-asked keys; they go over the existing answers, then the full set is validated.
+  const merged = base && isObj(pa.v) ? overlayAnswers(base, pa.v) : pa.v;
+  const a = validateAnswers(merged, facts);
   if (!a.ok) return { ok: false, errors: a.errors, code: 2 };
   const pp = parsed('picks');
   if ('err' in pp) return { ok: false, errors: [pp.err], code: 2 };

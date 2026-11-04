@@ -104,7 +104,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | Command | What it does |
 |---|---|
 | `init [--yes\|--config <file>\|--dry-run]` | Detects your repo, picks catalog items, shows the plan, then writes after you confirm. Run it as `/harness:init`. |
-| `update [--yes\|--check\|--dry-run]` | Re-renders the installed files with this version and shows the diff first. Run it as `/harness:update`. `--check` only looks for a newer version and also works in a terminal. |
+| `update [--yes\|--check\|--dry-run\|--plan]` | Re-renders the installed files with this version and shows the diff first. Run it as `/harness:update`. `--check` only looks for a newer version and also works in a terminal. `--plan` writes nothing and prints JSON: whether to re-recommend (the catalog or your project facts changed), what changed in the catalog, and which answers to ask again. Items that left the catalog are removed, with a line saying why. With `--answers`, update takes a partial file and changes only the keys it holds (`project`, `apps`, `unattended`, `tdd`); the rest of `config.yaml` stays as it is. |
 
 **In a plain terminal:**
 

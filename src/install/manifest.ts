@@ -33,6 +33,15 @@ export function renameRecorded(entry: Manifest['files'][number], from: string, t
   return { entry: { ...entry, ...(blocks ? { blocks } : {}), ...(replace ? { replace } : {}) }, found };
 }
 
+/** The files an item wrote (`item` is its id), plus the structural blocks (settings, .mcp.json) whose JSON names it. Text blocks belong to agents-md or the core install. */
+export function itemFiles(m: Manifest, id: string): { rel: string; blocks: string[] }[] {
+  const owns = (b: string) => { try { return JSON.parse(b)?.item === id; } catch { return false; } };
+  return m.files.flatMap((f) => {
+    const blocks = STRUCTURAL.has(f.rel) ? (f.blocks ?? []).filter(owns) : [];
+    return f.item === id || blocks.length ? [{ rel: f.rel, blocks }] : [];
+  });
+}
+
 export const MANIFEST_REL = '.harness/manifest.json';
 
 export class ManifestError extends Error {

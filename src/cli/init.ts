@@ -133,7 +133,7 @@ export async function budgetGate(
 }
 
 /** The person's own command line, for a step Claude Code's sandbox blocks. */
-export function sandboxLine(cmd: 'init' | 'update' | 'git', args: string[]): string {
+export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove', args: string[]): string {
   const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
   return `Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's \`!\` prefix: ${self} ${cmd} ${args.map(shq).join(' ')}`;
 }

@@ -137,7 +137,8 @@ test('an unknowable default branch stops with the set-head hint', () => {
   expect(r.out).toBe("Can't tell the default branch. Run `git remote set-head origin -a`, then run again.");
 });
 
-test('literal pathspecs: a manifest path with a glob stages only that file', () => {
+// `*` isn't a legal file-name character on Windows.
+test.skipIf(process.platform === 'win32')('literal pathspecs: a manifest path with a glob stages only that file', () => {
   const root = installed({ extra: ['a*.md'] });
   put(root, 'a1.md', 'other');
   g(root, 'checkout', '-q', '-b', 'b');

@@ -1,0 +1,19 @@
+id: agent-guard
+kind: own-hook
+title: Agent guard
+source:
+  type: own
+  checks: [guard, depVerify]
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when:
+  always: true
+cost:
+  context: none
+  setup: none
+stance: default
+why: >-
+  Guards secret reads, force-push, pushing to main and installs, with installs denied by default. When you allow an install, it checks the npm registry for the package. It also asks before shell commands write files into TDD paths.
+evidence:
+  - docs/specs/2026-11-01-harness-beta-design.md#3-what-each-repo-gets
+  - docs/specs/2026-10-30-harness-design.md#73-seed-catalog-for-v1

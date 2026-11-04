@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+import { expect } from 'vitest';
 import { realpathSync, rmSync } from 'node:fs';
 import { makeRepo } from '../install/helpers.js';
 
@@ -138,3 +141,18 @@ export function build(f: Fixture): string {
 }
 
 export const cleanup = (root: string): void => rmSync(root, { recursive: true, force: true });
+
+export const DISPATCH = '.harness/hooks/dispatch.mjs';
+
+/** Pipes hook JSON into a repo's installed dispatcher. `hook` returns the parsed output, or null for "no output". */
+export function hookRunner(env: NodeJS.ProcessEnv) {
+  const hook = (root: string, input: Record<string, unknown>) => {
+    const r = spawnSync('node', [join(root, DISPATCH)], { cwd: root, encoding: 'utf8', env, input: JSON.stringify({ session_id: 's1', cwd: root, ...input }) });
+    expect(r.status).toBe(0);
+    return r.stdout ? (JSON.parse(r.stdout) as any) : null;
+  };
+  const pre = (root: string, tool_name: string, tool_input: Record<string, unknown>) => hook(root, { hook_event_name: 'PreToolUse', tool_name, tool_input });
+  const verdict = (d: any): { decision: string; reason: string } =>
+    d?.hookSpecificOutput ? { decision: d.hookSpecificOutput.permissionDecision, reason: d.hookSpecificOutput.permissionDecisionReason } : { decision: d ? d.decision : 'allow', reason: d?.reason ?? '' };
+  return { hook, pre, verdict };
+}

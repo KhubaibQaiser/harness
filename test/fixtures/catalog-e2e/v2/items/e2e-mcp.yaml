@@ -1,0 +1,13 @@
+id: e2e-mcp
+kind: mcp
+title: "E2E MCP server"
+source: {"type":"npm","package":"e2e-mcp-server","version":"1.0.0"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"none"}
+stance: optional
+mcp: {"name":"e2e-mcp","config":{"command":"npx","args":["-y","e2e-mcp-server@1.0.0"]}}
+why: "Fixture MCP server for the end-to-end recommend test."
+evidence:
+  - "test/fixtures/catalog-e2e (fixture, not a real package)"

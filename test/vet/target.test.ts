@@ -86,7 +86,7 @@ test('relative-path source', () => {
 
 test('relative-path errors', () => {
   const f = fake(market('./plugins/../x'));
-  expect(resolveTarget(P, f.exec)).toEqual({ error: 'Plugin "p" in "m" has a path outside the marketplace: ./plugins/../x.' + URL });
+  expect(resolveTarget(P, f.exec)).toEqual({ error: 'Plugin "p" in "m" has a path outside the marketplace: "./plugins/../x".' + URL });
   expect(f.calls.some((c) => c[2]?.includes('/contents/plugins'))).toBe(false);
   expect(resolveTarget(P, fake(market('./plugins/x')).exec)).toEqual({ error: `Plugin "p" in "m": plugins/x not found in mo/mr at ${M.slice(0, 7)}.` + URL });
   const g = fake((c, a) => (a?.[1]?.includes('/contents/plugins/x') ? ok('file') : market('./plugins/x')(c, a)));
@@ -125,7 +125,7 @@ test('vetId', () => {
 
 test.each(['../x', '..', './..', './a/./b', './a//b'])('relative source %s is outside the marketplace, no gh call past marketplace.json', (src) => {
   const f = fake(market(src));
-  expect(resolveTarget(P, f.exec)).toEqual({ error: `Plugin "p" in "m" has a path outside the marketplace: ${src}.` + URL });
+  expect(resolveTarget(P, f.exec)).toEqual({ error: `Plugin "p" in "m" has a path outside the marketplace: "${src}".` + URL });
   expect(f.calls.some((c) => c[2]?.includes('/contents/') && !c[2].includes('marketplace.json'))).toBe(false);
 });
 
@@ -185,4 +185,14 @@ test('failed fetch of the raw marketplace.json', () => {
   expect(resolveTarget(P, raw('HTTP 502 bad gateway').exec)).toEqual({ error: 'mo/mr: could not verify marketplace.json (gh exited 1): HTTP 502 bad gateway.' + VER });
   const junk = fake((c, a) => (c === 'gh' && a[1].includes('marketplace.json') ? ok('not json') : base(c, a)));
   expect(resolveTarget(P, junk.exec)).toEqual({ error: 'Plugin "p" is not in marketplace "m". Check the plugin name, or pass the plugin\'s GitHub URL instead.' });
+});
+
+test('no doubled period when gh stderr already ends with one', () => {
+  const r = resolveTarget(T, fake(() => ({ status: 1, stdout: '', stderr: 'Rate limited.' })).exec) as { error: string };
+  expect(r.error).toBe('o/r: could not verify main (gh exited 1): Rate limited. Check your network or run gh auth status, then try again.');
+  expect(r.error).not.toContain('..');
+});
+
+test('source .. reads cleanly', () => {
+  expect(resolveTarget(P, fake(market('..')).exec)).toEqual({ error: 'Plugin "p" in "m" has a path outside the marketplace: "..". Pass the plugin\'s GitHub URL instead.' });
 });

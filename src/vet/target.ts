@@ -36,7 +36,7 @@ function gh(exec: Exec, args: string[], repo: string, what: string, notFound = `
   if (r.status === 0) return { out: r.stdout.trim() };
   if (isNotFound(r.stderr)) return { absent: true, error: notFound };
   const e = (r.stderr ?? '').trim().split('\n')[0];
-  return { error: `${esc(repo)}: could not verify ${esc(what)} (gh exited ${r.status})${e ? `: ${esc(e)}` : ''}. ${VERIFY}` };
+  return { error: `${esc(repo)}: could not verify ${esc(what)} (gh exited ${r.status})${e ? `: ${esc(e)}` : ''}${e.endsWith('.') ? '' : '.'} ${VERIFY}` };
 }
 const failed = (r: ReturnType<typeof gh>): Err | null => ('error' in r ? { error: r.error } : null);
 
@@ -97,7 +97,7 @@ function resolvePlugin(t: { name: string; market: string }, exec: Exec): Resolve
 
   if (typeof src === 'string') {
     const path = src.startsWith('.') ? src.replace(/^\.\//, '').replace(/^\.$/, '').replace(/\/+$/, '') : '..';
-    if (path !== '' && !safe(path)) return { error: `Plugin "${name}" in "${market}" has a path outside the marketplace: ${esc(src)}. ${URL_INSTEAD}` };
+    if (path !== '' && !safe(path)) return { error: `Plugin "${name}" in "${market}" has a path outside the marketplace: "${esc(src)}". ${URL_INSTEAD}` };
     if (path !== '') {
       const where = `${esc(path)}`;
       const d = gh(exec, ['api', `repos/${marketRepo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${mp.sha}`, '--jq', DIR_JQ], marketRepo, path,

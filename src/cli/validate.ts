@@ -22,7 +22,7 @@ export function validate(argv: string[], { root, out }: CliEnv): number {
   const args = argv.filter((a) => a !== '--merge-config');
   let merge: Merge = (raw) => raw;
   if (args.length !== argv.length) {
-    const c = readConfig(root, out);
+    const c = readConfig(root, out, true); // as update reads it, so an old results_dir doesn't stop the update flow
     if (typeof c === 'number') return c;
     merge = (raw) => (raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? overlayAnswers(configToAnswers(c), raw as Record<string, unknown>) : raw);
   }

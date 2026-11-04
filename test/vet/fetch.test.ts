@@ -79,6 +79,34 @@ describe('fetchTarball', () => {
     expect(f.skipped.map((s) => s.why.startsWith('name collides with'))).toEqual([true, true]);
     expect(onDisk(f)).toEqual([]);
   });
+  it('skips a long-s case-fold collision', () => {
+    const f = run([{ name: 'SKILL.md', body: 'a' }, { name: '\u017fKILL.md', body: 'b' }]);
+    expect(f.files).toEqual([]);
+    expect(f.skipped).toHaveLength(2);
+  });
+  it('keeps the harness .gitignore and renames the archive one', () => {
+    const f = run([{ name: '.gitignore', body: '!*\n' }, { name: 'sub/.gitignore', body: 'x' }]);
+    expect(readFileSync(join(f.dir, '.gitignore'), 'utf8')).toBe('*\n');
+    expect(f.map['.gitignore']).toBe('.gitignore.vetted');
+    expect(readFileSync(join(f.dir, '.gitignore.vetted'), 'utf8')).toBe('!*\n');
+    expect(f.map['sub/.gitignore']).toBe('sub/.gitignore');
+  });
+  it('returns an error, not a throw, when the folder cannot be made', () => {
+    const keys = ['TMPDIR', 'TEMP', 'TMP'], old = keys.map((k) => process.env[k]);
+    for (const k of keys) process.env[k] = join(tmpdir(), 'harness-vet-no-such-parent', 'x');
+    try {
+      const f = fetchTarball(r, ok([{ name: 'a', body: '1' }]));
+      expect(f).toEqual({ error: expect.stringMatching(/^o\/r@aaaaaaa: could not unpack the archive \(ENOENT\)\. Check .*free disk space/) });
+    } finally { keys.forEach((k, i) => (old[i] === undefined ? delete process.env[k] : (process.env[k] = old[i]))); }
+  });
+  it('caps the id part of the folder name at 40 characters', () => {
+    const f = run([{ name: 'a', body: '1' }]);
+    expect(basename(f.dir).length).toBeLessThanOrEqual('harness-vet-'.length + 40 + '-aaaaaaa-'.length + 6);
+    const long = fetchTarball({ ...r, repo: 'o/' + 'x'.repeat(100) }, ok([{ name: 'a', body: '1' }]));
+    if ('error' in long) throw new Error(long.error);
+    made.push(long.dir);
+    expect(basename(long.dir).startsWith('harness-vet-o-' + 'x'.repeat(38) + '-aaaaaaa-')).toBe(true);
+  });
   it('skips both copies of an exact duplicate', () => {
     const f = run([{ name: 'a.md', body: '1' }, { name: 'a.md', body: '2' }]);
     expect(f.files).toEqual([]);

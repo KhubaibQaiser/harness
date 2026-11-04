@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 
 /** Paths git reports as modified, staged or untracked, relative to the repo root (untracked dirs end in "/"). */
 export function dirtyPaths(root: string): string[] {
-  const raw = execFileSync('git', ['status', '--porcelain', '-z'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\0');
+  const raw = execFileSync('git', ['status', '--porcelain', '-z'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).split('\0');
   const paths: string[] = [];
   for (let i = 0; i < raw.length; i++) {
     const e = raw[i];

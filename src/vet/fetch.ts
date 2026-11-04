@@ -24,6 +24,7 @@ function unsafe(path: string): string | undefined {
 
 /** D12: names Claude Code reads as instructions get a .vetted suffix, so nothing in the unpacked tree is auto-loaded. */
 function neutralise(path: string): string {
+  if (path === '.gitignore') return '.gitignore.vetted'; // the folder's own .gitignore (*) must stay
   const segs = path.split('/');
   return segs.map((s, i) => (i === segs.length - 1 ? /^(claude\.md|claude\.local\.md|agents\.md)$/i.test(s) : /^\.claude$/i.test(s)) ? `${s}.vetted` : s).join('/');
 }
@@ -53,7 +54,7 @@ export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: s
   // Case-insensitive filesystems (macOS, Windows) fold case and Unicode form: colliding entries would overwrite each other, so none is written.
   const groups = new Map<string, typeof todo>();
   for (const t of todo) {
-    const k = t.to.normalize('NFC').toLowerCase();
+    const k = t.to.normalize('NFC').toUpperCase().toLowerCase(); // upper then lower folds the long s and similar
     groups.set(k, [...(groups.get(k) ?? []), t]);
   }
   const clash = new Set<(typeof todo)[number]>();
@@ -66,9 +67,10 @@ export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: s
     }
   }
 
-  const dir = mkdtempSync(join(tmpdir(), `${PREFIX}${vetId(r)}-${r.sha.slice(0, 7)}-`));
   const map: Record<string, string> = {};
+  let dir = '';
   try {
+    dir = mkdtempSync(join(tmpdir(), `${PREFIX}${vetId(r).slice(0, 40)}-${r.sha.slice(0, 7)}-`));
     writeFileSync(join(dir, '.gitignore'), '*\n'); // first, so a crash never leaves stageable files
     for (const t of todo) {
       if (clash.has(t)) continue;
@@ -81,8 +83,8 @@ export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: s
       } catch (err) { skipped.push({ path: t.path, why: `could not write (${(err as NodeJS.ErrnoException).code ?? 'error'})` }); }
     }
   } catch (err) {
-    cleanTmp(dir);
-    return { error: `${at}: could not unpack the archive (${(err as NodeJS.ErrnoException).code ?? 'error'}).` };
+    if (dir) cleanTmp(dir);
+    return { error: `${at}: could not unpack the archive (${(err as NodeJS.ErrnoException).code ?? 'error'}). Check that the temp folder exists and has free disk space, then try again.` };
   }
   return { dir, files: Object.keys(map).sort(), map, skipped, large };
 }

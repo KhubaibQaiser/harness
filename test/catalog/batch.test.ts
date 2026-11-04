@@ -41,9 +41,7 @@ const STANCES: Record<number, Record<string, { stance: string; reason?: string }
     'pr-review-toolkit': { stance: 'discouraged', reason: 'overlaps the built-in /code-review and the harness reviewer.' },
   },
   3: {
-    'typescript-lsp': { stance: 'default' },
     serena: { stance: 'discouraged', reason: 'duplicates LSP' },
-    sourcegraph: { stance: 'discouraged', reason: 'duplicates typescript-lsp and local search for single-repo work; needs a Sourcegraph instance.' },
   },
 };
 
@@ -63,4 +61,11 @@ test('impeccable side effects and mcp config shapes', () => {
     const c = i.mcp!.config;
     expect(c.command !== undefined || (c.type === 'http' && typeof c.url === 'string'), i.id).toBe(true);
   }
+});
+
+test('LSP plugins carry the marketplace lspServers map', () => {
+  const by = new Map(loadCatalog().catalog.items.map((i) => [i.id, i]));
+  const servers = { 'typescript-lsp': 'typescript', 'swift-lsp': 'sourcekit-lsp', 'kotlin-lsp': 'kotlin-lsp' } as const;
+  for (const [id, name] of Object.entries(servers)) expect([id, Object.keys(by.get(id)?.lsp_servers ?? {})]).toEqual([id, [name]]);
+  expect((by.get('kotlin-lsp')?.lsp_servers as any)['kotlin-lsp'].startupTimeout).toBe(120000);
 });

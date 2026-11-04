@@ -6,7 +6,8 @@ license: Apache-2.0
 min_claude_code: 2.1.314
 applies_when: {"any_dep":["typescript"]}
 cost: {"context":"low","setup":"medium"}
-stance: default
+stance: optional
+lsp_servers: {"typescript":{"command":"typescript-language-server","args":["--stdio"],"extensionToLanguage":{".ts":"typescript",".tsx":"typescriptreact",".js":"javascript",".jsx":"javascriptreact",".mts":"typescript",".cts":"typescript",".mjs":"javascript",".cjs":"javascript"}}}
 why: "TypeScript/JavaScript language server for enhanced code intelligence"
 evidence:
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/.claude-plugin/marketplace.json (entry \"typescript-lsp\": the source of the why sentence and of the lspServers config, command typescript-language-server --stdio; the plugin directory has only README.md and LICENSE, no plugin.json)"
@@ -14,3 +15,4 @@ evidence:
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/typescript-lsp/README.md (requirement: the language server is not bundled; install it with `npm install -g typescript-language-server typescript`, hence setup medium; supports .ts, .tsx, .js, .jsx, .mts, .cts, .mjs, .cjs)"
   - "audit.html: \"Real go-to-definition, references and diagnostics across your 250+ route TanStack codebases, instead of grep guesses.\" (the audit puts it in the user-scope base)"
   - "applies_when note: the README also covers plain JavaScript files, but the vocabulary has no language fact, so the item matches the `typescript` dependency; a JavaScript-only repo is under-matched"
+  - "lsp_servers is the `lspServers` object of the \"typescript-lsp\" entry in https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/.claude-plugin/marketplace.json at the pinned sha, copied verbatim (the installer must emit it; the plugin directory has no manifest)"

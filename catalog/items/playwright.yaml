@@ -11,7 +11,7 @@ why: "Browser automation and end-to-end testing MCP server by Microsoft."
 evidence:
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/playwright/.claude-plugin/plugin.json (the why sentence is the first sentence of its description; author Microsoft)"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/LICENSE (Apache-2.0, repo root; the plugin directory holds only config and has no LICENSE of its own; microsoft/playwright-mcp and npm @playwright/mcp are Apache-2.0)"
-  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/playwright/.mcp.json (runs `npx @playwright/mcp@latest`: unpinned, the newest npm release is fetched and run at launch)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/playwright/.mcp.json (runs `npx @playwright/mcp@latest`: the wrapper fetches and runs the newest @playwright/mcp release from npm at run time; nothing is pinned. The owner chose to keep this wrapper)"
   - "https://github.com/microsoft/playwright-mcp/blob/main/README.md (Requirements: Node.js 18 or newer; --isolated keeps the browser profile in memory instead of saving it to disk)"
   - "audit.html: \"Drives the browser and records E2E tests. Debug with DevTools MCP, then lock the fix in with a Playwright test.\" (project scope)"
   - "applies_when note: the audit gives project scope and the docs are about web pages, so web and landing projects"

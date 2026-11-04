@@ -16,4 +16,4 @@ evidence:
   - "README.md section \"Telemetry\": \"Mobile MCP collects anonymous usage telemetry via PostHog and Scarf\", opt out with MOBILEMCP_DISABLE_TELEMETRY=1: telemetry-on-by-default. The config here does not set that variable; see the owner note"
   - "README.md section \"Prerequisites\": Xcode command line tools, Android Platform Tools (adb), Node.js v20+, plus a booted simulator, emulator or connected device (setup medium). The tool list includes install and uninstall of apps, clearing app data, and cloud-device tools (login, allocate, release) for the paid Mobile Next Cloud; none runs unless called"
   - "audit.html: \"mobile-next/mobile-mcp (10k)\" and \"Use mobile-mcp for Android emulators.\""
-  - "applies_when note: project_types [mobile] is the closest field; the audit scopes it to React Native and Expo projects"
+  - "applies_when note: project_types [mobile] is exact for the audit scope: in src/install/facts.ts an app is mobile only when it has an expo or react-native dependency, the same set as frameworks [expo, react-native]"

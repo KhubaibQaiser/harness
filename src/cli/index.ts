@@ -29,7 +29,7 @@ export interface CliEnv {
 
 declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force] [--dry-run]\n       harness update [--yes] [--check] [--dry-run]\n       harness doctor\n       harness status\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness validate answers|product <file>\n       harness validate picks <file> --answers <file> [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness select --picks <file> [--choose <id,...>]';
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       /harness:init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force] [--dry-run]\n       /harness:update [--yes] [--check] [--dry-run]\n       harness doctor\n       harness status\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness validate answers|product <file>\n       harness validate picks <file> --answers <file> [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness select --picks <file> [--choose <id,...>]';
 const DAY = 86_400_000;
 
 export function tddStatus(root: string): string {

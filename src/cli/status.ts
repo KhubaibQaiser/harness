@@ -29,7 +29,7 @@ export function status(args: string[], cli: CliEnv, deps: { platform?: NodeJS.Pl
     if (e instanceof ManifestError) return out(e.message), 1;
     throw e;
   }
-  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run harness init to install it.'), 1;
+  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
 
   const { config, warnings } = loadConfig(root);
   const facts = detect(root);

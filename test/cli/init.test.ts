@@ -68,7 +68,7 @@ test('second init refuses and names update', async () => {
   git(root, '-c', 'user.name=t', '-c', 'user.email=t@e.x', 'commit', '-qm', 'harness');
   const r = await go(root, ['--yes']);
   expect(r.code).toBe(1);
-  expect(r.out).toContain('Harness is already installed (.harness/manifest.json). Run harness update instead.');
+  expect(r.out).toContain('Harness is already installed (.harness/manifest.json). Run /harness:update instead.');
 });
 
 test('declining the plan writes nothing', async () => {
@@ -134,7 +134,7 @@ test('report lists off-gates for a python repo', async () => {
 
 test('refuses outside a git repo and on an old Node', async () => {
   const nogit = makeRepo({ 'a.txt': 'a' }, { git: false });
-  expect((await go(nogit, ['--yes'])).out).toContain('Not a git repository. Run harness init inside a git repo.');
+  expect((await go(nogit, ['--yes'])).out).toContain('Not a git repository. Run /harness:init inside a git repo.');
   const root = makeRepo(NPM_VITEST);
   const r = await go(root, ['--yes'], fake(), { nodeVersion: '20.1.0' });
   expect(r.code).toBe(1);

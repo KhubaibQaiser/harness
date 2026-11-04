@@ -21,11 +21,12 @@ import type { CliEnv } from './index.js';
 
 export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch; fs?: FsLike };
 
-const USAGE = 'Usage: harness update [--yes] [--check] [--dry-run]';
+const USAGE = 'Usage: /harness:update [--yes] [--check] [--dry-run]';
 const PKG = '@khubaibqaiser/harness';
 const CONFIG = '.harness/config.yaml';
 const SETTINGS = '.claude/settings.json';
 const MCP = '.mcp.json';
+const AGAIN = 'Run /harness:update again to get recommendations for this repo.';
 
 export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/backup/') && !rel.split(/[\\/]/).includes('..');
 
@@ -49,7 +50,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   try {
     root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: cli.root, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {
-    return out('Not a git repository. Run harness update inside a git repo.'), 1;
+    return out('Not a git repository. Run /harness:update inside a git repo.'), 1;
   }
   let m: Manifest | null;
   try {
@@ -58,7 +59,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     if (e instanceof ManifestError) return out(e.message), 1;
     throw e;
   }
-  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run harness init to install it.'), 1;
+  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
 
   // Strict validation: update plans from this config, so a mistake in it should stop us, not be skipped silently.
   // The old default results_dir is now a config error, so it is migrated first (ruling 9): a one-line edit, not a rewrite.
@@ -113,7 +114,11 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   }
   if (!changes.length && !stale) {
     if (dryRun) return out(m.version === version ? `Harness ${version} is up to date.` : `Harness files already match ${version}. Dry run: nothing was written.`), 0;
-    if (m.version === version) return out(`Harness ${version} is up to date.`), 0;
+    if (m.version === version) {
+      out(`Harness ${version} is up to date.`);
+      if (insideClaude(cli.env) && !aiPath) out(AGAIN);
+      return 0;
+    }
     const err = commit([], { ...m, version });
     if (!err) stampHarnessFiles(root);
     return out(err ?? `Harness files already match ${version}. Manifest version updated from ${m.version}.`), err ? 1 : 0;
@@ -155,6 +160,6 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   out(`Harness updated to ${version}. Commit these files: ${[...changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);
-  if (insideClaude(cli.env) && !aiPath) out('Run /harness:update again to get recommendations for this repo.');
+  if (insideClaude(cli.env) && !aiPath) out(AGAIN);
   return 0;
 }

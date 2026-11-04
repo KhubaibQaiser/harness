@@ -10,6 +10,6 @@ export function refuseOutsideClaude(cmd: 'init' | 'update' | 'add' | 'sync', env
   return `Run /harness:${cmd} inside Claude Code. The harness supports Claude Code only for now.`;
 }
 
-// The AI flags arrive in later tasks; until then any of these present counts as "AI flags".
+// The AI flags arrive in later tasks; until then any of these present counts as "AI flags". Wired in Tasks 17 and 21.
 const AI_FLAGS = ['--answers', '--picks', '--choose', '--report', '--product'];
 export const hasAiFlags = (args: string[]): boolean => args.some((a) => AI_FLAGS.includes(a));

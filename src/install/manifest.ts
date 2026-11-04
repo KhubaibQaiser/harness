@@ -36,7 +36,7 @@ export const MANIFEST_REL = '.harness/manifest.json';
 
 export class ManifestError extends Error {
   constructor(options?: { cause?: unknown; message?: string }) {
-    super(options?.message ?? '`.harness/manifest.json` is unreadable. Restore it from git or delete `.harness/` and run harness init again.', options);
+    super(options?.message ?? '`.harness/manifest.json` is unreadable. Restore it from git or delete `.harness/` and run /harness:init again.', options);
     this.name = 'ManifestError';
   }
 }

@@ -166,7 +166,7 @@ test('same files, newer version: manifest version is bumped', async () => {
 });
 
 test('refuses when not installed, bad flag, or invalid config', async () => {
-  expect((await up(makeRepo(REPO), [])).out).toContain('harness init');
+  expect((await up(makeRepo(REPO), [])).out).toContain('/harness:init');
   expect((await up(makeRepo(REPO), ['--bogus'])).code).toBe(2);
   const root = await installed();
   writeFileSync(join(root, '.harness/config.yaml'), 'bogus_key: 1\n');
@@ -754,4 +754,12 @@ test('beta repo update inside Claude Code without AI flags refreshes files only'
   expect(settingsBlocks(root).filter((b) => beta.includes(b) && JSON.parse(b).event)).toEqual([]);
   expect(out).not.toContain('Removed');
   expect(out.trim().split('\n').pop()).toBe('Run /harness:update again to get recommendations for this repo.');
+});
+
+test('up to date inside Claude Code on the plain path still points to /harness:update, but not on a dry run', async () => {
+  const root = await installed();
+  const run = (args: string[]) => { let out = ''; return update(args, { env: { CLAUDECODE: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') }).then(() => out); };
+  const again = 'Run /harness:update again to get recommendations for this repo.';
+  expect(await run(['--yes'])).toContain(again);
+  expect(await run(['--dry-run'])).not.toContain(again);
 });

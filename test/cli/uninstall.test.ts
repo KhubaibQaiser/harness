@@ -87,7 +87,7 @@ test('no manifest: says harness is not installed, exit 1', async () => {
   const r = await un(makeRepo(REPO), ['--yes']);
   expect(r.code).toBe(1);
   expect(r.out).toContain('not installed');
-  expect(r.out).toContain('Run harness init');
+  expect(r.out).toContain('Run /harness:init');
 });
 
 test('edited settings.json: structural removal keeps the user hooks and deny rules', async () => {

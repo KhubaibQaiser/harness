@@ -60,7 +60,7 @@ test('tampered dispatcher: fix line, exit 1', async () => {
   const root = await installed();
   writeFileSync(join(root, '.harness/hooks/dispatch.mjs'), '// edited\n');
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/^fix .*dispatch\.mjs.*: .*harness update/m);
+  expect(r.out).toMatch(/^fix .*dispatch\.mjs.*: .*harness:update/m);
   expect(r.code).toBe(1);
 });
 
@@ -113,7 +113,7 @@ test('missing config: restore from git, never loops through update', async () =>
   const root = await installed();
   rmSync(join(root, '.harness/config.yaml'));
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toContain('fix `.harness/config.yaml` is missing: restore it with git checkout -- .harness/config.yaml, or run harness uninstall and then harness init.');
+  expect(r.out).toContain('fix `.harness/config.yaml` is missing: restore it with git checkout -- .harness/config.yaml, or run harness uninstall and then /harness:init.');
   expect(r.lines.find((l) => l.includes('config.yaml` is missing'))).not.toContain('harness update');
   expect(r.code).toBe(1);
 });
@@ -152,7 +152,7 @@ test('jest repo: doctor checks the installed reporter against the manifest', asy
   expect(ok.out).not.toMatch(/writes test results under/); // the reporter script is not a legacy results path
   writeFileSync(join(root, '.harness/hooks/jest-results.cjs'), '// edited\n');
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/^fix `\.harness\/hooks\/jest-results\.cjs` is not the installed version: commit or stash your changes, then run harness update to restore it$/m);
+  expect(r.out).toMatch(/^fix `\.harness\/hooks\/jest-results\.cjs` is not the installed version: commit or stash your changes, then run \/harness:update to restore it$/m);
   expect(r.code).toBe(1);
 });
 
@@ -167,7 +167,7 @@ test('vitest without a coverage provider: doctor gives the install hint, then th
   mkdirSync(join(root, 'node_modules/@vitest/coverage-v8'), { recursive: true });
   const b = run(root, { path: bin('npm') });
   expect(b.code).toBe(1); // actionable now: a problem, not a note
-  expect(b.out).toMatch(/^fix the coverage gate is off for the root package: run harness update to turn on Vitest coverage, then remove `src\/\*\*` from tdd\.coverage_skip in \.harness\/config\.yaml$/m);
+  expect(b.out).toMatch(/^fix the coverage gate is off for the root package: run \/harness:update to turn on Vitest coverage, then remove `src\/\*\*` from tdd\.coverage_skip in \.harness\/config\.yaml$/m);
 });
 
 test('CRLF checkout of the dispatcher still matches the manifest', async () => {
@@ -254,9 +254,9 @@ test('N6: the restore advice says to commit or stash first when the file has unc
   const p = join(root, '.harness/hooks/dispatch.mjs');
   writeFileSync(p, readFileSync(p, 'utf8') + '\n// tampered\n');
   const run = async () => { let out = ''; await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE }); return out; };
-  expect(await run()).toMatch(/does not match the installed version: commit or stash your changes, then run harness update to restore it$/m);
+  expect(await run()).toMatch(/does not match the installed version: commit or stash your changes, then run \/harness:update to restore it$/m);
   g('commit', '-q', '-am', 'tampered');
-  expect(await run()).toMatch(/does not match the installed version: run harness update to restore it$/m);
+  expect(await run()).toMatch(/does not match the installed version: run \/harness:update to restore it$/m);
 });
 
 const editSettings = (root: string, edit: (s: any) => void) => {
@@ -328,7 +328,7 @@ test('no node on the PATH: the dispatcher does not run', async () => {
   expect(code).toBe(1);
 });
 
-const differs = (ev: string) => new RegExp(`^fix \`\\.claude/settings\\.json\`: \`hooks\\.${ev}\` harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$`, 'm');
+const differs = (ev: string) => new RegExp(`^fix \`\\.claude/settings\\.json\`: \`hooks\\.${ev}\` harness hook differs from the one harness installs: undo the edit or delete that group, then run \/harness:update$`, 'm');
 const toShell = (s: any) => {
   const h = s.hooks.PreToolUse[0].hooks[0];
   h.command = 'node "${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"';
@@ -351,7 +351,7 @@ test('an old recorded shell-form entry is a run-harness-update fix', async () =>
   // Through the platform shell, from a path with a space. cmd.exe does not expand ${CLAUDE_PROJECT_DIR} (a POSIX-shell
   // form, the known limit that exec form fixes), so on win32 the self-test fails; the update fix below is the point.
   if (process.platform !== 'win32') expect(r.out).toMatch(/^ok dispatcher runs$/m);
-  expect(r.out).toMatch(/^fix `\.claude\/settings\.json` runs the dispatcher through a shell: run harness update$/m);
+  expect(r.out).toMatch(/^fix `\.claude\/settings\.json` runs the dispatcher through a shell: run \/harness:update$/m);
   expect(r.out).not.toMatch(differs('PreToolUse'));
   expect(r.code).toBe(1);
 });
@@ -360,7 +360,7 @@ test('an old recorded shell-form entry without onFailure gets one update line', 
   const root = await installed(PREFIX);
   recordOld(root, 'PreToolUse', (s) => (toShell(s), delete s.hooks.PreToolUse[0].hooks[0].onFailure));
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/through a shell: run harness update$/m);
+  expect(r.out).toMatch(/through a shell: run \/harness:update$/m);
   expect(r.out).not.toMatch(/^fix PreToolUse hook has no onFailure/m);
 });
 
@@ -377,7 +377,7 @@ test('an old recorded group without onFailure is a run-harness-update fix', asyn
   const root = await installed();
   recordOld(root, 'UserPromptSubmit', (s) => delete s.hooks.UserPromptSubmit[0].hooks[0].onFailure);
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/^fix UserPromptSubmit hook has no onFailure "block": run harness update$/m);
+  expect(r.out).toMatch(/^fix UserPromptSubmit hook has no onFailure "block": run \/harness:update$/m);
   expect(r.out).not.toMatch(/differs/);
   expect(r.out).not.toMatch(/^fix (PreToolUse|ConfigChange) hook/m);
   expect(r.code).toBe(1);
@@ -396,7 +396,7 @@ test('an edited harness hook group is a fix', async () => {
   const root = await installed();
   editSettings(root, (s) => (s.hooks.Stop[0].hooks[0].timeout = 5));
   const r = run(root, { path: bin('npm') });
-  expect(r.out).toMatch(/^fix `\.claude\/settings\.json`: `hooks\.Stop` harness hook differs from the one harness installs: undo the edit or delete that group, then run harness update$/m);
+  expect(r.out).toMatch(/^fix `\.claude\/settings\.json`: `hooks\.Stop` harness hook differs from the one harness installs: undo the edit or delete that group, then run \/harness:update$/m);
   expect(r.lines.filter((l) => l.includes('differs'))).toHaveLength(1);
   expect(r.code).toBe(1);
 });
@@ -435,7 +435,7 @@ test('a package still writing under .harness/state is a fix', async () => {
   expect(r.code).toBe(1);
 });
 
-const LEGACY_FIX = /^fix the root package writes test results under \.harness\/state, which the sandbox denies: run harness update$/m;
+const LEGACY_FIX = /^fix the root package writes test results under \.harness\/state, which the sandbox denies: run \/harness:update$/m;
 test.each([
   ['a Jest script', {}],
   ['jest.config.js', { 'jest.config.js': "module.exports = { outputFile: '.harness/results/root.json' };\n" }],

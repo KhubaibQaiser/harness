@@ -1,0 +1,19 @@
+id: deepeval
+kind: plugin
+title: "DeepEval skills"
+source: {"type": "github", "repo": "confident-ai/deepeval", "plugin": "deepeval", "sha": "da9b2c969f8a15e8aa4ef67c372157ce060cd63e"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+plugin_version: "1.0.0"
+applies_when: {"any_dep": ["@anthropic-ai/sdk", "openai", "ai"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+why: "Skills for adding DeepEval evaluations, tracing, datasets, Confident AI reports, and iterative improvement loops to AI applications."
+evidence:
+  - "https://github.com/confident-ai/deepeval/blob/da9b2c969f8a15e8aa4ef67c372157ce060cd63e/.claude-plugin/plugin.json (version 1.0.0, license Apache-2.0, \"skills\": \"./skills/\"; the why sentence is its description)"
+  - "https://github.com/confident-ai/deepeval/blob/da9b2c969f8a15e8aa4ef67c372157ce060cd63e/LICENSE.md (Apache-2.0, repo root; GitHub spdx Apache-2.0; each skill directory also has a LICENSE)"
+  - "audit.html: \"langfuse or deepeval\" in the AI and LLM features row (\"tracing and evals belong in the base of AI repos\"). Overlaps langfuse (batch 5): the audit says pick one: owner note"
+  - "https://github.com/confident-ai/deepeval/blob/da9b2c969f8a15e8aa4ef67c372157ce060cd63e/skills/deepeval/SKILL.md compatibility line: \"Requires Python 3.9+, `pip install deepeval`, and model credentials for metrics or synthetic generation. Confident AI reporting requires `deepeval login`.\" So the skill has the agent install the deepeval Python package (unpinned) in your project, LLM-judged metrics call a model with your credentials (a paid API call per metric), and Confident AI hosted reports/traces are optional and need a Confident AI login or CONFIDENT_API_KEY (setup medium)"
+  - "Contents at the pin: three skills (deepeval, deepeval-otel, deepeval-tracing) under skills/; no hooks directory in the tree listing. On demand, so context low. The plugin root is the whole deepeval repository (the repo's marketplace entry is source ./), so installing clones the full Python library repo"
+  - "Pin choice: the official marketplace pins this sha (anthropics/claude-plugins-official at a2e251d9b97b, url confident-ai/deepeval). Vendor HEAD 8b584f2d8d77 is 234 commits ahead; the pin is the screened one"
+  - "applies_when note: the docs name no dependency and the library is Python; the LLM client packages @anthropic-ai/sdk, openai and ai are my inference for an AI-feature repo. Python-only repos are not matched because facts.deps reads package.json only"

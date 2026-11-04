@@ -1,0 +1,21 @@
+id: security-guidance
+kind: plugin
+title: "Security guidance"
+source: {"type": "git-subdir", "repo": "anthropics/claude-plugins-official", "path": "plugins/security-guidance", "plugin": "security-guidance", "sha": "a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"always": true}
+cost: {"context": "medium", "setup": "low"}
+stance: default
+side_effects: ["installs-hook"]
+why: "Security review for Claude-generated code. Pattern-based warnings on edits, LLM-powered diff review on Stop, and an agentic commit reviewer that catches injection, XSS, SSRF, hardcoded secrets, and 25+ other vulnerability classes."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/security-guidance/.claude-plugin/plugin.json (version 2.0.17; the why text is its description, two sentences kept whole because the first alone says too little)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/security-guidance/LICENSE (Apache-2.0, the plugin directory's own file)"
+  - "audit.html: \"Warns about XSS, injection and SSRF patterns as the agent edits, and reviews the diff when it stops. Check that it doesn't run twice alongside your own Stop hook.\" (User scope; the audit's install line is /plugin install security-guidance@claude-plugins-official). It ships its own Stop review, so run it with the harness stop-gate only after checking they do not double up"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/security-guidance/hooks/hooks.json (SessionStart, UserPromptSubmit, PostToolUse on Edit/Write/MultiEdit/NotebookEdit and on Bash git commit/push/gt, and Stop, all python3 via hooks/sg-python.sh): installs-hook. No PreToolUse or PermissionRequest hook, so nothing auto-approves a command"
+  - "hooks/security_reminder_hook.py at the same sha: PostToolUse pattern matches are returned as hookSpecificOutput.additionalContext (module docstring: \"Injects brief warnings via additionalContext\"), and the Stop and commit reviews feed findings back to the model with asyncRewake. Hooks that inject text: cost.context medium (the text appears only when a pattern or review finding fires)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/security-guidance/README.md Prerequisites: Claude Code 2.1.144 or newer, Python 3.8+ on PATH, and credentials for the LLM reviews (your Claude Code sign-in, an API key, or Bedrock/Vertex/Foundry config). Without credentials only the pattern warnings run (setup low)"
+  - "README.md section \"Privacy and data handling\": each Stop-hook diff review sends the changed file paths, diff hunks and relevant file contents to the model endpoint (api.anthropic.com by default, or your gateway or cloud provider); the agentic commit review also sends files it reads. The reviews cost tokens or subscription usage (default model: the newest Opus); the README gives SECURITY_REVIEW_MODEL and SG_AGENTIC_MODEL to pick a cheaper model, and ENABLE_CODE_SECURITY_REVIEW=0 to turn the LLM reviews off. The plugin keeps a debug log at ~/.claude/security/log.txt, \"Nothing is uploaded\""
+  - "hooks/ensure_agent_sdk.py at the same sha (SessionStart): when claude_agent_sdk is not importable it creates a venv at ~/.claude/security/agent-sdk-venv and runs `pip install claude-agent-sdk` with no version pin (lines 472-475 and 716-718). Unpinned code fetched at run time; flagged in the owner note"
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, relative path plugins/security-guidance). Version drift not checked (git-subdir)"

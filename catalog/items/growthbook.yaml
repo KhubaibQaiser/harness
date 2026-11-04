@@ -1,0 +1,19 @@
+id: growthbook
+kind: plugin
+title: "GrowthBook"
+source: {"type": "github", "repo": "growthbook/skills", "plugin": "growthbook", "sha": "7a84f338fe217b20641cdc5c01b5b37f0b950527"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "2.0.0"
+applies_when: {"any_dep": ["@growthbook/growthbook", "@growthbook/growthbook-react"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+why: "Domain skills for the full GrowthBook feature flag, experimentation, and product analytics lifecycle."
+evidence:
+  - "https://github.com/growthbook/skills/blob/7a84f338fe217b20641cdc5c01b5b37f0b950527/.claude-plugin/plugin.json (version 2.0.0, license MIT; the why sentence is its description)"
+  - "https://github.com/growthbook/skills/blob/7a84f338fe217b20641cdc5c01b5b37f0b950527/LICENSE (MIT, GitHub spdx MIT)"
+  - "audit.html: \"optional: getsentry/skills, growthbook (experiments; you built an A/B platform)\" (Observability row)"
+  - "https://github.com/growthbook/skills/blob/7a84f338fe217b20641cdc5c01b5b37f0b950527/README.md: four skills (feature-flags, experiments, analytics, gb-setup); \"The skills call the GrowthBook REST API directly through a small bundled helper. No MCP server required.\" The 27 workflows are reference files that \"stay out of context until they're needed\": context low. No hooks, agents or MCP files in the tree listing"
+  - "README Install step 2: a GrowthBook API key (GB_API_KEY, a personal access token or secret key), plus GB_API_URL and GB_APP_URL for self-hosted; /growthbook:gb-setup validates it against the live API and writes it to a credentials file under ~/.config/growthbook/ with chmod 600 (setup medium: a GrowthBook account and Node 18+). The write workflows create, toggle, ramp and publish flags and start or stop experiments through the REST API once you ask, with changes attributed to your user; many are review-gated by GrowthBook's draft flow"
+  - "Pin choice: the official marketplace pins this sha (anthropics/claude-plugins-official at a2e251d9b97b, url growthbook/skills); it equals vendor HEAD"
+  - "applies_when note: the docs name no dependency; the GrowthBook SDK packages (npm view: @growthbook/growthbook 2.0.0, @growthbook/growthbook-react 2.0.0) are my inference for 'projects that use GrowthBook'"

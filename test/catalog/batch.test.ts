@@ -24,6 +24,12 @@ const BATCHES: Record<number, string[]> = {
     'mergify',
     'jfrog', 'sonatype-guide',
   ],
+  5: [
+    'security-guidance', 'claude-security', 'semgrep', 'trailofbits-insecure-defaults', 'trailofbits-supply-chain-risk-auditor', 'stackhawk-hawkscan', 'aikido', 'probity', 'tdd-guard', 'sonarqube',
+    'sentry', 'getsentry-skills', 'posthog', 'growthbook', 'datadog',
+    'evals-skills', 'langfuse', 'deepeval', 'agent-sdk-dev', 'mcp-server-dev',
+    'marketingskills',
+  ],
 };
 
 test.each(Object.entries(BATCHES))('batch %s ids are all in items/ or excluded.yaml', (_n, ids) => {
@@ -47,6 +53,13 @@ const STANCES: Record<number, Record<string, { stance: string; reason?: string }
     'pr-review-toolkit': { stance: 'discouraged', reason: 'overlaps the built-in /code-review and the harness reviewer.' },
   },
   3: {
+  },
+  5: {
+    'security-guidance': { stance: 'default' },
+    aikido: { stance: 'discouraged', reason: 'duplicates semgrep' },
+    'tdd-guard': { stance: 'discouraged', reason: 'superseded by probity' },
+    // sonarqube is excluded (non-standard licence); if added back it takes the owner's Q5 line.
+    sonarqube: { stance: 'discouraged', reason: 'belongs in CI quality gates, not the agent session.' },
   },
 };
 
@@ -82,4 +95,24 @@ test('batch 4 hook-bearing items carry installs-hook and only injectors are medi
   for (const id of hooked) expect([id, by.get(id)?.side_effects.includes('installs-hook')]).toEqual([id, true]);
   const medium = BATCHES[4].filter((id) => by.get(id)?.cost.context === 'medium').sort();
   expect(medium).toEqual(['jfrog', 'postman', 'stripe', 'vercel']);
+});
+
+// Batch 5 hook-bearing items (read from each pinned hooks.json); only hooks that inject text into the model's context are medium.
+test('batch 5 hook-bearing items carry installs-hook and only injectors are medium', () => {
+  const by = new Map(loadCatalog().catalog.items.map((i) => [i.id, i]));
+  const hooked = ['security-guidance', 'stackhawk-hawkscan', 'probity', 'tdd-guard', 'posthog', 'datadog'];
+  for (const id of hooked) expect([id, by.get(id)?.side_effects.includes('installs-hook')]).toEqual([id, true]);
+  const withHook = BATCHES[5].filter((id) => by.get(id)?.side_effects.includes('installs-hook')).sort();
+  expect(withHook).toEqual([...hooked].sort());
+  const medium = BATCHES[5].filter((id) => by.get(id)?.cost.context === 'medium').sort();
+  expect(medium).toEqual(['datadog', 'security-guidance', 'stackhawk-hawkscan']);
+  expect(by.get('datadog')?.side_effects).toContain('telemetry-on-by-default');
+});
+
+test('probity conflicts with tdd-gate and tdd-guard, and no other batch 5 item declares a conflict', () => {
+  const items = loadCatalog().catalog.items;
+  const by = new Map(items.map((i) => [i.id, i]));
+  expect(by.get('probity')?.conflicts_with).toEqual(['tdd-gate', 'tdd-guard']);
+  for (const id of ['tdd-gate', 'tdd-guard']) expect(by.has(id)).toBe(true);
+  expect(BATCHES[5].filter((id) => id !== 'probity' && (by.get(id)?.conflicts_with.length ?? 0) > 0)).toEqual([]);
 });

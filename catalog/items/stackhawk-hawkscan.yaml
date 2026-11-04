@@ -1,0 +1,19 @@
+id: stackhawk-hawkscan
+kind: plugin
+title: "StackHawk HawkScan (DAST)"
+source: {"type": "git-subdir", "repo": "stackhawk/agent-skills", "path": "plugins/hawkscan", "plugin": "hawkscan", "sha": "66cac9baa5883a1007575faf1b22855a1124834a"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"project_types": ["api"]}
+cost: {"context": "medium", "setup": "high"}
+stance: optional
+side_effects: ["installs-hook"]
+why: "Configure, run, and interpret HawkScan DAST results inside Claude Code."
+evidence:
+  - "https://github.com/stackhawk/agent-skills/blob/66cac9baa5883a1007575faf1b22855a1124834a/plugins/hawkscan/.claude-plugin/plugin.json (version 2.6.0, license MIT; the why sentence is the first sentence of its description)"
+  - "https://github.com/stackhawk/agent-skills/blob/66cac9baa5883a1007575faf1b22855a1124834a/LICENSE (MIT, repo root; GitHub reports MIT; the plugin directory has no LICENSE of its own)"
+  - "audit.html: \"Add stackhawk DAST only for a public API.\" (SAST / DAST / supply chain row). applies_when is project_types [api], the narrowest key available; 'public' cannot be detected, so the recommender should ask"
+  - "https://github.com/stackhawk/agent-skills/blob/66cac9baa5883a1007575faf1b22855a1124834a/plugins/hawkscan/hooks/hooks.json: SessionStart, PostToolUse (Bash and Skill) and Stop hooks, all bash scripts via run-hook.cmd: installs-hook. None of them approves a command"
+  - "hooks/session-start at the same sha prints a <hawkscan-autonomous-security> block at every startup, resume, clear and compact: \"after completing any meaningful code change ... Invoke the hawkscan skill to run the security scan loop ... Do not ask for permission.\" hooks/post-commit-scan adds additionalContext after each git commit telling the agent to scan that commit, and hooks/stop prints a reminder when code files changed without a scan. Always-on injected text: cost.context medium. The session-start hook also writes a per-session record under ~/.stackhawk/agent/sessions/"
+  - "https://github.com/stackhawk/agent-skills/blob/66cac9baa5883a1007575faf1b22855a1124834a/plugins/hawkscan/README.md Prerequisites: a StackHawk account, a StackHawk API key, the HawkScan CLI (hawk) or Docker, and `hawk init --browser` or HAWK_API_KEY (setup high). It runs scans against your running app and sends scan results to the StackHawk platform (inferred from the account and API-key requirement, not read in the scan flow)"
+  - "Pin choice: the official marketplace pins this sha (anthropics/claude-plugins-official at a2e251d9b97b, git-subdir plugins/hawkscan). Vendor HEAD is ecc998e80a0d and has the same hooks directory (same file names), so the marketplace pin adds no hooks that HEAD lacks. Version drift not checked (git-subdir)"

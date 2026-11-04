@@ -1,0 +1,19 @@
+id: langfuse
+kind: plugin
+title: "Langfuse skills"
+source: {"type": "github", "repo": "langfuse/skills", "plugin": "langfuse", "sha": "b86532b77f16f1e27c7cffa32bb632aa3cd9a352"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "1.10.0"
+applies_when: {"any_dep": ["@anthropic-ai/sdk", "openai", "ai", "langfuse", "@langfuse/client"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+why: "Skills for working with Langfuse, the open-source LLM engineering platform for tracing, prompt management, and evaluation."
+evidence:
+  - "https://github.com/langfuse/skills/blob/b86532b77f16f1e27c7cffa32bb632aa3cd9a352/.claude-plugin/plugin.json (version 1.10.0, license MIT; the why sentence is its description)"
+  - "https://github.com/langfuse/skills/blob/b86532b77f16f1e27c7cffa32bb632aa3cd9a352/LICENSE (MIT, GitHub spdx MIT)"
+  - "audit.html: \"New claude-api skill (built in) · agent-sdk-dev, mcp-server-dev (Anthropic) · langfuse or deepeval · hamelsmu/evals-skills\" with \"You build AI products, so tracing and evals belong in the base of AI repos.\" Two plausible Langfuse plugins: the official marketplace also lists langfuse-observability (langfuse/claude-observability-plugin), which exports Claude Code sessions to Langfuse. The audit's tracing-and-evals-for-AI-products wording matches this skills plugin (marketplace name langfuse), so I chose it: owner note"
+  - "https://github.com/langfuse/skills/blob/b86532b77f16f1e27c7cffa32bb632aa3cd9a352/README.md: skills langfuse (query and manage traces, prompts, datasets and scores through the Langfuse API) and migrate-to-langfuse. Prerequisites: \"You need a Langfuse account (cloud or self-hosted) and API keys\" LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and LANGFUSE_BASE_URL (setup medium). Your trace, prompt and dataset data goes to the Langfuse host you configure"
+  - "Contents at the pin: skills/langfuse with references (instrumentation, error-analysis, judge-calibration, ci-cd and others); no hooks, agents or MCP files in the tree listing. On demand, so context low"
+  - "Pin choice: the official marketplace pins this sha (anthropics/claude-plugins-official at a2e251d9b97b, url langfuse/skills). Vendor HEAD dd2b16cda5fd is 4 commits ahead (adds skills/langfuse/references/cost-optimization.md and publishing workflow files; the compare list shows no hooks)"
+  - "applies_when note: the docs name no dependency; the audit scopes it to AI products, so the LLM client packages @anthropic-ai/sdk (npm view: 1.4.0), openai (7.50.0), ai (7.0.162) and the Langfuse SDKs (langfuse 3.39.2, @langfuse/client 6.1.1) are my inference. Python-only AI repos are not matched because facts.deps reads package.json only"

@@ -1,0 +1,21 @@
+id: probity
+kind: plugin
+title: "Probity (TDD enforcement)"
+source: {"type": "github", "repo": "nizos/probity", "plugin": "probity", "sha": "eeac4214246a4e4875c7803058b4d00ee6642c3e"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "1.10.1"
+applies_when: {"always": true}
+conflicts_with: ["tdd-gate", "tdd-guard"]
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+side_effects: ["installs-hook"]
+why: "TDD enforcement and guardrails for Claude Code, Codex, and GitHub Copilot CLI."
+evidence:
+  - "https://github.com/nizos/probity/blob/eeac4214246a4e4875c7803058b4d00ee6642c3e/.claude-plugin/plugin.json (version 1.10.1, license MIT; the why sentence is its description)"
+  - "https://github.com/nizos/probity/blob/eeac4214246a4e4875c7803058b4d00ee6642c3e/LICENSE (MIT, GitHub spdx MIT)"
+  - "Conflicts: owner-approved (2026-10-30 section 7.3). probity enforces TDD with a PreToolUse hook, so it overlaps the harness tdd-gate and its predecessor tdd-guard. The README FAQ (paraphrase): if you already use TDD Guard, switch to Probity"
+  - "https://github.com/nizos/probity/blob/eeac4214246a4e4875c7803058b4d00ee6642c3e/hooks/hooks.json: one PreToolUse hook on Bash|Write|Edit|NotebookEdit running `npx @nizos/probity --agent claude-code`: installs-hook. Unpinned code at launch: npx runs the project's local @nizos/probity if installed, otherwise fetches the newest from npm, on every matching tool call. Flagged in the owner note"
+  - "No auto-approve: src/vendors/claude-code/adapter.ts toResponse emits permissionDecision deny with a reason only on a block; its comment says allow is \"no opinion\" (empty stdout, exit 0) so Claude Code's normal permission flow takes over. The block reason is shown to the model only when an action is denied, so cost.context is low"
+  - "https://github.com/nizos/probity/blob/eeac4214246a4e4875c7803058b4d00ee6642c3e/README.md and docs/setup.md: the project needs `npm install -D @nizos/probity` (global install for non-Node projects) and a probity.config.ts at the project root; the plugin only wires the hook (setup medium). enforceTdd() is an AI-validated rule that uses the agent's official SDK and the agent's own authentication, so it costs extra tokens (README FAQ: \"AI-validated rules add a turn each time they check an action\"); pattern-based rules add none. It reads the session transcript from the host"
+  - "Source choice: not in the official marketplace (read at a2e251d9b97b); the vendor repo is its own marketplace (.claude-plugin/marketplace.json, source ./). Pin is default-branch HEAD. Not in audit.html; the item comes from the brief"

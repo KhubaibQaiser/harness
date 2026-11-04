@@ -1,0 +1,22 @@
+id: datadog
+kind: plugin
+title: "Datadog"
+source: {"type": "github", "repo": "datadog-labs/claude-code-plugin", "plugin": "datadog", "sha": "195f570c002beab3d7bd342739034d0019aa4863"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+plugin_version: "0.7.17"
+applies_when: {"any_dep": ["dd-trace", "@datadog/browser-rum"]}
+cost: {"context": "medium", "setup": "medium"}
+stance: optional
+side_effects: ["installs-hook", "telemetry-on-by-default"]
+why: "Use Datadog directly in Claude Code through a preconfigured Datadog MCP server."
+evidence:
+  - "https://github.com/datadog-labs/claude-code-plugin/blob/195f570c002beab3d7bd342739034d0019aa4863/.claude-plugin/plugin.json (version 0.7.17; the why sentence is the first sentence of its description, which adds \"This plugin is in preview.\")"
+  - "https://github.com/datadog-labs/claude-code-plugin/blob/195f570c002beab3d7bd342739034d0019aa4863/LICENSE (Apache-2.0, GitHub spdx Apache-2.0)"
+  - "audit.html: \"Datadog is in the engineering plugin but not authenticated.\" (Observability row; optional). The engineering item (batch 3) bundles a hosted Datadog connector, so the two overlap: owner note"
+  - ".dd_claude-code_mcp.json at the pin: hosted http server https://${DD_MCP_DOMAIN:-not-setup}/v1/mcp (domain from /ddsetup), headers DD_API_KEY, DD_APPLICATION_KEY and X-Datadog-MCP-Toolsets from the environment. README: \"A Datadog account\", OAuth by default or key authentication (DD_MCP_DOMAIN, DD_API_KEY, DD_APPLICATION_KEY) (setup medium); your logs, metrics and traces queries go to Datadog. The README says \"This plugin is currently in Preview\""
+  - "hooks/hooks.json at the pin: PostToolUse on the get_widget and visualize_tabular_data MCP tools, and SessionEnd, both bash scripts under viz/hooks: installs-hook. forward.sh emits hookSpecificOutput with additionalContext (a bail reason such as \"Could not render the visualization properly due to missing dependency\") and updatedToolOutput that replaces the tool result with its content_text, so the hook writes into the model's context: cost.context medium (only when those two tools run). It does not approve commands"
+  - "viz/hooks/forward.sh ensure_daemon_macos: on macOS it starts a local daemon with `swift viz/ddviz.swift` (a source file in the plugin) that draws a floating chart panel; it needs the Swift toolchain (xcode-select) and falls back to a sandbox URL link otherwise. /ddviz disables it"
+  - "Telemetry: viz/hooks/ddviz_telemetry.sh posts one aggregate log per event (no user, session or install id per its header) to browser-intake-datadoghq.com using a client token embedded in the file. It returns early when DO_NOT_TRACK=1 or DISABLE_TELEMETRY=1 is set. telemetry-on-by-default is recorded; a plugin item has no mcp.config.env to carry the opt-out, so the opt-out is not applied (same as vercel): owner decision in the note"
+  - "Pin choice: the official marketplace pins this sha (anthropics/claude-plugins-official at a2e251d9b97b, url datadog-labs/claude-code-plugin). Vendor HEAD a1603119c813 is 2 commits ahead (changes hooks/hooks.json, viz/hooks/forward.sh and ddviz_telemetry.sh; not read)"
+  - "applies_when note: the docs name no dependency; dd-trace (npm view: 6.23.0) and @datadog/browser-rum (7.16.2) are my inference for 'projects that use Datadog'"

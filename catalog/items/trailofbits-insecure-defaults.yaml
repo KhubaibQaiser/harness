@@ -1,0 +1,17 @@
+id: trailofbits-insecure-defaults
+kind: plugin
+title: "Trail of Bits insecure-defaults"
+source: {"type": "git-subdir", "repo": "trailofbits/skills", "path": "plugins/insecure-defaults", "plugin": "insecure-defaults", "sha": "711af095215ad4ecde5b90cd1d0124b3f1c4ca9e"}
+license: CC-BY-SA-4.0
+min_claude_code: 2.1.314
+applies_when: {"always": true}
+cost: {"context": "low", "setup": "low"}
+stance: optional
+why: "Detects insecure default configurations including hardcoded credentials, fallback secrets, weak authentication defaults, and dangerous values in production"
+evidence:
+  - "https://github.com/trailofbits/skills/blob/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e/plugins/insecure-defaults/.claude-plugin/plugin.json (version 2.0.3; the why text is its description; author Trail of Bits)"
+  - "https://github.com/trailofbits/skills/blob/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e/LICENSE (Creative Commons Attribution-ShareAlike 4.0 International, repo root; README section License says the same; GitHub spdx CC-BY-SA-4.0). The plugin directory has no LICENSE of its own. This is a content licence, share-alike on redistribution of adapted material: owner decision in the note"
+  - "audit.html: \"Pick individual skills: insecure-defaults and supply-chain-risk-auditor. Don't install the whole marketplace.\" (trailofbits/skills, On demand)"
+  - "https://github.com/trailofbits/skills/blob/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e/plugins/insecure-defaults/README.md: run with /insecure-defaults:audit [path]; a recon agent (Sonnet), six sweep agents (Sonnet) and verifier agents (Opus) run as the workflow workflows/audit.js, so one run spends several model calls on your session. Not in the official marketplace (read at a2e251d9b97b), so the pin is the vendor repo's default-branch HEAD"
+  - "Contents at the pin: commands/audit.md, workflows/audit.js, references/*.md and *.json, tests/; no hooks, skills, agents or MCP files (tree listing). On demand, so context low. No account or CLI is needed"
+  - "Version drift not checked (git-subdir). Minimum Claude Code is not stated by the plugin; the workflow script may need a Claude Code release with workflows, unverified"

@@ -42,6 +42,10 @@ items: []
 git:
   commit_trailer: ""
 
+# Budget for always-loaded context that harness adds; harness asks before an install passes it.
+context:
+  budget_tokens: 2000
+
 # Red-first TDD enforcement (needs checks.tdd).
 tdd:
   paths: []

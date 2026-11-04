@@ -51,6 +51,7 @@ export interface HarnessConfig {
   apps: App[];
   items: Selected[];
   git: { commit_trailer: string };
+  context: { budget_tokens: number };
   tdd: { paths: string[]; exempt: string[]; diff_coverage: number; coverage_skip: string[]; test_lock: boolean; results_dir: string };
   multi_file_gate: { generated: string[] };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
@@ -69,6 +70,7 @@ export const defaults = (): HarnessConfig => ({
   apps: [],
   items: [],
   git: { commit_trailer: '' },
+  context: { budget_tokens: 2000 }, // DEFAULT_CONTEXT_BUDGET in src/budget/measure.ts; not imported, to keep the hook bundle as is
   tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: DEFAULT_RESULTS_DIR },
   multi_file_gate: { generated: [] },
   unattended: { multi_file_gate: 'block', require_reason: false },
@@ -172,6 +174,7 @@ const RULES: Record<string, Rule> = {
   'project.type': (v) => (v === '' ? null : oneOf(...PROJECT_TYPES)(v)), // '' means not set yet
   'project.team_size': num(0, 10000, true),
   'project.run_budget_usd': num(0, 100000, false),
+  'context.budget_tokens': num(0, 200000, true),
   apps: listOf('app mappings', appRule),
   items: listOf('item mappings', itemRule),
 };

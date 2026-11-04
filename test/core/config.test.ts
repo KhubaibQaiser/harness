@@ -172,3 +172,13 @@ test('apps[0].port out of range names the element path', () => {
   expect(l.errors).toEqual(['"apps[0].port" must be an integer from 1 to 65535']);
   expect(l.config.apps).toEqual([]);
 });
+
+test('budget_tokens default is 2000, and -1 and 1.5 are rejected', () => {
+  expect(loadConfig(emptyDir()).config.context).toEqual({ budget_tokens: 2000 });
+  for (const v of ['-1', '1.5']) {
+    const r = loadConfig(dirWith('.harness/config.yaml', `context:\n  budget_tokens: ${v}\n`));
+    expect(r.errors).toEqual(['"context.budget_tokens" must be an integer from 0 to 200000']);
+    expect(r.config.context.budget_tokens).toBe(2000);
+  }
+  expect(loadConfig(dirWith('.harness/config.yaml', 'context:\n  budget_tokens: 0\n')).config.context.budget_tokens).toBe(0);
+});

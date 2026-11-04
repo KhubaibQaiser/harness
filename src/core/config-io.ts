@@ -20,6 +20,7 @@ const SECTIONS: Record<keyof HarnessConfig, string> = {
   apps: 'Runnable apps in the repo: how to start them and what login (credential names only, never values) they need.',
   items: 'Catalog items chosen for this project.',
   git: 'Git settings.',
+  context: 'Budget for always-loaded context that harness adds; harness asks before an install passes it.',
   tdd: 'Red-first TDD enforcement (needs checks.tdd).',
   multi_file_gate: 'Multi-file edit gate (needs checks.multiFile).',
   unattended: 'Behaviour when no human is watching.',

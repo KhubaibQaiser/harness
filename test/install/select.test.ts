@@ -69,3 +69,8 @@ test('duplicate chosen ids collapse; a chosen id outside the picks is Chosen by 
 test('C1 controls in an id are escaped', () => {
   expect(resolveSelection(['a\u009bb'], catalog, null).errors).toEqual(['Unknown item "a\\u009bb".']);
 });
+
+test('checklist rows show the context line', () => {
+  const rows = checklist(picks(pk('base'), pk('gsap-skills')), catalog, { templates: 'templates' });
+  expect(rows.map((r) => r.context)).toEqual(['~0 tokens (estimate)', 'not measured before install']);
+});

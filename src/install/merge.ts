@@ -178,13 +178,16 @@ function mergePlugins(s: any, plugins: PinnedPlugin[], recorded: string[], block
   const want = new Set(plugins.map((p) => `${p.name}@${PINS}`));
   for (const [b, r] of recs) {
     if (!isObj(r) || typeof r.plugin !== 'string' || want.has(r.plugin)) continue;
-    if (isObj(s.enabledPlugins) && s.enabledPlugins[r.plugin] === true) delete s.enabledPlugins[r.plugin];
+    const v = s.enabledPlugins?.[r.plugin];
+    if (v !== undefined && v !== true) { notes.push(`\`${SETTINGS}\`: \`${r.plugin}\` was changed; left as is.`); continue; } // the person's value stays and stays recorded
+    if (v === true) delete s.enabledPlugins[r.plugin];
     dropped.push(b);
   }
   for (const p of plugins) {
     const key = `${p.name}@${PINS}`;
     if (isObj(s.enabledPlugins) && Object.hasOwn(s.enabledPlugins, key)) continue;
-    (s.enabledPlugins ??= {})[key] = true;
+    if (s.enabledPlugins === undefined) { s.enabledPlugins = {}; blocks.push(created('enabledPlugins')); }
+    s.enabledPlugins[key] = true;
     blocks.push(JSON.stringify({ plugin: key, item: p.item }));
   }
   // ponytail: a live check (Task 27) confirms that an inline `settings` marketplace honours `lspServers`.
@@ -194,7 +197,8 @@ function mergePlugins(s: any, plugins: PinnedPlugin[], recorded: string[], block
   if (have === undefined) {
     for (const [b, r] of recs) if (isObj(r) && r.marketplace === PINS) dropped.push(b); // the person removed it; the new entry replaces the record
     if (entry) {
-      (s.extraKnownMarketplaces ??= {})[PINS] = entry;
+      if (s.extraKnownMarketplaces === undefined) { s.extraKnownMarketplaces = {}; blocks.push(created('extraKnownMarketplaces')); }
+      s.extraKnownMarketplaces[PINS] = entry;
       blocks.push(JSON.stringify({ marketplace: PINS, entry }));
     }
   } else if (entry && isDeepStrictEqual(have, entry)) {
@@ -208,7 +212,14 @@ function mergePlugins(s: any, plugins: PinnedPlugin[], recorded: string[], block
   } else if (entry || recs.some(([, r]) => isObj(r) && r.marketplace === PINS)) {
     notes.push(`\`${SETTINGS}\`: the harness-pins marketplace was edited; left as is. harness doctor checks it.`);
   }
-  for (const k of ['enabledPlugins', 'extraKnownMarketplaces']) if (isObj(s[k]) && !Object.keys(s[k]).length) delete s[k];
+  for (const k of ['enabledPlugins', 'extraKnownMarketplaces']) dropCreated(s, k, recorded, dropped);
+}
+
+const created = (k: string) => JSON.stringify({ created: k });
+/** Deletes `s[k]` once empty, only when a recorded `created` block says harness made it; that block is then dropped. */
+function dropCreated(s: any, k: string, recorded: string[], dropped: string[]): void {
+  const b = created(k);
+  if (isObj(s[k]) && !Object.keys(s[k]).length && recorded.includes(b)) { delete s[k]; dropped.push(b); }
 }
 
 /** `.mcp.json` servers: block `{"mcp":name,"item":id,"server":{...}}`. A same-named server the person wrote is kept and reported. */
@@ -222,25 +233,28 @@ export function mergeMcp(before: string | null, servers: { name: string; item: s
   const names = new Set(servers.map((x) => x.name));
   for (const [b, r] of recs) {
     if (names.has(r.mcp)) continue;
-    if (isObj(s.mcpServers) && isDeepStrictEqual(s.mcpServers[r.mcp], r.server)) delete s.mcpServers[r.mcp];
+    const v = s.mcpServers?.[r.mcp];
+    if (v !== undefined && !isDeepStrictEqual(v, r.server)) { notes.push(`\`${MCP}\`: \`${r.mcp}\` was changed; left as is.`); continue; }
+    if (v !== undefined) delete s.mcpServers[r.mcp];
     dropped.push(b);
   }
   for (const v of servers) {
     const have = s.mcpServers?.[v.name];
     const block = JSON.stringify({ mcp: v.name, item: v.item, server: v.config });
     if (have === undefined) {
-      (s.mcpServers ??= {})[v.name] = v.config;
+      if (s.mcpServers === undefined) { s.mcpServers = {}; blocks.push(created('mcpServers')); }
+      s.mcpServers[v.name] = v.config;
       blocks.push(block);
       continue;
     }
     if (isDeepStrictEqual(have, v.config)) continue;
     const rec = recs.find(([, r]) => r.mcp === v.name && isDeepStrictEqual(r.server, have));
-    if (!rec) { notes.push(`\`${MCP}\` already has a server named "${v.name}"; left as is.`); continue; }
+    if (!rec) { notes.push(recs.some(([, r]) => r.mcp === v.name) ? `\`${MCP}\`: server "${v.name}" was edited; left as is.` : `\`${MCP}\` already has a server named "${v.name}"; left as is.`); continue; }
     s.mcpServers[v.name] = v.config;
     dropped.push(rec[0]);
     blocks.push(block);
   }
-  if (isObj(s.mcpServers) && !Object.keys(s.mcpServers).length) delete s.mcpServers;
+  dropCreated(s, 'mcpServers', recorded, dropped);
   const eol = before === null ? '\n' : eolOf(before);
   const tail = before === null || /\n$/.test(before) ? eol : '';
   return { after: withEol(JSON.stringify(s, null, before === null ? 2 : jsonIndentOf(before)), eol) + tail, blocks, dropped, notes };
@@ -292,8 +306,9 @@ export function removeFromSettings(current: string, f: Manifest['files'][number]
       if (!Array.isArray(list) || !list.includes(blk.deny)) notes.push(`\`${SETTINGS}\`: deny rule \`${blk.deny}\` was not found; left as is.`);
       else s.permissions.deny = list.filter((d: unknown) => d !== blk.deny);
     } else if (typeof blk?.plugin === 'string') {
-      if (isObj(s.enabledPlugins) && s.enabledPlugins[blk.plugin] === true) delete s.enabledPlugins[blk.plugin];
-      else notes.push(`\`${SETTINGS}\`: plugin \`${blk.plugin}\` was not found or was changed; left as is.`);
+      const v = s.enabledPlugins?.[blk.plugin];
+      if (v === true) delete s.enabledPlugins[blk.plugin];
+      else notes.push(v === undefined ? `\`${SETTINGS}\`: plugin \`${blk.plugin}\` was not found; left as is.` : `\`${SETTINGS}\`: \`${blk.plugin}\` was changed; left as is.`);
     } else if (typeof blk?.marketplace === 'string') {
       if (isObj(s.extraKnownMarketplaces) && isDeepStrictEqual(s.extraKnownMarketplaces[blk.marketplace], blk.entry)) delete s.extraKnownMarketplaces[blk.marketplace];
       else notes.push(`\`${SETTINGS}\`: the ${blk.marketplace} marketplace was not found or was changed; left as is.`);

@@ -80,7 +80,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
         continue;
       }
       const r = (f.rel === SETTINGS ? removeFromSettings : removeFromMcp)(cur, f, backup, notes);
-      if (!r) notes.push(`\`${f.rel}\` is not valid JSON; left as is. Remove the harness entries by hand.`);
+      if (!r) notes.push(`\`${f.rel}\` is not valid JSON; left as is. Remove the harness ${f.rel === SETTINGS ? 'hooks and deny rules' : 'entries'} by hand.`);
       else if (r.empty && f.kind === 'create') changes.push({ kind: 'delete', rel: f.rel, before: cur });
       else if (r.after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] });
       continue;

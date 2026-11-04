@@ -387,6 +387,7 @@ describe('mergeSettings sandbox', () => {
 });
 
 describe('plugins, marketplace and MCP blocks', () => {
+  const PW = { name: 'playwright', item: 'mcp-playwright', config: { command: 'npx', args: ['@playwright/mcp@1.0.0'] } };
   const GH = { name: 'alpha', item: 'plugin-alpha', source: { source: 'github', repo: 'o/alpha', sha: 'a'.repeat(40) } } as const;
   const SUB = { name: 'beta', item: 'plugin-beta', source: { source: 'git-subdir', url: 'o/mono', path: 'plugins/beta', sha: 'b'.repeat(40) } } as const;
   const GAMMA = { name: 'gamma', item: 'plugin-gamma', source: { source: 'github', repo: 'o/gamma', sha: 'c'.repeat(40) } } as const;
@@ -461,17 +462,66 @@ describe('plugins, marketplace and MCP blocks', () => {
     expect(r.notes).toEqual(['`.claude/settings.json`: the harness-pins marketplace was edited; left as is. harness doctor checks it.']);
   });
 
-  it("the person's own enabledPlugins and marketplaces survive install and uninstall byte-identical", () => {
-    const before = '{\r\n\t"enabledPlugins": {\r\n\t\t"foo@other": true\r\n\t},\r\n\t"extraKnownMarketplaces": {\r\n\t\t"other": { "source": { "source": "github", "repo": "x/y" } }\r\n\t},\r\n\t"sandbox": { "enabled": false }\r\n}\r\n';
-    const m = plug(before, [GH, SUB]);
-    const s = JSON.parse(m.after);
-    expect(s.enabledPlugins['foo@other']).toBe(true);
-    expect(s.extraKnownMarketplaces.other).toBeDefined();
-    expect(m.after).toContain('\r\n\t');
+  // Folds a merge into the recorded blocks the way update.ts does: drop the dropped, add the new.
+  const fold = (rec: string[], r: { blocks: string[]; dropped: string[] }) => [...rec.filter((b) => !r.dropped.includes(b)), ...r.blocks];
+  const canon = (o: unknown) => JSON.stringify(o, null, '\t').replace(/\n/g, '\r\n') + '\r\n';
+  const FILE = (rel: string, blocks: string[]) => ({ rel, kind: 'update' as const, hash: '', blocks });
+
+  it("the person's own plugins, marketplaces, sandbox and MCP servers survive install, re-merge and uninstall byte-identical", () => {
+    const before = canon({ enabledPlugins: { 'foo@other': true }, extraKnownMarketplaces: { other: { source: { source: 'github', repo: 'x/y' } } }, sandbox: { enabled: false } });
+    const m1 = mergeSettings(before, { sandbox: 'always', plugins: [GH, GAMMA] });
+    const m2 = mergeSettings(m1.after, { sandbox: 'always', plugins: [GH], recorded: m1.blocks });
+    const rec = fold(m1.blocks, m2);
+    expect(m2.after).toContain('\r\n\t');
     const notes: string[] = [];
-    const out = removeFromSettings(m.after, { rel: '.claude/settings.json', kind: 'update', hash: '', blocks: m.blocks }, before, notes);
-    expect(JSON.parse(out!.after)).toEqual(JSON.parse(before));
-    expect(notes).toEqual([]);
+    expect(removeFromSettings(m2.after, FILE('.claude/settings.json', rec), before, notes)!.after).toBe(before);
+    expect(notes.filter((n) => !/sandbox/.test(n))).toEqual([]);
+
+    const mcpBefore = canon({ mcpServers: { mine: { command: 'x' } } });
+    const a = mergeMcp(mcpBefore, [PW]);
+    const b = mergeMcp(a.after, [PW], a.blocks);
+    expect(removeFromMcp(b.after, FILE('.mcp.json', fold(a.blocks, b)), mcpBefore, [])!.after).toBe(mcpBefore);
+  });
+
+  it("the person's own empty enabledPlugins, marketplaces and mcpServers survive a merge with nothing picked", () => {
+    const own = '{\n  "enabledPlugins": {},\n  "extraKnownMarketplaces": {}\n}\n';
+    const r = plug(own, []);
+    expect(JSON.parse(r.after)).toMatchObject({ enabledPlugins: {}, extraKnownMarketplaces: {} });
+    expect(mergeMcp('{"mcpServers": {}}\n', []).after).toContain('"mcpServers": {}');
+  });
+
+  it('harness-created keys are recorded and deleted once empty', () => {
+    const first = plug(null, [GH]);
+    expect(first.blocks).toContain('{"created":"enabledPlugins"}');
+    expect(first.blocks).toContain('{"created":"extraKnownMarketplaces"}');
+    const r = plug(first.after, [], first.blocks);
+    expect(r.dropped).toContain('{"created":"enabledPlugins"}');
+    expect(JSON.parse(r.after)).not.toHaveProperty('enabledPlugins');
+    expect(mergeMcp(null, [PW]).blocks).toContain('{"created":"mcpServers"}');
+  });
+
+  it('a recorded plugin the person set to false is left with a note, stays recorded, and uninstall notes it too', () => {
+    const first = plug(null, [GH, GAMMA]);
+    const edited = JSON.parse(first.after);
+    edited.enabledPlugins['gamma@harness-pins'] = false;
+    const r = plug(JSON.stringify(edited, null, 2), [GH], first.blocks);
+    const gamma = first.blocks.find((b) => b.includes('gamma@harness-pins'))!;
+    expect(JSON.parse(r.after).enabledPlugins['gamma@harness-pins']).toBe(false);
+    expect(r.notes).toContain('`.claude/settings.json`: `gamma@harness-pins` was changed; left as is.');
+    expect(r.dropped).not.toContain(gamma);
+    const notes: string[] = [];
+    const out = removeFromSettings(r.after, FILE('.claude/settings.json', fold(first.blocks, r)), null, notes)!;
+    expect(JSON.parse(out.after).enabledPlugins).toEqual({ 'gamma@harness-pins': false });
+    expect(notes).toContain('`.claude/settings.json`: `gamma@harness-pins` was changed; left as is.');
+  });
+
+  it('a recorded plugin the person removed is dropped without a note', () => {
+    const first = plug(null, [GH, GAMMA]);
+    const edited = JSON.parse(first.after);
+    delete edited.enabledPlugins['gamma@harness-pins'];
+    const r = plug(JSON.stringify(edited), [GH], first.blocks);
+    expect(r.dropped).toContain(first.blocks.find((b) => b.includes('gamma@harness-pins')));
+    expect(r.notes).toEqual([]);
   });
 
   it('plugin entries leave the ConfigChange guarded view unchanged', () => {
@@ -498,7 +548,7 @@ describe('mergeMcp', () => {
   it('mergeMcp creates .mcp.json, and removal deletes it when harness created it and it ends empty', () => {
     const r = mergeMcp(null, [PW]);
     expect(JSON.parse(r.after)).toEqual({ mcpServers: { playwright: PW.config } });
-    expect(r.blocks.map((b) => JSON.parse(b))).toEqual([{ mcp: 'playwright', item: 'mcp-playwright', server: PW.config }]);
+    expect(r.blocks.map((b) => JSON.parse(b))).toEqual([{ created: 'mcpServers' }, { mcp: 'playwright', item: 'mcp-playwright', server: PW.config }]);
     const out = removeFromMcp(r.after, { rel: '.mcp.json', kind: 'create', hash: '', blocks: r.blocks }, null, []);
     expect(out).toEqual({ after: '{}\n', empty: true });
   });
@@ -524,8 +574,20 @@ describe('mergeMcp', () => {
     const first = mergeMcp(null, [PW, { name: 'two', item: 'mcp-two', config: { command: 'b' } }]);
     const r = mergeMcp(first.after, [{ ...PW, config: { command: 'npx', args: ['@playwright/mcp@2.0.0'] } }], first.blocks);
     expect(JSON.parse(r.after).mcpServers).toEqual({ playwright: { command: 'npx', args: ['@playwright/mcp@2.0.0'] } });
-    expect([...r.dropped].sort()).toEqual([...first.blocks].sort());
+    expect([...r.dropped].sort()).toEqual(first.blocks.filter((b) => !b.includes('created')).sort());
     expect(r.blocks).toHaveLength(1);
+  });
+
+  it('a changed recorded server no longer picked is kept with a note and stays recorded; an edited picked one gets the edited note', () => {
+    const first = mergeMcp(null, [PW]);
+    const edited = JSON.parse(first.after);
+    edited.mcpServers.playwright.command = 'mine';
+    const text = JSON.stringify(edited, null, 2);
+    const gone = mergeMcp(text, [], first.blocks);
+    expect(JSON.parse(gone.after).mcpServers.playwright.command).toBe('mine');
+    expect(gone.notes).toEqual(['`.mcp.json`: `playwright` was changed; left as is.']);
+    expect(gone.dropped).toEqual([]);
+    expect(mergeMcp(text, [PW], first.blocks).notes).toEqual(['`.mcp.json`: server "playwright" was edited; left as is.']);
   });
 
   it('STRUCTURAL names the two structural files', () => {

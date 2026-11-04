@@ -1,30 +1,26 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parse as parseYaml } from 'yaml';
-import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
-import { validateConfig } from '../core/config-io.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
-import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, readManifest, removeEmptyDirs, type Manifest } from '../install/apply.js';
+import { ApplyError, type Change, type FsLike, applyChanges, removeEmptyDirs } from '../install/apply.js';
 import { unifiedDiff } from '../install/diff.js';
-import { dirtyPaths } from '../install/git-status.js';
-import { MANIFEST_REL, itemFiles, mergeManifestFiles, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
-import { pinnedPlugins, STRUCTURAL } from '../install/merge.js';
+import { approvedIds } from '../install/approved.js';
+import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
+import { MANIFEST_REL, mergeManifestFiles, rawOf, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
+import { pinnedPlugins } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
 import { reconcile } from '../install/reconcile.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { budgetGate, installSelected, isDenied, sandboxLine } from './init.js';
-import { isBackupPath } from './update.js';
 import { NO_TTY, type Prompt } from './prompt.js';
-import { gitRoot } from '../core/repo-root.js';
+import { openInstall, readCatalog, readConfig } from './preamble.js';
 import type { CliEnv } from './index.js';
 
 export type SyncEnv = CliEnv & { prompt: Prompt; version?: string; templatesDir: string; distDir: string; fs?: FsLike; exec?: Exec; catalog?: Catalog };
 
 const USAGE = 'Usage: /harness:sync [--dry-run|--yes] [--take <file,...>] [--install-plugins] [--over-budget]';
-const CONFIG = '.harness/config.yaml';
 const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
 
 export async function sync(args: string[], cli: SyncEnv): Promise<number> {
@@ -45,29 +41,14 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   if (refused) return out(refused), 2;
   if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
 
-  const root = gitRoot(cli.root);
-  if (!root) return out('Not a git repository. Run /harness:sync inside a git repo.'), 1;
-  let m: Manifest | null;
-  try {
-    m = readManifest(root);
-  } catch (e) {
-    if (e instanceof ManifestError) return out(e.message), 1;
-    throw e;
-  }
-  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
-  const man = m;
-  let config;
-  try {
-    const v = validateConfig(parseYaml(readFileSync(join(root, CONFIG), 'utf8')));
-    if (!v.ok) return v.errors.forEach((e) => out(e)), out('Next step: run harness doctor.'), 1;
-    config = v.config;
-  } catch (e) {
-    return out(`Could not read \`${CONFIG}\`: ${(e as Error).message}\nNext step: run harness doctor.`), 1;
-  }
+  const opened = openInstall(cli, 'Not a git repository. Run /harness:sync inside a git repo.');
+  if (typeof opened === 'number') return opened;
+  const { root, m: man } = opened;
+  const config = readConfig(root, out);
+  if (typeof config === 'number') return config;
   if (!config.items.length) return out('This install predates the item catalog. Run /harness:update with recommendations first.'), 1;
-  const lc = cli.catalog ? { catalog: cli.catalog, errors: [] as string[] } : loadCatalog();
-  if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
-  const cat = lc.catalog;
+  const cat = readCatalog(cli.catalog, out);
+  if (typeof cat === 'number') return cat;
   if (cli.version && cli.version !== man.version) return out(`Harness files are ${man.version} but this is ${cli.version}. Run /harness:update first; sync does not change the version.`), 1;
   const have = selectedIds(config);
 
@@ -86,15 +67,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   // A recorded file of an unselected item that is already gone: only its manifest entry is left.
   const gone = man.files.filter((f) => f.item && !have.includes(f.item) && !existsSync(join(root, f.rel)) && !changes.some((c) => c.rel === f.rel));
   // A file with no change still loses its dropped blocks.
-  let stale = 0;
-  for (const rel of STRUCTURAL) {
-    const f = man.files.find((x) => x.rel === rel);
-    if (changes.some((c) => c.rel === rel) || !f?.blocks) continue;
-    const left = f.blocks.filter((b) => !planned.dropped.includes(b));
-    stale += f.blocks.length - left.length;
-    if (left.length) f.blocks = left;
-    else delete f.blocks;
-  }
+  const stale = pruneStale(man, changes, planned.dropped);
 
   const wanted = pinnedPlugins(cat.items.filter((i) => have.includes(i.id))).map((p) => `${p.name}@harness-pins`);
   let present: string[] = [];
@@ -131,8 +104,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
     }
   }
 
-  const dirty = dirtyPaths(root);
-  const touched = changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
+  const touched = dirtyTouched(root, changes);
   const dirtyLine = `Commit or stash these files first, so the change can be undone cleanly: ${touched.join(', ')}.`;
   if (touched.length && !dryRun) return out(dirtyLine), 1;
   if (touched.length) out(dirtyLine); // a preview still says so, and exits 0
@@ -144,7 +116,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   for (const f of gone) out(`  forget ${f.rel} (${f.item} is not selected)`);
   if (merged.length) out(`You edited these files; sync changes only the harness parts: ${list(merged)}.`);
   // Installed items are approved: they show, but only a selected item that was never installed counts.
-  const approved = have.filter((id) => itemFiles(man, id).length > 0);
+  const approved = approvedIds(config, man, cat);
   const stop = await budgetGate(cat, approved, have, approved, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget });
   if (stop !== null) return stop;
   if (dryRun) {
@@ -157,14 +129,14 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   let files = mergeManifestFiles(man, changes, `.harness/backup/${at.toISOString().replace(/:/g, '-')}`);
   files = files.filter((f) => !gone.some((g) => g.rel === f.rel));
   try {
-    applyChanges(root, changes, man.version, () => at, cli.fs, { manifest: { ...man, files } });
+    applyChanges(root, changes, man.version, () => at, cli.fs, { manifest: { ...man, files }, manifestBefore: rawOf(man) });
   } catch (e) {
     if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('sync', args) : e.message), 1;
     throw e;
   }
   removeEmptyDirs(root, changes);
   // The original is back in place. The path comes from the manifest; delete only inside .harness/backup/.
-  for (const c of changes) if (c.kind === 'update' && c.restored && isBackupPath(c.restored)) rmSync(join(root, c.restored), { force: true });
+  dropRestoredBackups(root, changes);
   stampHarnessFiles(root); // change detection: these writes are harness's own
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   let code = 0;

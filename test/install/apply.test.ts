@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, test } from 'vitest';
-import { ApplyError, ManifestError, applyChanges, readManifest, type Change, type FsLike } from '../../src/install/apply.js';
+import { ApplyError, ManifestError, applyChanges, readManifest, removeEmptyDirs, type Change, type FsLike } from '../../src/install/apply.js';
+import { rawOf } from '../../src/install/manifest.js';
 import { sha256 } from '../../src/install/text.js';
 import { makeRepo } from './helpers.js';
 
@@ -185,9 +186,9 @@ describe('applyChanges', () => {
     ];
     const bk = '.harness/backup/2026-11-01T10-20-30.000Z';
     expect(() => applyChanges(root, changes, '1', NOW, fs2)).toThrow(
-      `Rollback failed for \`b.json\`; its original is in \`${bk}/b.json\`. Restore it by hand.`,
+      `Rollback failed for \`a.json\`; its original is in \`${bk}/a.json\`. Restore it by hand.`,
     );
-    expect(readFileSync(join(root, bk, 'b.json'), 'utf8')).toBe('B');
+    expect(readFileSync(join(root, bk, 'a.json'), 'utf8')).toBe('A');
   });
 
   it('wraps unreadable files in ApplyError', () => {
@@ -243,4 +244,55 @@ test('N5: a manifest that cannot be read is a read error, never "unreadable, del
   } finally {
     Object.assign(RETRY, saved);
   }
+});
+
+describe('applyChanges: M3 final review', () => {
+  const setup = () => {
+    const root = makeRepo({ 'a.txt': 'a\n' });
+    applyChanges(root, [{ kind: 'create', rel: 'b.txt', content: 'b\n' }], '1', NOW);
+    return root;
+  };
+  it('stops when the manifest on disk is not the one the plan was built from', () => {
+    const root = setup();
+    const m = readManifest(root)!;
+    writeFileSync(join(root, '.harness/manifest.json'), readFileSync(join(root, '.harness/manifest.json'), 'utf8').replace('"1"', '"2"'));
+    expect(() => applyChanges(root, [], '1', NOW, undefined, { manifest: m, manifestBefore: rawOf(m) })).toThrow('Another harness command changed the install while this one ran. Run it again.');
+    expect(readFileSync(join(root, '.harness/manifest.json'), 'utf8')).toContain('"2"');
+  });
+  it('journals the run with .harness/apply.lock and refuses to plan over a stale one', () => {
+    const root = setup();
+    let seen = false;
+    const fs = { ...realFs, renameSync: (a: any, b: any) => { if (String(b).endsWith('c.txt')) seen = existsSync(join(root, '.harness/apply.lock')); realFs.renameSync(a, b); } } as FsLike;
+    applyChanges(root, [{ kind: 'create', rel: 'c.txt', content: 'c\n' }], '1', NOW, fs);
+    expect(seen).toBe(true);
+    expect(existsSync(join(root, '.harness/apply.lock'))).toBe(false);
+    writeFileSync(join(root, '.harness/apply.lock'), 'c.txt\n');
+    expect(() => applyChanges(root, [{ kind: 'create', rel: 'd.txt', content: 'd\n' }], '1', NOW)).toThrow(/interrupted/);
+    expect(existsSync(join(root, 'd.txt'))).toBe(false);
+  });
+  it('keeps the lock when a rollback fails, and the refusal says how to recover', () => {
+    const root = setup();
+    let n = 0;
+    const fs = { ...realFs, renameSync: (a: any, b: any) => { if (++n > 1) throw new Error('boom'); realFs.renameSync(a, b); } } as FsLike;
+    expect(() => applyChanges(root, [{ kind: 'update', rel: 'a.txt', before: 'a\n', after: 'a2\n', blocks: [] }, { kind: 'update', rel: 'b.txt', before: 'b\n', after: 'b2\n', blocks: [] }], '1', NOW, fs)).toThrow(/Rollback failed/);
+    expect(existsSync(join(root, '.harness/apply.lock'))).toBe(true);
+    expect(() => applyChanges(root, [], '1', NOW)).toThrow(/git status.*git checkout.*apply\.lock/s);
+  });
+  for (const code of ['EPERM', 'EBUSY']) {
+    it(`a ${code} on the first write leaves no lock and nothing to recover`, () => {
+      const root = setup();
+      const fs = { ...realFs, renameSync: (a: any, b: any) => { if (String(b).endsWith('a.txt')) throw Object.assign(new Error(`${code}: nope`), { code }); realFs.renameSync(a, b); } } as FsLike;
+      expect(() => applyChanges(root, [{ kind: 'update', rel: 'a.txt', before: 'a\n', after: 'a2\n', blocks: [] }], '1', NOW, fs)).toThrow(/rolled back/);
+      expect(existsSync(join(root, '.harness/apply.lock'))).toBe(false);
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('a\n');
+      applyChanges(root, [{ kind: 'update', rel: 'a.txt', before: 'a\n', after: 'a2\n', blocks: [] }], '1', NOW); // the rerun is not refused
+    });
+  }
+  it('removeEmptyDirs never removes the repo root, whatever its spelling', () => {
+    const root = mkdtempSync(join(tmpdir(), 'harness-m9-'));
+    mkdirSync(join(root, 'x'));
+    removeEmptyDirs(root + '/', [{ kind: 'delete', rel: 'x/f.txt', before: '' }]);
+    expect(existsSync(root)).toBe(true);
+    expect(existsSync(join(root, 'x'))).toBe(false);
+  });
 });

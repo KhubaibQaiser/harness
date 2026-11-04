@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, parseDocument } from 'yaml';
 import { init, type Prompt } from '../../src/cli/init.js';
 import { update } from '../../src/cli/update.js';
 import { uninstall } from '../../src/cli/uninstall.js';
@@ -844,7 +844,7 @@ test('update: plugin flags without AI flags are a usage error; an EPERM write pr
   const r = await up(root, ['--yes'], { fs, distDir: newDist() });
   expect(r.code).toBe(1);
   expect(r.out).toContain("Run this yourself with Claude Code's `!` prefix");
-  expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe(before);
+  expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe(before); // no lock either: nothing was written
 });
 
 test('update on an unchanged selection asks before installing plugins unless --yes', async () => {
@@ -942,10 +942,10 @@ test('update: retired items are removed with a line saying why; new picks are li
   writeFileSync(c, readFileSync(c, 'utf8').replace('id: impeccable', 'id: gone-item'));
   commitAll(root);
   const r = await upAi(root, [...reFlags([...OWN_IDS, 'mobile-mcp']), '--dry-run']);
-  expect(r.out).toContain('gone-item: retired from the catalog, removed.');
+  expect(r.out).toContain('gone-item: no longer in the catalog; its files are kept.');
   expect(r.out).toContain('New: mobile-mcp');
   const plain = await upAi(root, ['--dry-run']);
-  expect(plain.out).toContain('gone-item: retired from the catalog, removed.');
+  expect(plain.out).toContain('gone-item: no longer in the catalog; its files are kept.');
 });
 
 test('update --plan: a facts.json of the wrong shape counts as missing', async () => {
@@ -974,4 +974,16 @@ test('partial answers change only the given keys, and config.yaml comments survi
   expect(after.unattended).toEqual(before.unattended);
   expect(after.tdd).toEqual(before.tdd);
   expect(text).toContain('# my note');
+});
+
+test('update gives the same budget verdict as add and sync for a hand-selected, never-installed item', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  const c = join(root, '.harness/config.yaml');
+  const doc = parseDocument(readFileSync(c, 'utf8'));
+  doc.addIn(['items'], { id: 'mobile-mcp', include: 'optional', selected: true, reason: 'by hand', addresses: [], pin: '' });
+  writeFileSync(c, doc.toString());
+  commitAll(root);
+  const r = await upAi(root, [...reFlags([...OWN_IDS, 'mobile-mcp']), '--yes']);
+  expect(r.code).toBe(2);
+  expect(r.out).toContain('Not measured before install: mobile-mcp');
 });

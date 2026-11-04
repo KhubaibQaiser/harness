@@ -13,6 +13,7 @@ import { changedFiles, readRepoSnapshot, snapshotHarnessFiles } from '../../src/
 import { applyChanges, readManifest } from '../../src/install/apply.js';
 import { detect } from '../../src/install/detect.js';
 import { itemFiles } from '../../src/install/manifest.js';
+import { hashText } from '../../src/install/text.js';
 import { planChanges } from '../../src/install/plan.js';
 import { preset } from '../../src/install/preset.js';
 import { makeRepo } from '../install/helpers.js';
@@ -250,7 +251,11 @@ test('remove restores a backed-up file and drops the backup', async () => {
 
 test('remove ends with the git commit line, and an unrelated refresh is noted', async () => {
   const root = installed([...OWN, 'staff-reviewer']);
-  writeFileSync(join(root, '.harness/hooks/dispatch.mjs'), 'old\n'); // stands in for a stale dispatcher
+  writeFileSync(join(root, '.harness/hooks/dispatch.mjs'), 'old\n'); // stands in for a stale dispatcher: the manifest recorded these bytes
+  const mp = join(root, '.harness/manifest.json');
+  const mj = JSON.parse(readFileSync(mp, 'utf8'));
+  mj.files.find((f: any) => f.rel === '.harness/hooks/dispatch.mjs').hash = hashText('old\n');
+  writeFileSync(mp, JSON.stringify(mj, null, 2) + '\n');
   commitAll(root);
   const r = await run(root, 'remove', ['staff-reviewer', '--dry-run'], {});
   expect(r.out).toContain('Note: this also refreshes harness files: .harness/hooks/dispatch.mjs.');

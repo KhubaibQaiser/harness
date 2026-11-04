@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { loadCatalog } from '../catalog/load.js';
 import { budgetLines, budgetVerdict, measureSelectionSync } from '../budget/measure.js';
@@ -9,7 +9,7 @@ import { selectedIds } from '../install/plan.js';
 import { loadConfig } from '../core/config.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
 import { readHookEnv } from '../core/hook-env.js';
-import { readManifest, ManifestError } from '../install/apply.js';
+import { LOCK_RECOVERY, LOCK_REL, readManifest, ManifestError } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { isHarnessHook } from '../install/merge.js';
 import { BLOCKING } from './doctor.js';
@@ -45,7 +45,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   // Packages init left out of TDD that are still out of it.
   const left = (m.tddOff ?? []).filter((d) => !(config.checks.tdd && config.tdd.paths.includes(srcGlob(d)))).map((d) => unsafeWhy(d, noConfigFile(facts.packages.find((p) => p.dir === d))));
   const tddOffWhy = noJs ? OFF_WHY : left.length ? left.join(' ') : OFF_CONFIG;
-  const lines = [...warnings.map((w) => `warn ${w}`), `Harness ${VERSION} (installed ${m.version})`, 'Gates'];
+  const lines = [...warnings.map((w) => `warn ${w}`), `Harness ${VERSION} (installed ${m.version})`, ...(existsSync(join(root, LOCK_REL)) ? [`Lock: ${LOCK_REL} exists. ${LOCK_RECOVERY}`] : []), 'Gates'];
   for (const [label, key] of GATES) {
     const on = config.checks[key];
     lines.push(`  ${label}: ${on ? 'on' : `off - ${key === 'tdd' ? tddOffWhy : OFF_CONFIG}`}`);

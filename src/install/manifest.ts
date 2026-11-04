@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { retryTransient } from '../core/atomic.js';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { applyChanges, type Change } from './apply.js';
 import { lineHunks } from './diff.js';
@@ -51,6 +51,21 @@ export class ManifestError extends Error {
   }
 }
 
+/** The text `readManifest` read the manifest from, for a command to hand to applyChanges as `manifestBefore` (copies of the object don't carry it). */
+export const rawOf = (m: Manifest): string | undefined => (m as { [RAW]?: string })[RAW];
+const RAW = Symbol('raw');
+
+/** True for a manifest backup path: inside `.harness/backup/`, no `..` anywhere. */
+export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/backup/') && !rel.split(/[\\/]/).includes('..');
+
+/** The backup's text, or null when it is missing or its recorded path leaves `.harness/backup/` (a committed manifest is not trusted). */
+export function backupText(root: string, rel: string | undefined): string | null {
+  if (!rel || !isBackupPath(rel)) return null;
+  const p = resolve(root, rel);
+  if (!p.startsWith(resolve(root, '.harness/backup') + sep) || !existsSync(p)) return null;
+  try { return readFileSync(p, 'utf8'); } catch { return null; }
+}
+
 export function readManifest(root: string, read: (p: string, e: 'utf8') => string = readFileSync): Manifest | null {
   const p = join(root, MANIFEST_REL);
   if (!existsSync(p)) return null;
@@ -65,6 +80,7 @@ export function readManifest(root: string, read: (p: string, e: 'utf8') => strin
   try {
     const m = JSON.parse(text);
     if (m === null || typeof m !== 'object' || Array.isArray(m) || !Array.isArray(m.files)) throw new Error('bad shape');
+    Object.defineProperty(m, RAW, { value: text }); // not enumerable: never written back
     return m as Manifest;
   } catch (cause) {
     throw new ManifestError({ cause });
@@ -99,6 +115,8 @@ export function mergeManifestFiles(old: Manifest, changes: Change[], backupDir?:
     // Structural blocks (settings, .mcp.json) are JSON, not text: kept unless the merge dropped them.
     const still = (b: string) => c.kind !== 'update' || (STRUCTURAL.has(o.rel) ? !c.dropped?.includes(b) : removeBlocks(c.after, [b]) !== c.after); // EOL-tolerant, like uninstall's removal
     const blocks = [...new Set([...(o.blocks ?? []).filter(still), ...(c.blocks ?? [])])];
+    // The change cut the file's last harness block (and it has no formatted hunks): what is left is the person's file.
+    if (c.kind === 'update' && o.blocks?.length && !blocks.length && !o.replace?.length && !STRUCTURAL.has(o.rel) && o.rel !== CONFIG) continue;
     // A merged file the user edited since harness last wrote it: keep the old hash and drop the pre-init backup, so
     // uninstall still sees the edit and removes only harness's blocks (a whole-file restore or delete would lose it).
     const edited = c.kind === 'update' && merged(o.rel) && !matchesHash(c.before, o.hash);
@@ -157,7 +175,7 @@ export function rehashManifest(root: string, rels: string[]): void {
       changed = true;
       return { ...f, hash: hashText(text) };
     });
-    if (changed) applyChanges(root, [], m.version, undefined, undefined, { manifest: { ...m, files } });
+    if (changed) applyChanges(root, [], m.version, undefined, undefined, { manifest: { ...m, files }, manifestBefore: rawOf(m) });
   }
   stampHarnessFiles(root);
 }

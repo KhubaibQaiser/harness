@@ -104,7 +104,7 @@ Run each command as `harness <command>`. From source, use `node /path/to/harness
 | `init [--yes\|--config <file>\|--dry-run]` | Detects your repo, shows recommended settings and the plan, then writes after you confirm. |
 | `status` | Shows each gate as on or off, and why. |
 | `doctor` | Checks the install and prints a fix for each problem. Exits 1 if there is one. |
-| `update [--yes\|--check\|--dry-run]` | Re-renders the installed files with this version and shows the diff first. `--check` only looks for a newer version. |
+| `update [--yes\|--check\|--dry-run\|--plan]` | Re-renders the installed files with this version and shows the diff first. `--check` only looks for a newer version. `--plan` writes nothing and prints JSON: whether to re-recommend (the catalog or your project facts changed), what changed in the catalog, and which answers to ask again. Items that left the catalog are removed, with a line saying why. |
 | `uninstall [--yes\|--force\|--dry-run]` | Removes what harness added and restores your files. Close open Claude Code sessions first. |
 | `stats [--days N]` | Counts harness events (the default is the last 7 days). |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. Run it in your own terminal. |

@@ -18,6 +18,9 @@ import { toSelected } from '../install/select.js';
 import { STRUCTURAL } from '../install/merge.js';
 import { loadCatalog } from '../catalog/load.js';
 import { matchesHash } from '../install/text.js';
+import { catalogDelta, contradictions } from '../install/delta.js';
+import { factsJson } from '../install/facts.js';
+import type { Facts } from '../install/detect.js';
 import { dirtyPaths } from '../install/git-status.js';
 import { AI_USAGE, budgetGate, installSelected, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
 import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
@@ -26,11 +29,12 @@ import type { CliEnv } from './index.js';
 
 export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch; fs?: FsLike; exec?: Exec; claudeVersion?: () => string | null };
 
-const USAGE = `Usage: /harness:update [--yes] [--check] [--dry-run] ${AI_USAGE}`;
+const USAGE = `Usage: /harness:update [--yes] [--check] [--dry-run] [--plan] ${AI_USAGE}`;
 const PKG = '@khubaibqaiser/harness';
 const CONFIG = '.harness/config.yaml';
 const SETTINGS = '.claude/settings.json';
 const MCP = '.mcp.json';
+const FACTS = '.harness/facts.json';
 const AGAIN = 'Run /harness:update again to get recommendations for this repo.';
 
 export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/backup/') && !rel.split(/[\\/]/).includes('..');
@@ -38,16 +42,18 @@ export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/b
 export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const { out, prompt, version } = cli;
   const taken = takeAiFlags(args);
-  if (!taken || taken.rest.some((a) => a !== '--yes' && a !== '--check' && a !== '--dry-run')) return out(USAGE), 2;
+  if (!taken || taken.rest.some((a) => a !== '--yes' && a !== '--check' && a !== '--dry-run' && a !== '--plan')) return out(USAGE), 2;
   const ai = taken.ai;
+  const plan = args.includes('--plan'); // a preview: prints JSON and writes nothing
+  if (plan && (args.length > 1 || hasAiFlags(args))) return out(USAGE), 2;
   if (!hasAiFlags(args) && (ai.installPlugins || ai.overBudget)) return out(USAGE), 2;
-  const refused = args.includes('--check') ? null : refuseOutsideClaude('update', cli.env, hasAiFlags(args));
+  const refused = args.includes('--check') || plan ? null : refuseOutsideClaude('update', cli.env, hasAiFlags(args));
   if (refused) return out(refused), 2;
   const lacking = !args.includes('--check') && hasAiFlags(args) ? missingAi('update', ai) : null;
   if (lacking) return out(lacking), 2;
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
-  if (!yes && !dryRun && !args.includes('--check') && cli.tty === false) return out(NO_TTY), 2;
+  if (!yes && !dryRun && !plan && !args.includes('--check') && cli.tty === false) return out(NO_TTY), 2;
 
   if (args.includes('--check')) {
     const latest = await latestVersion(PKG, cli.fetchImpl);
@@ -86,6 +92,19 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const v = validateConfig(raw);
   if (!v.ok) return v.errors.forEach((e) => out(e)), out('Next step: run harness doctor.'), 1;
 
+  if (plan) {
+    const lc = loadCatalog();
+    if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out('The catalog has errors; update stopped. Run harness catalog validate.'), 1;
+    const now = detect(root);
+    let stored: string | null = null;
+    let prev: Facts | null = null;
+    try {
+      stored = readFileSync(join(root, FACTS), 'utf8');
+      prev = JSON.parse(stored) as Facts;
+    } catch { /* missing or unreadable: nothing to compare, so nothing is re-asked */ }
+    const recommend = v.config.catalog_version !== lc.catalog.version || stored?.trimEnd() !== factsJson(now);
+    return out(JSON.stringify({ recommend, delta: catalogDelta(v.config, lc.catalog), reask: contradictions(prev, now, v.config) }, null, 2)), 0;
+  }
   const aiFlags = hasAiFlags(args);
   const aiPath = v.config.items.length > 0 || aiFlags; // a selection from the recommend flow: the plan owns the config
   const cat = aiPath && !aiFlags ? loadCatalog() : null;
@@ -99,9 +118,19 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     for (const n of sel.notices) out(n);
     config = { ...answersToConfig(config, sel.answers), items: toSelected(sel.picks, sel.ids, sel.catalog), catalog_version: sel.catalog.version };
   }
-  let plan: ReturnType<typeof planChanges>;
+  if (aiPath) {
+    const d = catalogDelta(v.config, sel?.catalog ?? cat!.catalog);
+    const had = new Set(v.config.items.map((i) => i.id));
+    const fresh = sel ? sel.picks.items.map((i) => i.id).filter((id) => !had.has(id)) : [];
+    if (fresh.length) out(`New: ${fresh.join(', ')}`);
+    if (sel && d.changed.length) out(`Changed in the catalog: ${d.changed.join(', ')}`);
+    if (sel) for (const [a, b] of d.conflicting) out(`Now conflicting: ${a} and ${b}.`);
+    for (const id of d.retired) out(`${id}: retired from the catalog, removed.`);
+    if (!sel) config = { ...config, items: config.items.filter((i) => !d.retired.includes(i.id)) };
+  }
+  let planned: ReturnType<typeof planChanges>;
   try {
-    plan = planChanges(root, config, detect(root), {
+    planned = planChanges(root, config, detect(root), {
       version, distDir: cli.distDir, templatesDir: cli.templatesDir, legacyDir: LEGACY_RESULTS_DIR,
       recorded: m.files.find((f) => f.rel === SETTINGS)?.blocks, mcpRecorded: m.files.find((f) => f.rel === MCP)?.blocks,
       recordedFiles: m.files, ...(aiPath ? { catalog: (sel?.catalog ?? cat!.catalog) } : {}), ...(sel ? { ai: sel.files } : {}),
@@ -110,7 +139,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     return out(`Cannot build the update plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
   }
   // The user owns the config after init, except on the AI path, where the checks follow the selection.
-  const changes = aiPath ? plan.changes : [...(migrated ? [migrated] : []), ...plan.changes.filter((c) => c.rel !== CONFIG)];
+  const changes = aiPath ? planned.changes : [...(migrated ? [migrated] : []), ...planned.changes.filter((c) => c.rel !== CONFIG)];
 
   const at = new Date();
   const commit = (cs: typeof changes, manifest: Manifest) => {
@@ -127,7 +156,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   for (const rel of STRUCTURAL) {
     const f = m.files.find((x) => x.rel === rel);
     if (changes.some((c) => c.rel === rel) || !f?.blocks) continue;
-    const kept = f.blocks.filter((b) => !plan.dropped.includes(b));
+    const kept = f.blocks.filter((b) => !planned.dropped.includes(b));
     stale += f.blocks.length - kept.length;
     if (kept.length) f.blocks = kept;
     else delete f.blocks;
@@ -166,8 +195,8 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     out(`  ${c.kind} ${c.rel}`);
     if (c.kind === 'update') out(unifiedDiff(c.before, c.after, c.rel).trimEnd());
   }
-  if (plan.manual.length) out('Do these by hand:\n' + plan.manual.map((l) => `  ${l}`).join('\n'));
-  for (const n of plan.notes) out(`Note: ${n}`);
+  if (planned.manual.length) out('Do these by hand:\n' + planned.manual.map((l) => `  ${l}`).join('\n'));
+  for (const n of planned.notes) out(`Note: ${n}`);
   if (sel) {
     // Ask once, then exempt: what the person approved before shows but does not count.
     const had = selectedIds(v.config);

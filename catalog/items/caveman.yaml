@@ -1,0 +1,20 @@
+id: caveman
+kind: plugin
+title: "Caveman"
+source: {"type":"github","repo":"JuliusBrussee/caveman","plugin":"caveman","sha":"2e068f735253cce28256744804785f01887d9646"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+plugin_version: "4.0.1"
+applies_when: {"always":true}
+cost: {"context":"medium","setup":"low"}
+stance: discouraged
+stance_reason: "overlaps ponytail"
+side_effects: ["installs-hook"]
+why: "Ultra-compressed communication mode that shortens prose while preserving technical terms, code, commands, and exact errors."
+evidence:
+  - "https://github.com/JuliusBrussee/caveman/blob/2e068f735253cce28256744804785f01887d9646/.claude-plugin/plugin.json (SessionStart, SubagentStart, UserPromptSubmit and SessionEnd hooks: installs-hook)"
+  - "https://github.com/JuliusBrussee/caveman/blob/2e068f735253cce28256744804785f01887d9646/src/hooks/caveman-activate.js (header: \"Emits caveman ruleset as hidden SessionStart context\": context medium)"
+  - "https://github.com/JuliusBrussee/caveman/blob/2e068f735253cce28256744804785f01887d9646/LICENSING.md (everything in the repo is Apache-2.0 from 3.0.0)"
+  - "https://github.com/JuliusBrussee/caveman/blob/2e068f735253cce28256744804785f01887d9646/README.md Privacy section (the skill sends nothing; the separate CLI sends usage stats, which this plugin does not install)"
+  - "audit.html says caveman overlaps with ponytail (paraphrase)"
+  - "https://github.com/JuliusBrussee/caveman/blob/2e068f735253cce28256744804785f01887d9646/src/hooks/caveman-mode-tracker.js (the UserPromptSubmit hook emits a per-turn reinforcement reminder on every prompt while a mode is active, line 332 \"Per-turn reinforcement: emit a short reminder when caveman is active\" and the reinforce gate at line 371: context medium)"

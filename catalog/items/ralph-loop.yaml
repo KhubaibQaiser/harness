@@ -1,0 +1,19 @@
+id: ralph-loop
+kind: plugin
+title: "Ralph Loop"
+source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":"plugins/ralph-loop","plugin":"ralph-loop","sha":"a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"low"}
+stance: discouraged
+stance_reason: "use /goal"
+side_effects: ["installs-hook"]
+why: "Continuous self-referential AI loops for interactive iterative development, implementing the Ralph Wiggum technique."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/ralph-loop/.claude-plugin/plugin.json"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/ralph-loop/LICENSE (Apache-2.0)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/ralph-loop/hooks/hooks.json (a Stop hook: installs-hook)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/ralph-loop/hooks/stop-hook.sh (exits 0 and does nothing unless .claude/ralph-loop.local.md exists, so no context is injected until a loop is started)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/ralph-loop/README.md (--max-iterations default is unlimited)"
+  - "audit.html: \"Skip ralph-loop ... Each duplicates something you have: /goal\""

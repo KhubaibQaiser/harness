@@ -1,0 +1,16 @@
+id: skill-creator
+kind: plugin
+title: "Skill Creator"
+source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":"plugins/skill-creator","plugin":"skill-creator","sha":"a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"low"}
+stance: optional
+why: "Create new skills, improve existing skills, and measure skill performance."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/skill-creator/.claude-plugin/plugin.json"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/skill-creator/LICENSE (Apache-2.0)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/skill-creator/skills/skill-creator/scripts/run_eval.py (the eval runner spawns \"claude -p\" subprocesses, which use the user's Claude quota; no SIDE_EFFECTS value fits)"
+  - "audit.html: \"Lets you write and evaluate your own skills\""
+  - "Useful only to people who author or evaluate skills; the always applies_when does not capture that"

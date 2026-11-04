@@ -1,0 +1,16 @@
+id: pr-review-toolkit
+kind: plugin
+title: "PR Review Toolkit"
+source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":"plugins/pr-review-toolkit","plugin":"pr-review-toolkit","sha":"a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"low"}
+stance: discouraged
+stance_reason: "overlaps the built-in /code-review and the harness reviewer."
+why: "Comprehensive PR review agents specializing in comments, tests, error handling, type design, code quality, and code simplification."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/pr-review-toolkit/.claude-plugin/plugin.json"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/pr-review-toolkit/LICENSE (Apache-2.0)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/pr-review-toolkit/README.md (6 review agents; agents and commands, no hooks)"
+  - "audit.html lists pr-review-toolkit and the code-review plugin as overlapping review packs (paraphrase)"

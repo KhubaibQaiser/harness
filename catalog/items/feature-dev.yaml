@@ -1,0 +1,16 @@
+id: feature-dev
+kind: plugin
+title: "Feature Development"
+source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":"plugins/feature-dev","plugin":"feature-dev","sha":"a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"low"}
+stance: discouraged
+stance_reason: "overlaps superpowers; use one process pack."
+why: "Comprehensive feature development workflow with specialized agents for codebase exploration, architecture design, and quality review."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/feature-dev/.claude-plugin/plugin.json"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/feature-dev/LICENSE (Apache-2.0)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/feature-dev/README.md (/feature-dev command, 7 phases; agents and commands, no hooks)"
+  - "audit.html: \"Don't stack mattpocock-skills or feature-dev on top of it.\""

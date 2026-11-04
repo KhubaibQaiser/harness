@@ -44,3 +44,9 @@
   reason: part of the PR reviewer (M2)
 - id: mcp-for-blender
   reason: PyPI-only package run with uvx; the catalog can pin only npm or remote MCP sources
+- id: spec-kit
+  reason: installed with the specify CLI (uv tool install specify-cli); the repo has no Claude Code plugin manifest or skills directory for the catalog to pin
+- id: remember
+  reason: no license; LICENSE is a custom "Community License" with no-commercial-redistribution and no-competing-use clauses, not an SPDX license
+- id: wshobson-agents
+  reason: the repo is a marketplace of 94 plugins, not one plugin; there is no single source to pin

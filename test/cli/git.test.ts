@@ -13,6 +13,7 @@ const manifest = { version: '1.2.3', createdAt: 'x', files: [{ rel: '.harness/co
 /** A repo with harness files written but not committed. */
 function installed(opts: { branch?: string; remoteHead?: string; trailer?: string; tracked?: Record<string, string>; extra?: string[] } = {}) {
   const root = makeRepo({ 'a.txt': 'a\n', ...opts.tracked }, opts);
+  g(root, 'config', 'init.defaultBranch', opts.branch ?? 'main'); // hermetic: never the machine's global default
   for (const rel of opts.extra ?? []) put(root, rel, 'x');
   put(root, '.harness/config.yaml', `catalog_version: 7\n${opts.trailer ? `git:\n  commit_trailer: "${opts.trailer}"\n` : ''}`);
   put(root, '.claude/settings.json', '{}\n');
@@ -236,4 +237,14 @@ test('push to a real local bare origin sets the upstream', () => {
   expect(r.out).toBe('Pushed chore/ai-workflow-7 to origin.');
   expect(g(bare, 'rev-parse', 'chore/ai-workflow-7')).toBe(g(root, 'rev-parse', 'HEAD'));
   expect(g(root, 'rev-parse', '--abbrev-ref', '@{u}')).toBe('origin/chore/ai-workflow-7');
+});
+
+test('commit and push refuse main even when init.defaultBranch says master and there is no origin/HEAD', () => {
+  const root = installed();
+  g(root, 'config', 'init.defaultBranch', 'master'); // as a global setting would
+  expect(run(root, ['commit']).out).toBe('You are on main. Run harness git branch first.');
+  expect(run(root, ['push']).out).toBe('You are on main. Harness never pushes the default branch.');
+  g(root, 'checkout', '-q', '-b', 'b');
+  put(root, '.harness/report.md', 'r');
+  expect(run(root, ['pr']).out).toContain('--base main --head b'); // main exists, master does not
 });

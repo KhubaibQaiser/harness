@@ -408,7 +408,7 @@ test('a write the OS refuses rolls back and prints the person\'s command', async
   const fs = {
     ...realFs,
     renameSync: (a: string, b: string) => {
-      if (b.endsWith('.claude/settings.json')) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+      if (b.replace(/\\/g, '/').endsWith('.claude/settings.json')) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
       return realFs.renameSync(a, b);
     },
   };

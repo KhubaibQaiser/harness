@@ -162,7 +162,7 @@ export function pinnedPlugins(items: CatalogItem[]): PinnedPlugin[] {
   const out: PinnedPlugin[] = [];
   for (const i of items) {
     const s = i.source;
-    if (i.kind !== 'plugin' || (s.type !== 'github' && s.type !== 'git-subdir')) continue;
+    if ((i.kind !== 'plugin' && i.kind !== 'external-skill') || (s.type !== 'github' && s.type !== 'git-subdir')) continue;
     out.push({
       name: s.plugin, item: i.id,
       source: s.type === 'github' ? { source: 'github', repo: s.repo, sha: s.sha } : { source: 'git-subdir', url: s.repo, path: s.path, sha: s.sha },

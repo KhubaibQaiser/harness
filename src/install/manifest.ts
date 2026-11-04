@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { retryTransient } from '../core/atomic.js';
 import { join } from 'node:path';
+import type { Change } from './apply.js';
+import { lineHunks } from './diff.js';
+import { STRUCTURAL, removeBlocks } from './merge.js';
+import { hashText, matchesHash } from './text.js';
 
 export interface Manifest {
   version: string;
@@ -14,6 +18,8 @@ export interface Manifest {
     formatted?: true;
     /** Prettier was found but failed, so the edit was left unformatted. */
     unformatted?: true;
+    /** The catalog item this file belongs to. */
+    item?: string;
   }[];
 }
 
@@ -53,4 +59,52 @@ export function readManifest(root: string, read: (p: string, e: 'utf8') => strin
   } catch (cause) {
     throw new ManifestError({ cause });
   }
+}
+
+const CONFIG = '.harness/config.yaml';
+
+/**
+ * The manifest's file list after an update applies `changes` (rewriting a renamed results path in the records first).
+ * Old blocks stay unless the change dropped them, an edited merged file keeps its hash and drops its backup, an entry
+ * whose change is `delete` goes, and `item` follows the change.
+ */
+export function mergeManifestFiles(old: Manifest, changes: Change[], backupDir?: string): Manifest['files'] {
+  const base = old.files.slice();
+  const entry = (rel: string) => base.find((f) => f.rel === rel);
+  const merged = (rel: string) => entry(rel)?.kind === 'update' || !!entry(rel)?.blocks?.length || !!entry(rel)?.replace?.length;
+  // A moved results path: rewrite it in what the manifest recorded, else record the swap as hunks uninstall reverts.
+  for (const c of changes) {
+    if (c.kind !== 'update' || !c.rename) continue;
+    const o = entry(c.rel);
+    const r = o && renameRecorded(o, c.rename.from, c.rename.to);
+    if (r && r.found) base[base.indexOf(o)] = r.entry;
+    else c.replace = lineHunks(c.before, c.after);
+  }
+  const files: Manifest['files'] = [];
+  for (const o of base) {
+    const c = changes.find((x) => x.rel === o.rel);
+    if (c?.kind === 'delete' || (c?.kind === 'update' && c.restored)) continue;
+    if (!c) { files.push(o); continue; }
+    // A text block the new content no longer holds (a migrated Jest script) can't be removed later; drop it.
+    // Structural blocks (settings, .mcp.json) are JSON, not text: kept unless the merge dropped them.
+    const still = (b: string) => c.kind !== 'update' || (STRUCTURAL.has(o.rel) ? !c.dropped?.includes(b) : removeBlocks(c.after, [b]) !== c.after); // EOL-tolerant, like uninstall's removal
+    const blocks = [...new Set([...(o.blocks ?? []).filter(still), ...(c.blocks ?? [])])];
+    // A merged file the user edited since harness last wrote it: keep the old hash and drop the pre-init backup, so
+    // uninstall still sees the edit and removes only harness's blocks (a whole-file restore or delete would lose it).
+    const edited = c.kind === 'update' && merged(o.rel) && !matchesHash(c.before, o.hash);
+    const keep = edited || (!(c.kind === 'update' && c.rewrite) && o.rel === CONFIG && !matchesHash(c.kind === 'update' ? c.before : '', o.hash)); // an edited config keeps its hash
+    const hash = keep ? o.hash : hashText(c.kind === 'create' ? c.content : c.after);
+    // Formatted hunks: keep the old ones the new text still holds, then this update's (uninstall undoes them newest first).
+    // ponytail: an old hunk this update reformatted is dropped, so uninstall then leaves that part with a note.
+    const replace = [...(o.replace ?? []).filter((h) => c.kind !== 'update' || c.after.includes(h.from)), ...(c.kind === 'update' ? (c.replace ?? []) : [])];
+    const fmt = { ...(replace.length ? { replace } : {}), ...(o.formatted || (c.kind === 'update' && c.formatted) ? { formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}) };
+    const item = c.item ?? o.item;
+    // Otherwise keep init's kind (a created file stays deletable) and the pre-init backup uninstall restores.
+    files.push({ rel: o.rel, kind: o.kind, hash, ...(blocks.length ? { blocks } : {}), ...fmt, ...(item ? { item } : {}), ...(o.backup && !edited ? { backup: o.backup } : {}) });
+  }
+  for (const c of changes) {
+    if (c.kind === 'delete' || old.files.some((f) => f.rel === c.rel)) continue;
+    files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}), ...(c.kind === 'update' && c.replace?.length ? { replace: c.replace } : {}), ...(c.kind === 'update' && c.formatted ? { formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}), ...(c.item ? { item: c.item } : {}), ...(c.kind === 'update' && backupDir ? { backup: `${backupDir}/${c.rel}` } : {}) });
+  }
+  return files;
 }

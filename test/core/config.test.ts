@@ -190,3 +190,10 @@ test('esc escapes zero-width and bidi characters', () => {
   }
   expect(esc('plain é text')).toBe('plain é text');
 });
+
+test('RAW_CONTROL and CONTROL share the hidden-character set', async () => {
+  const { RAW_CONTROL } = await import('../../src/ai/product.js');
+  const { CONTROL } = await import('../../src/core/config.js');
+  for (const c of ['​', '‏', '⁠', '﻿', '‮', '\u009b']) expect([RAW_CONTROL.test(c), CONTROL.test(c)], c.charCodeAt(0).toString(16)).toEqual([true, true]);
+  expect([RAW_CONTROL.test('a\tb\r\n'), CONTROL.test('\t')]).toEqual([false, true]);
+});

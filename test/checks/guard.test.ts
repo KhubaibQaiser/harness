@@ -586,3 +586,8 @@ test('a preview flag that is a value flag\'s value is not a preview', () => {
     expect(kind(c), c).toBe('ask');
   all(['harness init --dry-run', 'harness init --config c.yaml --dry-run'], 'allow');
 });
+test('a comment or a redirection hides the real arguments: ask', () => {
+  for (const c of ['harness init # --dry-run', 'harness init --config c.yaml # --dry-run', 'harness add x # --dry-run', 'harness sync # --dry-run', 'harness update # --plan', 'harness init 2> --dry-run', 'harness init < --dry-run', 'script -q /dev/null harness init < --dry-run', 'npx @khubaibqaiser/harness init --config cfg # --dry-run', 'harness init > --dry-run', 'harness init --dry-run 2>/dev/null', 'harness init --dry-run --unknown'])
+    expect(kind(c), c).toBe('ask');
+  all(['harness init --dry-run --over-budget', 'harness update --answers a.json --dry-run', 'harness sync --take a,b --dry-run', 'harness init --check'.replace('--check', '--plan')], 'allow');
+});

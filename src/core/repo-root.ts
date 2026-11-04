@@ -14,11 +14,7 @@ export function gitRoot(cwd: string): string | null {
 export function repoRoot(cwd: string): string {
   let r = cache.get(cwd);
   if (r === undefined) {
-    try {
-      r = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || cwd;
-    } catch {
-      r = cwd;
-    }
+    r = gitRoot(cwd) ?? cwd;
     cache.set(cwd, r);
   }
   return r;

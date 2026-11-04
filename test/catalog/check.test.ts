@@ -83,10 +83,9 @@ test('loadCatalog on the real catalog/ has no errors', () => {
   expect(checkCatalog(r.catalog)).toEqual([]);
 });
 
-test('a remote MCP source needs unpinned_runtime too', () => {
+test('a remote MCP source needs no unpinned_runtime (hosted code does not run on the machine)', () => {
   const remote = item('r', { kind: 'mcp', source: { type: 'remote', url: 'https://x.dev', unpinned: 'hosted' } });
-  expect(checkCatalog(cat(remote), 'templates')).toEqual(['r: a remote source needs unpinned_runtime']);
-  expect(checkCatalog(cat({ ...remote, unpinned_runtime: 'hosted service' }), 'templates')).toEqual([]);
+  expect(checkCatalog(cat(remote), 'templates')).toEqual([]);
 });
 test('plugin names and mcp names are unique across items', () => {
   const a = item('a', { source: { type: 'github', repo: 'a/b', plugin: 'same', sha: 'a'.repeat(40) } });

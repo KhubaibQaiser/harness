@@ -56,7 +56,23 @@ const PMS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 // `harness <sub>` in their own terminal. One place: M3's entries are in.
 // A word right after a value flag is that flag's value (init reads `--config --dry-run` as a file name), not a preview flag.
 const VALUE_FLAG = new Set(['--config', '--answers', '--product', '--picks', '--report', '--choose', '--take', '--title']);
-const PREVIEW = (a: string[]) => a.some((t, i) => (t === '--dry-run' || t === '--check' || t === '--plan') && !VALUE_FLAG.has(a[i - 1])) && !a.includes('--yes');
+const PREVIEW_FLAGS = new Set(['--dry-run', '--check', '--plan']);
+const OTHER_FLAGS = new Set(['--over-budget', '--install-plugins']);
+const PLAIN_WORD = /^[\w@%+=:,./-]+$/; // no #, <, >, $, quotes or globs: nothing the shell could read differently
+/** Fails closed: a preview only when a preview flag is a real flag and every other word is a known flag, a value flag's
+ *  value, or a plain positional word. A comment, redirection, --yes or anything unknown means not a preview. */
+const PREVIEW = (a: string[]): boolean => {
+  if (a.includes('--yes')) return false;
+  let preview = false;
+  for (let i = 0; i < a.length; i++) {
+    const t = a[i];
+    if (VALUE_FLAG.has(t)) {
+      if (!a[i + 1] || a[i + 1].startsWith('-') || !PLAIN_WORD.test(a[++i])) return false;
+    } else if (PREVIEW_FLAGS.has(t)) preview = true;
+    else if (!OTHER_FLAGS.has(t) && (t.startsWith('-') || !PLAIN_WORD.test(t))) return false;
+  }
+  return preview;
+};
 const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (run: (sub: string) => string) => string }> = {
   tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (run) => `Only a person can pause TDD: run ${run('tdd off')} in your own terminal.` },
   uninstall: { kind: 'ask', allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: () => 'the agent is uninstalling the harness, which removes every gate' },

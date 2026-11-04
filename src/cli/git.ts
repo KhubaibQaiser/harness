@@ -11,9 +11,6 @@ import type { CliEnv } from './index.js';
 const USAGE = 'Usage: harness git branch|commit|push|pr [--title <t>]';
 const NETWORK = /could not resolve host|unable to access|network is unreachable|connection (refused|timed out|reset)|timed out|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|error connecting to/i;
 
-/** True for any default-branch candidate: the origin/HEAD target, init.defaultBranch, `main` or `master`. */
-export const onDefault = (branch: string, candidates: string[]): boolean => candidates.includes(branch);
-
 /** Steps run by the skill only after the person says yes: one step per call, never on the default branch. */
 export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEnv & { exec?: Exec }): number {
   const [sub, ...rest] = args;
@@ -51,7 +48,7 @@ export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEn
     return r.status ? failed('git checkout', r) : (out(`Switched to a new branch ${esc(b)}.`), 0);
   }
 
-  if (!branch || onDefault(branch, candidates)) {
+  if (!branch || candidates.includes(branch)) {
     const then = sub === 'commit' ? 'Run harness git branch first.' : sub === 'push' ? 'Harness never pushes the default branch.' : 'Run harness git branch first.';
     return out(`You are on ${esc(branch || 'a detached HEAD')}. ${then}`), 1;
   }

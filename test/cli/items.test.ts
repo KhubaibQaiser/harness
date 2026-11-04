@@ -284,3 +284,10 @@ test('add of a plugin item prints the install step', async () => {
   expect(r.code, r.out).toBe(0);
   expect(r.out).toContain('Run /harness:sync --install-plugins to install the plugin.');
 });
+
+test('add of an external-skill item prints the install step too', async () => {
+  const root = installed();
+  const r = await run(root, 'add', ['webapp-testing', '--yes', '--over-budget']);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('Run /harness:sync --install-plugins');
+});

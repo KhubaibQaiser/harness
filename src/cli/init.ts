@@ -14,6 +14,7 @@ import type { Catalog } from '../catalog/schema.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { packageDir } from '../core/package-dir.js';
+import { approvedIds } from '../install/approved.js';
 import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest } from '../install/apply.js';
 import { type Facts } from '../install/detect.js';
 import { pinnedPlugins } from '../install/merge.js';
@@ -71,7 +72,7 @@ export const missingAi = (cmd: string, ai: AiArgs): string | null => {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Lays a partial answers file over the existing answers; `project`, `unattended` and `tdd` merge one level deep. */
-function overlayAnswers(base: Record<string, unknown>, part: Record<string, unknown>): Record<string, unknown> {
+export function overlayAnswers(base: Record<string, unknown>, part: Record<string, unknown>): Record<string, unknown> {
   const m: Record<string, unknown> = { ...base, ...part };
   for (const k of ['project', 'unattended', 'tdd']) if (isObj(part[k])) m[k] = { ...(isObj(base[k]) ? base[k] : {}), ...part[k] };
   return m;
@@ -285,7 +286,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   if (manual.length) out('Do these by hand:\n' + manual.map((l) => `  ${l}`).join('\n'));
   for (const n of plan.notes) out(`Note: ${n}`);
   if (sel) {
-    const stop = await budgetGate(sel.catalog, [], sel.ids, [], config.context.budget_tokens, cli.templatesDir, out, { ...opts, overBudget: ai.overBudget });
+    const stop = await budgetGate(sel.catalog, [], sel.ids, approvedIds(config, null, sel.catalog), config.context.budget_tokens, cli.templatesDir, out, { ...opts, overBudget: ai.overBudget });
     if (stop !== null) return stop;
   }
   if (opts.dryRun) {

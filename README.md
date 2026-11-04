@@ -18,8 +18,8 @@ Rules in `CLAUDE.md` or `AGENTS.md` are advice, and a busy agent can skip them. 
 
 - **Deterministic.** The hooks call no model. They decide from the tool call, your own test results, coverage and `git diff`.
 - **Fails closed.** If the hook can't run, Claude Code blocks the call. If the config is invalid, edits are denied until a person fixes it.
-- **Local and reversible.** It sends nothing anywhere. `init` backs up every file it changes, and `uninstall` restores them.
-- **You confirm every write.** `init` and `update` show the plan and diff first. They never commit or push.
+- **Local and reversible.** `init` backs up every file it changes, and `uninstall` restores them.
+- **You confirm every write.** `init` and `update` show the plan and diff first. Committing and pushing are separate steps, each behind its own question.
 - **AI steps run only inside Claude Code.** `init` and `update` need Claude Code to read your repo and choose items. The hooks still call no model.
 
 ## What you get
@@ -108,8 +108,8 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | Command | What it does |
 |---|---|
 | `init [--yes\|--config <file>\|--dry-run]` | Detects your repo, picks catalog items, shows the plan, then writes after you confirm. Run it as `/harness:init`. |
-| `update [--yes\|--check\|--dry-run\|--plan]` | Re-renders the installed files with this version and shows the diff first. Run it as `/harness:update`. `--check` only looks for a newer version and also works in a terminal. `--plan` writes nothing and prints JSON: whether to re-recommend (the catalog or your project facts changed), what changed in the catalog, and which answers to ask again. Items that left the catalog are removed, with a line saying why. With `--answers`, update takes a partial file and changes only the keys it holds (`project`, `apps`, `unattended`, `tdd`); the rest of `config.yaml` stays as it is. |
-| `add <id> [--over-budget\|--dry-run\|--yes]` | Adds one catalog item, with what it requires. Run it as `/harness:add <id>`. Refuses when the item conflicts with an installed one. Shows the diff and the context budget first, and with `--yes` stops when it would go over budget unless you pass `--over-budget`. Ids you already approved don't count against the budget. |
+| `update [--yes\|--check\|--dry-run\|--plan]` | Re-renders the installed files with this version and shows the diff first. Run it as `/harness:update`. `--check` only looks for a newer version and also works in a terminal. `--plan` writes nothing and prints JSON: whether to re-recommend (the catalog or your project facts changed), what changed in the catalog, and which answers to ask again. Items that left the catalog are dropped from the selection with a line saying why, but their files are kept. With `--answers`, update takes a partial file and changes only the keys it holds (`project`, `apps`, `unattended`, `tdd`); the rest of `config.yaml` stays as it is. |
+| `add <id> [--over-budget\|--dry-run\|--yes] [--take <file,...>]` | Adds one catalog item, with what it requires. Run it as `/harness:add <id>`. Refuses when the item conflicts with an installed one. Shows the diff and the context budget first, and with `--yes` stops when it would go over budget unless you pass `--over-budget`. Only items harness installed count as approved and are exempt from the budget; one you selected by hand in `config.yaml` and never installed is counted (and `add`, `update` and `sync` all agree on that). Like `sync`, it keeps a harness file you edited and lists it; name it in `--take` to replace it. Merged files (AGENTS.md, settings, `.mcp.json`) can't be taken. |
 | `sync [--dry-run\|--yes] [--take <file,...>] [--install-plugins] [--over-budget]` | Fixes drift between `config.yaml`, the manifest and the files. Run it as `/harness:sync`. Restores missing files of selected items, and removes the files and records of items you unselected. A file you edited that harness wrote whole is kept and listed unless you name it in `--take`. In AGENTS.md, settings and `.mcp.json`, your content is never touched: sync changes only harness's own parts and lists the file. A selected item that was never installed counts against the context budget like `add`. The preview lists plugins that `claude plugin list` doesn't show; `--install-plugins` installs them and records the install (also on `init` and `update`), but only when `settings.json` has no edits besides the plugin entries. Otherwise it prints "not recorded" and `uninstall` keeps your content. Commit or stash `config.yaml` edits first. The agent has to ask before running it. |
 
 **In a plain terminal:**
@@ -119,7 +119,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `status` | Shows each gate as on or off, and why. Also the catalog version, how many items are selected, how many selected plugins aren't installed, and the always-loaded context estimate. |
 | `doctor` | Checks the install and prints a fix for each problem. Exits 1 if there is one. For installs with items it also reports the catalog version, items whose files or settings entries are missing (`/harness:sync` restores them), selected plugins that are enabled but not installed, plugin versions that differ from the catalog's pin, a plugin enabled from two marketplaces, an edited `harness-pins` marketplace or MCP server, and `checks` in `config.yaml` that differ from the selected items. It runs `claude plugin list` once; without `claude` it skips the plugin checks. |
 | `uninstall [--yes\|--force\|--dry-run]` | Removes what harness added and restores your files. Close open Claude Code sessions first. |
-| `remove <id> [--dry-run\|--yes]` | Removes one installed item and what it wrote, and restores your files. Refuses while another installed item requires it. The agent has to ask before running it. |
+| `remove <id> [--dry-run\|--yes] [--take <file,...>]` | Removes one installed item and what it wrote, and restores your files. Refuses while another installed item requires it. A file you edited, of this or another item, is kept and listed unless you name it in `--take`. The agent has to ask before running it. |
 | `why <id>` | For an installed item: why it is there, the findings it addresses, its cost and its context. For one that isn't installed: why it is in the catalog and its cost. |
 | `explain` | One line per installed item with its files, then the always-loaded context. |
 | `stats [--days N]` | Counts harness events (the default is the last 7 days). |
@@ -127,10 +127,10 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `scan` | Prints the facts harness detects about your repo, as JSON. Writes nothing. |
 | `catalog` | Prints the catalog of items harness can install, as JSON. |
 | `catalog check [--resolve] [--only <id,...>]` | Checks the catalog for problems. `--resolve` also looks up each pin, which needs the network. `--only` limits that to the listed ids. |
-| `validate answers\|product <file>` | Checks an interview answers file or a product file. |
-| `validate picks <file> --answers <file> [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. |
+| `validate answers\|product <file> [--merge-config]` | Checks an interview answers file or a product file. With `--merge-config`, an answers file holding only some keys is laid over the answers in `.harness/config.yaml` first (what `/harness:update` uses). |
+| `validate picks <file> --answers <file> [--merge-config] [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. `--merge-config` works as above. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
-| `select --picks <file> [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `items` entries. |
+| `select --picks <file> [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `selected` entries. Each checklist row also has `unpinned` ("Runs unpinned code at launch.") and `unpinned_reason` for items whose catalog entry sets `unpinned_runtime`. |
 | `git branch\|commit\|push\|pr [--title <t>]` | Commits and pushes the harness changes one step at a time. `branch` creates `chore/ai-workflow-<catalog version>`; `commit` stages only the files harness wrote, with your own git name and email; `push` and `pr` never touch the default branch. `pr` needs `gh` signed in, else it prints the command. The agent asks you before `push` and `pr`. |
 
 `scan`, `catalog`, `validate` and `select` write nothing. They are the steps `/harness:init` calls; you can run them to see what it sees.
@@ -141,7 +141,7 @@ Without a terminal, pass `--yes` or `--dry-run`.
 
 ### AI flags
 
-Inside Claude Code, `/harness:init` and `/harness:update` take the files the interview produced. All five are required together:
+Inside Claude Code, `/harness:init` and `/harness:update` take the files the interview produced. `init` requires all five. `update` requires all but `--answers`, which may hold only the re-asked keys or be left out:
 
 - `--answers <file> --product <file> --picks <file> --report <file>`
 - `--choose <id,...>`: the item ids you picked from the checklist.
@@ -264,6 +264,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 
 ## Known limits
 
+- The guard recognises the commands `harness` and `cli.mjs` by name. A renamed copy or symlink of the CLI (`node h.mjs add x --yes`) isn't recognised, so it doesn't ask first.
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
 - The `PowerShell(...)` deny rules, and the `Read` and `Edit` rules on PowerShell commands, are unverified until a live check on Windows passes.
 - The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop).
@@ -294,6 +295,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 - MCP servers need each user's approval.
 - `CLAUDECODE` is also set in IDE terminals, so `init` and `update` run there too, not only inside a Claude Code session. They don't print `Run /harness:init inside Claude Code`.
 - There is no version-drift check for `git-subdir` plugins that have no `plugin_version`. The commit is pinned, but `doctor` has nothing to compare. The release notes list them.
+- A harness command that is killed in the middle of writing, or whose rollback fails, leaves `.harness/apply.lock`. Every command, a dry run and `doctor` and `status` included, reports it and refuses to plan until you undo the partial change with git and delete the lock (the guard stops the agent from deleting it). Two harness commands running in one repo at the same time: the second to finish stops with "Another harness command changed the install while this one ran" and writes nothing.
 - When the agent runs an item change (`init`, `update`, `add`, `remove`, `sync`, `uninstall`), harness asks you first.
 - Under `sandbox: always`, item commands may need Claude Code's `!` prefix. Unverified, pending the live check.
 - `.harnessignore` has no `!` negation.
@@ -318,6 +320,8 @@ pnpm build && pnpm test && pnpm test:perf
 pnpm typecheck
 node scripts/gen-config-docs.mjs --write   # after changing a config key
 ```
+
+Releases go through a protected GitHub environment; see [docs/release.md](docs/release.md).
 
 CI runs on macOS and Windows with Node 22, plus gitleaks, a pack check, real Vitest and Jest installs, and `claude plugin validate`.
 

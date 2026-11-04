@@ -1,14 +1,14 @@
 import { readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
-import { ApplyError, type FsLike, ManifestError, applyChanges, removeEmptyDirs, readManifest, type Change, type Manifest } from '../install/apply.js';
+import { join, sep } from 'node:path';
+import { ApplyError, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
 import { STRUCTURAL, removeBlocks, removeFromMcp, removeFromSettings } from '../install/merge.js';
 import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, withEol } from '../install/text.js';
-import { MANIFEST_REL } from '../install/manifest.js';
+import { MANIFEST_REL, backupText } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
-import { gitRoot } from '../core/repo-root.js';
+import { openInstall } from './preamble.js';
 import type { CliEnv } from './index.js';
 
 export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike };
@@ -45,16 +45,9 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   const dryRun = args.includes('--dry-run');
   if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
 
-  const root = gitRoot(cli.root);
-  if (!root) return out('Not a git repository. Run harness uninstall inside a git repo.'), 1;
-  let m: Manifest | null;
-  try {
-    m = readManifest(root);
-  } catch (e) {
-    if (e instanceof ManifestError) return out(e.message), 1;
-    throw e;
-  }
-  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
+  const opened = openInstall(cli, 'Not a git repository. Run harness uninstall inside a git repo.');
+  if (typeof opened === 'number') return opened;
+  const { root, m } = opened;
 
   const changes: Change[] = [];
   const kept: string[] = [];
@@ -65,7 +58,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       notes.push(`\`${f.rel}\` is already gone.`);
       continue;
     }
-    const backup = f.backup ? read(join(root, f.backup)) : null;
+    const backup = backupText(root, f.backup);
     if (STRUCTURAL.has(f.rel)) {
       if (matchesHash(cur, f.hash) && f.kind === 'create') {
         changes.push({ kind: 'delete', rel: f.rel, before: cur });

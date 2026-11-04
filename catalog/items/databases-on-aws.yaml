@@ -4,7 +4,7 @@ title: "Databases on AWS (Aurora DSQL guidance)"
 source: {"type": "git-subdir", "repo": "awslabs/agent-plugins", "path": "plugins/databases-on-aws", "plugin": "databases-on-aws", "sha": "fbefb3764e67558fe10ac834dd85db49734aa9b6"}
 license: Apache-2.0
 min_claude_code: 2.1.314
-applies_when: {"any_dep": ["@aws-sdk/client-dynamodb", "@aws-sdk/lib-dynamodb"]}
+applies_when: {"any_dep": ["@aws-sdk/client-dsql", "@aws-sdk/dsql-signer"]}
 cost: {"context": "low", "setup": "medium"}
 stance: optional
 side_effects: ["installs-hook"]
@@ -12,9 +12,9 @@ why: "Expert database guidance for the AWS database portfolio. Design schemas, e
 evidence:
   - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/databases-on-aws/.claude-plugin/plugin.json (version 1.10.0, license Apache-2.0; the why sentences are its description)"
   - "License: repo awslabs/agent-plugins is Apache-2.0 (GitHub); plugin.json says Apache-2.0; the plugin directory has no LICENSE file of its own"
-  - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/databases-on-aws/.mcp.json (awsknowledge: hosted http https://knowledge-mcp.global.api.aws, enabled; aurora-dsql and cloudwatch: `uvx awslabs.aurora-dsql-mcp-server@latest` and `uvx awslabs.cloudwatch-mcp-server@latest`, both \"disabled\": true, so nothing unpinned runs by default; cloudwatch needs AWS_REGION and AWS_PROFILE filled in)"
-  - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/databases-on-aws/hooks/hooks.json (one PostToolUse prompt hook, matcher mcp__aurora-dsql.*__transact: it adds a verification prompt only after a DSQL transact call, which needs the disabled aurora-dsql server): installs-hook, no always-on text, context low (judgment call: see the owner note)"
+  - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/databases-on-aws/.mcp.json (awsknowledge: hosted http https://knowledge-mcp.global.api.aws; aurora-dsql and cloudwatch: `uvx awslabs.aurora-dsql-mcp-server@latest` and `uvx awslabs.cloudwatch-mcp-server@latest`, UNPINNED @latest. Both are marked \"disabled\": true in the vendor file and the vendor README says they are off by default, but Claude Code's MCP docs do not define a `disabled` key, so whether they start is unverified. If Claude Code ignores the key, two unpinned servers launch every session. Flagged with deploy-on-aws and aws-serverless; cloudwatch needs AWS_REGION and AWS_PROFILE filled in)"
+  - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/databases-on-aws/hooks/hooks.json (one PostToolUse hook of type \"prompt\", matcher mcp__aurora-dsql.*__transact: it runs a model prompt on the tool result after a DSQL transact call, which needs the aurora-dsql server; it does not inject text into the main context the way an additionalContext hook does): installs-hook, context low"
   - "The only skill is dsql (Aurora DSQL); the README table calls the plugin \"Some Services Available (Aurora DSQL)\". Requirement for use: the aurora-dsql server enabled, uv (`uvx`) and AWS credentials; setup medium"
-  - "audit.html: \"supabase plugin + supabase/agent-skills (3k) · prisma · neon · databases-on-aws (DynamoDB)\". The plugin as pinned covers Aurora DSQL, not DynamoDB: the audit label does not match its content"
+  - "audit.html: \"supabase plugin + supabase/agent-skills (3k) · prisma · neon · databases-on-aws (DynamoDB)\". The plugin as pinned has one skill, dsql, and the vendor README says \"Currently includes Aurora DSQL\": the audit label does not match its content"
   - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, ref main). Version drift not checked"
-  - "applies_when note: the audit names DynamoDB, so the DynamoDB SDK packages are listed (npm view @aws-sdk/client-dynamodb: 3.1161.0); no Facts field covers AWS databases"
+  - "applies_when note: keyed on what the plugin covers, Aurora DSQL: @aws-sdk/client-dsql and @aws-sdk/dsql-signer (npm view: both 3.1161.0). The audit says DynamoDB, which this plugin does not cover, so a DynamoDB project is not matched. No Facts field covers AWS databases"

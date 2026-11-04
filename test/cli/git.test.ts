@@ -238,3 +238,13 @@ test('push to a real local bare origin sets the upstream', () => {
   expect(g(bare, 'rev-parse', 'chore/ai-workflow-7')).toBe(g(root, 'rev-parse', 'HEAD'));
   expect(g(root, 'rev-parse', '--abbrev-ref', '@{u}')).toBe('origin/chore/ai-workflow-7');
 });
+
+test('commit and push refuse main even when init.defaultBranch says master and there is no origin/HEAD', () => {
+  const root = installed();
+  g(root, 'config', 'init.defaultBranch', 'master'); // as a global setting would
+  expect(run(root, ['commit']).out).toBe('You are on main. Run harness git branch first.');
+  expect(run(root, ['push']).out).toBe('You are on main. Harness never pushes the default branch.');
+  g(root, 'checkout', '-q', '-b', 'b');
+  put(root, '.harness/report.md', 'r');
+  expect(run(root, ['pr']).out).toContain('--base main --head b'); // main exists, master does not
+});

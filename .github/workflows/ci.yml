@@ -11,8 +11,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [22, 24]
+        # One job per platform on the engines floor; ubuntu is covered by the single-run jobs below.
+        os: [macos-latest, windows-latest]
+        node: [22]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

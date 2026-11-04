@@ -1,0 +1,11 @@
+# Default rules, plus one allowlist: catalog pins are public 40-hex git commit SHAs, which the
+# sourcegraph-access-token rule mistakes for tokens.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "catalog commit pins (public git SHAs)"
+condition = "AND"
+paths = ['''^catalog/items/[a-z0-9-]+\.yaml$''']
+regexTarget = "line"
+regexes = ['''"?sha"?\s*:\s*"?[0-9a-f]{40}"?''']

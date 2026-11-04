@@ -6,10 +6,10 @@ const dir = '.github/workflows';
 const raw = (f: string) => readFileSync(`${dir}/${f}`, 'utf8');
 const load = (f: string) => parse(raw(f));
 
-test('ci matrix covers three OSes and node 22/24', () => {
+test('ci matrix runs macOS and Windows on node 22', () => {
   const m = load('ci.yml').jobs.test.strategy.matrix;
-  expect(m.os).toEqual(['ubuntu-latest', 'macos-latest', 'windows-latest']);
-  expect(m.node).toEqual([22, 24]);
+  expect(m.os).toEqual(['macos-latest', 'windows-latest']);
+  expect(m.node).toEqual([22]);
 });
 
 test('ci is callable and has least-privilege permissions', () => {

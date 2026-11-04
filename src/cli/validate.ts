@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { MANIFEST_REL } from '../install/manifest.js';
 import { esc } from '../core/config.js';
 import { validateAnswers } from '../ai/answers.js';
 import { saveDebug } from '../ai/debug.js';
@@ -89,7 +91,8 @@ function recommend(args: string[], root: string, out: (l: string) => void): numb
   if (!errors.length) return out('ok'), 0; // read-only: finalizeReport is applied by init
   for (const e of errors) out(e);
   if (attempt < 2) return 2;
-  const rel = saveDebug(root, what, text as string);
-  out(`Recommend output failed validation twice. Raw output is in \`${rel}\`. Stopping.`);
+  // Only an installed repo gets a .harness/ folder; anywhere else the raw output is printed.
+  if (!existsSync(join(root, MANIFEST_REL))) return out(`Recommend output failed validation twice. Raw output follows. Stopping.\n${(text as string).split(/\r?\n/).map(esc).join('\n')}`), 1;
+  out(`Recommend output failed validation twice. Raw output is in \`${saveDebug(root, what, text as string)}\`. Stopping.`);
   return 1;
 }

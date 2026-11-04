@@ -1,8 +1,7 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { loadCatalog } from '../catalog/load.js';
+import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
 import { validateConfig } from '../core/config-io.js';
 import { defaultExec, type Exec } from '../core/exec.js';
@@ -19,6 +18,7 @@ import { refuseOutsideClaude } from './claude-only.js';
 import { budgetGate, installSelected, isDenied, sandboxLine } from './init.js';
 import { isBackupPath } from './update.js';
 import { NO_TTY, type Prompt } from './prompt.js';
+import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
 
 export type SyncEnv = CliEnv & { prompt: Prompt; version?: string; templatesDir: string; distDir: string; fs?: FsLike; exec?: Exec; catalog?: Catalog };
@@ -45,12 +45,8 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   if (refused) return out(refused), 2;
   if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
 
-  let root: string;
-  try {
-    root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: cli.root, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch {
-    return out('Not a git repository. Run /harness:sync inside a git repo.'), 1;
-  }
+  const root = gitRoot(cli.root);
+  if (!root) return out('Not a git repository. Run /harness:sync inside a git repo.'), 1;
   let m: Manifest | null;
   try {
     m = readManifest(root);
@@ -70,7 +66,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   }
   if (!config.items.length) return out('This install predates the item catalog. Run /harness:update with recommendations first.'), 1;
   const lc = cli.catalog ? { catalog: cli.catalog, errors: [] as string[] } : loadCatalog();
-  if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out('The catalog has errors; stopped. Run harness catalog validate.'), 1;
+  if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
   const cat = lc.catalog;
   if (cli.version && cli.version !== man.version) return out(`Harness files are ${man.version} but this is ${cli.version}. Run /harness:update first; sync does not change the version.`), 1;
   const have = selectedIds(config);

@@ -1,9 +1,12 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { run } from '../../src/cli/index.js';
 import { makeRepo } from '../install/helpers.js';
+
+// The notice set depends on the local Claude Code version; pin it so CI (no `claude` binary) and dev machines agree.
+vi.mock('../../src/core/min-claude.js', async (orig) => ({ ...(await orig<object>()), claudeVersion: () => '9.9.9' }));
 
 const root = makeRepo({ 'package.json': '{}' }, { git: false });
 const picksFile = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'picks.json');
@@ -33,7 +36,9 @@ test('select round trip: checklist, then choose', () => {
 });
 
 test('select prints errors with exit 2; bad usage and bad files exit 2', () => {
-  expect(go(['select', '--picks', picksFile, '--choose', 'lead-a,lead-b'])).toEqual({ code: 2, lines: ['lead-a and lead-b conflict; pick one.'] });
+  const both = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'p.json');
+  writeFileSync(both, JSON.stringify({ catalog_version: 1, findings: [], items: ['lead-a', 'lead-b'].map((id) => ({ id, include: 'optional', reason: 'r', addresses: [] })) }));
+  expect(go(['select', '--picks', both, '--choose', 'lead-a,lead-b'])).toEqual({ code: 2, lines: ['lead-a and lead-b conflict; pick one.'] });
   expect(go(['select']).code).toBe(2);
   expect(go(['select', '--picks', '/nonexistent']).code).toBe(2);
 });
@@ -49,15 +54,25 @@ test('select: --choose empty is a usage error; malformed picks exit 2; C1 in a p
   expect(c1.lines.join()).toContain('\\u009b');
 });
 
-test('select: chosen id outside the picks is Chosen by you', () => {
-  const out = JSON.parse(go(['select', '--picks', picksFile, '--choose', 'lead-a']).lines.join('\n'));
-  expect(out.selected.at(-1)).toMatchObject({ id: 'lead-a', reason: 'Chosen by you.' });
-});
-
 test('a real own-item row has a non-empty context line', () => {
   const f = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'p.json');
   writeFileSync(f, JSON.stringify({ catalog_version: 1, findings: [], items: [{ id: 'review-rubric', include: 'recommended', reason: 'r', addresses: [] }] }));
   const lines: string[] = [];
   expect(run(['select', '--picks', f], { root, env: {}, out: (l) => lines.push(l) })).toBe(0);
   expect(JSON.parse(lines.join('\n'))[0].context).toMatch(/^~[1-9]\d* tokens \(estimate\)$/);
+});
+
+test('--choose rejects ids that are not in the picks; requires stay allowed', () => {
+  const r = go(['select', '--picks', picksFile, '--choose', 'lead-a']);
+  expect(r.code).toBe(2);
+  expect(r.lines.join('\n')).toContain('"lead-a" was not in the picks');
+  expect(go(['select', '--picks', picksFile, '--choose', 'deep']).code).toBe(0);
+});
+
+test('picks with an id outside the catalog is an error, not a silent drop', () => {
+  const f = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'p.json');
+  writeFileSync(f, JSON.stringify({ catalog_version: 1, findings: [], items: [{ id: 'nope', include: 'optional', reason: 'r', addresses: [] }] }));
+  const r = go(['select', '--picks', f]);
+  expect(r.code).toBe(2);
+  expect(r.lines.join('\n')).toContain('unknown item "nope"');
 });

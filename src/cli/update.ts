@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -17,7 +16,7 @@ import { reconcile } from '../install/reconcile.js';
 import { selectedIds } from '../install/plan.js';
 import { toSelected } from '../install/select.js';
 import { STRUCTURAL } from '../install/merge.js';
-import { loadCatalog } from '../catalog/load.js';
+import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import { catalogDelta, contradictions } from '../install/delta.js';
 import { factsJson } from '../install/facts.js';
 import type { Facts } from '../install/detect.js';
@@ -25,6 +24,7 @@ import { dirtyPaths } from '../install/git-status.js';
 import { AI_USAGE, budgetGate, installSelected, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
 import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
+import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
 
 export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch; fs?: FsLike; exec?: Exec; claudeVersion?: () => string | null };
@@ -62,12 +62,8 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     return 0;
   }
 
-  let root: string;
-  try {
-    root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: cli.root, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch {
-    return out('Not a git repository. Run /harness:update inside a git repo.'), 1;
-  }
+  const root = gitRoot(cli.root);
+  if (!root) return out('Not a git repository. Run /harness:update inside a git repo.'), 1;
   let m: Manifest | null;
   try {
     m = readManifest(root);
@@ -94,7 +90,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 
   if (plan) {
     const lc = loadCatalog();
-    if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out('The catalog has errors; update stopped. Run harness catalog validate.'), 1;
+    if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
     const now = detect(root);
     let stored: string | null = null;
     let prev: Facts | null = null;
@@ -109,7 +105,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const aiFlags = hasAiFlags(args);
   const aiPath = v.config.items.length > 0 || aiFlags; // a selection from the recommend flow: the plan owns the config
   const cat = aiPath && !aiFlags ? loadCatalog() : null;
-  if (cat?.errors.length) return cat.errors.forEach((e) => out(e)), out('The catalog has errors; update stopped. Run harness catalog validate.'), 1;
+  if (cat?.errors.length) return cat.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
   let config = v.config;
   let sel: AiInputs | null = null;
   if (aiFlags) {

@@ -11,6 +11,7 @@ cost: {"context": "low", "setup": "medium"}
 stance: optional
 side_effects: ["installs-hook"]
 why: "TDD enforcement and guardrails for Claude Code, Codex, and GitHub Copilot CLI."
+unpinned_runtime: "runs `npx @nizos/probity` on every Bash, Write, Edit and NotebookEdit call: the local copy if installed, else the newest from npm"
 evidence:
   - "https://github.com/nizos/probity/blob/eeac4214246a4e4875c7803058b4d00ee6642c3e/.claude-plugin/plugin.json (version 1.10.1, license MIT; the why sentence is its description)"
   - "https://github.com/nizos/probity/blob/eeac4214246a4e4875c7803058b4d00ee6642c3e/LICENSE (MIT, GitHub spdx MIT)"

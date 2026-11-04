@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -70,6 +70,13 @@ test('validate picks: ok, then retry then stop with the raw output saved', () =>
   const bad = '{"catalog_version":1,"findings":[],"items":[{"id":"foo"}]}';
   expect(rec(['validate', 'picks', file('picks.json', bad), '--answers', a], r2).code).toBe(2);
   expect(existsSync(join(r2, '.harness/debug'))).toBe(false);
+  const none = rec(['validate', 'picks', file('picks.json', bad), '--answers', a, '--attempt', '2'], r2);
+  expect(none.code).toBe(1);
+  expect(none.lines.join('\n')).toContain('Raw output follows');
+  expect(none.lines.join('\n')).toContain('catalog_version');
+  expect(existsSync(join(r2, '.harness'))).toBe(false); // no install here: nothing is written
+  mkdirSync(join(r2, '.harness'));
+  writeFileSync(join(r2, '.harness/manifest.json'), '{}');
   const r = rec(['validate', 'picks', file('picks.json', bad), '--answers', a, '--attempt', '2'], r2);
   expect(r.code).toBe(1);
   const [name] = readdirSync(join(r2, '.harness/debug'));
@@ -85,6 +92,8 @@ test('validate report: read-only on ok; second failure saves the report', () => 
   expect(rec(['validate', 'report', rf, '--picks', picks]).code).toBe(0);
   expect(readFileSync(rf, 'utf8')).toBe(md);
   const r2 = makeRepo({ 'package.json': '{}' }, { git: false });
+  mkdirSync(join(r2, '.harness'));
+  writeFileSync(join(r2, '.harness/manifest.json'), '{}');
   const r = rec(['validate', 'report', file('r.md', 'nope'), '--picks', picks, '--attempt', '2'], r2);
   expect(r.code).toBe(1);
   const [name] = readdirSync(join(r2, '.harness/debug'));
@@ -99,6 +108,8 @@ test('validate picks/report: bad usage exits 2', () => {
 
 test('attempt 2 with an invalid answers file saves the picks and stops', () => {
   const r2 = makeRepo({ 'package.json': '{}' }, { git: false });
+  mkdirSync(join(r2, '.harness'));
+  writeFileSync(join(r2, '.harness/manifest.json'), '{}');
   const r = rec(['validate', 'picks', file('picks.json', good), '--answers', file('a.json', '{}'), '--attempt', '2'], r2);
   expect(r.code).toBe(1);
   expect(r.lines.at(-1)).toMatch(/^Recommend output failed validation twice\. Raw output is in `\.harness\/debug\/picks-.*\.txt`\. Stopping\.$/);

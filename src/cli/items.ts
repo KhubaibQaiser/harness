@@ -1,12 +1,11 @@
-import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { budgetLines, budgetVerdict, itemContext, itemContextLine, measureSelection } from '../budget/measure.js';
-import { loadCatalog } from '../catalog/load.js';
+import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
 import { validateConfig } from '../core/config-io.js';
-import type { HarnessConfig, Selected } from '../core/config.js';
+import { esc, type HarnessConfig, type Selected } from '../core/config.js';
 import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { packageDir } from '../core/package-dir.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
@@ -22,6 +21,7 @@ import type { Picks } from '../ai/picks.js';
 import { budgetGate, isDenied, sandboxLine } from './init.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
+import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
 
 export type ItemsEnv = CliEnv & { prompt: Prompt; templatesDir: string; distDir: string; fs?: FsLike; claudeVersion?: () => string | null; catalog?: Catalog };
@@ -39,7 +39,7 @@ const GUARD_OFF = 'The guard is off now, so the agent can run harness commands w
 /** The stored recommendation (`.harness/picks.json`), or null when it is missing or unreadable. */
 function storedPicks(root: string): Picks | null {
   try {
-    const p = parseYaml(readFileSync(join(root, '.harness/picks.json'), 'utf8'));
+    const p = JSON.parse(readFileSync(join(root, '.harness/picks.json'), 'utf8'));
     return p && Array.isArray(p.items) ? (p as Picks) : null;
   } catch {
     return null;
@@ -59,12 +59,8 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   if (refused) return out(refused), 2;
   if ((cmd === 'add' || cmd === 'remove') && !yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
 
-  let root: string;
-  try {
-    root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: cli.root, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch {
-    return out('Not a git repository. Run harness inside a git repo.'), 1;
-  }
+  const root = gitRoot(cli.root);
+  if (!root) return out('Not a git repository. Run harness inside a git repo.'), 1;
   let m: Manifest | null;
   try {
     m = readManifest(root);
@@ -82,7 +78,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
     return out(`Could not read \`${CONFIG}\`: ${(e as Error).message}\nNext step: run harness doctor.`), 1;
   }
   const lc = cli.catalog ? { catalog: cli.catalog, errors: [] as string[] } : loadCatalog();
-  if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out('The catalog has errors; stopped. Run harness catalog validate.'), 1;
+  if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
   const cat = lc.catalog;
   const byId = new Map(cat.items.map((i) => [i.id, i]));
   const have = selectedIds(config);
@@ -93,14 +89,14 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   const picks = storedPicks(root);
 
   if (cmd === 'why') {
-    if (!it) return out(`Unknown item "${id}". Run harness catalog to list the ids.`), 1;
+    if (!it) return out(`Unknown item "${esc(id)}". Run harness catalog to list the ids.`), 1;
     const sel = rows.find((i) => i.id === id && i.selected);
     const cost = `context ${it.cost.context}, setup ${it.cost.setup}`;
     if (!sel) return out(`Not installed. ${it.why} Cost: ${cost}.`), 0;
-    out(`${id}: ${sel.reason}`);
+    out(`${id}: ${esc(sel.reason)}`);
     for (const f of sel.addresses) {
       const found = picks?.findings.find((x) => x.id === f);
-      out(`  [${found?.severity ?? 'unknown'}] ${found?.title ?? f}`);
+      out(`  [${esc(String(found?.severity ?? 'unknown'))}] ${esc(String(found?.title ?? f))}`);
     }
     out(`Cost: ${cost}.`);
     out(`Context: ${itemContextLine(itemContext(it, dirs))}.`);
@@ -108,7 +104,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   }
   if (cmd === 'explain') {
     for (const s of rows.filter((i) => i.selected)) {
-      out(`${s.id} (${byId.get(s.id)?.kind ?? 'unknown'}): ${s.reason}`);
+      out(`${s.id} (${byId.get(s.id)?.kind ?? 'unknown'}): ${esc(s.reason)}`);
       for (const f of itemFiles(m, s.id)) out(`  ${f.rel}`);
     }
     const v = await measureSelection(have, cat, { ...dirs, plugin: dirname(packageDir('templates')) });
@@ -118,7 +114,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
 
   // add and remove: the selection changes, planChanges does the rest (the same path as update).
   if (!config.items.length) return out('This install predates the item catalog. Run /harness:update with recommendations first.'), 1;
-  if (!it) return out(`Unknown item "${id}". Run harness catalog to list the ids.`), 1;
+  if (!it) return out(`Unknown item "${esc(id)}". Run harness catalog to list the ids.`), 1;
   let next: Selected[];
   let after: string[];
   if (cmd === 'add') {
@@ -214,6 +210,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   stampHarnessFiles(root); // change detection: these writes are harness's own
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   if (cmd === 'remove' && id === 'agent-guard') out(GUARD_OFF);
+  if (cmd === 'add' && after.some((x) => !have.includes(x) && ['plugin', 'external-skill'].includes(byId.get(x)?.kind ?? ''))) out('Run /harness:sync --install-plugins to install the plugin.');
   out('Run harness git commit on a branch to commit this change.');
   return 0;
 }

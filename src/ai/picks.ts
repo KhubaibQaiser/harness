@@ -1,4 +1,4 @@
-import { esc } from '../core/config.js';
+import { CONTROL, esc } from '../core/config.js';
 import { conflictPairs } from '../catalog/relations.js';
 import type { Catalog } from '../catalog/schema.js';
 import type { Answers } from './answers.js';
@@ -9,6 +9,7 @@ export interface Picks { catalog_version: number; findings: Finding[]; items: Pi
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const text = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
+const clean = (errors: string[], at: string, v: unknown) => void (typeof v === 'string' && CONTROL.test(v) && errors.push(`${at}: must not contain control characters`));
 const q = (s: string) => `"${esc(s)}"`; // user-controlled text never reaches the terminal raw
 
 /** Checks the recommend skill's picks.json against the real catalog. Requires are not added here: the installer closes them. */
@@ -23,6 +24,8 @@ export function validatePicks(raw: unknown, c: Catalog, a: Answers): { ok: true;
   else raw.findings.forEach((f, i) => {
     if (!isObj(f)) return void errors.push(`findings[${i}]: must be a mapping`);
     for (const k of Object.keys(f)) if (!['id', 'severity', 'title'].includes(k)) errors.push(`findings[${i}].${esc(k)}: unknown key`);
+    clean(errors, `findings[${i}].id`, f.id);
+    clean(errors, `findings[${i}].title`, f.title);
     if (!text(f.id)) errors.push(`findings[${i}].id: must be a non-empty string`);
     else if (findingIds.has(f.id)) errors.push(`findings[${i}].id: duplicate ${q(f.id)}`);
     else findingIds.add(f.id);
@@ -43,6 +46,8 @@ export function validatePicks(raw: unknown, c: Catalog, a: Answers): { ok: true;
       else if (seen.has(p.id)) errors.push(`items[${i}].id: duplicate ${q(p.id)}`);
       else seen.add(p.id);
       if (p.include !== 'recommended' && p.include !== 'optional') errors.push(`items[${i}].include: must be recommended or optional`);
+      clean(errors, `items[${i}].reason`, p.reason);
+      clean(errors, `items[${i}].no_alternative`, p.no_alternative);
       if (!text(p.reason)) errors.push(`items[${i}].reason: must be a non-empty sentence`);
       if (!Array.isArray(p.addresses) || !p.addresses.every((x) => typeof x === 'string')) errors.push(`items[${i}].addresses: must be a list of finding ids`);
       else p.addresses.forEach((f, j) => findingIds.has(f) || errors.push(`items[${i}].addresses[${j}]: unknown finding ${q(f)}`));

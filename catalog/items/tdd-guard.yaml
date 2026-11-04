@@ -10,6 +10,7 @@ stance: discouraged
 stance_reason: "superseded by probity"
 side_effects: ["installs-hook"]
 why: "Automated Test-Driven Development enforcement"
+unpinned_runtime: "runs `npx tdd-guard@latest` in three hook events"
 evidence:
   - "https://github.com/nizos/tdd-guard/blob/ffb7026c8f7e335e2914461fce9ec3f897a87125/plugin/.claude-plugin/plugin.json (version 1.3.0, license MIT; the why text is its description)"
   - "https://github.com/nizos/tdd-guard/blob/ffb7026c8f7e335e2914461fce9ec3f897a87125/plugin/LICENSE (MIT, the plugin directory's own file)"

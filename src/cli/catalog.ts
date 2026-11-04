@@ -9,7 +9,10 @@ const USAGE = 'Usage: harness catalog\n       harness catalog check [--resolve] 
 
 export function catalog(args: string[], { out }: CliEnv, deps: { dir?: string; exec?: Exec } = {}): number {
   const { catalog: c, errors } = loadCatalog(deps.dir ?? packageDir('catalog'));
-  if (!args.length) return out(JSON.stringify({ catalog_version: c.version, items: compactCatalog(c) }, null, 2)), 0;
+  if (!args.length) {
+    if (errors.length) return errors.forEach((e) => out(e)), 1;
+    return out(JSON.stringify({ catalog_version: c.version, items: compactCatalog(c) }, null, 2)), 0;
+  }
   if (args[0] !== 'check') return out(USAGE), 2;
   let resolve = false;
   let only: string[] | undefined;

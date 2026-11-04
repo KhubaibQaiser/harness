@@ -13,3 +13,9 @@ test('more than 40 lines fails', () => {
 test.each(SECTIONS)('missing %s fails by name', (s) => {
   expect(validateProduct(good.replace(`## ${s}`, `### ${s}`))).toEqual([`product.md: missing section "## ${s}"`]);
 });
+
+test('control characters are rejected', () => {
+  const ok = ['Purpose', 'Users', 'Core features', 'Constraints', 'Non-goals', 'Sources'].map((s) => `## ${s}\nx`).join('\n');
+  expect(validateProduct(ok)).toEqual([]);
+  expect(validateProduct(`${ok}\u001b[2J`)).toEqual(['product.md: must not contain control characters']);
+});

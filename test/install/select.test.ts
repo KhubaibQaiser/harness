@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { loadCatalog } from '../../src/catalog/load.js';
-import { checklist, resolveSelection, toSelected } from '../../src/install/select.js';
+import { checklist, notPicked, resolveSelection, toSelected } from '../../src/install/select.js';
 
 const dirs = { templates: 'templates' };
 const { catalog } = loadCatalog('test/fixtures/catalog');
@@ -18,7 +18,7 @@ test('checklist order and local_only', () => {
 test('requires auto-selects with a notice, transitively', () => {
   const r = resolveSelection(['deep'], catalog, null);
   expect(r.ids).toEqual(['deep', 'extra', 'base']);
-  expect(r.notices).toEqual(['Added extra because deep requires it.', 'Added base because extra requires it.']);
+  expect(r.notices).toEqual(['Added extra because deep requires it.', 'Added base because extra requires it.', 'Claude Code version unknown; not checking which items need a newer Claude Code.']);
   expect(r.errors).toEqual([]);
 });
 
@@ -74,4 +74,27 @@ test('C1 controls in an id are escaped', () => {
 test('checklist rows show the context line', () => {
   const rows = checklist(picks(pk('base'), pk('gsap-skills')), catalog, dirs);
   expect(rows.map((r) => r.context)).toEqual(['~0 tokens (estimate)', 'not measured before install']);
+});
+
+test('checklist flags items that run unpinned code', () => {
+  const c = { ...catalog, items: catalog.items.map((i) => (i.id === 'base' ? { ...i, unpinned_runtime: 'runs npx base@latest' } : i)) };
+  const [a, b] = checklist(picks(pk('base'), pk('extra')), c, dirs);
+  expect(a).toMatchObject({ id: 'base', unpinned: 'Runs unpinned code at launch.', unpinned_reason: 'runs npx base@latest' });
+  expect(b).toMatchObject({ id: 'extra', unpinned: '', unpinned_reason: '' });
+});
+test('notPicked names chosen ids outside the picks, not ids pulled in by requires', () => {
+  const p = picks(pk('deep'));
+  expect(notPicked(['deep', 'lead-a\u001b'], p, catalog)).toEqual(['"lead-a\\u001b" was not in the picks; run the recommend step again or pick from the checklist.']);
+  expect(notPicked(['deep', 'extra', 'base'], p, catalog)).toEqual([]);
+});
+
+test('an empty selection after filtering is an error', () => {
+  const r = resolveSelection(['newer'], catalog, '2.1.314');
+  expect(r.ids).toEqual([]);
+  expect(r.errors).toEqual(['Nothing is left to install: every chosen item was skipped.']);
+});
+
+test('an unknown Claude Code version is a notice', () => {
+  expect(resolveSelection(['base'], catalog, null).notices).toEqual(['Claude Code version unknown; not checking which items need a newer Claude Code.']);
+  expect(resolveSelection(['base'], catalog, '2.1.500').notices).toEqual([]);
 });

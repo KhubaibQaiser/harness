@@ -9,6 +9,7 @@ cost: {"context": "low", "setup": "medium"}
 stance: optional
 side_effects: ["installs-hook"]
 why: "Deploy applications to AWS with architecture recommendations, cost estimates, and IaC deployment."
+unpinned_runtime: "runs `uvx awslabs.aws-iac-mcp-server@latest` and `uvx awslabs.aws-pricing-mcp-server@latest` at launch"
 evidence:
   - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/deploy-on-aws/.claude-plugin/plugin.json (version 1.4.0, license Apache-2.0; the why sentence is the first sentence of its description)"
   - "License: repo awslabs/agent-plugins is Apache-2.0 (GitHub); plugin.json says Apache-2.0; no LICENSE inside the plugin directory"

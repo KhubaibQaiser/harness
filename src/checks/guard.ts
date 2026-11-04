@@ -25,7 +25,7 @@ const REDIRECTION = /\d*[<>]+&?\d*\s*[^\s;&|]*/g;
 const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bun', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh', 'command', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'pnpx', 'x', 'stdbuf', 'script']);
 // Matched on text whose backslashes became slashes (see personOnlyInvocation). Windows shims (harness.cmd) and any case
 // count: Windows and macOS file systems ignore case.
-const HARNESS_CMD = /(^|\/)harness(@\S+)?(\.(cmd|ps1|bat|exe))?$|(^|\/)cli\.m?js$/i;
+const HARNESS_CMD = /(^=?|\/)harness(@\S+)?(\.(cmd|ps1|bat|exe))?$|(^=?|\/)cli\.m?js$/i; // zsh =cmd expands to the path of cmd
 /** True when a wrapper's flag takes the next word as its value: the flag itself (-u, --unset), or a short-option
  *  cluster whose first value flag is its last letter (-iu NAME, -vs KILL), for every wrapper in WRAPPER_VALUE_FLAGS.
  *  As in getopt, a value flag earlier in the cluster takes the rest of it as its value (-uC: unset C). */
@@ -38,7 +38,7 @@ const takesValue = (wrapper: string, t: string): boolean => {
   return i === t.length - 2;
 };
 /** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
-const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|ps1|bat|exe)$/, '');
+const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
@@ -50,11 +50,32 @@ const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   npx: new Set(['-p', '--package', ...VALUE_FLAGS]),
   ...Object.fromEntries(['npm', 'pnpm', 'yarn', 'bun', 'bunx', 'pnpx', 'exec', 'dlx', 'x'].map((n) => [n, VALUE_FLAGS])),
 };
+const NPM_ALIAS: Record<string, string> = { t: 'test', tst: 'test' };
+const BUILT = 'the subcommand of a harness command is built by the shell (a brace, glob, forwarded or piped word), so the guard cannot read it';
+const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'elif', 'else', 'do', 'while', 'until']);
 const PMS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 // Subcommands only a person may run (deny) or that need the person's yes (ask; the dispatcher denies it when
 // unattended), with the arguments (after the subcommand) the agent may still use. `run(sub)` is how the person runs
 // `harness <sub>` in their own terminal. One place: M3's entries are in.
-const PREVIEW = (a: string[]) => a.some((t) => t === '--dry-run' || t === '--check' || t === '--plan') && !a.includes('--yes');
+// A word right after a value flag is that flag's value (init reads `--config --dry-run` as a file name), not a preview flag.
+const VALUE_FLAG = new Set(['--config', '--answers', '--product', '--picks', '--report', '--choose', '--take', '--title']);
+const PREVIEW_FLAGS = new Set(['--dry-run', '--check', '--plan']);
+const OTHER_FLAGS = new Set(['--over-budget', '--install-plugins']);
+const PLAIN_WORD = /^[\w@%+=:,./-]+$/; // no #, <, >, $, quotes or globs: nothing the shell could read differently
+/** Fails closed: a preview only when a preview flag is a real flag and every other word is a known flag, a value flag's
+ *  value, or a plain positional word. A comment, redirection, --yes or anything unknown means not a preview. */
+const PREVIEW = (a: string[]): boolean => {
+  if (a.includes('--yes')) return false;
+  let preview = false;
+  for (let i = 0; i < a.length; i++) {
+    const t = a[i];
+    if (VALUE_FLAG.has(t)) {
+      if (!a[i + 1] || a[i + 1].startsWith('-') || !PLAIN_WORD.test(a[++i])) return false;
+    } else if (PREVIEW_FLAGS.has(t)) preview = true;
+    else if (!OTHER_FLAGS.has(t) && (t.startsWith('-') || !PLAIN_WORD.test(t))) return false;
+  }
+  return preview;
+};
 const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (run: (sub: string) => string) => string }> = {
   tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (run) => `Only a person can pause TDD: run ${run('tdd off')} in your own terminal.` },
   uninstall: { kind: 'ask', allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
@@ -102,7 +123,8 @@ export function commandStart(toks: string[], stop: (name: string) => boolean = (
       const e = toks.findIndex((x, i) => i > k && /^-(exec|execdir|ok|okdir)$/.test(x));
       if (e < 0) break;
       [k, wrapper] = [e + 1, ''];
-    } else if (RUNNERS.has(runnerName(t))) [k, wrapper, scriptFile] = [k + 1, runnerName(t), runnerName(t) === 'script'];
+    } else if (RESERVED.has(t)) k++; // `{ harness …; }`, `! harness …`, `then harness …`
+    else if (RUNNERS.has(runnerName(t))) [k, wrapper, scriptFile] = [k + 1, runnerName(t), runnerName(t) === 'script'];
     else if (/^\w+=/.test(t)) {
       const val = t.replace(/^\w+=/, '');
       if (HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
@@ -126,9 +148,58 @@ function scriptsOf(root: string): Record<string, string> {
   }
 }
 
+/**
+ * The command with each here-document body removed. `<<` counts only outside quotes; the delimiter has its quotes taken
+ * out (`<<E"O"F` is EOF); `<<-` ignores leading tabs on the end line, `<<` wants the line exactly. If anything is odd (a
+ * delimiter with an expansion, a body with no end line) the command is returned whole, so nothing is hidden from the parser.
+ */
+function withoutHeredocBodies(cmd: string): string {
+  if (!cmd.includes('<<')) return cmd;
+  const lines = cmd.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    out.push(line);
+    const ends: { word: string; dash: boolean }[] = [];
+    let quote = '';
+    for (let c = 0; c < line.length; c++) {
+      const ch = line[c];
+      if (quote) { if (ch === quote) quote = ''; continue; }
+      if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === '\\') c++;
+      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<') {
+        let d = c + 2;
+        const dash = line[d] === '-';
+        if (dash) d++;
+        while (line[d] === ' ' || line[d] === '\t') d++;
+        let word = '';
+        let q = '';
+        for (; d < line.length; d++) {
+          const x = line[d];
+          if (q) { if (x === q) q = ''; else word += x; } else if (x === '"' || x === "'") q = x;
+          else if (/[\s;|&<>()]/.test(x)) break;
+          else word += x;
+        }
+        if (q || !/^\w+$/.test(word)) return cmd;
+        ends.push({ word, dash });
+        c = d - 1;
+      }
+    }
+    for (const e of ends) {
+      let found = false;
+      while (++i < lines.length) if ((e.dash ? lines[i].replace(/^\t+/, '') : lines[i]) === e.word) { found = true; break; }
+      if (!found) return cmd;
+    }
+  }
+  return out.join('\n');
+}
+
 // Why a harness invocation (in command position) needs the person, or null when the agent may run it.
 // ponytail: a wrapper flag value not listed in WRAPPER_VALUE_FLAGS is read as the command, which then isn't harness.
 function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
+  command = command.replace(/\\\r?\n/g, '');
+  const whole = command;
+  command = withoutHeredocBodies(command); // a body is data for its command; a shell reading it is handled below, from `whole`
   // A backslash is an escape in a POSIX shell (harn\\ess -> harness) and a path separator on Windows
   // (C:\\x\\cli.mjs): judge the command both ways.
   // Then again with a quoted or escaped space kept inside its word, so a path such as "C:\\Users\\John Smith\\…\\cli.mjs"
@@ -141,7 +212,7 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
     // A -c payload, or a program fed to a shell on stdin (echo … | bash, <<<, a here-document), is a command line of
     // its own: judge it with all the readings (a spaced path inside it is one word).
     (depth < 3
-      ? [...cPayloads(command), ...stdinPrograms(command, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
+      ? [...cPayloads(command), ...stdinPrograms(whole, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
           .reduce<Hit | null>((hit, p) => hit ?? personOnlyInvocation(p, w, depth + 1), null)
       : null)
   );
@@ -166,7 +237,7 @@ function grouped(command: string, escapes: boolean): string {
 }
 
 function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
-  const words = plain.split(/\s+/);
+  const words = plain.split(/[ \t]+/); // not \s: the shell does not split on NBSP, \f, \v or Unicode spaces
   const hit = (name: string, tok: string): Hit => ({ kind: PERSON_ONLY[name].kind, reason: PERSON_ONLY[name].why((sub) => terminalCommand(tok, sub, w)) });
   const hidden: Hit = { kind: 'deny', reason: ANY_WHY };
   // The harness token at toks[k]: which person-only subcommand it runs, if any. `next` is the separator after it.
@@ -179,8 +250,11 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
       }
     }
     const s = rest.findIndex((t) => !t.startsWith('-'));
-    if (s < 0) return /^(\$\(|\(|`)$/.test(next ?? '') ? hidden : null; // subcommand comes from a substitution
-    if (/[$`]/.test(rest[s])) return hidden;
+    // `xargs harness` with no written subcommand: the words come from stdin.
+    if (s < 0) return /^(\$\(|\(|`)$/.test(next ?? '') ? hidden : toks.slice(0, k).some((t) => runnerName(t) === 'xargs') ? { kind: 'ask', reason: BUILT } : null;
+    if (/[$`]/.test(rest[s])) return /^\$[@*0-9]$/.test(rest[s]) ? { kind: 'ask', reason: BUILT } : hidden; // "$@", $*, $1: the caller's words
+    // A brace, glob or character class the shell expands into the subcommand: `tdd off` shaped is denied, the rest asks.
+    if (/[{*?[]/.test(rest[s])) return rest[s + 1] === 'off' ? hit('tdd', toks[k]) : { kind: 'ask', reason: BUILT };
     if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return hit(rest[s], toks[k]);
     return null;
   };
@@ -189,16 +263,27 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
   // A lone & separates commands; 2>&1, >&2 and &> are redirections.
   const parts = plain.split(/(&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`])/);
   for (let i = 0; i < parts.length; i += 2) {
-    const toks = parts[i].trim().split(/\s+/).filter(Boolean);
+    const toks = parts[i].split(/[ \t]+/).filter(Boolean);
     // npm run <script> -- args, or pnpm/yarn/bun <script>: judge the script text with the args appended.
     const pm = toks.findIndex((t) => PMS.has(runnerName(t)));
-    if (pm >= 0 && depth < 3) {
+    if (pm >= 0) {
       let j = pm + 1;
-      while (toks[j]?.startsWith('-')) j++;
-      if (toks[j] === 'run' || toks[j] === 'run-script') j++;
-      const script = scriptsOf(w.root)[toks[j] ?? ''];
-      if (typeof script === 'string') {
-        const r = personOnlyInvocation(`${script} ${toks.slice(j + 1).filter((t) => t !== '--').join(' ')}`, w, depth + 1);
+      let dir = w.root;
+      while (toks[j]?.startsWith('-')) {
+        const eq = /^(--prefix|--dir|-C)=(.*)$/.exec(toks[j]);
+        if (eq) dir = resolve(w.root, eq[2] || '.');
+        else if (['--prefix', '-C', '--dir'].includes(toks[j])) dir = resolve(w.root, toks[++j] ?? '.');
+        j++;
+      }
+      if (['run', 'run-script', 'rum', 'urn'].includes(toks[j])) j++;
+      const scripts = scriptsOf(dir);
+      const name = scripts[toks[j] ?? ''] !== undefined ? toks[j] : NPM_ALIAS[toks[j] ?? ''] ?? toks[j] ?? '';
+      const args = toks.slice(j + 1).filter((t) => t !== '--').join(' ');
+      // npm also runs pre<name> and post<name>.
+      const bodies = [`pre${name}`, name, `post${name}`].filter((n) => typeof scripts[n] === 'string').map((n) => `${scripts[n]}${n === name ? ` ${args}` : ''}`);
+      if (bodies.length && depth >= 3) return { kind: 'ask', reason: 'a chain of npm scripts is too deep for the guard to read; run it yourself or read the scripts first' };
+      for (const b of bodies) {
+        const r = personOnlyInvocation(b, w, depth + 1) ?? backstop(b);
         if (r) return r;
       }
     }
@@ -207,11 +292,57 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
     // Whatever the hidden command is, the allowed arguments stay allowed.
     const at = toks[k]?.startsWith('$') && !HARNESS_CMD.test(toks[k]) ? k + 1 : k === 0 && /^[`)]$/.test(parts[i - 1] ?? '') ? 0 : -1;
     if (at >= 0 && isPersonOnly(toks[at]) && !PERSON_ONLY[toks[at]].allowed(toks.slice(at + 1))) return hidden;
-    if (!toks[k] || !HARNESS_CMD.test(toks[k])) continue;
+    // A glob in the CLI path (dist/cli.mj?) is expanded by the shell: judge it as the harness CLI.
+    if (!toks[k] || !(HARNESS_CMD.test(toks[k]) || (/[*?[]/.test(toks[k]) && CLI_RE.test(toks[k])))) continue;
     const r = judge(toks, k, parts[i + 1]);
     if (r) return r;
   }
   return null;
+}
+// Backstop: the parser reads words, but the shell has more ways to hide a command (globs, renamed copies, comments,
+// redirections, odd whitespace). Text that names harness or its CLI and a word that changes things asks, unless the parser
+// saw every such segment as a plain harness command and the text is clean.
+const CLI_RE = /cli\.[m*?[]|c[*?]\S*\.m/i;
+const CHANGE = /(?<![\w-])(init|update|add|remove|sync|uninstall|push|pr)(?![\w-])/i;
+const TDD_OFF = /(?<![\w-])tdd\W+off(?![\w-])/i;
+const NORM = (t: string): string => t.replace(/\\\r?\n/g, '').replace(/['"\\]/g, '');
+// `harness` counts as a command word (or a bare word), never as part of a directory in a path: `cd /x/harness && git push` is a push.
+function names(text: string): boolean {
+  if (CLI_RE.test(text)) return true;
+  for (const seg of text.split(SEGMENTS)) {
+    const toks = seg.split(/[ \t]+/).filter(Boolean);
+    const k = commandStart(toks);
+    if (toks.some((t, i) => /harness/i.test(t) && (!t.includes('/') || i === k))) return true;
+  }
+  return false;
+}
+const UNCLEAN = /[{}*?[#<>]|[^\S \t]/;
+const SEGMENTS = /&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`]/;
+function previewOnly(text: string, depth = 0): boolean {
+  text = text.split('${CLAUDE_PLUGIN_ROOT}').join('PLUGIN_ROOT'); // the one expansion the skills use
+  if (UNCLEAN.test(text)) return false;
+  // A -c payload is judged on its own; what is left outside it is judged as before.
+  const pays = depth < 3 ? cPayloads(text) : [];
+  if (pays.length && !pays.every((p) => previewOnly(p, depth + 1))) return false;
+  for (const p of pays) text = text.split(p).join('');
+  const plain = grouped(text, false);
+  if (plain.split(/[ \t]+/).some((t) => RESERVED.has(t))) return false;
+  for (const seg of plain.split(SEGMENTS)) {
+    if (!CHANGE.test(seg)) continue;
+    const toks = seg.split(/[ \t]+/).filter(Boolean);
+    const k = commandStart(toks);
+    if (!toks[k] || !HARNESS_CMD.test(toks[k])) return false;
+  }
+  return true;
+}
+function backstop(raw: string): Hit | null {
+  raw = raw.replace(/\\\r?\n/g, '');
+  const norm = NORM(raw); // `in''it` and `in\it` are init
+  if (!names(norm)) return null;
+  // Only words: a real `harness tdd off` the parser saw was denied before this. Prose, echo, grep, a commit message or a forwarding function asks.
+  if (TDD_OFF.test(raw) || TDD_OFF.test(norm)) return { kind: 'ask', reason: 'the command names harness and `tdd off`, and the guard cannot tell that it does not run it. Only a person can pause TDD, in their own terminal' };
+  if (!(CHANGE.test(raw) || CHANGE.test(norm)) || previewOnly(raw)) return null;
+  return { kind: 'ask', reason: 'the command names harness and a word that changes it (init, update, add, remove, sync, uninstall, push, pr), and the guard cannot tell that it is only a preview' };
 }
 const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');
 
@@ -429,6 +560,14 @@ export function decidePaths(paths: string[]): Decision {
 }
 
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
+  command = command.replace(/\\\r?\n/g, ''); // a backslash-newline joins the lines for the shell
+  const d = decideCore(command, ctx);
+  if (d.kind === 'deny') return d;
+  const b = backstop(command);
+  return d.kind === 'allow' && b ? toDecision(['ask', b.reason]) : d;
+}
+
+function decideCore(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const tokens = command.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');

@@ -5,21 +5,18 @@ import { defaultExec, type Exec } from '../core/exec.js';
 import { readManifest } from '../install/apply.js';
 import { dirtyPaths } from '../install/git-status.js';
 import { MANIFEST_REL } from '../install/manifest.js';
-import { sandboxLine, shq } from './init.js';
+import { ownCommand, shq } from './init.js';
 import type { CliEnv } from './index.js';
 
 const USAGE = 'Usage: harness git branch|commit|push|pr [--title <t>]';
 const NETWORK = /could not resolve host|unable to access|network is unreachable|connection (refused|timed out|reset)|timed out|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|error connecting to/i;
-
-/** True for any default-branch candidate: the origin/HEAD target, init.defaultBranch, `main` or `master`. */
-export const onDefault = (branch: string, candidates: string[]): boolean => candidates.includes(branch);
 
 /** Steps run by the skill only after the person says yes: one step per call, never on the default branch. */
 export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEnv & { exec?: Exec }): number {
   const [sub, ...rest] = args;
   const titleAt = rest.indexOf('--title');
   const title = titleAt >= 0 ? rest[titleAt + 1] : undefined;
-  if (!['branch', 'commit', 'push', 'pr'].includes(sub) || rest.length !== (sub === 'pr' && titleAt === 0 ? 2 : 0) || (titleAt >= 0 && !title)) return out(USAGE), 2;
+  if (!['branch', 'commit', 'push', 'pr'].includes(sub) || rest.length !== (sub === 'pr' && titleAt === 0 ? 2 : 0) || (titleAt >= 0 && (!title || title.startsWith('--')))) return out(USAGE), 2;
 
   const git = (...a: string[]) => exec('git', ['-C', root, ...a]);
   const m = readManifest(root);
@@ -36,7 +33,7 @@ export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEn
   const lines = (s: string) => s.trim().split(/\r?\n/).map(esc).join('\n');
   const failed = (cmd: string, r: { stderr?: string; stdout: string }) => {
     const err = (r.stderr || r.stdout).trim();
-    return out(NETWORK.test(err) ? sandboxLine('git', [sub, ...rest]) : `${cmd} failed: ${lines(err)}\nFix that, then run \`harness git ${sub}\` again.`), 1;
+    return out(NETWORK.test(err) ? `${cmd} failed: the sandbox or the network blocked it (${lines(err)}). ${ownCommand('git', [sub, ...rest])}` : `${cmd} failed: ${lines(err)}\nFix that, then run \`harness git ${sub}\` again.`), 1;
   };
 
   const mine = [...m.files.map((f) => f.rel), MANIFEST_REL];
@@ -51,7 +48,7 @@ export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEn
     return r.status ? failed('git checkout', r) : (out(`Switched to a new branch ${esc(b)}.`), 0);
   }
 
-  if (!branch || onDefault(branch, candidates)) {
+  if (!branch || candidates.includes(branch)) {
     const then = sub === 'commit' ? 'Run harness git branch first.' : sub === 'push' ? 'Harness never pushes the default branch.' : 'Run harness git branch first.';
     return out(`You are on ${esc(branch || 'a detached HEAD')}. ${then}`), 1;
   }

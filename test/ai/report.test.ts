@@ -27,3 +27,12 @@ test('finalizeReport adds the sentence once, under Limits', () => {
   expect(finalizeReport(once)).toBe(once);
 });
 test('finding id f1 is not satisfied by f10', () => expect(validateReport(md().replace('f1:', 'f10:'), p)).toEqual(['report: finding "f1" is not in "## Findings"']));
+
+test('a finding id with control characters is escaped in the message', () => {
+  const q = { ...p, findings: [{ id: 'f\u009b31m', severity: 'medium', title: 't' }] } as any;
+  const m = validateReport(md(), q).join('\n');
+  expect(m).toContain('f\\u009b31m');
+  expect(m).not.toMatch(/[\u0080-\u009f]/);
+});
+
+test('control characters in the report are rejected', () => expect(validateReport(`${md()}\u009b31m`, p)).toEqual(['report: must not contain control characters']));

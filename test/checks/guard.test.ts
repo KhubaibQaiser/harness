@@ -276,8 +276,10 @@ test.each([
   'script -c "harness uninstall --yes" /dev/null', 'find . -maxdepth 0 -exec harness uninstall --yes ;', 'timeout -s KILL 60 harness uninstall --yes',
   'nice -n 5 harness uninstall --yes', 'pnpm --filter x exec harness uninstall --yes', 'npm --prefix x exec harness uninstall --yes',
 ])('R2: %s asks the person', (cmd) => expect(kind(cmd)).toBe('ask'));
-test.each(['git commit -m "docs: harness uninstall now asks"', 'echo "run harness tdd off yourself"', "grep -r 'harness uninstall' docs"])(
-  'R2: harness words inside quotes are prose, not an invocation: %s', (cmd) => expect(kind(cmd)).toBe('allow'));
+// The backstop reads the raw text, so prose that names harness and a change word asks (accepted cost), and `tdd off` is denied.
+test.each(['git commit -m "docs: harness uninstall now asks"', "grep -r 'harness uninstall' docs"])(
+  'R2: harness words inside quotes ask through the backstop: %s', (cmd) => expect(kind(cmd)).toBe('ask'));
+test('R2: prose with harness tdd off only asks', () => expect(kind('echo "run harness tdd off yourself"')).toBe('ask'));
 test.each(['harness uninstall --dry-run', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" uninstall --dry-run', 'npx @khubaibqaiser/harness uninstall --dry-run', 'harness status', 'harness doctor', 'git commit -m "uninstall the old hook"'])(
   '%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 
@@ -442,9 +444,9 @@ test.each(['script -q /dev/null harness "tdd" off', 'find . -exec harness "tdd" 
   'P2: %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
 // P3: harness words in argument positions are not commands.
 test.each([
-  'rg harness tdd', 'ls ~/code/harness tdd', 'git log -- harness tdd', 'echo harness uninstall', 'grep -rn harness uninstall',
-  'cat harness uninstall', 'find . -name harness -print', 'npm view @khubaibqaiser/harness version',
+  'rg harness tdd', 'ls ~/code/harness tdd', 'git log -- harness tdd', 'find . -name harness -print', 'npm view @khubaibqaiser/harness version',
 ])('P3: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+test.each(['echo harness uninstall', 'grep -rn harness uninstall', 'cat harness uninstall'])('P3: %s asks through the backstop', (cmd) => expect(kind(cmd)).toBe('ask'));
 
 // Round 7: Windows paths (backslashes, drive letters, quoted or not) and Windows shims name the harness CLI too.
 // Written as strings, so they run on every OS.
@@ -475,8 +477,9 @@ test.each([
 ])('F2: %s asks (uninstall)', (cmd) => expect(kind(cmd)).toBe('ask'));
 test.each(['node "./my dir/cli.mjs" tdd off', 'node ./my\\ dir/cli.mjs tdd off', 'node "C:\\Users\\John Smith\\dist\\cli.mjs" tdd off', '"/opt/my tools/harness" tdd off'])(
   'F2: %s is denied (tdd off)', (cmd) => expect(kind(cmd)).toBe('deny'));
-test.each(['node "./my dir/cli.mjs" uninstall --dry-run', 'node "./my dir/cli.mjs" tdd status', 'git commit -m "harness uninstall in my dir"', 'echo "./my dir/cli.mjs uninstall"'])(
+test.each(['node "./my dir/cli.mjs" uninstall --dry-run', 'node "./my dir/cli.mjs" tdd status'])(
   'F2: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+test.each(['git commit -m "harness uninstall in my dir"', 'echo "./my dir/cli.mjs uninstall"'])('F2: %s asks through the backstop', (cmd) => expect(kind(cmd)).toBe('ask'));
 
 // Round 10 F2a: -c payloads are judged again with the same readings, so a spaced path inside one is one word.
 test.each([
@@ -485,7 +488,8 @@ test.each([
   `find . -maxdepth 0 -exec sh -c "node './my dir/cli.mjs' uninstall --yes" ;`, `sh -c "sh -c \\"node './my dir/cli.mjs' uninstall --yes\\""`,
 ])('F2a: %s asks (uninstall)', (cmd) => expect(kind(cmd)).toBe('ask'));
 test.each([`sh -c 'node "./my dir/cli.mjs" tdd off'`, `bash -c "node './my dir/cli.mjs' tdd off"`])('F2a: %s is denied (tdd off)', (cmd) => expect(kind(cmd)).toBe('deny'));
-test.each([`sh -c "node './my dir/cli.mjs' uninstall --dry-run"`, `bash -c "echo 'harness uninstall' in a dir"`])('F2a: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+test.each([`sh -c "node './my dir/cli.mjs' uninstall --dry-run"`])('F2a: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+test(`F2a: bash -c "echo 'harness uninstall' in a dir" asks through the backstop`, () => expect(kind(`bash -c "echo 'harness uninstall' in a dir"`)).toBe('ask'));
 
 // Round 12 N2: shell options with values and -- before or after -c.
 test.each([`bash -o pipefail -c 'harness uninstall --yes'`, `bash -O extglob -c "node './my dir/cli.mjs' uninstall --yes"`, `bash -c -- "node './my dir/cli.mjs' uninstall --yes"`, `bash +o history -c 'harness uninstall --yes'`])(
@@ -494,7 +498,8 @@ test.each([`bash -o pipefail -c 'harness uninstall --yes'`, `bash -O extglob -c 
 test.each([`echo 'harness uninstall --yes' | bash`, `printf 'harness uninstall --yes\\n' | sh`, `bash -s <<< 'harness uninstall --yes'`, "bash <<'EOF'\nharness uninstall --yes\nEOF"])(
   'N4: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));
 test.each([`echo 'harness tdd off' | bash`, "sh <<EOF\nharness tdd off\nEOF"])('N4: %s is denied', (cmd) => expect(kind(cmd)).toBe('deny'));
-test.each([`echo 'harness uninstall' | cat`, `echo 'harness status' | bash`])('N4: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+test.each([`echo 'harness status' | bash`])('N4: %s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
+test(`N4: echo 'harness uninstall' | cat asks through the backstop`, () => expect(kind(`echo 'harness uninstall' | cat`)).toBe('ask'));
 
 test.each([`env -S "harness uninstall --yes"`, `env --split-string='node ./my\\ dir/cli.mjs uninstall --yes'`])('D1: %s asks', (cmd) => expect(kind(cmd)).toBe('ask'));
 
@@ -579,4 +584,90 @@ test('harness git push and git pr ask; harness git branch and git commit are all
   const why = 'Confirm: the agent is pushing or opening a pull request for the harness changes';
   for (const cmd of ['harness git push', 'harness git pr create', 'npx @khubaibqaiser/harness git push origin x']) expect(reason(decideCommand(cmd, ctx())), cmd).toBe(why);
   all(['harness git branch x', 'harness git commit -m x'], 'allow');
+});
+
+test('a preview flag that is a value flag\'s value is not a preview', () => {
+  for (const c of ['harness init --config --dry-run', 'harness init --answers --dry-run --product p --picks q --report r --choose c', 'harness update --picks --plan', 'harness sync --take --dry-run', 'harness git pr --title --dry-run'])
+    expect(kind(c), c).toBe('ask');
+  all(['harness init --dry-run', 'harness init --config c.yaml --dry-run'], 'allow');
+});
+test('a comment or a redirection hides the real arguments: ask', () => {
+  for (const c of ['harness init # --dry-run', 'harness init --config c.yaml # --dry-run', 'harness add x # --dry-run', 'harness sync # --dry-run', 'harness update # --plan', 'harness init 2> --dry-run', 'harness init < --dry-run', 'script -q /dev/null harness init < --dry-run', 'npx @khubaibqaiser/harness init --config cfg # --dry-run', 'harness init > --dry-run', 'harness init --dry-run 2>/dev/null', 'harness init --dry-run --unknown'])
+    expect(kind(c), c).toBe('ask');
+  all(['harness init --dry-run --over-budget', 'harness update --answers a.json --dry-run', 'harness sync --take a,b --dry-run', 'harness update --plan'], 'allow');
+});
+
+test('re-review I1: a word with a non-ASCII or odd space inside is one word for the shell', () => {
+  for (const sep of [' ', '\f', '\v', '\r', ' ', '　', '﻿']) {
+    expect(kind(`harness init --config x${sep}--dry-run`), JSON.stringify(sep)).toBe('ask');
+    expect(kind(`harness sync --take x${sep}--dry-run`), JSON.stringify(sep)).toBe('ask');
+    expect(kind(`node /p/dist/cli.mjs init --config c${sep}--dry-run`), JSON.stringify(sep)).toBe('ask');
+  }
+});
+test('re-review I2: a reserved word or brace in front of the command does not hide it', () => {
+  for (const c of ['{ harness init --yes; }', '! harness init --yes', 'if true; then harness init --yes; fi', 'while true; do harness init --yes; break; done', 'h() { node dist/cli.mjs "$@"; }; h init', '! harness uninstall --yes']) expect(kind(c), c).not.toBe('allow');
+  expect(kind('{ harness tdd off; }')).toBe('deny');
+  expect(kind('harness tdd off')).toBe('deny');
+});
+test('re-review I3: a glob in the CLI path does not hide it', () => {
+  for (const c of ['node dist/cli.mj? init --yes', 'node dist/c*.mjs init', 'node dist/cli.[m]js init', 'node dist/cli.m* init --yes']) expect(kind(c), c).toBe('ask');
+  expect(kind('node dist/cli.mj? tdd off')).toBe('deny');
+});
+test('re-review M2: a renamed or remote copy that names harness or cli.mjs asks', () => {
+  for (const c of ['ln -s dist/cli.mjs h.mjs && node h.mjs init --yes', 'cp dist/cli.mjs /tmp/h.mjs; node /tmp/h.mjs init', "node -e 'import(\"./dist/cli.mjs\")' x init --yes", 'npx khubaibqaiser/harness#main init', 'npx https://github.com/KhubaibQaiser/harness.git init', 'npx github:KhubaibQaiser/harness remove x'])
+    expect(kind(c), c).toBe('ask');
+});
+test('backstop: genuine previews and read-only commands stay allowed', () => {
+  all(['harness update --plan', 'harness status', 'harness doctor', 'harness why x', 'harness explain', 'harness catalog', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" init --answers a.json --product p.md --picks q.json --report r.md --choose a,b --dry-run', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" update --answers a.json --dry-run'], 'allow');
+});
+test('backstop: a commit message that mentions harness and a change word asks (accepted cost)', () => {
+  expect(kind('git commit -m "fix harness init docs"')).toBe('ask');
+  expect(kind('git commit -m "fix docs"')).toBe('allow');
+});
+test('re-review M1: npm pre/post scripts, aliases, another prefix and the depth limit', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-m1-'));
+  mkdirSync(join(root, 'sub'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { prex: 'harness init', x: 'true', test: 'harness init', a: 'harness init', b: 'npm run a', c: 'npm run b', d: 'npm run c', e: 'npm run d', quiet: 'true' } }));
+  writeFileSync(join(root, 'sub/package.json'), JSON.stringify({ scripts: { s: 'harness init' } }));
+  const k = (c: string) => decideCommand(c, { ...ctx(), root }).kind;
+  for (const c of ['npm run x', 'npm t', 'npm tst', 'npm rum a', 'npm run e', 'npm run d', 'npm --prefix sub run s', 'pnpm -C sub s']) expect(k(c), c).toBe('ask');
+  expect(k('npm run quiet')).toBe('allow');
+});
+
+test('tdd off: a real invocation the parser sees is denied, words the text scan only finds ask', () => {
+  for (const c of ['{ harness tdd off; }', '! harness tdd off', 'if true; then harness tdd off; fi', 'node dist/cli.mj? tdd off', 'node dist/c*.mjs tdd off']) expect(kind(c), c).toBe('deny');
+  for (const c of ['echo "harness tdd off"', "grep -r 'harness tdd off' docs", 'git commit -m "docs: harness tdd off"', 'cat <<EOF\nharness tdd off\nEOF', 'h() { node dist/cli.mjs "$@"; }; h tdd off']) expect(kind(c), c).toBe('ask');
+});
+
+test('rereview2 I1: a subcommand the shell builds by expansion is not allowed', () => {
+  for (const c of ['harness ini{t..t} --yes', 'node /abs/dist/cli.mjs ini{t..t} --yes', 'harness in\\\nit --yes', 'harn\\\ness init --yes', 'harness in* --yes', 'harness ini? --yes', 'CLAUDECODE= node /x/dist/cli.mjs ini{t..t} --yes'])
+    expect(kind(c), c).toBe('ask');
+  for (const c of ['harness t{d..d}d off', 'harness t\\\ndd off', 'harness t?d off', 'harness [t]dd off', 'CLAUDECODE= node /x/dist/cli.mjs t{d..d}d off', 'env -u CLAUDECODE harness t{d..d}d off']) expect(kind(c), c).toBe('deny');
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-g-'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { g: 'harness ini{t..t} --yes' } }));
+  expect(decideCommand('npm run g', { ...ctx(), root }).kind).toBe('ask');
+});
+test('rereview2 I2: forwarded, piped or quote-split words ask', () => {
+  for (const c of ['h() { harness "$@"; }; h in\'\'it --yes', 'h() { harness "$@"; }; h t\'\'dd off', 'h() { harness "$@"; }; x=in; h ${x}it --yes', "sh -c 'harness \"$@\"' _ in''it --yes", 'echo in""it --yes | xargs harness', "echo t''dd o''ff | xargs harness", 'printf %s%s in it | xargs -I{} harness {} --yes', "=node /abs/dist/cli.mjs in''it --yes", '=harness in""it --yes'])
+    expect(kind(c), c).toBe('ask');
+});
+test('rereview2 M1: heredoc stripping respects quotes, quoted delimiters and <<-', () => {
+  expect(kind("echo '<<EOF'\nharness tdd off\nEOF")).toBe('deny');
+  expect(kind('cat <<E"O"F\nx\nEOF\nharness tdd off\nE')).toBe('deny');
+  expect(kind("cat <<'EOF'\nharness tdd off\nEOF")).toBe('ask');
+  expect(kind('cat <<"EOF"\nharness tdd off\nEOF')).toBe('ask');
+  expect(kind('cat <<E"O"F\nharness tdd off\nEOF')).toBe('ask');
+  expect(kind('cat <<-EOF\n\tharness tdd off\n\tEOF')).toBe('ask');
+  expect(kind('cat <<EOF\nharness tdd off')).toBe('deny'); // no end line: nothing is stripped
+});
+test('rereview2 M2: --prefix=, --dir= and -C= are read', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-eq-'));
+  mkdirSync(join(root, 'sub'));
+  writeFileSync(join(root, 'package.json'), '{"scripts":{}}');
+  writeFileSync(join(root, 'sub/package.json'), JSON.stringify({ scripts: { s: 'harness init' } }));
+  for (const c of ['npm --prefix=sub run s', 'pnpm --dir=sub s']) expect(decideCommand(c, { ...ctx(), root }).kind, c).toBe('ask');
+});
+test('rereview2: harness inside a path is not a command word', () => {
+  all(['cd /x/harness && git add -A', 'cd /x/harness && git push origin feat', 'git -C /x/harness push origin feat', 'cd ~/Documents/khubaib-personal/harness && git add -A', 'git -C /x/harness add -A', 'rg "update" ~/harness/src', 'grep -rn init src/harness', 'pnpm -C /x/harness test'], 'allow');
+  for (const c of ['/x/harness/bin/harness init', 'node /x/harness/dist/cli.mjs init']) expect(kind(c), c).toBe('ask');
 });

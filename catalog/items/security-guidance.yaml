@@ -9,6 +9,7 @@ cost: {"context": "medium", "setup": "low"}
 stance: optional
 side_effects: ["installs-hook", "telemetry-on-by-default"]
 why: "Pattern-based warnings on edits, LLM-powered diff review on Stop, and an agentic commit reviewer that catches injection, XSS, SSRF, hardcoded secrets, and 25+ other vulnerability classes."
+unpinned_runtime: "installs claude-agent-sdk with pip and no version pin"
 evidence:
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/security-guidance/.claude-plugin/plugin.json (version 2.0.17; the why text is the second sentence of its description)"
   - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/security-guidance/LICENSE (Apache-2.0, the plugin directory's own file)"

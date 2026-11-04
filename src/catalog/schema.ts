@@ -34,6 +34,8 @@ export interface CatalogItem {
   why: string;
   evidence: string[];
   plugin_version?: string;
+  /** Why launching this item runs code that is not pinned (an `@latest` npx/uvx command, a hosted service). */
+  unpinned_runtime?: string;
   mcp?: { name: string; config: Record<string, unknown> };
   /** Plugin only: the `lspServers` map of the marketplace entry, copied verbatim for the installer to emit. */
   lsp_servers?: Record<string, unknown>;
@@ -62,7 +64,7 @@ export function validateItem(raw: unknown, file: string): { ok: true; item: Cata
     for (const k of Object.keys(o)) if (!known.includes(k)) err(at, `unknown key "${k}"`);
   };
   if (!isObj(raw)) return { ok: false, errors: [`${file}: must be a YAML mapping`] };
-  unknownKeys(raw, ['id', 'kind', 'title', 'source', 'license', 'min_claude_code', 'applies_when', 'conflicts_with', 'requires', 'cost', 'stance', 'stance_reason', 'side_effects', 'why', 'evidence', 'plugin_version', 'mcp', 'lsp_servers'], '');
+  unknownKeys(raw, ['id', 'kind', 'title', 'source', 'license', 'min_claude_code', 'applies_when', 'conflicts_with', 'requires', 'cost', 'stance', 'stance_reason', 'side_effects', 'why', 'evidence', 'plugin_version', 'unpinned_runtime', 'mcp', 'lsp_servers'], '');
   for (const k of ['id', 'title', 'license', 'why']) if (!str(raw[k])) err(k, 'must be a non-empty string');
   if (str(raw.id) && !ID_RE.test(raw.id)) err('id', 'must be lowercase letters, digits and hyphens');
   if (!KINDS.includes(raw.kind as ItemKind)) err('kind', `must be one of ${KINDS.join(', ')}`);
@@ -76,6 +78,7 @@ export function validateItem(raw: unknown, file: string): { ok: true; item: Cata
   if (!strs(fx)) err('side_effects', 'must be a list of strings');
   else fx.forEach((s, i) => (SIDE_EFFECTS as readonly string[]).includes(s) || err(`side_effects[${i}]`, `must be one of ${SIDE_EFFECTS.join(', ')}`));
   if (raw.plugin_version !== undefined && !str(raw.plugin_version)) err('plugin_version', 'must be a non-empty string');
+  if (raw.unpinned_runtime !== undefined && !str(raw.unpinned_runtime)) err('unpinned_runtime', 'must be a non-empty string');
 
   const aw = raw.applies_when;
   if (!isObj(aw)) err('applies_when', 'must be a mapping');

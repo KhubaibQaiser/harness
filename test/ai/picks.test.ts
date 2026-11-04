@@ -32,3 +32,13 @@ test('addresses must name findings', () => {
 test('catalog_version must match', () => expect(errs(picks([it('lead-a')], { catalog_version: 0 }))).toEqual(['catalog_version: picks are for catalog 0, this harness has catalog 1']));
 test('requires is not auto-added here', () => expect(errs(picks([it('extra')]))).toEqual([]));
 test('echoed text is escaped', () => expect(errs(picks([it('a\u001b[2Jb')]))[0]).toBe('items[0].id: unknown item "a\\u001b[2Jb"'));
+
+test('control characters in free text are rejected', () => {
+  const bad = 'ok \u001b[2J \u009b31m ‮';
+  for (const [name, raw] of [
+    ['items[0].reason', picks([it('lead-a', { reason: bad })])],
+    ['items[0].no_alternative', picks([it('lead-a', { no_alternative: bad })])],
+    ['findings[0].title', picks([it('lead-a')], { findings: [{ ...f(), title: bad }] })],
+    ['findings[0].id', picks([it('lead-a', { addresses: [] })], { findings: [{ ...f(bad) }] })],
+  ] as const) expect(errs(raw).join('\n'), name).toContain(`${name}: must not contain control characters`);
+});

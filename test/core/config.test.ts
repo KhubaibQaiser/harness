@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { configReference, loadConfig } from '../../src/core/config.js';
+import { configReference, esc, loadConfig } from '../../src/core/config.js';
 
 const emptyDir = () => mkdtempSync(join(tmpdir(), 'h-cfg-'));
 function dirWith(rel: string, body: string) {
@@ -181,4 +181,19 @@ test('budget_tokens default is 2000, and -1 and 1.5 are rejected', () => {
     expect(r.config.context.budget_tokens).toBe(2000);
   }
   expect(loadConfig(dirWith('.harness/config.yaml', 'context:\n  budget_tokens: 0\n')).config.context.budget_tokens).toBe(0);
+});
+
+test('esc escapes zero-width and bidi characters', () => {
+  for (const c of ['​', '‏', '‪', '‮', '⁠', '⁤', '⁦', '⁩', '﻿']) {
+    const e = esc(`a${c}b`);
+    expect(e, c.charCodeAt(0).toString(16)).toBe(`a\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}b`);
+  }
+  expect(esc('plain é text')).toBe('plain é text');
+});
+
+test('RAW_CONTROL and CONTROL share the hidden-character set', async () => {
+  const { RAW_CONTROL } = await import('../../src/ai/product.js');
+  const { CONTROL } = await import('../../src/core/config.js');
+  for (const c of ['​', '‏', '⁠', '﻿', '‮', '\u009b']) expect([RAW_CONTROL.test(c), CONTROL.test(c)], c.charCodeAt(0).toString(16)).toEqual([true, true]);
+  expect([RAW_CONTROL.test('a\tb\r\n'), CONTROL.test('\t')]).toEqual([false, true]);
 });

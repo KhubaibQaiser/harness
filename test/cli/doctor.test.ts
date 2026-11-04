@@ -557,7 +557,7 @@ test('items: config checks that differ from the selected items are a note', () =
   const root = itemsRepo([]);
   expect(runItems(root, []).out).not.toContain('checks differ');
   setConfig(root, (s) => s.replace(/(\n\s+tdd: )true/, '$1false'));
-  expect(runItems(root, []).out).toContain('note config.yaml checks differ from the selected items (tdd); the items win on the next update. Use harness add or remove to change gates.\n');
+  expect(runItems(root, []).out).toContain('note config.yaml checks differ from the selected items (tdd); the items win on the next update. Use /harness:add or harness remove to change gates.\n');
 });
 
 test('items: a missing or unreadable claude prints one note and skips the plugin checks', () => {

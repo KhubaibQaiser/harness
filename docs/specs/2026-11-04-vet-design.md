@@ -1,6 +1,6 @@
 # harness vet: design spec
 
-- Status: owner-approved (2026-11-04). The owner decisions are in section 1; D7 and D8 answered the spec's questions on 2026-11-04. Nothing is open.
+- Status: owner-approved (2026-11-04). The owner decisions are in section 1; D7 and D8 answered the spec's questions on 2026-11-04; D9 to D11 answered the plan's questions the same day. Nothing is open.
 - Date: 2026-11-04
 - Owner: khubaibqaiser
 - Inputs: two owner interviews on 2026-11-03 and 2026-11-04. The M3 code on main: `src/catalog/resolve.ts` (pin lookups through `gh`), `src/budget/measure.ts`, `src/install/facts.ts`, `src/ai/*` (the file contract and `harness validate`), and `templates/agents/staff-reviewer.md` (audit mode).
@@ -18,6 +18,9 @@
 | D6 | **Install.** On a yes, vet only prints the install command. harness doesn't track the item, so there is no manifest entry, no config change and no budget ask. |
 | D7 | **Pinning (2026-11-04).** vet also prints a sha-pinned plugin entry the owner can paste into a marketplace they control. `marketplace add` installs HEAD, so vet warns with the number of commits HEAD has moved past the vetted sha. |
 | D8 | **Reports in git (2026-11-04).** `.harness/vet/` reports are committed as evidence. |
+| D9 | **Temporary folder (2026-11-04).** The skill runs `harness vet --json --keep`, so the reviewer can read the files. That folder is deleted only by `harness vet --finish` or `harness vet --clean`, and it is gitignored. |
+| D10 | **Installed marketplaces only (2026-11-04).** `name@market` looks only in `claude plugin marketplace list --json`. There is no catalog fallback. A marketplace that isn't installed stops with a message asking for a GitHub URL. |
+| D11 | **Relative-path sources (2026-11-04).** A relative-path plugin source (`./plugins/x`) is that folder of the marketplace repo, at the marketplace's sha. A path containing `..`, or one that doesn't exist at that sha, stops. |
 
 ## 2. Scope
 
@@ -41,7 +44,11 @@
 
 1. **Parse the target.**
    - `https://github.com/o/r`, `…/tree/<ref>/<path>` and `o/r[#ref]` give a repo, a ref (default branch when none is given) and an optional sub-path.
-   - `name@market`: look the marketplace up in `claude plugin marketplace list --json` (installed marketplaces), then in harness's catalog. Read its `marketplace.json` at the marketplace's sha, and take the plugin entry's `source`. A `github` or `git-subdir` source becomes repo, path and ref. Any other source type, or a marketplace that can't be found, stops with a message naming the type.
+   - `name@market`: look the marketplace up in `claude plugin marketplace list --json` (installed marketplaces only, D10). Read its `marketplace.json` at the marketplace's sha, and take the plugin entry's `source`.
+     - A `github` or `git-subdir` source becomes repo, path and ref.
+     - A relative-path source (`./plugins/x`) becomes the marketplace repo, that path, and the marketplace's sha (D11). It stops on a path containing `..`, or a path that isn't a folder at that sha.
+     - Any other source type stops with a message naming the type.
+     - A marketplace that isn't installed stops with a message asking for the plugin's GitHub URL.
 2. **Pin.** Resolve the ref to a 40-character sha with `gh api repos/o/r/commits/<ref> --jq .sha`, reusing the `resolve.ts` error handling: a 404 means not found, and anything else means could not verify. Without `gh`, vet stops: `harness vet needs the GitHub CLI (gh).`
 3. **Fetch** the tarball with `gh api repos/o/r/tarball/<sha>` into `.harness/vet/tmp/<id>-<sha>/`, then extract it in-process. vet never runs anything from the item. Limits:
    - 25 MB compressed and 5,000 files;
@@ -49,6 +56,7 @@
    - files over 1 MB are listed but not read.
 4. **Scope** the scan to the sub-path, plus the repo-root files that a plugin at that path loads (`.claude-plugin/`, `.mcp.json`).
 5. **Clean up.** The temporary folder is deleted when the run ends, even when it fails. Only the report stays.
+   - D9: the skill's `--keep` run deletes the folder only on `harness vet --finish` or `harness vet --clean`. The folder is gitignored (its own `.gitignore` holds `*`).
 
 ## 4. The scan (deterministic, CLI)
 
@@ -70,7 +78,7 @@ The scan reads the manifests and plain text only. Each rule gives a severity, a 
 
 **Context cost.** The always-loaded text is skill and agent names and descriptions, and command descriptions. It is measured with `measure.ts` (characters / 4, the same estimate as the budget). A `SessionStart` or `UserPromptSubmit` hook that prints text is flagged as unmeasured injected context.
 
-**Output.** `--json` prints `{ target, repo, sha, path, kind, findings[], context: { tokens, unmeasured[] }, files }`. Without the flag, it prints the terminal summary from section 6.
+**Output.** `--json` prints `{ target, repo, sha, path, kind, findings[], context: { tokens, unmeasured[] }, files }`. With `--keep` (D9), it also has `dir`, the repo-relative temporary folder. Without the flag, it prints the terminal summary from section 6.
 
 ## 5. The review (AI, skill)
 

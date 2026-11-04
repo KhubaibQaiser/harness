@@ -49,7 +49,7 @@ export function planChanges(
   /** `legacyDir`: update's old results folder; a package whose results file still names it is migrated, TDD on or off.
    * `recorded`: the settings blocks the manifest holds, so update replaces harness's own old hook groups in place. */
   ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[]; catalog?: Catalog; mcpRecorded?: string[]; recordedFiles?: Manifest['files']; ai?: { picks: string; report: string; product: string } },
-): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[] } {
+): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[]; /** The config as written: checks follow the selection on the AI path. */ config: HarnessConfig } {
   const templatesDir = ctx.templatesDir ?? packageDir('templates');
   const changes: Change[] = [];
   const manual: string[] = [];
@@ -200,7 +200,7 @@ export function planChanges(
     put('.harness/context/product.md', ctx.ai.product);
   }
   formatEdits(root, changes, notes);
-  return { changes, manual, notes, dropped };
+  return { changes, manual, notes, dropped, config };
 }
 
 const JS = /\.[cm]?[jt]s$/;

@@ -135,22 +135,30 @@ export async function budgetGate(
 /** The person's own command line, for a step Claude Code's sandbox blocks. */
 export function sandboxLine(cmd: 'init' | 'update', args: string[]): string {
   const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
-  const q = (a: string) => (/\s/.test(a) ? JSON.stringify(a) : a);
-  return `Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's \`!\` prefix: ${self} ${cmd} ${args.map(q).join(' ')}`;
+  return `Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's \`!\` prefix: ${self} ${cmd} ${args.map(shq).join(' ')}`;
 }
+/** One shell word: bare when plain, else single-quoted (embedded quotes the POSIX way); control characters are escaped first so they never reach the terminal. */
+export const shq = (a: string): string => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${(/[\u0000-\u001f\u007f-\u009f]/.test(a) ? esc(a) : a).replace(/'/g, `'\\''`)}'`);
 export const isDenied = (e: unknown): boolean => ['EPERM', 'EACCES'].includes((((e as Error)?.cause ?? e) as NodeJS.ErrnoException)?.code ?? '');
-const SANDBOX_NET = /sandbox|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|network/i;
+// ponytail: wording guessed; Task 27 live-checks the real sandbox denial text. Not a bare "network" or ECONNREFUSED.
+const SANDBOX_NET = /\bsandbox\b|EAI_AGAIN|ENOTFOUND|EPERM|EACCES/i;
 
 /** Installs the selected pinned plugins, prints one line each, and re-hashes settings. Returns 1 when a sandbox network error hit. */
-export function installSelected(root: string, chosen: string[], cat: Catalog, exec: Exec, out: (s: string) => void, again: string): number {
+export function installSelected(root: string, chosen: string[], cat: Catalog, exec: Exec, out: (s: string) => void): number {
   const ids = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@harness-pins`);
   if (!ids.length) return 0;
   const r = installPlugins(ids, exec);
-  rehashManifest(root, ['.claude/settings.json']);
   for (const id of r.ok) out(`Installed plugin ${id}`);
-  for (const f of r.failed) out(`Could not install ${f.id}: ${f.message}\n  Run it yourself: claude plugin install ${f.id} --scope project`);
-  if (r.failed.some((f) => SANDBOX_NET.test(f.message))) return out(again), 1;
-  return 0;
+  for (const f of r.failed) out(`Could not install ${f.id}: ${f.message}\n  Run this yourself with Claude Code's \`!\` prefix: claude plugin install ${shq(f.id)} --scope project`);
+  if (r.failed.length) out('Then run /harness:sync to record the install.');
+  try {
+    if (r.ok.length) rehashManifest(root, ['.claude/settings.json']);
+  } catch (e) {
+    if (!(e instanceof ApplyError)) throw e;
+    out(`${isDenied(e) ? "Claude Code's sandbox blocks harness's own files. " : ''}The install worked but harness could not record it (${e.message}). Run /harness:sync to record the install.`);
+    return 1;
+  }
+  return r.failed.some((f) => SANDBOX_NET.test(f.message)) ? 1 : 0;
 }
 
 function parseArgs(args: string[]): { yes: boolean; dryRun: boolean; config?: string } | null {
@@ -173,6 +181,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   const aiPath = hasAiFlags(args);
   const refused = refuseOutsideClaude('init', cli.env, aiPath);
   if (refused) return out(refused), 2;
+  if (!aiPath && (ai.installPlugins || ai.overBudget)) return out(USAGE), 2;
   const lacking = aiPath ? missingAi('init', ai) : null;
   if (lacking) return out(lacking), 2;
   if (!opts.yes && !opts.dryRun && cli.tty === false) return out(NO_TTY), 2;
@@ -288,19 +297,20 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     throw e;
   }
   stampHarnessFiles(root); // change detection: these writes are harness's own
-  const installed = sel && ai.installPlugins ? installSelected(root, sel.ids, sel.catalog, cli.exec ?? defaultExec, out, sandboxLine('init', args)) : 0;
+  const installed = sel && ai.installPlugins ? installSelected(root, sel.ids, sel.catalog, cli.exec ?? defaultExec, out) : 0;
 
   // 6. Report
-  const checks = config.checks as Record<string, boolean>;
+  const written = plan.config; // on the AI path its checks follow the selection, not the preset
+  const checks = written.checks as Record<string, boolean>;
   // Coverage is on only if some TDD path is not skipped.
-  const coverageOn = checks.tdd && config.tdd.paths.some((p) => !config.tdd.coverage_skip.includes(p));
+  const coverageOn = checks.tdd && written.tdd.paths.some((p) => !written.tdd.coverage_skip.includes(p));
   const gates = [...Object.keys(GATES).map((k) => [GATES[k], checks[k]] as const), ['coverage', coverageOn] as const];
   const why = (g: string) => p.off.find((o) => o.gate === g)?.why ?? 'Turned off in the config.';
   out('Gates that are on: ' + gates.filter(([, on]) => on).map(([g]) => g).join(', '));
   const off = gates.filter(([, on]) => !on);
   out('Gates that are off:' + (off.length ? '\n' + off.map(([g]) => `  ${g}: ${why(g)}`).join('\n') : ' none'));
   if (checks.tdd) for (const o of p.tddOff) out(unsafeWhy(o.dir, o.noConfig));
-  if (checks.tdd) for (const p of coverageSkipped(facts, config)) out(coverageWhy(p));
+  if (checks.tdd) for (const p of coverageSkipped(facts, written)) out(coverageWhy(p));
   out(`Commit these files: ${[...plan.changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);
   out('Teammates need nothing else: the hooks are in the repo.');
   return installed;

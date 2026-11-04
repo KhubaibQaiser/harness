@@ -425,12 +425,9 @@ test('--install-plugins installs the pinned ids after apply, and rehashes settin
   const seen: string[][] = [];
   const exec = (_c: string, a: string[]) => {
     seen.push(a);
-    if (a[2].startsWith('impeccable')) {
-      const p = join(root, '.claude/settings.json');
-      writeFileSync(p, readFileSync(p, 'utf8').replace(/\n$/, '') + '\n\n');
-      return { status: 0, stdout: '{"ok":true}' };
-    }
-    return { status: 1, stdout: '{"ok":false,"error":"boom"}' };
+    const p = join(root, '.claude/settings.json');
+    writeFileSync(p, readFileSync(p, 'utf8').replace(/\n$/, '') + '\n\n');
+    return { status: 0, stdout: 'Installing...\n{"command":"install","outcome":"ok","message":"done"}' };
   };
   const r = await ai(root, [...aiArgs([...OWN, 'impeccable']), '--yes', '--over-budget', '--install-plugins'], { exec });
   expect(r.code).toBe(0);
@@ -439,4 +436,45 @@ test('--install-plugins installs the pinned ids after apply, and rehashes settin
   const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
   const text = readFileSync(join(root, '.claude/settings.json'), 'utf8');
   expect(m.files.find((f: { rel: string }) => f.rel === '.claude/settings.json').hash).toBe(createHash('sha256').update(text).digest('hex'));
+});
+
+test('a failed plugin install prints the per-plugin command and the sync line; a sandbox network failure exits 1', async () => {
+  const run = async (message: string) => {
+    const root = makeRepo(NPM_VITEST);
+    return ai(root, [...aiArgs([...OWN, 'impeccable']), '--yes', '--over-budget', '--install-plugins'], { exec: () => ({ status: 0, stdout: JSON.stringify({ command: 'install', outcome: 'failed', message }) }) });
+  };
+  const net = await run('getaddrinfo ENOTFOUND github.com');
+  expect(net.code).toBe(1);
+  expect(net.out).toContain("Run this yourself with Claude Code's `!` prefix: claude plugin install impeccable@harness-pins --scope project");
+  expect(net.out).toContain('Then run /harness:sync to record the install.');
+  const other = await run('Plugin impeccable@harness-pins requires a newer Claude Code');
+  expect(other.code).toBe(0);
+  expect(other.out).toContain('requires a newer Claude Code');
+  expect(other.out).not.toContain('Restart Claude Code');
+});
+
+test('plugin or budget flags without the AI flags are a usage error', async () => {
+  const root = makeRepo(NPM_VITEST);
+  for (const f of ['--install-plugins', '--over-budget']) expect((await go(root, ['--dry-run', f])).code).toBe(2);
+});
+
+test('the gate report follows the written config, not the preset', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const r = await ai(root, [...aiArgs(['agent-guard', 'agents-md']), '--yes', '--over-budget']);
+  expect(r.code).toBe(0);
+  expect(r.out).toMatch(/Gates that are off:[\s\S]*TDD/);
+  expect(r.out).toMatch(/Gates that are on: .*guard/);
+  expect(r.out.match(/Gates that are on: (.*)/)![1]).not.toContain('TDD');
+});
+
+test('interactive: the budget lines print before the confirm', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const order: string[] = [];
+  const prompt: Prompt = { async confirm(q) { order.push(`ask:${q}`); return false; }, async edit(_l, v) { return v; } };
+  let out = '';
+  const code = await init(aiArgs(OWN, { budget: 10 }), { root, env: { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' }, out: (s) => (order.push(`out:${s}`), (out += s + '\n')), prompt, version: '1.2.3', templatesDir, distDir, claudeVersion: () => null });
+  expect(code).toBe(0);
+  const ask = order.findIndex((o) => o.startsWith('ask:Apply these changes'));
+  expect(ask).toBeGreaterThan(order.findIndex((o) => o.includes('Over budget: confirm before installing.')));
+  expect(order.findIndex((o) => o.includes('Over budget'))).toBeGreaterThan(-1);
 });

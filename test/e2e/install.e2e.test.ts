@@ -5,10 +5,9 @@ import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, describe, expect, test } from 'vitest';
 import { MIN_CLAUDE_CODE } from '../../src/core/min-claude.js';
-import { PREFIX, build, cleanup, existingCrlf, noTests, npmVitest, standard, unsafeVitest, type Fixture } from './fixtures.js';
+import { DISPATCH, PREFIX, build, cleanup, existingCrlf, hookRunner, noTests, npmVitest, standard, unsafeVitest, type Fixture } from './fixtures.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'cli.mjs');
-const DISPATCH = '.harness/hooks/dispatch.mjs';
 
 // The suite must behave like an attended session even when CI or a parent agent sets these.
 const env: NodeJS.ProcessEnv = { ...process.env, HARNESS_PLAIN_INIT: '1' };
@@ -37,15 +36,7 @@ const cli = (root: string, ...args: string[]) => {
 const HOME = mkdtempSync(join(tmpdir(), 'h-e2e-home-'));
 afterAll(() => [shim, HOME].forEach(cleanup));
 const hookEnv = { ...env, HOME, USERPROFILE: HOME };
-/** Pipes one hook JSON into the installed dispatcher; returns the parsed decision, or null for "no output". */
-const hook = (root: string, input: Record<string, unknown>) => {
-  const r = spawnSync('node', [join(root, DISPATCH)], { cwd: root, encoding: 'utf8', env: hookEnv, input: JSON.stringify({ session_id: 's1', cwd: root, ...input }) });
-  expect(r.status).toBe(0);
-  return r.stdout ? (JSON.parse(r.stdout) as any) : null;
-};
-const pre = (root: string, tool_name: string, tool_input: Record<string, unknown>) => hook(root, { hook_event_name: 'PreToolUse', tool_name, tool_input });
-const verdict = (d: any): { decision: string; reason: string } =>
-  d?.hookSpecificOutput ? { decision: d.hookSpecificOutput.permissionDecision, reason: d.hookSpecificOutput.permissionDecisionReason } : { decision: d ? d.decision : 'allow', reason: d?.reason ?? '' };
+const { hook, pre, verdict } = hookRunner(hookEnv);
 const edit = (root: string, file: string) => verdict(pre(root, 'Edit', { file_path: join(root, file), old_string: 'a', new_string: 'b' }));
 
 const walk = (root: string, dir = root, out = new Map<string, string>()): Map<string, string> => {

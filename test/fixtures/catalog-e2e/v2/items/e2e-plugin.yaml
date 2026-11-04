@@ -1,0 +1,13 @@
+id: e2e-plugin
+kind: plugin
+title: "E2E plugin"
+source: {"type":"github","repo":"example/e2e-plugin","plugin":"e2e-plugin","sha":"2222222222222222222222222222222222222222"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"none"}
+stance: optional
+plugin_version: "1.0.0"
+why: "Fixture plugin for the end-to-end recommend test."
+evidence:
+  - "test/fixtures/catalog-e2e (fixture, not a real plugin)"

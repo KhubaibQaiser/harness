@@ -245,7 +245,6 @@ Every item below runs in CI unless marked otherwise.
 
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
 - TDD and coverage gates for JS/TS only. Other repos get every other gate.
-- No npm provenance while the repo is private.
 - Cloud Claude Code sessions don't load repo-enabled plugins. The committed hooks still run there, but `/harness:*` skills don't.
 - Hooks run with the user's permissions. Only CI and branch protection enforce rules for everyone.
 - Out of the beta: the PR reviewer, the interview and catalog, committing during `init`, and TDD for other languages.

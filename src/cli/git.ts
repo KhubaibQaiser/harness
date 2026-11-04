@@ -11,8 +11,8 @@ import type { CliEnv } from './index.js';
 const USAGE = 'Usage: harness git branch|commit|push|pr [--title <t>]';
 const NETWORK = /could not resolve host|unable to access|network is unreachable|connection (refused|timed out|reset)|timed out|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|error connecting to/i;
 
-/** True for the repo's default branch, `main` or `master`. */
-export const onDefault = (branch: string, defaultBranch: string): boolean => [defaultBranch, 'main', 'master'].includes(branch);
+/** True for any default-branch candidate: the origin/HEAD target, init.defaultBranch, `main` or `master`. */
+export const onDefault = (branch: string, candidates: string[]): boolean => candidates.includes(branch);
 
 /** Steps run by the skill only after the person says yes: one step per call, never on the default branch. */
 export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEnv & { exec?: Exec }): number {
@@ -29,7 +29,9 @@ export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEn
   // Not detect(): its last fallback is the current branch, which would make a feature branch the "default".
   const exists = (b: string) => git('rev-parse', '--verify', '-q', `refs/heads/${b}`).status === 0;
   const head = git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').stdout.trim().replace(/^origin\//, '');
-  const def = head || git('config', 'init.defaultBranch').stdout.trim() || ['main', 'master'].find(exists);
+  // Every candidate counts as default for the refusals (a global init.defaultBranch can disagree with the repo's real one).
+  const candidates = [...new Set([head, git('config', 'init.defaultBranch').stdout.trim(), 'main', 'master'].filter(Boolean))];
+  const def = candidates.find((b) => exists(b) || git('rev-parse', '--verify', '-q', `refs/remotes/origin/${b}`).status === 0);
   if (!def) return out("Can't tell the default branch. Run `git remote set-head origin -a`, then run again."), 1;
   const lines = (s: string) => s.trim().split(/\r?\n/).map(esc).join('\n');
   const failed = (cmd: string, r: { stderr?: string; stdout: string }) => {
@@ -49,7 +51,7 @@ export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEn
     return r.status ? failed('git checkout', r) : (out(`Switched to a new branch ${esc(b)}.`), 0);
   }
 
-  if (!branch || onDefault(branch, def)) {
+  if (!branch || onDefault(branch, candidates)) {
     const then = sub === 'commit' ? 'Run harness git branch first.' : sub === 'push' ? 'Harness never pushes the default branch.' : 'Run harness git branch first.';
     return out(`You are on ${esc(branch || 'a detached HEAD')}. ${then}`), 1;
   }

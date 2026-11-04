@@ -36,8 +36,9 @@ const base = (pm: Facts['packageManager'], yarnBerry = false): Facts => ({
   root: '/x', packageManager: pm, yarnBerry,
   packages: [{ dir: '.', scripts: {}, test: 'none' }, { dir: 'packages/a', scripts: { test: 'vitest' }, test: 'vitest' }],
   python: { present: false, tools: [] },
-  existing: { claudeMd: false, agentsMd: false, settings: false, settingsLocal: false, otherHooks: [] },
+  existing: { claudeMd: false, agentsMd: false, settings: false, settingsLocal: false, claudeDir: false, otherHooks: [] },
   defaultBranch: 'develop', warnings: [],
+  deps: [], apps: [], frameworks: [], routers: [], testRunners: [], ciFiles: [], docker: false, iac: [], dbClients: [], authSdks: [], expo: false, deploy: [], gitHooks: 'none',
 });
 
 it.each([

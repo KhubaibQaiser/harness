@@ -3,6 +3,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import picomatch from 'picomatch';
 import { parse as parseYaml } from 'yaml';
+import { deriveFacts } from './facts.js';
+import { harnessIgnore } from './harnessignore.js';
 import { jestCoverageUnreadable } from './test-config.js';
 
 export interface PackageFacts {
@@ -22,11 +24,28 @@ export interface Facts {
   yarnBerry: boolean;
   packages: PackageFacts[];
   python: { present: boolean; tools: ('pytest' | 'ruff' | 'mypy' | 'black')[] };
-  existing: { claudeMd: boolean; agentsMd: boolean; settings: boolean; settingsLocal: boolean; otherHooks: string[] };
+  existing: { claudeMd: boolean; agentsMd: boolean; settings: boolean; settingsLocal: boolean; claudeDir: boolean; otherHooks: string[] };
   defaultBranch: string;
   warnings: string[];
   /** Prettier is a dependency of the root or a workspace package. */
   prettier?: true;
+  /** Sorted union of every package's dependency names. File checks below are root-only, except app/pages/eas.json/app.json, which are per package. */
+  deps: string[];
+  apps: { dir: string; kind: 'web' | 'mobile' | 'api' }[];
+  frameworks: string[];
+  routers: string[];
+  testRunners: string[];
+  /** Repo-relative paths. */
+  ciFiles: string[];
+  docker: boolean;
+  /** Labels (terraform, cdk, pulumi, serverless, sst), not file names. */
+  iac: string[];
+  dbClients: string[];
+  authSdks: string[];
+  expo: boolean;
+  /** Labels from the config file stem (vercel, netlify, fly, render, railway, wrangler, amplify). */
+  deploy: string[];
+  gitHooks: 'lefthook' | 'husky' | 'none';
 }
 
 const SKIP = new Set(['node_modules', '.git', '.harness']);
@@ -37,7 +56,11 @@ const COVERAGE_PROVIDERS = ['@vitest/coverage-v8', '@vitest/coverage-istanbul'];
 const depsOf = (pkg: Record<string, any> | null) => new Set(DEP_FIELDS.flatMap((f) => Object.keys(pkg?.[f] ?? {})));
 
 // Every fs read goes through these so detect never throws; a missing file is silent, any other failure becomes a warning.
+// Set at the top of detect(); read() and list() honour it so a harnessignored path is never opened or listed.
+let ignored: (rel: string) => boolean = () => false;
+
 function read(root: string, rel: string, warnings: string[], skipped: string): string | null {
+  if (ignored(rel)) return null;
   try {
     return readFileSync(join(root, rel), 'utf8');
   } catch (e) {
@@ -48,7 +71,7 @@ function read(root: string, rel: string, warnings: string[], skipped: string): s
 
 function list(root: string, rel: string, warnings: string[], skipped: string): import('node:fs').Dirent[] {
   try {
-    return readdirSync(join(root, rel), { withFileTypes: true });
+    return readdirSync(join(root, rel), { withFileTypes: true }).filter((e) => !ignored(rel ? `${rel}/${e.name}` : e.name));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') warnings.push(`Could not list \`${rel || '.'}\`; ${skipped}. Check its permissions and run init again.`);
     return [];
@@ -164,6 +187,7 @@ function collectCommands(node: unknown, out: string[]): void {
 
 export function detect(root: string): Facts {
   const warnings: string[] = [];
+  ignored = harnessIgnore(root);
   const has = (f: string) => existsSync(join(root, f));
   const rootPkg = readJson(root, 'package.json', warnings, 'its scripts and test framework are skipped');
   const hasPkg = has('package.json');
@@ -190,10 +214,14 @@ export function detect(root: string): Facts {
   const wsList = Array.isArray(ws) ? ws : Array.isArray(ws?.packages) ? ws.packages : [];
   globs.push(...wsList.filter((g: unknown): g is string => typeof g === 'string'));
 
-  const dirs = globs.length ? workspaceDirs(root, globs, warnings) : [];
+  const dirs = globs.length ? workspaceDirs(root, globs, warnings).filter((d) => !ignored(d)) : [];
   const rootDeps = depsOf(rootPkg);
   const packages = [...(hasPkg ? ['.'] : []), ...dirs].map((d) => packageFacts(root, d, warnings, rootDeps));
-  const prettier = rootDeps.has('prettier') || dirs.some((d) => depsOf(readJson(root, `${d}/package.json`, [], '')).has('prettier'));
+  const pkgDeps = [...(hasPkg ? ['.'] : []), ...dirs].map((dir) => ({ dir, deps: dir === '.' ? rootDeps : depsOf(readJson(root, `${dir}/package.json`, [], '')) }));
+  const prettier = pkgDeps.some((p) => p.deps.has('prettier'));
+  const python = pythonFacts(root, warnings);
+  const visible = (f: string) => has(f) && !ignored(f);
+  const appJson = (rel: string) => readJson(root, rel, [], '');
 
   const otherHooks: string[] = [];
   for (const f of ['settings.json', 'settings.local.json']) {
@@ -206,16 +234,18 @@ export function detect(root: string): Facts {
     packageManager,
     yarnBerry: has('.yarnrc.yml'),
     packages,
-    python: pythonFacts(root, warnings),
+    python,
     existing: {
       claudeMd: has('CLAUDE.md'),
       agentsMd: has('AGENTS.md'),
       settings: has('.claude/settings.json'),
       settingsLocal: has('.claude/settings.local.json'),
+      claudeDir: has('.claude'),
       otherHooks: [...new Set(otherHooks)].filter((c) => !c.includes('.harness/hooks/dispatch.mjs')),
     },
     defaultBranch: defaultBranch(root),
     warnings: [...new Set(warnings)],
     ...(prettier ? { prettier: true as const } : {}),
+    ...deriveFacts(root, pkgDeps, python, visible, appJson),
   };
 }

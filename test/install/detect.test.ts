@@ -11,7 +11,7 @@ test('empty repo', () => {
   expect(f.packageManager).toBe('none');
   expect(f.packages).toEqual([]);
   expect(f.python).toEqual({ present: false, tools: [] });
-  expect(f.existing).toEqual({ claudeMd: false, agentsMd: false, settings: false, settingsLocal: false, otherHooks: [] });
+  expect(f.existing).toEqual({ claudeMd: false, agentsMd: false, settings: false, settingsLocal: false, claudeDir: false, otherHooks: [] });
   expect(f.defaultBranch).toBe('main');
 });
 
@@ -195,7 +195,7 @@ test('fixture: existing CLAUDE.md, AGENTS.md, settings with other hooks, CRLF fi
       '.claude/settings.local.json': crlf({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'notify.sh' }] }] } }),
     }),
   );
-  expect(f.existing).toEqual({ claudeMd: true, agentsMd: true, settings: true, settingsLocal: true, otherHooks: ['prettier --write', 'notify.sh'] });
+  expect(f.existing).toEqual({ claudeMd: true, agentsMd: true, settings: true, settingsLocal: true, claudeDir: true, otherHooks: ['prettier --write', 'notify.sh'] });
   expect(f.packages[0]).toMatchObject({ name: 'crlf', test: 'vitest' });
   expect(f.warnings).toEqual([]);
 });

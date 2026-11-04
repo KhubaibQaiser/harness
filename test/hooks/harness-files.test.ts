@@ -1,12 +1,16 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { status } from '../../src/cli/status.js';
 import { doctor } from '../../src/cli/doctor.js';
 import { readEvents } from '../../src/core/events.js';
 import { guardedDiff, guardedView, snapshotHarnessFiles, stampHarnessFiles } from '../../src/core/harness-files.js';
 import { dispatch } from '../../src/hooks/dispatch.js';
+
+// Expected config warnings (a removed config.yaml) go to stderr; keep them out of the suite output.
+beforeEach(() => { vi.spyOn(process.stderr, 'write').mockReturnValue(true); });
+afterEach(() => vi.restoreAllMocks());
 
 // Change detection (owner decision 2026-11-03): the backstop for every route the path checks can't see.
 const repo = (config = 'checks:\n  guard: true\n') => {

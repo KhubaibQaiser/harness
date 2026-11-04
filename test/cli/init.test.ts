@@ -480,7 +480,8 @@ test('interactive: the budget lines print before the confirm', async () => {
   expect(order.findIndex((o) => o.includes('Over budget'))).toBeGreaterThan(-1);
 });
 
-test('an ok install then a refused manifest write exits 1 with the sync line', async () => {
+// chmod can't make a directory read-only on Windows, and root ignores the mode.
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('an ok install then a refused manifest write exits 1 with the sync line', async () => {
   const { installSelected } = await import('../../src/cli/init.js');
   const { loadCatalog } = await import('../../src/catalog/load.js');
   const { applyChanges } = await import('../../src/install/apply.js');

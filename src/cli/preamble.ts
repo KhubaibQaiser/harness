@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
-import { validateConfig } from '../core/config-io.js';
+import { migrateResultsDir, validateConfig } from '../core/config-io.js';
 import type { HarnessConfig } from '../core/config.js';
 import { gitRoot } from '../core/repo-root.js';
 import { LOCK_RECOVERY, LOCK_REL, ManifestError, readManifest, type Manifest } from '../install/apply.js';
@@ -30,9 +30,11 @@ export function openInstall(cli: { root: string; out: (s: string) => void }, not
 }
 
 /** The validated config, or the exit code after printing why not. */
-export function readConfig(root: string, out: (s: string) => void): HarnessConfig | number {
+/** `migrate`: read an old default results_dir as the new one, in memory only (update writes the migration). */
+export function readConfig(root: string, out: (s: string) => void, migrate = false): HarnessConfig | number {
   try {
-    const v = validateConfig(parseYaml(readFileSync(join(root, CONFIG), 'utf8')));
+    const text = readFileSync(join(root, CONFIG), 'utf8');
+    const v = validateConfig(parseYaml((migrate && migrateResultsDir(text)) || text));
     if (!v.ok) return v.errors.forEach((e) => out(e)), out('Next step: run harness doctor.'), 1;
     return v.config;
   } catch (e) {

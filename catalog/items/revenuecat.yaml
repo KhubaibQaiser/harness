@@ -1,0 +1,18 @@
+id: revenuecat
+kind: plugin
+title: "RevenueCat (in-app purchases)"
+source: {"type":"git-subdir","repo":"RevenueCat/ai-toolkit","path":"revenuecat","plugin":"revenuecat","sha":"ccfc038185ec457b2ac9077f3bbf1ba947a44dbb"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"any_dep":["react-native-purchases"]}
+cost: {"context":"low","setup":"medium"}
+stance: optional
+why: "Set up RevenueCat, integrate it, and access data."
+evidence:
+  - "https://github.com/RevenueCat/ai-toolkit/blob/ccfc038185ec457b2ac9077f3bbf1ba947a44dbb/revenuecat/.claude-plugin/plugin.json (version 2.3.0, license MIT; the why sentence is its description)"
+  - "https://github.com/RevenueCat/ai-toolkit/blob/ccfc038185ec457b2ac9077f3bbf1ba947a44dbb/LICENSE (MIT, repo root; the plugin directory has no LICENSE of its own; the plugin.json license field is also MIT)"
+  - "https://github.com/RevenueCat/ai-toolkit/blob/ccfc038185ec457b2ac9077f3bbf1ba947a44dbb/revenuecat/.mcp.json (hosted http MCP server https://mcp.revenuecat.ai/mcp; deferred tools)"
+  - "https://github.com/RevenueCat/ai-toolkit/blob/ccfc038185ec457b2ac9077f3bbf1ba947a44dbb/revenuecat/README.md (\"The plugin requires authentication with your RevenueCat account via OAuth\", which \"covers all your projects\": setup medium. The examples create apps, products, entitlements and offerings, and change App Store prices in your RevenueCat project, so it can write to a live account)"
+  - "Source choice: the official marketplace entry lists RevenueCat/rc-claude-code-plugin, which GitHub now resolves to RevenueCat/ai-toolkit (full_name from the API); the canonical name is used. Owner ruling: the sha is the one the official marketplace entry pins (in anthropics/claude-plugins-official at a2e251d9b97b); upstream HEAD is newer (2.5.1). No hooks directory at the sha"
+  - "audit.html: \"revenuecat (mobile in-app purchases)\" and \"Install only when a project uses them.\""
+  - "applies_when note: the README covers iOS, Android, Kotlin Multiplatform, Flutter and React Native SDKs; npm view react-native-purchases shows MIT, repository revenuecat/react-native-purchases. Facts only sees npm deps, so native, Flutter and KMP projects are under-matched"

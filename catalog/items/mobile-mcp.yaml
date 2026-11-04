@@ -1,0 +1,19 @@
+id: mobile-mcp
+kind: mcp
+title: "Mobile MCP (iOS and Android automation)"
+source: {"type":"npm","package":"@mobilenext/mobile-mcp","version":"1.0.16"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"project_types":["mobile"]}
+cost: {"context":"low","setup":"medium"}
+stance: optional
+side_effects: ["telemetry-on-by-default"]
+mcp: {"name":"mobile-mcp","config":{"command":"npx","args":["-y","@mobilenext/mobile-mcp@1.0.16"],"env":{"MOBILEMCP_DISABLE_TELEMETRY":"1"}}}
+why: "This is an MCP Server that enables scalable mobile automation, development through a platform-agnostic interface, eliminating the need for distinct iOS or Android knowledge."
+evidence:
+  - "https://github.com/mobile-next/mobile-mcp/blob/57efc27d96971f96caba69b62665fa057ebc65ac/README.md (the why sentence is its second paragraph)"
+  - "npm view @mobilenext/mobile-mcp: version 1.0.16 (dist-tag latest), license Apache-2.0, repository mobile-next/mobile-mcp; the GitHub API also reports Apache-2.0, not archived"
+  - "README.md section \"Telemetry\": \"Mobile MCP collects anonymous usage telemetry via PostHog and Scarf\", opt out with MOBILEMCP_DISABLE_TELEMETRY=1: telemetry-on-by-default. Owner ruling: harness sets the opt-out, so mcp.config has env MOBILEMCP_DISABLE_TELEMETRY=1; side_effects keeps telemetry-on-by-default because it describes the vendor default"
+  - "README.md section \"Prerequisites\": Xcode command line tools, Android Platform Tools (adb), Node.js v20+, plus a booted simulator, emulator or connected device (setup medium). The tool list includes install and uninstall of apps, clearing app data, and cloud-device tools (login, allocate, release) for the paid Mobile Next Cloud; none runs unless called"
+  - "audit.html: \"mobile-next/mobile-mcp (10k)\" and \"Use mobile-mcp for Android emulators.\""
+  - "applies_when note: project_types [mobile] is exact for the audit scope: in src/install/facts.ts an app is mobile only when it has an expo or react-native dependency, the same set as frameworks [expo, react-native]"

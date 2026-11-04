@@ -1,0 +1,15 @@
+id: react-native-best-practices
+kind: external-skill
+title: "React Native best practices (Callstack)"
+source: {"type":"git-subdir","repo":"callstackincubator/agent-skills","path":"skills/react-native-best-practices","plugin":"react-native-best-practices","sha":"59e9d17446a248b21d86f078fcd0bd2d36db1ca4"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"frameworks":["react-native"]}
+cost: {"context":"low","setup":"low"}
+stance: optional
+why: "Provides React Native performance optimization guidelines for FPS, TTI, bundle size, memory leaks, re-renders, and animations."
+evidence:
+  - "https://github.com/callstackincubator/agent-skills/blob/59e9d17446a248b21d86f078fcd0bd2d36db1ca4/skills/react-native-best-practices/SKILL.md (frontmatter: license MIT; the why sentence is the first sentence of its description)"
+  - "https://github.com/callstackincubator/agent-skills/blob/59e9d17446a248b21d86f078fcd0bd2d36db1ca4/LICENSE (MIT, Callstack Incubator); repo license MIT, not archived"
+  - "https://github.com/callstackincubator/agent-skills/blob/59e9d17446a248b21d86f078fcd0bd2d36db1ca4/.claude-plugin/marketplace.json (the skill ships in the `building-react-native-apps` bundle, source ./plugins/building-react-native-apps, with four other skills; this item points at the single skill directory instead). The skill directory has SKILL.md, POWER.md, agents/ and references/, no hooks"
+  - "audit.html: \"Startup time, dropped frames, memory leaks, bundle size, Reanimated jank. It goes deeper than Vercel's RN skill, so install this one, not both.\" (overlaps vercel-react-native-skills; see the owner note)"

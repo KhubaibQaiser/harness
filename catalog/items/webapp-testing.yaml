@@ -1,0 +1,16 @@
+id: webapp-testing
+kind: external-skill
+title: "Web app testing (Playwright, Anthropic skills)"
+source: {"type":"git-subdir","repo":"anthropics/skills","path":"skills/webapp-testing","plugin":"webapp-testing","sha":"ca45fc496a3436251f191354091d557da31c15b5"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"project_types":["web","landing"]}
+cost: {"context":"low","setup":"medium"}
+stance: optional
+why: "Toolkit for interacting with and testing local web applications using Playwright."
+evidence:
+  - "https://github.com/anthropics/skills/blob/ca45fc496a3436251f191354091d557da31c15b5/skills/webapp-testing/SKILL.md (frontmatter description: the why sentence is its first sentence)"
+  - "https://github.com/anthropics/skills/blob/ca45fc496a3436251f191354091d557da31c15b5/skills/webapp-testing/LICENSE.txt (Apache License 2.0; the repo's GitHub license field is null, this skill directory carries its own LICENSE.txt)"
+  - "SKILL.md: the agent writes Python scripts that import playwright.sync_api and launches headless chromium; SKILL.md has no install step for the Playwright Python package (requirement: python and playwright for python, hence setup medium). scripts/with_server.py starts the servers you pass as `--server \"<shell command>\"` and runs a script after them, so it runs shell commands you or the agent give it"
+  - "https://github.com/anthropics/skills/blob/ca45fc496a3436251f191354091d557da31c15b5/.claude-plugin/marketplace.json (the skill ships only inside the 12-skill `example-skills` bundle; this item points at the single skill directory instead)"
+  - "audit.html: \"Web testing Covered playwright, anthropics/skills webapp-testing, engineering:testing-strategy, superpowers TDD\""

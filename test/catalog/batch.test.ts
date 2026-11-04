@@ -13,6 +13,11 @@ const BATCHES: Record<number, string[]> = {
     'claude-code-setup', 'claude-md-management', 'skill-creator', 'hookify', 'session-report', 'dash0',
     'feature-dev', 'pr-review-toolkit',
   ],
+  3: [
+    'typescript-lsp', 'swift-lsp', 'kotlin-lsp', 'context7', 'graphify', 'serena', 'sourcegraph', 'mintlify', 'engineering',
+    'playwright', 'chrome-devtools-mcp', 'webapp-testing',
+    'expo', 'react-native-best-practices', 'maestro-mcp', 'mobile-mcp', 'revenuecat',
+  ],
 };
 
 test.each(Object.entries(BATCHES))('batch %s ids are all in items/ or excluded.yaml', (_n, ids) => {
@@ -35,6 +40,8 @@ const STANCES: Record<number, Record<string, { stance: string; reason?: string }
     'feature-dev': { stance: 'discouraged', reason: 'overlaps superpowers; use one process pack.' },
     'pr-review-toolkit': { stance: 'discouraged', reason: 'overlaps the built-in /code-review and the harness reviewer.' },
   },
+  3: {
+  },
 };
 
 test.each(Object.entries(BATCHES))('batch %s stances and reasons match the brief', (n, ids) => {
@@ -53,4 +60,11 @@ test('impeccable side effects and mcp config shapes', () => {
     const c = i.mcp!.config;
     expect(c.command !== undefined || (c.type === 'http' && typeof c.url === 'string'), i.id).toBe(true);
   }
+});
+
+test('LSP plugins carry the marketplace lspServers map', () => {
+  const by = new Map(loadCatalog().catalog.items.map((i) => [i.id, i]));
+  const servers = { 'typescript-lsp': 'typescript', 'swift-lsp': 'sourcekit-lsp', 'kotlin-lsp': 'kotlin-lsp' } as const;
+  for (const [id, name] of Object.entries(servers)) expect([id, Object.keys(by.get(id)?.lsp_servers ?? {})]).toEqual([id, [name]]);
+  expect((by.get('kotlin-lsp')?.lsp_servers as any)['kotlin-lsp'].startupTimeout).toBe(120000);
 });

@@ -35,6 +35,8 @@ export interface CatalogItem {
   evidence: string[];
   plugin_version?: string;
   mcp?: { name: string; config: Record<string, unknown> };
+  /** Plugin only: the `lspServers` map of the marketplace entry, copied verbatim for the installer to emit. */
+  lsp_servers?: Record<string, unknown>;
 }
 export interface Catalog { version: number; items: CatalogItem[] }
 
@@ -60,7 +62,7 @@ export function validateItem(raw: unknown, file: string): { ok: true; item: Cata
     for (const k of Object.keys(o)) if (!known.includes(k)) err(at, `unknown key "${k}"`);
   };
   if (!isObj(raw)) return { ok: false, errors: [`${file}: must be a YAML mapping`] };
-  unknownKeys(raw, ['id', 'kind', 'title', 'source', 'license', 'min_claude_code', 'applies_when', 'conflicts_with', 'requires', 'cost', 'stance', 'stance_reason', 'side_effects', 'why', 'evidence', 'plugin_version', 'mcp'], '');
+  unknownKeys(raw, ['id', 'kind', 'title', 'source', 'license', 'min_claude_code', 'applies_when', 'conflicts_with', 'requires', 'cost', 'stance', 'stance_reason', 'side_effects', 'why', 'evidence', 'plugin_version', 'mcp', 'lsp_servers'], '');
   for (const k of ['id', 'title', 'license', 'why']) if (!str(raw[k])) err(k, 'must be a non-empty string');
   if (str(raw.id) && !ID_RE.test(raw.id)) err('id', 'must be lowercase letters, digits and hyphens');
   if (!KINDS.includes(raw.kind as ItemKind)) err('kind', `must be one of ${KINDS.join(', ')}`);
@@ -99,6 +101,8 @@ export function validateItem(raw: unknown, file: string): { ok: true; item: Cata
     const ok = FIT[kind] ?? ['own'];
     if (!ok.includes(src.type as string)) err('source.type', `kind ${kind} takes source type ${ok.join(' or ')}`);
   }
+  if (raw.lsp_servers !== undefined && kind !== 'plugin') err('lsp_servers', 'only allowed for kind plugin');
+  else if (raw.lsp_servers !== undefined && !(isObj(raw.lsp_servers) && Object.keys(raw.lsp_servers).length > 0)) err('lsp_servers', 'must be a non-empty mapping of server name to config');
   if (kind === 'mcp' && raw.mcp === undefined) err('mcp', 'required for kind mcp');
   else if (raw.mcp !== undefined && kind !== 'mcp') err('mcp', 'only allowed for kind mcp');
   else if (raw.mcp !== undefined) {

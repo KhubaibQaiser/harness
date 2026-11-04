@@ -1,0 +1,16 @@
+id: engineering
+kind: plugin
+title: "Engineering (Anthropic knowledge-work plugin)"
+source: {"type":"git-subdir","repo":"anthropics/knowledge-work-plugins","path":"engineering","plugin":"engineering","sha":"2574e29377c7173d0cecffef29a6ecbd7f8ccb5d"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"always":true}
+cost: {"context":"low","setup":"low"}
+stance: optional
+why: "Streamline engineering workflows — standups, code review, architecture decisions, incident response, and technical documentation."
+evidence:
+  - "https://github.com/anthropics/knowledge-work-plugins/blob/2574e29377c7173d0cecffef29a6ecbd7f8ccb5d/engineering/.claude-plugin/plugin.json (version 1.2.0; the why sentence is the first sentence of its description)"
+  - "https://github.com/anthropics/knowledge-work-plugins/blob/2574e29377c7173d0cecffef29a6ecbd7f8ccb5d/LICENSE (Apache-2.0, repo root; the plugin directory has no LICENSE of its own)"
+  - "https://github.com/anthropics/knowledge-work-plugins/blob/2574e29377c7173d0cecffef29a6ecbd7f8ccb5d/engineering/.mcp.json (bundles 10 hosted MCP servers: slack, linear, asana, atlassian, notion, github, pagerduty, datadog, google calendar, gmail; google calendar and gmail have an empty url) and skills/ (10 directories: architecture, code-review, debug, deploy-checklist, documentation, incident-response, standup, system-design, tech-debt, testing-strategy). The plugin has no hooks directory and no always-on text of its own; context is low per the brief rule (deferred MCP tools and skills, no hooks). The owner audit nonetheless records an overload finding, kept here for the record: \"superpowers, ponytail, postman, caveman, engineering and design packs all load into every session\" (audit \"Instruction overload\" finding)"
+  - "audit.html: \"Datadog is in the engineering plugin but not authenticated.\""
+  - "https://github.com/anthropics/knowledge-work-plugins/blob/2574e29377c7173d0cecffef29a6ecbd7f8ccb5d/engineering/README.md (works standalone, supercharged when tools are connected; the docs name no stack, so always)"

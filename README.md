@@ -390,7 +390,7 @@ The config table in this README comes from the key rules in `src/core/config.ts`
 node scripts/gen-config-docs.mjs --write
 ```
 
-CI runs typecheck, tests and the latency suite on Ubuntu, macOS and Windows with Node 22 and 24, plus a gitleaks scan, `npm pack --dry-run`, real Vitest and Jest installs and `claude plugin validate`. A release runs from a `v<version>` tag that matches `package.json`, and publishes only from a manual run on a tag that is on `main`.
+CI runs typecheck, tests and the latency suite on macOS and Windows with Node 22, plus a gitleaks scan, `npm pack --dry-run`, real Vitest and Jest installs and `claude plugin validate`. A release runs from a `v<version>` tag that matches `package.json`, and publishes only from a manual run on a tag that is on `main`.
 
 ## Reporting feedback
 

@@ -169,3 +169,20 @@ test('marketplace list accepts {name, repo} and a missing source type', () => {
 test('repo name . / .. / .git and empty ref segments are rejected', () => {
   for (const s of ['o/..', 'o/.', 'o/.git', 'https://github.com/o/..', 'o/r#a//b', 'o/r#./x']) expect((parseTarget(s) as { error: string }).error?.startsWith(BAD), s).toBe(true);
 });
+
+test('gh failure pinning the marketplace', () => {
+  const base = market('./');
+  const rate = fake((c, a) => (c === 'gh' && a[1] === 'repos/mo/mr/commits/main' ? { status: 1, stdout: '', stderr: 'HTTP 403 rate limit' } : base(c, a)));
+  expect(resolveTarget(P, rate.exec)).toEqual({ error: 'mo/mr: could not verify main (gh exited 1): HTTP 403 rate limit.' + VER });
+  const gone = fake((c, a) => (c === 'gh' && a[1] === 'repos/mo/mr/commits/main' ? { status: 1, stdout: '', stderr: 'HTTP 404' } : base(c, a)));
+  expect(resolveTarget(P, gone.exec)).toEqual({ error: 'mo/mr: main not found on GitHub. Check the URL or ref.' });
+});
+
+test('failed fetch of the raw marketplace.json', () => {
+  const base = market('./');
+  const raw = (stderr: string) => fake((c, a) => (c === 'gh' && a[1].includes('marketplace.json') ? { status: 1, stdout: '', stderr } : base(c, a)));
+  expect(resolveTarget(P, raw('HTTP 404').exec)).toEqual({ error: 'mo/mr: marketplace.json not found on GitHub. Check the URL or ref.' });
+  expect(resolveTarget(P, raw('HTTP 502 bad gateway').exec)).toEqual({ error: 'mo/mr: could not verify marketplace.json (gh exited 1): HTTP 502 bad gateway.' + VER });
+  const junk = fake((c, a) => (c === 'gh' && a[1].includes('marketplace.json') ? ok('not json') : base(c, a)));
+  expect(resolveTarget(P, junk.exec)).toEqual({ error: 'Plugin "p" is not in marketplace "m". Check the plugin name, or pass the plugin\'s GitHub URL instead.' });
+});

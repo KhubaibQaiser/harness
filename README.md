@@ -82,6 +82,19 @@ claude plugin install harness@harness
 
 Then run `/harness:init` inside Claude Code. The plugin also adds `/harness:doctor`, `/harness:status`, `/harness:update` and `/harness:uninstall`. From a terminal, `npx @khubaibqaiser/harness init` does the same.
 
+### `/harness:init` in Claude Code
+
+The full flow runs only inside Claude Code, where Claude does the interview and the recommendations. The CLI stays deterministic: Claude passes it files, and it checks them.
+
+1. **Scan.** It reads your repo and shows what it found.
+2. **Interview.** Claude asks one question at a time: scope first, then gaps the scan can't answer. It drafts `product.md` for you to edit. It reads only files you point to, never dotenv files or `.harnessignore` paths, and credentials are names only.
+3. **Recommend.** A fresh-context reviewer audits the repo against the catalog and proposes items and a report.
+4. **Select.** You tick items, four per question, with the reason, context cost and side effects of each.
+5. **Apply.** It shows the plan and the always-loaded context from harness. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
+6. **Git.** Each of branch, commit, push and PR is its own question. Nothing runs without a yes.
+
+It writes the same files as `init`, plus `.harness/context/product.md` and `.harness/report.md`.
+
 ## Commands
 
 Run each command as `harness <command>`. From source, use `node /path/to/harness/dist/cli.mjs <command>`.

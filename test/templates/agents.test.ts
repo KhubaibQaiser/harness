@@ -36,6 +36,13 @@ test('staff-reviewer has an audit mode with picks and report blocks', () => {
   expect(a).toMatch(/no `\[sev\] file:line` lines/i);
 });
 
+test('audit mode: top switch, enums and read limit', () => {
+  const s = read('templates/agents/staff-reviewer.md');
+  expect(s.indexOf('skip to Audit mode')).toBeLessThan(s.indexOf('If no diff was supplied'));
+  const a = s.slice(s.indexOf('## Audit mode'));
+  for (const t of ['`recommended` or `optional`', '`critical`, `medium` or `nit`', 'copy it from the compact catalog', 'Read only that rubric file path', 'dotenv']) expect(a).toContain(t);
+});
+
 test('diff review rules unchanged', () => {
   const s = read('templates/agents/staff-reviewer.md');
   expect(s).toContain('If no diff was supplied, report `BLOCKERS: 0, MEDIUM: 0, NITS: 0` with one line saying no diff was supplied, and stop.');

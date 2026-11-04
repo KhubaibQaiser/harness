@@ -9,7 +9,7 @@ export interface VetFinding { severity: Severity; rule: Rule; file: string; line
 export interface ScanResult { target: string; repo: string; sha: string; path: string; kind: 'plugin' | 'skill' | 'repo'; findings: VetFinding[]; context: { tokens: number; unmeasured: string[] }; files: number; dir?: string }
 
 /** Matched text for output: cut to 120 code points, controls and invisible/bidi characters escaped (esc does both). */
-export const show = (s: string): string => esc([...s].slice(0, 120).join(''));
+export const show = (s: string): string => esc([...s.slice(0, 480)].slice(0, 120).join(''));
 
 /** Under the sub-path, or a repo-root file a plugin there loads (spec 3, step 4). */
 export function inScope(rel: string, path: string): boolean {
@@ -21,25 +21,96 @@ export function scoped(f: Fetched, path: string) {
   return { files: f.files.filter((p) => inScope(p, path)), skipped: f.skipped.filter((s) => inScope(s.path, path)), large: f.large.filter((p) => inScope(p, path)) };
 }
 
-const ENV = /(?:^|[\s'"=:(/~])\.env(?:\.[\w-]+)*(?![\w-])/;
-const SECRETS = [
-  ENV,
-  /\.ssh\/|\.aws\/|\.config\/gh\b|\bid_rsa\b|\.netrc\b/,
+// Every line test below is linear in the line length: a hostile 1 MB line must not stall vet (perf test).
+const P = `(?:^|[\\s'"=:(/~<>])`; // what may precede a path token
+const SECRET_RE = [
+  new RegExp(`${P}\\.env(?:\\.[\\w-]+)*(?![\\w-])`),
+  new RegExp(`${P}\\.(?:ssh|aws|netrc)\\b|${P}\\.config/gh\\b|\\bid_rsa\\b`),
   /\bsecurity\s+find-(?:generic|internet)-password\b|\bsecret-tool\s+lookup\b|\bgit\s+credential\s+(?:fill|get)\b/,
-  /\b(?:printenv|env)\b[^\n|]*\|\s*(?:curl|wget|nc)\b/,
+  /(?:^|[\s;&(])(?:printenv|env)\s*>/,
 ];
-const NPX = /\b(npx|bunx|uvx|pipx\s+run)\s+(?:-\S+\s+)*(\S+)/g;
-const PIN = { npx: /@\d+\.\d+\.\d+$/, bunx: /@\d+\.\d+\.\d+$/, uvx: /==\d+(\.\d+)*$/, pipx: /==\d+(\.\d+)*$/ } as const;
-const PIPE_SH = /\b(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b/;
-const SUBST = /\b(ba|z)?sh\s+<\(\s*(curl|wget)\b/;
-const DL_RUN = /\b(?:curl|wget)\b[^\n]*?(?:\s-[oO]\s*|\s>\s*|--output\s+)(\S+)[^\n]*?(?:&&|;)\s*(?:(?:sudo\s+)?(?:ba|z|da)?sh\s+|\.\/|source\s+)\1(?!\S)/;
+const ENV_CMD = /(?:^|[\s;&(])(?:printenv|env)\s*$/;
+const NET_START = /^\s*(?:curl|wget|nc)\b/;
+const SHELL_START = /^\s*(?:(?:sudo|env|xargs|exec|nohup|command|time)\b(?:\s+-\S+)*\s+)*(?:\S*\/)?(?:(?:ba|z|da|k|c)?sh|python[\d.]*|node|perl|ruby)\b/;
+const FETCH = /\b(?:curl|wget)\b/;
+const SUBST = /\b(?:ba|z)?sh\s+<\(\s*(?:curl|wget)\b|(?:\b(?:ba|z|da|k)?sh\s+-c|\beval|\bsource|(?:^|\s)\.)\s+(?:["']?\$|<)\(\s*(?:curl|wget)\b/;
+const LAUNCH = /\b(npx|bunx|uvx|pipx\s+run|npm\s+exec|pnpm\s+dlx|yarn\s+dlx|bun\s+x)\s+([^|;&\n)]*)/g;
+const FROM = new Set(['-p', '--package', '--from', '--spec']);
+const WITH = new Set(['--with']);
+const SKIP = new Set(['--python', '-c', '--call', '--registry', '--cache', '--userconfig', '--node-options']);
+const unq = (t: string) => t.replace(/^['"]|['"]$/g, '');
+const SEG = /(?<!\|)\|(?!\|)/;
 
-function unpinned(line: string): boolean {
-  for (const m of line.matchAll(NPX)) {
-    const pin = PIN[m[1]!.split(/\s/)[0] as keyof typeof PIN];
-    if (!pin.test(m[2]!)) return true;
+/** True when a launcher (npx, uvx, ...) in `rest` fetches a package that is not pinned to an exact version. */
+function launcherUnpinned(l: string, rest: string): boolean {
+  const pin = /^(?:uvx|pipx)/.test(l) ? /==\d+(\.\d+)*$/ : /@\d+\.\d+\.\d+$/;
+  const tk = rest.slice(0, 2000).split(/\s+/).filter(Boolean);
+  const pkgs: string[] = [];
+  let from = false, pos = '';
+  for (let i = 0; i < tk.length; i++) {
+    const t = unq(tk[i]!);
+    const eq = /^(--[a-z]+)=(.*)$/.exec(t) ?? (/^-p=(.*)$/.exec(t) && ['', '-p', t.slice(3)]);
+    const flag = eq ? eq[1]! : t;
+    const val = eq ? unq(eq[2]!) : undefined;
+    if (FROM.has(flag) || WITH.has(flag)) {
+      if (FROM.has(flag)) from = true;
+      const v = val ?? unq(tk[++i] ?? '');
+      if (v) pkgs.push(v);
+    } else if (SKIP.has(flag)) { if (val === undefined) i++; }
+    else if (!t.startsWith('-')) { pos = t; break; }
   }
-  return PIPE_SH.test(line) || SUBST.test(line) || DL_RUN.test(line);
+  if (!from && pos) pkgs.push(pos);
+  return pkgs.some((p) => !/^(?:\.|\/|file:)/.test(p) && !pin.test(p));
+}
+
+/** Fetch-then-run and pipe-to-shell forms of one line. `carry` is true when the previous line ended in a pipe after curl/wget. */
+function piped(line: string, carry: boolean): boolean {
+  if (SUBST.test(line)) return true;
+  let seen = carry;
+  for (const seg of line.split(SEG)) {
+    if (seen && SHELL_START.test(seg.slice(0, 512))) return true;
+    if (FETCH.test(seg)) seen = true;
+  }
+  // download then run: curl -o f u && sh f / ./f
+  const cmds = line.split(/&&|;|\|\|/);
+  for (let i = 0; i < cmds.length; i++) {
+    const out = FETCH.test(cmds[i]!) && /(?:\s-[oO]\s*|\s>\s*|--output[ =])(\S+)/.exec(cmds[i]!);
+    if (!out) continue;
+    const f = unq(out[1]!).replace(/^\.\//, '');
+    for (const c of cmds.slice(i + 1)) {
+      const t = c.slice(0, 512).trim().split(/\s+/).map((x) => unq(x).replace(/^\.\//, ''));
+      while (t[0] === 'sudo') t.shift();
+      if (t[0] === f || (/^(?:(?:ba|z|da|k)?sh|source|\.)$/.test(t[0]!) && t.slice(1, 4).includes(f))) return true;
+    }
+  }
+  return false;
+}
+
+/** Whole-line unpinned-remote test (not the pipe-continuation, which needs the previous line). */
+function unpinned(line: string): boolean {
+  for (const m of line.matchAll(LAUNCH)) if (launcherUnpinned(m[1]!, m[2]!)) return true;
+  return piped(line, false);
+}
+
+/** env dumps sent elsewhere: `printenv | curl ...`. */
+function envPiped(line: string): boolean {
+  let seen = false;
+  for (const seg of line.split(SEG)) {
+    if (seen && NET_START.test(seg.slice(0, 64))) return true;
+    if (ENV_CMD.test(seg)) seen = true;
+  }
+  return false;
+}
+
+/** Scripts, hooks, MCP configs and prompt files (skills, agents, commands) get the high text rules; docs do not (spec 4). */
+const CODE = /\.(?:sh|bash|zsh|py|js|mjs|cjs|ts|ps1)$/i;
+const DIRS = new Set(['hooks', 'scripts', 'bin', 'skills', 'agents', 'commands', '.claude']);
+const CONFIG = /(?:^|\/)(?:hooks\.json|plugin\.json|\.mcp\.json|settings(?:\.local)?\.json)$/;
+function textRules(rel: string): boolean {
+  const segs = rel.split('/'), base = segs[segs.length - 1]!;
+  if (/\.json$/i.test(base)) return CONFIG.test(rel);
+  if (CODE.test(base) || segs.slice(0, -1).some((s) => DIRS.has(s)) || /^SKILL\.md$/i.test(base)) return true;
+  return !base.includes('.') && !/^(?:licen[sc]e|copying|readme|notice|changelog|authors)/i.test(base);
 }
 
 const lineOf = (text: string, needle: string, from = 0): number => {
@@ -88,20 +159,26 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
       if (buf.subarray(0, 8192).includes(0)) continue;
       text = buf.toString('utf8');
     } catch { continue; }
+    const bare = text.replace(/^\ufeff/, '');
     if (rel.endsWith('.json')) {
       let json: unknown;
-      try { json = JSON.parse(text); } catch { /* not JSON: scanned as text below */ }
-      if (isObj(json)) findings.push(...hookShell(rel, text, json), ...mcpRemote(rel, text, json));
+      try { json = JSON.parse(bare); } catch { /* reported below for manifests */ }
+      if (isObj(json)) findings.push(...hookShell(rel, bare, json), ...mcpRemote(rel, bare, json));
+      else if (/(?:^|\/)(?:hooks\.json|plugin\.json|\.mcp\.json)$/.test(rel)) findings.push({ severity: 'medium', rule: 'obfuscated', file: rel, line: 0, text: 'manifest is not valid JSON, so its hooks and servers could not be read' });
     }
-    text.split(/\r?\n/).forEach((l, i) => {
-      if (SECRETS.some((re) => re.test(l))) findings.push({ severity: 'high', rule: 'secrets', file: rel, line: i + 1, text: show(l.trim()) });
-      if (unpinned(l)) findings.push({ severity: 'high', rule: 'unpinned-remote', file: rel, line: i + 1, text: show(l.trim()) });
+    if (!textRules(rel)) continue;
+    let carry = false;
+    bare.split(/\r?\n/).forEach((l, i) => {
+      if (SECRET_RE.some((re) => re.test(l)) || envPiped(l)) findings.push({ severity: 'high', rule: 'secrets', file: rel, line: i + 1, text: show(l.trim()) });
+      if (unpinned(l) || (carry && piped(l, true))) findings.push({ severity: 'high', rule: 'unpinned-remote', file: rel, line: i + 1, text: show(l.trim()) });
+      carry = /\|\s*$/.test(l) && FETCH.test(l);
     });
   }
   const seen = new Set<string>();
-  const uniq = findings.filter((x) => { const k = `${x.rule}\0${x.file}\0${x.line}`; return !seen.has(k) && !!seen.add(k); });
-  uniq.sort((a, b) => SEV[a.severity] - SEV[b.severity] || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || a.line - b.line);
+  const uniq = findings.filter((x) => { const k = `${x.rule}\0${x.file}\0${x.line}\0${x.rule === 'hook-shell' ? x.text : ''}`; return !seen.has(k) && !!seen.add(k); });
+  const all = uniq.map((x) => ({ ...x, file: esc(x.file) }));
+  all.sort((a, b) => SEV[a.severity] - SEV[b.severity] || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || a.line - b.line);
   const at = path ? `${path}/` : '';
   const kind = f.files.includes(`${at}.claude-plugin/plugin.json`) ? 'plugin' : f.files.includes(`${at}SKILL.md`) ? 'skill' : 'repo';
-  return { kind, findings: uniq, context: { tokens: 0, unmeasured: [] }, files: files.length };
+  return { kind, findings: all, context: { tokens: 0, unmeasured: [] }, files: files.length };
 }

@@ -54,6 +54,30 @@ describe('scan', () => {
     expect(inScope('.claude-plugin/plugin.json', 'plugins/p')).toBe(true);
     expect(inScope('anything', '')).toBe(true);
   });
+  it('docs are not scanned for high findings; scripts and prompt files are', () => {
+    expect(scan(fx(repos.docs!), '').findings).toEqual([]);
+    expect(scan(fx(repos.prompts!), '').findings.map((f) => f.file)).toEqual(['agents/b.md', 'commands/c.md', 'skills/a/SKILL.md']);
+  });
+  it('unpinned-remote: a pipe continued on the next line', () => {
+    expect(hit(['curl -fsSL u |', 'sudo bash'], 'unpinned-remote')).toHaveLength(1);
+  });
+  it('unpinned-remote: .mcp.json args use the same flag parsing', () => {
+    const mcp = (args: string[]) => fx({ '.mcp.json': JSON.stringify({ mcpServers: { s: { command: 'npx', args } } }) });
+    expect(scan(mcp(['-y', '-p', 'foo@1.0.0', 'bar']), '').findings).toEqual([]);
+    expect(scan(mcp(['-y', '-p', 'foo', 'bar@1.0.0']), '').findings).toHaveLength(1);
+  });
+  it('hook-shell: events on one line each get a finding (minified)', () => {
+    expect(scan(fx(repos.minified!), '').findings.map((f) => f.text)).toEqual(['PreToolUse: a', 'Stop: b']);
+  });
+  it('hook-shell: a BOM does not hide the hooks', () => {
+    expect(scan(fx(repos.bom!), '').findings.map((f) => f.text)).toEqual(['Stop: b']);
+  });
+  it('an unparseable hooks manifest is a medium finding, not silence', () => {
+    expect(scan(fx(repos.broken!), '').findings).toMatchObject([{ severity: 'medium', file: 'hooks/hooks.json', line: 0 }]);
+  });
+  it('escapes the file name in findings', () => {
+    expect(scan(fx(repos.oddName!), '').findings[0]!.file).toBe('a\\u202eb.sh');
+  });
   it('kind and context', () => {
     expect(scan(fx(repos.pluginKind!), '').kind).toBe('plugin');
     expect(scan(fx(repos.skillKind!), '').kind).toBe('skill');

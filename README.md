@@ -62,7 +62,7 @@ Exact rules for each gate: [docs/reference.md](docs/reference.md).
 
 ## Quick start
 
-`init` and `update` run only inside Claude Code. In a plain terminal they print `Run /harness:init inside Claude Code` and exit. The `/harness:init` skill flow is coming; until it lands, the install steps below are not available end to end.
+`init` and `update` run only inside Claude Code. In a plain terminal they print `Run /harness:init inside Claude Code` and exit.
 
 Build from source. You need pnpm (`corepack enable` provides it).
 
@@ -286,7 +286,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 ## Roadmap
 
 These aren't shipped yet:
-- per-project recommendations from a pinned catalog (M3, in progress; the catalog, selection, budget and installs are in, the `/harness:init` flow, `add`, `remove`, `why`, `explain` and `sync` are not);
+- per-project recommendations from a pinned catalog (M3, in progress; the catalog, selection, budget, installs and the `/harness:init` flow are in; `add`, `remove`, `why`, `explain` and `sync` are not);
 - a PR size check;
 - memory;
 - the PR reviewer;

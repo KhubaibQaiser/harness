@@ -50,6 +50,8 @@ const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   npx: new Set(['-p', '--package', ...VALUE_FLAGS]),
   ...Object.fromEntries(['npm', 'pnpm', 'yarn', 'bun', 'bunx', 'pnpx', 'exec', 'dlx', 'x'].map((n) => [n, VALUE_FLAGS])),
 };
+const NPM_ALIAS: Record<string, string> = { t: 'test', tst: 'test' };
+const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'elif', 'else', 'do', 'while', 'until']);
 const PMS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 // Subcommands only a person may run (deny) or that need the person's yes (ask; the dispatcher denies it when
 // unattended), with the arguments (after the subcommand) the agent may still use. `run(sub)` is how the person runs
@@ -120,7 +122,8 @@ export function commandStart(toks: string[], stop: (name: string) => boolean = (
       const e = toks.findIndex((x, i) => i > k && /^-(exec|execdir|ok|okdir)$/.test(x));
       if (e < 0) break;
       [k, wrapper] = [e + 1, ''];
-    } else if (RUNNERS.has(runnerName(t))) [k, wrapper, scriptFile] = [k + 1, runnerName(t), runnerName(t) === 'script'];
+    } else if (RESERVED.has(t)) k++; // `{ harness …; }`, `! harness …`, `then harness …`
+    else if (RUNNERS.has(runnerName(t))) [k, wrapper, scriptFile] = [k + 1, runnerName(t), runnerName(t) === 'script'];
     else if (/^\w+=/.test(t)) {
       const val = t.replace(/^\w+=/, '');
       if (HARNESS_CMD.test(val)) { toks[k] = val; break; } // CMD="harness tdd off"
@@ -184,7 +187,7 @@ function grouped(command: string, escapes: boolean): string {
 }
 
 function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
-  const words = plain.split(/\s+/);
+  const words = plain.split(/[ \t]+/); // not \s: the shell does not split on NBSP, \f, \v or Unicode spaces
   const hit = (name: string, tok: string): Hit => ({ kind: PERSON_ONLY[name].kind, reason: PERSON_ONLY[name].why((sub) => terminalCommand(tok, sub, w)) });
   const hidden: Hit = { kind: 'deny', reason: ANY_WHY };
   // The harness token at toks[k]: which person-only subcommand it runs, if any. `next` is the separator after it.
@@ -207,16 +210,25 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
   // A lone & separates commands; 2>&1, >&2 and &> are redirections.
   const parts = plain.split(/(&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`])/);
   for (let i = 0; i < parts.length; i += 2) {
-    const toks = parts[i].trim().split(/\s+/).filter(Boolean);
+    const toks = parts[i].split(/[ \t]+/).filter(Boolean);
     // npm run <script> -- args, or pnpm/yarn/bun <script>: judge the script text with the args appended.
     const pm = toks.findIndex((t) => PMS.has(runnerName(t)));
-    if (pm >= 0 && depth < 3) {
+    if (pm >= 0) {
       let j = pm + 1;
-      while (toks[j]?.startsWith('-')) j++;
-      if (toks[j] === 'run' || toks[j] === 'run-script') j++;
-      const script = scriptsOf(w.root)[toks[j] ?? ''];
-      if (typeof script === 'string') {
-        const r = personOnlyInvocation(`${script} ${toks.slice(j + 1).filter((t) => t !== '--').join(' ')}`, w, depth + 1);
+      let dir = w.root;
+      while (toks[j]?.startsWith('-')) {
+        if (['--prefix', '-C', '--dir'].includes(toks[j])) dir = resolve(w.root, toks[++j] ?? '.');
+        j++;
+      }
+      if (['run', 'run-script', 'rum', 'urn'].includes(toks[j])) j++;
+      const scripts = scriptsOf(dir);
+      const name = scripts[toks[j] ?? ''] !== undefined ? toks[j] : NPM_ALIAS[toks[j] ?? ''] ?? toks[j] ?? '';
+      const args = toks.slice(j + 1).filter((t) => t !== '--').join(' ');
+      // npm also runs pre<name> and post<name>.
+      const bodies = [`pre${name}`, name, `post${name}`].filter((n) => typeof scripts[n] === 'string').map((n) => `${scripts[n]}${n === name ? ` ${args}` : ''}`);
+      if (bodies.length && depth >= 3) return { kind: 'ask', reason: 'a chain of npm scripts is too deep for the guard to read; run it yourself or read the scripts first' };
+      for (const b of bodies) {
+        const r = personOnlyInvocation(b, w, depth + 1) ?? backstop(b);
         if (r) return r;
       }
     }
@@ -230,6 +242,37 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
     if (r) return r;
   }
   return null;
+}
+// Backstop: the parser reads words, but the shell has more ways to hide a command (globs, renamed copies, comments,
+// redirections, odd whitespace). Text that names harness or its CLI and a word that changes things asks, unless the parser
+// saw every such segment as a plain harness command and the text is clean.
+const TARGET = /harness|cli\.[m*?[]|c[*?]\S*\.m/i;
+const CHANGE = /(?<![\w-])(init|update|add|remove|sync|uninstall|push|pr)(?![\w-])/i;
+const TDD_OFF = /(?<![\w-])tdd\W+off(?![\w-])/i;
+const UNCLEAN = /[{}*?[#<>]|[^\S \t]/;
+const SEGMENTS = /&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`]/;
+function previewOnly(text: string, depth = 0): boolean {
+  text = text.split('${CLAUDE_PLUGIN_ROOT}').join('PLUGIN_ROOT'); // the one expansion the skills use
+  if (UNCLEAN.test(text)) return false;
+  // A -c payload is judged on its own; what is left outside it is judged as before.
+  const pays = depth < 3 ? cPayloads(text) : [];
+  if (pays.length && !pays.every((p) => previewOnly(p, depth + 1))) return false;
+  for (const p of pays) text = text.split(p).join('');
+  const plain = grouped(text, false);
+  if (plain.split(/[ \t]+/).some((t) => RESERVED.has(t))) return false;
+  for (const seg of plain.split(SEGMENTS)) {
+    if (!CHANGE.test(seg)) continue;
+    const toks = seg.split(/[ \t]+/).filter(Boolean);
+    const k = commandStart(toks);
+    if (!toks[k] || !HARNESS_CMD.test(toks[k])) return false;
+  }
+  return true;
+}
+function backstop(text: string): Hit | null {
+  if (!TARGET.test(text)) return null;
+  if (TDD_OFF.test(text)) return { kind: 'deny', reason: PERSON_ONLY.tdd.why((sub) => `\`harness ${sub}\``) };
+  if (!CHANGE.test(text) || previewOnly(text)) return null;
+  return { kind: 'ask', reason: 'the command names harness and a word that changes it (init, update, add, remove, sync, uninstall, push, pr), and the guard cannot tell that it is only a preview' };
 }
 const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');
 
@@ -447,6 +490,14 @@ export function decidePaths(paths: string[]): Decision {
 }
 
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
+  const d = decideCore(command, ctx);
+  if (d.kind === 'deny') return d;
+  const b = backstop(command);
+  if (b?.kind === 'deny') return { kind: 'deny', reason: b.reason, check: 'guard' };
+  return d.kind === 'allow' && b ? toDecision(['ask', b.reason]) : d;
+}
+
+function decideCore(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const tokens = command.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');

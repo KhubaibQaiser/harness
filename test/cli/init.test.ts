@@ -448,7 +448,8 @@ test('a failed plugin install prints the per-plugin command and the sync line; a
   expect(net.out).toContain("Run this yourself with Claude Code's `!` prefix: claude plugin install impeccable@harness-pins --scope project");
   expect(net.out).toContain('Then run /harness:sync to record the install.');
   const other = await run('Plugin impeccable@harness-pins requires a newer Claude Code');
-  expect(other.code).toBe(0);
+  expect(other.code).toBe(1);
+  expect(other.out).toContain('Files applied; 1 plugin(s) not installed.');
   expect(other.out).toContain('requires a newer Claude Code');
   expect(other.out).not.toContain('Restart Claude Code');
 });
@@ -477,4 +478,22 @@ test('interactive: the budget lines print before the confirm', async () => {
   const ask = order.findIndex((o) => o.startsWith('ask:Apply these changes'));
   expect(ask).toBeGreaterThan(order.findIndex((o) => o.includes('Over budget: confirm before installing.')));
   expect(order.findIndex((o) => o.includes('Over budget'))).toBeGreaterThan(-1);
+});
+
+test('an ok install then a refused manifest write exits 1 with the sync line', async () => {
+  const { installSelected } = await import('../../src/cli/init.js');
+  const { loadCatalog } = await import('../../src/catalog/load.js');
+  const { applyChanges } = await import('../../src/install/apply.js');
+  const { chmodSync } = realFs;
+  const root = makeRepo({});
+  applyChanges(root, [{ kind: 'create', rel: '.claude/settings.json', content: '{"a":1}\n' }], '1');
+  writeFileSync(join(root, '.claude/settings.json'), '{"a":2}\n'); // what the install changed
+  chmodSync(join(root, '.harness'), 0o555);
+  let out = '';
+  try {
+    expect(installSelected(root, ['impeccable'], loadCatalog().catalog, () => ({ status: 0, stdout: '{"command":"install","outcome":"ok","message":"x"}' }), (s) => (out += s + '\n'))).toBe(1);
+  } finally {
+    chmodSync(join(root, '.harness'), 0o755);
+  }
+  expect(out).toContain('Run /harness:sync to record the install.');
 });

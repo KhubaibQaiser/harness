@@ -140,15 +140,13 @@ export function sandboxLine(cmd: 'init' | 'update', args: string[]): string {
 /** One shell word: bare when plain, else single-quoted (embedded quotes the POSIX way); control characters are escaped first so they never reach the terminal. */
 export const shq = (a: string): string => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${(/[\u0000-\u001f\u007f-\u009f]/.test(a) ? esc(a) : a).replace(/'/g, `'\\''`)}'`);
 export const isDenied = (e: unknown): boolean => ['EPERM', 'EACCES'].includes((((e as Error)?.cause ?? e) as NodeJS.ErrnoException)?.code ?? '');
-// ponytail: wording guessed; Task 27 live-checks the real sandbox denial text. Not a bare "network" or ECONNREFUSED.
-const SANDBOX_NET = /\bsandbox\b|EAI_AGAIN|ENOTFOUND|EPERM|EACCES/i;
-
-/** Installs the selected pinned plugins, prints one line each, and re-hashes settings. Returns 1 when a sandbox network error hit. */
-export function installSelected(root: string, chosen: string[], cat: Catalog, exec: Exec, out: (s: string) => void): number {
+/** Installs the selected pinned plugins, prints one line each, and re-hashes settings. Returns 1 when any install or the re-hash failed. `applied`: the files were written in this run. */
+export function installSelected(root: string, chosen: string[], cat: Catalog, exec: Exec, out: (s: string) => void, applied = true): number {
   const ids = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@harness-pins`);
   if (!ids.length) return 0;
   const r = installPlugins(ids, exec);
   for (const id of r.ok) out(`Installed plugin ${id}`);
+  if (r.failed.length) out(`${applied ? 'Files applied; ' : ''}${r.failed.length} plugin(s) not installed.`);
   for (const f of r.failed) out(`Could not install ${f.id}: ${f.message}\n  Run this yourself with Claude Code's \`!\` prefix: claude plugin install ${shq(f.id)} --scope project`);
   if (r.failed.length) out('Then run /harness:sync to record the install.');
   try {
@@ -158,7 +156,7 @@ export function installSelected(root: string, chosen: string[], cat: Catalog, ex
     out(`${isDenied(e) ? "Claude Code's sandbox blocks harness's own files. " : ''}The install worked but harness could not record it (${e.message}). Run /harness:sync to record the install.`);
     return 1;
   }
-  return r.failed.some((f) => SANDBOX_NET.test(f.message)) ? 1 : 0;
+  return r.failed.length ? 1 : 0;
 }
 
 function parseArgs(args: string[]): { yes: boolean; dryRun: boolean; config?: string } | null {

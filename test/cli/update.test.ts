@@ -804,3 +804,34 @@ test('update: plugin flags without AI flags are a usage error; an EPERM write pr
   expect(r.out).toContain("Run this yourself with Claude Code's `!` prefix");
   expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe(before);
 });
+
+test('update on an unchanged selection asks before installing plugins unless --yes', async () => {
+  const root = aiInstalled(REPO, [...OWN_IDS, 'impeccable']);
+  const d = mkdtempSync(join(tmpdir(), 'harness-upd-ai-'));
+  const w = (n: string, t: string) => (writeFileSync(join(d, n), t), join(d, n));
+  const ids = [...OWN_IDS, 'impeccable'];
+  const flags = [
+    '--answers', w('a.json', JSON.stringify({ scope: { paths: ['src'] }, project: { type: 'library', domain: 'tools', compliance: [], data_handling: '', team_size: 1, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [] }, apps: [], unattended: { multi_file_gate: 'block', require_reason: false }, tdd: { paths: ['src/**'], diff_coverage: 80 } })),
+    '--product', w('p.md', ['Purpose', 'Users', 'Core features', 'Constraints', 'Non-goals', 'Sources'].map((s) => `## ${s}\nx\n`).join('\n')),
+    '--picks', w('k.json', JSON.stringify({ catalog_version: 1, findings: [], items: ids.map((id) => ({ id, include: 'recommended', reason: 'r', addresses: [] })) })),
+    '--report', w('r.md', '## Findings\n\n## Roadmap\n30 days, 60 days, 90 days.\n\n## Deliberate exclusions\nnone\n\n## Limits\nx\n'),
+    '--choose', ids.join(','),
+  ];
+  const run = async (extra: string[], answers: boolean[]) => {
+    const calls: string[][] = [];
+    let out = '';
+    const code = await update([...flags, ...extra], { env: { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(answers), version: '1.1.0', templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null, exec: (_c, a) => (calls.push(a), { status: 1, stdout: '{"command":"install","outcome":"failed","message":"nope"}' }) });
+    return { code, out, calls };
+  };
+  expect((await run(['--yes'], [])).code).toBe(0);
+  commitAll(root);
+  const no = await run(['--install-plugins'], [false]);
+  expect(no.calls).toHaveLength(0);
+  expect(no.out).toContain('No plugins were installed');
+  const yes = await run(['--install-plugins'], [true]);
+  expect(yes.calls).toHaveLength(1);
+  expect(yes.code).toBe(1);
+  expect(yes.out).toContain('1 plugin(s) not installed.');
+  expect(yes.out).not.toContain('Files applied');
+  expect((await run(['--install-plugins', '--yes'], [])).calls).toHaveLength(1);
+});

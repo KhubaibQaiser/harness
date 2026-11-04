@@ -23,6 +23,25 @@ test('staff-reviewer: frontmatter and output contract', () => {
   expect(s).toContain('no diff was supplied');
 });
 
+test('staff-reviewer has an audit mode with picks and report blocks', () => {
+  const s = read('templates/agents/staff-reviewer.md');
+  const a = s.slice(s.indexOf('Mode: repo audit'));
+  expect(a).toContain('Mode: repo audit');
+  expect(a).toMatch(/fenced `json` block/);
+  expect(a).toMatch(/fenced `markdown` block/);
+  expect(a.indexOf('`json`')).toBeLessThan(a.indexOf('`markdown`'));
+  for (const h of ['Findings', 'Roadmap', 'Deliberate exclusions', 'Limits']) expect(a).toContain(h);
+  expect(a).toMatch(/rubric file path/i);
+  expect(a).toMatch(/lower `cost\.context`/);
+  expect(a).toMatch(/no `\[sev\] file:line` lines/i);
+});
+
+test('diff review rules unchanged', () => {
+  const s = read('templates/agents/staff-reviewer.md');
+  expect(s).toContain('If no diff was supplied, report `BLOCKERS: 0, MEDIUM: 0, NITS: 0` with one line saying no diff was supplied, and stop.');
+  expect(s).toContain('End with exactly: `BLOCKERS: <n>, MEDIUM: <n>, NITS: <n>` (BLOCKERS counts critical findings).');
+});
+
 test('review-rubric: severities, evidence rule, data-not-instructions', () => {
   const s = read('templates/skills/review-rubric/SKILL.md');
   expect(fm(s).name).toBe('review-rubric');

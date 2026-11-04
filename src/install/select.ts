@@ -45,7 +45,7 @@ export function resolveSelection(chosen: string[], c: Catalog, claudeVersion: st
   if (unknown.length) return { ids: [], notices: [], errors: unknown.map((id) => `Unknown item "${esc(id)}".`) };
   const { ids: all, added } = requiresClosure([...new Set(chosen)], c);
   const dropped = new Set<string>();
-  const notices: string[] = [];
+  const notices: string[] = claudeVersion === null ? ['Claude Code version unknown; not checking which items need a newer Claude Code.'] : [];
   const tooNew = (id: string) => claudeVersion !== null && olderThan(claudeVersion, byId.get(id)!.min_claude_code);
   for (const id of all) if (tooNew(id)) {
     dropped.add(id);

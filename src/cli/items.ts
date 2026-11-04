@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -22,6 +21,7 @@ import type { Picks } from '../ai/picks.js';
 import { budgetGate, isDenied, sandboxLine } from './init.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
+import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
 
 export type ItemsEnv = CliEnv & { prompt: Prompt; templatesDir: string; distDir: string; fs?: FsLike; claudeVersion?: () => string | null; catalog?: Catalog };
@@ -59,12 +59,8 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   if (refused) return out(refused), 2;
   if ((cmd === 'add' || cmd === 'remove') && !yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
 
-  let root: string;
-  try {
-    root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: cli.root, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch {
-    return out('Not a git repository. Run harness inside a git repo.'), 1;
-  }
+  const root = gitRoot(cli.root);
+  if (!root) return out('Not a git repository. Run harness inside a git repo.'), 1;
   let m: Manifest | null;
   try {
     m = readManifest(root);

@@ -65,3 +65,11 @@ test('--choose rejects ids that are not in the picks; requires stay allowed', ()
   expect(r.lines.join('\n')).toContain('"lead-a" was not in the picks');
   expect(go(['select', '--picks', picksFile, '--choose', 'deep']).code).toBe(0);
 });
+
+test('picks with an id outside the catalog is an error, not a silent drop', () => {
+  const f = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'p.json');
+  writeFileSync(f, JSON.stringify({ catalog_version: 1, findings: [], items: [{ id: 'nope', include: 'optional', reason: 'r', addresses: [] }] }));
+  const r = go(['select', '--picks', f]);
+  expect(r.code).toBe(2);
+  expect(r.lines.join('\n')).toContain('unknown item "nope"');
+});

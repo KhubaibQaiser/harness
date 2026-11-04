@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { ApplyError, type FsLike, ManifestError, applyChanges, removeEmptyDirs, readManifest, type Change, type Manifest } from '../install/apply.js';
@@ -9,6 +8,7 @@ import { matchesHash, eolOf, withEol } from '../install/text.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
+import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
 
 export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike };
@@ -45,12 +45,8 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   const dryRun = args.includes('--dry-run');
   if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
 
-  let root: string;
-  try {
-    root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: cli.root, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch {
-    return out('Not a git repository. Run harness uninstall inside a git repo.'), 1;
-  }
+  const root = gitRoot(cli.root);
+  if (!root) return out('Not a git repository. Run harness uninstall inside a git repo.'), 1;
   let m: Manifest | null;
   try {
     m = readManifest(root);

@@ -18,7 +18,7 @@ export function select(args: string[], { out }: CliEnv): number {
   let picks: Picks;
   try {
     picks = JSON.parse(readFileSync(args[1], 'utf8'));
-    if (!Array.isArray(picks?.items) || !picks.items.every(ok)) throw new Error('malformed');
+    if (!Array.isArray(picks?.items) || !Array.isArray(picks.findings) || !picks.items.every(ok)) throw new Error('malformed');
   } catch (e) {
     return out(`picks: could not read a picks file at "${esc(args[1])}" (${(e as NodeJS.ErrnoException).code ?? 'invalid'})`), 2;
   }
@@ -26,6 +26,8 @@ export function select(args: string[], { out }: CliEnv): number {
   if (choose && !choose.length) return out(USAGE), 2;
   const { catalog, errors } = loadCatalog(packageDir('catalog'));
   if (errors.length) return errors.forEach((e) => out(`catalog: ${e}`)), 2;
+  const unknown = picks.items.filter((x) => !catalog.items.some((i) => i.id === x.id));
+  if (unknown.length) return unknown.forEach((x) => out(`picks: unknown item "${esc(x.id)}"`)), 2;
   if (!choose) return out(json(checklist(picks, catalog, { templates: packageDir('templates') }))), 0;
   const np = notPicked(choose, picks, catalog);
   if (np.length) return np.forEach((e) => out(e)), 2;

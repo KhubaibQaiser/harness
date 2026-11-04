@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -30,6 +29,7 @@ import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/pres
 import { findOnPath } from '../checks/stop/runner.js';
 import { hasAiFlags, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
+import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
 
 export type { Prompt };
@@ -196,12 +196,8 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   if (!opts.yes && !opts.dryRun && cli.tty === false) return out(NO_TTY), 2;
 
   // 1. Preflight
-  let root: string;
-  try {
-    root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: cli.root, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch {
-    return out('Not a git repository. Run /harness:init inside a git repo.'), 1;
-  }
+  const root = gitRoot(cli.root);
+  if (!root) return out('Not a git repository. Run /harness:init inside a git repo.'), 1;
   out(`Installing at the repo root: ${resolve(root)}`);
   const node = cli.nodeVersion ?? process.versions.node;
   const [major, minor] = node.split('.').map(Number);

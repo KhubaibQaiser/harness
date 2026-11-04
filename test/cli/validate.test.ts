@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
+import { defaults } from '../../src/core/config.js';
+import { serializeConfig } from '../../src/core/config-io.js';
 import { run } from '../../src/cli/index.js';
 import { makeRepo } from '../install/helpers.js';
 
@@ -115,4 +117,17 @@ test('attempt 2 with an invalid answers file saves the picks and stops', () => {
   expect(r.lines.at(-1)).toMatch(/^Recommend output failed validation twice\. Raw output is in `\.harness\/debug\/picks-.*\.txt`\. Stopping\.$/);
   const [name] = readdirSync(join(r2, '.harness/debug'));
   expect(readFileSync(join(r2, '.harness/debug', name), 'utf8')).toBe(good);
+});
+
+test('--merge-config lays a partial answers file over the stored answers (update)', () => {
+  const repo = makeRepo({ 'package.json': '{}' }, { git: false });
+  mkdirSync(join(repo, '.harness'), { recursive: true });
+  writeFileSync(join(repo, '.harness/config.yaml'), serializeConfig(defaults()));
+  const partial = file('answers.json', JSON.stringify({ project: { deploy_target: 'vercel' } }));
+  expect(go(['validate', 'answers', partial], repo).code).toBe(2);
+  expect(go(['validate', 'answers', partial, '--merge-config'], repo)).toEqual({ code: 0, lines: ['ok'] });
+  const picks = file('picks.json', readFileSync('test/fixtures/ai/picks.json', 'utf8'));
+  expect(go(['validate', 'picks', picks, '--answers', partial], repo).lines.join('\n')).toContain('answers file is not valid');
+  expect(go(['validate', 'picks', picks, '--answers', partial, '--merge-config'], repo).lines.join('\n')).not.toContain('answers file is not valid');
+  expect(go(['validate', 'answers', partial, '--merge-config'], makeRepo({ 'package.json': '{}' }, { git: false })).code).toBe(1); // no install
 });

@@ -42,12 +42,13 @@ test('a v* tag push publishes; there is no manual trigger', () => {
 test('release runs one at a time and publishes only a commit on main', () => {
   const rel = load('release.yml');
   expect(rel.concurrency).toEqual({ group: 'release', 'cancel-in-progress': false });
-  const steps = rel.jobs.publish.steps;
+  // The on-main check is in check-tag, so a bad tag fails before CI and before the approval gate.
+  const steps = rel.jobs['check-tag'].steps;
   expect(steps[0].with['fetch-depth']).toBe(0);
   const i = steps.findIndex((s: any) => /git merge-base --is-ancestor "\$GITHUB_SHA" origin\/main/.test(s.run ?? ''));
   expect(i).toBeGreaterThan(0);
   expect(steps[i].run).toContain('exit 1');
-  expect(i).toBeLessThan(steps.findIndex((s: any) => /npm publish/.test(s.run ?? '')));
+  expect(rel.jobs.publish.steps.some((s: any) => /merge-base/.test(s.run ?? ''))).toBe(false);
 });
 
 test('the publish job waits on the npm-release environment', () => {
@@ -104,7 +105,7 @@ test('prerelease versions publish with --tag beta, others latest', () => {
 
 test('ci validates the plugin on every push and PR, on ubuntu, with Claude Code pinned to the minimum version', async () => {
   const ci = load('ci.yml');
-  expect(ci.on).toHaveProperty('push');
+  expect(ci.on.push).toEqual({ branches: ['main'] });
   expect(ci.on).toHaveProperty('pull_request');
   const job = ci.jobs['plugin-validate'];
   expect(job['runs-on']).toBe('ubuntu-latest');

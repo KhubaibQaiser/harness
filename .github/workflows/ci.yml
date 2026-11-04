@@ -1,7 +1,7 @@
 name: ci
 on:
   push:
-    branches: ['**'] # tags are covered by the release workflow's call to this one
+    branches: [main]
   pull_request:
   workflow_call:
 permissions:

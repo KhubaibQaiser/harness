@@ -127,8 +127,8 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `scan` | Prints the facts harness detects about your repo, as JSON. Writes nothing. |
 | `catalog` | Prints the catalog of items harness can install, as JSON. |
 | `catalog check [--resolve] [--only <id,...>]` | Checks the catalog for problems. `--resolve` also looks up each pin, which needs the network. `--only` limits that to the listed ids. |
-| `validate answers\|product <file>` | Checks an interview answers file or a product file. |
-| `validate picks <file> --answers <file> [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. |
+| `validate answers\|product <file> [--merge-config]` | Checks an interview answers file or a product file. With `--merge-config`, an answers file holding only some keys is laid over the answers in `.harness/config.yaml` first (what `/harness:update` uses). |
+| `validate picks <file> --answers <file> [--merge-config] [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. `--merge-config` works as above. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
 | `select --picks <file> [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `selected` entries. Each checklist row also has `unpinned` ("Runs unpinned code at launch.") and `unpinned_reason` for items whose catalog entry sets `unpinned_runtime`. |
 | `git branch\|commit\|push\|pr [--title <t>]` | Commits and pushes the harness changes one step at a time. `branch` creates `chore/ai-workflow-<catalog version>`; `commit` stages only the files harness wrote, with your own git name and email; `push` and `pr` never touch the default branch. `pr` needs `gh` signed in, else it prints the command. The agent asks you before `push` and `pr`. |

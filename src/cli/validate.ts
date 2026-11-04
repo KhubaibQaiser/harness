@@ -2,7 +2,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { esc } from '../core/config.js';
-import { validateAnswers } from '../ai/answers.js';
+import { configToAnswers, validateAnswers } from '../ai/answers.js';
+import { overlayAnswers } from './init.js';
+import { readConfig } from './preamble.js';
 import { saveDebug } from '../ai/debug.js';
 import { type Picks, validatePicks } from '../ai/picks.js';
 import { validateReport } from '../ai/report.js';
@@ -12,11 +14,19 @@ import { validateProduct } from '../ai/product.js';
 import { detect } from '../install/detect.js';
 import type { CliEnv } from './index.js';
 
-const USAGE = 'Usage: harness validate answers <file>\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]';
+const USAGE = 'Usage: harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]';
 
 /** Checks what the interview wrote. Exit 0 prints ok; exit 2 prints one error per line. Safe in a plain terminal and in Claude Code. */
-export function validate(args: string[], { root, out }: CliEnv): number {
-  if (args[0] === 'picks' || args[0] === 'report') return recommend(args, root, out);
+export function validate(argv: string[], { root, out }: CliEnv): number {
+  // --merge-config: the answers file is partial (an update's re-asked keys); lay it over the answers in .harness/config.yaml first.
+  const args = argv.filter((a) => a !== '--merge-config');
+  let merge: Merge = (raw) => raw;
+  if (args.length !== argv.length) {
+    const c = readConfig(root, out);
+    if (typeof c === 'number') return c;
+    merge = (raw) => (raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? overlayAnswers(configToAnswers(c), raw as Record<string, unknown>) : raw);
+  }
+  if (args[0] === 'picks' || args[0] === 'report') return recommend(args, root, out, merge);
   const [what, file] = args;
   if (args.length !== 2 || (what !== 'answers' && what !== 'product')) return out(USAGE), 2;
   let text: string;
@@ -34,7 +44,7 @@ export function validate(args: string[], { root, out }: CliEnv): number {
     } catch {
       return out('answers: not valid JSON'), 2;
     }
-    const r = validateAnswers(raw, detect(root));
+    const r = validateAnswers(merge(raw), detect(root));
     errors = r.ok ? [] : r.errors;
   }
   if (!errors.length) return out('ok'), 0;
@@ -59,7 +69,8 @@ const json = (t: string): unknown => {
 
 /** picks/report: exit 0 ok, 2 invalid (a retry is left), 1 invalid on attempt 2 (raw output saved, stop). */
 type Kind = 'picks' | 'report';
-function recommend(args: string[], root: string, out: (l: string) => void): number {
+type Merge = (raw: unknown) => unknown;
+function recommend(args: string[], root: string, out: (l: string) => void, merge: Merge): number {
   const [what, file, flag, other, ...tail] = args as [Kind, ...string[]];
   const f2 = what === 'picks' ? '--answers' : '--picks';
   let attempt = 1;
@@ -69,7 +80,7 @@ function recommend(args: string[], root: string, out: (l: string) => void): numb
   const text = read(file);
   const side = read(other);
   for (const t of [text, side]) if (typeof t !== 'string') return out(`${what}: ${t.error}`), 2;
-  const sideRaw = json(side as string);
+  const sideRaw = what === 'picks' ? merge(json(side as string)) : json(side as string);
 
   let errors: string[];
   if (what === 'picks') {

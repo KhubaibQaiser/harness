@@ -72,7 +72,7 @@ export const missingAi = (cmd: string, ai: AiArgs): string | null => {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Lays a partial answers file over the existing answers; `project`, `unattended` and `tdd` merge one level deep. */
-function overlayAnswers(base: Record<string, unknown>, part: Record<string, unknown>): Record<string, unknown> {
+export function overlayAnswers(base: Record<string, unknown>, part: Record<string, unknown>): Record<string, unknown> {
   const m: Record<string, unknown> = { ...base, ...part };
   for (const k of ['project', 'unattended', 'tdd']) if (isObj(part[k])) m[k] = { ...(isObj(base[k]) ? base[k] : {}), ...part[k] };
   return m;

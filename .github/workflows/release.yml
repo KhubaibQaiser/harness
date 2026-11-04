@@ -17,6 +17,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # fetches origin/main too, for the on-main check
+      - name: Check the tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not on main. Merge it to main, then tag a commit on main." >&2
+            exit 1
+          fi
       - name: Check tag equals package.json version
         run: |
           v="v$(node -p "require('./package.json').version")"
@@ -39,13 +46,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0 # fetches origin/main too, for the check below
-      - name: Check the tagged commit is on main
-        run: |
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not on main. Merge it to main, then tag a commit on main." >&2
-            exit 1
-          fi
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -54,6 +54,7 @@ jobs:
           cache: pnpm
       - name: Pin npm (trusted publishing needs 11.5.1 or newer)
         run: npm install -g npm@11.5.1
+      # A guard, not a fix: it fails clearly if the pin above is ever lowered or removed.
       - name: Check npm is new enough for trusted publishing
         run: |
           v=$(npm --version)

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { LEGACY_RESULTS_DIR } from '../core/config.js';
 import { migrateResultsDir, validateConfig } from '../core/config-io.js';
-import { answersToConfig } from '../ai/answers.js';
+import { answersToConfig, configToAnswers } from '../ai/answers.js';
 import { latestVersion } from '../core/registry.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
@@ -100,7 +100,8 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     let prev: Facts | null = null;
     try {
       stored = readFileSync(join(root, FACTS), 'utf8');
-      prev = JSON.parse(stored) as Facts;
+      const j = JSON.parse(stored);
+      if (Array.isArray(j?.apps) && Array.isArray(j?.deploy)) prev = j as Facts; // any other shape counts as missing
     } catch { /* missing or unreadable: nothing to compare, so nothing is re-asked */ }
     const recommend = v.config.catalog_version !== lc.catalog.version || stored?.trimEnd() !== factsJson(now);
     return out(JSON.stringify({ recommend, delta: catalogDelta(v.config, lc.catalog), reask: contradictions(prev, now, v.config) }, null, 2)), 0;
@@ -112,7 +113,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   let config = v.config;
   let sel: AiInputs | null = null;
   if (aiFlags) {
-    const r = loadAiInputs(ai, detect(root), (cli.claudeVersion ?? realClaudeVersion)());
+    const r = loadAiInputs(ai, detect(root), (cli.claudeVersion ?? realClaudeVersion)(), configToAnswers(v.config));
     if (!r.ok) return r.errors.forEach((e) => out(e)), r.code;
     sel = r.in;
     for (const n of sel.notices) out(n);

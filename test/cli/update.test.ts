@@ -1,10 +1,12 @@
 import * as realFs from 'node:fs';
 import type { FsLike } from '../../src/install/apply.js';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import { init, type Prompt } from '../../src/cli/init.js';
 import { update } from '../../src/cli/update.js';
 import { uninstall } from '../../src/cli/uninstall.js';
@@ -853,6 +855,12 @@ const upAi = async (root: string, args: string[]) => {
   const code = await update(args, { env: { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null });
   return { code, out };
 };
+/** Every file under root (ignored ones too, .git aside): path, size and content hash. */
+const tree = (root: string): string[] =>
+  (readdirSync(root, { recursive: true, withFileTypes: true }) as import('node:fs').Dirent[])
+    .filter((e) => e.isFile() && !(e.parentPath ?? (e as any).path).includes(`${root}/.git`))
+    .map((e) => { const f = join(e.parentPath ?? (e as any).path, e.name); const b = readFileSync(f); return `${f} ${b.length} ${createHash('sha256').update(b).digest('hex')}`; })
+    .sort();
 const planOf = async (root: string) => {
   const r = await upAi(root, ['--plan']);
   return { code: r.code, ...JSON.parse(r.out) };
@@ -860,10 +868,10 @@ const planOf = async (root: string) => {
 
 test('update --plan writes nothing and says to recommend when the catalog version differs', async () => {
   const root = aiInstalled(REPO, OWN_IDS);
-  const before = execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' });
+  const before = tree(root);
   const p = await planOf(root);
   expect(p).toMatchObject({ code: 0, recommend: true, reask: [], delta: { changed: [], retired: [], conflicting: [] } });
-  expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe(before);
+  expect(tree(root)).toEqual(before);
 });
 
 test('update --plan: no change means no re-recommend', async () => {
@@ -898,4 +906,32 @@ test('update: retired items are removed with a line saying why; new picks are li
   expect(r.out).toContain('New: mobile-mcp');
   const plain = await upAi(root, ['--dry-run']);
   expect(plain.out).toContain('gone-item: retired from the catalog, removed.');
+});
+
+test('update --plan: a facts.json of the wrong shape counts as missing', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  expect((await upAi(root, [...reFlags(OWN_IDS), '--yes'])).code).toBe(0);
+  writeFileSync(join(root, '.harness/facts.json'), '{}\n');
+  expect(await planOf(root)).toMatchObject({ code: 0, recommend: true, reask: [] });
+});
+
+test('partial answers change only the given keys, and config.yaml comments survive', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  const c = join(root, '.harness/config.yaml');
+  writeFileSync(c, '# my note\n' + readFileSync(c, 'utf8'));
+  commitAll(root);
+  const before = parseYaml(readFileSync(c, 'utf8')) as any;
+  const part = join(mkdtempSync(join(tmpdir(), 'harness-upd-part-')), 'a.json');
+  writeFileSync(part, JSON.stringify({ project: { deploy_target: 'vercel' } }));
+  const flags = reFlags(OWN_IDS).slice(2);
+  const r = await upAi(root, ['--answers', part, ...flags, '--yes']);
+  expect(r.code).toBe(0);
+  const text = readFileSync(c, 'utf8');
+  const after = parseYaml(text) as any;
+  expect(after.project.deploy_target).toBe('vercel');
+  expect(after.project).toEqual({ ...before.project, deploy_target: 'vercel' });
+  expect(after.apps).toEqual(before.apps);
+  expect(after.unattended).toEqual(before.unattended);
+  expect(after.tdd).toEqual(before.tdd);
+  expect(text).toContain('# my note');
 });

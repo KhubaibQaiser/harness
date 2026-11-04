@@ -86,3 +86,9 @@ export function answersToConfig(base: HarnessConfig, a: Answers): HarnessConfig 
   c.tdd.diff_coverage = a.tdd.diff_coverage;
   return c;
 }
+
+/** The answers a config already holds, in the shape of an answers file (the base a partial update file goes over). */
+export function configToAnswers(c: HarnessConfig): Record<string, unknown> {
+  const { scope_paths, ...project } = c.project;
+  return { scope: { paths: scope_paths }, project, apps: c.apps, unattended: c.unattended, tdd: { paths: c.tdd.paths, diff_coverage: c.tdd.diff_coverage } };
+}

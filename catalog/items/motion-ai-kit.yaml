@@ -9,7 +9,6 @@ cost: {"context":"low","setup":"low"}
 stance: optional
 mcp: {"name":"motion","config":{"type":"http","url":"https://mcp.motion.dev"}}
 why: "Suite of animation tools that helps agents write production-grade animations, with searchable Motion documentation."
-unpinned_runtime: "hosted MCP server; the vendor controls the version"
 evidence:
   - "https://github.com/motiondivision/ai-kit/blob/1e424943582cbbdb6e3f410687e39f96451447bb/README.md"
   - "https://github.com/motiondivision/ai-kit/blob/1e424943582cbbdb6e3f410687e39f96451447bb/plugins/motion/mcp.json"

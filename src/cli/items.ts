@@ -190,7 +190,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   stampHarnessFiles(root); // change detection: these writes are harness's own
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   if (cmd === 'remove' && id === 'agent-guard') out(GUARD_OFF);
-  if (cmd === 'add' && after.some((x) => !have.includes(x) && byId.get(x)?.kind === 'plugin')) out('Run /harness:sync --install-plugins to install the plugin.');
+  if (cmd === 'add' && after.some((x) => !have.includes(x) && ['plugin', 'external-skill'].includes(byId.get(x)?.kind ?? ''))) out('Run /harness:sync --install-plugins to install the plugin.');
   out('Run harness git commit on a branch to commit this change.');
   return 0;
 }

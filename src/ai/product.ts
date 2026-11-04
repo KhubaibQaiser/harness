@@ -1,7 +1,8 @@
+import { HIDDEN_CLASS } from '../core/config.js';
 const SECTIONS = ['Purpose', 'Users', 'Core features', 'Constraints', 'Non-goals', 'Sources'];
 const MAX_LINES = 40;
 // Not \t \n \r. The text reaches the terminal in the update diff.
-export const RAW_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+export const RAW_CONTROL = new RegExp(`[\u0000-\u0008\u000b\u000c\u000e-\u001f${HIDDEN_CLASS}]`);
 
 /** Errors for the product.md the interview writes: at most 40 lines and every required `## ` section. */
 export function validateProduct(text: string): string[] {

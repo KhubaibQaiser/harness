@@ -1,9 +1,12 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { run } from '../../src/cli/index.js';
 import { makeRepo } from '../install/helpers.js';
+
+// The notice set depends on the local Claude Code version; pin it so CI (no `claude` binary) and dev machines agree.
+vi.mock('../../src/core/min-claude.js', async (orig) => ({ ...(await orig<object>()), claudeVersion: () => '9.9.9' }));
 
 const root = makeRepo({ 'package.json': '{}' }, { git: false });
 const picksFile = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'picks.json');

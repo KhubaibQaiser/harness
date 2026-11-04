@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { LEGACY_RESULTS_DIR } from '../core/config.js';
@@ -86,9 +86,10 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   // The user owns the config after init, except on the AI path, where the checks follow the selection.
   const changes = aiPath ? plan.changes : [...(migrated ? [migrated] : []), ...plan.changes.filter((c) => c.rel !== CONFIG)];
 
+  const at = new Date();
   const commit = (cs: typeof changes, manifest: Manifest) => {
     try {
-      applyChanges(root, cs, version, undefined, cli.fs, { manifest });
+      applyChanges(root, cs, version, () => at, cli.fs, { manifest });
       return null;
     } catch (e) {
       if (e instanceof ApplyError) return e.message;
@@ -139,10 +140,11 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   if (!yes && !(await prompt.confirm('Apply these changes? (y/N)'))) return out('Cancelled. Nothing was written.'), 0;
 
   // One transaction: the files and the merged manifest commit together or roll back together.
-  const files = mergeManifestFiles(m, changes);
-  const err = commit(changes, { version, createdAt: new Date().toISOString(), ...(m.tddOff ? { tddOff: m.tddOff } : {}), files });
+  const files = mergeManifestFiles(m, changes, `.harness/backup/${at.toISOString().replace(/:/g, '-')}`);
+  const err = commit(changes, { version, createdAt: at.toISOString(), ...(m.tddOff ? { tddOff: m.tddOff } : {}), files });
   if (err) return out(err), 1;
   removeEmptyDirs(root, changes);
+  for (const c of changes) if (c.kind === 'update' && c.restored) rmSync(join(root, c.restored), { force: true }); // the original is back in place
   stampHarnessFiles(root); // change detection: these writes are harness's own
 
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);

@@ -694,6 +694,7 @@ test('an AI-path install, update and uninstall give the pre-init bytes', async (
 test('update applies the config change on the AI path and drops it on the plain path', async () => {
   const root = aiInstalled(REPO, OWN_IDS);
   const p = join(root, CONFIG);
+  const oldHash = readManifest(root)!.files.find((f) => f.rel === CONFIG)!.hash;
   const off = readFileSync(p, 'utf8').replace(/(- id: staff-reviewer\n(?:.*\n)*?\s+selected: )true/, '$1false') + '# mine\n';
   expect(off).toContain('selected: false');
   writeFileSync(p, off);
@@ -702,7 +703,7 @@ test('update applies the config change on the AI path and drops it on the plain 
   expect(r.code).toBe(0);
   expect(readFileSync(p, 'utf8')).toContain('# mine'); // the person's comment survives
   expect(realFs.existsSync(join(root, '.claude/agents'))).toBe(false); // the emptied dir goes too
-  expect(readManifest(root)!.files.find((f) => f.rel === CONFIG)!.hash).toBe(sha256(readFileSync(p, 'utf8')));
+  expect(readManifest(root)!.files.find((f) => f.rel === CONFIG)!.hash).toBe(oldHash); // hand-edited text: the old hash stays
   expect(realFs.existsSync(join(root, '.claude/agents/staff-reviewer.md'))).toBe(false);
   expect(readManifest(root)!.files.some((f) => f.rel === '.claude/agents/staff-reviewer.md')).toBe(false);
 
@@ -712,4 +713,24 @@ test('update applies the config change on the AI path and drops it on the plain 
   commitAll(plain);
   expect((await up(plain, ['--yes'], { distDir: newDist() })).code).toBe(0);
   expect(readFileSync(q, 'utf8')).toContain('# mine\n');
+});
+
+test('a restored file is the person\'s again: edit it, reselect, uninstall gives their bytes back', async () => {
+  const SR = '.claude/agents/staff-reviewer.md';
+  const root = aiInstalled({ ...REPO, [SR]: 'mine\n' }, OWN_IDS);
+  expect(readFileSync(join(root, SR), 'utf8')).not.toBe('mine\n');
+  const p = join(root, CONFIG);
+  const flip = (from: string, to: string) => writeFileSync(p, readFileSync(p, 'utf8').replace(new RegExp(`(- id: staff-reviewer\\n(?:.*\\n)*?\\s+selected: )${from}`), `$1${to}`));
+  flip('true', 'false');
+  commitAll(root);
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  expect(readFileSync(join(root, SR), 'utf8')).toBe('mine\n');
+  expect(readManifest(root)!.files.some((f) => f.rel === SR)).toBe(false);
+  writeFileSync(join(root, SR), 'mine, edited\n');
+  flip('false', 'true');
+  commitAll(root);
+  expect((await up(root, ['--yes'])).code).toBe(0);
+  expect(readFileSync(join(root, SR), 'utf8')).not.toBe('mine, edited\n'); // reselected: the template is written again
+  expect((await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() }))).toBe(0);
+  expect(readFileSync(join(root, SR), 'utf8')).toBe('mine, edited\n');
 });

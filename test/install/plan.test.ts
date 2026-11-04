@@ -181,7 +181,7 @@ test('the AI-path config keeps the person\'s comments', () => {
   const c = get(plan(root, OWN.filter((i) => i !== 'tdd-gate'), { off: ['tdd-gate'], files }).changes, '.harness/config.yaml');
   expect(text(c)).toContain('# my note');
   expect(text(c)).toMatch(/tdd: false/);
-  expect(c).toMatchObject({ rewrite: true });
+  expect(c).not.toHaveProperty('rewrite');
 });
 
 test('an id missing from the catalog keeps its plugin and server', () => {
@@ -201,4 +201,21 @@ test('deselecting agents-md removes the AGENTS.md block and the CLAUDE.md import
   const p = plan(root, OWN.filter((i) => i !== 'agents-md'), { off: ['agents-md'], files });
   expect(text(get(p.changes, 'AGENTS.md'))).toBe('# Mine\n');
   expect(text(get(p.changes, 'CLAUDE.md'))).toBe('# C\n');
+});
+
+test('a comment inside checks survives a flipped check, and the person\'s config is not recorded as rewritten', () => {
+  const root = makeRepo(REPO);
+  const files = install(root, plan(root, OWN).changes).files;
+  const p = join(root, '.harness/config.yaml');
+  writeFileSync(p, readFileSync(p, 'utf8').replace('  tdd: true', '  tdd: true # keep me'));
+  const c = get(plan(root, OWN.filter((i) => i !== 'tdd-gate'), { off: ['tdd-gate'], files }).changes, '.harness/config.yaml');
+  expect(text(c)).toMatch(/tdd: false # keep me/);
+  expect(c).not.toHaveProperty('rewrite');
+});
+
+test('a deselected file whose backup is missing gets its own note', () => {
+  const root = makeRepo({ ...REPO, [SR]: 'mine\n' });
+  const files = install(root, plan(root, OWN).changes).files.map((f) => (f.rel === SR ? { ...f, backup: '.harness/backup/gone/x' } : f));
+  const p = plan(root, OFF, { off: ['staff-reviewer'], files });
+  expect(p.notes.join('\n')).toContain('backup is missing');
 });

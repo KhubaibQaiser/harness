@@ -68,7 +68,7 @@ const CONFIG = '.harness/config.yaml';
  * Old blocks stay unless the change dropped them, an edited merged file keeps its hash and drops its backup, an entry
  * whose change is `delete` goes, and `item` follows the change.
  */
-export function mergeManifestFiles(old: Manifest, changes: Change[]): Manifest['files'] {
+export function mergeManifestFiles(old: Manifest, changes: Change[], backupDir?: string): Manifest['files'] {
   const base = old.files.slice();
   const entry = (rel: string) => base.find((f) => f.rel === rel);
   const merged = (rel: string) => entry(rel)?.kind === 'update' || !!entry(rel)?.blocks?.length || !!entry(rel)?.replace?.length;
@@ -83,7 +83,7 @@ export function mergeManifestFiles(old: Manifest, changes: Change[]): Manifest['
   const files: Manifest['files'] = [];
   for (const o of base) {
     const c = changes.find((x) => x.rel === o.rel);
-    if (c?.kind === 'delete') continue;
+    if (c?.kind === 'delete' || (c?.kind === 'update' && c.restored)) continue;
     if (!c) { files.push(o); continue; }
     // A text block the new content no longer holds (a migrated Jest script) can't be removed later; drop it.
     // Structural blocks (settings, .mcp.json) are JSON, not text: kept unless the merge dropped them.
@@ -104,7 +104,7 @@ export function mergeManifestFiles(old: Manifest, changes: Change[]): Manifest['
   }
   for (const c of changes) {
     if (c.kind === 'delete' || old.files.some((f) => f.rel === c.rel)) continue;
-    files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}), ...(c.kind === 'update' && c.replace?.length ? { replace: c.replace } : {}), ...(c.kind === 'update' && c.formatted ? { formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}), ...(c.item ? { item: c.item } : {}) });
+    files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}), ...(c.kind === 'update' && c.replace?.length ? { replace: c.replace } : {}), ...(c.kind === 'update' && c.formatted ? { formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}), ...(c.item ? { item: c.item } : {}), ...(c.kind === 'update' && backupDir ? { backup: `${backupDir}/${c.rel}` } : {}) });
   }
   return files;
 }

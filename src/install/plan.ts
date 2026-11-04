@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
-import { parseDocument } from 'yaml';
+import { parseDocument, type Document } from 'yaml';
 import { join } from 'node:path';
 import { packageDir } from '../core/package-dir.js';
 import type { HarnessConfig } from '../core/config.js';
@@ -27,6 +27,13 @@ const LEGACY_FILES = [
 
 /** The ids with `selected: true`; the legacy own items when the config has no items. */
 export const selectedIds = (config: HarnessConfig): string[] => (config.items.length ? config.items.filter((i) => i.selected).map((i) => i.id) : [...LEGACY_OWN]);
+
+/** Sets in `doc` only the leaves of `want` that differ from `cur`, descending into maps, so the person's comments inside them survive. */
+function setChanged(doc: Document, path: string[], cur: any, want: any): void {
+  const map = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (map(want) && map(cur)) for (const k of Object.keys(want)) setChanged(doc, [...path, k], cur[k], want[k]);
+  else if (!isDeepStrictEqual(cur, want)) doc.setIn(path, want);
+}
 
 export const ESLINT = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'];
 
@@ -88,19 +95,19 @@ export function planChanges(
   put('.harness/hooks/dispatch.mjs', readFileSync(join(ctx.distDir, 'hooks', 'dispatch.mjs'), 'utf8'), [], 0o755);
   const cfgBefore = read('.harness/config.yaml');
   let cfgText = serializeConfig(config, ctx.version);
+  let rewritten = false;
   if (catalog && cfgBefore !== null) {
     // The person's text stays: only the top-level sections that differ are set, so their comments survive.
     const doc = parseDocument(cfgBefore);
-    if (doc.errors.length) notes.push('`.harness/config.yaml` could not be parsed; it is rewritten from the selection and its comments are not kept.');
+    if (doc.errors.length) { rewritten = true; notes.push('`.harness/config.yaml` could not be parsed; it is rewritten from the selection and its comments are not kept.'); }
     else {
-      const cur = doc.toJS() ?? {};
-      for (const [k, v] of Object.entries(JSON.parse(JSON.stringify(config)))) if (!isDeepStrictEqual(cur[k], v)) doc.set(k, v);
+      setChanged(doc, [], doc.toJS() ?? {}, JSON.parse(JSON.stringify(config)));
       cfgText = doc.toString();
     }
   }
   put('.harness/config.yaml', cfgText);
   const cfgChange = changes.at(-1);
-  if (catalog && cfgChange?.kind === 'update' && cfgChange.rel === '.harness/config.yaml') cfgChange.rewrite = true;
+  if (catalog && cfgChange?.kind === 'update' && cfgChange.rel === '.harness/config.yaml' && rewritten) cfgChange.rewrite = true;
   // LF whatever the package checkout uses (a Windows clone may have CRLF), so the bytes and the manifest hash are the same everywhere.
   const tpl = (...p: string[]) => readFileSync(join(templatesDir, ...p), 'utf8').replace(/\r\n/g, '\n');
   const ownFiles = catalog
@@ -116,7 +123,8 @@ export function planChanges(
     const e = entryOf(f.to);
     const backup = backupOf(e);
     if (e?.kind === 'create' && matchesHash(cur, e.hash)) changes.push({ kind: 'delete', rel: f.to, before: cur });
-    else if (e?.kind === 'update' && matchesHash(cur, e.hash) && backup !== null) { if (backup !== cur) changes.push({ kind: 'update', rel: f.to, before: cur, after: backup, blocks: [] }); }
+    else if (e?.kind === 'update' && matchesHash(cur, e.hash) && backup !== null) changes.push({ kind: 'update', rel: f.to, before: cur, after: backup, blocks: [], restored: e.backup });
+    else if (e?.kind === 'update' && matchesHash(cur, e.hash)) notes.push(`\`${f.to}\`: its backup is missing, so the file you had before init cannot be restored; kept although ${f.id} is no longer selected.`);
     else notes.push(e ? `\`${f.to}\` was edited since harness wrote it; it is kept although ${f.id} is no longer selected.` : `\`${f.to}\` is not recorded as written by harness; it is kept although ${f.id} is no longer selected.`);
   }
 
@@ -154,7 +162,7 @@ export function planChanges(
       if (!e || cur === null || !e.blocks?.length) continue;
       const backup = backupOf(e);
       if (e.kind === 'create' && matchesHash(cur, e.hash)) changes.push({ kind: 'delete', rel, before: cur });
-      else if (e.kind === 'update' && matchesHash(cur, e.hash) && backup !== null) changes.push({ kind: 'update', rel, before: cur, after: backup, blocks: [] });
+      else if (e.kind === 'update' && matchesHash(cur, e.hash) && backup !== null) changes.push({ kind: 'update', rel, before: cur, after: backup, blocks: [], restored: e.backup });
       else {
         const after = removeBlocks(cur, e.blocks);
         if (after !== cur) changes.push({ kind: 'update', rel, before: cur, after, blocks: [] });

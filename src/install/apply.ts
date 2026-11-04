@@ -9,7 +9,7 @@ export { readManifest, ManifestError, type Manifest };
 
 export type Change =
   | { kind: 'create'; rel: string; content: string; mode?: number; blocks?: string[]; item?: string }
-  | { kind: 'update'; rel: string; before: string; after: string; blocks: string[]; replace?: Hunk[]; formatted?: true; unformatted?: true; rename?: { from: string; to: string }; dropped?: string[]; item?: string; /** Harness wrote the whole file (the AI-path config): record its new hash. */ rewrite?: true }
+  | { kind: 'update'; rel: string; before: string; after: string; blocks: string[]; replace?: Hunk[]; formatted?: true; unformatted?: true; rename?: { from: string; to: string }; dropped?: string[]; item?: string; /** Harness wrote the whole file (the AI-path config): record its new hash. */ rewrite?: true; /** The backup this change restored: the file is the person's again, so its entry and backup go. */ restored?: string }
   | { kind: 'delete'; rel: string; before: string };
 
 export type FsLike = Pick<

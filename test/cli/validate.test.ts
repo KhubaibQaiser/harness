@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -42,4 +42,66 @@ test('validate product reports errors; bad usage and unreadable or non-JSON file
 test('an unreadable file name is escaped in the error', () => {
   const r = go(['validate', 'answers', '/nonexistent/a\u001b[31m.json'], root);
   expect(r.lines.join()).not.toContain('\u001b');
+});
+
+const answersOk = {
+  scope: { paths: [] },
+  project: { type: 'web', domain: 'shop', compliance: [], data_handling: '', team_size: 2, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 5, named_items: [] },
+  apps: [],
+  unattended: { multi_file_gate: 'block', require_reason: false },
+  tdd: { paths: [], diff_coverage: 80 },
+};
+const rec = (args: string[], r = root) => {
+  process.env.HARNESS_CATALOG_DIR = 'test/fixtures/catalog';
+  process.env.HARNESS_PLAIN_INIT = '1';
+  try {
+    return go(args, r);
+  } finally {
+    delete process.env.HARNESS_CATALOG_DIR;
+    delete process.env.HARNESS_PLAIN_INIT;
+  }
+};
+const good = JSON.stringify({ catalog_version: 1, findings: [{ id: 'f1', severity: 'nit', title: 't' }], items: [{ id: 'base', include: 'optional', reason: 'Helps.', addresses: ['f1'] }] });
+
+test('validate picks: ok, then retry then stop with the raw output saved', () => {
+  const a = file('answers.json', JSON.stringify(answersOk));
+  expect(rec(['validate', 'picks', file('picks.json', good), '--answers', a])).toEqual({ code: 0, lines: ['ok'] });
+  const r2 = makeRepo({ 'package.json': '{}' }, { git: false });
+  const bad = '{"catalog_version":1,"findings":[],"items":[{"id":"foo"}]}';
+  expect(rec(['validate', 'picks', file('picks.json', bad), '--answers', a], r2).code).toBe(2);
+  expect(existsSync(join(r2, '.harness/debug'))).toBe(false);
+  const r = rec(['validate', 'picks', file('picks.json', bad), '--answers', a, '--attempt', '2'], r2);
+  expect(r.code).toBe(1);
+  const [name] = readdirSync(join(r2, '.harness/debug'));
+  expect(name).toMatch(/^picks-.*\.txt$/);
+  expect(readFileSync(join(r2, '.harness/debug', name), 'utf8')).toBe(bad);
+  expect(r.lines.at(-1)).toBe(`Recommend output failed validation twice. Raw output is in \`.harness/debug/${name}\`. Stopping.`);
+});
+
+test('validate report: read-only on ok; second failure saves the report', () => {
+  const picks = file('picks.json', good);
+  const md = '## Findings\nf1\n## Roadmap\n30 60 90\n## Deliberate exclusions\nx\n## Limits\ny\n';
+  const rf = file('report.md', md);
+  expect(rec(['validate', 'report', rf, '--picks', picks]).code).toBe(0);
+  expect(readFileSync(rf, 'utf8')).toBe(md);
+  const r2 = makeRepo({ 'package.json': '{}' }, { git: false });
+  const r = rec(['validate', 'report', file('r.md', 'nope'), '--picks', picks, '--attempt', '2'], r2);
+  expect(r.code).toBe(1);
+  const [name] = readdirSync(join(r2, '.harness/debug'));
+  expect(readFileSync(join(r2, '.harness/debug', name), 'utf8')).toBe('nope');
+});
+
+test('validate picks/report: bad usage exits 2', () => {
+  expect(go(['validate', 'picks', 'x'], root).code).toBe(2);
+  expect(go(['validate', 'report', 'x', '--picks', 'y', '--attempt', '3'], root).code).toBe(2);
+  expect(go(['validate', 'picks', '/nonexistent', '--answers', '/nonexistent'], root).code).toBe(2);
+});
+
+test('attempt 2 with an invalid answers file saves the picks and stops', () => {
+  const r2 = makeRepo({ 'package.json': '{}' }, { git: false });
+  const r = rec(['validate', 'picks', file('picks.json', good), '--answers', file('a.json', '{}'), '--attempt', '2'], r2);
+  expect(r.code).toBe(1);
+  expect(r.lines.at(-1)).toMatch(/^Recommend output failed validation twice\. Raw output is in `\.harness\/debug\/picks-.*\.txt`\. Stopping\.$/);
+  const [name] = readdirSync(join(r2, '.harness/debug'));
+  expect(readFileSync(join(r2, '.harness/debug', name), 'utf8')).toBe(good);
 });

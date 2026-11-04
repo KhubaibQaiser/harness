@@ -1,0 +1,15 @@
+id: quiet
+kind: own-skill
+title: Fixture quiet
+source: { type: own }
+license: MIT
+min_claude_code: 2.1.0
+applies_when: { always: true }
+conflicts_with: []
+requires: []
+cost: { context: low, setup: none }
+stance: discouraged
+stance_reason: "overlaps lead-a"
+side_effects: []
+why: Fixture item for picks tests.
+evidence: []

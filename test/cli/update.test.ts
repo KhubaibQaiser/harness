@@ -734,3 +734,11 @@ test('a restored file is the person\'s again: edit it, reselect, uninstall gives
   expect((await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() }))).toBe(0);
   expect(readFileSync(join(root, SR), 'utf8')).toBe('mine, edited\n');
 });
+
+test('a restored backup is deleted only inside .harness/backup/', async () => {
+  const { isBackupPath } = await import('../../src/cli/update.js');
+  expect(isBackupPath('.harness/backup/2026-11-04T00-00-00.000Z/AGENTS.md')).toBe(true);
+  expect(isBackupPath('.harness/backup/../../README.md')).toBe(false);
+  expect(isBackupPath('README.md')).toBe(false);
+  expect(isBackupPath('.harness/backup\\..\\x')).toBe(false);
+});

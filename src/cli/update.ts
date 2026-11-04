@@ -26,6 +26,8 @@ const CONFIG = '.harness/config.yaml';
 const SETTINGS = '.claude/settings.json';
 const MCP = '.mcp.json';
 
+export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/backup/') && !rel.split(/[\\/]/).includes('..');
+
 export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const { out, prompt, version } = cli;
   if (args.some((a) => a !== '--yes' && a !== '--check' && a !== '--dry-run')) return out(USAGE), 2;
@@ -144,7 +146,8 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const err = commit(changes, { version, createdAt: at.toISOString(), ...(m.tddOff ? { tddOff: m.tddOff } : {}), files });
   if (err) return out(err), 1;
   removeEmptyDirs(root, changes);
-  for (const c of changes) if (c.kind === 'update' && c.restored) rmSync(join(root, c.restored), { force: true }); // the original is back in place
+  // The original is back in place. The path comes from the manifest, so delete only inside .harness/backup/.
+  for (const c of changes) if (c.kind === 'update' && c.restored && isBackupPath(c.restored)) rmSync(join(root, c.restored), { force: true });
   stampHarnessFiles(root); // change detection: these writes are harness's own
 
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);

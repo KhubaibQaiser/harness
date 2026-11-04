@@ -151,3 +151,24 @@ test('sandbox defaults to unattended', () => {
 test('sandbox: sometimes is an error', () => {
   expect(loadConfig(dirWith('.harness/config.yaml', 'sandbox: sometimes\n')).errors).toEqual(['"sandbox" must be one of unattended, always, off']);
 });
+
+test('platform-enforcement config without the new sections loads with no warnings', () => {
+  const d = mkdtempSync(join(tmpdir(), 'h-cfg-new-'));
+  mkdirSync(join(d, '.harness'));
+  writeFileSync(join(d, '.harness/config.yaml'), 'version: 1\nsandbox: always\nchecks:\n  tdd: true\n');
+  const l = loadConfig(d);
+  expect(l.warnings).toEqual([]);
+  expect(l.config.apps).toEqual([]);
+  expect(l.config.project.type).toBe('');
+  expect(l.config.catalog_version).toBe(0);
+});
+
+test('apps[0].port out of range names the element path', () => {
+  const app = { dir: 'web', kind: 'web', install: [], start: [], ready_url: '', port: 70000, public_facing: false, login: { needed: false, credentials: { file: '', keys: [], env: [] }, login_url: '', post_login: '' } };
+  const d = mkdtempSync(join(tmpdir(), 'h-cfg-port-'));
+  mkdirSync(join(d, '.harness'));
+  writeFileSync(join(d, '.harness/config.yaml'), JSON.stringify({ apps: [app] }));
+  const l = loadConfig(d);
+  expect(l.errors).toEqual(['"apps[0].port" must be an integer from 1 to 65535']);
+  expect(l.config.apps).toEqual([]);
+});

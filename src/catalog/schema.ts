@@ -43,8 +43,8 @@ export interface Catalog { version: number; items: CatalogItem[] }
 const KINDS: ItemKind[] = ['own-skill', 'own-agent', 'own-hook', 'plugin', 'mcp', 'external-skill', 'rule', 'ci', 'settings'];
 const LEVELS: Level[] = ['none', 'low', 'medium', 'high'];
 const STANCES: Stance[] = ['default', 'optional', 'discouraged'];
-const PROJECT_TYPES: ProjectType[] = ['web', 'landing', 'mobile', 'api', 'infra', 'library', 'other'];
-const CHECKS = Object.keys(defaults().checks);
+export const PROJECT_TYPES: ProjectType[] = ['web', 'landing', 'mobile', 'api', 'infra', 'library', 'other'];
+const checkNames = () => Object.keys(defaults().checks); // lazy: config.ts imports this module
 const SOURCE_TYPES = ['own', 'github', 'git-subdir', 'npm', 'remote'];
 const FIT: Record<string, string[]> = { plugin: ['github', 'git-subdir'], 'external-skill': ['github', 'git-subdir'], mcp: ['npm', 'remote'] };
 
@@ -151,7 +151,7 @@ function sourceErrors(s: Record<string, unknown>, err: (path: string, msg: strin
     }
     if (s.checks !== undefined) {
       if (!strs(s.checks)) err('.checks', 'must be a list of check names');
-      else s.checks.forEach((c, i) => CHECKS.includes(c) || err(`.checks[${i}]`, 'must be a harness check name'));
+      else s.checks.forEach((c, i) => checkNames().includes(c) || err(`.checks[${i}]`, 'must be a harness check name'));
     }
     if (s.merge !== undefined) {
       if (!Array.isArray(s.merge)) err('.merge', 'must be a list');

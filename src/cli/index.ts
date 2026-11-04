@@ -12,6 +12,7 @@ import { readlinePrompt } from './prompt.js';
 import { doctor } from './doctor.js';
 import { status } from './status.js';
 import { catalog } from './catalog.js';
+import { validate } from './validate.js';
 import { detect } from '../install/detect.js';
 import { factsJson } from '../install/facts.js';
 import { pauseStatus, pauseTdd, resumeTdd } from '../core/pause.js';
@@ -26,7 +27,7 @@ export interface CliEnv {
 
 declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force] [--dry-run]\n       harness update [--yes] [--check] [--dry-run]\n       harness doctor\n       harness status\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]';
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force] [--dry-run]\n       harness update [--yes] [--check] [--dry-run]\n       harness doctor\n       harness status\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness validate answers|product <file>';
 const DAY = 86_400_000;
 
 export function tddStatus(root: string): string {
@@ -97,6 +98,7 @@ export function run(argv: string[], cli: CliEnv): number {
   if (cmd === 'status') return status(rest, cli);
   if (cmd === 'scan') return rest.length ? (cli.out(USAGE), 2) : (cli.out(factsJson(detect(cli.root))), 0);
   if (cmd === 'catalog') return catalog(rest, cli);
+  if (cmd === 'validate') return validate(rest, cli);
   cli.out(USAGE);
   return 2;
 }

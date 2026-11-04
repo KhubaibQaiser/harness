@@ -52,6 +52,15 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
+      - name: Pin npm (trusted publishing needs 11.5.1 or newer)
+        run: npm install -g npm@11.5.1
+      - name: Check npm is new enough for trusted publishing
+        run: |
+          v=$(npm --version)
+          if [ "$(printf '%s\n11.5.1\n' "$v" | sort -V | head -n1)" != "11.5.1" ]; then
+            echo "npm $v is older than 11.5.1, which trusted publishing needs." >&2
+            exit 1
+          fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Publish

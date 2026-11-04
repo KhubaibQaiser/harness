@@ -54,6 +54,15 @@ test('the publish job waits on the npm-release environment', () => {
   expect(load('release.yml').jobs.publish.environment).toBe('npm-release');
 });
 
+test('release pins npm 11.5.1 before publishing and fails when npm is older', () => {
+  const steps = load('release.yml').jobs.publish.steps;
+  const i = steps.findIndex((s: any) => s.run === 'npm install -g npm@11.5.1');
+  const chk = steps.findIndex((s: any) => /older than 11\.5\.1/.test(s.run ?? ''));
+  expect(i).toBeGreaterThan(-1);
+  expect(chk).toBeGreaterThan(i);
+  expect(chk).toBeLessThan(steps.findIndex((s: any) => /npm publish/.test(s.run ?? '')));
+});
+
 test('release publishes with --provenance', () => {
   const pub = allSteps('release.yml').find((s) => /npm publish/.test(s.run ?? ''));
   expect(pub.run).toContain('--provenance');

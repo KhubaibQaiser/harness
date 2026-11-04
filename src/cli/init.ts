@@ -133,7 +133,7 @@ export async function budgetGate(
 }
 
 /** The person's own command line, for a step Claude Code's sandbox blocks. */
-export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove', args: string[]): string {
+export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove' | 'sync', args: string[]): string {
   const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
   return `Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's \`!\` prefix: ${self} ${cmd} ${args.map(shq).join(' ')}`;
 }
@@ -141,8 +141,8 @@ export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove', a
 export const shq = (a: string): string => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${(/[\u0000-\u001f\u007f-\u009f]/.test(a) ? esc(a) : a).replace(/'/g, `'\\''`)}'`);
 export const isDenied = (e: unknown): boolean => ['EPERM', 'EACCES'].includes((((e as Error)?.cause ?? e) as NodeJS.ErrnoException)?.code ?? '');
 /** Installs the selected pinned plugins, prints one line each, and re-hashes settings. Returns 1 when any install or the re-hash failed. `applied`: the files were written in this run. */
-export function installSelected(root: string, chosen: string[], cat: Catalog, exec: Exec, out: (s: string) => void, applied = true): number {
-  const ids = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@harness-pins`);
+export function installSelected(root: string, chosen: string[], cat: Catalog, exec: Exec, out: (s: string) => void, applied = true, have: string[] = []): number {
+  const ids = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@harness-pins`).filter((id) => !have.includes(id));
   if (!ids.length) return 0;
   const r = installPlugins(ids, exec);
   for (const id of r.ok) out(`Installed plugin ${id}`);

@@ -29,11 +29,12 @@ test('release checks tag equals package.json version, calls ci, then publishes',
   expect(rel.jobs.publish.needs).toBe('ci');
 });
 
-test('publish waits for a manual run on a tag; a tag push alone only checks', () => {
+test('a v* tag push publishes; there is no manual trigger', () => {
   const rel = load('release.yml');
-  expect(rel.on).toHaveProperty('workflow_dispatch');
+  expect(rel.on).not.toHaveProperty('workflow_dispatch');
   expect(rel.on.push.tags).toEqual(['v*']);
-  expect(rel.jobs.publish.if).toBe("github.event_name == 'workflow_dispatch' && github.ref_type == 'tag'");
+  expect(rel.jobs.publish.if).toBeUndefined();
+  expect(rel.jobs.publish.needs).toBe('ci');
   expect(rel.jobs['check-tag'].if).toBeUndefined();
   expect(rel.jobs.ci.if).toBeUndefined();
 });
@@ -49,9 +50,9 @@ test('release runs one at a time and publishes only a commit on main', () => {
   expect(i).toBeLessThan(steps.findIndex((s: any) => /npm publish/.test(s.run ?? '')));
 });
 
-test('release has no --provenance flag', () => {
-  const lines = raw('release.yml').split('\n').filter((l) => !l.trim().startsWith('#'));
-  expect(lines.join('\n')).not.toContain('--provenance');
+test('release publishes with --provenance', () => {
+  const pub = allSteps('release.yml').find((s) => /npm publish/.test(s.run ?? ''));
+  expect(pub.run).toContain('--provenance');
 });
 
 test('every uses: is pinned to a 40-char SHA', () => {
@@ -75,12 +76,10 @@ test('release tag check compares against package.json version and exits 1', () =
   expect(check.run).toContain('exit 1');
 });
 
-test('NPM_TOKEN appears only in the publish step env', () => {
-  const withToken = allSteps('release.yml').filter((s) => JSON.stringify(s).includes('NPM_TOKEN'));
-  expect(withToken).toHaveLength(1);
-  expect(withToken[0].run).toContain('npm publish --access public');
-  expect(raw('release.yml').match(/NPM_TOKEN/g)).toHaveLength(1);
-  expect(raw('ci.yml')).not.toContain('NPM_TOKEN');
+test('publish uses trusted publishing: OIDC permission, no npm token', () => {
+  const rel = load('release.yml');
+  expect(rel.jobs.publish.permissions['id-token']).toBe('write');
+  for (const f of ['release.yml', 'ci.yml']) expect(raw(f)).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN/);
 });
 
 test('prerelease versions publish with --tag beta, others latest', () => {

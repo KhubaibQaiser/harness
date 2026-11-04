@@ -10,7 +10,7 @@ The hooks are committed into the repo, so every teammate gets the same rules.
 
 Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, and in every session with `sandbox: always`. Elsewhere, and on native Windows always, the guard and protect checks are a seatbelt.
 
-**Status:** beta, version `0.1.0-beta.0`. It isn't on npm yet, so install from source.
+**Status:** beta, version `0.1.0-beta.1`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. M3 is still in progress.
 
 ## Why
 
@@ -274,7 +274,6 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 - A script that rewrites `.harness/state` can forge the CLI record. Protect covers file tools and named shell writes, and the sandbox denies it when unattended.
 - Mid-session, only the harness CLI's own change to `.claude/settings.json` is let through. A change to the user or local settings, by anyone, applies from the next session.
 - TDD and coverage gates for JS/TS only. Other repos get every other gate.
-- No npm provenance while the repo is private.
 - Cloud Claude Code sessions don't load repo-enabled plugins. The committed hooks still run there, but `/harness:*` skills don't.
 - Hooks run with the user's permissions. Only CI and branch protection enforce rules for everyone.
 - The CLI path the guard prints is trusted by location only (the repo's `node_modules/@khubaibqaiser/harness`). The agent can still put a copy there with commands protect doesn't parse, such as `git clone … node_modules/…`, `curl -o`/`wget -O`, `patch`, `git apply --directory`, or a `file:` dependency in `package.json` followed by an install. Read the printed command before you run it in your own terminal.

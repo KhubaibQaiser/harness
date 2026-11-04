@@ -1,6 +1,6 @@
 {
   "name": "harness",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0-beta.1",
   "description": "Hook harness for Claude Code: red-first TDD, multi-file edit gate and verified stops. Skills run the bundled CLI.",
   "agents": ["./templates/agents/staff-reviewer.md"],
   "author": { "name": "khubaibqaiser" }

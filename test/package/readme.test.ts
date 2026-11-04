@@ -18,7 +18,7 @@ test('README names the minimum Claude Code version from the source', () => {
 
 test('known limits are spec section 10, verbatim', () => {
   const limits = between(spec, '## 10.', '## 11.').split('\n').filter((l) => l.startsWith('- '));
-  expect(limits).toHaveLength(6);
+  expect(limits).toHaveLength(5);
   for (const l of limits) expect(readme).toContain(l + '\n');
 });
 

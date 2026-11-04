@@ -33,7 +33,7 @@ const fake = (answers: (boolean | string)[] = []): Prompt & { asked: string[] } 
 
 const go = async (root: string, args: string[], prompt: Prompt = fake(), extra: object = {}) => {
   let out = '';
-  const code = await init(args, { root, env: {}, out: (s) => (out += s + '\n'), prompt, version: '1.2.3', templatesDir, distDir, ...extra });
+  const code = await init(args, { root, env: { HARNESS_PLAIN_INIT: '1' }, out: (s) => (out += s + '\n'), prompt, version: '1.2.3', templatesDir, distDir, ...extra });
   return { code, out };
 };
 const git = (root: string, ...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8' });
@@ -262,7 +262,7 @@ test('init leaves out Stop steps whose tool is not on PATH and lists them', asyn
   const bin = mkdtempSync(join(tmpdir(), 'h-bin-'));
   for (const n of ['pytest', 'pytest.cmd']) writeFileSync(join(bin, n), '#!/bin/sh\n', { mode: 0o755 });
   const root = makeRepo(PYTHON);
-  const r = await go(root, ['--yes'], fake(), { env: { PATH: bin } });
+  const r = await go(root, ['--yes'], fake(), { env: { PATH: bin, HARNESS_PLAIN_INIT: '1' } });
   expect(r.code).toBe(0);
   expect(r.out).toContain('Stop steps left out:\n  ruff: `ruff` is not on PATH. Install it, then add the step to stop.steps.');
   const y = readFileSync(join(root, '.harness/config.yaml'), 'utf8');

@@ -164,6 +164,11 @@ test('ci runs the offline catalog check after pnpm build', () => {
   expect(runs).toEqual(['pnpm install --frozen-lockfile', 'pnpm build', 'node dist/cli.mjs catalog check']);
 });
 
+test('test steps set HARNESS_PLAIN_INIT so the Claude-Code-only gate does not block them', () => {
+  for (const f of ['ci.yml', 'claude-code-weekly.yml'])
+    expect(allSteps(f).find((s: any) => s.run === 'pnpm test').env).toEqual({ HARNESS_PLAIN_INIT: '1' });
+});
+
 test('catalog-pins runs weekly and on catalog changes with --resolve', () => {
   const w = load('catalog-pins.yml');
   expect(w.on.schedule).toEqual([{ cron: '0 6 * * 1' }]);

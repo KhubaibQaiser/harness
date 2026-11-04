@@ -15,6 +15,7 @@ import { STRUCTURAL } from '../install/merge.js';
 import { loadCatalog } from '../catalog/load.js';
 import { matchesHash } from '../install/text.js';
 import { dirtyPaths } from './init.js';
+import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -31,6 +32,8 @@ export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/b
 export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const { out, prompt, version } = cli;
   if (args.some((a) => a !== '--yes' && a !== '--check' && a !== '--dry-run')) return out(USAGE), 2;
+  const refused = args.includes('--check') ? null : refuseOutsideClaude('update', cli.env, hasAiFlags(args));
+  if (refused) return out(refused), 2;
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
   if (!yes && !dryRun && !args.includes('--check') && cli.tty === false) return out(NO_TTY), 2;
@@ -152,5 +155,6 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   out(`Harness updated to ${version}. Commit these files: ${[...changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);
+  if (insideClaude(cli.env) && !aiPath) out('Run /harness:update again to get recommendations for this repo.');
   return 0;
 }

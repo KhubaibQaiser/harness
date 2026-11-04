@@ -6,6 +6,7 @@ import { packageDir } from '../core/package-dir.js';
 import { repoRoot } from '../core/repo-root.js';
 import { recordCliPath } from '../core/cli-path.js';
 import { init } from './init.js';
+import { insideClaude } from './claude-only.js';
 import { uninstall } from './uninstall.js';
 import { update } from './update.js';
 import { readlinePrompt } from './prompt.js';
@@ -42,7 +43,7 @@ function tdd(sub: string | undefined, { root, env, out }: CliEnv): number {
   if (sub === 'status') return out(tddStatus(root)), 0;
   if (sub === 'on') return resumeTdd(root), log(root, 'resumed'), out(tddStatus(root)), 0;
   if (sub !== 'off') return out(USAGE), 2;
-  if (env.CLAUDECODE) {
+  if (insideClaude(env)) {
     log(root, 'refused');
     const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
     out(`Run harness tdd off from a plain terminal, not inside Claude Code: ${self} tdd off`);

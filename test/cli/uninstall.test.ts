@@ -12,7 +12,7 @@ import { doctor } from '../../src/cli/doctor.js';
 import { makeRepo } from '../install/helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const base = { env: {}, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') };
+const base = { env: { HARNESS_PLAIN_INIT: '1' }, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') };
 const REPO = {
   'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^1.0.0' } }, null, 2) + '\n',
   'package-lock.json': '{}\n',

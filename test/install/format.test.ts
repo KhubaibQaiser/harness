@@ -15,7 +15,7 @@ import { makeRepo, withPrettier } from './helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const prompt: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
-const quiet = { env: {}, out: () => {} };
+const quiet = { env: { HARNESS_PLAIN_INIT: '1' }, out: () => {} };
 
 const VITEST = 'export default {\n  test: { globals: true },\n};\n';
 const repo = (files: Record<string, string> = {}) => makeRepo({

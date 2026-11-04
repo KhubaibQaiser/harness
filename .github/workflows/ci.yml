@@ -27,6 +27,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+        env:
+          HARNESS_PLAIN_INIT: '1'
       - name: Hook latency (alone, after the parallel suite)
         run: pnpm test:perf
   security-and-pack:

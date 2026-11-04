@@ -13,6 +13,7 @@ import { stampHarnessFiles } from '../core/harness-files.js';
 import { planChanges } from '../install/plan.js';
 import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/preset.js';
 import { findOnPath } from '../checks/stop/runner.js';
+import { hasAiFlags, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -54,6 +55,8 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   const { out, prompt } = cli;
   const opts = parseArgs(args);
   if (!opts) return out(USAGE), 2;
+  const refused = refuseOutsideClaude('init', cli.env, hasAiFlags(args));
+  if (refused) return out(refused), 2;
   if (!opts.yes && !opts.dryRun && cli.tty === false) return out(NO_TTY), 2;
 
   // 1. Preflight

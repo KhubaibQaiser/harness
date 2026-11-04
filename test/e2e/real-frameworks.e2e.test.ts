@@ -19,7 +19,7 @@ const made: string[] = [];
 afterEach(() => void made.splice(0).forEach(cleanup));
 
 const run = (cwd: string, cmd: string, args: string[]) => {
-  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', shell: process.platform === 'win32' });
+  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', env: { ...process.env, HARNESS_PLAIN_INIT: '1' }, shell: process.platform === 'win32' });
   return { code: r.status, out: r.stdout + r.stderr };
 };
 /** Asserts exit 0, showing the command's output when it is not. */

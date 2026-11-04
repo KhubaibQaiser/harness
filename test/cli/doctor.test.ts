@@ -22,7 +22,7 @@ const REPO = {
 const prompt: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
 const installed = async (prefix?: string) => {
   const root = makeRepo(REPO, prefix ? { prefix } : {});
-  await init(['--yes'], { env: { PATH: bin('npm') }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   writeHookEnv(root); // as if a hook had run
   return root;
 };
@@ -130,7 +130,7 @@ test('custom tdd.paths: missing reporter is still reported', async () => {
 const UNSAFE = "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: { root: './src' } });\n";
 test('package left out of TDD: doctor repeats the manual lines, then names the tdd.paths edit once they are there', async () => {
   const root = makeRepo({ ...REPO, 'vitest.config.ts': UNSAFE });
-  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   const a = run(root, { path: bin('npm') });
   expect(a.out).toMatch(/^note TDD is off for the root package because its test config could not be edited safely: do this by hand: .*outputFile: \{ json: '\.harness\/results\/root\.json' \}.*then set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
   expect(a.code).toBe(0); // a note, not a problem
@@ -146,7 +146,7 @@ test('package left out of TDD: doctor repeats the manual lines, then names the t
 
 test('jest repo: doctor checks the installed reporter against the manifest', async () => {
   const root = makeRepo({ 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' } }), 'package-lock.json': '{}\n' });
-  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   const ok = run(root, { path: bin('npm') });
   expect(ok.out).toMatch(/^ok Jest reporter matches the manifest$/m);
   expect(ok.out).not.toMatch(/writes test results under/); // the reporter script is not a legacy results path
@@ -158,7 +158,7 @@ test('jest repo: doctor checks the installed reporter against the manifest', asy
 
 test('vitest without a coverage provider: doctor gives the install hint, then the steps once it is installed', async () => {
   const root = makeRepo({ ...REPO, 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^1.0.0' } }) });
-  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).not.toContain('enabled: true');
   const a = run(root, { path: bin('npm') });
   expect(a.out).toMatch(/^note the coverage gate is off for the root package: install @vitest\/coverage-v8 to turn on the coverage gate$/m);
@@ -180,7 +180,7 @@ test('CRLF checkout of the dispatcher still matches the manifest', async () => {
 test('package with no vitest config file: the note says so and gives the lines to create it', async () => {
   const { 'vitest.config.ts': _, ...noCfg } = REPO;
   const root = makeRepo(noCfg);
-  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   const r = run(root, { path: bin('npm') });
   expect(r.out).toMatch(/^note TDD is off for the root package because it has no Vitest\/Jest config file: do this by hand: Create `vitest\.config\.ts` with:/m);
   expect(r.code).toBe(0);
@@ -195,7 +195,7 @@ test('doctor notes that the hooks may see a different PATH than this terminal', 
 const JEST_TEXT = { 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' }, jest: { coverageReporters: ['text'] } }, null, 2) + '\n', 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n' };
 test('doctor: a Jest coverage config the gate cannot read is a note when skipped, a fix when it is not', async () => {
   const root = makeRepo(JEST_TEXT);
-  await init(['--yes'], { env: { PATH: bin('npm') }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE }); return { code, out }; };
   const a = await run();
   expect(a.out).toMatch(/^note the coverage gate is off for the root package: `package.json` "jest" sets `coverageReporters` without 'json'/m);
@@ -233,7 +233,7 @@ test('doctor: a format or lint Stop step that would check the .harness/ files is
   pkg.scripts['format:check'] = 'prettier --check .';
   pkg.devDependencies.prettier = '^3.0.0';
   const root = makeRepo({ ...REPO, 'package.json': JSON.stringify(pkg, null, 2) + '\n', 'eslint.config.js': 'export default makeConfig();\n' });
-  await init(['--yes'], { env: { PATH: bin('npm') }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE }); return { code, out }; };
   const a = await run(); // init wrote .prettierignore, but could not edit the computed ESLint config
   expect(a.out).not.toMatch(/runs Prettier/);
@@ -441,7 +441,7 @@ test.each([
   ['jest.config.js', { 'jest.config.js': "module.exports = { outputFile: '.harness/results/root.json' };\n" }],
 ])('a Jest package still writing under .harness/state is one fix (%s)', async (_n, extra) => {
   const root = makeRepo({ 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' } }), 'package-lock.json': '{}\n', ...extra });
-  await init(['--yes'], { env: {}, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
   for (const f of ['package.json', ...Object.keys(extra)]) {
     const p = join(root, f);
     writeFileSync(p, readFileSync(p, 'utf8').replaceAll('.harness/results', '.harness/state/test-results'));

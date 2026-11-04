@@ -2,8 +2,6 @@ name: release
 on:
   push:
     tags: ['v*']
-  # Publishing is manual: Actions > release > Run workflow, with the tag picked under "Use workflow from".
-  workflow_dispatch:
 permissions:
   contents: read
 # One release run at a time; a second one waits instead of cancelling a publish in progress.
@@ -29,8 +27,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
   publish:
     needs: ci
-    # A tag push only checks; this manual run on a tag is the approval to publish.
-    if: github.event_name == 'workflow_dispatch' && github.ref_type == 'tag'
+    # npm trusted publishing (OIDC): no token; npm links this workflow to the package.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -54,11 +51,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      # No --provenance: npm requires a public source repo, and this repo is private.
       - name: Publish
         run: |
           v=$(node -p "require('./package.json').version")
           case "$v" in *-*) tag=beta ;; *) tag=latest ;; esac
-          npm publish --access public --tag "$tag"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm publish --access public --provenance --tag "$tag"

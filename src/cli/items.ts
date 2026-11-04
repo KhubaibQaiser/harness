@@ -86,13 +86,15 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   const cat = lc.catalog;
   const byId = new Map(cat.items.map((i) => [i.id, i]));
   const have = selectedIds(config);
+  // A legacy install has no items list: its own items count as installed.
+  const rows: Selected[] = config.items.length ? config.items : have.map((x) => ({ id: x, include: 'recommended', selected: true, reason: 'Part of the harness install.', addresses: [], pin: '' }));
   const dirs = { templates: cli.templatesDir };
   const it = id === undefined ? undefined : byId.get(id);
   const picks = storedPicks(root);
 
   if (cmd === 'why') {
     if (!it) return out(`Unknown item "${id}". Run harness catalog to list the ids.`), 1;
-    const sel = config.items.find((i) => i.id === id && i.selected);
+    const sel = rows.find((i) => i.id === id && i.selected);
     const cost = `context ${it.cost.context}, setup ${it.cost.setup}`;
     if (!sel) return out(`Not installed. ${it.why} Cost: ${cost}.`), 0;
     out(`${id}: ${sel.reason}`);
@@ -105,7 +107,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
     return 0;
   }
   if (cmd === 'explain') {
-    for (const s of config.items.filter((i) => i.selected)) {
+    for (const s of rows.filter((i) => i.selected)) {
       out(`${s.id} (${byId.get(s.id)?.kind ?? 'unknown'}): ${s.reason}`);
       for (const f of itemFiles(m, s.id)) out(`  ${f.rel}`);
     }
@@ -177,6 +179,13 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   const dirty = dirtyPaths(root);
   const touched = changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
   if (touched.length && !dryRun) return out(`Commit or stash these files first, so the change can be undone cleanly: ${touched.join(', ')}.`), 1;
+  const mine = new Set([CONFIG, MANIFEST_REL, '.claude/settings.json', '.mcp.json', 'AGENTS.md', 'CLAUDE.md']);
+  for (const x of cmd === 'add' ? after.filter((y) => !have.includes(y)) : [id]) {
+    const src = byId.get(x)?.source;
+    for (const f of src?.type === 'own' ? src.files ?? [] : []) mine.add(f.to);
+  }
+  const other = changes.map((c) => c.rel).filter((rel) => !mine.has(rel));
+  if (other.length) out(`Note: this also refreshes harness files: ${other.join(', ')}.`);
   out('Plan:');
   for (const c of changes) {
     out(`  ${c.kind} ${c.rel}`);
@@ -196,7 +205,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   try {
     applyChanges(root, changes, m.version, () => at, cli.fs, { manifest: { ...m, files } });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('update', args) : e.message), 1;
+    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine(cmd as 'add' | 'remove', args) : e.message), 1;
     throw e;
   }
   removeEmptyDirs(root, changes);
@@ -204,10 +213,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   for (const c of changes) if (c.kind === 'update' && c.restored?.startsWith('.harness/backup/') && !c.restored.split(/[\\/]/).includes('..')) rmSync(join(root, c.restored), { force: true });
   stampHarnessFiles(root); // change detection: these writes are harness's own
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
-  if (cmd === 'add') out('Run harness git commit on a branch to commit this change.');
-  else {
-    out(`Removed ${id}. Commit these files: ${[...changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);
-    if (id === 'agent-guard') out(GUARD_OFF);
-  }
+  if (cmd === 'remove' && id === 'agent-guard') out(GUARD_OFF);
+  out('Run harness git commit on a branch to commit this change.');
   return 0;
 }

@@ -2,6 +2,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import * as realFs from 'node:fs';
+import type { FsLike } from '../../src/install/apply.js';
 import { expect, test } from 'vitest';
 import { items } from '../../src/cli/items.js';
 import type { Prompt } from '../../src/cli/prompt.js';
@@ -33,8 +36,8 @@ const commitAll = (root: string) => {
   execFileSync('git', ['add', '-A'], { cwd: root });
   execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'x'], { cwd: root });
 };
-const installed = (ids: string[] = OWN) => {
-  const root = makeRepo(REPO);
+const installed = (ids: string[] = OWN, files: Record<string, string> = REPO) => {
+  const root = makeRepo(files);
   const facts = detect(root);
   const config = preset(facts).config;
   config.items = ids.map((id) => ({ id, include: 'recommended' as const, selected: true, reason: 'r', addresses: [], pin: '' })).map((i) => (i.id === 'staff-reviewer' ? { ...i, reason: 'Reviews every diff.', addresses: ['f1'] } : i));
@@ -45,9 +48,9 @@ const installed = (ids: string[] = OWN) => {
 };
 const noPrompt: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
 const CLAUDE = { CLAUDECODE: '1' };
-const run = async (root: string, cmd: 'add' | 'remove' | 'why' | 'explain', args: string[], env: NodeJS.ProcessEnv = CLAUDE, catalog?: ReturnType<typeof loadCatalog>['catalog']) => {
+const run = async (root: string, cmd: 'add' | 'remove' | 'why' | 'explain', args: string[], env: NodeJS.ProcessEnv = CLAUDE, catalog?: ReturnType<typeof loadCatalog>['catalog'], fs?: FsLike) => {
   let out = '';
-  const code = await items(cmd, args, { env, root, out: (s) => (out += s + '\n'), prompt: noPrompt, templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null, catalog });
+  const code = await items(cmd, args, { env, root, out: (s) => (out += s + '\n'), prompt: noPrompt, templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null, catalog, fs });
   return { code, out };
 };
 const tree = (root: string, dir = ''): Record<string, string> => Object.fromEntries(readdirSync(join(root, dir)).filter((n) => n !== '.git').flatMap((n) => {
@@ -190,4 +193,77 @@ test('add refuses outside Claude Code; remove, why and explain do not', async ()
   expect((await run(root, 'why', ['stop-gate'], {})).code).toBe(0);
   expect((await run(root, 'explain', [], {})).code).toBe(0);
   expect((await run(root, 'remove', ['stop-gate', '--dry-run'], {})).code).toBe(0);
+});
+
+const MCP = '.mcp.json';
+const denied = { ...realFs, renameSync: (a: string, b: string) => { if (b.endsWith('settings.json') || b.endsWith('manifest.json')) throw Object.assign(new Error('EPERM: nope'), { code: 'EPERM' }); return realFs.renameSync(a, b); } } as unknown as FsLike;
+
+test('a sandbox-denied write prints the add or remove command, not update', async () => {
+  const root = installed();
+  const a = await run(root, 'add', ['mobile-mcp', '--yes', '--over-budget'], CLAUDE, undefined, denied);
+  expect(a.code, a.out).toBe(1);
+  expect(a.out).toMatch(/ add mobile-mcp --yes --over-budget\n$/);
+  expect(a.out).not.toMatch(/ update mobile-mcp/);
+  const root2 = installed([...OWN, 'staff-reviewer']);
+  const r = await run(root2, 'remove', ['staff-reviewer', '--yes'], {}, undefined, denied);
+  expect(r.code, r.out).toBe(1);
+  expect(r.out).toContain(' remove staff-reviewer --yes');
+});
+
+test('remove keeps a .mcp.json the person created, with their server', async () => {
+  const mine = JSON.stringify({ mcpServers: { mine: { command: 'm' } } }, null, 2) + '\n';
+  const root = installed([...OWN, 'mobile-mcp'], { ...REPO, [MCP]: mine });
+  expect((await run(root, 'remove', ['mobile-mcp', '--yes'], {})).code).toBe(0);
+  expect(readFileSync(join(root, MCP), 'utf8')).toBe(mine);
+});
+
+test('remove keeps a harness-created .mcp.json once the person added a server', async () => {
+  const root = installed([...OWN, 'mobile-mcp']);
+  const p = join(root, MCP);
+  const j = JSON.parse(readFileSync(p, 'utf8'));
+  j.mcpServers.mine = { command: 'm' };
+  writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+  commitAll(root);
+  expect((await run(root, 'remove', ['mobile-mcp', '--yes'], {})).code).toBe(0);
+  expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ mcpServers: { mine: { command: 'm' } } });
+});
+
+test('remove keeps an own file the person edited, and says so', async () => {
+  const root = installed([...OWN, 'staff-reviewer']);
+  writeFileSync(join(root, SR), 'my edits\n');
+  commitAll(root);
+  const r = await run(root, 'remove', ['staff-reviewer', '--yes'], {});
+  expect(r.code, r.out).toBe(0);
+  expect(readFileSync(join(root, SR), 'utf8')).toBe('my edits\n');
+  expect(r.out).toContain('was edited since harness wrote it');
+});
+
+test('remove restores a backed-up file and drops the backup', async () => {
+  const root = installed([...OWN, 'staff-reviewer'], { ...REPO, [SR]: 'mine\n' });
+  const backup = readManifest(root)!.files.find((f) => f.rel === SR)!.backup!;
+  expect(existsSync(join(root, backup))).toBe(true);
+  expect((await run(root, 'remove', ['staff-reviewer', '--yes'], {})).code).toBe(0);
+  expect(readFileSync(join(root, SR), 'utf8')).toBe('mine\n');
+  expect(existsSync(join(root, backup))).toBe(false);
+  expect(readManifest(root)!.files.some((f) => f.rel === SR)).toBe(false);
+});
+
+test('remove ends with the git commit line, and an unrelated refresh is noted', async () => {
+  const root = installed([...OWN, 'staff-reviewer']);
+  writeFileSync(join(root, '.harness/hooks/dispatch.mjs'), 'old\n'); // stands in for a stale dispatcher
+  commitAll(root);
+  const r = await run(root, 'remove', ['staff-reviewer', '--dry-run'], {});
+  expect(r.out).toContain('Note: this also refreshes harness files: .harness/hooks/dispatch.mjs.');
+  const ok = await run(root, 'remove', ['staff-reviewer', '--yes'], {});
+  expect(ok.out).toMatch(/Run harness git commit on a branch to commit this change\.\n$/);
+  expect(ok.out).not.toContain('Commit these files');
+});
+
+test('why and explain on a legacy install count the own items as installed', async () => {
+  const root = installed();
+  const p = join(root, '.harness/config.yaml');
+  writeFileSync(p, readFileSync(p, 'utf8').replace(/\nitems:[\s\S]*?\n(?=\S)/, '\nitems: []\n'));
+  expect(readFileSync(p, 'utf8')).toContain('items: []');
+  expect((await run(root, 'why', ['stop-gate'], {})).out).not.toContain('Not installed');
+  expect((await run(root, 'explain', [], {})).out).toContain('stop-gate (');
 });

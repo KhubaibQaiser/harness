@@ -283,6 +283,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 - LSP plugin config in the `harness-pins` marketplace is unverified live. Claude Code may ignore it.
 - The context count is an estimate (characters divided by 4), and plugins, external skills and MCP servers aren't measured before install.
 - `.harnessignore` has no `!` negation.
+- `remove tdd-gate` (or deselecting it) leaves the test-config edits `init` made in place; undo them by hand.
 - `update` doesn't rename a package config and make another edit to it in one run. Run it twice.
 - `harness git` treats `origin/HEAD`, `init.defaultBranch`, `main` and `master` as the default branch. If your default is another name and `origin/HEAD` isn't set, run `git remote set-head origin -a` first.
 - Out of the beta: the PR reviewer, the interview and catalog, committing during `init`, and TDD for other languages.

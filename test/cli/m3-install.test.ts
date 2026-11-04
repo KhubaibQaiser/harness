@@ -11,6 +11,7 @@ import type { Prompt } from '../../src/cli/prompt.js';
 import { loadCatalog } from '../../src/catalog/load.js';
 import { applyChanges, readManifest } from '../../src/install/apply.js';
 import { detect } from '../../src/install/detect.js';
+import { pruneStale } from '../../src/install/finish.js';
 import { approvedIds } from '../../src/install/approved.js';
 import { backupText } from '../../src/install/manifest.js';
 import { planChanges } from '../../src/install/plan.js';
@@ -199,4 +200,27 @@ test('a CRLF config.yaml stays CRLF after add', async () => {
   const r = await add(root, 'add', ['staff-reviewer', '--yes']);
   expect(r.code, r.out).toBe(0);
   expect(readFileSync(p, 'utf8').replace(/\r\n/g, '')).not.toContain('\n');
+});
+
+// M6: stale blocks. A block the person already removed by hand is forgotten by the manifest when its item goes.
+test('remove forgets the settings blocks of an item whose entries the person already deleted', async () => {
+  const root = installed([...OWN, 'impeccable']);
+  const sp = join(root, '.claude/settings.json');
+  const j = JSON.parse(readFileSync(sp, 'utf8'));
+  delete j.enabledPlugins;
+  delete j.extraKnownMarketplaces;
+  writeFileSync(sp, JSON.stringify(j, null, 2) + '\n');
+  commitAll(root);
+  const owns = () => (readManifest(root)!.files.find((f) => f.rel === '.claude/settings.json')?.blocks ?? []).filter((b) => b.includes('impeccable'));
+  expect(owns().length).toBeGreaterThan(0);
+  expect((await add(root, 'remove', ['impeccable', '--yes'])).code).toBe(0);
+  expect(owns()).toEqual([]);
+});
+
+test('pruneStale drops the dropped blocks of a file with no change and counts them', () => {
+  const m = { version: '1', createdAt: '', files: [{ rel: '.mcp.json', kind: 'update' as const, hash: 'h', blocks: ['a', 'b'] }, { rel: '.claude/settings.json', kind: 'update' as const, hash: 'h', blocks: ['c'] }] };
+  expect(pruneStale(m, [], ['a', 'c'])).toBe(2);
+  expect(m.files[0].blocks).toEqual(['b']);
+  expect(m.files[1].blocks).toBeUndefined();
+  expect(pruneStale(m, [{ kind: 'delete', rel: '.mcp.json', before: '' }], ['b'])).toBe(0); // a file with a change is left to the merge
 });

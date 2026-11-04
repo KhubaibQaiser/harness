@@ -26,7 +26,7 @@ import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish
 import { AI_USAGE, budgetGate, installSelected, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
 import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
-import { gitRoot } from '../core/repo-root.js';
+import { openInstall } from './preamble.js';
 import type { CliEnv } from './index.js';
 
 export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch; fs?: FsLike; exec?: Exec; claudeVersion?: () => string | null };
@@ -63,16 +63,9 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     return 0;
   }
 
-  const root = gitRoot(cli.root);
-  if (!root) return out('Not a git repository. Run /harness:update inside a git repo.'), 1;
-  let m: Manifest | null;
-  try {
-    m = readManifest(root);
-  } catch (e) {
-    if (e instanceof ManifestError) return out(e.message), 1;
-    throw e;
-  }
-  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
+  const opened = openInstall(cli, 'Not a git repository. Run /harness:update inside a git repo.');
+  if (typeof opened === 'number') return opened;
+  const { root, m } = opened;
 
   // Strict validation: update plans from this config, so a mistake in it should stop us, not be skipped silently.
   // The old default results_dir is now a config error, so it is migrated first (ruling 9): a one-line edit, not a rewrite.

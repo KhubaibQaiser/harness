@@ -844,7 +844,8 @@ test('update: plugin flags without AI flags are a usage error; an EPERM write pr
   const r = await up(root, ['--yes'], { fs, distDir: newDist() });
   expect(r.code).toBe(1);
   expect(r.out).toContain("Run this yourself with Claude Code's `!` prefix");
-  expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe(before);
+  // The rollback itself hit the same EPERM, so the lock stays: the next run refuses until the person recovers.
+  expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe(before + '?? .harness/apply.lock\n');
 });
 
 test('update on an unchanged selection asks before installing plugins unless --yes', async () => {

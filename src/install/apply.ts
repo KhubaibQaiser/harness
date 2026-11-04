@@ -39,7 +39,7 @@ export function applyChanges(
   const abs = (rel: string) => join(root, ...rel.split('/'));
   // A kill mid-apply leaves written files the manifest never recorded; the journal below tells the next run.
   if (fs.existsSync(abs(LOCK)))
-    throw new ApplyError('A previous harness run was interrupted before it recorded its files. Run `git status`, undo its changes with `git checkout` and `git clean`, delete `.harness/apply.lock`, then run the command again.');
+    throw new ApplyError('A previous harness run was interrupted or could not roll back, so the files and `.harness/manifest.json` may disagree. To recover: 1) run `git status` to see what it changed, 2) undo that with `git checkout -- <file>` and `git clean -f <file>` (restore any file named in the earlier rollback message from `.harness/backup/`), 3) delete `.harness/apply.lock`, 4) run the command again.');
   const createdAt = now().toISOString();
   const backupRel = `.harness/backup/${createdAt.replace(/:/g, '-')}`;
   const writeManifest = opts.manifest !== undefined || (opts.writeManifest ?? true);
@@ -158,7 +158,7 @@ export function applyChanges(
     }
     const restoreFailed = failed.length > 0;
     for (const s of steps) fs.rmSync(abs(s.rel) + TMP, { force: true });
-    fs.rmSync(abs(LOCK), { force: true }); // the error below says what to restore by hand
+    if (!restoreFailed) fs.rmSync(abs(LOCK), { force: true }); // files and manifest may disagree: the next run refuses until the person recovers
     if (!restoreFailed) fs.rmSync(abs(backupRel), { recursive: true, force: true });
     for (const d of madeDirs.reverse()) {
       try {

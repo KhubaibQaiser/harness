@@ -1,15 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { parse as parseYaml } from 'yaml';
 import { budgetLines, budgetVerdict, itemContext, itemContextLine, measureSelection } from '../budget/measure.js';
-import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
-import { validateConfig } from '../core/config-io.js';
 import { esc, type HarnessConfig, type Selected } from '../core/config.js';
 import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { packageDir } from '../core/package-dir.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
-import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, readManifest, removeEmptyDirs, type Manifest } from '../install/apply.js';
+import { ApplyError, type Change, type FsLike, applyChanges, removeEmptyDirs } from '../install/apply.js';
 import { approvedIds } from '../install/approved.js';
 import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
 import { unifiedDiff } from '../install/diff.js';
@@ -21,7 +18,7 @@ import type { Picks } from '../ai/picks.js';
 import { budgetGate, isDenied, sandboxLine } from './init.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
-import { gitRoot } from '../core/repo-root.js';
+import { openInstall, readCatalog, readConfig } from './preamble.js';
 import type { CliEnv } from './index.js';
 
 export type ItemsEnv = CliEnv & { prompt: Prompt; templatesDir: string; distDir: string; fs?: FsLike; claudeVersion?: () => string | null; catalog?: Catalog };
@@ -69,27 +66,14 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   if (refused) return out(refused), 2;
   if ((cmd === 'add' || cmd === 'remove') && !yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
 
-  const root = gitRoot(cli.root);
-  if (!root) return out('Not a git repository. Run harness inside a git repo.'), 1;
-  let m: Manifest | null;
-  try {
-    m = readManifest(root);
-  } catch (e) {
-    if (e instanceof ManifestError) return out(e.message), 1;
-    throw e;
-  }
-  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
-  let config: HarnessConfig;
-  try {
-    const v = validateConfig(parseYaml(readFileSync(join(root, CONFIG), 'utf8')));
-    if (!v.ok) return v.errors.forEach((e) => out(e)), out('Next step: run harness doctor.'), 1;
-    config = v.config;
-  } catch (e) {
-    return out(`Could not read \`${CONFIG}\`: ${(e as Error).message}\nNext step: run harness doctor.`), 1;
-  }
-  const lc = cli.catalog ? { catalog: cli.catalog, errors: [] as string[] } : loadCatalog();
-  if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
-  const cat = lc.catalog;
+  const opened = openInstall(cli, 'Not a git repository. Run harness inside a git repo.');
+  if (typeof opened === 'number') return opened;
+  const { root, m } = opened;
+  const cfg = readConfig(root, out);
+  if (typeof cfg === 'number') return cfg;
+  const config = cfg;
+  const cat = readCatalog(cli.catalog, out);
+  if (typeof cat === 'number') return cat;
   const byId = new Map(cat.items.map((i) => [i.id, i]));
   const have = selectedIds(config);
   // A legacy install has no items list: its own items count as installed.

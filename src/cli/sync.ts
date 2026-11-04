@@ -1,30 +1,26 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parse as parseYaml } from 'yaml';
-import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
-import { validateConfig } from '../core/config-io.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
-import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, readManifest, removeEmptyDirs, type Manifest } from '../install/apply.js';
+import { ApplyError, type Change, type FsLike, applyChanges, removeEmptyDirs } from '../install/apply.js';
 import { unifiedDiff } from '../install/diff.js';
 import { approvedIds } from '../install/approved.js';
 import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
 import { MANIFEST_REL, mergeManifestFiles, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
-import { pinnedPlugins, STRUCTURAL } from '../install/merge.js';
+import { pinnedPlugins } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
 import { reconcile } from '../install/reconcile.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { budgetGate, installSelected, isDenied, sandboxLine } from './init.js';
 import { NO_TTY, type Prompt } from './prompt.js';
-import { gitRoot } from '../core/repo-root.js';
+import { openInstall, readCatalog, readConfig } from './preamble.js';
 import type { CliEnv } from './index.js';
 
 export type SyncEnv = CliEnv & { prompt: Prompt; version?: string; templatesDir: string; distDir: string; fs?: FsLike; exec?: Exec; catalog?: Catalog };
 
 const USAGE = 'Usage: /harness:sync [--dry-run|--yes] [--take <file,...>] [--install-plugins] [--over-budget]';
-const CONFIG = '.harness/config.yaml';
 const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
 
 export async function sync(args: string[], cli: SyncEnv): Promise<number> {
@@ -45,29 +41,14 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   if (refused) return out(refused), 2;
   if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
 
-  const root = gitRoot(cli.root);
-  if (!root) return out('Not a git repository. Run /harness:sync inside a git repo.'), 1;
-  let m: Manifest | null;
-  try {
-    m = readManifest(root);
-  } catch (e) {
-    if (e instanceof ManifestError) return out(e.message), 1;
-    throw e;
-  }
-  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
-  const man = m;
-  let config;
-  try {
-    const v = validateConfig(parseYaml(readFileSync(join(root, CONFIG), 'utf8')));
-    if (!v.ok) return v.errors.forEach((e) => out(e)), out('Next step: run harness doctor.'), 1;
-    config = v.config;
-  } catch (e) {
-    return out(`Could not read \`${CONFIG}\`: ${(e as Error).message}\nNext step: run harness doctor.`), 1;
-  }
+  const opened = openInstall(cli, 'Not a git repository. Run /harness:sync inside a git repo.');
+  if (typeof opened === 'number') return opened;
+  const { root, m: man } = opened;
+  const config = readConfig(root, out);
+  if (typeof config === 'number') return config;
   if (!config.items.length) return out('This install predates the item catalog. Run /harness:update with recommendations first.'), 1;
-  const lc = cli.catalog ? { catalog: cli.catalog, errors: [] as string[] } : loadCatalog();
-  if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
-  const cat = lc.catalog;
+  const cat = readCatalog(cli.catalog, out);
+  if (typeof cat === 'number') return cat;
   if (cli.version && cli.version !== man.version) return out(`Harness files are ${man.version} but this is ${cli.version}. Run /harness:update first; sync does not change the version.`), 1;
   const have = selectedIds(config);
 

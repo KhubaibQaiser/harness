@@ -291,7 +291,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 - MCP servers need each user's approval.
 - `CLAUDECODE` is also set in IDE terminals, so `init` and `update` run there too, not only inside a Claude Code session. They don't print `Run /harness:init inside Claude Code`.
 - There is no version-drift check for `git-subdir` plugins that have no `plugin_version`. The commit is pinned, but `doctor` has nothing to compare. The release notes list them.
-- A harness command that is killed in the middle of writing leaves `.harness/apply.lock`. The next command refuses to run until you undo the partial change with git and delete the lock. Two harness commands running in one repo at the same time: the second to finish stops with "Another harness command changed the install while this one ran" and writes nothing.
+- A harness command that is killed in the middle of writing, or whose rollback fails, leaves `.harness/apply.lock`. The next command refuses to run until you undo the partial change with git and delete the lock. Two harness commands running in one repo at the same time: the second to finish stops with "Another harness command changed the install while this one ran" and writes nothing.
 - When the agent runs an item change (`init`, `update`, `add`, `remove`, `sync`, `uninstall`), harness asks you first.
 - Under `sandbox: always`, item commands may need Claude Code's `!` prefix. Unverified, pending the live check.
 - `.harnessignore` has no `!` negation.

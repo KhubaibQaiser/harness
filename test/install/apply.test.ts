@@ -269,6 +269,14 @@ describe('applyChanges: M3 final review', () => {
     expect(() => applyChanges(root, [{ kind: 'create', rel: 'd.txt', content: 'd\n' }], '1', NOW)).toThrow(/interrupted/);
     expect(existsSync(join(root, 'd.txt'))).toBe(false);
   });
+  it('keeps the lock when a rollback fails, and the refusal says how to recover', () => {
+    const root = setup();
+    let n = 0;
+    const fs = { ...realFs, renameSync: (a: any, b: any) => { if (++n > 1) throw new Error('boom'); realFs.renameSync(a, b); } } as FsLike;
+    expect(() => applyChanges(root, [{ kind: 'update', rel: 'a.txt', before: 'a\n', after: 'a2\n', blocks: [] }, { kind: 'update', rel: 'b.txt', before: 'b\n', after: 'b2\n', blocks: [] }], '1', NOW, fs)).toThrow(/Rollback failed/);
+    expect(existsSync(join(root, '.harness/apply.lock'))).toBe(true);
+    expect(() => applyChanges(root, [], '1', NOW)).toThrow(/git status.*git checkout.*apply\.lock/s);
+  });
   it('removeEmptyDirs never removes the repo root, whatever its spelling', () => {
     const root = mkdtempSync(join(tmpdir(), 'harness-m9-'));
     mkdirSync(join(root, 'x'));

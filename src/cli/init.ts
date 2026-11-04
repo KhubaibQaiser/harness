@@ -18,6 +18,7 @@ import { packageDir } from '../core/package-dir.js';
 import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest } from '../install/apply.js';
 import { type Facts } from '../install/detect.js';
 import { pinnedPlugins } from '../install/merge.js';
+import { dirtyPaths } from '../install/git-status.js';
 import { installPlugins } from '../install/plugin-install.js';
 import { resolveSelection, toSelected } from '../install/select.js';
 import { detect } from '../install/detect.js';
@@ -41,19 +42,6 @@ const USAGE = `Usage: /harness:init [--yes] [--dry-run] [--config <file>] ${AI_U
 const GATES: Record<string, string> = { guard: 'guard', protect: 'protect', depVerify: 'dep-verify', multiFile: 'multi-file', tdd: 'TDD', stop: 'stop' };
 
 const at = (o: any, path: string): unknown => path.split('.').reduce((v, k) => v?.[k], o);
-
-/** Paths git reports as modified, staged or untracked, relative to the repo root (untracked dirs end in "/"). */
-export function dirtyPaths(root: string): string[] {
-  const raw = execFileSync('git', ['status', '--porcelain', '-z'], { cwd: root, encoding: 'utf8' }).split('\0');
-  const paths: string[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    const e = raw[i];
-    if (e.length < 4) continue;
-    paths.push(e.slice(3));
-    if (e[0] === 'R' || e[0] === 'C' || e[1] === 'R' || e[1] === 'C') paths.push(raw[++i]);
-  }
-  return paths;
-}
 
 export interface AiArgs { answers?: string; product?: string; picks?: string; report?: string; choose?: string; installPlugins: boolean; overBudget: boolean }
 const VALUE_FLAGS = ['answers', 'product', 'picks', 'report', 'choose'] as const;
@@ -133,7 +121,7 @@ export async function budgetGate(
 }
 
 /** The person's own command line, for a step Claude Code's sandbox blocks. */
-export function sandboxLine(cmd: 'init' | 'update', args: string[]): string {
+export function sandboxLine(cmd: 'init' | 'update' | 'git', args: string[]): string {
   const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
   return `Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's \`!\` prefix: ${self} ${cmd} ${args.map(shq).join(' ')}`;
 }

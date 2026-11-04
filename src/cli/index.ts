@@ -15,6 +15,7 @@ import { status } from './status.js';
 import { catalog } from './catalog.js';
 import { validate } from './validate.js';
 import { select } from './select.js';
+import { gitStep } from './git.js';
 import { detect } from '../install/detect.js';
 import { factsJson } from '../install/facts.js';
 import { pauseStatus, pauseTdd, resumeTdd } from '../core/pause.js';
@@ -29,7 +30,7 @@ export interface CliEnv {
 
 declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       /harness:init [--yes] [--dry-run] [--config <file>] [--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]\n       harness uninstall [--yes] [--force] [--dry-run]\n       /harness:update [--yes] [--check] [--dry-run] [AI flags as init]\n       harness doctor\n       harness status\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness validate answers|product <file>\n       harness validate picks <file> --answers <file> [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness select --picks <file> [--choose <id,...>]';
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       /harness:init [--yes] [--dry-run] [--config <file>] [--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]\n       harness uninstall [--yes] [--force] [--dry-run]\n       /harness:update [--yes] [--check] [--dry-run] [AI flags as init]\n       harness doctor\n       harness status\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness validate answers|product <file>\n       harness validate picks <file> --answers <file> [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness select --picks <file> [--choose <id,...>]\n       harness git branch|commit|push|pr [--title <t>]';
 const DAY = 86_400_000;
 
 export function tddStatus(root: string): string {
@@ -102,6 +103,7 @@ export function run(argv: string[], cli: CliEnv): number {
   if (cmd === 'catalog') return catalog(rest, cli);
   if (cmd === 'validate') return validate(rest, cli);
   if (cmd === 'select') return select(rest, cli);
+  if (cmd === 'git') return gitStep(rest, cli);
   cli.out(USAGE);
   return 2;
 }

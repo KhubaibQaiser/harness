@@ -17,7 +17,7 @@ import { JEST_REPORTER, hasResultsOutput, resultsRename, testConfigChange } from
 import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
-import { dirtyPaths } from './init.js';
+import { dirtyPaths } from '../install/git-status.js';
 
 export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJS.Platform };
 

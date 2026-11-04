@@ -109,6 +109,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `validate picks <file> --answers <file> [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
 | `select --picks <file> [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `items` entries. |
+| `git branch\|commit\|push\|pr [--title <t>]` | Commits and pushes the harness changes one step at a time. `branch` creates `chore/ai-workflow-<catalog version>`; `commit` stages only the files harness wrote, with your own git name and email; `push` and `pr` never touch the default branch. `pr` needs `gh` signed in, else it prints the command. The agent asks you before `push` and `pr`. |
 
 `scan`, `catalog`, `validate` and `select` write nothing. They are the steps `/harness:init` calls; you can run them to see what it sees.
 
@@ -266,6 +267,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 - The context count is an estimate (characters divided by 4), and plugins, external skills and MCP servers aren't measured before install.
 - `.harnessignore` has no `!` negation.
 - `update` doesn't rename a package config and make another edit to it in one run. Run it twice.
+- `harness git` treats `origin/HEAD`, `init.defaultBranch`, `main` and `master` as the default branch. If your default is another name and `origin/HEAD` isn't set, run `git remote set-head origin -a` first.
 - Out of the beta: the PR reviewer, the interview and catalog, committing during `init`, and TDD for other languages.
 
 ## Roadmap

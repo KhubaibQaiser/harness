@@ -50,6 +50,10 @@ test('release runs one at a time and publishes only a commit on main', () => {
   expect(i).toBeLessThan(steps.findIndex((s: any) => /npm publish/.test(s.run ?? '')));
 });
 
+test('the publish job waits on the npm-release environment', () => {
+  expect(load('release.yml').jobs.publish.environment).toBe('npm-release');
+});
+
 test('release publishes with --provenance', () => {
   const pub = allSteps('release.yml').find((s) => /npm publish/.test(s.run ?? ''));
   expect(pub.run).toContain('--provenance');
@@ -171,7 +175,7 @@ test('test steps set HARNESS_PLAIN_INIT so the Claude-Code-only gate does not bl
 test('catalog-pins runs weekly and on catalog changes with --resolve', () => {
   const w = load('catalog-pins.yml');
   expect(w.on.schedule).toEqual([{ cron: '0 6 * * 1' }]);
-  expect(w.on.push.paths).toEqual(['catalog/**']);
+  expect(w.on.push.paths).toEqual(['catalog/**', 'src/catalog/**']);
   expect(w.on).toHaveProperty('workflow_dispatch');
   expect(w.permissions).toEqual({ contents: 'read' });
   const steps = allSteps('catalog-pins.yml');

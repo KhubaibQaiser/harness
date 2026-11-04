@@ -18,8 +18,8 @@ Rules in `CLAUDE.md` or `AGENTS.md` are advice, and a busy agent can skip them. 
 
 - **Deterministic.** The hooks call no model. They decide from the tool call, your own test results, coverage and `git diff`.
 - **Fails closed.** If the hook can't run, Claude Code blocks the call. If the config is invalid, edits are denied until a person fixes it.
-- **Local and reversible.** It sends nothing anywhere. `init` backs up every file it changes, and `uninstall` restores them.
-- **You confirm every write.** `init` and `update` show the plan and diff first. They never commit or push.
+- **Local and reversible.** `init` backs up every file it changes, and `uninstall` restores them.
+- **You confirm every write.** `init` and `update` show the plan and diff first. Committing and pushing are separate steps, each behind its own question.
 - **AI steps run only inside Claude Code.** `init` and `update` need Claude Code to read your repo and choose items. The hooks still call no model.
 
 ## What you get
@@ -130,7 +130,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `validate answers\|product <file>` | Checks an interview answers file or a product file. |
 | `validate picks <file> --answers <file> [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
-| `select --picks <file> [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `items` entries. |
+| `select --picks <file> [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `selected` entries. Each checklist row also has `unpinned` ("Runs unpinned code at launch.") and `unpinned_reason` for items whose catalog entry sets `unpinned_runtime`. |
 | `git branch\|commit\|push\|pr [--title <t>]` | Commits and pushes the harness changes one step at a time. `branch` creates `chore/ai-workflow-<catalog version>`; `commit` stages only the files harness wrote, with your own git name and email; `push` and `pr` never touch the default branch. `pr` needs `gh` signed in, else it prints the command. The agent asks you before `push` and `pr`. |
 
 `scan`, `catalog`, `validate` and `select` write nothing. They are the steps `/harness:init` calls; you can run them to see what it sees.
@@ -141,7 +141,7 @@ Without a terminal, pass `--yes` or `--dry-run`.
 
 ### AI flags
 
-Inside Claude Code, `/harness:init` and `/harness:update` take the files the interview produced. All five are required together:
+Inside Claude Code, `/harness:init` and `/harness:update` take the files the interview produced. `init` requires all five. `update` requires all but `--answers`, which may hold only the re-asked keys or be left out:
 
 - `--answers <file> --product <file> --picks <file> --report <file>`
 - `--choose <id,...>`: the item ids you picked from the checklist.
@@ -264,6 +264,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 
 ## Known limits
 
+- The guard recognises the commands `harness` and `cli.mjs` by name. A renamed copy or symlink of the CLI (`node h.mjs add x --yes`) isn't recognised, so it doesn't ask first.
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
 - The `PowerShell(...)` deny rules, and the `Read` and `Edit` rules on PowerShell commands, are unverified until a live check on Windows passes.
 - The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop).
@@ -316,6 +317,8 @@ pnpm build && pnpm test && pnpm test:perf
 pnpm typecheck
 node scripts/gen-config-docs.mjs --write   # after changing a config key
 ```
+
+Releases go through a protected GitHub environment; see [docs/release.md](docs/release.md).
 
 CI runs on macOS and Windows with Node 22, plus gitleaks, a pack check, real Vitest and Jest installs, and `claude plugin validate`.
 

@@ -1,4 +1,6 @@
 name: release
+# Publishing waits for approval. The owner creates the GitHub environment `npm-release` once,
+# with themselves as a required reviewer; setup steps are in docs/release.md.
 on:
   push:
     tags: ['v*']
@@ -27,6 +29,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
   publish:
     needs: ci
+    environment: npm-release
     # npm trusted publishing (OIDC): no token; npm links this workflow to the package.
     runs-on: ubuntu-latest
     permissions:

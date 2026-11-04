@@ -264,6 +264,44 @@ test('a hand install plus another edit is not recorded, and the person\'s key su
   expect(JSON.parse(readFileSync(p, 'utf8')).mine).toEqual({ keep: true });
 });
 
+const PLUGIN = 'impeccable@harness-pins';
+/** Stands in for `claude plugin install`: reports it missing, then rewrites settings.json the way claude does (the entry flips), plus `extra`. */
+const installer = (root: string, extra: object = {}): Exec => (_c, a) => {
+  if (a[1] === 'list') return { status: 0, stdout: '[]' };
+  const p = join(root, SETTINGS);
+  const j = JSON.parse(readFileSync(p, 'utf8'));
+  j.enabledPlugins[PLUGIN] = false;
+  writeFileSync(p, JSON.stringify({ ...j, ...extra }, null, 2) + '\n');
+  return { status: 0, stdout: JSON.stringify({ command: 'install', outcome: 'ok', message: '' }) };
+};
+
+test('sync --install-plugins after a committed hand edit does not record it, and the key survives uninstall', async () => {
+  const root = installed([...OWN, 'impeccable']);
+  const p = join(root, SETTINGS);
+  const j = JSON.parse(readFileSync(p, 'utf8'));
+  j.mine = { keep: true };
+  writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+  commitAll(root);
+  const old = hash(root);
+  const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, installer(root));
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('settings.json has other edits; not recorded. Run /harness:update to review them.');
+  expect(hash(root)).toBe(old);
+  expect(await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: yes })).toBe(0);
+  expect(JSON.parse(readFileSync(p, 'utf8')).mine).toEqual({ keep: true });
+});
+
+test('a clean sync --install-plugins is recorded, and uninstall leaves the repo as it was', async () => {
+  const root = installed([...OWN, 'impeccable']);
+  const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, installer(root));
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).not.toContain('not recorded');
+  expect(await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: yes })).toBe(0);
+  const first = execFileSync('git', ['rev-list', '--max-parents=0', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  expect(execFileSync('git', ['diff', first], { cwd: root, encoding: 'utf8' })).toBe('');
+  expect(execFileSync('git', ['ls-files', '-o', '--exclude-standard'], { cwd: root, encoding: 'utf8' })).toBe('');
+});
+
 test('sync refuses when the package version differs from the manifest', async () => {
   const r = await run(installed(), ['--dry-run'], CLAUDE, undefined, '9.9.9');
   expect(r.code).toBe(1);

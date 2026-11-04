@@ -5,7 +5,7 @@ import { stampHarnessFiles } from '../core/harness-files.js';
 import { applyChanges, type Change } from './apply.js';
 import { lineHunks } from './diff.js';
 import { STRUCTURAL, removeBlocks } from './merge.js';
-import { hashText, matchesHash } from './text.js';
+import { hashText, jsonIndentOf, matchesHash } from './text.js';
 
 export interface Manifest {
   version: string;
@@ -117,6 +117,27 @@ export function mergeManifestFiles(old: Manifest, changes: Change[], backupDir?:
     files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}), ...(c.kind === 'update' && c.replace?.length ? { replace: c.replace } : {}), ...(c.kind === 'update' && c.formatted ? { formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}), ...(c.item ? { item: c.item } : {}), ...(c.kind === 'update' && backupDir ? { backup: `${backupDir}/${c.rel}` } : {}) });
   }
   return files;
+}
+
+/**
+ * True when settings.json differs from its recorded hash only by the `enabledPlugins` entries of `pluginIds` (which
+ * `claude plugin install` rewrites). Compared by hash: the entries are set back to what harness wrote (true) and the file
+ * is re-serialised with its own indent. Any other edit makes it differ, and so does a missing or unparsable file.
+ */
+export function settingsOnlyPluginEdits(root: string, pluginIds: string[]): boolean {
+  const entry = readManifest(root)?.files.find((f) => f.rel === '.claude/settings.json');
+  const p = join(root, '.claude/settings.json');
+  if (!entry || !existsSync(p)) return true;
+  const text = readFileSync(p, 'utf8');
+  if (matchesHash(text, entry.hash)) return true;
+  try {
+    const j = JSON.parse(text);
+    if (j?.enabledPlugins && typeof j.enabledPlugins === 'object') for (const id of pluginIds) if (id in j.enabledPlugins) j.enabledPlugins[id] = true;
+    const body = JSON.stringify(j, null, jsonIndentOf(text));
+    return [body, body + '\n'].some((t) => matchesHash(t, entry.hash));
+  } catch {
+    return false;
+  }
 }
 
 /**

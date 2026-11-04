@@ -1,6 +1,9 @@
 name: ci
 on:
+  # Push runs only on main: a PR commit already runs through pull_request, and a second run doubles the queue on
+  # GitHub's capacity-limited macOS arm64 pool (jobs were cancelled as "not acquired by Runner").
   push:
+    branches: [main]
   pull_request:
   workflow_call:
 permissions:

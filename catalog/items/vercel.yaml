@@ -1,0 +1,22 @@
+id: vercel
+kind: plugin
+title: "Vercel"
+source: {"type": "github", "repo": "vercel/vercel-plugin", "plugin": "vercel", "sha": "882e66c2698689324c341b7bb8fd8beb92c27bf6"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+plugin_version: "0.50.0"
+applies_when: {"any_dep": ["vercel", "@vercel/node"]}
+cost: {"context": "medium", "setup": "medium"}
+stance: optional
+side_effects: ["installs-hook", "telemetry-on-by-default"]
+why: "Build and deploy web apps and agents"
+evidence:
+  - "https://github.com/vercel/vercel-plugin/blob/882e66c2698689324c341b7bb8fd8beb92c27bf6/.claude-plugin/plugin.json (version 0.50.0, license Apache-2.0; the why sentence is its description)"
+  - "https://github.com/vercel/vercel-plugin/blob/882e66c2698689324c341b7bb8fd8beb92c27bf6/LICENSE (Apache License 2.0 text, Copyright 2026 Vercel, Inc.; the GitHub license field reads NOASSERTION)"
+  - "https://github.com/vercel/vercel-plugin/blob/882e66c2698689324c341b7bb8fd8beb92c27bf6/.mcp.json (hosted http MCP server https://mcp.vercel.com, OAuth, \"Read-only in initial release\"; deferred tools)"
+  - "https://github.com/vercel/vercel-plugin/blob/882e66c2698689324c341b7bb8fd8beb92c27bf6/hooks/hooks.json (SessionStart startup|resume|clear|compact runs session-start-seen-skills, session-start-profiler and inject-claude-md; PostToolUse on Skill runs posttooluse-skill-telemetry; SessionEnd runs session-end-cleanup): installs-hook. README \"Hooks\": \"Session start context injection — Injects a thin Vercel session context plus the knowledge-update guidance for empty directories and detected Vercel, Next.js, or eve projects\": hook-injected text, so cost.context medium"
+  - "https://github.com/vercel/vercel-plugin/blob/882e66c2698689324c341b7bb8fd8beb92c27bf6/README.md \"Telemetry\": \"Telemetry is on by default and can be disabled with `VERCEL_PLUGIN_TELEMETRY=off`.\" Events go to https://telemetry.vercel.com/api/vercel-plugin/v1/events: a daily ping, first use, plugin version and the names of this plugin's skills when invoked, with a random installation ID. Prompt text, commands and file paths are \"not collected\". The opt-out is an environment variable of the plugin's hooks; a plugin item has no mcp.config.env to carry it, so harness cannot set it with the current schema: owner decision"
+  - "Prerequisites (README): Node.js 18+ and Bun; plus a Vercel account for the MCP server (setup medium). Per README, skills are not auto-injected on every tool call or prompt by default"
+  - "audit.html: \"render (fitness-app has render.yaml) · vercel · cloudflare\" and \"Enable each only in repos that deploy there.\""
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, source url vercel/vercel-plugin); upstream HEAD is 3ca3e549d485, newer"
+  - "applies_when note: facts.deploy gets vercel from vercel.json, which is not an allowed key; the `vercel` CLI package (npm view: 65.11.0) and @vercel/node (29.0.1) are the dependency signals, so projects deploying with only vercel.json are under-matched"

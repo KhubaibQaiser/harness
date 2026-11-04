@@ -1,0 +1,18 @@
+id: aws-core
+kind: plugin
+title: "AWS core (IaC, services and AWS MCP)"
+source: {"type": "git-subdir", "repo": "aws/agent-toolkit-for-aws", "path": "plugins/aws-core", "plugin": "aws-core", "sha": "34b3eccfd8b619ea0cb4ba04a9be9dfefebd94e7"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"any_dep": ["aws-cdk-lib", "aws-cdk"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+why: "Build, deploy, and operate applications on AWS."
+evidence:
+  - "The why sentence is the first sentence of the official marketplace entry description (\"Build, deploy, and operate applications on AWS. Skills to author infrastructure-as-code, use core services, and complete common tasks.\") in anthropics/claude-plugins-official at a2e251d9b97b; https://github.com/aws/agent-toolkit-for-aws/blob/34b3eccfd8b619ea0cb4ba04a9be9dfefebd94e7/plugins/aws-core/.claude-plugin/plugin.json has the same first sentence in a much longer description (version 1.1.0, license Apache-2.0)"
+  - "License: repo aws/agent-toolkit-for-aws is Apache-2.0 (GitHub); plugin.json says Apache-2.0; no LICENSE inside the plugin directory"
+  - "https://github.com/aws/agent-toolkit-for-aws/blob/34b3eccfd8b619ea0cb4ba04a9be9dfefebd94e7/plugins/aws-core/.mcp.json (one stdio server: `uvx mcp-proxy-for-aws-cli==1.7.0 https://aws-mcp.us-east-1.api.aws/mcp --skip-auth --metadata INSTALL_SOURCE=agent-toolkit-core`: version pinned; it proxies to the AWS-hosted MCP server). https://github.com/aws/agent-toolkit-for-aws/blob/34b3eccfd8b619ea0cb4ba04a9be9dfefebd94e7/plugins/aws-core/README.md: \"Authenticated access to any of the 300+ AWS services through `call_aws`\" and sandboxed script execution through `run_script`; documentation search and skill retrieval need no authentication"
+  - "No hooks directory (not in the plugin listing: .claude-plugin .codex-plugin .cursor-plugin .mcp.json README.md com.anthropic.claude-code mcp.json plugin.json skills); 25 skill directories: context low. Requirements: uv (`uvx`) and AWS credentials for call_aws (setup medium)"
+  - "audit.html: \"Infrastructure-as-code authoring and AWS MCP config. Turn it on only in repos that have CDK.\" and \"Pulumi and CDK are both on your résumé. Use one IaC plugin per repo.\""
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, ref main). Version drift not checked"
+  - "applies_when note: the audit says CDK repos; src/install/facts.ts detects cdk.json into facts.iac, which is not an allowed key, so any_dep names aws-cdk-lib and aws-cdk (npm view: 2.275.0 and 2.1147.0)"

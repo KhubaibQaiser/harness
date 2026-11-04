@@ -1,0 +1,18 @@
+id: auth0
+kind: plugin
+title: "Auth0"
+source: {"type": "git-subdir", "repo": "auth0/agent-skills", "path": "plugins/auth0", "plugin": "auth0", "sha": "7b3821d533430eef35fd7406a87b7b8d02302bdf"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"any_dep": ["@auth0/auth0-react", "@auth0/nextjs-auth0", "@auth0/auth0-spa-js", "auth0"]}
+cost: {"context": "low", "setup": "low"}
+stance: optional
+why: "A single unified Auth0 skill that detects your framework, feature, and tooling, then loads the right reference guides for adding authentication — login, MFA, Organizations, ACUL, custom domains, branding, JWT validation, migration, and debugging — to any app."
+evidence:
+  - "https://github.com/auth0/agent-skills/blob/7b3821d533430eef35fd7406a87b7b8d02302bdf/plugins/auth0/.claude-plugin/plugin.json (version 2.6.0; the why sentence is its description)"
+  - "https://github.com/auth0/agent-skills/blob/7b3821d533430eef35fd7406a87b7b8d02302bdf/LICENSE (repo root; GitHub reports Apache-2.0; no LICENSE inside plugins/auth0)"
+  - "The plugin directory holds .claude-plugin, README.md, skills (one skill, auth0) and manifests for other agents; no hooks directory and no .mcp.json (404): context low. Requirement: an Auth0 tenant for the app being built; the plugin sets up nothing itself"
+  - "https://github.com/auth0/agent-skills/blob/7b3821d533430eef35fd7406a87b7b8d02302bdf/plugins/auth0/README.md (\"Auto-detection is reliable on capable models ... name the skill explicitly: /auth0\"; older per-framework skill names no longer exist)"
+  - "audit.html: \"auth0 (you've shipped Auth0) · workos · stripe · revenuecat (mobile in-app purchases)\" and \"Install only when a project uses them.\""
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, ref main), which gives a shorter description; plugin.json is used. Version drift not checked. I did not search every reference file for run-time fetches"
+  - "applies_when note: AUTH in src/install/facts.ts matches @auth0/.+ for facts.authSdks; any_dep lists real packages (npm view: @auth0/auth0-react 2.30.0, @auth0/nextjs-auth0 4.33.0, @auth0/auth0-spa-js 2.30.0, auth0 7.6.0)"

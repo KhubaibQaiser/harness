@@ -60,3 +60,7 @@
   reason: "left out by the owner: queries go to Upstash's hosted backend; vendor llms.txt pages and docs MCPs cover the need"
 - id: serena
   reason: "left out by the owner: runs its unpinned upstream branch at every launch; LSP plugins cover it"
+- id: prisma
+  reason: "no license: prisma/claude-plugin has no LICENSE file, no license field in plugin.json and no README at the marketplace pin 815dbc4a045a (the repo holds only .claude-plugin and .mcp.json; GitHub license is null). Its .mcp.json also runs `npx -y prisma mcp` unpinned"
+- id: mergify
+  reason: "no open-source license: Mergifyio/mergify-cli LICENSE (marketplace pin 6307ed10e862) is a proprietary Mergify licence that allows running the software unmodified only with the Mergify service; plugin.json says LicenseRef-Mergify-Proprietary and the GitHub license is NOASSERTION. Brief step 4 excludes non-standard licenses; owner may add it back as vendor-terms"

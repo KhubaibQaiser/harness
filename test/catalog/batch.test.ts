@@ -18,6 +18,12 @@ const BATCHES: Record<number, string[]> = {
     'playwright', 'chrome-devtools-mcp', 'webapp-testing',
     'expo', 'react-native-best-practices', 'maestro-mcp', 'mobile-mcp', 'revenuecat',
   ],
+  4: [
+    'postman', '42crunch-api-security-testing', 'supabase', 'supabase-agent-skills', 'prisma', 'neon', 'databases-on-aws', 'auth0', 'workos', 'stripe',
+    'aws-core', 'aws-serverless', 'deploy-on-aws', 'pulumi', 'terraform', 'vercel', 'cloudflare', 'render', 'railway',
+    'mergify',
+    'jfrog', 'sonatype-guide',
+  ],
 };
 
 test.each(Object.entries(BATCHES))('batch %s ids are all in items/ or excluded.yaml', (_n, ids) => {

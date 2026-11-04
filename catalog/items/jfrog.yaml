@@ -1,0 +1,21 @@
+id: jfrog
+kind: plugin
+title: "JFrog (Artifactory, Xray, Curation)"
+source: {"type": "github", "repo": "jfrog/claude-plugin", "plugin": "jfrog", "sha": "9b1f8f6c883522a87502e5155abd593a8befe3c5"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+plugin_version: "0.3.11"
+applies_when: {"project_types": ["other"]}
+cost: {"context": "medium", "setup": "high"}
+stance: optional
+side_effects: ["installs-hook"]
+why: "Connect Claude Code to JFrog to manage, secure, and govern your software supply chain."
+evidence:
+  - "Owner Q5 line: neutral, recommended only to teams already on Artifactory or Nexus (here: Artifactory). No Facts field shows that. THE RECOMMENDER MUST CHECK that the team uses Artifactory (a JFrog platform URL) before it recommends this item. applies_when [project_types: other] is a placeholder with no meaning of its own, because the allowed keys cannot express it"
+  - "https://github.com/jfrog/claude-plugin/blob/9b1f8f6c883522a87502e5155abd593a8befe3c5/.claude-plugin/plugin.json (version 0.3.11, license Apache-2.0; the why sentence is the second sentence of its description)"
+  - "https://github.com/jfrog/claude-plugin/blob/9b1f8f6c883522a87502e5155abd593a8befe3c5/LICENSE (Apache-2.0 per GitHub)"
+  - "https://github.com/jfrog/claude-plugin/blob/9b1f8f6c883522a87502e5155abd593a8befe3c5/.mcp.json (hosted http MCP server at ${JFROG_URL}/mcp: the URL is the customer's own JFrog host; README: OAuth)"
+  - "https://github.com/jfrog/claude-plugin/blob/9b1f8f6c883522a87502e5155abd593a8befe3c5/hooks/hooks.json: SessionStart runs modules/claude-session-start.mjs (header: \"stdout: JSON with hookSpecificOutput.additionalContext\", the Agent Package Resolution text), scripts/claude-align-mcp-json.mjs (README: rewrites other installed plugins' .mcp.json so stdio MCP entries launch via @jfrog/agent-guard) and an async `npx --yes --registry ... @jfrog/agent-guard --version`; PreToolUse on Skill|Read and UserPromptExpansion run `npx --yes --prefer-offline --registry ${JFROG_AGENT_GUARD_REPO:-https://releases.jfrog.io/artifactory/api/npm/coding-agents-npm/} @jfrog/agent-guard --enforce-skill`. UNPINNED: an npm package from the JFrog registry is fetched and run on every skill call and prompt expansion. Flagged as an owner decision, recommendation exclude. Hooks inject text: cost.context medium; installs-hook"
+  - "https://github.com/jfrog/claude-plugin/blob/9b1f8f6c883522a87502e5155abd593a8befe3c5/README.md Prerequisites: \"JFrog host URL and access token\", Node.js 18+ with npx, `jf` CLI, jq and curl, a configured JFrog instance (setup high). Skill Governance is described as an opt-in-by-entitlement preview: \"the Agent Guard returns \\\"allow\\\" for an unconfigured or unentitled user\""
+  - "audit.html says: \"Skip aikido, sonarqube, jfrog and sonatype; they duplicate semgrep.\" The owner's Q5 answer (progress.md) replaced this: jfrog is neutral, for Artifactory teams only"
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, source url jfrog/claude-plugin); upstream HEAD is 0c9acc7daf65, newer"

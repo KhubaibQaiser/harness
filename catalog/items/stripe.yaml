@@ -1,0 +1,21 @@
+id: stripe
+kind: plugin
+title: "Stripe"
+source: {"type": "git-subdir", "repo": "stripe/ai", "path": "providers/claude/plugin", "plugin": "stripe", "sha": "deae744bc0cbf6034b4b6f22f51c690b71a4e779"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"any_dep": ["stripe"]}
+cost: {"context": "medium", "setup": "medium"}
+stance: optional
+side_effects: ["installs-hook"]
+why: "Stripe development plugin for Claude"
+evidence:
+  - "https://github.com/stripe/ai/blob/deae744bc0cbf6034b4b6f22f51c690b71a4e779/providers/claude/plugin/.claude-plugin/plugin.json (version 0.11.17, license MIT; the why sentence is its description)"
+  - "https://github.com/stripe/ai/blob/deae744bc0cbf6034b4b6f22f51c690b71a4e779/LICENSE (repo root; GitHub reports MIT; the plugin directory has no LICENSE)"
+  - "https://github.com/stripe/ai/blob/deae744bc0cbf6034b4b6f22f51c690b71a4e779/providers/claude/plugin/.mcp.json (hosted http MCP server https://mcp.stripe.com, OAuth per the repo README; deferred tools). Stripe terms not read"
+  - "https://github.com/stripe/ai/blob/deae744bc0cbf6034b4b6f22f51c690b71a4e779/providers/claude/plugin/hooks/hooks.json (SessionStart startup, PostToolUse on Skill and Agent, PostToolUseFailure, PostToolBatch and UserPromptSubmit, all `node` scripts under scripts/lifecycle): installs-hook"
+  - "https://github.com/stripe/ai/blob/deae744bc0cbf6034b4b6f22f51c690b71a4e779/providers/claude/plugin/scripts/lifecycle/sessionStart.mjs emits, via emitSoftContext, the Stripe CLI guidance (scripts/cli.mjs: \"The Stripe CLI can improve Stripe integration guidance. It can be installed with `npm i -g @stripe/cli` ...\") when the CLI is missing, not logged in or outdated; scripts/lifecycle/userPromptSubmit.mjs emits a feedback prompt at sample rate 0.01 per turn when the last turn mentioned stripe or metronome (scripts/constants.mjs; per-tool rate 0.001); scripts/feedback.mjs messages tell the agent to ask the user before sending feedback with `stripe feedback`. Hooks that inject text: cost.context medium"
+  - "Requirements: a Stripe account; the Stripe CLI is optional but the session hook nags about it (setup medium). The hook runs `stripe` commands via spawnSync to check install, login and version (scripts/cli.mjs)"
+  - "audit.html: \"auth0 (you've shipped Auth0) · workos · stripe · revenuecat (mobile in-app purchases)\" and \"Install only when a project uses them.\""
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, git-subdir path providers/claude/plugin, ref main). Version drift not checked"
+  - "applies_when note: npm view stripe: 23.1.0. @stripe/stripe-js was not checked (npm view failed with a network error), so it is not listed"

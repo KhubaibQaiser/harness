@@ -1,0 +1,20 @@
+id: supabase
+kind: plugin
+title: "Supabase (plugin with MCP)"
+source: {"type": "github", "repo": "supabase-community/supabase-plugin", "plugin": "supabase", "sha": "2c6d02d4565babe784103ee4d446a93ae9b24151"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "0.1.16"
+applies_when: {"any_dep": ["@supabase/supabase-js", "@supabase/ssr"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+why: "Official Supabase plugin for Claude Code with bundled Supabase skills and MCP access for project management, database work, auth, storage, and Postgres best practices."
+evidence:
+  - "https://github.com/supabase-community/supabase-plugin/blob/2c6d02d4565babe784103ee4d446a93ae9b24151/.claude-plugin/plugin.json (version 0.1.16, license MIT; the why sentence is its description; mcpServers ./agents/claude/.mcp.json)"
+  - "License: the repo has no LICENSE file at the sha and the GitHub license field is null; MIT comes from the \"license\" line of plugin.json only (the same basis as sourcegraph in batch 3)"
+  - "https://github.com/supabase-community/supabase-plugin/blob/2c6d02d4565babe784103ee4d446a93ae9b24151/agents/claude/.mcp.json (hosted http MCP server https://mcp.supabase.com/mcp; deferred tools). Supabase hosted-service terms not read"
+  - "No hooks directory at the sha (repo root: .claude-plugin agents assets skills and manifests for other agents): context low. README: skills/supabase and skills/supabase-postgres-best-practices are vendored from supabase/agent-skills"
+  - "Requirements: a Supabase account and project for the MCP server (sign-in is done by the MCP client); setup medium. Default data sent: whatever the agent passes to the MCP tools (SQL, project calls)"
+  - "audit.html: \"supabase plugin + supabase/agent-skills (3k) · prisma · neon · databases-on-aws (DynamoDB)\" and \"One per project, matching that project's database.\""
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, source url supabase-community/supabase-plugin); upstream HEAD is 016bf5b36670, newer"
+  - "applies_when note: src/install/facts.ts puts @supabase/supabase-js in dbClients, which is a Facts field, not an allowed key, so any_dep names it (and @supabase/ssr)"

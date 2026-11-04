@@ -1,0 +1,21 @@
+id: postman
+kind: plugin
+title: "Postman (API lifecycle)"
+source: {"type": "github", "repo": "postmanlabs/postman-plugin", "plugin": "postman", "sha": "c6352ef5605cd46d3f817e15c601eeb9a56c08f7"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+plugin_version: "2.0.1"
+applies_when: {"project_types": ["api"]}
+cost: {"context": "medium", "setup": "medium"}
+stance: optional
+side_effects: ["installs-hook", "telemetry-on-by-default"]
+why: "Work with Postman from your agent: bootstrap a repo's Postman setup, mock an API before it's implemented, run collection and governance checks in CI, monitor a live endpoint, deploy and debug Postman Flows, and publish generated API documentation."
+evidence:
+  - "https://github.com/postmanlabs/postman-plugin/blob/c6352ef5605cd46d3f817e15c601eeb9a56c08f7/.claude-plugin/plugin.json (version 2.0.1, license Apache-2.0; the why sentence is its description; mcpServers ./mcp.claude-code.json)"
+  - "https://github.com/postmanlabs/postman-plugin/blob/c6352ef5605cd46d3f817e15c601eeb9a56c08f7/LICENSE (Apache-2.0; README License section: \"Apache-2.0\")"
+  - "https://github.com/postmanlabs/postman-plugin/blob/c6352ef5605cd46d3f817e15c601eeb9a56c08f7/mcp.claude-code.json (one hosted http MCP server, https://mcp.postman.com/mcp; deferred tools). README \"The MCP fallback\": \"MCP tool calls reach Postman by design and are not governed by the CLI flags above\""
+  - "https://github.com/postmanlabs/postman-plugin/blob/c6352ef5605cd46d3f817e15c601eeb9a56c08f7/hooks/hooks.json (SessionStart, matcher startup|clear|compact) runs hooks/session-start, which prints hooks/session-start-context.md: an <EXTREMELY_IMPORTANT> block telling the agent to load the postman:api-engineer skill before any non-trivial API task. That is always-on text at every session start: cost.context medium, side_effects installs-hook"
+  - "audit.html: \"its \\\"EXTREMELY_IMPORTANT\\\" block loads every session. Enable it only in API repos.\" and \"postman (per API repo)\": the reason the item is optional and applies_when is narrowed to API projects"
+  - "https://github.com/postmanlabs/postman-plugin/blob/c6352ef5605cd46d3f817e15c601eeb9a56c08f7/README.md section \"Anonymous usage counts\": \"The CLI records command usage surface — a minimal, unauthenticated count with no workspace, user, or payload attached.\" No opt-out variable is documented there: telemetry-on-by-default. Section \"How Postman builds context\": once a folder is connected with `postman init`, run results are published to the Postman workspace by default; `--report-events=false` per invocation turns that off"
+  - "https://github.com/postmanlabs/postman-plugin/blob/c6352ef5605cd46d3f817e15c601eeb9a56c08f7/skills/bootstrap/SKILL.md (requirements: the Postman CLI, \"If the CLI is missing, use `npm install -g postman-cli`\", and `postman login` with a Postman API key or login: setup medium; the plugin does not install the CLI itself, the agent is told to)"
+  - "applies_when note: no Facts field names Postman use; project_types [api] (an app with hono, express, fastify or @nestjs/core in src/install/facts.ts) matches the audit \"per API repo\" scope. Non-JS API repos are under-matched"

@@ -1,0 +1,18 @@
+id: terraform
+kind: plugin
+title: "Terraform MCP server (HashiCorp)"
+source: {"type": "git-subdir", "repo": "anthropics/claude-plugins-official", "path": "external_plugins/terraform", "plugin": "terraform", "sha": "a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: MPL-2.0
+min_claude_code: 2.1.314
+applies_when: {"project_types": ["infra"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+why: "The Terraform MCP Server provides seamless integration with Terraform ecosystem, enabling advanced automation and interaction capabilities for Infrastructure as Code (IaC) development."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/terraform/.claude-plugin/plugin.json (author HashiCorp; the why sentence is its description, same as the marketplace entry)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/external_plugins/terraform/.mcp.json (the directory holds only .claude-plugin and .mcp.json: `docker run -i --rm -e TFE_TOKEN=${TFE_TOKEN} hashicorp/terraform-mcp-server:0.4.0`: a pinned image tag, not a digest; the upstream latest release is v1.4.1)"
+  - "License: the pinned directory has no LICENSE; the repo root LICENSE is Apache-2.0 and covers only this wrapper. The server that runs is hashicorp/terraform-mcp-server, which GitHub reports as MPL-2.0; MPL-2.0 is recorded because that is the code that runs (the serena precedent). Owner decision on which license to record"
+  - "Requirements: Docker; an optional Terraform Cloud or Enterprise token in TFE_TOKEN (upstream README: TFE_TOKEN defaults to empty, TFE_ADDRESS sets the host). Default data sent: Terraform Registry lookups, and HCP Terraform API calls when a token is set. No hooks, no skills: context low"
+  - "audit.html: \"aws-core, aws-serverless, deploy-on-aws · pulumi/agent-skills (official, new: 78 stars) · terraform\" and \"Use one IaC plugin per repo.\""
+  - "Source choice: the official marketplace entry is the relative path ./external_plugins/terraform, so git-subdir into anthropics/claude-plugins-official at a2e251d9b97b. Version drift not checked"
+  - "applies_when note: facts.iac gets terraform from *.tf files, which is not an allowed key and there is no npm signal; project_types [infra] is the closest field and may not be produced by detection"

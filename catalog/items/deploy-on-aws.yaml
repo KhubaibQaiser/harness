@@ -1,0 +1,20 @@
+id: deploy-on-aws
+kind: plugin
+title: "Deploy on AWS"
+source: {"type": "git-subdir", "repo": "awslabs/agent-plugins", "path": "plugins/deploy-on-aws", "plugin": "deploy-on-aws", "sha": "fbefb3764e67558fe10ac834dd85db49734aa9b6"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"any_dep": ["aws-cdk-lib", "aws-cdk"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+side_effects: ["installs-hook"]
+why: "Deploy applications to AWS with architecture recommendations, cost estimates, and IaC deployment."
+evidence:
+  - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/deploy-on-aws/.claude-plugin/plugin.json (version 1.4.0, license Apache-2.0; the why sentence is the first sentence of its description)"
+  - "License: repo awslabs/agent-plugins is Apache-2.0 (GitHub); plugin.json says Apache-2.0; no LICENSE inside the plugin directory"
+  - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/deploy-on-aws/.mcp.json (awsiac: `uvx awslabs.aws-iac-mcp-server@latest`; awspricing: `uvx awslabs.aws-pricing-mcp-server@latest`, \"disabled\": false; awsknowledge: hosted http https://knowledge-mcp.global.api.aws. UNPINNED: two servers fetched from PyPI at every launch. Flagged as an owner decision)"
+  - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/deploy-on-aws/hooks/hooks.json (PostToolUse on Edit|Write runs scripts/validate-drawio.sh, which exits early unless the file is .drawio or .drawio.xml and otherwise needs python3 with defusedxml): installs-hook; context low"
+  - "Skills: aws-architecture-diagram, deploy, elastic-beanstalk. Requirements: uv (`uvx`), python3 and defusedxml for the hook, AWS credentials to deploy (setup medium)"
+  - "audit.html: \"aws-core, aws-serverless, deploy-on-aws · pulumi/agent-skills (official, new: 78 stars) · terraform\" and \"Use one IaC plugin per repo.\""
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, ref main). Version drift not checked"
+  - "applies_when note: same CDK dependency names as aws-core; no Facts-compatible field names a plain AWS deploy"

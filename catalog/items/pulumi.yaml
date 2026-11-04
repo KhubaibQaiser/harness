@@ -1,0 +1,18 @@
+id: pulumi
+kind: plugin
+title: "Pulumi agent skills"
+source: {"type": "github", "repo": "pulumi/agent-skills", "plugin": "pulumi", "sha": "82f222a529a499e8005a820000148cc5e28c934c"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+plugin_version: "2.0.8"
+applies_when: {"any_dep": ["@pulumi/pulumi"]}
+cost: {"context": "low", "setup": "low"}
+stance: optional
+why: "Build cloud infrastructure with Pulumi. Skills for writing infrastructure as code, troubleshooting deployments, managing secrets, and migrating from Terraform, CloudFormation, AWS CDK, or Azure ARM."
+evidence:
+  - "https://github.com/pulumi/agent-skills/blob/82f222a529a499e8005a820000148cc5e28c934c/.claude-plugin/plugin.json (name pulumi, version 2.0.8 = latest release v2.0.8, license Apache-2.0, termsOfServiceUrl https://www.pulumi.com/terms-and-conditions/; the why sentences are its description; skills from ./pulumi/skills, ./migration/skills and ./delegation/skills)"
+  - "https://github.com/pulumi/agent-skills/blob/82f222a529a499e8005a820000148cc5e28c934c/LICENSE (repo root; GitHub reports Apache-2.0)"
+  - "No .mcp.json and no hooks directory at the sha (404): skills only, context low. README: skills include pulumi-overview, pulumi-best-practices, pulumi-esc and migration skills; its skill table includes skills for Pulumi Cloud features (Discovery API, Context API) and Pulumi Neo delegation, which need a Pulumi Cloud account. Not checked: which skills call Pulumi Cloud by default"
+  - "audit.html: \"aws-core, aws-serverless, deploy-on-aws · pulumi/agent-skills (official, new: 78 stars) · terraform\", \"Pulumi and CDK are both on your résumé. Use one IaC plugin per repo.\" and the sources line \"Pulumi skills\""
+  - "Source choice: pulumi/agent-skills is not in the official marketplace (no pulumi entry at a2e251d9b97b or at HEAD), so the pin is upstream HEAD of the default branch. The repo marketplace has four plugins (pulumi, pulumi-migration, pulumi-delegation, pulumi-package-maintenance); the \"pulumi\" plugin (source ./) bundles the first three skill sets"
+  - "applies_when note: facts.iac gets pulumi from Pulumi.yaml, which is not an allowed key; @pulumi/pulumi (npm view: 3.273.0) is the TypeScript signal, so Python, Go and C# Pulumi projects are under-matched"

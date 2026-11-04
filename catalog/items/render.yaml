@@ -1,0 +1,21 @@
+id: render
+kind: plugin
+title: "Render"
+source: {"type": "github", "repo": "render-oss/render-plugin-claude-code", "plugin": "render", "sha": "d7ecf826c5971eb7dfdb5aed79fa838a8d67ff46"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "0.3.0"
+applies_when: {"project_types": ["web", "api"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+side_effects: ["installs-hook"]
+why: "Deploy, debug, and monitor applications on Render. Includes skills, an agent, slash commands, a render.yaml validation hook, and the Render MCP server preconfigured over OAuth."
+evidence:
+  - "https://github.com/render-oss/render-plugin-claude-code/blob/d7ecf826c5971eb7dfdb5aed79fa838a8d67ff46/.claude-plugin/plugin.json (version 0.3.0, license MIT; the why sentences are its description)"
+  - "https://github.com/render-oss/render-plugin-claude-code/blob/d7ecf826c5971eb7dfdb5aed79fa838a8d67ff46/LICENSE (MIT; README \"License: MIT\"; GitHub reports MIT)"
+  - "https://github.com/render-oss/render-plugin-claude-code/blob/d7ecf826c5971eb7dfdb5aed79fa838a8d67ff46/.mcp.json (hosted http MCP server https://mcp.render.com/mcp over OAuth, \"no API key required\" per README; deferred tools). Render terms not read"
+  - "https://github.com/render-oss/render-plugin-claude-code/blob/d7ecf826c5971eb7dfdb5aed79fa838a8d67ff46/hooks/hooks.json (PostToolUse on Edit|Write|MultiEdit runs scripts/validate-render-yaml-hook.sh): installs-hook. The script exits unless the file is render.yaml or render.yml, then runs `render blueprints validate`; if the CLI is missing it prints install hints (including a `curl ... | sh` line for Linux) and exits 0. Not always-on text: context low"
+  - "https://github.com/render-oss/render-plugin-claude-code/blob/d7ecf826c5971eb7dfdb5aed79fa838a8d67ff46/README.md: \"The plugin uses the Render CLI for live operations and Blueprint validation. Most workflows depend on it\" (`brew install render`, `render login`): setup medium. Skills are synced daily from render-oss/skills"
+  - "audit.html: \"render (fitness-app has render.yaml)\", \"Render's plugin includes a render.yaml validation hook. Enable each only in repos that deploy there.\""
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, source url render-oss/render-plugin-claude-code); upstream HEAD is 2df0bc02ef12, newer"
+  - "applies_when note: facts.deploy gets render from render.yaml, which is not an allowed key and has no dependency signal; project_types [web, api] is the closest field and is wider than the audit scope"

@@ -17,11 +17,11 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 function pathProblem(p: unknown, ignored: (rel: string) => boolean): string | null {
   if (typeof p !== 'string' || p === '') return 'must be a non-empty string';
   const bad = relPathProblem(p);
-  if (bad) return `${JSON.stringify(p)} ${bad}`;
+  if (bad) return `"${esc(p)}" ${bad}`;
   const segs = p.split('/');
-  if (segs.some((s) => /^\.env(\..*)?$/i.test(s) || /\.env$/i.test(s)))return `${JSON.stringify(p)} must not be a dotenv file`;
-  if (/^(\.\/)*\.harness(\/|$)/i.test(p)) return `${JSON.stringify(p)} must not be inside .harness/`;
-  if (ignored(p.replace(/^(\.\/)+/, ''))) return `${JSON.stringify(p)} is ignored by .harnessignore`;
+  if (segs.some((s) => /^\.env(\..*)?$/i.test(s) || /\.env$/i.test(s)))return `"${esc(p)}" must not be a dotenv file`;
+  if (/^(\.\/)*\.harness(\/|$)/i.test(p)) return `"${esc(p)}" must not be inside .harness/`;
+  if (ignored(p.replace(/^(\.\/)+/, ''))) return `"${esc(p)}" is ignored by .harnessignore`;
   return null;
 }
 
@@ -67,7 +67,7 @@ export function validateAnswers(raw: unknown, facts: Facts): { ok: true; answers
   if (Array.isArray(raw.apps)) {
     const dirs = new Set(facts.apps.map((a) => a.dir));
     raw.apps.forEach((a, i) => {
-      if (isObj(a) && typeof a.dir === 'string' && !dirs.has(a.dir)) errors.push(`apps[${i}].dir: no app at ${JSON.stringify(a.dir)} in this repo`);
+      if (isObj(a) && typeof a.dir === 'string' && !dirs.has(a.dir)) errors.push(`apps[${i}].dir: no app at "${esc(a.dir)}" in this repo`);
     });
   }
   if (errors.length) return { ok: false, errors };

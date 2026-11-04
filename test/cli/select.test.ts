@@ -37,3 +37,19 @@ test('select prints errors with exit 2; bad usage and bad files exit 2', () => {
   expect(go(['select']).code).toBe(2);
   expect(go(['select', '--picks', '/nonexistent']).code).toBe(2);
 });
+
+test('select: --choose empty is a usage error; malformed picks exit 2; C1 in a path is escaped', () => {
+  expect(go(['select', '--picks', picksFile, '--choose', '']).code).toBe(2);
+  const bad = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'bad.json');
+  writeFileSync(bad, '{"items":[null]}');
+  const r = go(['select', '--picks', bad]);
+  expect(r.code).toBe(2);
+  const c1 = go(['select', '--picks', '/nonexistent/a\u009b.json']);
+  expect(c1.lines.join()).not.toContain('\u009b');
+  expect(c1.lines.join()).toContain('\\u009b');
+});
+
+test('select: chosen id outside the picks is Chosen by you', () => {
+  const out = JSON.parse(go(['select', '--picks', picksFile, '--choose', 'lead-a']).lines.join('\n'));
+  expect(out.selected.at(-1)).toMatchObject({ id: 'lead-a', reason: 'Chosen by you.' });
+});

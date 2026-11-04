@@ -51,3 +51,21 @@ test('unknown chosen id is an error, escaped', () => {
   expect(r.errors).toEqual(['Unknown item "nope\\u001b[2J".']);
   expect(r.ids).toEqual([]);
 });
+
+test('a dependent of a version-skipped item is skipped too, transitively', () => {
+  const r = resolveSelection(['needs-newer'], catalog, '2.1.314');
+  expect(r.ids).toEqual([]);
+  expect(r.notices).toEqual(['Skipped newer: needs Claude Code 2.1.400 or newer (you have 2.1.314).', 'Skipped needs-newer: requires newer, which needs a newer Claude Code.']);
+  expect(resolveSelection(['needs-newer', 'base'], catalog, '2.1.314').ids).toEqual(['base']);
+  expect(resolveSelection(['needs-newer'], catalog, '2.1.500').ids).toEqual(['needs-newer', 'newer']);
+});
+
+test('duplicate chosen ids collapse; a chosen id outside the picks is Chosen by you', () => {
+  expect(resolveSelection(['base', 'base'], catalog, null).ids).toEqual(['base']);
+  const s = toSelected(picks(pk('deep')), ['deep', 'extra', 'base', 'lead-a'], catalog);
+  expect(s.slice(1).map((x) => x.reason)).toEqual(['Required by deep.', 'Required by extra.', 'Chosen by you.']);
+});
+
+test('C1 controls in an id are escaped', () => {
+  expect(resolveSelection(['a\u009bb'], catalog, null).errors).toEqual(['Unknown item "a\\u009bb".']);
+});

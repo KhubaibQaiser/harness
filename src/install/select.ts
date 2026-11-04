@@ -35,14 +35,24 @@ export function resolveSelection(chosen: string[], c: Catalog, claudeVersion: st
   const unknown = chosen.filter((id) => !byId.has(id));
   if (unknown.length) return { ids: [], notices: [], errors: unknown.map((id) => `Unknown item "${esc(id)}".`) };
   const { ids: all, added } = requiresClosure([...new Set(chosen)], c);
-  const notices = added.map((a) => `Added ${a.id} because ${a.by} requires it.`);
-  const ids = all.filter((id) => {
-    const need = byId.get(id)!.min_claude_code;
-    if (claudeVersion === null || !olderThan(claudeVersion, need)) return true;
-    notices.push(`Skipped ${id}: needs Claude Code ${need} or newer (you have ${claudeVersion}).`);
-    return false;
-  });
-  return { ids, notices, errors: conflictPairs(ids, c).map(([a, b]) => `${a} and ${b} conflict; pick one.`) };
+  const dropped = new Set<string>();
+  const notices: string[] = [];
+  const tooNew = (id: string) => claudeVersion !== null && olderThan(claudeVersion, byId.get(id)!.min_claude_code);
+  for (const id of all) if (tooNew(id)) {
+    dropped.add(id);
+    notices.push(`Skipped ${id}: needs Claude Code ${byId.get(id)!.min_claude_code} or newer (you have ${claudeVersion}).`);
+  }
+  // A dependent without its requirement would install half a feature: drop it too, until nothing changes.
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const id of all) {
+      const dep = dropped.has(id) ? undefined : byId.get(id)!.requires.find((r) => dropped.has(r));
+      if (dep) changed = !!dropped.add(id), notices.push(`Skipped ${id}: requires ${dep}, which needs a newer Claude Code.`);
+    }
+  }
+  const ids = all.filter((id) => !dropped.has(id));
+  const addedNotices = added.filter((a) => !dropped.has(a.id)).map((a) => `Added ${a.id} because ${a.by} requires it.`);
+  return { ids, notices: [...addedNotices, ...notices], errors: conflictPairs(ids, c).map(([a, b]) => `${a} and ${b} conflict; pick one.`) };
 }
 
 const pinOf = (s: object): string => ((s as OutsideSource & { sha?: string; version?: string }).sha ?? (s as { version?: string }).version ?? '');
@@ -54,8 +64,9 @@ export function toSelected(p: Picks, ids: string[], c: Catalog): Selected[] {
   const picked = new Set(p.items.map((x) => x.id));
   const pin = (id: string) => pinOf(byId.get(id)?.source ?? {});
   const rows: Selected[] = p.items.map((x) => ({ id: x.id, include: x.include, selected: chosen.has(x.id), reason: x.reason, addresses: x.addresses, pin: pin(x.id) }));
-  const { added } = requiresClosure([...chosen].filter((id) => picked.has(id)), c);
-  const by = new Map(added.map((a) => [a.id, a.by]));
-  for (const id of ids) if (!picked.has(id)) rows.push({ id, include: 'optional', selected: true, reason: `Required by ${by.get(id) ?? 'another item'}.`, addresses: [], pin: pin(id) });
+  for (const id of ids) if (!picked.has(id)) {
+    const by = ids.find((o) => o !== id && byId.get(o)?.requires.includes(id));
+    rows.push({ id, include: 'optional', selected: true, reason: by ? `Required by ${by}.` : 'Chosen by you.', addresses: [], pin: pin(id) });
+  }
   return rows;
 }

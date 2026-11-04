@@ -1,4 +1,6 @@
 name: release
+# Publishing waits for approval. The owner creates the GitHub environment `npm-release` once,
+# with themselves as a required reviewer; setup steps are in docs/release.md.
 on:
   push:
     tags: ['v*']
@@ -15,6 +17,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # fetches origin/main too, for the on-main check
+      - name: Check the tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not on main. Merge it to main, then tag a commit on main." >&2
+            exit 1
+          fi
       - name: Check tag equals package.json version
         run: |
           v="v$(node -p "require('./package.json').version")"
@@ -27,6 +36,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
   publish:
     needs: ci
+    environment: npm-release
     # npm trusted publishing (OIDC): no token; npm links this workflow to the package.
     runs-on: ubuntu-latest
     permissions:
@@ -36,19 +46,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0 # fetches origin/main too, for the check below
-      - name: Check the tagged commit is on main
-        run: |
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not on main. Merge it to main, then tag a commit on main." >&2
-            exit 1
-          fi
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
+      - name: Pin npm (trusted publishing needs 11.5.1 or newer)
+        run: npm install -g npm@11.5.1
+      # A guard, not a fix: it fails clearly if the pin above is ever lowered or removed.
+      - name: Check npm is new enough for trusted publishing
+        run: |
+          v=$(npm --version)
+          if [ "$(printf '%s\n11.5.1\n' "$v" | sort -V | head -n1)" != "11.5.1" ]; then
+            echo "npm $v is older than 11.5.1, which trusted publishing needs." >&2
+            exit 1
+          fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Publish

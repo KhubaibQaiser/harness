@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test, vi } from 'vitest';
+import { expect, onTestFinished, test, vi } from 'vitest';
 import { readEvents } from '../../src/core/events.js';
 import { isSafeSessionId, readState, statePath } from '../../src/core/state.js';
 import { readHookEnv } from '../../src/core/hook-env.js';
@@ -173,16 +173,22 @@ test('--self-test prints ok and the Node version without reading stdin', async (
   expect(stdout).toMatch(/^ok v\d+\.\d+\.\d+\n?$/);
 });
 
+/** Restores a stderr spy at the end of the test, so expected failure messages don't print into the suite output. */
+const after = (spy: { mockRestore: () => void }) => onTestFinished(() => spy.mockRestore());
 const boom = async (): Promise<string> => { throw new Error('bad'); };
 test('runHook: a throw on PreToolUse prints a deny', async () => {
+  const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  after(err);
   const r = await runHook(pre(), boom);
   expect(r.code).toBe(0);
   expect(out(r.out).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'harness dispatcher failed: bad' });
 });
 test('runHook: a throw on UserPromptSubmit or ConfigChange exits 1 with no output', async () => {
+  after(vi.spyOn(process.stderr, 'write').mockReturnValue(true));
   for (const e of ['UserPromptSubmit', 'ConfigChange']) expect(await runHook(payload({ hook_event_name: e }), boom)).toEqual({ out: '', code: 1 });
 });
 test('runHook: unparseable stdin exits 1, fields missing on PreToolUse denies, unknown event is silent', async () => {
+  after(vi.spyOn(process.stderr, 'write').mockReturnValue(true));
   for (const raw of ['', 'garbage{']) expect(await runHook(raw, async () => 'x')).toEqual({ out: '', code: 1 });
   const miss = await runHook('{"hook_event_name":"PreToolUse"}', (r) => dispatch(r, [], {}));
   expect(miss.code).toBe(0);
@@ -190,6 +196,7 @@ test('runHook: unparseable stdin exits 1, fields missing on PreToolUse denies, u
   expect(await runHook(JSON.stringify({ hook_event_name: 'Nope', session_id: 's', cwd: root }), (r) => dispatch(r, [], {}))).toEqual({ out: '', code: 0 });
 });
 test('UserPromptSubmit writes hook-env.json, PreToolUse alone does not', async () => {
+  after(vi.spyOn(process.stderr, 'write').mockReturnValue(true));
   const r = mkdtempSync(join(tmpdir(), 'h-dp-env-'));
   await dispatch(pre({ cwd: r }), [], {});
   expect(readHookEnv(r)).toBeNull();

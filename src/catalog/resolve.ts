@@ -1,8 +1,11 @@
 import type { Exec } from '../core/exec.js';
 import type { Catalog } from './schema.js';
 
+/** True when gh's stderr says the thing does not exist (as opposed to a rate limit or network failure). */
+export const isNotFound = (stderr: string | undefined): boolean => /HTTP 404|Not Found|E404/i.test(stderr ?? '');
+
 // The contents API returns an array for a directory, an object for a file.
-const DIR_JQ = 'if type == "array" then "dir" else .type end';
+export const DIR_JQ = 'if type == "array" then "dir" else .type end';
 
 /** Checks that each pinned source still exists upstream. Remote servers cannot be pinned, so they are listed instead. */
 export function resolvePins(c: Catalog, exec: Exec, only?: string[]): { problems: string[]; unpinned: { id: string; reason: string }[] } {
@@ -16,7 +19,7 @@ export function resolvePins(c: Catalog, exec: Exec, only?: string[]): { problems
     if (r.missing) return missing.add(cmd), null;
     if (r.status === 0) return r.stdout.trim();
     const err = (r.stderr ?? '').trim();
-    if (/HTTP 404|Not Found|E404/i.test(err)) return 'absent';
+    if (isNotFound(err)) return 'absent';
     problems.push(`${id}: could not verify ${what} (${cmd} exited ${r.status})${err ? `: ${err.split('\n')[0]}` : ''}`);
     return null;
   };

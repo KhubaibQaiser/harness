@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { gzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { readTar } from '../../src/vet/tar.js';
 import { makeRepo } from '../install/helpers.js';
@@ -37,5 +37,22 @@ describe('readTar', () => {
     const gz = execFileSync('git', ['archive', '--format=tar.gz', '--prefix=o-r-abc/', 'HEAD'], { cwd: repo, maxBuffer: 1 << 24 });
     const files = readTar(gz, big).filter((e) => e.type === 'file').map((e) => e.path).sort();
     expect(files).toEqual(['d/' + 'n'.repeat(120) + '.md', 'skills/a/SKILL.md']);
+  });
+  it('rejects a tar cut at a header boundary, a negative size and a lenient number', () => {
+    const one = gunzipSync(tarGz([{ name: 'a', body: 'x' }]));
+    expect(() => readTar(gzipSync(one.subarray(0, 1024)), big)).toThrow('archive is corrupt');
+    expect(() => readTar(tarGz([{ name: 'a', body: '', size: '-0000000001\0' }]), big)).toThrow('archive is corrupt');
+    expect(() => readTar(tarGz([{ name: 'a', body: '', size: '1x\0' }]), big)).toThrow('archive is corrupt');
+  });
+  it('keeps a .. hidden in a pax or GNU long name so the caller can reject it', () => {
+    const e = readTar(tarGz([{ name: 'P', type: 'x', body: pax('path', 'o-r-abc1234/../../p') }, { name: 'a' }, { name: 'L', type: 'L', body: 'o-r-abc1234/../g\0' }, { name: 'b' }]), big);
+    expect(e.map((x) => x.path)).toEqual(['../../p', '../g']);
+  });
+  it('ignores GNU K headers, reads type 7 as a file, and types devices as other', () => {
+    const e = readTar(tarGz([{ name: 'K', type: 'K', body: 'target\0' }, { name: 'c', type: '7', body: 'c' }, { name: 'd', type: '3' }]), big);
+    expect(e.map((x) => [x.path, x.type])).toEqual([['c', 'file'], ['d', 'other']]);
+  });
+  it('reads non-ASCII names', () => {
+    expect(readTar(tarGz([{ name: 'caf\u00e9.md', body: 'x' }]), big)[0].path).toBe('caf\u00e9.md');
   });
 });

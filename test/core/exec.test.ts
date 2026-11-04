@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { defaultExecBytes } from '../../src/core/exec.js';
 
@@ -12,5 +14,6 @@ describe('defaultExecBytes', () => {
   });
   it('reports a missing binary', () => {
     expect(defaultExecBytes('no-such-binary-xyz', [], 10).missing).toBe(true);
+    expect(defaultExecBytes(join(tmpdir(), 'no-such-binary-xyz'), [], 10).missing).toBe(true);
   });
 });

@@ -1,19 +1,19 @@
 import { gzipSync } from 'node:zlib';
 
-export interface TarSpec { name: string; body?: string | Buffer; type?: '0' | '1' | '2' | '5' | 'x' | 'L'; link?: string }
+export interface TarSpec { name: string; body?: string | Buffer; type?: string; link?: string; size?: string }
 
-const put = (b: Buffer, off: number, s: string) => void b.write(s, off, 'latin1');
+const put = (b: Buffer, off: number, s: string) => void b.write(s, off, 'utf8');
 
-/** Builds a ustar tar.gz in memory. Each name is prefix + name, as GitHub's tarballs do. Names are not validated, so hostile ones can be written. */
+/** `size` overrides the raw size field. Builds a ustar tar.gz in memory. Each name is prefix + name, as GitHub's tarballs do. Names are not validated, so hostile ones can be written. */
 export function tarGz(entries: TarSpec[], prefix = 'o-r-abc1234/'): Buffer {
   const parts: Buffer[] = [];
   for (const e of entries) {
     const body = Buffer.from(e.body ?? '');
     const type = e.type ?? '0';
     const h = Buffer.alloc(512);
-    put(h, 0, (type === 'x' || type === 'L' ? e.name : prefix + e.name).slice(0, 100));
+    put(h, 0, (['x', 'L', 'K'].includes(type) ? e.name : prefix + e.name));
     put(h, 100, '0000644\0');
-    put(h, 124, body.length.toString(8).padStart(11, '0') + '\0');
+    put(h, 124, e.size ?? body.length.toString(8).padStart(11, '0') + '\0');
     put(h, 136, '00000000000\0');
     put(h, 148, '        ');
     put(h, 156, type);

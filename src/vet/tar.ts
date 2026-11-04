@@ -2,7 +2,7 @@ import { gunzipSync } from 'node:zlib';
 
 export interface TarEntry { path: string; type: 'file' | 'dir' | 'symlink' | 'hardlink' | 'other'; data: Buffer }
 
-const TYPES: Record<string, TarEntry['type']> = { '0': 'file', '\0': 'file', '5': 'dir', '2': 'symlink', '1': 'hardlink' };
+const TYPES: Record<string, TarEntry['type']> = { '0': 'file', '\0': 'file', '7': 'file', '5': 'dir', '2': 'symlink', '1': 'hardlink' };
 const str = (b: Buffer, off: number, len: number): string => {
   const s = b.subarray(off, off + len);
   const z = s.indexOf(0);
@@ -31,28 +31,31 @@ export function readTar(gz: Buffer, maxOut: number): TarEntry[] {
     throw new Error((e as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE' ? `archive expands past ${Math.round(maxOut / 1048576)} MB` : 'archive is corrupt');
   }
   const out: TarEntry[] = [];
+  let ended = false;
   let longName: string | undefined, paxName: string | undefined;
   for (let off = 0; off + 512 <= tar.length; ) {
     const h = tar.subarray(off, off + 512);
-    if (h.every((c) => c === 0)) break;
+    if (h.every((c) => c === 0)) { ended = true; break; }
     let sum = 0;
     for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 0x20 : h[i];
-    if (parseInt(str(h, 148, 8).trim(), 8) !== sum) throw new Error('archive is corrupt');
-    const size = parseInt(str(h, 124, 12).trim() || '0', 8);
-    if (!(size >= 0) || off + 512 + size > tar.length) throw new Error('archive is corrupt');
+    const sumField = str(h, 148, 8).trim(), sizeField = str(h, 124, 12).trim() || '0';
+    if (!/^[0-7]+$/.test(sumField) || parseInt(sumField, 8) !== sum || !/^[0-7]+$/.test(sizeField)) throw new Error('archive is corrupt');
+    const size = parseInt(sizeField, 8);
+    if ( off + 512 + size > tar.length) throw new Error('archive is corrupt');
     const data = tar.subarray(off + 512, off + 512 + size);
     off += 512 + Math.ceil(size / 512) * 512;
     const flag = String.fromCharCode(h[156]);
-    if (flag === 'g') continue;
+    if (flag === 'g' || flag === 'K') continue;
     if (flag === 'x') { paxName = paxPath(data); continue; }
     if (flag === 'L') { longName = str(data, 0, data.length); continue; }
     const prefix = str(h, 345, 155);
-    const name = paxName ?? longName ?? (prefix && str(h, 257, 5) === 'ustar' ? `${prefix}/` : '') + str(h, 0, 100);
+    const name = paxName ?? longName ?? (prefix && str(h, 257, 6) === 'ustar' ? `${prefix}/` : '') + str(h, 0, 100);
     paxName = longName = undefined;
     const i = name.indexOf('/');
     const path = i < 0 ? '' : name.slice(i + 1);
     if (path === '') continue;
-    out.push({ path, type: TYPES[flag] ?? 'other', data: Buffer.from(data) });
+    out.push({ path, type: TYPES[flag] ?? 'other', data });
   }
+  if (!ended) throw new Error('archive is corrupt');
   return out;
 }

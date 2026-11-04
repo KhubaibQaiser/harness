@@ -1,6 +1,6 @@
 # harness vet: design spec
 
-- Status: owner-approved (2026-11-04). The owner decisions are in section 1; D7 and D8 answered the spec's questions on 2026-11-04; D9 to D11 answered the plan's questions the same day. Nothing is open.
+- Status: owner-approved (2026-11-04). The owner decisions are in section 1; D7 and D8 answered the spec's questions on 2026-11-04; D9 to D11 answered the plan's questions the same day; D12 followed from the Task 2 review. Nothing is open.
 - Date: 2026-11-04
 - Owner: khubaibqaiser
 - Inputs: two owner interviews on 2026-11-03 and 2026-11-04. The M3 code on main: `src/catalog/resolve.ts` (pin lookups through `gh`), `src/budget/measure.ts`, `src/install/facts.ts`, `src/ai/*` (the file contract and `harness validate`), and `templates/agents/staff-reviewer.md` (audit mode).
@@ -21,6 +21,7 @@
 | D9 | **Temporary folder (2026-11-04).** The skill runs `harness vet --json --keep`, so the reviewer can read the files. That folder is deleted only by `harness vet --finish` or `harness vet --clean`, and it is gitignored. |
 | D10 | **Installed marketplaces only (2026-11-04).** `name@market` looks only in `claude plugin marketplace list --json`. There is no catalog fallback. A marketplace that isn't installed stops with a message asking for a GitHub URL. |
 | D11 | **Relative-path sources (2026-11-04).** A relative-path plugin source (`./plugins/x`) is that folder of the marketplace repo, at the marketplace's sha. A path containing `..`, or one that doesn't exist at that sha, stops. |
+| D12 | **Unpack outside the project (2026-11-04).** The tarball is unpacked under the OS temp folder (`harness-vet-<id>-<sha7>-<random>`), never inside the repo, so Claude Code's own discovery of `CLAUDE.md` and `.claude/` cannot load it. On the way in, any file named `CLAUDE.md`, `CLAUDE.local.md` or `AGENTS.md` (any case) gets a `.vetted` suffix, and any folder named `.claude` becomes `.claude.vetted`. A map keeps the original paths, which findings and the report quote. |
 
 ## 2. Scope
 
@@ -50,13 +51,14 @@
      - Any other source type stops with a message naming the type.
      - A marketplace that isn't installed stops with a message asking for the plugin's GitHub URL.
 2. **Pin.** Resolve the ref to a 40-character sha with `gh api repos/o/r/commits/<ref> --jq .sha`, reusing the `resolve.ts` error handling: a 404 means not found, and anything else means could not verify. Without `gh`, vet stops: `harness vet needs the GitHub CLI (gh).`
-3. **Fetch** the tarball with `gh api repos/o/r/tarball/<sha>` into `.harness/vet/tmp/<id>-<sha>/`, then extract it in-process. vet never runs anything from the item. Limits:
+3. **Fetch** the tarball with `gh api repos/o/r/tarball/<sha>` then extract it in-process into a new folder under the OS temp dir, outside the project (D12). vet never runs anything from the item. Limits:
    - 25 MB compressed and 5,000 files;
-   - entries that are symlinks, hard links, absolute paths or contain `..` are skipped and reported as **medium**;
+   - entries that are symlinks, hard links, absolute paths or contain `..` are skipped and reported as **medium**; so are names Windows can't write and names that collide under case-folding or Unicode normalisation (none of the colliding entries is written);
+   - `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` and `.claude/` are renamed with a `.vetted` suffix on the way in (D12);
    - files over 1 MB are listed but not read.
 4. **Scope** the scan to the sub-path, plus the repo-root files that a plugin at that path loads (`.claude-plugin/`, `.mcp.json`).
 5. **Clean up.** The temporary folder is deleted when the run ends, even when it fails. Only the report stays.
-   - D9: the skill's `--keep` run deletes the folder only on `harness vet --finish` or `harness vet --clean`. The folder is gitignored (its own `.gitignore` holds `*`).
+   - D9: the skill's `--keep` run deletes the folder only on `harness vet --finish` or `harness vet --clean`. The folder is outside the project; it also holds a `.gitignore` with `*`.
 
 ## 4. The scan (deterministic, CLI)
 
@@ -78,7 +80,7 @@ The scan reads the manifests and plain text only. Each rule gives a severity, a 
 
 **Context cost.** The always-loaded text is skill and agent names and descriptions, and command descriptions. It is measured with `measure.ts` (characters / 4, the same estimate as the budget). A `SessionStart` or `UserPromptSubmit` hook that prints text is flagged as unmeasured injected context.
 
-**Output.** `--json` prints `{ target, repo, sha, path, kind, findings[], context: { tokens, unmeasured[] }, files }`. With `--keep` (D9), it also has `dir`, the repo-relative temporary folder. Without the flag, it prints the terminal summary from section 6.
+**Output.** `--json` prints `{ target, repo, sha, path, kind, findings[], context: { tokens, unmeasured[] }, files }`. With `--keep` (D9), it also has `dir`, the absolute temporary folder, and `map` from original to unpacked paths. Without the flag, it prints the terminal summary from section 6.
 
 ## 5. The review (AI, skill)
 
@@ -112,9 +114,9 @@ The scan reads the manifests and plain text only. Each rule gives a severity, a 
 
 ## 7. Guard and safety
 
-- vet writes only under `.harness/vet/`. The guard treats `harness vet` as allowed for the agent, because it changes no settings and installs nothing.
+- vet writes reports under `.harness/vet/`; the unpacked tarball goes only to a new folder under the OS temp dir (D12). The guard treats `harness vet` as allowed for the agent, because it changes no settings and installs nothing.
 - The tarball is untrusted data. It is never imported, required or executed, and no interpreter runs with it as the working directory (the scratch rule).
-- Extraction applies the limits in section 3 before any file is written.
+- Extraction applies the limits in section 3 before any file is written, and renames instruction-bearing names (D12) so the reviewer reading the folder never auto-loads item content as instructions.
 - vet sends no data anywhere except the `gh` API calls for the repo it was given.
 
 ## 8. Testing

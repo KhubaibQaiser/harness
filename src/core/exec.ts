@@ -19,6 +19,8 @@ export const defaultExecBytes: ExecBytes = (cmd, args, maxBytes) => {
   if (!isAbsolute(cmd) && !findOnPath(cmd, process.env, process.platform)) return { status: 127, stdout: Buffer.alloc(0), missing: true };
   const [file, a, opts] = syncCommand(cmd, args);
   const r = spawnSync(file, a, { ...opts, encoding: 'buffer', maxBuffer: maxBytes, timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
-  const tooBig = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS';
+  const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'ENOENT') return { status: 127, stdout: Buffer.alloc(0), missing: true };
+  const tooBig = code === 'ENOBUFS';
   return { status: r.status ?? 1, stdout: tooBig ? Buffer.alloc(0) : (r.stdout ?? Buffer.alloc(0)), stderr: r.stderr?.toString() || r.error?.message || '', ...(tooBig ? { tooBig: true as const } : {}) };
 };

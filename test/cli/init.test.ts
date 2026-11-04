@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { init, type Prompt } from '../../src/cli/init.js';
+import { uninstall } from '../../src/cli/uninstall.js';
 import { planChanges } from '../../src/install/plan.js';
 import { detect } from '../../src/install/detect.js';
 import { preset } from '../../src/install/preset.js';
@@ -438,6 +439,25 @@ test('--install-plugins installs the pinned ids after apply, and rehashes settin
   expect(m.files.find((f: { rel: string }) => f.rel === '.claude/settings.json').hash).toBe(createHash('sha256').update(text).digest('hex'));
 });
 
+test('init --install-plugins: other edits made during the install are not recorded and survive uninstall; a clean install is recorded', async () => {
+  const edit = (root: string, extra: object): ((c: string, a: string[]) => { status: number; stdout: string }) => () => {
+    const p = join(root, '.claude/settings.json');
+    writeFileSync(p, JSON.stringify({ ...JSON.parse(readFileSync(p, 'utf8')), ...extra }, null, 2) + '\n');
+    return { status: 0, stdout: '{"command":"install","outcome":"ok","message":""}' };
+  };
+  const flags = [...aiArgs([...OWN, 'impeccable']), '--yes', '--over-budget', '--install-plugins'];
+  const dirty = makeRepo(NPM_VITEST);
+  const r = await ai(dirty, flags, { exec: edit(dirty, { mine: { keep: true } }) });
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('settings.json has other edits; not recorded. Run /harness:update to review them.');
+  await uninstall(['--yes'], { env: {}, root: dirty, out: () => {}, prompt: fake() });
+  expect(JSON.parse(readFileSync(join(dirty, '.claude/settings.json'), 'utf8')).mine).toEqual({ keep: true });
+  const clean = makeRepo(NPM_VITEST);
+  expect((await ai(clean, flags, { exec: edit(clean, {}) })).code).toBe(0);
+  await uninstall(['--yes'], { env: {}, root: clean, out: () => {}, prompt: fake() });
+  expect(tree(clean)).toBe('');
+});
+
 test('a failed plugin install prints the per-plugin command and the sync line; a sandbox network failure exits 1', async () => {
   const run = async (message: string) => {
     const root = makeRepo(NPM_VITEST);
@@ -487,8 +507,8 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('an ok ins
   const { applyChanges } = await import('../../src/install/apply.js');
   const { chmodSync } = realFs;
   const root = makeRepo({});
-  applyChanges(root, [{ kind: 'create', rel: '.claude/settings.json', content: '{"a":1}\n' }], '1');
-  writeFileSync(join(root, '.claude/settings.json'), '{"a":2}\n'); // what the install changed
+  applyChanges(root, [{ kind: 'create', rel: '.claude/settings.json', content: '{\n  "enabledPlugins": {\n    "impeccable@harness-pins": true\n  }\n}\n' }], '1');
+  writeFileSync(join(root, '.claude/settings.json'), '{\n  "enabledPlugins": {\n    "impeccable@harness-pins": false\n  }\n}\n'); // what the install changed
   chmodSync(join(root, '.harness'), 0o555);
   let out = '';
   try {

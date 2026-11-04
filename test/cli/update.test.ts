@@ -796,6 +796,46 @@ test('update with AI flags: an approved plugin does not ask, a newly added one d
   expect(same.out).not.toContain('Over budget');
 });
 
+test('update --install-plugins after a committed hand edit does not record it, and the key survives uninstall; a clean one is recorded', async () => {
+  const ids = [...OWN_IDS, 'impeccable'];
+  const d = mkdtempSync(join(tmpdir(), 'harness-upd-ai-'));
+  const w = (n: string, t: string) => (writeFileSync(join(d, n), t), join(d, n));
+  const flags = [
+    '--answers', w('a.json', JSON.stringify({ scope: { paths: ['src'] }, project: { type: 'library', domain: 'tools', compliance: [], data_handling: '', team_size: 1, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [] }, apps: [], unattended: { multi_file_gate: 'block', require_reason: false }, tdd: { paths: ['src/**'], diff_coverage: 80 } })),
+    '--product', w('p.md', ['Purpose', 'Users', 'Core features', 'Constraints', 'Non-goals', 'Sources'].map((s) => `## ${s}\nx\n`).join('\n')),
+    '--picks', w('k.json', JSON.stringify({ catalog_version: 1, findings: [], items: ids.map((id) => ({ id, include: 'recommended', reason: 'r', addresses: [] })) })),
+    '--report', w('r.md', '## Findings\n\n## Roadmap\n30 days, 60 days, 90 days.\n\n## Deliberate exclusions\nnone\n\n## Limits\nx\n'),
+    '--choose', ids.join(','), '--yes', '--install-plugins',
+  ];
+  const go = async (root: string, hand: boolean) => {
+    const p = join(root, '.claude/settings.json');
+    if (hand) { writeFileSync(p, JSON.stringify({ ...JSON.parse(readFileSync(p, 'utf8')), mine: { keep: true } }, null, 2) + '\n'); commitAll(root); }
+    const exec = (_c: string, a: string[]) => {
+      if (!a.includes('install')) return { status: 0, stdout: '[]' };
+      const j = JSON.parse(readFileSync(p, 'utf8'));
+      j.enabledPlugins['impeccable@harness-pins'] = false; // claude's own write
+      writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+      return { status: 0, stdout: '{"command":"install","outcome":"ok","message":""}' };
+    };
+    let out = '';
+    const code = await update(flags, { env: { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null, exec });
+    return { code, out, p };
+  };
+  const dirty = aiInstalled(REPO, ids);
+  const r = await go(dirty, true);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('settings.json has other edits; not recorded. Run /harness:update to review them.');
+  expect(await uninstall(['--yes'], { env: {}, root: dirty, out: () => {}, prompt: fake() })).toBe(0);
+  expect(JSON.parse(readFileSync(r.p, 'utf8')).mine).toEqual({ keep: true });
+  const clean = aiInstalled(REPO, ids);
+  const c = await go(clean, false);
+  expect(c.code, c.out).toBe(0);
+  expect(c.out).not.toContain('not recorded');
+  expect(await uninstall(['--yes'], { env: {}, root: clean, out: () => {}, prompt: fake() })).toBe(0);
+  const first = execFileSync('git', ['rev-list', '--max-parents=0', 'HEAD'], { cwd: clean, encoding: 'utf8' }).trim();
+  expect(execFileSync('git', ['diff', first], { cwd: clean, encoding: 'utf8' })).toBe('');
+});
+
 test('update: plugin flags without AI flags are a usage error; an EPERM write prints the ! line and rolls back', async () => {
   const root = aiInstalled(REPO, [...OWN_IDS, 'impeccable']);
   expect((await up(root, ['--yes', '--install-plugins'])).code).toBe(2);

@@ -10,8 +10,7 @@ import { stampHarnessFiles } from '../core/harness-files.js';
 import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, readManifest, removeEmptyDirs, type Manifest } from '../install/apply.js';
 import { unifiedDiff } from '../install/diff.js';
 import { dirtyPaths } from '../install/git-status.js';
-import { MANIFEST_REL, itemFiles, mergeManifestFiles, rehashManifest } from '../install/manifest.js';
-import { matchesHash, jsonIndentOf } from '../install/text.js';
+import { MANIFEST_REL, itemFiles, mergeManifestFiles, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
 import { pinnedPlugins, STRUCTURAL } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
@@ -112,23 +111,8 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   }
   // Recording an install touches settings.json's hash, so it needs the flag and proof that every wanted plugin is installed.
   const record = installFlag && wanted.length > 0 && !missing.length;
-  // Compared by hash: the manifest keeps no old content, so the file with the selected plugins' enabledPlugins entries set back to
-  // what harness wrote (true) must hash as recorded. Any other edit makes it differ.
-  const onlyPluginEdits = (): boolean => {
-    const entry = man.files.find((f) => f.rel === '.claude/settings.json');
-    const text = readFileSync(join(root, '.claude/settings.json'), 'utf8');
-    if (!entry || matchesHash(text, entry.hash)) return true;
-    try {
-      const j = JSON.parse(text);
-      if (j?.enabledPlugins && typeof j.enabledPlugins === 'object') for (const id of wanted) if (id in j.enabledPlugins) j.enabledPlugins[id] = true;
-      const body = JSON.stringify(j, null, jsonIndentOf(text));
-      return [body, body + '\n'].some((t) => matchesHash(t, entry.hash));
-    } catch {
-      return false;
-    }
-  };
   const recordInstall = (): number | null => {
-    if (!onlyPluginEdits()) return out('settings.json has other edits; not recorded. Run /harness:update to review them.'), null;
+    if (!settingsOnlyPluginEdits(root, wanted)) return out('settings.json has other edits; not recorded. Run /harness:update to review them.'), null;
     const before = readFileSync(join(root, MANIFEST_REL), 'utf8');
     try {
       rehashManifest(root, ['.claude/settings.json']);

@@ -23,7 +23,7 @@ import { installPlugins } from '../install/plugin-install.js';
 import { resolveSelection, toSelected } from '../install/select.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
-import { MANIFEST_REL, rehashManifest } from '../install/manifest.js';
+import { MANIFEST_REL, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { planChanges } from '../install/plan.js';
 import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/preset.js';
@@ -142,7 +142,8 @@ export const shq = (a: string): string => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${
 export const isDenied = (e: unknown): boolean => ['EPERM', 'EACCES'].includes((((e as Error)?.cause ?? e) as NodeJS.ErrnoException)?.code ?? '');
 /** Installs the selected pinned plugins, prints one line each, and re-hashes settings. Returns 1 when any install or the re-hash failed. `applied`: the files were written in this run. */
 export function installSelected(root: string, chosen: string[], cat: Catalog, exec: Exec, out: (s: string) => void, applied = true, have: string[] = []): number {
-  const ids = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@harness-pins`).filter((id) => !have.includes(id));
+  const all = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@harness-pins`);
+  const ids = all.filter((id) => !have.includes(id));
   if (!ids.length) return 0;
   const r = installPlugins(ids, exec);
   for (const id of r.ok) out(`Installed plugin ${id}`);
@@ -150,7 +151,10 @@ export function installSelected(root: string, chosen: string[], cat: Catalog, ex
   for (const f of r.failed) out(`Could not install ${f.id}: ${f.message}\n  Run this yourself with Claude Code's \`!\` prefix: claude plugin install ${shq(f.id)} --scope project`);
   if (r.failed.length) out('Then run /harness:sync to record the install.');
   try {
-    if (r.ok.length) rehashManifest(root, ['.claude/settings.json']);
+    if (r.ok.length) {
+      if (settingsOnlyPluginEdits(root, all)) rehashManifest(root, ['.claude/settings.json']);
+      else out('settings.json has other edits; not recorded. Run /harness:update to review them.');
+    }
   } catch (e) {
     if (!(e instanceof ApplyError)) throw e;
     out(`${isDenied(e) ? "Claude Code's sandbox blocks harness's own files. " : ''}The install worked but harness could not record it (${e.message}). Run /harness:sync to record the install.`);

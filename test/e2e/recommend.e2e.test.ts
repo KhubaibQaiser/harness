@@ -54,7 +54,10 @@ const walk = (root: string, dir = root, out = new Map<string, string>()): Map<st
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (e.name === '.git') continue;
     const p = join(dir, e.name);
-    if (e.isDirectory()) walk(root, p, out);
+    if (e.isDirectory()) {
+      out.set(relative(root, p) + '/', ''); // empty directories count too
+      walk(root, p, out);
+    }
     else out.set(relative(root, p), readFileSync(p).toString('base64'));
   }
   return out;
@@ -103,9 +106,16 @@ test('fake AI step through select, apply, update, remove, uninstall leaves the r
   expect(calls()).toContain('plugin install e2e-plugin@harness-pins --scope project --json');
   const manifest = JSON.parse(read('.harness/manifest.json'));
   const entry = manifest.files.find((f: any) => f.rel === '.claude/settings.json');
-  expect(entry.hash).toContain(createHash('sha256').update(read('.claude/settings.json')).digest('hex'));
+  expect(entry.hash).toBe(createHash('sha256').update(read('.claude/settings.json')).digest('hex'));
   // Change detection: the first prompt sets the baseline, the second sees no change.
   expect(hook(root, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })).toBeNull();
+  expect(hook(root, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })).toBeNull();
+  // Negative control: the same check does speak when a guarded file changes, then goes quiet again once reverted.
+  const settingsText = read('.claude/settings.json');
+  writeFileSync(join(root, '.claude/settings.json'), JSON.stringify({ ...settings, env: { X: '1' } }, null, 2) + '\n');
+  expect(JSON.stringify(hook(root, { hook_event_name: 'UserPromptSubmit', prompt: 'go' }))).toContain('.claude/settings.json');
+  writeFileSync(join(root, '.claude/settings.json'), settingsText);
+  hook(root, { hook_event_name: 'UserPromptSubmit', prompt: 'go' });
   expect(hook(root, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })).toBeNull();
 
   // 5. Platform enforcement still works, and the plugin's settings write is allowed.
@@ -126,7 +136,10 @@ test('fake AI step through select, apply, update, remove, uninstall leaves the r
   const upd = cli(root, v2, 'update', ...AI_FLAGS, '--yes', '--install-plugins', '--over-budget');
   expect(upd.code, upd.out).toBe(0);
   expect(read('.harness/config.yaml')).toContain('2222222222222222222222222222222222222222');
-  expect(Object.keys(JSON.parse(read('.claude/settings.json')).extraKnownMarketplaces)).toEqual(['harness-pins']);
+  const markets = JSON.parse(read('.claude/settings.json')).extraKnownMarketplaces;
+  expect(Object.keys(markets)).toEqual(['harness-pins']);
+  expect(JSON.stringify(markets)).toContain('2222222222222222222222222222222222222222');
+  expect(JSON.stringify(markets)).not.toContain('1111111111111111111111111111111111111111');
   const blocks = JSON.parse(read('.harness/manifest.json')).files.flatMap((f: any) => (f.blocks ?? []) as string[]);
   expect(new Set(blocks).size).toBe(blocks.length);
   git('add', '-A');

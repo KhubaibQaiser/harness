@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from 'vitest';
-import { realpathSync, rmSync } from 'node:fs';
 import { makeRepo } from '../install/helpers.js';
 
 // Temp names with a space and a non-ASCII letter, to catch quoting and encoding bugs in every path the harness builds.

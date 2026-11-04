@@ -52,9 +52,11 @@ function pluginEntry(plugin: string): ContextEntry {
 }
 
 /** `exempt` ids (items the person already approved) keep an entry but add nothing and are never unmeasured. harness-plugin is never exempt. */
-export const measureSelection = async (
+export async function measureSelection(
   ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { count?: CountTokens; exempt?: string[] } = {},
-): Promise<ContextMeasure> => measureSelectionSync(ids, c, dirs, opts);
+): Promise<ContextMeasure> {
+  return measureSelectionSync(ids, c, dirs, opts);
+}
 
 /** The same estimate without the async seam, for `status`. */
 export function measureSelectionSync(

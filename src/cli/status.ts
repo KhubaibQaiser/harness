@@ -65,7 +65,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   if (blocked) lines.push(`Last blocked settings change: ${blocked.ts} (${blocked.reason})`);
   const changed = lastHarnessFilesChange(root);
   if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
-  lines.push(...itemLines(config, deps.pluginList ?? pluginList));
+  if (config.items.length) lines.push(...itemLines(config, deps.pluginList ?? pluginList));
   lines.push('Last day');
   lines.forEach((l) => out(l));
   return stats(['--days', '1'], cli);
@@ -90,8 +90,8 @@ function itemLines(config: ReturnType<typeof loadConfig>['config'], list: typeof
   const lines = [`Catalog ${config.catalog_version}`, `Items: ${ids.length} selected`];
   const wanted = pinnedPlugins(lc.catalog.items.filter((i) => ids.includes(i.id))).map((p) => `${p.name}@harness-pins`);
   if (wanted.length) {
-    const have = list(); // one call; null (no claude) leaves the count out
-    if (have) lines.push(`Plugins not installed: ${wanted.filter((id) => !have.some((p) => p.id === id)).length}`);
+    const have = list(); // one call
+    lines.push(have ? `Plugins not installed: ${wanted.filter((id) => !have.some((p) => p.id === id)).length}` : 'Plugins not installed: unknown (claude not found)');
   }
   const m = measureSelectionSync(ids, lc.catalog, { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) });
   lines.push(budgetLines(budgetVerdict(m, m, config.context.budget_tokens))[0]);

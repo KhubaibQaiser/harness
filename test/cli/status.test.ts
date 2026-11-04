@@ -170,3 +170,17 @@ test('status shows the catalog, the item count, missing plugins and the budget l
   expect(calls).toBe(1);
   expect(out.indexOf('Enforcement:')).toBeLessThan(out.indexOf('Catalog '));
 });
+
+test('status says so when claude is not found, and skips item lines for a legacy install', async () => {
+  const root = makeRepo({ 'package.json': '{"name":"a"}\n', 'package-lock.json': '{}\n' });
+  const facts = detect(root);
+  const config = preset(facts).config;
+  config.items = ['caveman'].map((id) => ({ id, include: 'recommended' as const, selected: true, reason: 'r', addresses: [], pin: '' }));
+  const ai = { picks: JSON.stringify({ catalog_version: 1, findings: [], items: [] }), report: '# R\n\n## Limits\n\nx\n', product: '# P\n' };
+  applyChanges(root, planChanges(root, config, facts, { version: '1.0.0', distDir: join(pkgDir, 'dist'), templatesDir: join(pkgDir, 'templates'), catalog: loadCatalog().catalog, ai }).changes, '1.0.0');
+  let out = '';
+  status([], { root, env: {}, out: (s) => (out += s + '\n') }, { pluginList: () => null });
+  expect(out).toContain('Plugins not installed: unknown (claude not found)\n');
+  const legacy = (await go({ 'package.json': '{"name":"a"}\n', 'package-lock.json': '{}\n' })).out;
+  expect(legacy).not.toMatch(/^(Catalog|Items:|Plugins not installed|Always-loaded)/m);
+});

@@ -58,7 +58,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const ok = (s: string) => out(`ok ${s}`);
   const fix = (what: string, next: string) => (bad++, out(`fix ${what}: ${next}`));
   // A gate init turned off on purpose, with what turns it on: worth knowing, not a problem (doctor still exits 0).
-  const note = (what: string, next: string) => out(`note ${what}: ${next}`);
+  const note = (what: string, next?: string) => out(`note ${what}${next === undefined ? '' : `: ${next}`}`); // no next: the sentence carries its own advice
 
   const node = process.versions.node;
   if (olderThan(node, NODE_MIN_S)) fix(`Node ${node} is too old`, 'install Node 22.11 or newer');
@@ -225,7 +225,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     if (config.stop.steps.length)
       note("Stop steps were checked against this terminal's PATH", "Claude Code's hooks may see a different one (for example when Claude Code starts from the GUI); if Stop warns that a tool is not on its PATH, make the tool available there");
   }
-  if (config.items.length) itemChecks(root, config, manifest, deps.pluginList ?? pluginList, { ok, fix, note, out });
+  if (config.items.length) itemChecks(root, config, manifest, deps.pluginList ?? pluginList, { ok, fix, note });
   if (bad) out(`${bad} problem${bad === 1 ? '' : 's'} found.`);
   return bad ? 1 : 0;
 }
@@ -236,7 +236,7 @@ const EDITED = /harness-pins marketplace was edited|^`\.mcp\.json`: .*(was edite
 /** Catalog version, item drift (from reconcile, the same plan sync applies), plugin state and edited entries. Only for installs with an items list. */
 function itemChecks(
   root: string, config: HarnessConfig, manifest: NonNullable<ReturnType<typeof readManifest>>,
-  list: typeof pluginList, p: { ok: (s: string) => void; fix: (w: string, n: string) => void; note: (w: string, n: string) => void; out: (s: string) => void },
+  list: typeof pluginList, p: { ok: (s: string) => void; fix: (w: string, n: string) => void; note: (w: string, n?: string) => void },
 ): void {
   const lc = loadCatalog();
   if (lc.errors.length) return p.note('the catalog has errors, so item checks were skipped', 'run harness catalog validate');
@@ -260,7 +260,7 @@ function itemChecks(
   }
   if (planned.notes.some((n) => EDITED.test(n))) p.note('the harness-pins marketplace or a harness MCP server differs from what harness installed', 'run /harness:sync');
   const diff = (Object.keys(config.checks) as (keyof typeof config.checks)[]).filter((k) => config.checks[k] !== planned.config.checks[k]);
-  if (diff.length) p.out(`note config.yaml checks differ from the selected items (${diff.join(', ')}); the items win on the next update. Use harness add or remove to change gates.`);
+  if (diff.length) p.note(`config.yaml checks differ from the selected items (${diff.join(', ')}); the items win on the next update. Use harness add or remove to change gates.`);
 
   const pinned = pinnedPlugins(cat.items.filter((i) => ids.includes(i.id)));
   if (!pinned.length) return;
@@ -278,6 +278,6 @@ function itemChecks(
     const want = cat.items.find((i) => i.id === pin.item)?.plugin_version;
     if (want && got.version && got.version !== want) p.note(`${id} is ${got.version}, the catalog pins ${want}`, `run claude plugin update ${id} --scope project`);
     for (const o of have.filter((x) => x.enabled && x.id !== id && x.id.split('@')[0] === pin.name))
-      if (got.enabled || enabled[id] === true) p.out(`note ${pin.name} is enabled twice (${o.id} and ${PINS}); only one copy's hooks run. Disable one.`);
+      if (got.enabled || enabled[id] === true) p.note(`${pin.name} is enabled twice (${o.id} and ${PINS}); only one copy's hooks run. Disable one.`);
   }
 }

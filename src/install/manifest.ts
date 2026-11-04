@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { retryTransient } from '../core/atomic.js';
 import { join } from 'node:path';
-import type { Change } from './apply.js';
+import { stampHarnessFiles } from '../core/harness-files.js';
+import { applyChanges, type Change } from './apply.js';
 import { lineHunks } from './diff.js';
 import { STRUCTURAL, removeBlocks } from './merge.js';
 import { hashText, matchesHash } from './text.js';
@@ -107,4 +108,26 @@ export function mergeManifestFiles(old: Manifest, changes: Change[], backupDir?:
     files.push({ rel: c.rel, kind: c.kind, hash: hashText(c.kind === 'create' ? c.content : c.after), ...(c.blocks?.length ? { blocks: c.blocks } : {}), ...(c.kind === 'update' && c.replace?.length ? { replace: c.replace } : {}), ...(c.kind === 'update' && c.formatted ? { formatted: true as const } : {}), ...(c.kind === 'update' && c.unformatted ? { unformatted: true as const } : {}), ...(c.item ? { item: c.item } : {}), ...(c.kind === 'update' && backupDir ? { backup: `${backupDir}/${c.rel}` } : {}) });
   }
   return files;
+}
+
+/**
+ * `claude plugin install --scope project` rewrites .claude/settings.json behind harness's back. For each of `rels`
+ * whose bytes no longer match the recorded hash, the manifest takes the new hash (a manifest-only transaction), then
+ * the harness files are stamped so the hooks don't report the install as an outside change.
+ */
+export function rehashManifest(root: string, rels: string[]): void {
+  const m = readManifest(root);
+  if (m) {
+    let changed = false;
+    const files = m.files.map((f) => {
+      const p = join(root, f.rel);
+      if (!rels.includes(f.rel) || !existsSync(p)) return f;
+      const text = readFileSync(p, 'utf8');
+      if (matchesHash(text, f.hash)) return f;
+      changed = true;
+      return { ...f, hash: hashText(text) };
+    });
+    if (changed) applyChanges(root, [], m.version, undefined, undefined, { manifest: { ...m, files } });
+  }
+  stampHarnessFiles(root);
 }

@@ -1,14 +1,28 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { overlay } from '../core/config.js';
+import { esc, overlay } from '../core/config.js';
 import { validateConfig } from '../core/config-io.js';
 import type { HarnessConfig } from '../core/config.js';
-import { ApplyError, ManifestError, applyChanges, readManifest } from '../install/apply.js';
+import { answersToConfig, validateAnswers, type Answers } from '../ai/answers.js';
+import { validatePicks, type Picks } from '../ai/picks.js';
+import { validateProduct } from '../ai/product.js';
+import { validateReport } from '../ai/report.js';
+import { budgetLines, budgetVerdict, measureSelection } from '../budget/measure.js';
+import { loadCatalog } from '../catalog/load.js';
+import type { Catalog } from '../catalog/schema.js';
+import { defaultExec, type Exec } from '../core/exec.js';
+import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
+import { packageDir } from '../core/package-dir.js';
+import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest } from '../install/apply.js';
+import { type Facts } from '../install/detect.js';
+import { pinnedPlugins } from '../install/merge.js';
+import { installPlugins } from '../install/plugin-install.js';
+import { resolveSelection, toSelected } from '../install/select.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
-import { MANIFEST_REL } from '../install/manifest.js';
+import { MANIFEST_REL, rehashManifest } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { planChanges } from '../install/plan.js';
 import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/preset.js';
@@ -20,9 +34,10 @@ import type { CliEnv } from './index.js';
 export type { Prompt };
 export { planChanges };
 
-export type InitEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; nodeVersion?: string };
+export type InitEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; nodeVersion?: string; exec?: Exec; fs?: FsLike; claudeVersion?: () => string | null };
 
-const USAGE = 'Usage: /harness:init [--yes] [--dry-run] [--config <file>]';
+export const AI_USAGE = '[--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]';
+const USAGE = `Usage: /harness:init [--yes] [--dry-run] [--config <file>] ${AI_USAGE}`;
 const GATES: Record<string, string> = { guard: 'guard', protect: 'protect', depVerify: 'dep-verify', multiFile: 'multi-file', tdd: 'TDD', stop: 'stop' };
 
 const at = (o: any, path: string): unknown => path.split('.').reduce((v, k) => v?.[k], o);
@@ -40,6 +55,104 @@ export function dirtyPaths(root: string): string[] {
   return paths;
 }
 
+export interface AiArgs { answers?: string; product?: string; picks?: string; report?: string; choose?: string; installPlugins: boolean; overBudget: boolean }
+const VALUE_FLAGS = ['answers', 'product', 'picks', 'report', 'choose'] as const;
+
+/** Splits the AI flags off `args`; null when a value flag has no value. */
+export function takeAiFlags(args: string[]): { ai: AiArgs; rest: string[] } | null {
+  const ai: AiArgs = { installPlugins: false, overBudget: false };
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const k = VALUE_FLAGS.find((f) => args[i] === `--${f}`);
+    if (k) {
+      if (args[i + 1] === undefined) return null;
+      ai[k] = args[++i];
+    } else if (args[i] === '--install-plugins') ai.installPlugins = true;
+    else if (args[i] === '--over-budget') ai.overBudget = true;
+    else rest.push(args[i]);
+  }
+  return { ai, rest };
+}
+
+/** The usage error for the first AI input that is missing (all of them are needed together), or null. */
+export const missingAi = (cmd: string, ai: AiArgs): string | null => {
+  const f = VALUE_FLAGS.find((k) => ai[k] === undefined);
+  return f ? `${cmd}: --${f} ${f === 'choose' ? '<id,...>' : '<file>'} is required inside Claude Code` : null;
+};
+
+export interface AiInputs { answers: Answers; picks: Picks; ids: string[]; notices: string[]; files: { picks: string; report: string; product: string }; catalog: Catalog }
+
+/** Reads and validates the AI step's files against the facts and the real catalog, then resolves --choose. */
+export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null): { ok: true; in: AiInputs } | { ok: false; errors: string[]; code: number } {
+  const cat = loadCatalog();
+  if (cat.errors.length) return { ok: false, errors: [...cat.errors, 'The catalog has errors; stopped. Run harness catalog validate.'], code: 1 };
+  const text: Record<string, string> = {};
+  for (const k of ['answers', 'product', 'picks', 'report'] as const) {
+    try {
+      text[k] = readFileSync(ai[k]!, 'utf8');
+    } catch (e) {
+      return { ok: false, errors: [`Could not read --${k} "${esc(ai[k]!)}" (${(e as NodeJS.ErrnoException).code ?? 'unreadable'}).`], code: 2 };
+    }
+  }
+  const parsed = (k: 'answers' | 'picks'): { v: unknown } | { err: string } => {
+    try {
+      return { v: parseYaml(text[k]) };
+    } catch (e) {
+      return { err: `${k}: not valid JSON or YAML (${esc((e as Error).message.split('\n')[0])})` };
+    }
+  };
+  const pa = parsed('answers');
+  if ('err' in pa) return { ok: false, errors: [pa.err], code: 2 };
+  const a = validateAnswers(pa.v, facts);
+  if (!a.ok) return { ok: false, errors: a.errors, code: 2 };
+  const pp = parsed('picks');
+  if ('err' in pp) return { ok: false, errors: [pp.err], code: 2 };
+  const p = validatePicks(pp.v, cat.catalog, a.answers);
+  if (!p.ok) return { ok: false, errors: p.errors, code: 2 };
+  const errors = [...validateProduct(text.product), ...validateReport(text.report, p.picks)];
+  if (errors.length) return { ok: false, errors, code: 2 };
+  const r = resolveSelection(ai.choose!.split(',').filter(Boolean), cat.catalog, claudeVer);
+  if (r.errors.length) return { ok: false, errors: r.errors, code: 2 };
+  // The report is passed as written: planChanges adds the enforcement sentence when it writes .harness/report.md.
+  return { ok: true, in: { answers: a.answers, picks: p.picks, ids: r.ids, notices: r.notices, files: { picks: text.picks, report: text.report, product: text.product }, catalog: cat.catalog } };
+}
+
+/**
+ * Prints the budget lines. Returns 2 when the install must stop (over budget, --yes, no --over-budget), else null.
+ * `exempt` holds the ids the person already approved: they show but do not count.
+ */
+export async function budgetGate(
+  cat: Catalog, before: string[], after: string[], exempt: string[], budget: number, templatesDir: string, out: (s: string) => void, f: { yes: boolean; dryRun: boolean; overBudget: boolean },
+): Promise<number | null> {
+  const dirs = { templates: templatesDir, plugin: dirname(packageDir('templates')) };
+  const v = budgetVerdict(await measureSelection(before, cat, dirs, { exempt }), await measureSelection(after, cat, dirs, { exempt }), budget);
+  for (const l of budgetLines(v)) out(l);
+  if (!v.ask || f.dryRun || f.overBudget || !f.yes) return null;
+  out(`This goes over the context budget (~${v.after.tokens} of ${budget} tokens, estimate). Run again with --over-budget to accept, or pick fewer items.`);
+  return 2;
+}
+
+/** The person's own command line, for a step Claude Code's sandbox blocks. */
+export function sandboxLine(cmd: 'init' | 'update', args: string[]): string {
+  const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
+  const q = (a: string) => (/\s/.test(a) ? JSON.stringify(a) : a);
+  return `Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's \`!\` prefix: ${self} ${cmd} ${args.map(q).join(' ')}`;
+}
+export const isDenied = (e: unknown): boolean => ['EPERM', 'EACCES'].includes((((e as Error)?.cause ?? e) as NodeJS.ErrnoException)?.code ?? '');
+const SANDBOX_NET = /sandbox|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|network/i;
+
+/** Installs the selected pinned plugins, prints one line each, and re-hashes settings. Returns 1 when a sandbox network error hit. */
+export function installSelected(root: string, chosen: string[], cat: Catalog, exec: Exec, out: (s: string) => void, again: string): number {
+  const ids = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@harness-pins`);
+  if (!ids.length) return 0;
+  const r = installPlugins(ids, exec);
+  rehashManifest(root, ['.claude/settings.json']);
+  for (const id of r.ok) out(`Installed plugin ${id}`);
+  for (const f of r.failed) out(`Could not install ${f.id}: ${f.message}\n  Run it yourself: claude plugin install ${f.id} --scope project`);
+  if (r.failed.some((f) => SANDBOX_NET.test(f.message))) return out(again), 1;
+  return 0;
+}
+
 function parseArgs(args: string[]): { yes: boolean; dryRun: boolean; config?: string } | null {
   const o: { yes: boolean; dryRun: boolean; config?: string } = { yes: false, dryRun: false };
   for (let i = 0; i < args.length; i++) {
@@ -53,10 +166,15 @@ function parseArgs(args: string[]): { yes: boolean; dryRun: boolean; config?: st
 
 export async function init(args: string[], cli: InitEnv): Promise<number> {
   const { out, prompt } = cli;
-  const opts = parseArgs(args);
-  if (!opts) return out(USAGE), 2;
-  const refused = refuseOutsideClaude('init', cli.env, hasAiFlags(args));
+  const taken = takeAiFlags(args);
+  const opts = taken && parseArgs(taken.rest);
+  if (!taken || !opts) return out(USAGE), 2;
+  const ai = taken.ai;
+  const aiPath = hasAiFlags(args);
+  const refused = refuseOutsideClaude('init', cli.env, aiPath);
   if (refused) return out(refused), 2;
+  const lacking = aiPath ? missingAi('init', ai) : null;
+  if (lacking) return out(lacking), 2;
   if (!opts.yes && !opts.dryRun && cli.tty === false) return out(NO_TTY), 2;
 
   // 1. Preflight
@@ -98,7 +216,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     if (!v2.ok) return v2.errors.forEach((m) => out(m)), 2;
     config = v2.config;
     out(`Using the answers in ${opts.config}.`);
-  } else {
+  } else if (!aiPath) {
     out('Recommended settings:');
     for (const [k, why] of Object.entries(p.reasons)) out(`  ${k} = ${JSON.stringify(at(config, k))}\n    ${why}`);
     if (p.off.length) out('Off for this repo:\n' + p.off.map((o) => `  ${o.gate}: ${o.why}`).join('\n'));
@@ -121,10 +239,20 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     }
   }
 
+  // The AI step's files: validated, then they set the answers and the selection.
+  let sel: AiInputs | null = null;
+  if (aiPath) {
+    const r = loadAiInputs(ai, facts, (cli.claudeVersion ?? realClaudeVersion)());
+    if (!r.ok) return r.errors.forEach((m) => out(m)), r.code;
+    sel = r.in;
+    for (const n of sel.notices) out(n);
+    config = { ...answersToConfig(config, sel.answers), items: toSelected(sel.picks, sel.ids, sel.catalog), catalog_version: sel.catalog.version };
+  }
+
   // 3. Build the changes
   let plan: ReturnType<typeof planChanges>;
   try {
-    plan = planChanges(root, config, facts, { version: cli.version, distDir: cli.distDir, templatesDir: cli.templatesDir });
+    plan = planChanges(root, config, facts, { version: cli.version, distDir: cli.distDir, templatesDir: cli.templatesDir, ...(sel ? { catalog: sel.catalog, ai: sel.files } : {}) });
   } catch (e) {
     return out(`Cannot build the install plan: ${(e as Error).message}`), 1;
   }
@@ -142,6 +270,10 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   const manual = [...new Set([...plan.manual, ...p.tddOff.flatMap((o) => o.manual)])];
   if (manual.length) out('Do these by hand:\n' + manual.map((l) => `  ${l}`).join('\n'));
   for (const n of plan.notes) out(`Note: ${n}`);
+  if (sel) {
+    const stop = await budgetGate(sel.catalog, [], sel.ids, [], config.context.budget_tokens, cli.templatesDir, out, { ...opts, overBudget: ai.overBudget });
+    if (stop !== null) return stop;
+  }
   if (opts.dryRun) {
     if (touched.length) out(`These files have uncommitted changes; commit or stash them before applying: ${touched.join(', ')}.`);
     return out('Dry run: nothing was written.'), 0;
@@ -150,12 +282,13 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
 
   // 5. Apply
   try {
-    applyChanges(root, plan.changes, cli.version, undefined, undefined, { tddOff: p.tddOff.map((o) => o.dir) });
+    applyChanges(root, plan.changes, cli.version, undefined, cli.fs, { tddOff: p.tddOff.map((o) => o.dir) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(e.message), 1;
+    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('init', args) : e.message), 1;
     throw e;
   }
   stampHarnessFiles(root); // change detection: these writes are harness's own
+  const installed = sel && ai.installPlugins ? installSelected(root, sel.ids, sel.catalog, cli.exec ?? defaultExec, out, sandboxLine('init', args)) : 0;
 
   // 6. Report
   const checks = config.checks as Record<string, boolean>;
@@ -170,5 +303,5 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   if (checks.tdd) for (const p of coverageSkipped(facts, config)) out(coverageWhy(p));
   out(`Commit these files: ${[...plan.changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);
   out('Teammates need nothing else: the hooks are in the repo.');
-  return 0;
+  return installed;
 }

@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import * as realFs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { cpSync, existsSync, realpathSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -320,4 +322,121 @@ test('eslint flat config with only a per-object ignores: init appends a global-i
   const r = await go(root, ['--yes']);
   expect(r.out).not.toContain("add '.harness/' to the ignores array");
   expect(readFileSync(join(root, 'eslint.config.js'), 'utf8')).toBe('export default [\n  { files: ["src/**"], ignores: ["src/gen/**"] },\n  { ignores: [".harness/"] },\n];\n');
+});
+
+// ---- AI init: validated files, the budget ask and plugin installs ----
+const SECTIONS = '## Findings\n\n## Roadmap\n30 days: a. 60 days: b. 90 days: c.\n\n## Deliberate exclusions\nnone\n\n## Limits\nx\n';
+const PRODUCT = ['Purpose', 'Users', 'Core features', 'Constraints', 'Non-goals', 'Sources'].map((s) => `## ${s}\nx\n`).join('\n');
+const ANSWERS = {
+  scope: { paths: ['src'] },
+  project: { type: 'library', domain: 'tools', compliance: [], data_handling: '', team_size: 1, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [] },
+  apps: [], unattended: { multi_file_gate: 'block', require_reason: false }, tdd: { paths: ['src/**'], diff_coverage: 80 },
+};
+const aiDir = mkdtempSync(join(tmpdir(), 'harness-ai-'));
+let n = 0;
+/** Writes the four AI files for `ids` and returns the flag list. */
+const aiArgs = (ids: string[], o: { budget?: number; skip?: string; picks?: object } = {}): string[] => {
+  const d = join(aiDir, `r${n++}`);
+  mkdirSync(d);
+  const f = (name: string, text: string) => (writeFileSync(join(d, name), text), join(d, name));
+  const picks = o.picks ?? { catalog_version: 1, findings: [], items: ids.map((id) => ({ id, include: 'recommended', reason: 'r', addresses: [] })) };
+  const a = ['--answers', f('answers.json', JSON.stringify(ANSWERS)), '--product', f('product.md', PRODUCT), '--picks', f('picks.json', JSON.stringify(picks)), '--report', f('report.md', SECTIONS), '--choose', ids.join(',')];
+  if (o.budget !== undefined) a.push('--config', f('cfg.yaml', `context:\n  budget_tokens: ${o.budget}\n`));
+  if (o.skip) a.splice(a.indexOf(o.skip), 2);
+  return a;
+};
+const ai = (root: string, args: string[], extra: object = {}) =>
+  go(root, args, fake(), { env: { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' }, claudeVersion: () => null, ...extra });
+const OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'review-rubric', 'agents-md'];
+const tree = (root: string) => git(root, 'status', '--porcelain', '-uall');
+
+test('AI init needs all inputs', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const r = await ai(root, [...aiArgs(OWN, { skip: '--picks' }), '--yes']);
+  expect(r.code).toBe(2);
+  expect(r.out).toContain('init: --picks <file> is required inside Claude Code');
+});
+
+test('invalid picks stop before planning', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const r = await ai(root, [...aiArgs(OWN, { picks: { catalog_version: 1, findings: [], items: [{ id: 'nope', include: 'recommended', reason: 'r', addresses: [] }] } }), '--yes']);
+  expect(r.code).toBe(2);
+  expect(r.out).toContain('unknown item "nope"');
+  expect(r.out).not.toContain('Plan:');
+});
+
+test('AI init dry run shows the plan and the budget', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const r = await ai(root, [...aiArgs([...OWN, 'impeccable', 'mobile-mcp']), '--dry-run']);
+  expect(r.code).toBe(0);
+  for (const f of ['.mcp.json', '.claude/settings.json', '.harness/facts.json', '.harness/picks.json', '.harness/report.md', '.harness/context/product.md', '.harness/config.yaml']) expect(r.out, f).toContain(f);
+  expect(r.out).toContain('Always-loaded context from harness');
+  expect(r.out).toContain('Dry run: nothing was written.');
+  expect(tree(root)).toBe('');
+});
+
+test('over budget with --yes refuses before writing; --over-budget applies', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const args = [...aiArgs(OWN, { budget: 10 }), '--yes'];
+  const r = await ai(root, args);
+  expect(r.code).toBe(2);
+  expect(r.out).toMatch(/This goes over the context budget \(~\d+ of 10 tokens, estimate\)\. Run again with --over-budget to accept, or pick fewer items\./);
+  expect(tree(root)).toBe('');
+  const r2 = await ai(root, [...args, '--over-budget']);
+  expect(r2.code).toBe(0);
+  expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
+  expect(existsSync(join(root, '.harness/report.md'))).toBe(true);
+});
+
+test('a new plugin pick asks under budget', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const r = await ai(root, [...aiArgs([...OWN, 'impeccable']), '--yes']);
+  expect(r.code).toBe(2);
+  expect(r.out).toContain('Not measured before install: impeccable');
+  expect(tree(root)).toBe('');
+});
+
+test('init --dry-run with every AI flag writes nothing', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const r = await ai(root, [...aiArgs(OWN, { budget: 10 }), '--install-plugins', '--over-budget', '--dry-run']);
+  expect(r.code).toBe(0);
+  expect(tree(root)).toBe('');
+});
+
+test('a write the OS refuses rolls back and prints the person\'s command', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const fs = {
+    ...realFs,
+    renameSync: (a: string, b: string) => {
+      if (b.endsWith('.claude/settings.json')) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+      return realFs.renameSync(a, b);
+    },
+  };
+  const r = await ai(root, [...aiArgs(OWN), '--yes', '--over-budget'], { fs });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's `!` prefix: ");
+  expect(r.out).toContain('init');
+  expect(r.out).toContain('--yes');
+  expect(tree(root)).toBe('');
+});
+
+test('--install-plugins installs the pinned ids after apply, and rehashes settings', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const seen: string[][] = [];
+  const exec = (_c: string, a: string[]) => {
+    seen.push(a);
+    if (a[2].startsWith('impeccable')) {
+      const p = join(root, '.claude/settings.json');
+      writeFileSync(p, readFileSync(p, 'utf8').replace(/\n$/, '') + '\n\n');
+      return { status: 0, stdout: '{"ok":true}' };
+    }
+    return { status: 1, stdout: '{"ok":false,"error":"boom"}' };
+  };
+  const r = await ai(root, [...aiArgs([...OWN, 'impeccable']), '--yes', '--over-budget', '--install-plugins'], { exec });
+  expect(r.code).toBe(0);
+  expect(seen).toEqual([['plugin', 'install', 'impeccable@harness-pins', '--scope', 'project', '--json']]);
+  expect(r.out).toContain('impeccable@harness-pins');
+  const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
+  const text = readFileSync(join(root, '.claude/settings.json'), 'utf8');
+  expect(m.files.find((f: { rel: string }) => f.rel === '.claude/settings.json').hash).toBe(createHash('sha256').update(text).digest('hex'));
 });

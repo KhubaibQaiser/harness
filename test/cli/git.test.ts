@@ -13,6 +13,7 @@ const manifest = { version: '1.2.3', createdAt: 'x', files: [{ rel: '.harness/co
 /** A repo with harness files written but not committed. */
 function installed(opts: { branch?: string; remoteHead?: string; trailer?: string; tracked?: Record<string, string>; extra?: string[] } = {}) {
   const root = makeRepo({ 'a.txt': 'a\n', ...opts.tracked }, opts);
+  g(root, 'config', 'init.defaultBranch', opts.branch ?? 'main'); // hermetic: never the machine's global default
   for (const rel of opts.extra ?? []) put(root, rel, 'x');
   put(root, '.harness/config.yaml', `catalog_version: 7\n${opts.trailer ? `git:\n  commit_trailer: "${opts.trailer}"\n` : ''}`);
   put(root, '.claude/settings.json', '{}\n');

@@ -103,7 +103,7 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
   for (const e of errors) out(e);
   if (attempt < 2) return 2;
   // Only an installed repo gets a .harness/ folder; anywhere else the raw output is printed.
-  if (!existsSync(join(root, MANIFEST_REL))) return out(`Recommend output failed validation twice. Raw output follows. Stopping.\n${esc(text as string)}`), 1;
+  if (!existsSync(join(root, MANIFEST_REL))) return out(`Recommend output failed validation twice. Raw output follows. Stopping.\n${(text as string).split(/\r?\n/).map(esc).join('\n')}`), 1;
   out(`Recommend output failed validation twice. Raw output is in \`${saveDebug(root, what, text as string)}\`. Stopping.`);
   return 1;
 }

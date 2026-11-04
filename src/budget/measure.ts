@@ -40,8 +40,15 @@ export function itemContext(item: CatalogItem, dirs: { templates: string }): Con
 function pluginEntry(plugin: string): ContextEntry {
   const root = join(plugin, 'skills');
   const names = existsSync(root) ? readdirSync(root) : [];
-  // ponytail: plugin.json registers no agents yet (Task 20); add them here when it does.
-  return { id: 'harness-plugin', tokens: names.reduce((n, d) => n + estimateTokens(alwaysLoadedText('skill', read(join(root, d, 'SKILL.md')))), 0) };
+  const skills = names.reduce((n, d) => n + estimateTokens(alwaysLoadedText('skill', read(join(root, d, 'SKILL.md')))), 0);
+  // The agents plugin.json registers load their name and description too.
+  let agents: string[] = [];
+  try {
+    agents = (JSON.parse(read(join(plugin, '.claude-plugin', 'plugin.json'))) as { agents?: string[] }).agents ?? [];
+  } catch {
+    // no readable manifest: count the skills only
+  }
+  return { id: 'harness-plugin', tokens: skills + agents.reduce((n, a) => n + estimateTokens(alwaysLoadedText('agent', read(join(plugin, a)))), 0) };
 }
 
 /** `exempt` ids (items the person already approved) keep an entry but add nothing and are never unmeasured. harness-plugin is never exempt. */

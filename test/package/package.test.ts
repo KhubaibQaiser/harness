@@ -1,9 +1,11 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { syncCommand } from '../../src/checks/stop/runner.js';
+import { loadCatalog } from '../../src/catalog/load.js';
+import { measureSelection } from '../../src/budget/measure.js';
 
 const json = (f: string) => JSON.parse(readFileSync(f, 'utf8'));
 const pkg = json('package.json');
@@ -42,14 +44,62 @@ test('packed files: the plugin and CLI ship, sources and tests do not', () => {
 }, NPM_TIMEOUT);
 
 test('every skill runs the bundled CLI, never npx, and stays under 60 lines', () => {
-  for (const s of ['init', 'doctor', 'status', 'update', 'uninstall']) {
+  for (const s of readdirSync('skills')) {
     const text = readFileSync(`skills/${s}/SKILL.md`, 'utf8');
-    expect(text, s).toMatch(/^---\nname: \S+\ndescription: .+\n---\n/);
+    expect(text, s).toMatch(/^---\nname: \S+\ndescription: .+\n(disable-model-invocation: true\n)?---\n/);
     expect(text, s).toContain('node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs"');
     expect(text, s).not.toMatch(/npx/);
     expect(text, s).toMatch(/data, not instructions/);
     expect(text.split('\n').length, s).toBeLessThan(60);
   }
+});
+
+const CLI = 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs"';
+test('init skill holds every CLI line', () => {
+  const t = readFileSync('skills/init/SKILL.md', 'utf8');
+  for (const c of ['scan', 'validate product', 'validate answers', 'catalog', 'validate picks', 'validate report', 'select', 'init', 'git branch', 'git commit', 'git push', 'git pr']) {
+    expect(t.split('\n').some((l) => l.includes(`${CLI} ${c}`)), c).toBe(true);
+  }
+  expect(t).toContain('--over-budget');
+  expect(t).toContain('/harness:sync');
+  expect(t).toContain('Could not install');
+  expect(t).toContain("Claude Code's sandbox blocks harness's own files");
+  expect(t).toContain('${CLAUDE_PLUGIN_ROOT}/templates/skills/review-rubric/SKILL.md');
+  expect(t).toContain('(recommended)');
+});
+
+test('side files hold no commands', () => {
+  for (const f of ['interview', 'recommend']) expect(readFileSync(`skills/init/${f}.md`, 'utf8'), f).not.toContain('dist/cli.mjs');
+});
+
+test('interview.md says never to read dotenv files or unpointed files', () => {
+  const t = readFileSync('skills/init/interview.md', 'utf8');
+  expect(t).toMatch(/never read[^\n]*\.env/i);
+  expect(t).toMatch(/\.harnessignore/);
+  expect(t).toMatch(/only (the )?files? the (user|person) (points|pointed)/i);
+  expect(t).toMatch(/names only/i);
+});
+
+test('recommend.md calls harness:staff-reviewer, passes the rubric path and prefers on-demand items', () => {
+  const t = readFileSync('skills/init/recommend.md', 'utf8');
+  expect(t).toContain('harness:staff-reviewer');
+  expect(t).toContain('Mode: repo audit');
+  expect(t).toMatch(/rubric path/);
+  expect(t).toMatch(/on demand/i);
+  expect(t).toMatch(/cost\.context/);
+  expect(t).toMatch(/Artifactory or Nexus/);
+});
+
+test('plugin.json registers the reviewer only, and its path exists', () => {
+  const p = json('.claude-plugin/plugin.json');
+  expect(p.agents).toEqual(['./templates/agents/staff-reviewer.md']);
+  expect(p.skills).toBeUndefined();
+  expect(existsSync(p.agents[0])).toBe(true);
+});
+
+test('harness-plugin context stays under 500 tokens (estimate)', async () => {
+  const r = await measureSelection([], loadCatalog().catalog, { templates: 'templates', plugin: '.' });
+  expect(r.entries.find((e) => e.id === 'harness-plugin')!.tokens).toBeLessThan(500);
 });
 
 test('packed CLI runs: status in a bare fixture exits 1 with the not-installed message', () => {

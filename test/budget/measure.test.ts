@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { defaults } from '../../src/core/config.js';
@@ -55,6 +55,14 @@ test("measureSelection always includes the harness plugin's own skills", async (
   const e = r.entries.find((x) => x.id === 'harness-plugin');
   expect(e?.tokens).toBeGreaterThan(0);
   expect(r.tokens).toBe(e!.tokens);
+});
+
+test('harness-plugin also counts the agents plugin.json registers', async () => {
+  const skills = readdirSync(join(plugin, 'skills')).reduce((n, d) => n + estimateTokens(alwaysLoadedText('skill', readFileSync(join(plugin, 'skills', d, 'SKILL.md'), 'utf8'))), 0);
+  const agent = estimateTokens(alwaysLoadedText('agent', readFileSync(join(templates, 'agents/staff-reviewer.md'), 'utf8')));
+  const r = await measureSelection([], cat(), dirs);
+  expect(r.entries[0]!.tokens).toBe(skills + agent);
+  expect(agent).toBeGreaterThan(0);
 });
 
 test('approved items are exempt', async () => {

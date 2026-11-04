@@ -62,7 +62,7 @@ Exact rules for each gate: [docs/reference.md](docs/reference.md).
 
 ## Quick start
 
-`init` and `update` run only inside Claude Code. In a plain terminal they print `Run /harness:init inside Claude Code` and exit. The `/harness:init` skill flow is coming; until it lands, the install steps below are not available end to end.
+`init` and `update` run only inside Claude Code. In a plain terminal they print `Run /harness:init inside Claude Code` and exit.
 
 Build from source. You need pnpm (`corepack enable` provides it).
 
@@ -81,6 +81,19 @@ claude plugin install harness@harness
 Then run `/harness:init` inside Claude Code. The plugin also adds `/harness:doctor`, `/harness:status`, `/harness:update` and `/harness:uninstall`. `npx @khubaibqaiser/harness init` in a terminal does not install; it tells you to use `/harness:init`.
 
 Commit the files `init` lists, then keep working in Claude Code.
+
+### `/harness:init` in Claude Code
+
+The full flow runs only inside Claude Code, where Claude does the interview and the recommendations. The CLI stays deterministic: Claude passes it files, and it checks them.
+
+1. **Scan.** It reads your repo and shows what it found.
+2. **Interview.** Claude asks one question at a time: scope first, then gaps the scan can't answer. It drafts `product.md` for you to edit. It reads only files you point to, never dotenv files or `.harnessignore` paths, and credentials are names only.
+3. **Recommend.** A fresh-context reviewer audits the repo against the catalog and proposes items and a report.
+4. **Select.** You tick items, four per question, with the reason, context cost and side effects of each.
+5. **Apply.** It shows the plan and the always-loaded context from harness. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
+6. **Git.** Each of branch, commit, push and PR is its own question. Nothing runs without a yes.
+
+It writes the same files as `init`, plus `.harness/context/product.md` and `.harness/report.md`.
 
 ## Commands
 
@@ -273,7 +286,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 ## Roadmap
 
 These aren't shipped yet:
-- per-project recommendations from a pinned catalog (M3, in progress; the catalog, selection, budget and installs are in, the `/harness:init` flow, `add`, `remove`, `why`, `explain` and `sync` are not);
+- per-project recommendations from a pinned catalog (M3, in progress; the catalog, selection, budget, installs and the `/harness:init` flow are in; `add`, `remove`, `why`, `explain` and `sync` are not);
 - a PR size check;
 - memory;
 - the PR reviewer;

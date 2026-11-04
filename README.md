@@ -40,7 +40,7 @@ Rules in `CLAUDE.md` or `AGENTS.md` are advice, and a busy agent can skip them. 
   - Denies reads of secrets such as `.env`, keys and credentials.
   - Denies force-push, pushing to `main`, `curl | sh` and package installs.
   - Asks before destructive commands.
-  - Asks before the agent runs `harness init`, `update`, `add`, `remove`, `sync` or `uninstall`, and before it pushes or opens a pull request for harness changes. Previews such as `--dry-run` pass. `add`, `remove` and `sync` are coming.
+  - Asks before the agent runs `harness init`, `update`, `add`, `remove`, `sync` or `uninstall`, and before it pushes or opens a pull request for harness changes. Previews such as `--dry-run` pass. `sync` is coming.
 - **Protected paths.** The agent can't edit `.harness/`, `.claude/settings*.json` or `node_modules/`. Changes to harness's own files are reported at your next prompt.
 - **Multi-file gate.** Asks once per turn before the agent edits a second source file.
 - **TDD gates.**
@@ -78,7 +78,7 @@ claude plugin marketplace add KhubaibQaiser/harness
 claude plugin install harness@harness
 ```
 
-Then run `/harness:init` inside Claude Code. The plugin also adds `/harness:doctor`, `/harness:status`, `/harness:update` and `/harness:uninstall`. `npx @khubaibqaiser/harness init` in a terminal does not install; it tells you to use `/harness:init`.
+Then run `/harness:init` inside Claude Code. The plugin also adds `/harness:doctor`, `/harness:status`, `/harness:update`, `/harness:add` and `/harness:uninstall`. `npx @khubaibqaiser/harness init` in a terminal does not install; it tells you to use `/harness:init`.
 
 Commit the files `init` lists, then keep working in Claude Code.
 
@@ -105,6 +105,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 |---|---|
 | `init [--yes\|--config <file>\|--dry-run]` | Detects your repo, picks catalog items, shows the plan, then writes after you confirm. Run it as `/harness:init`. |
 | `update [--yes\|--check\|--dry-run\|--plan]` | Re-renders the installed files with this version and shows the diff first. Run it as `/harness:update`. `--check` only looks for a newer version and also works in a terminal. `--plan` writes nothing and prints JSON: whether to re-recommend (the catalog or your project facts changed), what changed in the catalog, and which answers to ask again. Items that left the catalog are removed, with a line saying why. With `--answers`, update takes a partial file and changes only the keys it holds (`project`, `apps`, `unattended`, `tdd`); the rest of `config.yaml` stays as it is. |
+| `add <id> [--over-budget\|--dry-run\|--yes]` | Adds one catalog item, with what it requires. Run it as `/harness:add <id>`. Refuses when the item conflicts with an installed one. Shows the diff and the context budget first, and with `--yes` stops when it would go over budget unless you pass `--over-budget`. Ids you already approved don't count against the budget. |
 
 **In a plain terminal:**
 
@@ -113,6 +114,9 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `status` | Shows each gate as on or off, and why. |
 | `doctor` | Checks the install and prints a fix for each problem. Exits 1 if there is one. |
 | `uninstall [--yes\|--force\|--dry-run]` | Removes what harness added and restores your files. Close open Claude Code sessions first. |
+| `remove <id> [--dry-run\|--yes]` | Removes one installed item and what it wrote, and restores your files. Refuses while another installed item requires it. The agent has to ask before running it. |
+| `why <id>` | For an installed item: why it is there, the findings it addresses, its cost and its context. For one that isn't installed: why it is in the catalog and its cost. |
+| `explain` | One line per installed item with its files, then the always-loaded context. |
 | `stats [--days N]` | Counts harness events (the default is the last 7 days). |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. `off` works only in your own terminal. |
 | `scan` | Prints the facts harness detects about your repo, as JSON. Writes nothing. |
@@ -130,7 +134,7 @@ Without a terminal, pass `--yes` or `--dry-run`.
 
 `init` writes `.harness/` (the dispatcher, config and manifest) and merges hook entries and deny rules into `.claude/settings.json`. It also adds a short block to `AGENTS.md` (imported from `CLAUDE.md`), `.gitignore` lines, and the review agent. When TDD is on, it edits your test config so tests write JSON results. It then writes the items you chose, the plugin pins in `.claude/settings.json` and the servers in `.mcp.json`, described below. The full list is in [docs/reference.md](docs/reference.md#what-init-changes-in-your-repo).
 
-Coming: `add`, `remove`, `why`, `explain` and `sync` for single items, and an item line in `status` and `doctor`.
+Coming: `sync`, and an item line in `status` and `doctor`.
 
 ### AI flags
 
@@ -286,7 +290,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 ## Roadmap
 
 These aren't shipped yet:
-- per-project recommendations from a pinned catalog (M3, in progress; the catalog, selection, budget, installs and the `/harness:init` flow are in; `add`, `remove`, `why`, `explain` and `sync` are not);
+- per-project recommendations from a pinned catalog (M3, in progress; the catalog, selection, budget, installs, the `/harness:init` flow and `add`, `remove`, `why` and `explain` are in; `sync` is not);
 - a PR size check;
 - memory;
 - the PR reviewer;

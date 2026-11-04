@@ -9,6 +9,7 @@ import { init } from './init.js';
 import { insideClaude } from './claude-only.js';
 import { uninstall } from './uninstall.js';
 import { update } from './update.js';
+import { items } from './items.js';
 import { readlinePrompt } from './prompt.js';
 import { doctor } from './doctor.js';
 import { status } from './status.js';
@@ -134,6 +135,13 @@ try {
       const prompt = readlinePrompt();
       try {
         process.exitCode = await update(argv.slice(1), { ...cli, root: process.cwd(), prompt, version: VERSION, templatesDir: packageDir('templates'), distDir });
+      } finally {
+        prompt.close();
+      }
+    } else if (argv[0] === 'add' || argv[0] === 'remove' || argv[0] === 'why' || argv[0] === 'explain') {
+      const prompt = readlinePrompt();
+      try {
+        process.exitCode = await items(argv[0], argv.slice(1), { ...cli, root: process.cwd(), prompt, templatesDir: packageDir('templates'), distDir: packageDir('dist') });
       } finally {
         prompt.close();
       }

@@ -53,13 +53,17 @@ const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
 const PMS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 // Subcommands only a person may run (deny) or that need the person's yes (ask; the dispatcher denies it when
 // unattended), with the arguments (after the subcommand) the agent may still use. `run(sub)` is how the person runs
-// `harness <sub>` in their own terminal. One place: M3 adds remove, add and sync here.
-const DRY_OR_CHECK = (a: string[]) => a.length > 0 && a.every((t) => t === '--dry-run' || t === '--check');
+// `harness <sub>` in their own terminal. One place: M3's entries are in.
+const PREVIEW = (a: string[]) => a.some((t) => t === '--dry-run' || t === '--check' || t === '--plan') && !a.includes('--yes');
 const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (run: (sub: string) => string) => string }> = {
   tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (run) => `Only a person can pause TDD: run ${run('tdd off')} in your own terminal.` },
   uninstall: { kind: 'ask', allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
-  init: { kind: 'ask', allowed: DRY_OR_CHECK, why: () => 'the agent is installing the harness, which writes its hooks, rules and settings' },
-  update: { kind: 'ask', allowed: DRY_OR_CHECK, why: () => 'the agent is updating the harness, which rewrites its hooks, rules and settings' },
+  init: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is installing the harness, which writes its hooks, rules and settings' },
+  update: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is updating the harness, which rewrites its hooks, rules and settings' },
+  add: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is adding a harness item, which writes its files and settings' },
+  remove: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is removing a harness item, which deletes its files and settings' },
+  sync: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is syncing the harness items, which rewrites their files and settings' },
+  git: { kind: 'ask', allowed: (a) => a[0] === 'branch' || a[0] === 'commit', why: () => 'the agent is pushing or opening a pull request for the harness changes' },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
 const ANY_WHY = 'Only a person can change or remove the harness gates: run the harness command in your own terminal.';

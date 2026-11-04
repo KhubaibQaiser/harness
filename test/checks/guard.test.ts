@@ -544,3 +544,39 @@ test('the PowerShell ask is a deny when unattended', async () => {
   expect(o.permissionDecision).toBe('deny');
   expect(o.permissionDecisionReason).toBe('Unattended run: Harness does not parse PowerShell, so a PowerShell command that names .harness, .claude or .env needs your approval.');
 });
+
+describe.each([
+  ['add', 'the agent is adding a harness item, which writes its files and settings'],
+  ['remove', 'the agent is removing a harness item, which deletes its files and settings'],
+  ['sync', 'the agent is syncing the harness items, which rewrites their files and settings'],
+])('%s asks the person (M3 item changes)', (sub, why) => {
+  test.each([`node "/x/dist/cli.mjs" ${sub} x --yes`, `pnpm harness ${sub} x --yes`, `npx @khubaibqaiser/harness ${sub} x --yes`])('%s', (cmd) => {
+    const d = decideCommand(cmd, ctx());
+    expect(d.kind).toBe('ask');
+    expect(reason(d)).toBe(`Confirm: ${why}`);
+  });
+  test('PowerShell asks too', async () => {
+    expect(await run('PowerShell', { command: `harness ${sub} x --yes` })).toMatchObject({ kind: 'ask', check: 'guard', reason: `Confirm: ${why}` });
+  });
+  test('unattended (bypassPermissions) is denied with the Unattended prefix', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'h-guard-m3-'));
+    mkdirSync(join(root, '.harness'));
+    writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+    const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, permission_mode: 'bypassPermissions', tool_name: 'Bash', tool_input: { command: `harness ${sub} x --yes` } });
+    const o = JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput;
+    expect(o.permissionDecision).toBe('deny');
+    expect(o.permissionDecisionReason).toMatch(/^Unattended run: /);
+  });
+  test('a hidden subcommand is denied', () => expect(kind(`H=${sub}; harness $H x`)).toBe('deny'));
+});
+test('add, remove and sync previews are allowed', () => {
+  all(['harness remove x --dry-run', 'harness add x --dry-run', 'harness sync --dry-run', 'harness update --plan', 'harness update --answers a.json --dry-run'], 'allow');
+});
+test('a preview with --yes still asks', () => {
+  expect(kind('harness remove x --dry-run --yes')).toBe('ask');
+});
+test('harness git push and git pr ask; harness git branch and git commit are allowed', () => {
+  const why = 'Confirm: the agent is pushing or opening a pull request for the harness changes';
+  for (const cmd of ['harness git push', 'harness git pr create', 'npx @khubaibqaiser/harness git push origin x']) expect(reason(decideCommand(cmd, ctx())), cmd).toBe(why);
+  all(['harness git branch x', 'harness git commit -m x'], 'allow');
+});

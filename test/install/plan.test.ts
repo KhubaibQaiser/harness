@@ -1,0 +1,135 @@
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { expect, test } from 'vitest';
+import { loadCatalog } from '../../src/catalog/load.js';
+import type { Selected } from '../../src/core/config.js';
+import { applyChanges, type Change } from '../../src/install/apply.js';
+import { detect } from '../../src/install/detect.js';
+import { LEGACY_OWN, planChanges, selectedIds } from '../../src/install/plan.js';
+import { preset } from '../../src/install/preset.js';
+import { LIMITS_SENTENCE } from '../../src/ai/report.js';
+import { makeRepo } from './helpers.js';
+
+const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const distDir = join(pkgDir, 'dist');
+const templatesDir = join(pkgDir, 'templates');
+const catalog = loadCatalog().catalog;
+const REPO = {
+  'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^1.0.0' } }, null, 2) + '\n',
+  'package-lock.json': '{}\n',
+  'vitest.config.ts': "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: {} });\n",
+  '.gitignore': 'node_modules\n',
+};
+const OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'agents-md'];
+const sel = (id: string, selected = true): Selected => ({ id, include: 'recommended', selected, reason: 'r', addresses: [], pin: '' });
+const AI = { picks: '{}\n', report: '# R\n\n## Findings\n\nx\n\n## Limits\n\nsome\n', product: '# P\n' };
+
+function plan(root: string, ids: string[], over: { off?: string[]; sandbox?: 'always'; recorded?: string[]; mcpRecorded?: string[]; ai?: boolean } = {}) {
+  const facts = detect(root);
+  const config = preset(facts).config;
+  config.items = [...ids.map((i) => sel(i)), ...(over.off ?? []).map((i) => sel(i, false))];
+  if (over.sandbox) config.sandbox = over.sandbox;
+  return planChanges(root, config, facts, { version: '1.0.0', distDir, templatesDir, catalog, recorded: over.recorded, mcpRecorded: over.mcpRecorded, ...(over.ai ? { ai: AI } : {}) });
+}
+const install = (root: string, changes: Change[]) => applyChanges(root, changes, '1.0.0');
+const blocksOf = (m: ReturnType<typeof install>, rel: string) => m.files.find((f) => f.rel === rel)?.blocks;
+const get = (cs: Change[], rel: string) => cs.find((c) => c.rel === rel);
+const text = (c: Change | undefined) => (c?.kind === 'create' ? c.content : c?.kind === 'update' ? c.after : '');
+
+test('selectedIds returns the selected ids, or the legacy own items without items', () => {
+  const config = preset(detect(makeRepo(REPO))).config;
+  expect(selectedIds(config)).toEqual(LEGACY_OWN);
+  config.items = [sel('a'), sel('b', false)];
+  expect(selectedIds(config)).toEqual(['a']);
+});
+
+test('legacy config without items keeps the beta files', () => {
+  const root = makeRepo(REPO);
+  const facts = detect(root);
+  const withCat = planChanges(root, preset(facts).config, facts, { version: '1.0.0', distDir, templatesDir, catalog });
+  const without = planChanges(root, preset(facts).config, facts, { version: '1.0.0', distDir, templatesDir });
+  expect(withCat.changes).toEqual(without.changes);
+  const rels = without.changes.map((c) => c.rel);
+  expect(rels).toEqual(expect.arrayContaining(['.harness/hooks/dispatch.mjs', '.harness/config.yaml', '.claude/agents/staff-reviewer.md', '.claude/skills/review-rubric/SKILL.md', '.claude/settings.json', 'AGENTS.md', '.gitignore', 'vitest.config.ts']));
+  expect(rels.some((r) => r === '.harness/facts.json' || r === '.mcp.json')).toBe(false);
+  expect(without.changes.some((c) => 'item' in c)).toBe(false);
+});
+
+test('deselecting staff-reviewer plans its removal; an edited file is kept with a note', () => {
+  const root = makeRepo(REPO);
+  install(root, plan(root, OWN).changes);
+  const off = plan(root, OWN.filter((i) => i !== 'staff-reviewer'), { off: ['staff-reviewer'] });
+  expect(off.changes.find((c) => c.rel === '.claude/agents/staff-reviewer.md')).toMatchObject({ kind: 'delete' });
+  writeFileSync(join(root, '.claude/agents/staff-reviewer.md'), 'mine\n');
+  const kept = plan(root, OWN.filter((i) => i !== 'staff-reviewer'), { off: ['staff-reviewer'] });
+  expect(get(kept.changes, '.claude/agents/staff-reviewer.md')).toBeUndefined();
+  expect(kept.notes.join('\n')).toContain('.claude/agents/staff-reviewer.md` was edited');
+});
+
+test('own files carry their item', () => {
+  const root = makeRepo(REPO);
+  expect(get(plan(root, OWN).changes, '.claude/agents/staff-reviewer.md')).toMatchObject({ kind: 'create', item: 'staff-reviewer' });
+});
+
+test('deselecting permissions-baseline turns checks.protect off and keeps all 30 deny rules', () => {
+  const root = makeRepo(REPO);
+  const p = plan(root, OWN.filter((i) => i !== 'permissions-baseline'), { off: ['permissions-baseline'] });
+  expect(text(get(p.changes, '.harness/config.yaml'))).toMatch(/protect: false/);
+  const deny = JSON.parse(text(get(p.changes, '.claude/settings.json'))).permissions.deny;
+  const frag = JSON.parse(readFileSync(join(templatesDir, 'settings.fragment.json'), 'utf8')).permissions.deny;
+  expect(frag).toHaveLength(30);
+  expect(deny).toEqual(frag);
+});
+
+test('own items set checks: unselecting tdd-gate turns tdd off and edits no test config', () => {
+  const root = makeRepo(REPO);
+  const on = plan(root, OWN);
+  expect(text(get(on.changes, '.harness/config.yaml'))).toMatch(/tdd: true/);
+  expect(get(on.changes, 'vitest.config.ts')).toBeDefined();
+  const off = plan(root, OWN.filter((i) => i !== 'tdd-gate'), { off: ['tdd-gate'] });
+  expect(text(get(off.changes, '.harness/config.yaml'))).toMatch(/tdd: false/);
+  expect(get(off.changes, 'vitest.config.ts')).toBeUndefined();
+});
+
+test('items never change sandbox', () => {
+  const root = makeRepo(REPO);
+  const p = plan(root, OWN, { sandbox: 'always' });
+  expect(text(get(p.changes, '.harness/config.yaml'))).toMatch(/sandbox: always/);
+  expect(blocksOf(install(root, p.changes), '.claude/settings.json')!.some((b) => JSON.parse(b).set?.[0] === 'sandbox')).toBe(true);
+});
+
+test('plugins, external skills and mcp servers install with the selection and are removed with it', () => {
+  const root = makeRepo(REPO);
+  const ids = [...OWN, 'impeccable', 'shadcn', 'mobile-mcp'];
+  const m = install(root, plan(root, ids).changes);
+  const settings = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'));
+  expect(Object.keys(settings.enabledPlugins).sort()).toEqual(['impeccable@harness-pins', 'shadcn@harness-pins']);
+  expect(JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8')).mcpServers).toHaveProperty('mobile-mcp');
+  expect(m.files.find((f) => f.rel === '.mcp.json')).toMatchObject({ kind: 'create' });
+  // everything deselected: the settings and .mcp.json are rewritten and their old blocks dropped
+  const back = plan(root, OWN, { off: ['impeccable', 'shadcn', 'mobile-mcp'], recorded: blocksOf(m, '.claude/settings.json'), mcpRecorded: blocksOf(m, '.mcp.json') });
+  const s = get(back.changes, '.claude/settings.json');
+  expect(s?.kind === 'update' && s.dropped?.length).toBeGreaterThan(0);
+  expect(JSON.parse(text(s)).enabledPlugins).toBeUndefined();
+  expect(JSON.parse(text(get(back.changes, '.mcp.json'))).mcpServers).toBeUndefined();
+  expect(back.dropped.length).toBeGreaterThan(2);
+});
+
+test('removing the last plugin rewrites settings', () => {
+  const root = makeRepo(REPO);
+  const m = install(root, plan(root, [...OWN, 'impeccable']).changes);
+  const back = plan(root, OWN, { off: ['impeccable'], recorded: blocksOf(m, '.claude/settings.json') });
+  expect(get(back.changes, '.claude/settings.json')).toMatchObject({ kind: 'update' });
+});
+
+test('ai files are written and recorded', () => {
+  const root = makeRepo(REPO);
+  const p = plan(root, OWN, { ai: true });
+  for (const rel of ['.harness/facts.json', '.harness/picks.json', '.harness/report.md', '.harness/context/product.md']) expect(get(p.changes, rel)).toMatchObject({ kind: 'create' });
+  expect(text(get(p.changes, '.harness/report.md')).trimEnd().endsWith(LIMITS_SENTENCE)).toBe(true);
+  const m = install(root, p.changes);
+  expect(m.files.map((f) => f.rel)).toEqual(expect.arrayContaining(['.harness/facts.json', '.harness/picks.json', '.harness/report.md', '.harness/context/product.md']));
+  expect(existsSync(join(root, '.harness/facts.json'))).toBe(true);
+  expect(plan(root, OWN).changes.some((c) => c.rel === '.harness/facts.json')).toBe(false);
+});

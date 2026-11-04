@@ -9,7 +9,11 @@ import { init, type Prompt } from '../../src/cli/init.js';
 import { update } from '../../src/cli/update.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import { latestVersion } from '../../src/core/registry.js';
-import { readManifest } from '../../src/install/apply.js';
+import { applyChanges, readManifest } from '../../src/install/apply.js';
+import { loadCatalog } from '../../src/catalog/load.js';
+import { detect } from '../../src/install/detect.js';
+import { planChanges } from '../../src/install/plan.js';
+import { preset } from '../../src/install/preset.js';
 import { sha256 } from '../../src/install/text.js';
 import { betaSettings, makeRepo } from '../install/helpers.js';
 import { execFileSync } from 'node:child_process';
@@ -657,4 +661,53 @@ test('leaving always with only a changed key left drops the set blocks from the 
   writeFileSync(p, JSON.stringify(s, null, 2) + '\n');
   await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() });
   expect(JSON.parse(readFileSync(p, 'utf8')).sandbox).toEqual({ enabled: true });
+});
+
+// The recommend flow's install: the plan carries the selected items, and update and uninstall follow the manifest.
+const OWN_IDS = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'agents-md'];
+const aiInstalled = (files: Record<string, string>, ids: string[]) => {
+  const root = makeRepo(files);
+  const facts = detect(root);
+  const config = preset(facts).config;
+  config.items = ids.map((id) => ({ id, include: 'recommended' as const, selected: true, reason: 'r', addresses: [], pin: '' }));
+  const ai = { picks: '{}\n', report: '# R\n\n## Limits\n\nx\n', product: '# P\n' };
+  const plan = planChanges(root, config, facts, { version: '1.0.0', distDir: join(pkgDir, 'dist'), templatesDir, catalog: loadCatalog().catalog, ai });
+  applyChanges(root, plan.changes, '1.0.0');
+  commitAll(root);
+  return root;
+};
+
+test('an AI-path install, update and uninstall give the pre-init bytes', async () => {
+  const files = { ...REPO, [SETTINGS]: JSON.stringify({ model: 'sonnet' }, null, 2) + '\n', '.mcp.json': JSON.stringify({ mcpServers: { mine: { command: 'm' } } }, null, 2) + '\n' };
+  const root = aiInstalled(files, [...OWN_IDS, 'impeccable', 'shadcn', 'mobile-mcp']);
+  expect(JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8')).mcpServers).toHaveProperty('mobile-mcp');
+  const r = await up(root, ['--yes'], { distDir: newDist() });
+  expect(r.code).toBe(0);
+  const m = readManifest(root)!;
+  expect(m.files.find((f) => f.rel === '.mcp.json')!.blocks!.length).toBeGreaterThan(0); // structural blocks survive the update
+  expect(m.files.find((f) => f.rel === '.claude/agents/staff-reviewer.md')!.item).toBe('staff-reviewer');
+  expect((await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake() }))).toBe(0);
+  for (const [rel, text] of Object.entries(files)) expect(readFileSync(join(root, rel), 'utf8'), rel).toBe(text);
+  for (const rel of ['.claude/agents/staff-reviewer.md', '.harness/facts.json', '.harness/report.md']) expect(realFs.existsSync(join(root, rel)), rel).toBe(false);
+});
+
+test('update applies the config change on the AI path and drops it on the plain path', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  const p = join(root, CONFIG);
+  const off = readFileSync(p, 'utf8').replace(/(- id: staff-reviewer\n(?:.*\n)*?\s+selected: )true/, '$1false') + '# mine\n';
+  expect(off).toContain('selected: false');
+  writeFileSync(p, off);
+  commitAll(root);
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(readFileSync(p, 'utf8')).not.toContain('# mine'); // rewritten from the selection
+  expect(realFs.existsSync(join(root, '.claude/agents/staff-reviewer.md'))).toBe(false);
+  expect(readManifest(root)!.files.some((f) => f.rel === '.claude/agents/staff-reviewer.md')).toBe(false);
+
+  const plain = await installed();
+  const q = join(plain, CONFIG);
+  writeFileSync(q, readFileSync(q, 'utf8') + '# mine\n');
+  commitAll(plain);
+  expect((await up(plain, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readFileSync(q, 'utf8')).toContain('# mine\n');
 });

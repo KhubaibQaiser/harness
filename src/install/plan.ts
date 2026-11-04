@@ -7,8 +7,22 @@ import type { Change } from './apply.js';
 import { lineHunks, revertHunks } from './diff.js';
 import { prettierFormat, repoPrettier } from './format.js';
 import type { Facts } from './detect.js';
-import { mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings } from './merge.js';
+import type { Catalog } from '../catalog/schema.js';
+import { factsJson } from './facts.js';
+import { finalizeReport } from '../ai/report.js';
+import { STRUCTURAL, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeMcp, mergeSettings, pinnedPlugins } from './merge.js';
 import { JEST_REPORTER, resultsRename, testConfigChange } from './test-config.js';
+
+/** The own items a config without `items` (every install before the recommend flow) always has. */
+export const LEGACY_OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'agents-md'];
+// The own files of the legacy items, for a plan without a catalog.
+const LEGACY_FILES = [
+  { id: 'staff-reviewer', from: 'agents/staff-reviewer.md', to: '.claude/agents/staff-reviewer.md' },
+  { id: 'review-rubric', from: 'skills/review-rubric/SKILL.md', to: '.claude/skills/review-rubric/SKILL.md' },
+];
+
+/** The ids with `selected: true`; the legacy own items when the config has no items. */
+export const selectedIds = (config: HarnessConfig): string[] => (config.items.length ? config.items.filter((i) => i.selected).map((i) => i.id) : [...LEGACY_OWN]);
 
 export const ESLINT = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'];
 
@@ -23,28 +37,52 @@ export function planChanges(
   facts: Facts,
   /** `legacyDir`: update's old results folder; a package whose results file still names it is migrated, TDD on or off.
    * `recorded`: the settings blocks the manifest holds, so update replaces harness's own old hook groups in place. */
-  ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[] },
+  ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[]; catalog?: Catalog; mcpRecorded?: string[]; ai?: { picks: string; report: string; product: string } },
 ): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[] } {
   const templatesDir = ctx.templatesDir ?? packageDir('templates');
   const changes: Change[] = [];
   const manual: string[] = [];
   const notes: string[] = [];
   const read = (rel: string): string | null => (existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null);
-  const put = (rel: string, after: string, blocks: string[] = [], mode?: number) => {
+  const put = (rel: string, after: string, blocks: string[] = [], mode?: number, item?: string) => {
     const before = read(rel);
-    if (before === null) changes.push({ kind: 'create', rel, content: after, ...(mode ? { mode } : {}), ...(blocks.length ? { blocks } : {}) });
+    const it = item ? { item } : {};
+    if (before === null) changes.push({ kind: 'create', rel, content: after, ...(mode ? { mode } : {}), ...(blocks.length ? { blocks } : {}), ...it });
     // A CRLF checkout of an LF file (core.autocrlf) is unchanged; merged files already keep the file's own EOL.
-    else if (before.replace(/\r\n/g, '\n') !== after.replace(/\r\n/g, '\n')) changes.push({ kind: 'update', rel, before, after, blocks });
+    else if (before.replace(/\r\n/g, '\n') !== after.replace(/\r\n/g, '\n')) changes.push({ kind: 'update', rel, before, after, blocks, ...it });
   };
+
+  // The selection gates the own items. Without a catalog or items nothing is gated: the beta behaviour.
+  const catalog = config.items.length ? ctx.catalog : undefined;
+  const ids = new Set(selectedIds(config));
+  const on = (id: string) => !catalog || ids.has(id);
+  const chosen = catalog ? catalog.items.filter((i) => ids.has(i.id)) : [];
+  if (catalog) for (const id of ids) if (!catalog.items.some((i) => i.id === id)) notes.push(`Item "${id}" is not in this harness's catalog; it is skipped.`);
+  // checks come from the selected own items (any kind); sandbox is not derived
+  if (catalog) {
+    const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false };
+    for (const i of chosen) if (i.source.type === 'own') for (const k of i.source.checks ?? []) checks[k] = true;
+    config = { ...config, checks };
+  }
 
   put('.harness/hooks/dispatch.mjs', readFileSync(join(ctx.distDir, 'hooks', 'dispatch.mjs'), 'utf8'), [], 0o755);
   put('.harness/config.yaml', serializeConfig(config, ctx.version));
   // LF whatever the package checkout uses (a Windows clone may have CRLF), so the bytes and the manifest hash are the same everywhere.
   const tpl = (...p: string[]) => readFileSync(join(templatesDir, ...p), 'utf8').replace(/\r\n/g, '\n');
-  put('.claude/agents/staff-reviewer.md', tpl('agents', 'staff-reviewer.md'));
-  put('.claude/skills/review-rubric/SKILL.md', tpl('skills', 'review-rubric', 'SKILL.md'));
+  const ownFiles = catalog
+    ? catalog.items.flatMap((i) => (i.source.type === 'own' ? (i.source.files ?? []).map((f) => ({ id: i.id, ...f })) : []))
+    : LEGACY_FILES;
+  for (const f of ownFiles) {
+    if (on(f.id)) put(f.to, tpl(...f.from.split('/')), [], undefined, catalog ? f.id : undefined);
+    else {
+      const cur = read(f.to);
+      if (cur === null) continue;
+      if (cur.replace(/\r\n/g, '\n') === tpl(...f.from.split('/'))) changes.push({ kind: 'delete', rel: f.to, before: cur });
+      else notes.push(`\`${f.to}\` was edited; it is kept although ${f.id} is no longer selected.`);
+    }
+  }
 
-  const settings = mergeSettings(read('.claude/settings.json'), { sandbox: config.sandbox, recorded: ctx.recorded });
+  const settings = mergeSettings(read('.claude/settings.json'), { sandbox: config.sandbox, recorded: ctx.recorded, plugins: pinnedPlugins(chosen) });
   notes.push(...settings.notes);
   if (settings.blocks.length || settings.dropped.length) { // leaving `always` drops set blocks with no replacement
     put('.claude/settings.json', settings.after, settings.blocks);
@@ -52,10 +90,25 @@ export function planChanges(
     if (c?.kind === 'update' && c.rel === '.claude/settings.json' && settings.dropped.length) c.dropped = settings.dropped;
   }
 
-  const agents = mergeAgents(read('AGENTS.md'));
-  put('AGENTS.md', agents.after, agents.blocks);
-  const claude = mergeClaudeMd(read('CLAUDE.md'), true); // init always creates or merges AGENTS.md
-  if (claude) put('CLAUDE.md', claude.after, claude.blocks);
+  const dropped = [...settings.dropped];
+  const servers = chosen.flatMap((i) => (i.kind === 'mcp' && i.mcp ? [{ name: i.mcp.name, item: i.id, config: i.mcp.config }] : []));
+  if (catalog && (servers.length || ctx.mcpRecorded?.length)) {
+    const mcp = mergeMcp(read('.mcp.json'), servers, ctx.mcpRecorded);
+    notes.push(...mcp.notes);
+    dropped.push(...mcp.dropped);
+    if (mcp.blocks.length || mcp.dropped.length) {
+      put('.mcp.json', mcp.after, mcp.blocks);
+      const c = changes.at(-1);
+      if (c?.kind === 'update' && c.rel === '.mcp.json' && mcp.dropped.length) c.dropped = mcp.dropped;
+    }
+  }
+
+  if (on('agents-md')) {
+    const agents = mergeAgents(read('AGENTS.md'));
+    put('AGENTS.md', agents.after, agents.blocks);
+    const claude = mergeClaudeMd(read('CLAUDE.md'), true); // init always creates or merges AGENTS.md
+    if (claude) put('CLAUDE.md', claude.after, claude.blocks);
+  }
 
   const ignore = (rel: string, m: { after: string; blocks: string[] }) => m.blocks.length && put(rel, m.after, m.blocks);
   ignore('.gitignore', mergeGitignore(read('.gitignore')));
@@ -79,8 +132,14 @@ export function planChanges(
       else if ('manual' in r) manual.push(...r.manual);
     }
   }
+  if (ctx.ai) {
+    put('.harness/facts.json', factsJson(facts) + '\n');
+    put('.harness/picks.json', ctx.ai.picks);
+    put('.harness/report.md', finalizeReport(ctx.ai.report));
+    put('.harness/context/product.md', ctx.ai.product);
+  }
   formatEdits(root, changes, notes);
-  return { changes, manual, notes, dropped: settings.dropped };
+  return { changes, manual, notes, dropped };
 }
 
 const JS = /\.[cm]?[jt]s$/;
@@ -92,7 +151,7 @@ const JS = /\.[cm]?[jt]s$/;
 function formatEdits(root: string, changes: Change[], notes: string[]): void {
   for (const c of changes) {
     // Settings blocks are structural (uninstall removes them by deep equality), so formatting keeps them as they are.
-    if (c.rel === '.claude/settings.json' && (c.kind === 'create' || c.kind === 'update')) {
+    if (STRUCTURAL.has(c.rel) && (c.kind === 'create' || c.kind === 'update')) {
       const bin = repoPrettier(root, c.rel);
       try {
         if (bin && c.kind === 'create') c.content = prettierFormat(bin, root, c.rel, c.content);

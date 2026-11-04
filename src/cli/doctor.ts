@@ -67,7 +67,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   else ok(`Node ${node}`);
 
   const cv = (deps.claudeVersion ?? claudeVersion)();
-  if (cv === null) ok('Claude Code not found: hooks still run when Claude Code is installed');
+  if (cv === null) ok('Claude Code not found (or `claude --version` did not answer): hooks still run when Claude Code is installed');
   else if (olderThan(cv, MIN_CLAUDE_CODE)) fix(`Claude Code ${cv} is older than ${MIN_CLAUDE_CODE}`, 'update Claude Code');
   else ok(`Claude Code ${cv}`);
 

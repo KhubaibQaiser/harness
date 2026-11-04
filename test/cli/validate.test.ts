@@ -131,3 +131,14 @@ test('--merge-config lays a partial answers file over the stored answers (update
   expect(go(['validate', 'picks', picks, '--answers', partial, '--merge-config'], repo).lines.join('\n')).not.toContain('answers file is not valid');
   expect(go(['validate', 'answers', partial, '--merge-config'], makeRepo({ 'package.json': '{}' }, { git: false })).code).toBe(1); // no install
 });
+
+test('--merge-config reads an old default results_dir as update does, without writing it', () => {
+  const repo = makeRepo({ 'package.json': '{}' }, { git: false });
+  mkdirSync(join(repo, '.harness'), { recursive: true });
+  const old = serializeConfig(defaults()).replace(/results_dir: .*/, 'results_dir: .harness/state/test-results');
+  expect(old).toContain('results_dir: .harness/state/test-results');
+  writeFileSync(join(repo, '.harness/config.yaml'), old);
+  const partial = file('answers.json', JSON.stringify({ project: { deploy_target: 'vercel' } }));
+  expect(go(['validate', 'answers', partial, '--merge-config'], repo)).toEqual({ code: 0, lines: ['ok'] });
+  expect(readFileSync(join(repo, '.harness/config.yaml'), 'utf8')).toBe(old);
+});

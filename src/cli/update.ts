@@ -4,24 +4,28 @@ import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { LEGACY_RESULTS_DIR } from '../core/config.js';
 import { migrateResultsDir, validateConfig } from '../core/config-io.js';
+import { answersToConfig } from '../ai/answers.js';
 import { latestVersion } from '../core/registry.js';
+import { defaultExec, type Exec } from '../core/exec.js';
+import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, removeEmptyDirs, readManifest, type Manifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL, mergeManifestFiles } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
-import { planChanges } from '../install/plan.js';
+import { planChanges, selectedIds } from '../install/plan.js';
+import { toSelected } from '../install/select.js';
 import { STRUCTURAL } from '../install/merge.js';
 import { loadCatalog } from '../catalog/load.js';
 import { matchesHash } from '../install/text.js';
-import { dirtyPaths } from './init.js';
+import { AI_USAGE, budgetGate, dirtyPaths, installSelected, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
 import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
-export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch; fs?: FsLike };
+export type UpdateEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; fetchImpl?: typeof fetch; fs?: FsLike; exec?: Exec; claudeVersion?: () => string | null };
 
-const USAGE = 'Usage: /harness:update [--yes] [--check] [--dry-run]';
+const USAGE = `Usage: /harness:update [--yes] [--check] [--dry-run] ${AI_USAGE}`;
 const PKG = '@khubaibqaiser/harness';
 const CONFIG = '.harness/config.yaml';
 const SETTINGS = '.claude/settings.json';
@@ -32,9 +36,14 @@ export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/b
 
 export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const { out, prompt, version } = cli;
-  if (args.some((a) => a !== '--yes' && a !== '--check' && a !== '--dry-run')) return out(USAGE), 2;
+  const taken = takeAiFlags(args);
+  if (!taken || taken.rest.some((a) => a !== '--yes' && a !== '--check' && a !== '--dry-run')) return out(USAGE), 2;
+  const ai = taken.ai;
+  if (!hasAiFlags(args) && (ai.installPlugins || ai.overBudget)) return out(USAGE), 2;
   const refused = args.includes('--check') ? null : refuseOutsideClaude('update', cli.env, hasAiFlags(args));
   if (refused) return out(refused), 2;
+  const lacking = !args.includes('--check') && hasAiFlags(args) ? missingAi('update', ai) : null;
+  if (lacking) return out(lacking), 2;
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
   if (!yes && !dryRun && !args.includes('--check') && cli.tty === false) return out(NO_TTY), 2;
@@ -76,15 +85,25 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const v = validateConfig(raw);
   if (!v.ok) return v.errors.forEach((e) => out(e)), out('Next step: run harness doctor.'), 1;
 
-  const aiPath = v.config.items.length > 0; // a selection from the recommend flow: the plan owns the config
-  const cat = aiPath ? loadCatalog() : null;
+  const aiFlags = hasAiFlags(args);
+  const aiPath = v.config.items.length > 0 || aiFlags; // a selection from the recommend flow: the plan owns the config
+  const cat = aiPath && !aiFlags ? loadCatalog() : null;
   if (cat?.errors.length) return cat.errors.forEach((e) => out(e)), out('The catalog has errors; update stopped. Run harness catalog validate.'), 1;
+  let config = v.config;
+  let sel: AiInputs | null = null;
+  if (aiFlags) {
+    const r = loadAiInputs(ai, detect(root), (cli.claudeVersion ?? realClaudeVersion)());
+    if (!r.ok) return r.errors.forEach((e) => out(e)), r.code;
+    sel = r.in;
+    for (const n of sel.notices) out(n);
+    config = { ...answersToConfig(config, sel.answers), items: toSelected(sel.picks, sel.ids, sel.catalog), catalog_version: sel.catalog.version };
+  }
   let plan: ReturnType<typeof planChanges>;
   try {
-    plan = planChanges(root, v.config, detect(root), {
+    plan = planChanges(root, config, detect(root), {
       version, distDir: cli.distDir, templatesDir: cli.templatesDir, legacyDir: LEGACY_RESULTS_DIR,
       recorded: m.files.find((f) => f.rel === SETTINGS)?.blocks, mcpRecorded: m.files.find((f) => f.rel === MCP)?.blocks,
-      recordedFiles: m.files, ...(aiPath ? { catalog: cat!.catalog } : {}),
+      recordedFiles: m.files, ...(aiPath ? { catalog: (sel?.catalog ?? cat!.catalog) } : {}), ...(sel ? { ai: sel.files } : {}),
     });
   } catch (e) {
     return out(`Cannot build the update plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
@@ -98,7 +117,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
       applyChanges(root, cs, version, () => at, cli.fs, { manifest });
       return null;
     } catch (e) {
-      if (e instanceof ApplyError) return e.message;
+      if (e instanceof ApplyError) return isDenied(e) ? sandboxLine('update', args) : e.message;
       throw e;
     }
   };
@@ -112,16 +131,23 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     if (kept.length) f.blocks = kept;
     else delete f.blocks;
   }
+  // An unchanged selection still installs its plugins when asked (a failed install is retried that way).
+  const inst = async (ask: boolean, applied: boolean) => {
+    if (!sel || !ai.installPlugins) return 0;
+    if (ask && !yes && !(await prompt.confirm('Install these plugins? (y/N)'))) return out('Cancelled. No plugins were installed.'), 0;
+    return installSelected(root, sel.ids, sel.catalog, cli.exec ?? defaultExec, out, applied);
+  };
   if (!changes.length && !stale) {
     if (dryRun) return out(m.version === version ? `Harness ${version} is up to date.` : `Harness files already match ${version}. Dry run: nothing was written.`), 0;
     if (m.version === version) {
       out(`Harness ${version} is up to date.`);
       if (insideClaude(cli.env) && !aiPath) out(AGAIN);
-      return 0;
+      return inst(true, false);
     }
     const err = commit([], { ...m, version });
     if (!err) stampHarnessFiles(root);
-    return out(err ?? `Harness files already match ${version}. Manifest version updated from ${m.version}.`), err ? 1 : 0;
+    out(err ?? `Harness files already match ${version}. Manifest version updated from ${m.version}.`);
+    return err ? 1 : inst(true, false);
   }
 
   const dirty = dirtyPaths(root);
@@ -141,6 +167,12 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   }
   if (plan.manual.length) out('Do these by hand:\n' + plan.manual.map((l) => `  ${l}`).join('\n'));
   for (const n of plan.notes) out(`Note: ${n}`);
+  if (sel) {
+    // Ask once, then exempt: what the person approved before shows but does not count.
+    const had = selectedIds(v.config);
+    const stop = await budgetGate(sel.catalog, had, sel.ids, had, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget: ai.overBudget });
+    if (stop !== null) return stop;
+  }
   if (editedOwned.length) out(`You edited these harness files; update replaces them: ${list(editedOwned)}.`);
   if (editedMerged.length) out(`You edited these files; update changes only the harness parts: ${list(editedMerged)}.`);
   if (dryRun) {
@@ -157,9 +189,10 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   // The original is back in place. The path comes from the manifest, so delete only inside .harness/backup/.
   for (const c of changes) if (c.kind === 'update' && c.restored && isBackupPath(c.restored)) rmSync(join(root, c.restored), { force: true });
   stampHarnessFiles(root); // change detection: these writes are harness's own
+  const installed = await inst(false, true);
 
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   out(`Harness updated to ${version}. Commit these files: ${[...changes.map((c) => c.rel), MANIFEST_REL].join(', ')}.`);
   if (insideClaude(cli.env) && !aiPath) out(AGAIN);
-  return 0;
+  return installed;
 }

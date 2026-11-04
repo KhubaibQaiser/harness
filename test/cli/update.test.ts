@@ -763,3 +763,75 @@ test('up to date inside Claude Code on the plain path still points to /harness:u
   expect(await run(['--yes'])).toContain(again);
   expect(await run(['--dry-run'])).not.toContain(again);
 });
+
+// Ask once, then exempt: items the person already approved show but do not count toward the ask.
+test('update with AI flags: an approved plugin does not ask, a newly added one does', async () => {
+  const root = aiInstalled(REPO, [...OWN_IDS, 'impeccable']);
+  const d = mkdtempSync(join(tmpdir(), 'harness-upd-ai-'));
+  const flags = (ids: string[]) => {
+    const w = (n: string, t: string) => (writeFileSync(join(d, n), t), join(d, n));
+    const sec = ['Purpose', 'Users', 'Core features', 'Constraints', 'Non-goals', 'Sources'].map((s) => `## ${s}\nx\n`).join('\n');
+    return [
+      '--answers', w('a.json', JSON.stringify({ scope: { paths: ['src'] }, project: { type: 'library', domain: 'tools', compliance: [], data_handling: '', team_size: 1, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [] }, apps: [], unattended: { multi_file_gate: 'block', require_reason: false }, tdd: { paths: ['src/**'], diff_coverage: 80 } })),
+      '--product', w('p.md', sec),
+      '--picks', w('k.json', JSON.stringify({ catalog_version: 1, findings: [], items: ids.map((id) => ({ id, include: 'recommended', reason: 'r', addresses: [] })) })),
+      '--report', w('r.md', '## Findings\n\n## Roadmap\n30 days, 60 days, 90 days.\n\n## Deliberate exclusions\nnone\n\n## Limits\nx\n'),
+      '--choose', ids.join(','),
+    ];
+  };
+  const run = async (ids: string[], extra: string[] = [], over: object = {}) => {
+    let out = '';
+    const code = await update([...flags(ids), '--yes', ...extra], { ...over, env: { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null });
+    return { code, out };
+  };
+  const added = await run([...OWN_IDS, 'impeccable', 'mobile-mcp']);
+  expect(added.code).toBe(2);
+  expect(added.out).toContain('Not measured before install: mobile-mcp');
+  expect(added.out).toMatch(/Approved earlier, not counted: .*impeccable/);
+  expect(added.out).toContain('Run again with --over-budget');
+  const same = await run([...OWN_IDS, 'impeccable']);
+  expect(same.code).toBe(0);
+  expect(same.out).not.toContain('Over budget');
+});
+
+test('update: plugin flags without AI flags are a usage error; an EPERM write prints the ! line and rolls back', async () => {
+  const root = aiInstalled(REPO, [...OWN_IDS, 'impeccable']);
+  expect((await up(root, ['--yes', '--install-plugins'])).code).toBe(2);
+  const before = execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' });
+  const fs = { ...realFs, renameSync: (a: string, b: string) => { if (b.endsWith('dispatch.mjs')) throw Object.assign(new Error('EPERM: nope'), { code: 'EPERM' }); return realFs.renameSync(a, b); } } as unknown as FsLike;
+  const r = await up(root, ['--yes'], { fs, distDir: newDist() });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain("Run this yourself with Claude Code's `!` prefix");
+  expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe(before);
+});
+
+test('update on an unchanged selection asks before installing plugins unless --yes', async () => {
+  const root = aiInstalled(REPO, [...OWN_IDS, 'impeccable']);
+  const d = mkdtempSync(join(tmpdir(), 'harness-upd-ai-'));
+  const w = (n: string, t: string) => (writeFileSync(join(d, n), t), join(d, n));
+  const ids = [...OWN_IDS, 'impeccable'];
+  const flags = [
+    '--answers', w('a.json', JSON.stringify({ scope: { paths: ['src'] }, project: { type: 'library', domain: 'tools', compliance: [], data_handling: '', team_size: 1, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [] }, apps: [], unattended: { multi_file_gate: 'block', require_reason: false }, tdd: { paths: ['src/**'], diff_coverage: 80 } })),
+    '--product', w('p.md', ['Purpose', 'Users', 'Core features', 'Constraints', 'Non-goals', 'Sources'].map((s) => `## ${s}\nx\n`).join('\n')),
+    '--picks', w('k.json', JSON.stringify({ catalog_version: 1, findings: [], items: ids.map((id) => ({ id, include: 'recommended', reason: 'r', addresses: [] })) })),
+    '--report', w('r.md', '## Findings\n\n## Roadmap\n30 days, 60 days, 90 days.\n\n## Deliberate exclusions\nnone\n\n## Limits\nx\n'),
+    '--choose', ids.join(','),
+  ];
+  const run = async (extra: string[], answers: boolean[]) => {
+    const calls: string[][] = [];
+    let out = '';
+    const code = await update([...flags, ...extra], { env: { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(answers), version: '1.1.0', templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null, exec: (_c, a) => (calls.push(a), { status: 1, stdout: '{"command":"install","outcome":"failed","message":"nope"}' }) });
+    return { code, out, calls };
+  };
+  expect((await run(['--yes'], [])).code).toBe(0);
+  commitAll(root);
+  const no = await run(['--install-plugins'], [false]);
+  expect(no.calls).toHaveLength(0);
+  expect(no.out).toContain('No plugins were installed');
+  const yes = await run(['--install-plugins'], [true]);
+  expect(yes.calls).toHaveLength(1);
+  expect(yes.code).toBe(1);
+  expect(yes.out).toContain('1 plugin(s) not installed.');
+  expect(yes.out).not.toContain('Files applied');
+  expect((await run(['--install-plugins', '--yes'], [])).calls).toHaveLength(1);
+});

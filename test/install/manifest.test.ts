@@ -1,5 +1,11 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { mergeManifestFiles, renameRecorded, type Manifest } from '../../src/install/manifest.js';
+import { mergeManifestFiles, readManifest, renameRecorded, rehashManifest, type Manifest } from '../../src/install/manifest.js';
+import { applyChanges } from '../../src/install/apply.js';
+import { changedFiles, readRepoSnapshot, snapshotHarnessFiles } from '../../src/core/harness-files.js';
+import { hashText } from '../../src/install/text.js';
+import { makeRepo } from './helpers.js';
 import { mergeMcp, mergeSettings, pinnedPlugins } from '../../src/install/merge.js';
 import type { Change } from '../../src/install/apply.js';
 
@@ -54,4 +60,29 @@ test('mcp blocks are kept as structural blocks', () => {
   const gone = mergeMcp(first.after, [], first.blocks);
   const files2 = mergeManifestFiles(old, [{ kind: 'update', rel: '.mcp.json', before: first.after, after: gone.after, blocks: gone.blocks, dropped: gone.dropped }]);
   expect(files2[0].blocks).toBeUndefined();
+});
+
+const SET = '.claude/settings.json';
+const withSettings = () => {
+  const root = makeRepo({});
+  applyChanges(root, [{ kind: 'create', rel: SET, content: '{"a":1}\n' }], '1');
+  return root;
+};
+
+test('rehashManifest updates the settings hash when install changed the bytes, and is a no-op otherwise', () => {
+  const root = withSettings();
+  const mp = join(root, '.harness/manifest.json');
+  const before = readFileSync(mp, 'utf8');
+  rehashManifest(root, [SET]);
+  expect(readFileSync(mp, 'utf8')).toBe(before);
+  writeFileSync(join(root, SET), '{"a":1,"enabledPlugins":{}}\n');
+  rehashManifest(root, [SET]);
+  expect(readManifest(root)!.files.find((f) => f.rel === SET)!.hash).toBe(hashText('{"a":1,"enabledPlugins":{}}\n'));
+});
+
+test('rehashManifest stamps the harness files', () => {
+  const root = withSettings();
+  writeFileSync(join(root, SET), '{"a":2}\n');
+  rehashManifest(root, [SET]);
+  expect(changedFiles(readRepoSnapshot(root).cli!.files, snapshotHarnessFiles(root))).toEqual([]);
 });

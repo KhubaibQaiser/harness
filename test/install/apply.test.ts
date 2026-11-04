@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, test } from 'vitest';
-import { ApplyError, ManifestError, applyChanges, readManifest, type Change, type FsLike } from '../../src/install/apply.js';
+import { ApplyError, ManifestError, applyChanges, readManifest, removeEmptyDirs, type Change, type FsLike } from '../../src/install/apply.js';
 import { sha256 } from '../../src/install/text.js';
 import { makeRepo } from './helpers.js';
 
@@ -243,4 +243,37 @@ test('N5: a manifest that cannot be read is a read error, never "unreadable, del
   } finally {
     Object.assign(RETRY, saved);
   }
+});
+
+describe('applyChanges: M3 final review', () => {
+  const setup = () => {
+    const root = makeRepo({ 'a.txt': 'a\n' });
+    applyChanges(root, [{ kind: 'create', rel: 'b.txt', content: 'b\n' }], '1', NOW);
+    return root;
+  };
+  it('stops when the manifest on disk is not the one the plan was built from', () => {
+    const root = setup();
+    const m = readManifest(root)!;
+    writeFileSync(join(root, '.harness/manifest.json'), readFileSync(join(root, '.harness/manifest.json'), 'utf8').replace('"1"', '"2"'));
+    expect(() => applyChanges(root, [], '1', NOW, undefined, { manifest: m })).toThrow('Another harness command changed the install while this one ran. Run it again.');
+    expect(readFileSync(join(root, '.harness/manifest.json'), 'utf8')).toContain('"2"');
+  });
+  it('journals the run with .harness/apply.lock and refuses to plan over a stale one', () => {
+    const root = setup();
+    let seen = false;
+    const fs = { ...realFs, renameSync: (a: any, b: any) => { if (String(b).endsWith('c.txt')) seen = existsSync(join(root, '.harness/apply.lock')); realFs.renameSync(a, b); } } as FsLike;
+    applyChanges(root, [{ kind: 'create', rel: 'c.txt', content: 'c\n' }], '1', NOW, fs);
+    expect(seen).toBe(true);
+    expect(existsSync(join(root, '.harness/apply.lock'))).toBe(false);
+    writeFileSync(join(root, '.harness/apply.lock'), 'c.txt\n');
+    expect(() => applyChanges(root, [{ kind: 'create', rel: 'd.txt', content: 'd\n' }], '1', NOW)).toThrow(/interrupted/);
+    expect(existsSync(join(root, 'd.txt'))).toBe(false);
+  });
+  it('removeEmptyDirs never removes the repo root, whatever its spelling', () => {
+    const root = mkdtempSync(join(tmpdir(), 'harness-m9-'));
+    mkdirSync(join(root, 'x'));
+    removeEmptyDirs(root + '/', [{ kind: 'delete', rel: 'x/f.txt', before: '' }]);
+    expect(existsSync(root)).toBe(true);
+    expect(existsSync(join(root, 'x'))).toBe(false);
+  });
 });

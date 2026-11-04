@@ -5,7 +5,7 @@ import { STRUCTURAL, removeBlocks, removeFromMcp, removeFromSettings } from '../
 import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, withEol } from '../install/text.js';
-import { MANIFEST_REL } from '../install/manifest.js';
+import { MANIFEST_REL, backupText } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { gitRoot } from '../core/repo-root.js';
@@ -65,7 +65,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       notes.push(`\`${f.rel}\` is already gone.`);
       continue;
     }
-    const backup = f.backup ? read(join(root, f.backup)) : null;
+    const backup = backupText(root, f.backup);
     if (STRUCTURAL.has(f.rel)) {
       if (matchesHash(cur, f.hash) && f.kind === 'create') {
         changes.push({ kind: 'delete', rel: f.rel, before: cur });

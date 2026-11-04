@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { budgetLines, budgetVerdict, itemContext, itemContextLine, measureSelection } from '../budget/measure.js';
@@ -10,12 +10,12 @@ import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { packageDir } from '../core/package-dir.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, readManifest, removeEmptyDirs, type Manifest } from '../install/apply.js';
-import { detect } from '../install/detect.js';
+import { approvedIds } from '../install/approved.js';
+import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
 import { unifiedDiff } from '../install/diff.js';
-import { dirtyPaths } from '../install/git-status.js';
 import { MANIFEST_REL, itemFiles, mergeManifestFiles } from '../install/manifest.js';
-import { STRUCTURAL } from '../install/merge.js';
-import { planChanges, selectedIds } from '../install/plan.js';
+import { selectedIds } from '../install/plan.js';
+import { reconcile } from '../install/reconcile.js';
 import { pinOf, resolveSelection } from '../install/select.js';
 import type { Picks } from '../ai/picks.js';
 import { budgetGate, isDenied, sandboxLine } from './init.js';
@@ -27,12 +27,13 @@ import type { CliEnv } from './index.js';
 export type ItemsEnv = CliEnv & { prompt: Prompt; templatesDir: string; distDir: string; fs?: FsLike; claudeVersion?: () => string | null; catalog?: Catalog };
 
 const USAGE: Record<string, string> = {
-  add: 'Usage: /harness:add <id> [--over-budget] [--dry-run|--yes]',
-  remove: 'Usage: harness remove <id> [--dry-run|--yes]',
+  add: 'Usage: /harness:add <id> [--over-budget] [--take <file,...>] [--dry-run|--yes]',
+  remove: 'Usage: harness remove <id> [--take <file,...>] [--dry-run|--yes]',
   why: 'Usage: harness why <id>',
   explain: 'Usage: harness explain',
 };
 const CONFIG = '.harness/config.yaml';
+const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
 const HAND = 'Added by hand with harness add.';
 const GUARD_OFF = 'The guard is off now, so the agent can run harness commands without asking.';
 
@@ -46,8 +47,17 @@ function storedPicks(root: string): Picks | null {
   }
 }
 
-export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: string[], cli: ItemsEnv): Promise<number> {
+export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: string[], cli: ItemsEnv): Promise<number> {
   const { out } = cli;
+  // --take <file,...> (add and remove, as in sync): its value is not an id.
+  const take: string[] = [];
+  const args: string[] = [];
+  for (let i = 0; i < allArgs.length; i++) {
+    if (allArgs[i] !== '--take' || (cmd !== 'add' && cmd !== 'remove')) { args.push(allArgs[i]); continue; }
+    const v = allArgs[++i];
+    if (!v || v.startsWith('--')) return out(USAGE[cmd]), 2;
+    take.push(...v.split(',').filter(Boolean));
+  }
   const flags = new Set(cmd === 'add' ? ['--yes', '--dry-run', '--over-budget'] : cmd === 'remove' ? ['--yes', '--dry-run'] : []);
   const ids = args.filter((a) => !a.startsWith('--'));
   const bad = args.some((a) => a.startsWith('--') && !flags.has(a)) || ids.length !== (cmd === 'explain' ? 0 : 1) || new Set(args).size !== args.length;
@@ -142,39 +152,24 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
   }
 
   const nextConfig: HarnessConfig = { ...config, items: next };
-  const ent = (rel: string) => m!.files.find((f) => f.rel === rel);
-  let planned: ReturnType<typeof planChanges>;
+  let planned: ReturnType<typeof reconcile>;
   try {
-    planned = planChanges(root, nextConfig, detect(root), {
-      version: m.version, distDir: cli.distDir, templatesDir: cli.templatesDir, catalog: cat,
-      recorded: ent('.claude/settings.json')?.blocks, mcpRecorded: ent('.mcp.json')?.blocks, recordedFiles: m.files,
-    });
+    planned = reconcile(root, nextConfig, m, { version: m.version, distDir: cli.distDir, templatesDir: cli.templatesDir, catalog: cat });
   } catch (e) {
     return out(`Cannot build the plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
   }
-  // A harness-created .mcp.json that ends with nothing in it goes away.
-  const changes: Change[] = planned.changes.map((c) => {
-    if (c.kind !== 'update' || c.rel !== '.mcp.json' || ent(c.rel)?.kind !== 'create') return c;
-    try {
-      return Object.keys(JSON.parse(c.after)).length ? c : { kind: 'delete', rel: c.rel, before: c.before };
-    } catch {
-      return c;
-    }
-  });
+  const { owned, merged } = planned.edited;
+  const unknown = take.filter((r) => !owned.includes(r));
+  if (unknown.length) return out(`--take names files that are not edited harness-owned files: ${list(unknown)}.`), 2;
+  // An edited file whose whole content is harness's is kept unless named in --take; a merged one changes only harness's parts.
+  const kept = owned.filter((r) => !take.includes(r));
+  const changes: Change[] = planned.changes.filter((c) => !kept.includes(c.rel));
+  const stale = pruneStale(m, changes, planned.dropped);
+  if (!changes.length && !stale) return out('Nothing to change.'), 0;
 
-  // A file with no change still loses its dropped blocks.
-  for (const rel of STRUCTURAL) {
-    const f = m.files.find((x) => x.rel === rel);
-    if (changes.some((c) => c.rel === rel) || !f?.blocks) continue;
-    const kept = f.blocks.filter((b) => !planned.dropped.includes(b));
-    if (kept.length) f.blocks = kept;
-    else delete f.blocks;
-  }
-  if (!changes.length) return out('Nothing to change.'), 0;
-
-  const dirty = dirtyPaths(root);
-  const touched = changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
+  const touched = dirtyTouched(root, changes);
   if (touched.length && !dryRun) return out(`Commit or stash these files first, so the change can be undone cleanly: ${touched.join(', ')}.`), 1;
+  for (const r of kept) out(`Kept \`${r}\`: you edited it. Name it in --take to replace it with harness's version.`);
   const mine = new Set([CONFIG, MANIFEST_REL, '.claude/settings.json', '.mcp.json', 'AGENTS.md', 'CLAUDE.md']);
   for (const x of cmd === 'add' ? after.filter((y) => !have.includes(y)) : [id]) {
     const src = byId.get(x)?.source;
@@ -188,9 +183,11 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
     if (c.kind === 'update') out(unifiedDiff(c.before, c.after, c.rel).trimEnd());
   }
   for (const n of planned.notes) out(`Note: ${n}`);
+  if (merged.length) out(`You edited these files; ${cmd} changes only the harness parts: ${list(merged)}.`);
   if (cmd === 'add') {
-    // The ids already installed are approved: they show, but only the new ones count.
-    const stop = await budgetGate(cat, have, after, have, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget: args.includes('--over-budget') });
+    // Items harness installed are approved: they show, but only the new ones count (a hand-selected one never installed does too).
+    const approved = approvedIds(config, m, cat);
+    const stop = await budgetGate(cat, approved, after, approved, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget: args.includes('--over-budget') });
     if (stop !== null) return stop;
   }
   if (dryRun) return out('Dry run: nothing was written.'), 0;
@@ -205,8 +202,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', args: str
     throw e;
   }
   removeEmptyDirs(root, changes);
-  // The original is back in place. The path comes from the manifest; delete only inside .harness/backup/.
-  for (const c of changes) if (c.kind === 'update' && c.restored?.startsWith('.harness/backup/') && !c.restored.split(/[\\/]/).includes('..')) rmSync(join(root, c.restored), { force: true });
+  dropRestoredBackups(root, changes);
   stampHarnessFiles(root); // change detection: these writes are harness's own
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   if (cmd === 'remove' && id === 'agent-guard') out(GUARD_OFF);

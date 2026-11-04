@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { LEGACY_RESULTS_DIR } from '../core/config.js';
@@ -11,6 +11,7 @@ import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, remo
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL, mergeManifestFiles } from '../install/manifest.js';
+export { isBackupPath } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { reconcile } from '../install/reconcile.js';
 import { selectedIds } from '../install/plan.js';
@@ -20,7 +21,8 @@ import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import { catalogDelta, contradictions } from '../install/delta.js';
 import { factsJson } from '../install/facts.js';
 import type { Facts } from '../install/detect.js';
-import { dirtyPaths } from '../install/git-status.js';
+import { approvedIds } from '../install/approved.js';
+import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
 import { AI_USAGE, budgetGate, installSelected, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
 import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
@@ -37,7 +39,6 @@ const MCP = '.mcp.json';
 const FACTS = '.harness/facts.json';
 const AGAIN = 'Run /harness:update again to get recommendations for this repo.';
 
-export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/backup/') && !rel.split(/[\\/]/).includes('..');
 
 export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const { out, prompt, version } = cli;
@@ -122,7 +123,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     if (fresh.length) out(`New: ${fresh.join(', ')}`);
     if (sel && d.changed.length) out(`Changed in the catalog: ${d.changed.join(', ')}`);
     if (sel) for (const [a, b] of d.conflicting) out(`Now conflicting: ${a} and ${b}.`);
-    for (const id of d.retired) out(`${id}: retired from the catalog, removed.`);
+    for (const id of d.retired) out(`${id}: no longer in the catalog; its files are kept.`);
     if (!sel) config = { ...config, items: config.items.filter((i) => !d.retired.includes(i.id)) };
   }
   let planned: ReturnType<typeof reconcile>;
@@ -148,15 +149,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     }
   };
   // A file with no change still loses its dropped blocks (leaving `always` with no key left to delete changes no bytes).
-  let stale = 0;
-  for (const rel of STRUCTURAL) {
-    const f = m.files.find((x) => x.rel === rel);
-    if (changes.some((c) => c.rel === rel) || !f?.blocks) continue;
-    const kept = f.blocks.filter((b) => !planned.dropped.includes(b));
-    stale += f.blocks.length - kept.length;
-    if (kept.length) f.blocks = kept;
-    else delete f.blocks;
-  }
+  const stale = pruneStale(m, changes, planned.dropped);
   // An unchanged selection still installs its plugins when asked (a failed install is retried that way).
   const inst = async (ask: boolean, applied: boolean) => {
     if (!sel || !ai.installPlugins) return 0;
@@ -176,8 +169,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     return err ? 1 : inst(true, false);
   }
 
-  const dirty = dirtyPaths(root);
-  const touched = changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
+  const touched = dirtyTouched(root, changes);
   if (touched.length && !dryRun) return out(`Commit or stash these files first, so the update can be undone cleanly: ${touched.join(', ')}.`), 1;
 
   const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
@@ -191,7 +183,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   for (const n of planned.notes) out(`Note: ${n}`);
   if (sel) {
     // Ask once, then exempt: what the person approved before shows but does not count.
-    const had = selectedIds(v.config);
+    const had = approvedIds(v.config, m, sel.catalog);
     const stop = await budgetGate(sel.catalog, had, sel.ids, had, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget: ai.overBudget });
     if (stop !== null) return stop;
   }
@@ -209,7 +201,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   if (err) return out(err), 1;
   removeEmptyDirs(root, changes);
   // The original is back in place. The path comes from the manifest, so delete only inside .harness/backup/.
-  for (const c of changes) if (c.kind === 'update' && c.restored && isBackupPath(c.restored)) rmSync(join(root, c.restored), { force: true });
+  dropRestoredBackups(root, changes);
   stampHarnessFiles(root); // change detection: these writes are harness's own
   const installed = await inst(false, true);
 

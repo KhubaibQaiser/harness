@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
@@ -8,15 +8,15 @@ import { defaultExec, type Exec } from '../core/exec.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, readManifest, removeEmptyDirs, type Manifest } from '../install/apply.js';
 import { unifiedDiff } from '../install/diff.js';
-import { dirtyPaths } from '../install/git-status.js';
-import { MANIFEST_REL, itemFiles, mergeManifestFiles, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
+import { approvedIds } from '../install/approved.js';
+import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
+import { MANIFEST_REL, mergeManifestFiles, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
 import { pinnedPlugins, STRUCTURAL } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
 import { reconcile } from '../install/reconcile.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { budgetGate, installSelected, isDenied, sandboxLine } from './init.js';
-import { isBackupPath } from './update.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
@@ -86,15 +86,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   // A recorded file of an unselected item that is already gone: only its manifest entry is left.
   const gone = man.files.filter((f) => f.item && !have.includes(f.item) && !existsSync(join(root, f.rel)) && !changes.some((c) => c.rel === f.rel));
   // A file with no change still loses its dropped blocks.
-  let stale = 0;
-  for (const rel of STRUCTURAL) {
-    const f = man.files.find((x) => x.rel === rel);
-    if (changes.some((c) => c.rel === rel) || !f?.blocks) continue;
-    const left = f.blocks.filter((b) => !planned.dropped.includes(b));
-    stale += f.blocks.length - left.length;
-    if (left.length) f.blocks = left;
-    else delete f.blocks;
-  }
+  const stale = pruneStale(man, changes, planned.dropped);
 
   const wanted = pinnedPlugins(cat.items.filter((i) => have.includes(i.id))).map((p) => `${p.name}@harness-pins`);
   let present: string[] = [];
@@ -131,8 +123,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
     }
   }
 
-  const dirty = dirtyPaths(root);
-  const touched = changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
+  const touched = dirtyTouched(root, changes);
   const dirtyLine = `Commit or stash these files first, so the change can be undone cleanly: ${touched.join(', ')}.`;
   if (touched.length && !dryRun) return out(dirtyLine), 1;
   if (touched.length) out(dirtyLine); // a preview still says so, and exits 0
@@ -144,7 +135,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   for (const f of gone) out(`  forget ${f.rel} (${f.item} is not selected)`);
   if (merged.length) out(`You edited these files; sync changes only the harness parts: ${list(merged)}.`);
   // Installed items are approved: they show, but only a selected item that was never installed counts.
-  const approved = have.filter((id) => itemFiles(man, id).length > 0);
+  const approved = approvedIds(config, man, cat);
   const stop = await budgetGate(cat, approved, have, approved, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget });
   if (stop !== null) return stop;
   if (dryRun) {
@@ -164,7 +155,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   }
   removeEmptyDirs(root, changes);
   // The original is back in place. The path comes from the manifest; delete only inside .harness/backup/.
-  for (const c of changes) if (c.kind === 'update' && c.restored && isBackupPath(c.restored)) rmSync(join(root, c.restored), { force: true });
+  dropRestoredBackups(root, changes);
   stampHarnessFiles(root); // change detection: these writes are harness's own
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   let code = 0;

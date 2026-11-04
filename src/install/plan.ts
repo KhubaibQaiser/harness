@@ -12,8 +12,8 @@ import type { Facts } from './detect.js';
 import type { Catalog } from '../catalog/schema.js';
 import { factsJson } from './facts.js';
 import { finalizeReport } from '../ai/report.js';
-import { matchesHash } from './text.js';
-import type { Manifest } from './manifest.js';
+import { eolOf, matchesHash, withEol } from './text.js';
+import { backupText, type Manifest } from './manifest.js';
 import { STRUCTURAL, removeBlocks, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeMcp, mergeSettings, pinnedPlugins, type PinnedPlugin } from './merge.js';
 import { JEST_REPORTER, resultsRename, testConfigChange } from './test-config.js';
 
@@ -29,8 +29,15 @@ const LEGACY_FILES = [
 export const selectedIds = (config: HarnessConfig): string[] => (config.items.length ? config.items.filter((i) => i.selected).map((i) => i.id) : [...LEGACY_OWN]);
 
 /** Sets in `doc` only the leaves of `want` that differ from `cur`, descending into maps, so the person's comments inside them survive. */
-function setChanged(doc: Document, path: string[], cur: any, want: any): void {
+function setChanged(doc: Document, path: (string | number)[], cur: any, want: any): void {
   const map = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  // `items`: rows are matched by id, so a comment on an untouched row survives; a dropped or reordered row replaces the list.
+  const ids = (l: any[]) => l.map((r) => r?.id);
+  if (path.length === 1 && path[0] === 'items' && Array.isArray(cur) && cur.length > 0 && Array.isArray(want) && ids(cur).every((id) => ids(want).includes(id))) {
+    cur.forEach((row, i) => setChanged(doc, ['items', i], row, want[ids(want).indexOf(row.id)]));
+    for (const row of want) if (!ids(cur).includes(row.id)) doc.addIn(['items'], row);
+    if (isDeepStrictEqual(ids(doc.toJS().items), ids(want))) return;
+  }
   if (map(want) && map(cur)) for (const k of Object.keys(want)) setChanged(doc, [...path, k], cur[k], want[k]);
   else if (!isDeepStrictEqual(cur, want)) doc.setIn(path, want);
 }
@@ -102,7 +109,7 @@ export function planChanges(
     if (doc.errors.length) { rewritten = true; notes.push('`.harness/config.yaml` could not be parsed; it is rewritten from the selection and its comments are not kept.'); }
     else {
       setChanged(doc, [], doc.toJS() ?? {}, JSON.parse(JSON.stringify(config)));
-      cfgText = doc.toString();
+      cfgText = withEol(doc.toString(), eolOf(cfgBefore));
     }
   }
   put('.harness/config.yaml', cfgText);
@@ -114,7 +121,7 @@ export function planChanges(
     ? catalog.items.flatMap((i) => (i.source.type === 'own' ? (i.source.files ?? []).map((f) => ({ id: i.id, ...f })) : []))
     : LEGACY_FILES;
   const entryOf = (rel: string) => ctx.recordedFiles?.find((f) => f.rel === rel);
-  const backupOf = (e: Manifest['files'][number] | undefined) => (e?.backup ? read(e.backup) : null);
+  const backupOf = (e: Manifest['files'][number] | undefined) => backupText(root, e?.backup);
   for (const f of ownFiles) {
     if (on(f.id)) { put(f.to, tpl(...f.from.split('/')), [], undefined, catalog ? f.id : undefined); continue; }
     // Deselected: the manifest decides. Only a file harness wrote and the person left alone is removed or restored.
@@ -146,6 +153,8 @@ export function planChanges(
       put('.mcp.json', mcp.after, mcp.blocks);
       const c = changes.at(-1);
       if (c?.kind === 'update' && c.rel === '.mcp.json' && mcp.dropped.length) c.dropped = mcp.dropped;
+      // A harness-created .mcp.json that ends with nothing in it goes away.
+      if (c?.kind === 'update' && c.rel === '.mcp.json' && entryOf('.mcp.json')?.kind === 'create' && !Object.keys((() => { try { return JSON.parse(c.after); } catch { return { x: 1 }; } })()).length) changes[changes.length - 1] = { kind: 'delete', rel: c.rel, before: c.before };
     }
   }
 

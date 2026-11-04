@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
 import { expect, test } from 'vitest';
 
 const readme = readFileSync('README.md', 'utf8');
@@ -51,4 +52,37 @@ test('README carries the unattended launch command', () => {
 test('README carries the enforcement line', () => {
   const line = /One plain line at the top: "([^"]+)"/.exec(between(pe, '## 9.', '## 10.'))![1];
   expect(readme).toContain(line);
+});
+
+// M3 Task 26
+const pkgVersion = JSON.parse(readFileSync('package.json', 'utf8')).version as string;
+const notes = readFileSync(`docs/release-notes/${pkgVersion}.md`, 'utf8');
+const catalogItems = readdirSync('catalog/items').map((f) => parseYaml(readFileSync(`catalog/items/${f}`, 'utf8')) as { id: string; source: { type: string }; plugin_version?: string });
+
+test('README carries neither test variable and names the budget key', () => {
+  expect(readme).not.toContain('HARNESS_PLAIN_INIT');
+  expect(readme).not.toContain('HARNESS_CATALOG_DIR');
+  expect(readme).toContain('context.budget_tokens');
+  expect(readme).toContain('--over-budget');
+});
+
+test('README has no stale out-of-scope line and promises no telemetry', () => {
+  expect(readme).not.toContain('the interview and catalog, committing');
+  expect(readme.toLowerCase()).not.toContain('telemetry');
+});
+
+test('README states the M3 known limits, with C1 unverified', () => {
+  for (const s of ['local only', 'extraKnownMarketplaces', 'folder trust', '`CLAUDECODE`', '`git-subdir`', '`!` prefix', 'Unverified, pending the live check']) expect(readme, s).toContain(s);
+});
+
+test('release notes list every excluded id and every unpinned git-subdir item', () => {
+  const excluded = (parseYaml(readFileSync('catalog/excluded.yaml', 'utf8')) as { id: string }[]).map((e) => e.id);
+  const subdir = catalogItems.filter((i) => i.source.type === 'git-subdir' && !i.plugin_version).map((i) => i.id);
+  for (const id of [...excluded, ...subdir]) expect(notes, id).toContain(`\`${id}\``);
+  const version = (parseYaml(readFileSync('catalog/catalog.yaml', 'utf8')) as { version: number }).version;
+  expect(notes).toContain(`Catalog version ${version}, ${catalogItems.length} items`);
+});
+
+test('versions are 0.2.0-beta.0 in the README status line', () => {
+  expect(readme).toContain(`version \`${pkgVersion}\``);
 });

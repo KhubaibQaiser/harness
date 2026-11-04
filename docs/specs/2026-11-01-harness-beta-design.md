@@ -247,7 +247,7 @@ Every item below runs in CI unless marked otherwise.
 - TDD and coverage gates for JS/TS only. Other repos get every other gate.
 - Cloud Claude Code sessions don't load repo-enabled plugins. The committed hooks still run there, but `/harness:*` skills don't.
 - Hooks run with the user's permissions. Only CI and branch protection enforce rules for everyone.
-- Out of the beta: the PR reviewer, the interview and catalog, committing during `init`, and TDD for other languages.
+- Not in this release: the PR reviewer (M2) and TDD for other languages.
 
 ## 11. Timeline (estimate, not a promise)
 

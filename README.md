@@ -10,7 +10,7 @@ The hooks are committed into the repo, so every teammate gets the same rules.
 
 Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, and in every session with `sandbox: always`. Elsewhere, and on native Windows always, the guard and protect checks are a seatbelt.
 
-**Status:** beta, version `0.1.0-beta.1`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. M3 is still in progress.
+**Status:** beta, version `0.2.0-beta.0`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. Release notes: [docs/release-notes/0.2.0-beta.0.md](docs/release-notes/0.2.0-beta.0.md).
 
 ## Why
 
@@ -81,6 +81,10 @@ claude plugin install harness@harness
 Then run `/harness:init` inside Claude Code. The plugin also adds `/harness:doctor`, `/harness:status`, `/harness:update`, `/harness:add`, `/harness:sync` and `/harness:uninstall`. `npx @khubaibqaiser/harness init` in a terminal does not install; it tells you to use `/harness:init`.
 
 Commit the files `init` lists, then keep working in Claude Code.
+
+### Teammates
+
+The hooks are in the repo, so a teammate needs nothing for them. Plugins you picked are pinned in `.claude/settings.json`, but each person installs them in their own Claude Code. After pulling, a teammate runs `claude plugin install <id> --scope project` for each, or `/harness:sync --install-plugins`. `harness doctor` lists the ones that are missing. Claude Code asks each user to approve MCP servers and, for the pinned marketplace, to trust the folder.
 
 ### `/harness:init` in Claude Code
 
@@ -281,17 +285,23 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 - The protected-path and `node_modules` rules read the paths a shell command names, and inline code only when it is literal in the command. Not seen by them: a program that writes files itself (a script file, a build script, an install hook), code that assembles a path at run time, a command hidden in a variable or built at run time, and quoting rules other than POSIX. Change detection reports a change to harness's own files from any of these at the next prompt and Stop, after the fact, unless the same script also rewrote the fingerprints in `.harness/state/`; it doesn't cover `node_modules` or other files.
 - Plugin install messages are matched by guessed wording until a live check on the real Claude Code output. If a plugin install fails oddly, run the printed command yourself.
 - LSP plugin config in the `harness-pins` marketplace is unverified live. Claude Code may ignore it.
-- The context count is an estimate (characters divided by 4), and plugins, external skills and MCP servers aren't measured before install.
+- The context count is an estimate (characters divided by 4). Plugins, external skills and MCP servers aren't measured before install, and committed picks load for every teammate but only the person installing is asked about the budget.
+- Plugin picks are "local only" in Claude Code and are missing in cloud sessions.
+- `extraKnownMarketplaces` (where the `harness-pins` marketplace lives) needs folder trust.
+- MCP servers need each user's approval.
+- `CLAUDECODE` is also set in IDE terminals, so `init` and `update` run there too, not only inside a Claude Code session. They don't print `Run /harness:init inside Claude Code`.
+- There is no version-drift check for `git-subdir` plugins that have no `plugin_version`. The commit is pinned, but `doctor` has nothing to compare. The release notes list them.
+- The agent asks before item changes (`init`, `update`, `add`, `remove`, `sync`, `uninstall`).
+- Under `sandbox: always`, item commands may need Claude Code's `!` prefix. Unverified, pending the live check.
 - `.harnessignore` has no `!` negation.
 - `remove tdd-gate` (or deselecting it) leaves the test-config edits `init` made in place; undo them by hand.
 - `update` doesn't rename a package config and make another edit to it in one run. Run it twice.
 - `harness git` treats `origin/HEAD`, `init.defaultBranch`, `main` and `master` as the default branch. If your default is another name and `origin/HEAD` isn't set, run `git remote set-head origin -a` first.
-- Out of the beta: the PR reviewer, the interview and catalog, committing during `init`, and TDD for other languages.
+- Not in this release: the PR reviewer (M2) and TDD for other languages.
 
 ## Roadmap
 
-These aren't shipped yet:
-- per-project recommendations from a pinned catalog (M3, in progress; the catalog, selection, budget, installs, the `/harness:init` flow and `add`, `remove`, `why`, `explain` and `sync` are in);
+Per-project recommendations from a pinned catalog shipped in 0.2.0-beta.0. These aren't shipped yet:
 - a PR size check;
 - memory;
 - the PR reviewer;

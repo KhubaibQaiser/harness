@@ -74,3 +74,7 @@
   reason: "no open-source license: SonarSource/sonarqube-agent-plugins LICENSE (marketplace pin 5a9356d957db) is the SONAR Source-Available License v1.0 (plugin.json license SSAL-1.0), which restricts use that competes with SonarQube and is not an SPDX open-source licence; GitHub says NOASSERTION. Brief step 4 excludes a non-standard license (as for mergify). If added back, the owner's Q5 stance applies: discouraged with stance_reason \"belongs in CI quality gates, not the agent session.\""
 - id: evals-skills
   reason: "archived upstream: hamelsmu/evals-skills (MIT, 1675 stars) is archived on GitHub (last commit 22418da2bfb1, 2026-08-16); audit.html's pick for fitness-app's AI feature (\"Error analysis and checking LLM judges against human labels\"). langfuse (judge-calibration and error-analysis references) and deepeval cover the area"
+- id: getsentry-skills
+  reason: "left out by the owner: its always-on commit skill imposes Sentry's commit conventions"
+- id: deepeval
+  reason: "left out by the owner: Python-only; project facts read JS dependencies only for now"

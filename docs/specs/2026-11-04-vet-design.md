@@ -1,6 +1,6 @@
 # harness vet: design spec
 
-- Status: draft for owner review. The owner decisions are in section 1; D7 and D8 answered the spec's questions on 2026-11-04. Nothing is open.
+- Status: owner-approved (2026-11-04). The owner decisions are in section 1; D7 and D8 answered the spec's questions on 2026-11-04. Nothing is open.
 - Date: 2026-11-04
 - Owner: khubaibqaiser
 - Inputs: two owner interviews on 2026-11-03 and 2026-11-04. The M3 code on main: `src/catalog/resolve.ts` (pin lookups through `gh`), `src/budget/measure.ts`, `src/install/facts.ts`, `src/ai/*` (the file contract and `harness validate`), and `templates/agents/staff-reviewer.md` (audit mode).

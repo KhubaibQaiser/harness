@@ -1,0 +1,19 @@
+id: permissions-baseline
+kind: settings
+title: Permissions baseline
+source:
+  type: own
+  checks: [protect]
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when:
+  always: true
+cost:
+  context: none
+  setup: none
+stance: default
+why: >-
+  Denies reading secrets and writing harness state and hooks, and protects .harness/ and .claude/settings*.json.
+evidence:
+  - docs/specs/2026-11-01-harness-beta-design.md#3-what-each-repo-gets
+  - docs/specs/2026-10-30-harness-design.md#11-safety

@@ -1,0 +1,7 @@
+{
+  "scope": { "paths": ["packages"] },
+  "project": { "type": "library", "domain": "tools", "compliance": [], "data_handling": "", "team_size": 1, "open_source": false, "codeowners": [], "deploy_target": "", "run_budget_usd": 0, "named_items": [] },
+  "apps": [],
+  "unattended": { "multi_file_gate": "block", "require_reason": false },
+  "tdd": { "paths": ["packages/b/src/**"], "diff_coverage": 80 }
+}

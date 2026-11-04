@@ -1,0 +1,11 @@
+{
+  "catalog_version": 1,
+  "findings": [{ "id": "f1", "severity": "nit", "title": "No agent rules yet" }],
+  "items": [
+    { "id": "agent-guard", "include": "recommended", "reason": "Blocks secret reads and pushes to main.", "addresses": ["f1"] },
+    { "id": "permissions-baseline", "include": "recommended", "reason": "Protects harness files.", "addresses": ["f1"] },
+    { "id": "agents-md", "include": "recommended", "reason": "Gives the agent the rules it cannot infer.", "addresses": ["f1"] },
+    { "id": "e2e-plugin", "include": "optional", "reason": "Fixture plugin.", "addresses": [] },
+    { "id": "e2e-mcp", "include": "optional", "reason": "Fixture MCP server.", "addresses": [] }
+  ]
+}

@@ -8,6 +8,12 @@ import { status } from '../../src/cli/status.js';
 import { appendEvent } from '../../src/core/events.js';
 import { writeHookEnv } from '../../src/core/hook-env.js';
 import { makeRepo } from '../install/helpers.js';
+import { execFileSync } from 'node:child_process';
+import { loadCatalog } from '../../src/catalog/load.js';
+import { applyChanges } from '../../src/install/apply.js';
+import { detect } from '../../src/install/detect.js';
+import { planChanges } from '../../src/install/plan.js';
+import { preset } from '../../src/install/preset.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const prompt: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
@@ -142,4 +148,25 @@ test('status shows the last blocked settings change', async () => {
   expect(show(root, 'darwin')).not.toContain('Last blocked settings change');
   appendEvent(root, { ts: '2026-11-02T00:00:00.000Z', session: 's', check: 'config-change', decision: 'config-change-blocked', reason: '.claude/settings.json: hooks' });
   expect(show(root, 'darwin')).toMatch(/^Last blocked settings change: 2026-11-02T00:00:00\.000Z \(\.claude\/settings\.json: hooks\)$/m);
+});
+
+test('status shows the catalog, the item count, missing plugins and the budget line', () => {
+  const root = makeRepo({ 'package.json': '{"name":"a"}\n', 'package-lock.json': '{}\n' });
+  const facts = detect(root);
+  const config = preset(facts).config;
+  const cat = loadCatalog().catalog;
+  config.catalog_version = cat.version;
+  config.items = ['agent-guard', 'caveman'].map((id) => ({ id, include: 'recommended' as const, selected: true, reason: 'r', addresses: [], pin: '' }));
+  const ai = { picks: JSON.stringify({ catalog_version: 1, findings: [], items: [] }), report: '# R\n\n## Limits\n\nx\n', product: '# P\n' };
+  applyChanges(root, planChanges(root, config, facts, { version: '1.0.0', distDir: join(pkgDir, 'dist'), templatesDir: join(pkgDir, 'templates'), catalog: cat, ai }).changes, '1.0.0');
+  execFileSync('git', ['add', '-A'], { cwd: root });
+  let out = '';
+  let calls = 0;
+  status([], { root, env: {}, out: (s) => (out += s + '\n') }, { pluginList: () => (calls++, []) });
+  expect(out).toContain(`Catalog ${cat.version}\n`);
+  expect(out).toContain('Items: 2 selected\n');
+  expect(out).toContain('Plugins not installed: 1\n');
+  expect(out).toMatch(/^Always-loaded context from harness: ~\d+ tokens \(estimate\), budget \d+\.$/m);
+  expect(calls).toBe(1);
+  expect(out.indexOf('Enforcement:')).toBeLessThan(out.indexOf('Catalog '));
 });

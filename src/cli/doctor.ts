@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { validateConfig } from '../core/config-io.js';
-import { LEGACY_RESULTS_DIR } from '../core/config.js';
+import { LEGACY_RESULTS_DIR, type HarnessConfig } from '../core/config.js';
 import { readHookEnv } from '../core/hook-env.js';
 import { MIN_CLAUDE_CODE, claudeVersion, olderThan } from '../core/min-claude.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
@@ -18,8 +18,14 @@ import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../in
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import type { CliEnv } from './index.js';
 import { dirtyPaths } from '../install/git-status.js';
+import { loadCatalog } from '../catalog/load.js';
+import { packageDir } from '../core/package-dir.js';
+import { STRUCTURAL, pinnedPlugins } from '../install/merge.js';
+import { pluginList } from '../install/plugin-install.js';
+import { reconcile } from '../install/reconcile.js';
+import { selectedIds } from '../install/plan.js';
 
-export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJS.Platform };
+export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJS.Platform; pluginList?: typeof pluginList };
 
 const DISPATCH = '.harness/hooks/dispatch.mjs';
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd'];
@@ -219,6 +225,59 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     if (config.stop.steps.length)
       note("Stop steps were checked against this terminal's PATH", "Claude Code's hooks may see a different one (for example when Claude Code starts from the GUI); if Stop warns that a tool is not on its PATH, make the tool available there");
   }
+  if (config.items.length) itemChecks(root, config, manifest, deps.pluginList ?? pluginList, { ok, fix, note, out });
   if (bad) out(`${bad} problem${bad === 1 ? '' : 's'} found.`);
   return bad ? 1 : 0;
+}
+
+const PINS = 'harness-pins';
+const EDITED = /harness-pins marketplace was edited|^`\.mcp\.json`: .*(was edited|was changed)/;
+
+/** Catalog version, item drift (from reconcile, the same plan sync applies), plugin state and edited entries. Only for installs with an items list. */
+function itemChecks(
+  root: string, config: HarnessConfig, manifest: NonNullable<ReturnType<typeof readManifest>>,
+  list: typeof pluginList, p: { ok: (s: string) => void; fix: (w: string, n: string) => void; note: (w: string, n: string) => void; out: (s: string) => void },
+): void {
+  const lc = loadCatalog();
+  if (lc.errors.length) return p.note('the catalog has errors, so item checks were skipped', 'run harness catalog validate');
+  const cat = lc.catalog;
+  if (cat.version > config.catalog_version) p.note(`catalog ${cat.version} is newer than this repo's ${config.catalog_version}`, 'run /harness:update');
+  else p.ok(`catalog ${config.catalog_version}`);
+  const ids = selectedIds(config);
+  let planned;
+  try {
+    planned = reconcile(root, config, manifest, { version: manifest.version, distDir: packageDir('dist'), templatesDir: packageDir('templates'), catalog: cat });
+  } catch (e) {
+    return p.fix(`the items could not be compared with the files (${(e as Error).message.split('\n')[0]})`, 'fix the file it names, then run harness doctor');
+  }
+  const seen = new Set<string>();
+  const missing = (item: string, rel: string) => seen.has(item + rel) || (seen.add(item + rel), p.fix(`${item} is missing ${rel}`, 'run /harness:sync'));
+  for (const c of planned.changes) {
+    if (c.kind === 'create' && c.item) missing(c.item, c.rel);
+    // A settings or .mcp.json block of an item that harness would add again is missing from the file.
+    if (c.kind !== 'delete' && STRUCTURAL.has(c.rel))
+      for (const b of c.blocks ?? []) try { const j = JSON.parse(b); if (typeof j?.item === 'string') missing(j.item, c.rel); } catch {}
+  }
+  if (planned.notes.some((n) => EDITED.test(n))) p.note('the harness-pins marketplace or a harness MCP server differs from what harness installed', 'run /harness:sync');
+  const diff = (Object.keys(config.checks) as (keyof typeof config.checks)[]).filter((k) => config.checks[k] !== planned.config.checks[k]);
+  if (diff.length) p.out(`note config.yaml checks differ from the selected items (${diff.join(', ')}); the items win on the next update. Use harness add or remove to change gates.`);
+
+  const pinned = pinnedPlugins(cat.items.filter((i) => ids.includes(i.id)));
+  if (!pinned.length) return;
+  const have = list(); // the one `claude plugin list` call
+  if (!have) return p.note('claude is missing or its plugin list is unreadable, so plugin checks were skipped', 'install Claude Code or run harness doctor from a shell where claude works');
+  let enabled: Record<string, unknown> = {};
+  try { enabled = JSON.parse(readText(join(root, '.claude/settings.json')) ?? '{}').enabledPlugins ?? {}; } catch {}
+  for (const pin of pinned) {
+    const id = `${pin.name}@${PINS}`;
+    const got = have.find((x) => x.id === id);
+    if (!got) {
+      if (enabled[id] === true) p.fix(`${id} is enabled in this repo but not installed`, `claude plugin install ${id} --scope project`);
+      continue;
+    }
+    const want = cat.items.find((i) => i.id === pin.item)?.plugin_version;
+    if (want && got.version && got.version !== want) p.note(`${id} is ${got.version}, the catalog pins ${want}`, `run claude plugin update ${id} --scope project`);
+    for (const o of have.filter((x) => x.enabled && x.id !== id && x.id.split('@')[0] === pin.name))
+      if (got.enabled || enabled[id] === true) p.out(`note ${pin.name} is enabled twice (${o.id} and ${PINS}); only one copy's hooks run. Disable one.`);
+  }
 }

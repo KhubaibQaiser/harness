@@ -85,7 +85,9 @@ export const defaults = (): HarnessConfig => ({
 });
 
 /** Control characters in user-supplied keys become \\uXXXX, so an error line can't drive the terminal. */
-export const esc = (s: string): string => JSON.stringify(s).slice(1, -1).replace(/[\u007f-\u009f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+/** C0/C1 controls, zero-width and bidi characters: free text from the AI step may not carry them. */
+export const CONTROL = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/;
+export const esc = (s: string): string => JSON.stringify(s).slice(1, -1).replace(/[\u007f-\u009f​-‏‪-‮⁠-⁤⁦-⁩﻿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStrs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
 

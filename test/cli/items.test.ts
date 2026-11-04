@@ -267,3 +267,20 @@ test('why and explain on a legacy install count the own items as installed', asy
   expect((await run(root, 'why', ['stop-gate'], {})).out).not.toContain('Not installed');
   expect((await run(root, 'explain', [], {})).out).toContain('stop-gate (');
 });
+
+test('why escapes control characters in the reason and finding title', async () => {
+  const root = installed([...OWN, 'staff-reviewer']);
+  const cfg = join(root, '.harness/config.yaml');
+  writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('Reviews every diff.', '"x \\u001b[2J \\u009b31m"'));
+  writeFileSync(join(root, '.harness/picks.json'), JSON.stringify({ items: [], findings: [{ id: 'f1', severity: 'critical', title: 'T \u001b]0;pwned\u0007' }] }));
+  const r = await run(root, 'why', ['staff-reviewer'], {});
+  expect(r.out).toContain('x \\u001b[2J \\u009b31m');
+  expect(r.out).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+});
+
+test('add of a plugin item prints the install step', async () => {
+  const root = installed();
+  const r = await run(root, 'add', ['frontend-design', '--yes', '--over-budget']);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('Run /harness:sync --install-plugins to install the plugin.');
+});

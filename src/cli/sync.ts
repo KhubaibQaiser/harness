@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { loadCatalog } from '../catalog/load.js';
+import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
 import { validateConfig } from '../core/config-io.js';
 import { defaultExec, type Exec } from '../core/exec.js';
@@ -70,7 +70,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   }
   if (!config.items.length) return out('This install predates the item catalog. Run /harness:update with recommendations first.'), 1;
   const lc = cli.catalog ? { catalog: cli.catalog, errors: [] as string[] } : loadCatalog();
-  if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out('The catalog has errors; stopped. Run harness catalog validate.'), 1;
+  if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
   const cat = lc.catalog;
   if (cli.version && cli.version !== man.version) return out(`Harness files are ${man.version} but this is ${cli.version}. Run /harness:update first; sync does not change the version.`), 1;
   const have = selectedIds(config);

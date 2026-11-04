@@ -10,7 +10,7 @@ import { validatePicks, type Picks } from '../ai/picks.js';
 import { validateProduct } from '../ai/product.js';
 import { validateReport } from '../ai/report.js';
 import { budgetLines, budgetVerdict, measureSelection } from '../budget/measure.js';
-import { loadCatalog } from '../catalog/load.js';
+import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
@@ -20,7 +20,7 @@ import { type Facts } from '../install/detect.js';
 import { pinnedPlugins } from '../install/merge.js';
 import { dirtyPaths } from '../install/git-status.js';
 import { installPlugins } from '../install/plugin-install.js';
-import { resolveSelection, toSelected } from '../install/select.js';
+import { notPicked, resolveSelection, toSelected } from '../install/select.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
@@ -53,7 +53,7 @@ export function takeAiFlags(args: string[]): { ai: AiArgs; rest: string[] } | nu
   for (let i = 0; i < args.length; i++) {
     const k = VALUE_FLAGS.find((f) => args[i] === `--${f}`);
     if (k) {
-      if (args[i + 1] === undefined) return null;
+      if (args[i + 1] === undefined || args[i + 1].startsWith('--')) return null;
       ai[k] = args[++i];
     } else if (args[i] === '--install-plugins') ai.installPlugins = true;
     else if (args[i] === '--over-budget') ai.overBudget = true;
@@ -82,7 +82,7 @@ export interface AiInputs { answers: Answers; picks: Picks; ids: string[]; notic
 /** Reads and validates the AI step's files against the facts and the real catalog, then resolves --choose. */
 export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null, base?: Record<string, unknown>): { ok: true; in: AiInputs } | { ok: false; errors: string[]; code: number } {
   const cat = loadCatalog();
-  if (cat.errors.length) return { ok: false, errors: [...cat.errors, 'The catalog has errors; stopped. Run harness catalog validate.'], code: 1 };
+  if (cat.errors.length) return { ok: false, errors: [...cat.errors, CATALOG_BROKEN], code: 1 };
   const text: Record<string, string> = {};
   for (const k of ['answers', 'product', 'picks', 'report'] as const) {
     if (k === 'answers' && base && ai.answers === undefined) { text.answers = '{}'; continue; }
@@ -94,9 +94,9 @@ export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null,
   }
   const parsed = (k: 'answers' | 'picks'): { v: unknown } | { err: string } => {
     try {
-      return { v: parseYaml(text[k]) };
+      return { v: JSON.parse(text[k]) };
     } catch (e) {
-      return { err: `${k}: not valid JSON or YAML (${esc((e as Error).message.split('\n')[0])})` };
+      return { err: `${k}: not valid JSON (${esc((e as Error).message.split('\n')[0])})` };
     }
   };
   const pa = parsed('answers');
@@ -111,7 +111,10 @@ export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null,
   if (!p.ok) return { ok: false, errors: p.errors, code: 2 };
   const errors = [...validateProduct(text.product), ...validateReport(text.report, p.picks)];
   if (errors.length) return { ok: false, errors, code: 2 };
-  const r = resolveSelection(ai.choose!.split(',').filter(Boolean), cat.catalog, claudeVer);
+  const chosen = ai.choose!.split(',').filter(Boolean);
+  const np = notPicked(chosen, p.picks, cat.catalog);
+  if (np.length) return { ok: false, errors: np, code: 2 };
+  const r = resolveSelection(chosen, cat.catalog, claudeVer);
   if (r.errors.length) return { ok: false, errors: r.errors, code: 2 };
   // The report is passed as written: planChanges adds the enforcement sentence when it writes .harness/report.md.
   return { ok: true, in: { answers: a.answers, picks: p.picks, ids: r.ids, notices: r.notices, files: { picks: text.picks, report: text.report, product: text.product }, catalog: cat.catalog } };
@@ -134,8 +137,12 @@ export async function budgetGate(
 
 /** The person's own command line, for a step Claude Code's sandbox blocks. */
 export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove' | 'sync', args: string[]): string {
+  return `Claude Code's sandbox blocks harness's own files. ${ownCommand(cmd, args)}`;
+}
+/** The person's own command line, with the `!` prefix hint. */
+export function ownCommand(cmd: string, args: string[]): string {
   const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
-  return `Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's \`!\` prefix: ${self} ${cmd} ${args.map(shq).join(' ')}`;
+  return `Run this yourself with Claude Code's \`!\` prefix: ${self} ${cmd} ${args.map(shq).join(' ')}`;
 }
 /** One shell word: bare when plain, else single-quoted (embedded quotes the POSIX way); control characters are escaped first so they never reach the terminal. */
 export const shq = (a: string): string => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${(/[\u0000-\u001f\u007f-\u009f]/.test(a) ? esc(a) : a).replace(/'/g, `'\\''`)}'`);
@@ -168,7 +175,7 @@ function parseArgs(args: string[]): { yes: boolean; dryRun: boolean; config?: st
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--yes') o.yes = true;
     else if (args[i] === '--dry-run') o.dryRun = true;
-    else if (args[i] === '--config' && args[i + 1] !== undefined) o.config = args[++i];
+    else if (args[i] === '--config' && args[i + 1] !== undefined && !args[i + 1].startsWith('--')) o.config = args[++i];
     else return null;
   }
   return o;

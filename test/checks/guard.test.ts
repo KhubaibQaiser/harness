@@ -580,3 +580,9 @@ test('harness git push and git pr ask; harness git branch and git commit are all
   for (const cmd of ['harness git push', 'harness git pr create', 'npx @khubaibqaiser/harness git push origin x']) expect(reason(decideCommand(cmd, ctx())), cmd).toBe(why);
   all(['harness git branch x', 'harness git commit -m x'], 'allow');
 });
+
+test('a preview flag that is a value flag\'s value is not a preview', () => {
+  for (const c of ['harness init --config --dry-run', 'harness init --answers --dry-run --product p --picks q --report r --choose c', 'harness update --picks --plan', 'harness sync --take --dry-run', 'harness git pr --title --dry-run'])
+    expect(kind(c), c).toBe('ask');
+  all(['harness init --dry-run', 'harness init --config c.yaml --dry-run'], 'allow');
+});

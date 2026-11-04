@@ -9,7 +9,7 @@ export interface ChecklistRow {
   id: string; title: string; include: 'recommended' | 'optional'; ticked: boolean; reason: string; cost: string;
   /** From itemContextLine. */
   context: string;
-  side_effects: string[]; local_only: boolean; stance_reason: string; no_alternative: string;
+  side_effects: string[]; /** 'Runs unpinned code at launch.' when the catalog marks the item unpinned_runtime, else ''. */ unpinned: string; unpinned_reason: string; local_only: boolean; stance_reason: string; no_alternative: string;
 }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -25,9 +25,17 @@ export function checklist(p: Picks, c: Catalog, dirs: { templates: string }): Ch
       return {
         id: x.id, title: it.title, include: x.include, ticked: x.include === 'recommended', reason: x.reason,
         cost: `context ${it.cost.context}, setup ${it.cost.setup}`, context: itemContextLine(itemContext(it, dirs)), side_effects: it.side_effects,
+        unpinned: it.unpinned_runtime ? 'Runs unpinned code at launch.' : '', unpinned_reason: it.unpinned_runtime ?? '',
         local_only: it.kind === 'plugin' || it.kind === 'external-skill', stance_reason: it.stance_reason, no_alternative: x.no_alternative ?? '',
       };
     });
+}
+
+/** Errors for chosen ids the reviewer never picked. Ids that a picked, chosen item requires are allowed. */
+export function notPicked(chosen: string[], p: Picks, c: Catalog): string[] {
+  const picked = new Set(p.items.map((x) => x.id));
+  const allowed = new Set([...picked, ...requiresClosure(chosen.filter((id) => picked.has(id)), c).ids]);
+  return chosen.filter((id) => !allowed.has(id)).map((id) => `"${esc(id)}" was not in the picks; run the recommend step again or pick from the checklist.`);
 }
 
 /** Adds requires, drops items the installed Claude Code is too old for, and reports conflicts. */
@@ -52,6 +60,7 @@ export function resolveSelection(chosen: string[], c: Catalog, claudeVersion: st
     }
   }
   const ids = all.filter((id) => !dropped.has(id));
+  if (!ids.length && all.length) return { ids, notices, errors: ['Nothing is left to install: every chosen item was skipped.'] };
   const addedNotices = added.filter((a) => !dropped.has(a.id)).map((a) => `Added ${a.id} because ${a.by} requires it.`);
   return { ids, notices: [...addedNotices, ...notices], errors: conflictPairs(ids, c).map(([a, b]) => `${a} and ${b} conflict; pick one.`) };
 }

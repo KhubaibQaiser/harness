@@ -17,7 +17,7 @@ import { reconcile } from '../install/reconcile.js';
 import { selectedIds } from '../install/plan.js';
 import { toSelected } from '../install/select.js';
 import { STRUCTURAL } from '../install/merge.js';
-import { loadCatalog } from '../catalog/load.js';
+import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import { catalogDelta, contradictions } from '../install/delta.js';
 import { factsJson } from '../install/facts.js';
 import type { Facts } from '../install/detect.js';
@@ -94,7 +94,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 
   if (plan) {
     const lc = loadCatalog();
-    if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out('The catalog has errors; update stopped. Run harness catalog validate.'), 1;
+    if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
     const now = detect(root);
     let stored: string | null = null;
     let prev: Facts | null = null;
@@ -109,7 +109,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const aiFlags = hasAiFlags(args);
   const aiPath = v.config.items.length > 0 || aiFlags; // a selection from the recommend flow: the plan owns the config
   const cat = aiPath && !aiFlags ? loadCatalog() : null;
-  if (cat?.errors.length) return cat.errors.forEach((e) => out(e)), out('The catalog has errors; update stopped. Run harness catalog validate.'), 1;
+  if (cat?.errors.length) return cat.errors.forEach((e) => out(e)), out(CATALOG_BROKEN), 1;
   let config = v.config;
   let sel: AiInputs | null = null;
   if (aiFlags) {

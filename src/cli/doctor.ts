@@ -239,7 +239,7 @@ function itemChecks(
   list: typeof pluginList, p: { ok: (s: string) => void; fix: (w: string, n: string) => void; note: (w: string, n?: string) => void },
 ): void {
   const lc = loadCatalog();
-  if (lc.errors.length) return p.note('the catalog has errors, so item checks were skipped', 'run harness catalog validate');
+  if (lc.errors.length) return p.note('the catalog has errors, so item checks were skipped', 'reinstall or update harness; run harness catalog check');
   const cat = lc.catalog;
   if (cat.version > config.catalog_version) p.note(`catalog ${cat.version} is newer than this repo's ${config.catalog_version}`, 'run /harness:update');
   else p.ok(`catalog ${config.catalog_version}`);
@@ -260,7 +260,7 @@ function itemChecks(
   }
   if (planned.notes.some((n) => EDITED.test(n))) p.note('the harness-pins marketplace or a harness MCP server differs from what harness installed', 'run /harness:sync');
   const diff = (Object.keys(config.checks) as (keyof typeof config.checks)[]).filter((k) => config.checks[k] !== planned.config.checks[k]);
-  if (diff.length) p.note(`config.yaml checks differ from the selected items (${diff.join(', ')}); the items win on the next update. Use harness add or remove to change gates.`);
+  if (diff.length) p.note(`config.yaml checks differ from the selected items (${diff.join(', ')}); the items win on the next update. Use /harness:add or harness remove to change gates.`);
 
   const pinned = pinnedPlugins(cat.items.filter((i) => ids.includes(i.id)));
   if (!pinned.length) return;

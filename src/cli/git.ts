@@ -5,7 +5,7 @@ import { defaultExec, type Exec } from '../core/exec.js';
 import { readManifest } from '../install/apply.js';
 import { dirtyPaths } from '../install/git-status.js';
 import { MANIFEST_REL } from '../install/manifest.js';
-import { sandboxLine, shq } from './init.js';
+import { ownCommand, shq } from './init.js';
 import type { CliEnv } from './index.js';
 
 const USAGE = 'Usage: harness git branch|commit|push|pr [--title <t>]';
@@ -19,7 +19,7 @@ export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEn
   const [sub, ...rest] = args;
   const titleAt = rest.indexOf('--title');
   const title = titleAt >= 0 ? rest[titleAt + 1] : undefined;
-  if (!['branch', 'commit', 'push', 'pr'].includes(sub) || rest.length !== (sub === 'pr' && titleAt === 0 ? 2 : 0) || (titleAt >= 0 && !title)) return out(USAGE), 2;
+  if (!['branch', 'commit', 'push', 'pr'].includes(sub) || rest.length !== (sub === 'pr' && titleAt === 0 ? 2 : 0) || (titleAt >= 0 && (!title || title.startsWith('--')))) return out(USAGE), 2;
 
   const git = (...a: string[]) => exec('git', ['-C', root, ...a]);
   const m = readManifest(root);
@@ -36,7 +36,7 @@ export function gitStep(args: string[], { root, out, exec = defaultExec }: CliEn
   const lines = (s: string) => s.trim().split(/\r?\n/).map(esc).join('\n');
   const failed = (cmd: string, r: { stderr?: string; stdout: string }) => {
     const err = (r.stderr || r.stdout).trim();
-    return out(NETWORK.test(err) ? sandboxLine('git', [sub, ...rest]) : `${cmd} failed: ${lines(err)}\nFix that, then run \`harness git ${sub}\` again.`), 1;
+    return out(NETWORK.test(err) ? `${cmd} failed: the sandbox or the network blocked it (${lines(err)}). ${ownCommand('git', [sub, ...rest])}` : `${cmd} failed: ${lines(err)}\nFix that, then run \`harness git ${sub}\` again.`), 1;
   };
 
   const mine = [...m.files.map((f) => f.rel), MANIFEST_REL];

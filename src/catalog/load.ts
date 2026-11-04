@@ -63,3 +63,6 @@ export const compactCatalog = (c: Catalog): CompactItem[] =>
   c.items
     .map(({ id, kind, applies_when, why, cost, stance, stance_reason, conflicts_with, requires }) => ({ id, kind, applies_when, why, cost, stance, stance_reason, conflicts_with, requires }))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+/** The last line after a bundled-catalog load error: the person can't edit the catalog, so the fix is a newer harness. */
+export const CATALOG_BROKEN = 'The bundled catalog has errors (listed above). Reinstall or update harness; run harness catalog check to see them again.';

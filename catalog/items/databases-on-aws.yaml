@@ -9,6 +9,7 @@ cost: {"context": "low", "setup": "medium"}
 stance: optional
 side_effects: ["installs-hook"]
 why: "Expert database guidance for the AWS database portfolio. Design schemas, execute queries, handle migrations, and choose the right database for your workload."
+unpinned_runtime: "`uvx ...@latest` for the aurora-dsql and cloudwatch servers; the vendor file marks both disabled, but Claude Code does not document that key, so they may still start"
 evidence:
   - "https://github.com/awslabs/agent-plugins/blob/fbefb3764e67558fe10ac834dd85db49734aa9b6/plugins/databases-on-aws/.claude-plugin/plugin.json (version 1.10.0, license Apache-2.0; the why sentences are its description)"
   - "License: repo awslabs/agent-plugins is Apache-2.0 (GitHub); plugin.json says Apache-2.0; the plugin directory has no LICENSE file of its own"

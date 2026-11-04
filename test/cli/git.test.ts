@@ -111,13 +111,13 @@ test('pr runs gh pr create when gh is signed in', () => {
   expect(calls.at(-1)).toEqual(['gh', 'pr', 'create', '--base', 'main', '--head', 'b', '--title', 'chore: add AI workflow', '--body-file', join(root, '.harness/report.md')]);
 });
 
-test('a network failure prints the sandbox line', () => {
+test('a network failure names both the sandbox and the network', () => {
   const root = installed();
   g(root, 'checkout', '-q', '-b', 'b');
   const exec: Exec = (cmd, args) => (cmd === 'git' && args.includes('push') ? { status: 128, stdout: '', stderr: 'fatal: unable to access: Could not resolve host: github.com' } : defaultExec(cmd, args));
   const r = run(root, ['push'], exec);
   expect(r.code).toBe(1);
-  expect(r.out).toContain("Claude Code's sandbox blocks");
+  expect(r.out).toContain('the sandbox or the network blocked');
   expect(r.out).toContain('git push');
 });
 
@@ -222,7 +222,7 @@ test('ETIMEDOUT counts as a network error', () => {
   const root = installed();
   g(root, 'checkout', '-q', '-b', 'b');
   const exec: Exec = (cmd, args) => (cmd === 'git' && args.includes('push') ? { status: 1, stdout: '', stderr: 'spawnSync git ETIMEDOUT' } : defaultExec(cmd, args));
-  expect(run(root, ['push'], exec).out).toContain("Claude Code's sandbox blocks");
+  expect(run(root, ['push'], exec).out).toContain('the sandbox or the network blocked');
 });
 
 test('push to a real local bare origin sets the upstream', () => {
@@ -247,4 +247,9 @@ test('commit and push refuse main even when init.defaultBranch says master and t
   g(root, 'checkout', '-q', '-b', 'b');
   put(root, '.harness/report.md', 'r');
   expect(run(root, ['pr']).out).toContain('--base main --head b'); // main exists, master does not
+});
+
+test('--title takes a value, not a flag', () => {
+  const root = installed();
+  expect(run(root, ['pr', '--title', '--dry-run']).code).toBe(2);
 });

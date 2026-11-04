@@ -11,7 +11,7 @@ const SHA = 'b'.repeat(40);
 const y = (id: string, extra = '') => `id: ${id}
 kind: plugin
 title: T
-source: { type: github, repo: o/r, plugin: p, sha: ${SHA} }
+source: { type: github, repo: o/r, plugin: ${id}, sha: ${SHA} }
 license: MIT
 min_claude_code: 2.1.0
 applies_when: { always: true }
@@ -54,7 +54,7 @@ test('catalog check exits 1 and prints each problem', () => {
 });
 
 test('catalog check --resolve prints unpinned items and --only filters', () => {
-  const remote = y('r').replace(/source:.*/, 'source: { type: remote, url: "https://x.dev/m", unpinned: hosted }').replace('kind: plugin', 'kind: mcp') + 'mcp: { name: r, config: { command: x } }\n';
+  const remote = y('r').replace(/source:.*/, 'source: { type: remote, url: "https://x.dev/m", unpinned: hosted }').replace('kind: plugin', 'kind: mcp') + 'unpinned_runtime: hosted\nmcp: { name: r, config: { command: x } }\n';
   const d = dir({ a: y('a'), r: remote });
   const r = go(['check', '--resolve'], d, () => ({ status: 0, stdout: SHA }));
   expect(r.code).toBe(0);
@@ -83,4 +83,11 @@ test('HARNESS_CATALOG_DIR is ignored without HARNESS_PLAIN_INIT', () => {
   expect(packageDir('catalog')).not.toBe('/elsewhere');
   process.env.HARNESS_PLAIN_INIT = '1';
   expect(packageDir('catalog')).toBe('/elsewhere');
+});
+
+test('bare catalog prints the load errors and exits 1', () => {
+  const r = go([], dir({ bad: 'id: bad\n' }));
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('bad.yaml');
+  expect(r.out).not.toContain('catalog_version');
 });

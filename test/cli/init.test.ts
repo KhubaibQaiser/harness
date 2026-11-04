@@ -518,3 +518,13 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('an ok ins
   }
   expect(out).toContain('Run /harness:sync to record the install.');
 });
+
+test('a value flag takes a value, never another flag', async () => {
+  const root = makeRepo(NPM_VITEST);
+  for (const args of [['--config', '--dry-run'], ['--answers', '--dry-run', '--product', 'p', '--picks', 'q', '--report', 'r', '--choose', 'c']]) {
+    const r = await go(root, args);
+    expect(r.code, args.join(' ')).toBe(2);
+    expect(r.out).toContain('Usage:');
+  }
+  expect(existsSync(join(root, '.harness'))).toBe(false);
+});

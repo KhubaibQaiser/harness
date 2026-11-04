@@ -10,6 +10,7 @@ cost: {"context": "medium", "setup": "high"}
 stance: optional
 side_effects: ["installs-hook"]
 why: "Connect Claude Code to JFrog to manage, secure, and govern your software supply chain."
+unpinned_runtime: "three `npx` commands name `@jfrog/agent-guard` with no version, at session start, on Skill and Read calls, and on prompt expansion"
 evidence:
   - "Owner Q5 line: neutral, recommended only to teams already on Artifactory or Nexus (here: Artifactory). No Facts field shows that. The recommender must check that the team uses Artifactory (a JFrog platform URL) before it recommends this item."
   - "project_types [other] is a placeholder; recommend only when the team says it uses Artifactory/Nexus"

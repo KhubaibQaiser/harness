@@ -79,3 +79,9 @@ test('lsp_servers is a non-empty mapping, only on kind plugin', () => {
   expect(mut((r) => (r.lsp_servers = ['x']))).toEqual(['gsap-skills.yaml: lsp_servers: must be a non-empty mapping of server name to config']);
   expect(mut((r) => ((r.kind = 'external-skill'), (r.lsp_servers = lsp)))).toEqual(['gsap-skills.yaml: lsp_servers: only allowed for kind plugin']);
 });
+
+test('unpinned_runtime is a non-empty string', () => {
+  expect(mut((r) => (r.unpinned_runtime = 'runs npx pkg@latest'))).toEqual([]);
+  expect(mut((r) => (r.unpinned_runtime = ' '))).toEqual(['gsap-skills.yaml: unpinned_runtime: must be a non-empty string']);
+  expect(mut((r) => (r.unpinned_runtime = 3))).toEqual(['gsap-skills.yaml: unpinned_runtime: must be a non-empty string']);
+});

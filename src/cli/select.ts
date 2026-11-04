@@ -4,7 +4,7 @@ import type { Picks } from '../ai/picks.js';
 import { loadCatalog } from '../catalog/load.js';
 import { claudeVersion } from '../core/min-claude.js';
 import { packageDir } from '../core/package-dir.js';
-import { checklist, resolveSelection, toSelected } from '../install/select.js';
+import { checklist, notPicked, resolveSelection, toSelected } from '../install/select.js';
 import type { CliEnv } from './index.js';
 
 const ok = (x: any) => typeof x?.id === 'string' && (x.include === 'recommended' || x.include === 'optional') && typeof x.reason === 'string' && Array.isArray(x.addresses);
@@ -27,6 +27,8 @@ export function select(args: string[], { out }: CliEnv): number {
   const { catalog, errors } = loadCatalog(packageDir('catalog'));
   if (errors.length) return errors.forEach((e) => out(`catalog: ${e}`)), 2;
   if (!choose) return out(json(checklist(picks, catalog, { templates: packageDir('templates') }))), 0;
+  const np = notPicked(choose, picks, catalog);
+  if (np.length) return np.forEach((e) => out(e)), 2;
   const r = resolveSelection(choose, catalog, claudeVersion());
   if (r.errors.length) return r.errors.forEach((e) => out(e)), 2;
   out(json({ ids: r.ids, notices: r.notices, selected: toSelected(picks, r.ids, catalog) }));

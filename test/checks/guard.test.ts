@@ -638,3 +638,36 @@ test('tdd off: a real invocation the parser sees is denied, words the text scan 
   for (const c of ['{ harness tdd off; }', '! harness tdd off', 'if true; then harness tdd off; fi', 'node dist/cli.mj? tdd off', 'node dist/c*.mjs tdd off']) expect(kind(c), c).toBe('deny');
   for (const c of ['echo "harness tdd off"', "grep -r 'harness tdd off' docs", 'git commit -m "docs: harness tdd off"', 'cat <<EOF\nharness tdd off\nEOF', 'h() { node dist/cli.mjs "$@"; }; h tdd off']) expect(kind(c), c).toBe('ask');
 });
+
+test('rereview2 I1: a subcommand the shell builds by expansion is not allowed', () => {
+  for (const c of ['harness ini{t..t} --yes', 'node /abs/dist/cli.mjs ini{t..t} --yes', 'harness in\\\nit --yes', 'harn\\\ness init --yes', 'harness in* --yes', 'harness ini? --yes', 'CLAUDECODE= node /x/dist/cli.mjs ini{t..t} --yes'])
+    expect(kind(c), c).toBe('ask');
+  for (const c of ['harness t{d..d}d off', 'harness t\\\ndd off', 'harness t?d off', 'harness [t]dd off', 'CLAUDECODE= node /x/dist/cli.mjs t{d..d}d off', 'env -u CLAUDECODE harness t{d..d}d off']) expect(kind(c), c).toBe('deny');
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-g-'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { g: 'harness ini{t..t} --yes' } }));
+  expect(decideCommand('npm run g', { ...ctx(), root }).kind).toBe('ask');
+});
+test('rereview2 I2: forwarded, piped or quote-split words ask', () => {
+  for (const c of ['h() { harness "$@"; }; h in\'\'it --yes', 'h() { harness "$@"; }; h t\'\'dd off', 'h() { harness "$@"; }; x=in; h ${x}it --yes', "sh -c 'harness \"$@\"' _ in''it --yes", 'echo in""it --yes | xargs harness', "echo t''dd o''ff | xargs harness", 'printf %s%s in it | xargs -I{} harness {} --yes', "=node /abs/dist/cli.mjs in''it --yes", '=harness in""it --yes'])
+    expect(kind(c), c).toBe('ask');
+});
+test('rereview2 M1: heredoc stripping respects quotes, quoted delimiters and <<-', () => {
+  expect(kind("echo '<<EOF'\nharness tdd off\nEOF")).toBe('deny');
+  expect(kind('cat <<E"O"F\nx\nEOF\nharness tdd off\nE')).toBe('deny');
+  expect(kind("cat <<'EOF'\nharness tdd off\nEOF")).toBe('ask');
+  expect(kind('cat <<"EOF"\nharness tdd off\nEOF')).toBe('ask');
+  expect(kind('cat <<E"O"F\nharness tdd off\nEOF')).toBe('ask');
+  expect(kind('cat <<-EOF\n\tharness tdd off\n\tEOF')).toBe('ask');
+  expect(kind('cat <<EOF\nharness tdd off')).toBe('deny'); // no end line: nothing is stripped
+});
+test('rereview2 M2: --prefix=, --dir= and -C= are read', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-eq-'));
+  mkdirSync(join(root, 'sub'));
+  writeFileSync(join(root, 'package.json'), '{"scripts":{}}');
+  writeFileSync(join(root, 'sub/package.json'), JSON.stringify({ scripts: { s: 'harness init' } }));
+  for (const c of ['npm --prefix=sub run s', 'pnpm --dir=sub s']) expect(decideCommand(c, { ...ctx(), root }).kind, c).toBe('ask');
+});
+test('rereview2: harness inside a path is not a command word', () => {
+  all(['cd /x/harness && git add -A', 'cd /x/harness && git push origin feat', 'git -C /x/harness push origin feat', 'cd ~/Documents/khubaib-personal/harness && git add -A', 'git -C /x/harness add -A', 'rg "update" ~/harness/src', 'grep -rn init src/harness', 'pnpm -C /x/harness test'], 'allow');
+  for (const c of ['/x/harness/bin/harness init', 'node /x/harness/dist/cli.mjs init']) expect(kind(c), c).toBe('ask');
+});

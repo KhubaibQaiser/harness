@@ -594,3 +594,29 @@ describe('mergeMcp', () => {
     expect([...STRUCTURAL].sort()).toEqual(['.claude/settings.json', '.mcp.json']);
   });
 });
+
+describe('uninstall trusts created-key blocks', () => {
+  const F = (rel: string, blocks: string[]) => ({ rel, kind: 'update' as const, hash: '', blocks });
+  const PL = { name: 'alpha', item: 'a', source: { source: 'github' as const, repo: 'o/alpha', sha: 'a'.repeat(40) } };
+
+  it('no backup: a recorded created block removes the key it emptied', () => {
+    const m = mergeSettings(null, { sandbox: 'unattended', plugins: [PL] });
+    const out = removeFromSettings(m.after, F('.claude/settings.json', m.blocks), null, [])!;
+    expect(JSON.parse(out.after)).not.toHaveProperty('enabledPlugins');
+    expect(JSON.parse(out.after)).not.toHaveProperty('extraKnownMarketplaces');
+    const k = mergeMcp('{"mine":1}\n', [{ name: 'pw', item: 'm', config: { command: 'x' } }]);
+    expect(JSON.parse(removeFromMcp(k.after, F('.mcp.json', k.blocks), null, [])!.after)).toEqual({ mine: 1 });
+  });
+
+  it("no backup: the person's own empty key, with no created block, stays", () => {
+    const own = '{\n  "enabledPlugins": {\n    "foo@other": true\n  }\n}\n';
+    const m = mergeSettings(own, { sandbox: 'unattended', plugins: [PL] });
+    const out = removeFromSettings(m.after, F('.claude/settings.json', m.blocks.filter((b) => !b.includes('created":"enabledPlugins'))), null, [])!;
+    expect(JSON.parse(out.after).enabledPlugins).toEqual({ 'foo@other': true });
+    const ownEmpty = '{"enabledPlugins":{"x@harness-pins":true}}\n';
+    const blk = [JSON.stringify({ plugin: 'x@harness-pins', item: 'x' })];
+    expect(JSON.parse(removeFromSettings(ownEmpty, F('.claude/settings.json', blk), null, [])!.after)).toEqual({ enabledPlugins: {} });
+    const mcp = removeFromMcp('{"mcpServers":{"pw":{"command":"x"}}}\n', F('.mcp.json', [JSON.stringify({ mcp: 'pw', item: 'm', server: { command: 'x' } })]), null, [])!;
+    expect(JSON.parse(mcp.after)).toEqual({ mcpServers: {} });
+  });
+});

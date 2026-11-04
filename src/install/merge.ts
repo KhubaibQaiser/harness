@@ -269,24 +269,26 @@ function openRemoval(current: string, f: Manifest['files'][number], original: st
   if (orig === null && original !== null) { try { orig = JSON.parse(original); } catch {} }
   const had = (...path: string[]) => (orig === null ? true : path.reduce((v: any, k) => v?.[k], orig) !== undefined);
   const blocks = (f.blocks ?? []).map(parse) as any[];
+  // A recorded `created` block proves harness made the key, whatever the backup (or its absence) says.
+  const gone = (k: string) => blocks.some((b) => b?.created === k) || !had(k);
   const done = () => {
     const eol = eolOf(current);
     return { after: withEol(JSON.stringify(s, null, jsonIndentOf(current)), eol) + (/\n$/.test(current) ? eol : ''), empty: !Object.keys(s).length };
   };
-  return { s, had, blocks, done };
+  return { s, had, gone, blocks, done };
 }
 
 /** Drops the recorded `mcp` servers that still equal what harness wrote. Returns null when the file is not a JSON object. */
 export function removeFromMcp(current: string, f: Manifest['files'][number], original: string | null, notes: string[]): { after: string; empty: boolean } | null {
   const o = openRemoval(current, f, original);
   if (!o) return null;
-  const { s, had } = o;
+  const { s, gone } = o;
   for (const blk of o.blocks) {
     if (typeof blk?.mcp !== 'string') continue;
     if (isObj(s.mcpServers) && isDeepStrictEqual(s.mcpServers[blk.mcp], blk.server)) delete s.mcpServers[blk.mcp];
     else notes.push(`\`${MCP}\`: server "${blk.mcp}" was not found or was changed; left as is.`);
   }
-  if (isObj(s.mcpServers) && !Object.keys(s.mcpServers).length && !had('mcpServers')) delete s.mcpServers;
+  if (isObj(s.mcpServers) && !Object.keys(s.mcpServers).length && gone('mcpServers')) delete s.mcpServers;
   return o.done();
 }
 
@@ -294,7 +296,7 @@ export function removeFromMcp(current: string, f: Manifest['files'][number], ori
 export function removeFromSettings(current: string, f: Manifest['files'][number], original: string | null, notes: string[]): { after: string; empty: boolean } | null {
   const o = openRemoval(current, f, original);
   if (!o) return null;
-  const { s, had } = o;
+  const { s, had, gone } = o;
   for (const blk of o.blocks) {
     if (typeof blk?.event === 'string') {
       const list = s.hooks?.[blk.event];
@@ -324,7 +326,7 @@ export function removeFromSettings(current: string, f: Manifest['files'][number]
     if (Array.isArray(s.permissions.deny) && !s.permissions.deny.length && !had('permissions', 'deny')) delete s.permissions.deny;
     if (!Object.keys(s.permissions).length && !had('permissions')) delete s.permissions;
   }
-  for (const k of ['enabledPlugins', 'extraKnownMarketplaces']) if (isObj(s[k]) && !Object.keys(s[k]).length && !had(k)) delete s[k];
+  for (const k of ['enabledPlugins', 'extraKnownMarketplaces']) if (isObj(s[k]) && !Object.keys(s[k]).length && gone(k)) delete s[k];
   return o.done();
 }
 

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
-import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
+import { ApplyError, type FsLike, ManifestError, applyChanges, removeEmptyDirs, readManifest, type Change, type Manifest } from '../install/apply.js';
 import { STRUCTURAL, removeBlocks, removeFromMcp, removeFromSettings } from '../install/merge.js';
 import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
@@ -139,13 +139,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       throw e;
     }
   }
-  // Remove directories the deletes left empty, never above the repo root and never a non-empty one.
-  for (const c of changes) {
-    if (c.kind !== 'delete') continue;
-    try {
-      for (let d = dirname(join(root, c.rel)); d !== root; d = dirname(d)) rmdirSync(d);
-    } catch {} // rmdir refuses a non-empty directory
-  }
+  removeEmptyDirs(root, changes);
   for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} \`${c.rel}\``);
   for (const n of notes) out(`Note: ${n}`);
 

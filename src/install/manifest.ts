@@ -92,7 +92,7 @@ export function mergeManifestFiles(old: Manifest, changes: Change[]): Manifest['
     // A merged file the user edited since harness last wrote it: keep the old hash and drop the pre-init backup, so
     // uninstall still sees the edit and removes only harness's blocks (a whole-file restore or delete would lose it).
     const edited = c.kind === 'update' && merged(o.rel) && !matchesHash(c.before, o.hash);
-    const keep = edited || (o.rel === CONFIG && !matchesHash(c.kind === 'update' ? c.before : '', o.hash)); // an edited config keeps its hash
+    const keep = edited || (!(c.kind === 'update' && c.rewrite) && o.rel === CONFIG && !matchesHash(c.kind === 'update' ? c.before : '', o.hash)); // an edited config keeps its hash
     const hash = keep ? o.hash : hashText(c.kind === 'create' ? c.content : c.after);
     // Formatted hunks: keep the old ones the new text still holds, then this update's (uninstall undoes them newest first).
     // ponytail: an old hunk this update reformatted is dropped, so uninstall then leaves that part with a note.

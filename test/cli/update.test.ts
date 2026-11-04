@@ -700,7 +700,9 @@ test('update applies the config change on the AI path and drops it on the plain 
   commitAll(root);
   const r = await up(root, ['--yes']);
   expect(r.code).toBe(0);
-  expect(readFileSync(p, 'utf8')).not.toContain('# mine'); // rewritten from the selection
+  expect(readFileSync(p, 'utf8')).toContain('# mine'); // the person's comment survives
+  expect(realFs.existsSync(join(root, '.claude/agents'))).toBe(false); // the emptied dir goes too
+  expect(readManifest(root)!.files.find((f) => f.rel === CONFIG)!.hash).toBe(sha256(readFileSync(p, 'utf8')));
   expect(realFs.existsSync(join(root, '.claude/agents/staff-reviewer.md'))).toBe(false);
   expect(readManifest(root)!.files.some((f) => f.rel === '.claude/agents/staff-reviewer.md')).toBe(false);
 

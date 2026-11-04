@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
+import { parseDocument } from 'yaml';
 import { join } from 'node:path';
 import { packageDir } from '../core/package-dir.js';
 import type { HarnessConfig } from '../core/config.js';
@@ -10,7 +12,9 @@ import type { Facts } from './detect.js';
 import type { Catalog } from '../catalog/schema.js';
 import { factsJson } from './facts.js';
 import { finalizeReport } from '../ai/report.js';
-import { STRUCTURAL, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeMcp, mergeSettings, pinnedPlugins } from './merge.js';
+import { matchesHash } from './text.js';
+import type { Manifest } from './manifest.js';
+import { STRUCTURAL, removeBlocks, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeMcp, mergeSettings, pinnedPlugins, type PinnedPlugin } from './merge.js';
 import { JEST_REPORTER, resultsRename, testConfigChange } from './test-config.js';
 
 /** The own items a config without `items` (every install before the recommend flow) always has. */
@@ -37,7 +41,7 @@ export function planChanges(
   facts: Facts,
   /** `legacyDir`: update's old results folder; a package whose results file still names it is migrated, TDD on or off.
    * `recorded`: the settings blocks the manifest holds, so update replaces harness's own old hook groups in place. */
-  ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[]; catalog?: Catalog; mcpRecorded?: string[]; ai?: { picks: string; report: string; product: string } },
+  ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[]; catalog?: Catalog; mcpRecorded?: string[]; recordedFiles?: Manifest['files']; ai?: { picks: string; report: string; product: string } },
 ): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[] } {
   const templatesDir = ctx.templatesDir ?? packageDir('templates');
   const changes: Change[] = [];
@@ -57,7 +61,23 @@ export function planChanges(
   const ids = new Set(selectedIds(config));
   const on = (id: string) => !catalog || ids.has(id);
   const chosen = catalog ? catalog.items.filter((i) => ids.has(i.id)) : [];
-  if (catalog) for (const id of ids) if (!catalog.items.some((i) => i.id === id)) notes.push(`Item "${id}" is not in this harness's catalog; it is skipped.`);
+  // An id the catalog no longer has keeps its plugin or server: it is rebuilt from what the manifest recorded.
+  const keepPlugins: PinnedPlugin[] = [];
+  const keepServers: { name: string; item: string; config: Record<string, unknown> }[] = [];
+  if (catalog) {
+    const parse = (bs: string[] = []) => bs.flatMap((b) => { try { return [JSON.parse(b)]; } catch { return []; } });
+    const market = parse(ctx.recorded).find((r) => r.marketplace)?.entry?.source?.plugins ?? [];
+    for (const id of ids) {
+      if (catalog.items.some((i) => i.id === id)) continue;
+      notes.push(`Item "${id}" is not in this catalog; left as is.`);
+      for (const r of parse(ctx.recorded)) {
+        const name = typeof r.plugin === 'string' ? r.plugin.split('@')[0] : '';
+        const e = r.item === id ? market.find((x: any) => x.name === name) : undefined;
+        if (e) keepPlugins.push({ name, item: id, source: e.source, ...(e.lspServers ? { lspServers: e.lspServers } : {}) });
+      }
+      for (const r of parse(ctx.mcpRecorded)) if (r.item === id && typeof r.mcp === 'string') keepServers.push({ name: r.mcp, item: id, config: r.server });
+    }
+  }
   // checks come from the selected own items (any kind); sandbox is not derived
   if (catalog) {
     const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false };
@@ -66,23 +86,41 @@ export function planChanges(
   }
 
   put('.harness/hooks/dispatch.mjs', readFileSync(join(ctx.distDir, 'hooks', 'dispatch.mjs'), 'utf8'), [], 0o755);
-  put('.harness/config.yaml', serializeConfig(config, ctx.version));
+  const cfgBefore = read('.harness/config.yaml');
+  let cfgText = serializeConfig(config, ctx.version);
+  if (catalog && cfgBefore !== null) {
+    // The person's text stays: only the top-level sections that differ are set, so their comments survive.
+    const doc = parseDocument(cfgBefore);
+    if (doc.errors.length) notes.push('`.harness/config.yaml` could not be parsed; it is rewritten from the selection and its comments are not kept.');
+    else {
+      const cur = doc.toJS() ?? {};
+      for (const [k, v] of Object.entries(JSON.parse(JSON.stringify(config)))) if (!isDeepStrictEqual(cur[k], v)) doc.set(k, v);
+      cfgText = doc.toString();
+    }
+  }
+  put('.harness/config.yaml', cfgText);
+  const cfgChange = changes.at(-1);
+  if (catalog && cfgChange?.kind === 'update' && cfgChange.rel === '.harness/config.yaml') cfgChange.rewrite = true;
   // LF whatever the package checkout uses (a Windows clone may have CRLF), so the bytes and the manifest hash are the same everywhere.
   const tpl = (...p: string[]) => readFileSync(join(templatesDir, ...p), 'utf8').replace(/\r\n/g, '\n');
   const ownFiles = catalog
     ? catalog.items.flatMap((i) => (i.source.type === 'own' ? (i.source.files ?? []).map((f) => ({ id: i.id, ...f })) : []))
     : LEGACY_FILES;
+  const entryOf = (rel: string) => ctx.recordedFiles?.find((f) => f.rel === rel);
+  const backupOf = (e: Manifest['files'][number] | undefined) => (e?.backup ? read(e.backup) : null);
   for (const f of ownFiles) {
-    if (on(f.id)) put(f.to, tpl(...f.from.split('/')), [], undefined, catalog ? f.id : undefined);
-    else {
-      const cur = read(f.to);
-      if (cur === null) continue;
-      if (cur.replace(/\r\n/g, '\n') === tpl(...f.from.split('/'))) changes.push({ kind: 'delete', rel: f.to, before: cur });
-      else notes.push(`\`${f.to}\` was edited; it is kept although ${f.id} is no longer selected.`);
-    }
+    if (on(f.id)) { put(f.to, tpl(...f.from.split('/')), [], undefined, catalog ? f.id : undefined); continue; }
+    // Deselected: the manifest decides. Only a file harness wrote and the person left alone is removed or restored.
+    const cur = read(f.to);
+    if (cur === null) continue;
+    const e = entryOf(f.to);
+    const backup = backupOf(e);
+    if (e?.kind === 'create' && matchesHash(cur, e.hash)) changes.push({ kind: 'delete', rel: f.to, before: cur });
+    else if (e?.kind === 'update' && matchesHash(cur, e.hash) && backup !== null) { if (backup !== cur) changes.push({ kind: 'update', rel: f.to, before: cur, after: backup, blocks: [] }); }
+    else notes.push(e ? `\`${f.to}\` was edited since harness wrote it; it is kept although ${f.id} is no longer selected.` : `\`${f.to}\` is not recorded as written by harness; it is kept although ${f.id} is no longer selected.`);
   }
 
-  const settings = mergeSettings(read('.claude/settings.json'), { sandbox: config.sandbox, recorded: ctx.recorded, plugins: pinnedPlugins(chosen) });
+  const settings = mergeSettings(read('.claude/settings.json'), { sandbox: config.sandbox, recorded: ctx.recorded, plugins: [...pinnedPlugins(chosen), ...keepPlugins] });
   notes.push(...settings.notes);
   if (settings.blocks.length || settings.dropped.length) { // leaving `always` drops set blocks with no replacement
     put('.claude/settings.json', settings.after, settings.blocks);
@@ -91,7 +129,7 @@ export function planChanges(
   }
 
   const dropped = [...settings.dropped];
-  const servers = chosen.flatMap((i) => (i.kind === 'mcp' && i.mcp ? [{ name: i.mcp.name, item: i.id, config: i.mcp.config }] : []));
+  const servers = [...chosen.flatMap((i) => (i.kind === 'mcp' && i.mcp ? [{ name: i.mcp.name, item: i.id, config: i.mcp.config }] : [])), ...keepServers];
   if (catalog && (servers.length || ctx.mcpRecorded?.length)) {
     const mcp = mergeMcp(read('.mcp.json'), servers, ctx.mcpRecorded);
     notes.push(...mcp.notes);
@@ -108,6 +146,21 @@ export function planChanges(
     put('AGENTS.md', agents.after, agents.blocks);
     const claude = mergeClaudeMd(read('CLAUDE.md'), true); // init always creates or merges AGENTS.md
     if (claude) put('CLAUDE.md', claude.after, claude.blocks);
+  } else {
+    // Deselected: undo the merge as uninstall does (delete what harness created, restore the backup, else cut the blocks).
+    for (const rel of ['AGENTS.md', 'CLAUDE.md']) {
+      const e = entryOf(rel);
+      const cur = read(rel);
+      if (!e || cur === null || !e.blocks?.length) continue;
+      const backup = backupOf(e);
+      if (e.kind === 'create' && matchesHash(cur, e.hash)) changes.push({ kind: 'delete', rel, before: cur });
+      else if (e.kind === 'update' && matchesHash(cur, e.hash) && backup !== null) changes.push({ kind: 'update', rel, before: cur, after: backup, blocks: [] });
+      else {
+        const after = removeBlocks(cur, e.blocks);
+        if (after !== cur) changes.push({ kind: 'update', rel, before: cur, after, blocks: [] });
+        else notes.push(`\`${rel}\`: the harness block was not found; left as is.`);
+      }
+    }
   }
 
   const ignore = (rel: string, m: { after: string; blocks: string[] }) => m.blocks.length && put(rel, m.after, m.blocks);

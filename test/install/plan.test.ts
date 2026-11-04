@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { cpSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
@@ -25,12 +25,12 @@ const OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gat
 const sel = (id: string, selected = true): Selected => ({ id, include: 'recommended', selected, reason: 'r', addresses: [], pin: '' });
 const AI = { picks: '{}\n', report: '# R\n\n## Findings\n\nx\n\n## Limits\n\nsome\n', product: '# P\n' };
 
-function plan(root: string, ids: string[], over: { off?: string[]; sandbox?: 'always'; recorded?: string[]; mcpRecorded?: string[]; ai?: boolean } = {}) {
+function plan(root: string, ids: string[], over: { off?: string[]; sandbox?: 'always'; recorded?: string[]; mcpRecorded?: string[]; files?: ReturnType<typeof install>['files']; cat?: typeof catalog; ai?: boolean } = {}) {
   const facts = detect(root);
   const config = preset(facts).config;
   config.items = [...ids.map((i) => sel(i)), ...(over.off ?? []).map((i) => sel(i, false))];
   if (over.sandbox) config.sandbox = over.sandbox;
-  return planChanges(root, config, facts, { version: '1.0.0', distDir, templatesDir, catalog, recorded: over.recorded, mcpRecorded: over.mcpRecorded, ...(over.ai ? { ai: AI } : {}) });
+  return planChanges(root, config, facts, { version: '1.0.0', distDir, templatesDir, catalog: over.cat ?? catalog, recordedFiles: over.files, recorded: over.recorded, mcpRecorded: over.mcpRecorded, ...(over.ai ? { ai: AI } : {}) });
 }
 const install = (root: string, changes: Change[]) => applyChanges(root, changes, '1.0.0');
 const blocksOf = (m: ReturnType<typeof install>, rel: string) => m.files.find((f) => f.rel === rel)?.blocks;
@@ -58,13 +58,13 @@ test('legacy config without items keeps the beta files', () => {
 
 test('deselecting staff-reviewer plans its removal; an edited file is kept with a note', () => {
   const root = makeRepo(REPO);
-  install(root, plan(root, OWN).changes);
-  const off = plan(root, OWN.filter((i) => i !== 'staff-reviewer'), { off: ['staff-reviewer'] });
+  const files = install(root, plan(root, OWN).changes).files;
+  const off = plan(root, OWN.filter((i) => i !== 'staff-reviewer'), { off: ['staff-reviewer'], files });
   expect(off.changes.find((c) => c.rel === '.claude/agents/staff-reviewer.md')).toMatchObject({ kind: 'delete' });
   writeFileSync(join(root, '.claude/agents/staff-reviewer.md'), 'mine\n');
-  const kept = plan(root, OWN.filter((i) => i !== 'staff-reviewer'), { off: ['staff-reviewer'] });
+  const kept = plan(root, OWN.filter((i) => i !== 'staff-reviewer'), { off: ['staff-reviewer'], files });
   expect(get(kept.changes, '.claude/agents/staff-reviewer.md')).toBeUndefined();
-  expect(kept.notes.join('\n')).toContain('.claude/agents/staff-reviewer.md` was edited');
+  expect(kept.notes.join('\n')).toContain('.claude/agents/staff-reviewer.md` was edited since harness wrote it');
 });
 
 test('own files carry their item', () => {
@@ -132,4 +132,73 @@ test('ai files are written and recorded', () => {
   expect(m.files.map((f) => f.rel)).toEqual(expect.arrayContaining(['.harness/facts.json', '.harness/picks.json', '.harness/report.md', '.harness/context/product.md']));
   expect(existsSync(join(root, '.harness/facts.json'))).toBe(true);
   expect(plan(root, OWN).changes.some((c) => c.rel === '.harness/facts.json')).toBe(false);
+});
+
+const OFF = OWN.filter((i) => i !== 'staff-reviewer');
+const SR = '.claude/agents/staff-reviewer.md';
+
+test('deselecting an item restores a file the person had before init', () => {
+  const root = makeRepo({ ...REPO, [SR]: 'my reviewer\n' });
+  const files = install(root, plan(root, OWN).changes).files;
+  expect(readFileSync(join(root, SR), 'utf8')).not.toBe('my reviewer\n');
+  const c = get(plan(root, OFF, { off: ['staff-reviewer'], files }).changes, SR);
+  expect(c).toMatchObject({ kind: 'update', after: 'my reviewer\n' });
+});
+
+test('a pre-existing file equal to the template survives a deselect', () => {
+  const root = makeRepo({ ...REPO, [SR]: readFileSync(join(templatesDir, 'agents/staff-reviewer.md'), 'utf8') });
+  const files = install(root, plan(root, OWN).changes).files;
+  const p = plan(root, OFF, { off: ['staff-reviewer'], files });
+  expect(get(p.changes, SR)).toBeUndefined();
+});
+
+test('a file with no manifest entry is never deleted', () => {
+  const root = makeRepo({ ...REPO, [SR]: readFileSync(join(templatesDir, 'agents/staff-reviewer.md'), 'utf8') });
+  const p = plan(root, OFF, { off: ['staff-reviewer'], files: [] });
+  expect(get(p.changes, SR)).toBeUndefined();
+  expect(p.notes.join('\n')).toContain('not recorded');
+});
+
+test('a file from an older release is deleted by its recorded hash', () => {
+  const root = makeRepo(REPO);
+  const old = makeRepo({}, { git: false });
+  cpSync(templatesDir, old, { recursive: true });
+  writeFileSync(join(old, 'agents/staff-reviewer.md'), 'older release\n');
+  const facts = detect(root);
+  const config = preset(facts).config;
+  config.items = OWN.map((i) => sel(i));
+  const first = planChanges(root, config, facts, { version: '1.0.0', distDir, templatesDir: old, catalog });
+  const files = install(root, first.changes).files;
+  expect(readFileSync(join(root, SR), 'utf8')).toBe('older release\n');
+  expect(get(plan(root, OFF, { off: ['staff-reviewer'], files }).changes, SR)).toMatchObject({ kind: 'delete' });
+});
+
+test('the AI-path config keeps the person\'s comments', () => {
+  const root = makeRepo(REPO);
+  const files = install(root, plan(root, OWN).changes).files;
+  const p = join(root, '.harness/config.yaml');
+  writeFileSync(p, readFileSync(p, 'utf8').replace('checks:', '# my note\nchecks:'));
+  const c = get(plan(root, OWN.filter((i) => i !== 'tdd-gate'), { off: ['tdd-gate'], files }).changes, '.harness/config.yaml');
+  expect(text(c)).toContain('# my note');
+  expect(text(c)).toMatch(/tdd: false/);
+  expect(c).toMatchObject({ rewrite: true });
+});
+
+test('an id missing from the catalog keeps its plugin and server', () => {
+  const root = makeRepo(REPO);
+  const m = install(root, plan(root, [...OWN, 'impeccable', 'mobile-mcp']).changes);
+  const small = { ...catalog, items: catalog.items.filter((i) => i.id !== 'impeccable' && i.id !== 'mobile-mcp') };
+  const p = plan(root, [...OWN, 'impeccable', 'mobile-mcp'], { cat: small, recorded: blocksOf(m, '.claude/settings.json'), mcpRecorded: blocksOf(m, '.mcp.json'), files: m.files });
+  expect(p.notes.join('\n')).toContain('"impeccable" is not in this catalog; left as is');
+  expect(p.dropped).toEqual([]);
+  expect(get(p.changes, '.claude/settings.json')).toBeUndefined();
+  expect(get(p.changes, '.mcp.json')).toBeUndefined();
+});
+
+test('deselecting agents-md removes the AGENTS.md block and the CLAUDE.md import', () => {
+  const root = makeRepo({ ...REPO, 'AGENTS.md': '# Mine\n', 'CLAUDE.md': '# C\n' });
+  const files = install(root, plan(root, OWN).changes).files;
+  const p = plan(root, OWN.filter((i) => i !== 'agents-md'), { off: ['agents-md'], files });
+  expect(text(get(p.changes, 'AGENTS.md'))).toBe('# Mine\n');
+  expect(text(get(p.changes, 'CLAUDE.md'))).toBe('# C\n');
 });

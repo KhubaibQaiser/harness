@@ -534,10 +534,12 @@ describe('plugins, marketplace and MCP blocks', () => {
     expect(pinnedPlugins([
       item('a', { type: 'github', repo: 'o/alpha', plugin: 'alpha', sha: 'a'.repeat(40) }),
       item('b', { type: 'git-subdir', repo: 'o/mono', path: 'p/b', plugin: 'beta', sha: 'b'.repeat(40) }, { lsp_servers: { x: { command: 'y' } } }),
+      item('x', { type: 'git-subdir', repo: 'o/mono', path: 'skills/x', plugin: 'xs', sha: 'c'.repeat(40) }, { kind: 'external-skill' }),
       { id: 'm', kind: 'mcp', source: { type: 'npm', package: 'p', version: '1.0.0' } } as any,
     ])).toEqual([
       { name: 'alpha', item: 'a', source: { source: 'github', repo: 'o/alpha', sha: 'a'.repeat(40) } },
       { name: 'beta', item: 'b', source: { source: 'git-subdir', url: 'o/mono', path: 'p/b', sha: 'b'.repeat(40) }, lspServers: { x: { command: 'y' } } },
+      { name: 'xs', item: 'x', source: { source: 'git-subdir', url: 'o/mono', path: 'skills/x', sha: 'c'.repeat(40) } },
     ]);
   });
 });

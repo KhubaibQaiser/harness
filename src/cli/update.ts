@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { LEGACY_RESULTS_DIR } from '../core/config.js';
 import { migrateResultsDir, validateConfig } from '../core/config-io.js';
 import { latestVersion } from '../core/registry.js';
-import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, readManifest, type Manifest } from '../install/apply.js';
+import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, removeEmptyDirs, readManifest, type Manifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL, mergeManifestFiles } from '../install/manifest.js';
@@ -71,12 +71,14 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   if (!v.ok) return v.errors.forEach((e) => out(e)), out('Next step: run harness doctor.'), 1;
 
   const aiPath = v.config.items.length > 0; // a selection from the recommend flow: the plan owns the config
+  const cat = aiPath ? loadCatalog() : null;
+  if (cat?.errors.length) return cat.errors.forEach((e) => out(e)), out('The catalog has errors; update stopped. Run harness catalog validate.'), 1;
   let plan: ReturnType<typeof planChanges>;
   try {
     plan = planChanges(root, v.config, detect(root), {
       version, distDir: cli.distDir, templatesDir: cli.templatesDir, legacyDir: LEGACY_RESULTS_DIR,
       recorded: m.files.find((f) => f.rel === SETTINGS)?.blocks, mcpRecorded: m.files.find((f) => f.rel === MCP)?.blocks,
-      ...(aiPath ? { catalog: loadCatalog().catalog } : {}),
+      recordedFiles: m.files, ...(aiPath ? { catalog: cat!.catalog } : {}),
     });
   } catch (e) {
     return out(`Cannot build the update plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
@@ -140,6 +142,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const files = mergeManifestFiles(m, changes);
   const err = commit(changes, { version, createdAt: new Date().toISOString(), ...(m.tddOff ? { tddOff: m.tddOff } : {}), files });
   if (err) return out(err), 1;
+  removeEmptyDirs(root, changes);
   stampHarnessFiles(root); // change detection: these writes are harness's own
 
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);

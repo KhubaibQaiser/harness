@@ -9,7 +9,7 @@ export { readManifest, ManifestError, type Manifest };
 
 export type Change =
   | { kind: 'create'; rel: string; content: string; mode?: number; blocks?: string[]; item?: string }
-  | { kind: 'update'; rel: string; before: string; after: string; blocks: string[]; replace?: Hunk[]; formatted?: true; unformatted?: true; rename?: { from: string; to: string }; dropped?: string[]; item?: string }
+  | { kind: 'update'; rel: string; before: string; after: string; blocks: string[]; replace?: Hunk[]; formatted?: true; unformatted?: true; rename?: { from: string; to: string }; dropped?: string[]; item?: string; /** Harness wrote the whole file (the AI-path config): record its new hash. */ rewrite?: true }
   | { kind: 'delete'; rel: string; before: string };
 
 export type FsLike = Pick<
@@ -162,4 +162,14 @@ export function applyChanges(
     throw new ApplyError(`apply failed and was rolled back: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
   }
   return manifest;
+}
+
+/** Removes the directories the deletes left empty, never above the repo root and never a non-empty one. */
+export function removeEmptyDirs(root: string, changes: Change[]): void {
+  for (const c of changes) {
+    if (c.kind !== 'delete') continue;
+    try {
+      for (let d = dirname(join(root, c.rel)); d !== root; d = dirname(d)) nodeFs.rmdirSync(d);
+    } catch {} // rmdir refuses a non-empty directory
+  }
 }

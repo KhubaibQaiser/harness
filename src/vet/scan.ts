@@ -4,7 +4,7 @@ import { esc } from '../core/config.js';
 import type { Fetched } from './fetch.js';
 
 export type Severity = 'high' | 'medium' | 'low';
-export type Rule = 'hook-shell' | 'secrets' | 'unpinned-remote' | 'obfuscated' | 'network' | 'mcp-server' | 'permissions' | 'injection-text' | 'unsafe-archive' | 'license' | 'telemetry';
+export type Rule = 'hook-shell' | 'hook-http' | 'secrets' | 'unpinned-remote' | 'obfuscated' | 'network' | 'mcp-server' | 'permissions' | 'injection-text' | 'unsafe-archive' | 'license' | 'telemetry';
 export interface VetFinding { severity: Severity; rule: Rule; file: string; line: number; text: string }
 export interface ScanResult { target: string; repo: string; sha: string; path: string; kind: 'plugin' | 'skill' | 'repo'; findings: VetFinding[]; context: { tokens: number; unmeasured: string[] }; files: number; dir?: string }
 
@@ -125,11 +125,15 @@ function hookShell(file: string, text: string, json: Record<string, unknown>): V
   const out: VetFinding[] = [];
   for (const [ev, groups] of Object.entries(json.hooks)) {
     const evAt = Math.max(0, text.indexOf(JSON.stringify(ev)));
-    const list = Array.isArray(groups) ? groups : [];
-    const hooks = list.flatMap((g) => (isObj(g) && Array.isArray(g.hooks) ? g.hooks : [g]));
+    const list = Array.isArray(groups) ? groups : [groups];
+    const hooks = list.flatMap((g) => (isObj(g) && g.hooks !== undefined ? (Array.isArray(g.hooks) ? g.hooks : [g.hooks]) : [g]));
     for (const h of hooks) {
-      if (!isObj(h) || typeof h.command !== 'string' || (h.type !== undefined && h.type !== 'command')) continue;
-      out.push({ severity: 'high', rule: 'hook-shell', file, line: lineOf(text, JSON.stringify(h.command), evAt), text: show(`${ev}: ${h.command}`) });
+      if (!isObj(h)) continue;
+      if (h.type === 'http' && typeof h.url === 'string') out.push({ severity: 'high', rule: 'hook-http', file, line: lineOf(text, JSON.stringify(h.url), evAt), text: show(`${ev}: ${h.url}`) });
+      if (typeof h.command !== 'string' || (h.type !== undefined && h.type !== 'command')) continue;
+      const line = lineOf(text, JSON.stringify(h.command), evAt);
+      out.push({ severity: 'high', rule: 'hook-shell', file, line, text: show(`${ev}: ${h.command}`) });
+      if (unpinned(h.command)) out.push({ severity: 'high', rule: 'unpinned-remote', file, line, text: show(h.command) });
     }
   }
   return out;
@@ -144,6 +148,20 @@ function mcpRemote(file: string, text: string, json: Record<string, unknown>): V
     const cmd = [s.command, ...(Array.isArray(s.args) ? s.args.map(String) : [])].join(' ');
     if (unpinned(cmd)) out.push({ severity: 'high', rule: 'unpinned-remote', file, line: lineOf(text, JSON.stringify(s.command)), text: show(cmd) });
   }
+  return out;
+}
+
+/** Logical lines: a trailing backslash joins the next physical line. Each keeps the number of its first physical line. */
+function joinContinuations(text: string): [string, number][] {
+  const out: [string, number][] = [];
+  let cur: [string, number] | undefined;
+  text.split(/\r?\n/).forEach((l, i) => {
+    const joined = cur ? cur[0] + l : l;
+    cur = [joined, cur ? cur[1] : i + 1];
+    if (l.endsWith('\\') && joined.length < 1_000_000) cur[0] = joined.slice(0, -1) + ' ';
+    else { out.push(cur); cur = undefined; }
+  });
+  if (cur) out.push(cur);
   return out;
 }
 
@@ -168,14 +186,15 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
     }
     if (!textRules(rel)) continue;
     let carry = false;
-    bare.split(/\r?\n/).forEach((l, i) => {
-      if (SECRET_RE.some((re) => re.test(l)) || envPiped(l)) findings.push({ severity: 'high', rule: 'secrets', file: rel, line: i + 1, text: show(l.trim()) });
-      if (unpinned(l) || (carry && piped(l, true))) findings.push({ severity: 'high', rule: 'unpinned-remote', file: rel, line: i + 1, text: show(l.trim()) });
+    const json = rel.endsWith('.json'); // structured rules above already judge hook commands and MCP servers
+    joinContinuations(bare).forEach(([l, n]) => {
+      if (SECRET_RE.some((re) => re.test(l)) || envPiped(l)) findings.push({ severity: 'high', rule: 'secrets', file: rel, line: n, text: show(l.trim()) });
+      if (!json && (unpinned(l) || (carry && piped(l, true)))) findings.push({ severity: 'high', rule: 'unpinned-remote', file: rel, line: n, text: show(l.trim()) });
       carry = /\|\s*$/.test(l) && FETCH.test(l);
     });
   }
   const seen = new Set<string>();
-  const uniq = findings.filter((x) => { const k = `${x.rule}\0${x.file}\0${x.line}\0${x.rule === 'hook-shell' ? x.text : ''}`; return !seen.has(k) && !!seen.add(k); });
+  const uniq = findings.filter((x) => { const k = `${x.rule}\0${x.file}\0${x.line}\0${x.text}`; return !seen.has(k) && !!seen.add(k); });
   const all = uniq.map((x) => ({ ...x, file: esc(x.file) }));
   all.sort((a, b) => SEV[a.severity] - SEV[b.severity] || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || a.line - b.line);
   const at = path ? `${path}/` : '';

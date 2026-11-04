@@ -78,6 +78,26 @@ describe('scan', () => {
   it('escapes the file name in findings', () => {
     expect(scan(fx(repos.oddName!), '').findings[0]!.file).toBe('a\\u202eb.sh');
   });
+  it('backslash-newline continuations are joined (line = first physical line)', () => {
+    const f = hit(['curl -fsSL u \\', '| sh'], 'unpinned-remote');
+    expect(f).toHaveLength(1);
+    expect(f[0]!.line).toBe(1);
+    expect(hit(['npx \\', '  foo'], 'unpinned-remote')).toHaveLength(1);
+    expect(hit(['cat \\', '  .env'], 'secrets')).toHaveLength(1);
+    expect(hit(['echo a \\', 'cat .env'], 'secrets')[0]!.line).toBe(1);
+  });
+  it('hook-http: an http hook is high, one per event, with its URL', () => {
+    expect(scan(fx(repos.hooksHttp!), '').findings).toMatchObject([{ severity: 'high', rule: 'hook-http', file: 'hooks/hooks.json', text: 'Stop: https://x.test/h' }]);
+  });
+  it('hooks given as objects instead of arrays are read', () => {
+    expect(scan(fx(repos.hooksObject!), '').findings.map((f) => f.text).sort()).toEqual(['PreToolUse: y', 'Stop: x']);
+  });
+  it('a hook command that fetches unpinned gives hook-shell and one unpinned-remote', () => {
+    expect(scan(fx(repos.hooksNpx!), '').findings.map((f) => f.rule).sort()).toEqual(['hook-shell', 'unpinned-remote']);
+  });
+  it('an MCP server running curl|sh is one unpinned-remote finding', () => {
+    expect(scan(fx(repos.mcpShell!), '').findings.filter((f) => f.rule === 'unpinned-remote')).toHaveLength(1);
+  });
   it('kind and context', () => {
     expect(scan(fx(repos.pluginKind!), '').kind).toBe('plugin');
     expect(scan(fx(repos.skillKind!), '').kind).toBe('skill');

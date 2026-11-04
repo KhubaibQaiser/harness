@@ -112,8 +112,8 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 
 | Command | What it does |
 |---|---|
-| `status` | Shows each gate as on or off, and why. |
-| `doctor` | Checks the install and prints a fix for each problem. Exits 1 if there is one. |
+| `status` | Shows each gate as on or off, and why. Also the catalog version, how many items are selected, how many selected plugins aren't installed, and the always-loaded context estimate. |
+| `doctor` | Checks the install and prints a fix for each problem. Exits 1 if there is one. For installs with items it also reports the catalog version, items whose files or settings entries are missing (`/harness:sync` restores them), selected plugins that are enabled but not installed, plugin versions that differ from the catalog's pin, a plugin enabled from two marketplaces, an edited `harness-pins` marketplace or MCP server, and `checks` in `config.yaml` that differ from the selected items. It runs `claude plugin list` once; without `claude` it skips the plugin checks. |
 | `uninstall [--yes\|--force\|--dry-run]` | Removes what harness added and restores your files. Close open Claude Code sessions first. |
 | `remove <id> [--dry-run\|--yes]` | Removes one installed item and what it wrote, and restores your files. Refuses while another installed item requires it. The agent has to ask before running it. |
 | `why <id>` | For an installed item: why it is there, the findings it addresses, its cost and its context. For one that isn't installed: why it is in the catalog and its cost. |
@@ -134,8 +134,6 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 Without a terminal, pass `--yes` or `--dry-run`.
 
 `init` writes `.harness/` (the dispatcher, config and manifest) and merges hook entries and deny rules into `.claude/settings.json`. It also adds a short block to `AGENTS.md` (imported from `CLAUDE.md`), `.gitignore` lines, and the review agent. When TDD is on, it edits your test config so tests write JSON results. It then writes the items you chose, the plugin pins in `.claude/settings.json` and the servers in `.mcp.json`, described below. The full list is in [docs/reference.md](docs/reference.md#what-init-changes-in-your-repo).
-
-Coming: an item line in `status` and `doctor`.
 
 ### AI flags
 
@@ -254,6 +252,8 @@ Start with `harness doctor`, which prints a fix for each problem.
 - **Every edit is denied.** `.harness/config.yaml` is invalid. `doctor` names the line.
 - **"Run a test first", but the test exists.** Red-first needs a fresh failing run from this session. Run the test, see it fail, then edit.
 - **A Stop step is skipped with a warning.** Its tool isn't on Claude Code's PATH, which can differ from your terminal's. Install the tool or edit `stop.steps`.
+- **`doctor` says an item is missing a file.** Run `/harness:sync`; it restores the file or the settings entry.
+- **`doctor` says a plugin is enabled but not installed.** Run the `claude plugin install <id> --scope project` line it prints, or `/harness:sync --install-plugins`.
 - **Format or lint fails on `.harness/` files.** Add `.harness/` to that tool's ignore file.
 
 More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setup-details).

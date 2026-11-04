@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { loadCatalog } from '../catalog/load.js';
+import { budgetLines, budgetVerdict, measureSelectionSync } from '../budget/measure.js';
+import { packageDir } from '../core/package-dir.js';
+import { pinnedPlugins } from '../install/merge.js';
+import { pluginList } from '../install/plugin-install.js';
+import { selectedIds } from '../install/plan.js';
 import { loadConfig } from '../core/config.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
 import { readHookEnv } from '../core/hook-env.js';
@@ -18,7 +24,9 @@ const GATES: [string, keyof ReturnType<typeof loadConfig>['config']['checks']][]
   ['guard', 'guard'], ['protect', 'protect'], ['dep-verify', 'depVerify'], ['multi-file', 'multiFile'], ['tdd', 'tdd'], ['stop', 'stop'],
 ];
 
-export function status(args: string[], cli: CliEnv, deps: { platform?: NodeJS.Platform } = {}): number {
+export type StatusDeps = { platform?: NodeJS.Platform; pluginList?: typeof pluginList };
+
+export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): number {
   const { root, out } = cli;
   const platform = deps.platform ?? process.platform;
   if (args.length) return out('Usage: harness status'), 2;
@@ -57,6 +65,7 @@ export function status(args: string[], cli: CliEnv, deps: { platform?: NodeJS.Pl
   if (blocked) lines.push(`Last blocked settings change: ${blocked.ts} (${blocked.reason})`);
   const changed = lastHarnessFilesChange(root);
   if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
+  if (config.items.length) lines.push(...itemLines(config, deps.pluginList ?? pluginList));
   lines.push('Last day');
   lines.forEach((l) => out(l));
   return stats(['--days', '1'], cli);
@@ -71,4 +80,20 @@ function blocksOnFailure(root: string): boolean {
     return false;
   }
   return BLOCKING.every((ev) => Array.isArray(hooks?.[ev]) && hooks[ev].some((g: any) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure === 'block')));
+}
+
+/** Catalog version, selected items, plugins not installed and the budget's first line. A catalog that fails to load adds nothing. */
+function itemLines(config: ReturnType<typeof loadConfig>['config'], list: typeof pluginList): string[] {
+  const lc = loadCatalog();
+  if (lc.errors.length) return [];
+  const ids = selectedIds(config);
+  const lines = [`Catalog ${config.catalog_version}`, `Items: ${ids.length} selected`];
+  const wanted = pinnedPlugins(lc.catalog.items.filter((i) => ids.includes(i.id))).map((p) => `${p.name}@harness-pins`);
+  if (wanted.length) {
+    const have = list(); // one call
+    lines.push(have ? `Plugins not installed: ${wanted.filter((id) => !have.some((p) => p.id === id)).length}` : 'Plugins not installed: unknown (claude not found)');
+  }
+  const m = measureSelectionSync(ids, lc.catalog, { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) });
+  lines.push(budgetLines(budgetVerdict(m, m, config.context.budget_tokens))[0]);
+  return lines;
 }

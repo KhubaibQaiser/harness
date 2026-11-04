@@ -1,0 +1,19 @@
+id: aikido
+kind: plugin
+title: "Aikido Security"
+source: {"type": "github", "repo": "AikidoSec/aikido-claude-plugin", "plugin": "aikido", "sha": "8fdc995a44102a30ad54164e0bdd249d158c725c"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "1.2.11"
+applies_when: {"always": true}
+cost: {"context": "low", "setup": "medium"}
+stance: discouraged
+stance_reason: "duplicates semgrep"
+why: "Aikido Security for Claude Code: scan code (SAST, secrets, IaC) and list all issues from your Aikido feed powered by the Aikido MCP server."
+evidence:
+  - "https://github.com/AikidoSec/aikido-claude-plugin/blob/8fdc995a44102a30ad54164e0bdd249d158c725c/.claude-plugin/plugin.json (version 1.2.11, license MIT; the why sentence is its description)"
+  - "License: the repo has no LICENSE file and GitHub reports none; the MIT line in plugin.json counts under the owner's rule. The MCP package it runs, @aikidosec/mcp, is listed on npm with license \"AGPL\" (npm view @aikidosec/mcp@1.0.28): owner decision in the note"
+  - "audit.html: \"Skip aikido, sonarqube, jfrog and sonatype; they duplicate semgrep.\" (SAST / DAST / supply chain row). Stance discouraged with the brief's reason. Note semgrep is excluded from this catalog (no license), so the stated reason is about the audit's recommendation, not an installed alternative (fix round 1: kept as the brief's text; semgrep is excluded for having no licence)"
+  - "https://github.com/AikidoSec/aikido-claude-plugin/blob/8fdc995a44102a30ad54164e0bdd249d158c725c/.mcp.json: stdio server `npx -y @aikidosec/mcp@1.0.28`, a pinned npm version (npm latest is 1.0.33). Fetched from npm the first time it launches. The package (npm view @aikidosec/mcp@1.0.28 dependencies) depends on zod, jose, pino, @github/keytar, isomorphic-fetch, @xhmikosr/decompress and @modelcontextprotocol/sdk at exact versions, but `npx -y` resolves those packages' own dependencies unpinned at install, and @github/keytar is a native module"
+  - "skills/setup/SKILL.md: needs Node.js 18.19.0 or newer and an Aikido sign-in through the MCP login tool (browser flow); skills/scan/SKILL.md: files are scanned through aikido_scan_paths (the server reads the files) or aikido_full_scan (the agent passes file content), up to 50 files per request, so your code goes to Aikido's service (setup medium: an Aikido account). Tools are deferred; the plugin has no hooks, agents or commands (tree listing): context low"
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, url AikidoSec/aikido-claude-plugin). Vendor HEAD d49c4fa7c2ba has the same file list"

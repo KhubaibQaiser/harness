@@ -1,0 +1,20 @@
+id: sentry
+kind: plugin
+title: "Sentry"
+source: {"type": "github", "repo": "getsentry/plugin-claude", "plugin": "sentry", "sha": "73e53541d7af21672e27428c7067f4264b8a3d65"}
+license: MIT
+min_claude_code: 2.1.314
+plugin_version: "1.4.0"
+applies_when: {"any_dep": ["@sentry/node", "@sentry/react", "@sentry/nextjs", "@sentry/browser", "@sentry/react-native"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+why: "Sentry Plugin for Claude Code to help with debugging including MCP and skill capabilities."
+evidence:
+  - "https://github.com/getsentry/plugin-claude/blob/73e53541d7af21672e27428c7067f4264b8a3d65/.claude-plugin/plugin.json (version 1.4.0, license MIT; the why sentence is its description)"
+  - "https://github.com/getsentry/plugin-claude/blob/73e53541d7af21672e27428c7067f4264b8a3d65/LICENSE (MIT, GitHub spdx MIT). The plugin also points at Sentry's hosted MCP server; the hosted service has its own terms, which I did not read. The repo carries real skills under the MIT file, so I recorded MIT rather than vendor-terms: owner decision in the note"
+  - "audit.html: \"Lets the agent read the real error or funnel before it touches the fix. Both are on your résumé and neither is in your loop yet.\" (sentry · posthog, Project scope) and \"Prefer entries the vendor itself publishes (Expo, Sentry, Google Chrome, AWS, Microsoft).\""
+  - "plugin.json mcpServers: {\"sentry\": {\"type\": \"http\", \"url\": \"https://mcp.sentry.dev/mcp?utm_source=plugin\"}}, a hosted server, deferred tools. Eight skills (sentry-get-started, sentry-instrument, sentry-debug-issue, sentry-fix-stack-traces, sentry-create-alert, sentry-setup-releases, sentry-otel-exporter-setup, sentry-snapshots-cocoa). No hooks, agents or commands in the tree listing. README: \"A few router skills are always available; the rest ... load on demand, so they do not crowd the model's context\": context low"
+  - "Requirements: a Sentry account for the hosted MCP server (the README says it queries \"your Sentry environment\"; I did not read the sign-in flow). Error reports and stack traces you ask about come from Sentry's service"
+  - "Pin choice: the official marketplace pins this sha (anthropics/claude-plugins-official at a2e251d9b97b, url getsentry/plugin-claude). Vendor HEAD 1b082a07d1a8 is 6 commits ahead (skill and reference changes; the HEAD tree has no path containing hook, .mcp, agents/ or commands/)"
+  - "applies_when note: the audit gives Project scope; the docs name no dependency, so the @sentry SDK packages (npm view: 11.10.0 for node, react, nextjs and browser; react-native 8.33.0) are my inference for 'projects that use Sentry'. It will not match a project that has not installed the SDK yet"
+  - "Overlap: getsentry-skills (plugin sentry-skills) is a different plugin from the same vendor; the repo getsentry/plugin-claude says it is generated from getsentry/sentry-for-ai"

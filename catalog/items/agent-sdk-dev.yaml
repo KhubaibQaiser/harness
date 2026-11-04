@@ -1,0 +1,18 @@
+id: agent-sdk-dev
+kind: plugin
+title: "Agent SDK development kit"
+source: {"type": "git-subdir", "repo": "anthropics/claude-plugins-official", "path": "plugins/agent-sdk-dev", "plugin": "agent-sdk-dev", "sha": "a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"any_dep": ["@anthropic-ai/claude-agent-sdk"]}
+cost: {"context": "low", "setup": "low"}
+stance: optional
+why: "A comprehensive plugin for creating and verifying Claude Agent SDK applications in Python and TypeScript."
+evidence:
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/agent-sdk-dev/README.md (the why sentence is its first sentence)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/agent-sdk-dev/.claude-plugin/plugin.json (version 1.0.1)"
+  - "https://github.com/anthropics/claude-plugins-official/blob/a2e251d9b97b909bf728b3e84fc8d17e6aba0063/plugins/agent-sdk-dev/LICENSE (Apache-2.0, the plugin directory's own file)"
+  - "audit.html: \"New claude-api skill (built in) · agent-sdk-dev, mcp-server-dev (Anthropic) · langfuse or deepeval · hamelsmu/evals-skills\" (AI and LLM features row: \"You build AI products, so tracing and evals belong in the base of AI repos.\")"
+  - "Contents at the pin: commands/new-sdk-app.md and two agents (agents/agent-sdk-verifier-py.md, agents/agent-sdk-verifier-ts.md); no hooks, skills or MCP files (tree listing). On demand, so context low. README: /new-sdk-app \"Checks for and installs the latest SDK version\" and creates project files, so it writes to the working directory and installs packages only when you run it. No account is required by the plugin"
+  - "applies_when note: the docs name no dependency; the TypeScript SDK package @anthropic-ai/claude-agent-sdk (npm view: 0.3.318) is my inference for 'a project that uses the Agent SDK'. Python-only repos are not matched because facts.deps reads package.json only"
+  - "Source choice: the pin is the official marketplace entry (relative path plugins/agent-sdk-dev at a2e251d9b97b). Version drift not checked (git-subdir)"

@@ -1,0 +1,17 @@
+id: trailofbits-supply-chain-risk-auditor
+kind: plugin
+title: "Trail of Bits supply-chain-risk-auditor"
+source: {"type": "git-subdir", "repo": "trailofbits/skills", "path": "plugins/supply-chain-risk-auditor", "plugin": "supply-chain-risk-auditor", "sha": "711af095215ad4ecde5b90cd1d0124b3f1c4ca9e"}
+license: CC-BY-SA-4.0
+min_claude_code: 2.1.314
+applies_when: {"always": true}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+why: "Audit a project's npm, PyPI, and Go dependencies for supply-chain risk: version-matched advisories for direct dependencies and the full lockfile tree, abandoned upstreams, npm publisher concentration, and install scripts"
+evidence:
+  - "https://github.com/trailofbits/skills/blob/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e/plugins/supply-chain-risk-auditor/.claude-plugin/plugin.json (version 2.0.4; the why text is its description; author Eric Quintero)"
+  - "https://github.com/trailofbits/skills/blob/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e/LICENSE (Creative Commons Attribution-ShareAlike 4.0 International, repo root; README section License says the same). No LICENSE in the plugin directory"
+  - "audit.html: \"Pick individual skills: insecure-defaults and supply-chain-risk-auditor. Don't install the whole marketplace.\" (On demand)"
+  - "https://github.com/trailofbits/skills/blob/711af095215ad4ecde5b90cd1d0124b3f1c4ca9e/plugins/supply-chain-risk-auditor/README.md Usage: \"Requirements: `uv` (the scripts are stdlib-only Python). Authenticated `gh` is strongly recommended\" (setup medium). A deterministic collector \"queries registries and advisory databases\" (README: OSV, npm and PyPI registries, GitHub, OpenSSF Scorecard), so your dependency names go to those public services; HTTP responses are cached under the system temp directory. It \"never installs, builds, or executes the project or its packages\""
+  - "Contents at the pin: one skill (skills/supply-chain-risk-auditor with Python scripts), evals/; no hooks, agents or MCP files (tree listing). On demand, so context low. pnpm-lock.yaml is not read by the collector (README), which matters for pnpm repos"
+  - "Not in the official marketplace (read at a2e251d9b97b), so the pin is the vendor repo's default-branch HEAD. Version drift not checked (git-subdir)"

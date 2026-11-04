@@ -24,6 +24,12 @@ const BATCHES: Record<number, string[]> = {
     'mergify',
     'jfrog', 'sonatype-guide',
   ],
+  5: [
+    'security-guidance', 'claude-security', 'semgrep', 'trailofbits-insecure-defaults', 'trailofbits-supply-chain-risk-auditor', 'stackhawk-hawkscan', 'aikido', 'probity', 'tdd-guard', 'sonarqube',
+    'sentry', 'getsentry-skills', 'posthog', 'growthbook', 'datadog',
+    'evals-skills', 'langfuse', 'deepeval', 'agent-sdk-dev', 'mcp-server-dev',
+    'marketingskills',
+  ],
 };
 
 test.each(Object.entries(BATCHES))('batch %s ids are all in items/ or excluded.yaml', (_n, ids) => {
@@ -47,6 +53,10 @@ const STANCES: Record<number, Record<string, { stance: string; reason?: string }
     'pr-review-toolkit': { stance: 'discouraged', reason: 'overlaps the built-in /code-review and the harness reviewer.' },
   },
   3: {
+  },
+  5: {
+    aikido: { stance: 'discouraged', reason: 'duplicates semgrep' },
+    'tdd-guard': { stance: 'discouraged', reason: 'superseded by probity' },
   },
 };
 
@@ -82,4 +92,33 @@ test('batch 4 hook-bearing items carry installs-hook and only injectors are medi
   for (const id of hooked) expect([id, by.get(id)?.side_effects.includes('installs-hook')]).toEqual([id, true]);
   const medium = BATCHES[4].filter((id) => by.get(id)?.cost.context === 'medium').sort();
   expect(medium).toEqual(['jfrog', 'postman', 'stripe', 'vercel']);
+});
+
+// Batch 5 hook-bearing ids, listed from each pinned hooks.json (security-guidance, stackhawk-hawkscan, probity, tdd-guard, posthog, datadog);
+// the catalog's side_effects must match this independent list in both directions.
+test('batch 5 hook-bearing items carry installs-hook and context cost follows the rules', () => {
+  const by = new Map(loadCatalog().catalog.items.map((i) => [i.id, i]));
+  const hooked = ['security-guidance', 'stackhawk-hawkscan', 'probity', 'tdd-guard', 'posthog', 'datadog'];
+  for (const id of hooked) expect([id, by.get(id)?.side_effects.includes('installs-hook')]).toEqual([id, true]);
+  const withHook = BATCHES[5].filter((id) => by.get(id)?.side_effects.includes('installs-hook')).sort();
+  expect(withHook).toEqual([...hooked].sort());
+  const level = (l: string) => BATCHES[5].filter((id) => by.get(id)?.cost.context === l).sort();
+  expect(level('medium')).toEqual(['datadog', 'security-guidance', 'stackhawk-hawkscan']);
+  expect(level('high')).toEqual(['posthog']);
+  expect(by.get('datadog')?.side_effects).toContain('telemetry-on-by-default');
+  expect(by.get('security-guidance')?.side_effects).toContain('telemetry-on-by-default');
+});
+
+// Items that fetch or run code unpinned at launch must say so in their evidence (owner precedent).
+test('batch 5 unpinned-launch items say unpinned in evidence', () => {
+  const by = new Map(loadCatalog().catalog.items.map((i) => [i.id, i]));
+  for (const id of ['probity', 'tdd-guard', 'security-guidance']) expect([id, by.get(id)?.evidence.some((e) => /unpinned/i.test(e))]).toEqual([id, true]);
+});
+
+test('probity conflicts with tdd-gate and tdd-guard, and no other batch 5 item declares a conflict', () => {
+  const items = loadCatalog().catalog.items;
+  const by = new Map(items.map((i) => [i.id, i]));
+  expect(by.get('probity')?.conflicts_with).toEqual(['tdd-gate', 'tdd-guard']);
+  for (const id of ['tdd-gate', 'tdd-guard']) expect(by.has(id)).toBe(true);
+  expect(BATCHES[5].filter((id) => id !== 'probity' && (by.get(id)?.conflicts_with.length ?? 0) > 0)).toEqual([]);
 });

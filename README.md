@@ -291,7 +291,7 @@ More detail, including TDD setup: [docs/reference.md](docs/reference.md#tdd-setu
 - MCP servers need each user's approval.
 - `CLAUDECODE` is also set in IDE terminals, so `init` and `update` run there too, not only inside a Claude Code session. They don't print `Run /harness:init inside Claude Code`.
 - There is no version-drift check for `git-subdir` plugins that have no `plugin_version`. The commit is pinned, but `doctor` has nothing to compare. The release notes list them.
-- The agent asks before item changes (`init`, `update`, `add`, `remove`, `sync`, `uninstall`).
+- When the agent runs an item change (`init`, `update`, `add`, `remove`, `sync`, `uninstall`), harness asks you first.
 - Under `sandbox: always`, item commands may need Claude Code's `!` prefix. Unverified, pending the live check.
 - `.harnessignore` has no `!` negation.
 - `remove tdd-gate` (or deselecting it) leaves the test-config edits `init` made in place; undo them by hand.

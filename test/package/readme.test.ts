@@ -83,6 +83,6 @@ test('release notes list every excluded id and every unpinned git-subdir item', 
   expect(notes).toContain(`Catalog version ${version}, ${catalogItems.length} items`);
 });
 
-test('versions are 0.2.0-beta.0 in the README status line', () => {
+test('the README status line shows the package version', () => {
   expect(readme).toContain(`version \`${pkgVersion}\``);
 });

@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { expect, test } from 'vitest';
 import { parseDocument } from 'yaml';
 import { sync } from '../../src/cli/sync.js';
+import { uninstall } from '../../src/cli/uninstall.js';
 import type { Prompt } from '../../src/cli/prompt.js';
 import type { Exec } from '../../src/core/exec.js';
 import { loadCatalog } from '../../src/catalog/load.js';
@@ -165,13 +166,73 @@ test('missing plugins are installed with --install-plugins', async () => {
   expect(calls.some((a) => a[1] === 'install')).toBe(false);
 });
 
-test('a plugin installed by hand is recorded by sync', async () => {
+const SETTINGS = '.claude/settings.json';
+const listing = (ids: string[]): Exec => (_c, a) => (a[1] === 'list' ? { status: 0, stdout: JSON.stringify(ids.map((id) => ({ id, version: '1', enabled: true }))) } : { status: 1, stdout: '' });
+const hash = (root: string) => readManifest(root)!.files.find((f) => f.rel === SETTINGS)!.hash;
+
+test('a plugin installed by hand is recorded with --install-plugins', async () => {
   const root = installed([...OWN, 'impeccable']);
-  const p = join(root, '.claude/settings.json');
+  const p = join(root, SETTINGS);
   writeFileSync(p, readFileSync(p, 'utf8').replace(/\n$/, '') + '\n\n'); // stands in for claude rewriting the file
-  const hash = () => readManifest(root)!.files.find((f) => f.rel === '.claude/settings.json')!.hash;
-  const old = hash();
+  const old = hash(root);
+  const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, listing(['impeccable@harness-pins']));
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('Recorded the plugin install');
+  expect(hash(root)).not.toBe(old);
+});
+
+test('sync without --install-plugins never rehashes settings, and a hand-edited key survives uninstall', async () => {
+  const root = installed([...OWN, 'impeccable']);
+  const p = join(root, SETTINGS);
+  const j = JSON.parse(readFileSync(p, 'utf8'));
+  j.mine = { keep: true };
+  writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+  commitAll(root);
+  const old = hash(root);
+  const r = await run(root, ['--yes'], CLAUDE, listing(['impeccable@harness-pins']));
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).not.toContain('Recorded');
+  expect(hash(root)).toBe(old);
+  let out = '';
+  expect(await uninstall(['--yes'], { env: {}, root, out: (s) => (out += s), prompt: yes })).toBe(0);
+  expect(JSON.parse(readFileSync(p, 'utf8')).mine).toEqual({ keep: true });
+});
+
+test('the preview lists missing plugins without --install-plugins', async () => {
+  const root = installed([...OWN, 'impeccable']);
+  const r = await run(root, ['--dry-run'], CLAUDE, listing([]));
+  expect(r.out).toContain('Plugins not installed: impeccable@harness-pins');
+});
+
+test('a failed plugin install prints the recovery copy', async () => {
+  const root = installed([...OWN, 'impeccable']);
+  const exec: Exec = (_c, a) => (a[1] === 'list' ? { status: 0, stdout: '[]' } : { status: 0, stdout: JSON.stringify({ command: 'install', outcome: 'failed', message: 'boom' }) });
+  const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, exec);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('Then run /harness:sync to record the install.');
+});
+
+test('an edited AGENTS.md keeps the person\'s content and is listed', async () => {
+  const root = installed();
+  const p = join(root, 'AGENTS.md');
+  const mine = '# Mine\nmy own rules\n';
+  writeFileSync(p, readFileSync(p, 'utf8').replace('# Mine\n', mine));
+  commitAll(root);
+  const text = readFileSync(p, 'utf8');
+  writeFileSync(p, text.slice(0, text.indexOf('<!--')) ); // the harness block is gone: sync restores only that part
+  commitAll(root);
   const r = await run(root, ['--yes']);
   expect(r.code, r.out).toBe(0);
-  expect(hash()).not.toBe(old);
+  expect(r.out).toContain('sync changes only the harness parts: `AGENTS.md`');
+  expect(readFileSync(p, 'utf8').startsWith(mine)).toBe(true);
+  expect((await run(root, ['--yes', '--take', 'AGENTS.md'])).code).toBe(2); // a merged file has nothing to take
+});
+
+test('an edited file of an unselected item is kept', async () => {
+  const root = installed([...OWN, 'staff-reviewer']);
+  writeFileSync(join(root, SR), 'mine\n');
+  editConfig(root, (items) => { items.find((i) => i.id === 'staff-reviewer').selected = false; });
+  const r = await run(root, ['--yes']);
+  expect(r.code, r.out).toBe(0);
+  expect(readFileSync(join(root, SR), 'utf8')).toBe('mine\n');
 });

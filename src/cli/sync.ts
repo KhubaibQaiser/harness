@@ -21,7 +21,7 @@ import { isBackupPath } from './update.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
-export type SyncEnv = CliEnv & { prompt: Prompt; templatesDir: string; distDir: string; fs?: FsLike; exec?: Exec; catalog?: Catalog };
+export type SyncEnv = CliEnv & { prompt: Prompt; version?: string; templatesDir: string; distDir: string; fs?: FsLike; exec?: Exec; catalog?: Catalog };
 
 const USAGE = 'Usage: /harness:sync [--dry-run|--yes] [--take <file,...>] [--install-plugins] [--over-budget]';
 const CONFIG = '.harness/config.yaml';
@@ -72,6 +72,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   const lc = cli.catalog ? { catalog: cli.catalog, errors: [] as string[] } : loadCatalog();
   if (lc.errors.length) return lc.errors.forEach((e) => out(e)), out('The catalog has errors; stopped. Run harness catalog validate.'), 1;
   const cat = lc.catalog;
+  if (cli.version && cli.version !== man.version) return out(`Harness files are ${man.version} but this is ${cli.version}. Run /harness:update first; sync does not change the version.`), 1;
   const have = selectedIds(config);
 
   let planned: ReturnType<typeof reconcile>;
@@ -81,8 +82,8 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
     return out(`Cannot build the plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
   }
   const { owned, merged } = planned.edited;
-  const unknown = take.filter((r) => ![...owned, ...merged].includes(r));
-  if (unknown.length) return out(`--take names files that are not edited harness files: ${list(unknown)}.`), 2;
+  const unknown = take.filter((r) => !owned.includes(r));
+  if (unknown.length) return out(`--take names files that are not edited harness-owned files: ${list(unknown)}.`), 2;
   // An edited file whose whole content is harness's is kept unless named in --take; a merged one changes only harness's parts.
   const kept = owned.filter((r) => !take.includes(r));
   const changes: Change[] = planned.changes.filter((c) => !kept.includes(c.rel));
@@ -102,28 +103,34 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   const wanted = pinnedPlugins(cat.items.filter((i) => have.includes(i.id))).map((p) => `${p.name}@harness-pins`);
   let present: string[] = [];
   let missing: string[] = [];
-  if (installFlag && wanted.length) {
-    const l = pluginList(cli.exec ?? defaultExec);
-    if (!l) return out('Could not read the installed plugins (`claude plugin list` failed). Nothing was changed.'), 1;
-    present = l.map((p) => p.id);
-    missing = wanted.filter((id) => !present.includes(id));
+  if (wanted.length) {
+    const l = pluginList(cli.exec ?? defaultExec); // read-only, so the preview can report what is missing
+    if (!l && installFlag) return out('Could not read the installed plugins (`claude plugin list` failed). Nothing was changed.'), 1;
+    present = (l ?? []).map((p) => p.id);
+    missing = l ? wanted.filter((id) => !present.includes(id)) : [];
   }
+  // Recording an install touches settings.json's hash, so it needs the flag and proof that every wanted plugin is installed.
+  const record = installFlag && wanted.length > 0 && !missing.length;
+  const recordInstall = (): number | null => {
+    const before = readFileSync(join(root, MANIFEST_REL), 'utf8');
+    try {
+      rehashManifest(root, ['.claude/settings.json']);
+    } catch (e) {
+      if (!(e instanceof ApplyError)) throw e;
+      return out(isDenied(e) ? sandboxLine('sync', args) : e.message), 1;
+    }
+    if (readFileSync(join(root, MANIFEST_REL), 'utf8') !== before) out('Recorded the plugin install in the manifest.');
+    return null;
+  };
 
   for (const r of kept) out(`Kept \`${r}\`: you edited it. Name it in --take to replace it with harness's version.`);
   for (const n of planned.notes) out(`Note: ${n}`);
   if (planned.manual.length) out('Do these by hand:\n' + planned.manual.map((l) => `  ${l}`).join('\n'));
   if (!changes.length && !gone.length && !stale) {
-    if (dryRun) return missing.length ? (out(`Dry run: would install ${missing.join(', ')}.`), 0) : (out('Nothing to sync. Dry run: nothing was written.'), 0);
+    if (dryRun) return out(missing.length ? `Plugins not installed: ${missing.join(', ')}. Run with --install-plugins to install them. Dry run: nothing was written.` : 'Nothing to sync. Dry run: nothing was written.'), 0;
     if (!missing.length) {
-      // The plugins may have been installed by hand: record their settings change.
-      const before = readFileSync(join(root, MANIFEST_REL), 'utf8');
-      try {
-        if (wanted.length) rehashManifest(root, ['.claude/settings.json']);
-      } catch (e) {
-        if (!(e instanceof ApplyError)) throw e;
-        return out(isDenied(e) ? sandboxLine('sync', args) : e.message), 1;
-      }
-      return out(readFileSync(join(root, MANIFEST_REL), 'utf8') !== before ? 'Recorded the plugin install in the manifest.' : 'Nothing to sync.'), 0;
+      if (record) { const r = recordInstall(); if (r !== null) return r; }
+      return out('Nothing to sync.'), 0;
     }
   }
 
@@ -142,7 +149,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   const stop = await budgetGate(cat, approved, have, approved, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget });
   if (stop !== null) return stop;
   if (dryRun) {
-    if (missing.length) out(`Would install: ${missing.join(', ')}.`);
+    if (missing.length) out(`Plugins not installed: ${missing.join(', ')}. ${installFlag ? 'Would install them.' : 'Run with --install-plugins to install them.'}`);
     return out('Dry run: nothing was written.'), 0;
   }
   if (!yes && !(await cli.prompt.confirm('Apply these changes? (y/N)'))) return out('Cancelled. Nothing was written.'), 0;
@@ -162,15 +169,8 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   stampHarnessFiles(root); // change detection: these writes are harness's own
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   let code = 0;
-  if (missing.length) code = installSelected(root, have, cat, cli.exec ?? defaultExec, out, true, present);
-  else if (wanted.length) {
-    try {
-      rehashManifest(root, ['.claude/settings.json']);
-    } catch (e) {
-      if (!(e instanceof ApplyError)) throw e;
-      return out(isDenied(e) ? sandboxLine('sync', args) : e.message), 1;
-    }
-  }
+  if (installFlag && missing.length) code = installSelected(root, have, cat, cli.exec ?? defaultExec, out, true, present);
+  else if (record) code = recordInstall() ?? 0;
   out('Run harness git commit on a branch to commit this change.');
   return code;
 }

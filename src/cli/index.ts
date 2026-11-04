@@ -142,7 +142,7 @@ try {
     } else if (argv[0] === 'sync') {
       const prompt = readlinePrompt();
       try {
-        process.exitCode = await sync(argv.slice(1), { ...cli, root: process.cwd(), prompt, templatesDir: packageDir('templates'), distDir: packageDir('dist') });
+        process.exitCode = await sync(argv.slice(1), { ...cli, root: process.cwd(), prompt, version: VERSION, templatesDir: packageDir('templates'), distDir: packageDir('dist') });
       } finally {
         prompt.close();
       }

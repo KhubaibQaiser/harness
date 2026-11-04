@@ -16,7 +16,7 @@ const prompt = (): Prompt & { asked: string[] } => {
   const asked: string[] = [];
   return { asked, async confirm(q) { asked.push(q); return false; }, async edit(_l, v) { return v; } };
 };
-const env = (root: string, p: Prompt) => ({ env: {}, root, tty: false, out: (s: string) => lines.push(s), prompt: p, version: '1.0.0', templatesDir: join(process.cwd(), 'templates'), distDir: join(process.cwd(), 'dist') });
+const env = (root: string, p: Prompt) => ({ env: { HARNESS_PLAIN_INIT: '1' }, root, tty: false, out: (s: string) => lines.push(s), prompt: p, version: '1.0.0', templatesDir: join(process.cwd(), 'templates'), distDir: join(process.cwd(), 'dist') });
 let lines: string[] = [];
 
 test('dry-run never prompts', async () => {

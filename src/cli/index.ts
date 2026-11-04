@@ -6,6 +6,7 @@ import { packageDir } from '../core/package-dir.js';
 import { repoRoot } from '../core/repo-root.js';
 import { recordCliPath } from '../core/cli-path.js';
 import { init } from './init.js';
+import { insideClaude } from './claude-only.js';
 import { uninstall } from './uninstall.js';
 import { update } from './update.js';
 import { readlinePrompt } from './prompt.js';
@@ -28,7 +29,7 @@ export interface CliEnv {
 
 declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       harness init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force] [--dry-run]\n       harness update [--yes] [--check] [--dry-run]\n       harness doctor\n       harness status\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness validate answers|product <file>\n       harness validate picks <file> --answers <file> [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness select --picks <file> [--choose <id,...>]';
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       /harness:init [--yes] [--dry-run] [--config <file>]\n       harness uninstall [--yes] [--force] [--dry-run]\n       /harness:update [--yes] [--check] [--dry-run]\n       harness doctor\n       harness status\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness validate answers|product <file>\n       harness validate picks <file> --answers <file> [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness select --picks <file> [--choose <id,...>]';
 const DAY = 86_400_000;
 
 export function tddStatus(root: string): string {
@@ -42,7 +43,7 @@ function tdd(sub: string | undefined, { root, env, out }: CliEnv): number {
   if (sub === 'status') return out(tddStatus(root)), 0;
   if (sub === 'on') return resumeTdd(root), log(root, 'resumed'), out(tddStatus(root)), 0;
   if (sub !== 'off') return out(USAGE), 2;
-  if (env.CLAUDECODE) {
+  if (insideClaude(env)) {
     log(root, 'refused');
     const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
     out(`Run harness tdd off from a plain terminal, not inside Claude Code: ${self} tdd off`);

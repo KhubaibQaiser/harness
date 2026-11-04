@@ -11,7 +11,7 @@ const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'c
 const DISPATCH = '.harness/hooks/dispatch.mjs';
 
 // The suite must behave like an attended session even when CI or a parent agent sets these.
-const env = { ...process.env };
+const env: NodeJS.ProcessEnv = { ...process.env, HARNESS_PLAIN_INIT: '1' };
 for (const k of ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE', 'CLAUDECODE', 'CLAUDE_CONFIG_DIR', 'HARNESS_SANDBOX']) delete env[k];
 // A claude at the floor first on PATH, so doctor's version line never depends on this machine's Claude Code.
 const shim = mkdtempSync(join(tmpdir(), 'h-e2e-claude-'));

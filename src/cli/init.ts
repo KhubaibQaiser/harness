@@ -13,6 +13,7 @@ import { stampHarnessFiles } from '../core/harness-files.js';
 import { planChanges } from '../install/plan.js';
 import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/preset.js';
 import { findOnPath } from '../checks/stop/runner.js';
+import { hasAiFlags, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import type { CliEnv } from './index.js';
 
@@ -21,7 +22,7 @@ export { planChanges };
 
 export type InitEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; nodeVersion?: string };
 
-const USAGE = 'Usage: harness init [--yes] [--dry-run] [--config <file>]';
+const USAGE = 'Usage: /harness:init [--yes] [--dry-run] [--config <file>]';
 const GATES: Record<string, string> = { guard: 'guard', protect: 'protect', depVerify: 'dep-verify', multiFile: 'multi-file', tdd: 'TDD', stop: 'stop' };
 
 const at = (o: any, path: string): unknown => path.split('.').reduce((v, k) => v?.[k], o);
@@ -54,6 +55,8 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   const { out, prompt } = cli;
   const opts = parseArgs(args);
   if (!opts) return out(USAGE), 2;
+  const refused = refuseOutsideClaude('init', cli.env, hasAiFlags(args));
+  if (refused) return out(refused), 2;
   if (!opts.yes && !opts.dryRun && cli.tty === false) return out(NO_TTY), 2;
 
   // 1. Preflight
@@ -61,14 +64,14 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   try {
     root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: cli.root, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {
-    return out('Not a git repository. Run harness init inside a git repo.'), 1;
+    return out('Not a git repository. Run /harness:init inside a git repo.'), 1;
   }
   out(`Installing at the repo root: ${resolve(root)}`);
   const node = cli.nodeVersion ?? process.versions.node;
   const [major, minor] = node.split('.').map(Number);
   if (major < 22 || (major === 22 && minor < 11)) return out(`Node ${node} is too old. Harness needs Node 22.11 or newer.`), 1;
   try {
-    if (readManifest(root)) return out('Harness is already installed (.harness/manifest.json). Run harness update instead.'), 1;
+    if (readManifest(root)) return out('Harness is already installed (.harness/manifest.json). Run /harness:update instead.'), 1;
   } catch (e) {
     if (e instanceof ManifestError) return out(e.message), 1;
     throw e;

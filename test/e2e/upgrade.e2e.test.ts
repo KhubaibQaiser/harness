@@ -19,7 +19,7 @@ const OLD = '.harness/state/test-results';
 interface OldInstall { beta: string; before: Record<string, string>; installed: Record<string, string>; hand?: Record<string, string> }
 const names = readdirSync(FIXTURES).filter((n) => n.endsWith('.json')).map((n) => n.slice(0, -5)).sort();
 
-const env = { ...process.env };
+const env: NodeJS.ProcessEnv = { ...process.env, HARNESS_PLAIN_INIT: '1' };
 for (const k of ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE', 'CLAUDECODE', 'CLAUDE_CONFIG_DIR', 'HARNESS_SANDBOX']) delete env[k];
 const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
 /** env with a fake `claude` printing `version` first on PATH. */

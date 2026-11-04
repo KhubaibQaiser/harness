@@ -46,14 +46,14 @@ const commitAll = (root: string) => {
 };
 const installed = async (files: Record<string, string> = REPO) => {
   const root = makeRepo(files);
-  await init(['--yes'], { env: {}, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
   commitAll(root);
   return root;
 };
 
 const up = async (root: string, args: string[], over: { distDir?: string; version?: string; prompt?: Prompt; fetchImpl?: typeof fetch; fs?: FsLike } = {}) => {
   let out = '';
-  const code = await update(args, { env: {}, root, out: (s) => (out += s + '\n'), prompt: over.prompt ?? fake(), version: over.version ?? '1.1.0', templatesDir, distDir: over.distDir ?? join(pkgDir, 'dist'), fetchImpl: over.fetchImpl, fs: over.fs });
+  const code = await update(args, { env: { HARNESS_PLAIN_INIT: '1' }, root, out: (s) => (out += s + '\n'), prompt: over.prompt ?? fake(), version: over.version ?? '1.1.0', templatesDir, distDir: over.distDir ?? join(pkgDir, 'dist'), fetchImpl: over.fetchImpl, fs: over.fs });
   return { code, out };
 };
 const DISPATCH = '.harness/hooks/dispatch.mjs';
@@ -111,7 +111,7 @@ test('edited-files copy differs for merged files', async () => {
   cpSync(templatesDir, t, { recursive: true });
   writeFileSync(join(t, 'agents-block.md'), readFileSync(join(t, 'agents-block.md'), 'utf8') + '\nNew line.\n');
   let out = '';
-  await update(['--yes'], { env: {}, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir: t, distDir: newDist() });
+  await update(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir: t, distDir: newDist() });
   expect(out).toContain(`You edited these harness files; update replaces them: \`${DISPATCH}\`.`);
   expect(out).toMatch(/You edited these files; update changes only the harness parts: `AGENTS.md`\./);
 });
@@ -166,7 +166,7 @@ test('same files, newer version: manifest version is bumped', async () => {
 });
 
 test('refuses when not installed, bad flag, or invalid config', async () => {
-  expect((await up(makeRepo(REPO), [])).out).toContain('harness init');
+  expect((await up(makeRepo(REPO), [])).out).toContain('/harness:init');
   expect((await up(makeRepo(REPO), ['--bogus'])).code).toBe(2);
   const root = await installed();
   writeFileSync(join(root, '.harness/config.yaml'), 'bogus_key: 1\n');
@@ -239,7 +239,7 @@ test('update keeps the packages init left out of TDD in the manifest', async () 
 const oldJestInstall = async () => {
   const pkg = JSON.stringify({ name: 'app', scripts: { test: 'jest --silent' }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n';
   const root = makeRepo({ 'package.json': pkg, 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n' });
-  await init(['--yes'], { env: {}, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
   const oldBlock = ' --json --outputFile=.harness/results/root.json --coverage';
   const oldPkg = pkg.replace('"jest --silent"', `"jest --silent${oldBlock}"`);
   writeFileSync(join(root, 'package.json'), oldPkg);
@@ -294,7 +294,7 @@ test('update refuses uncommitted changes to a file it would touch; --dry-run onl
   writeFileSync(join(root, 'AGENTS.md'), readFileSync(join(root, 'AGENTS.md'), 'utf8') + 'uncommitted\n');
   const dist = newDist();
   let out = '';
-  const run = (args: string[]) => update(args, { env: {}, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir, distDir: dist });
+  const run = (args: string[]) => update(args, { env: { HARNESS_PLAIN_INIT: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir, distDir: dist });
   expect(await run(['--yes'])).toBe(1);
   expect(out).toContain('Commit or stash these files first, so the update can be undone cleanly: AGENTS.md.');
   expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toContain('uncommitted');
@@ -741,4 +741,25 @@ test('a restored backup is deleted only inside .harness/backup/', async () => {
   expect(isBackupPath('.harness/backup/../../README.md')).toBe(false);
   expect(isBackupPath('README.md')).toBe(false);
   expect(isBackupPath('.harness/backup\\..\\x')).toBe(false);
+});
+
+test('beta repo update inside Claude Code without AI flags refreshes files only', async () => {
+  const root = await installed();
+  const fresh = settingsBlocks(root);
+  const beta = betaInstall(root, {});
+  let out = '';
+  const code = await update(['--yes'], { env: { CLAUDECODE: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.1.0', templatesDir, distDir: join(pkgDir, 'dist') });
+  expect(code).toBe(0);
+  expect(new Set(settingsBlocks(root))).toEqual(new Set(fresh));
+  expect(settingsBlocks(root).filter((b) => beta.includes(b) && JSON.parse(b).event)).toEqual([]);
+  expect(out).not.toContain('Removed');
+  expect(out.trim().split('\n').pop()).toBe('Run /harness:update again to get recommendations for this repo.');
+});
+
+test('up to date inside Claude Code on the plain path still points to /harness:update, but not on a dry run', async () => {
+  const root = await installed();
+  const run = (args: string[]) => { let out = ''; return update(args, { env: { CLAUDECODE: '1' }, root, out: (s) => (out += s + '\n'), prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') }).then(() => out); };
+  const again = 'Run /harness:update again to get recommendations for this repo.';
+  expect(await run(['--yes'])).toContain(again);
+  expect(await run(['--dry-run'])).not.toContain(again);
 });

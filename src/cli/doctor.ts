@@ -46,7 +46,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     if (e instanceof ManifestError) return out(e.message), 1;
     throw e;
   }
-  if (!manifest) return out('Harness is not installed here (no `.harness/manifest.json`). Run harness init to install it.'), 1;
+  if (!manifest) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
 
   let bad = 0;
   const ok = (s: string) => out(`ok ${s}`);
@@ -71,7 +71,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const groups = (ev: string): any[] =>
     (Array.isArray(settings?.hooks?.[ev]) ? settings.hooks[ev] : []).filter((g: any) => Array.isArray(g?.hooks) && g.hooks.some(isHarnessHook));
   const unwired = EVENTS.filter((e) => !groups(e).length);
-  if (unwired.length) fix(`\`.claude/settings.json\` does not run the dispatcher for ${unwired.join(', ')}`, 'run harness update to restore the hooks');
+  if (unwired.length) fix(`\`.claude/settings.json\` does not run the dispatcher for ${unwired.join(', ')}`, 'run /harness:update to restore the hooks');
   else ok('settings run the dispatcher for all 6 hook events');
 
   const he = readHookEnv(root);
@@ -89,7 +89,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const preGroup = groups('PreToolUse')[0];
   const pre = preGroup?.hooks.find(isHarnessHook);
   const shellForm = (h: any) => !Array.isArray(h.args);
-  let shellOld = false; // that line's "run harness update" also covers a missing onFailure on the same group
+  let shellOld = false; // that line's "run /harness:update" also covers a missing onFailure on the same group
   const dispMissing = readText(join(root, DISPATCH)) === null; // its own line below; a self-test would only add a second
   if (pre && typeof pre.command === 'string' && !dispMissing) {
     const opts = { env: { ...env, CLAUDE_PROJECT_DIR: root }, encoding: 'utf8', timeout: 5000 } as const;
@@ -99,15 +99,15 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     if (r.status === 0 && (r.stdout ?? '').startsWith('ok ')) ok('dispatcher runs');
     else fix(`the dispatcher does not run (${(r.stderr ?? '').trim().split('\n')[0] || r.error?.message || `exit code ${r.status}`})`, 'check that node is on the PATH Claude Code gives its hooks, then run harness doctor again');
     shellOld = shellForm(pre) && kind('PreToolUse', preGroup) === 'old';
-    if (shellOld) fix('`.claude/settings.json` runs the dispatcher through a shell', 'run harness update');
+    if (shellOld) fix('`.claude/settings.json` runs the dispatcher through a shell', 'run /harness:update');
   }
 
   for (const ev of EVENTS) {
     const gs = groups(ev);
     if (gs.some((g) => kind(ev, g) === 'edited'))
-      fix(`\`.claude/settings.json\`: \`hooks.${ev}\` harness hook differs from the one harness installs`, 'undo the edit or delete that group, then run harness update');
+      fix(`\`.claude/settings.json\`: \`hooks.${ev}\` harness hook differs from the one harness installs`, 'undo the edit or delete that group, then run /harness:update');
     else if (BLOCKING.includes(ev) && !(ev === 'PreToolUse' && shellOld) && gs.some((g) => kind(ev, g) === 'old' && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure !== 'block')))
-      fix(`${ev} hook has no onFailure "block"`, 'run harness update');
+      fix(`${ev} hook has no onFailure "block"`, 'run /harness:update');
   }
 
   const entry = manifest.files.find((f) => f.rel === DISPATCH);
@@ -115,7 +115,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   // update refuses uncommitted changes to the files it rewrites, so say so up front.
   let dirty: string[] = [];
   try { dirty = dirtyPaths(root); } catch {}
-  const restore = (rel: string) => (dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))) ? 'commit or stash your changes, then run harness update to restore it' : 'run harness update to restore it');
+  const restore = (rel: string) => (dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))) ? 'commit or stash your changes, then run /harness:update to restore it' : 'run /harness:update to restore it');
   if (disp === null) fix(`\`${DISPATCH}\` is missing`, restore(DISPATCH));
   else if (!entry || !matchesHash(disp, entry.hash)) fix(`\`${DISPATCH}\` does not match the installed version`, restore(DISPATCH));
   else ok('dispatcher matches the manifest');
@@ -135,7 +135,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     parseErr = (e as Error).message.split('\n')[0];
   }
   const v = cfgText === null ? null : parseErr ? null : validateConfig(raw);
-  if (cfgText === null) fix('`.harness/config.yaml` is missing', 'restore it with git checkout -- .harness/config.yaml, or run harness uninstall and then harness init.');
+  if (cfgText === null) fix('`.harness/config.yaml` is missing', 'restore it with git checkout -- .harness/config.yaml, or run harness uninstall and then /harness:init.');
   else if (parseErr) fix(`\`.harness/config.yaml\` is not valid YAML (${parseErr})`, 'fix the YAML, then run harness doctor');
   else if (!v!.ok) fix(`\`.harness/config.yaml\` is invalid (${(v as { errors: string[] }).errors.join('; ')})`, 'fix those keys, then run harness doctor');
   else ok('`.harness/config.yaml` is valid');
@@ -152,7 +152,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const whereOf = (dir: string) => (dir === '.' ? 'the root package' : `\`${dir}\``);
   // resultsRename, not hasResultsOutput: a Jest script with the harness reporter counts as set up for any folder.
   const legacy = new Set(facts.packages.filter((p) => resultsRename(p, root, config.tdd.results_dir, LEGACY_RESULTS_DIR)).map((p) => p.dir));
-  for (const d of legacy) fix(`${whereOf(d)} writes test results under .harness/state, which the sandbox denies`, 'run harness update');
+  for (const d of legacy) fix(`${whereOf(d)} writes test results under .harness/state, which the sandbox denies`, 'run /harness:update');
   // Packages init left out of TDD (test config not safely editable) and still out of it. Doctor never edits their config.
   const left = new Set((manifest.tddOff ?? []).filter((d) => !(config.checks.tdd && config.tdd.paths.includes(srcGlob(d)))));
   for (const p of facts.packages.filter((p) => left.has(p.dir) && p.test !== 'none' && !legacy.has(p.dir))) {
@@ -161,7 +161,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     const r = testConfigChange(p, root, config.tdd.results_dir);
     if (hasResultsOutput(p, root, config.tdd.results_dir)) note(`TDD is off for ${whereOf(p.dir)}`, addPath);
     else if ('manual' in r) note(`TDD is off for ${whereOf(p.dir)} because ${offCause(noConfigFile(p))}`, `do this by hand: ${r.manual.join(' ')}; then ${addPath}`);
-    else note(`TDD is off for ${whereOf(p.dir)}`, `${addPath}, then run harness update to add the reporter output`);
+    else note(`TDD is off for ${whereOf(p.dir)}`, `${addPath}, then run /harness:update to add the reporter output`);
   }
 
   if (config.checks.tdd) {
@@ -170,7 +170,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
       const what = `the coverage gate is off for ${whereOf(p.dir)}`;
       if (noCoverage(p)) note(what, coverageHint(p));
       // Coverage not yet turned on in the Vitest config (the provider came later): update can fix it.
-      else if (p.test === 'vitest' && 'change' in testConfigChange(p, root, config.tdd.results_dir)) fix(what, `run harness update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
+      else if (p.test === 'vitest' && 'change' in testConfigChange(p, root, config.tdd.results_dir)) fix(what, `run /harness:update to turn on Vitest coverage, then remove \`${srcGlob(p.dir)}\` from tdd.coverage_skip in .harness/config.yaml`);
       else note(what, `it is listed in tdd.coverage_skip; remove \`${srcGlob(p.dir)}\` from it in .harness/config.yaml to turn the gate on`); // a deliberate choice
     }
     // A Jest coverage config the gate can't read, in a TDD path: every Stop would block on missing coverage.
@@ -184,7 +184,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
       const r = testConfigChange(p, root, config.tdd.results_dir);
       const where = whereOf(p.dir);
       if ('none' in r || ('manual' in r && hasResultsOutput(p, root, config.tdd.results_dir))) ok(`${p.test} reporter output is set up for ${where}`);
-      else if ('change' in r) fix(`\`${r.change.rel}\` lacks the JSON reporter output the TDD gate reads`, 'run harness update to add it');
+      else if ('change' in r) fix(`\`${r.change.rel}\` lacks the JSON reporter output the TDD gate reads`, 'run /harness:update to add it');
       else fix(`the ${p.test} reporter output is not set up for ${where}`, `do this by hand: ${r.manual.join(' ')}`);
     }
   }

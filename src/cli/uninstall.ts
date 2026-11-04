@@ -58,7 +58,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     if (e instanceof ManifestError) return out(e.message), 1;
     throw e;
   }
-  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run harness init to install it.'), 1;
+  if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
 
   const changes: Change[] = [];
   const kept: string[] = [];
@@ -154,7 +154,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     out('Kept `.harness/` (manifest removed).');
     stampHarnessFiles(root); // change detection: these writes are harness's own
   }
-  if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run harness init to install again.`);
+  if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run /harness:init to install again.`);
   out('Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.');
   return 0;
 }

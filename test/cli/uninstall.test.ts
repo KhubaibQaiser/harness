@@ -12,7 +12,7 @@ import { doctor } from '../../src/cli/doctor.js';
 import { makeRepo } from '../install/helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const base = { env: {}, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') };
+const base = { env: { HARNESS_PLAIN_INIT: '1' }, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') };
 const REPO = {
   'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^1.0.0' } }, null, 2) + '\n',
   'package-lock.json': '{}\n',
@@ -87,7 +87,7 @@ test('no manifest: says harness is not installed, exit 1', async () => {
   const r = await un(makeRepo(REPO), ['--yes']);
   expect(r.code).toBe(1);
   expect(r.out).toContain('not installed');
-  expect(r.out).toContain('Run harness init');
+  expect(r.out).toContain('Run /harness:init');
 });
 
 test('edited settings.json: structural removal keeps the user hooks and deny rules', async () => {

@@ -217,7 +217,7 @@ describe('applyChanges', () => {
     }
     const root = makeRepo({ '.harness/manifest.json': '{nope' }, { git: false });
     expect(() => readManifest(root)).toThrow(
-      '`.harness/manifest.json` is unreadable. Restore it from git or delete `.harness/` and run harness init again.',
+      '`.harness/manifest.json` is unreadable. Restore it from git or delete `.harness/` and run /harness:init again.',
     );
   });
 });

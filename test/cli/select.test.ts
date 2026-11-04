@@ -53,3 +53,11 @@ test('select: chosen id outside the picks is Chosen by you', () => {
   const out = JSON.parse(go(['select', '--picks', picksFile, '--choose', 'lead-a']).lines.join('\n'));
   expect(out.selected.at(-1)).toMatchObject({ id: 'lead-a', reason: 'Chosen by you.' });
 });
+
+test('a real own-item row has a non-empty context line', () => {
+  const f = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'p.json');
+  writeFileSync(f, JSON.stringify({ catalog_version: 1, findings: [], items: [{ id: 'review-rubric', include: 'recommended', reason: 'r', addresses: [] }] }));
+  const lines: string[] = [];
+  expect(run(['select', '--picks', f], { root, env: {}, out: (l) => lines.push(l) })).toBe(0);
+  expect(JSON.parse(lines.join('\n'))[0].context).toMatch(/^~[1-9]\d* tokens \(estimate\)$/);
+});

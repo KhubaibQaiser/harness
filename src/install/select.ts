@@ -2,11 +2,12 @@ import type { Picks } from '../ai/picks.js';
 import { conflictPairs, requiresClosure } from '../catalog/relations.js';
 import type { Catalog, OutsideSource } from '../catalog/schema.js';
 import { esc, type Selected } from '../core/config.js';
+import { itemContext, itemContextLine } from '../budget/measure.js';
 import { olderThan } from '../core/min-claude.js';
 
 export interface ChecklistRow {
   id: string; title: string; include: 'recommended' | 'optional'; ticked: boolean; reason: string; cost: string;
-  /** Filled by itemContextLine (Task 13). */
+  /** From itemContextLine. */
   context: string;
   side_effects: string[]; local_only: boolean; stance_reason: string; no_alternative: string;
 }
@@ -14,7 +15,7 @@ export interface ChecklistRow {
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** One row per pick: recommended first (ticked), then optional, each by id. Picks are validated, so ids exist. */
-export function checklist(p: Picks, c: Catalog): ChecklistRow[] {
+export function checklist(p: Picks, c: Catalog, dirs: { templates: string }): ChecklistRow[] {
   const byId = new Map(c.items.map((i) => [i.id, i]));
   return p.items
     .filter((x) => byId.has(x.id))
@@ -23,7 +24,7 @@ export function checklist(p: Picks, c: Catalog): ChecklistRow[] {
       const it = byId.get(x.id)!;
       return {
         id: x.id, title: it.title, include: x.include, ticked: x.include === 'recommended', reason: x.reason,
-        cost: `context ${it.cost.context}, setup ${it.cost.setup}`, context: '', side_effects: it.side_effects,
+        cost: `context ${it.cost.context}, setup ${it.cost.setup}`, context: itemContextLine(itemContext(it, dirs)), side_effects: it.side_effects,
         local_only: it.kind === 'plugin' || it.kind === 'external-skill', stance_reason: it.stance_reason, no_alternative: x.no_alternative ?? '',
       };
     });

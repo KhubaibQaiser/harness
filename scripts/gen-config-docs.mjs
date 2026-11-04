@@ -29,6 +29,7 @@ const WHAT = {
   apps: 'Runnable apps (`dir`, `kind`, `install`, `start`, `ready_url`, `port`, `public_facing`, `login`). `login.credentials` holds file and variable names, never values.',
   items: 'Catalog items chosen for this project (`id`, `include`, `selected`, `reason`, `addresses`, `pin`).',
   'git.commit_trailer': 'Line added to the end of commit messages. Empty adds none.',
+  'context.budget_tokens': 'Estimated tokens of always-loaded context harness may add before it asks you to confirm an install. Items you approved earlier are not counted.',
   sandbox: '`unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only.',
   'tdd.paths': 'Globs for the files TDD covers.',
   'tdd.exempt': 'Globs inside `tdd.paths` that TDD skips.',

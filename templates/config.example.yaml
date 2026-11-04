@@ -15,6 +15,33 @@ checks:
 # Claude Code's sandbox: required for unattended runs (unattended), on for everyone (always), or not used (off).
 sandbox: unattended
 
+# Version of the catalog the recommendations came from (0: no catalog).
+catalog_version: 0
+
+# What this project is, from the interview. Used to recommend tools; codeowners is input only.
+project:
+  type: ""
+  domain: ""
+  compliance: []
+  data_handling: ""
+  team_size: 0
+  open_source: false
+  codeowners: []
+  deploy_target: ""
+  run_budget_usd: 0
+  named_items: []
+  scope_paths: []
+
+# Runnable apps in the repo: how to start them and what login (credential names only, never values) they need.
+apps: []
+
+# Catalog items chosen for this project.
+items: []
+
+# Git settings.
+git:
+  commit_trailer: ""
+
 # Red-first TDD enforcement (needs checks.tdd).
 tdd:
   paths: []

@@ -1,6 +1,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import { expect, test } from 'vitest';
 import { defaults, loadConfig } from '../../src/core/config.js';
 import { migrateResultsDir, serializeConfig, validateConfig } from '../../src/core/config-io.js';
@@ -111,4 +112,19 @@ test('migrateResultsDir swaps the old default on its one line, keeping indent, q
   expect(migrateResultsDir('tdd:\n  results_dir: ".harness/state/test-results"\n')).toBe('tdd:\n  results_dir: ".harness/results"\n');
   expect(migrateResultsDir('tdd:\n  results_dir: build/results\n')).toBeNull();
   expect(migrateResultsDir('a:\n  results_dir: .harness/state/test-results\nb:\n  results_dir: .harness/state/test-results\n')).toBeNull();
+});
+
+test('serializeConfig(defaults) passes validateConfig', () => {
+  expect(validateConfig(parseYaml(serializeConfig(defaults())))).toEqual({ ok: true, config: defaults() });
+});
+
+test('serializeConfig round-trips the new sections', () => {
+  const c = defaults();
+  c.catalog_version = 3;
+  c.project = { ...c.project, type: 'web', compliance: ['gdpr'], team_size: 4, scope_paths: ['src'] };
+  c.apps = [{ dir: 'web', kind: 'web', install: ['pnpm i'], start: ['pnpm dev'], ready_url: 'http://localhost:3000', port: 3000, public_facing: true, login: { needed: true, credentials: { file: 'creds.json', keys: ['API_KEY'], env: ['MY_TOKEN'] }, login_url: '/login', post_login: '/' } }];
+  c.items = [{ id: 'x', include: 'recommended', selected: true, reason: 'r', addresses: ['a'], pin: '' }];
+  c.git.commit_trailer = 'T';
+  expect(load(serializeConfig(c)).config).toEqual(c);
+  expect(load(serializeConfig(c)).warnings).toEqual([]);
 });

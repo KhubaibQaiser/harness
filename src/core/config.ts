@@ -2,15 +2,55 @@ import { existsSync, readFileSync } from 'node:fs';
 import { retryTransient } from './atomic.js';
 import { join, posix, relative, resolve } from 'node:path';
 import { parse } from 'yaml';
+import type { ProjectType } from '../catalog/schema.js';
 
 export type StopStep = string | { name: string; run: string[] };
 export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun' | 'none';
 export type SandboxMode = 'unattended' | 'always' | 'off';
 
+export interface App {
+  dir: string;
+  kind: 'web' | 'mobile' | 'api';
+  install: string[];
+  start: string[];
+  ready_url: string;
+  port: number;
+  public_facing: boolean;
+  login: { needed: boolean; credentials: { file: string; keys: string[]; env: string[] }; login_url: string; post_login: string };
+}
+export interface Selected {
+  id: string;
+  include: 'recommended' | 'optional';
+  selected: boolean;
+  reason: string;
+  addresses: string[];
+  /** The sha, the npm version, or ''. */
+  pin: string;
+}
+
 export interface HarnessConfig {
   version: 1;
   checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop', boolean>;
   sandbox: SandboxMode;
+  /** 0 means no catalog. */
+  catalog_version: number;
+  project: {
+    type: '' | ProjectType;
+    domain: string;
+    compliance: string[];
+    data_handling: string;
+    team_size: number;
+    open_source: boolean;
+    /** Recommend input only. */
+    codeowners: string[];
+    deploy_target: string;
+    run_budget_usd: number;
+    named_items: string[];
+    scope_paths: string[];
+  };
+  apps: App[];
+  items: Selected[];
+  git: { commit_trailer: string };
   tdd: { paths: string[]; exempt: string[]; diff_coverage: number; coverage_skip: string[]; test_lock: boolean; results_dir: string };
   multi_file_gate: { generated: string[] };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
@@ -24,6 +64,11 @@ export const defaults = (): HarnessConfig => ({
   version: 1,
   checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true },
   sandbox: 'unattended',
+  catalog_version: 0,
+  project: { type: '', domain: '', compliance: [], data_handling: '', team_size: 0, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [], scope_paths: [] },
+  apps: [],
+  items: [],
+  git: { commit_trailer: '' },
   tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: DEFAULT_RESULTS_DIR },
   multi_file_gate: { generated: [] },
   unattended: { multi_file_gate: 'block', require_reason: false },
@@ -64,6 +109,48 @@ const stepsRule: Rule = (v) => {
   }
   return null;
 };
+// Object and list rules: each returns the first failure, with `at` as a path suffix (like stepsRule).
+const prefix = (r: Fail, at: string): Fail => (typeof r === 'string' ? { at, msg: r } : { at: at + r.at, msg: r.msg });
+const objRule = (spec: Record<string, Rule>): Rule => (v) => {
+  if (!isObj(v)) return 'must be a mapping';
+  const extra = Object.keys(v).find((k) => !Object.hasOwn(spec, k));
+  if (extra !== undefined) return { at: `.${extra}`, msg: 'unknown key' };
+  for (const [k, r] of Object.entries(spec)) {
+    const bad = r(v[k]);
+    if (bad) return prefix(bad, `.${k}`);
+  }
+  return null;
+};
+const listOf = (what: string, rule: Rule): Rule => (v) => {
+  if (!Array.isArray(v)) return `must be a list of ${what}`;
+  for (let i = 0; i < v.length; i++) {
+    const bad = rule(v[i]);
+    if (bad) return prefix(bad, `[${i}]`);
+  }
+  return null;
+};
+const str: Rule = (v) => (typeof v === 'string' ? null : 'must be a string');
+const bool: Rule = (v) => (typeof v === 'boolean' ? null : 'must be a boolean');
+const strs: Rule = (v) => (isStrs(v) ? null : 'must be a list of strings');
+const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// The message never includes the rejected text: a mistaken value may be a secret.
+const names = listOf('names', (v) => (typeof v === 'string' && NAME.test(v) ? null : 'must be a name such as API_KEY, not a value'));
+/** A repo-relative path with `/` separators and no `..`; '' is allowed (nothing set). */
+export const relPathProblem = (v: unknown): string | null =>
+  typeof v !== 'string' ? 'must be a string' : v === '' || (!/^([/\\]|[A-Za-z]:)/.test(v) && !v.includes('\\') && !v.split('/').includes('..')) ? null : 'must be a repo-relative path using /, without ..';
+const APP_KINDS = ['web', 'mobile', 'api'];
+const appRule = objRule({
+  dir: str,
+  kind: oneOf(...APP_KINDS),
+  install: strs,
+  start: strs,
+  ready_url: str,
+  port: num(1, 65535, true),
+  public_facing: bool,
+  login: objRule({ needed: bool, credentials: objRule({ file: relPathProblem, keys: names, env: names }), login_url: str, post_login: str }),
+});
+const itemRule = objRule({ id: (v) => (typeof v === 'string' && v !== '' ? null : 'must be a non-empty string'), include: oneOf('recommended', 'optional'), selected: bool, reason: str, addresses: strs, pin: str });
+const PROJECT_TYPES = ['web', 'landing', 'mobile', 'api', 'infra', 'library', 'other'];
 const IN_STATE = 'must not be inside .harness/state (the sandbox denies it there)';
 const resultsDirRule: Rule = (v) => {
   if (v === undefined) return IN_STATE; // the README reads this text
@@ -81,6 +168,11 @@ const RULES: Record<string, Rule> = {
   'stop.package_manager': oneOf('npm', 'pnpm', 'yarn', 'bun', 'none'),
   'stop.steps': stepsRule,
   sandbox: oneOf('unattended', 'always', 'off'),
+  'project.type': (v) => (v === '' ? null : oneOf(...PROJECT_TYPES)(v)), // '' means not set yet
+  'project.team_size': num(0, 10000, true),
+  'project.run_budget_usd': num(0, 100000, false),
+  apps: listOf('app mappings', appRule),
+  items: listOf('item mappings', itemRule),
 };
 
 function problem(p: string, v: unknown, d: unknown): Fail | null {

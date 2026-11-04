@@ -120,7 +120,7 @@ test('missing config: restore from git, never loops through update', async () =>
 
 test('custom tdd.paths: missing reporter is still reported', async () => {
   const root = await installed();
-  setConfig(root, (s) => s.replace(/paths:[\s\S]*?\n {2}exempt/, 'paths:\n    - lib/**\n  exempt'));
+  setConfig(root, (s) => s.replace(/\n {2}paths:[\s\S]*?\n {2}exempt/, '\n  paths:\n    - lib/**\n  exempt'));
   const r = run(root, { path: bin('npm') });
   expect(r.out).toMatch(/^ok vitest reporter output is set up/m);
   writeFileSync(join(root, 'vitest.config.ts'), "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: {} });\n");
@@ -138,7 +138,7 @@ test('package left out of TDD: doctor repeats the manual lines, then names the t
   const b = run(root, { path: bin('npm') });
   expect(b.out).toMatch(/^note TDD is off for the root package: set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).toContain("root: './src'"); // never rewritten
-  setConfig(root, (s) => s.replace('tdd: false', 'tdd: true').replace(/paths: \[\]/, 'paths:\n    - src/**'));
+  setConfig(root, (s) => s.replace('tdd: false', 'tdd: true').replace(/\n {2}paths: \[\]/, '\n  paths:\n    - src/**'));
   const c = run(root, { path: bin('npm') });
   expect(c.out).not.toMatch(/TDD is off/);
   expect(c.out).toMatch(/^ok vitest reporter output is set up for the root package$/m);

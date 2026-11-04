@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { esc } from '../core/config.js';
 import { validateAnswers } from '../ai/answers.js';
 import { saveDebug } from '../ai/debug.js';
 import { type Picks, validatePicks } from '../ai/picks.js';
@@ -20,7 +21,7 @@ export function validate(args: string[], { root, out }: CliEnv): number {
   try {
     text = readFileSync(file, 'utf8');
   } catch (e) {
-    return out(`${what}: could not read ${JSON.stringify(file)}(${(e as NodeJS.ErrnoException).code ?? 'error'})`), 2;
+    return out(`${what}: could not read "${esc(file)}"(${(e as NodeJS.ErrnoException).code ?? 'error'})`), 2;
   }
   let errors: string[];
   if (what === 'product') errors = validateProduct(text);
@@ -43,7 +44,7 @@ const read = (file: string): string | { error: string } => {
   try {
     return readFileSync(file, 'utf8');
   } catch (e) {
-    return { error: `could not read ${JSON.stringify(file)} (${(e as NodeJS.ErrnoException).code ?? 'error'})` };
+    return { error: `could not read "${esc(file)}" (${(e as NodeJS.ErrnoException).code ?? 'error'})` };
   }
 };
 const json = (t: string): unknown => {

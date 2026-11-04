@@ -6,7 +6,8 @@ import type { Catalog } from '../catalog/schema.js';
 import { validateConfig } from '../core/config-io.js';
 import type { HarnessConfig } from '../core/config.js';
 import { gitRoot } from '../core/repo-root.js';
-import { ManifestError, readManifest, type Manifest } from '../install/apply.js';
+import { LOCK_RECOVERY, LOCK_REL, ManifestError, readManifest, type Manifest } from '../install/apply.js';
+import { existsSync } from 'node:fs';
 
 const CONFIG = '.harness/config.yaml';
 
@@ -23,6 +24,8 @@ export function openInstall(cli: { root: string; out: (s: string) => void }, not
     throw e;
   }
   if (!m) return out('Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.'), 1;
+  // Nothing is planned over a run that left files and manifest disagreeing, a dry run included.
+  if (existsSync(join(root, LOCK_REL))) return out(LOCK_RECOVERY), 1;
   return { root, m };
 }
 

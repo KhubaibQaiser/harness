@@ -10,7 +10,7 @@ import { ApplyError, type Change, type FsLike, applyChanges, removeEmptyDirs } f
 import { approvedIds } from '../install/approved.js';
 import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
 import { unifiedDiff } from '../install/diff.js';
-import { MANIFEST_REL, itemFiles, mergeManifestFiles } from '../install/manifest.js';
+import { MANIFEST_REL, itemFiles, mergeManifestFiles, rawOf } from '../install/manifest.js';
 import { selectedIds } from '../install/plan.js';
 import { reconcile } from '../install/reconcile.js';
 import { pinOf, resolveSelection } from '../install/select.js';
@@ -180,7 +180,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   const at = new Date();
   const files = mergeManifestFiles(m, changes, `.harness/backup/${at.toISOString().replace(/:/g, '-')}`);
   try {
-    applyChanges(root, changes, m.version, () => at, cli.fs, { manifest: { ...m, files } });
+    applyChanges(root, changes, m.version, () => at, cli.fs, { manifest: { ...m, files }, manifestBefore: rawOf(m) });
   } catch (e) {
     if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine(cmd as 'add' | 'remove', args) : e.message), 1;
     throw e;

@@ -157,7 +157,7 @@ test('the event log is protected like the state dir', () => {
     expect(bash(c), c).toBe('deny');
 });
 
-test.each(['.harness/manifest.json', '.harness/backup/2026-11-01T00-00-00.000Z/AGENTS.md', '.harness/backup'])('agent write to %s is denied', (p) => {
+test.each(['.harness/manifest.json', '.harness/apply.lock', '.harness/backup/2026-11-01T00-00-00.000Z/AGENTS.md', '.harness/backup'])('agent write to %s is denied', (p) => {
   expect(edit(p, 'Write').kind).toBe('deny');
   expect(bash(`rm -rf ${p}`)).toBe('deny');
 });

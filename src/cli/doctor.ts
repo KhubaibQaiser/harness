@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parse as parseYaml } from 'yaml';
@@ -8,7 +8,7 @@ import { LEGACY_RESULTS_DIR, type HarnessConfig } from '../core/config.js';
 import { readHookEnv } from '../core/hook-env.js';
 import { MIN_CLAUDE_CODE, claudeVersion, olderThan } from '../core/min-claude.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
-import { ManifestError, readManifest } from '../install/apply.js';
+import { LOCK_RECOVERY, LOCK_REL, ManifestError, readManifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { matchesHash } from '../install/text.js';
 import { isHarnessHook, mergeEslintFlatIgnores, settingsFragment } from '../install/merge.js';
@@ -59,6 +59,8 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const fix = (what: string, next: string) => (bad++, out(`fix ${what}: ${next}`));
   // A gate init turned off on purpose, with what turns it on: worth knowing, not a problem (doctor still exits 0).
   const note = (what: string, next?: string) => out(`note ${what}${next === undefined ? '' : `: ${next}`}`); // no next: the sentence carries its own advice
+
+  if (existsSync(join(root, LOCK_REL))) fix(`${LOCK_REL} exists`, LOCK_RECOVERY);
 
   const node = process.versions.node;
   if (olderThan(node, NODE_MIN_S)) fix(`Node ${node} is too old`, 'install Node 22.11 or newer');

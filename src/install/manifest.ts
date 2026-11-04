@@ -51,8 +51,9 @@ export class ManifestError extends Error {
   }
 }
 
-/** The manifest text each repo's last read saw. applyChanges refuses to write over a manifest that no longer holds it. */
-export const manifestSeen = new Map<string, string>();
+/** The text `readManifest` read the manifest from, for a command to hand to applyChanges as `manifestBefore` (copies of the object don't carry it). */
+export const rawOf = (m: Manifest): string | undefined => (m as { [RAW]?: string })[RAW];
+const RAW = Symbol('raw');
 
 /** True for a manifest backup path: inside `.harness/backup/`, no `..` anywhere. */
 export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/backup/') && !rel.split(/[\\/]/).includes('..');
@@ -67,7 +68,6 @@ export function backupText(root: string, rel: string | undefined): string | null
 
 export function readManifest(root: string, read: (p: string, e: 'utf8') => string = readFileSync): Manifest | null {
   const p = join(root, MANIFEST_REL);
-  manifestSeen.delete(resolve(root));
   if (!existsSync(p)) return null;
   let text: string;
   try {
@@ -77,10 +77,10 @@ export function readManifest(root: string, read: (p: string, e: 'utf8') => strin
     const why = (cause as Error).message.split('\n')[0];
     throw new ManifestError({ cause, message: `\`.harness/manifest.json\` could not be read (${why}). Try again; if it keeps failing, check what holds the file open.` });
   }
-  manifestSeen.set(resolve(root), text);
   try {
     const m = JSON.parse(text);
     if (m === null || typeof m !== 'object' || Array.isArray(m) || !Array.isArray(m.files)) throw new Error('bad shape');
+    Object.defineProperty(m, RAW, { value: text }); // not enumerable: never written back
     return m as Manifest;
   } catch (cause) {
     throw new ManifestError({ cause });
@@ -175,7 +175,7 @@ export function rehashManifest(root: string, rels: string[]): void {
       changed = true;
       return { ...f, hash: hashText(text) };
     });
-    if (changed) applyChanges(root, [], m.version, undefined, undefined, { manifest: { ...m, files } });
+    if (changed) applyChanges(root, [], m.version, undefined, undefined, { manifest: { ...m, files }, manifestBefore: rawOf(m) });
   }
   stampHarnessFiles(root);
 }

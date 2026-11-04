@@ -14,7 +14,9 @@ export function approvedIds(config: HarnessConfig, m: Manifest | null, cat: Cata
   return selectedIds(config).filter((id) => {
     if (itemFiles(m, id).length) return true;
     const src = cat.items.find((i) => i.id === id)?.source;
-    if (src?.type !== 'own' || src.files?.length) return false;
+    if (src?.type !== 'own') return false;
+    // A pre-catalog install recorded own files without an item tag: match them by path.
+    if (src.files?.length) return src.files.every((f) => m.files.some((e) => e.rel === f.to));
     if (src.merge?.includes('agents-md')) return m.files.some((f) => (f.rel === 'AGENTS.md' || f.rel === 'CLAUDE.md') && f.blocks?.length);
     return !!src.checks?.length && src.checks.every((k) => config.checks[k]);
   });

@@ -10,7 +10,7 @@ import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, removeEmptyDirs, readManifest, type Manifest } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
-import { MANIFEST_REL, mergeManifestFiles } from '../install/manifest.js';
+import { MANIFEST_REL, mergeManifestFiles, rawOf } from '../install/manifest.js';
 export { isBackupPath } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { reconcile } from '../install/reconcile.js';
@@ -134,7 +134,7 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const at = new Date();
   const commit = (cs: typeof changes, manifest: Manifest) => {
     try {
-      applyChanges(root, cs, version, () => at, cli.fs, { manifest });
+      applyChanges(root, cs, version, () => at, cli.fs, { manifest, manifestBefore: rawOf(m) });
       return null;
     } catch (e) {
       if (e instanceof ApplyError) return isDenied(e) ? sandboxLine('update', args) : e.message;

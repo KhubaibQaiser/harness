@@ -67,8 +67,10 @@ The scan reads the manifests and plain text only. Each rule gives a severity, a 
 | Severity | Rule | What it matches |
 |---|---|---|
 | high | `hook-shell` | Any hook whose type runs a command, in `hooks/hooks.json`, a `plugin.json` `hooks` block or a settings fragment. Each event is listed. |
+| high | `hook-http` | Any hook of type `http`: it sends the event data to a URL on every event. Each event is listed, with its URL. |
 | high | `secrets` | Reads or paths in scripts and prompts: `.env*`, `~/.ssh`, `id_rsa`, `~/.aws`, `~/.config/gh`, `.netrc`, keychain or credential-store commands, `printenv` or `env` dumps sent elsewhere. |
 | high | `unpinned-remote` | `npx`, `uvx`, `pipx run` or `bunx` without an exact version, or with `@latest`; `curl` or `wget` piped to a shell; `bash <(curl …)`; downloads written and then run; MCP `command` entries that fetch at launch. |
+| medium | `invalid-manifest` | A `hooks.json`, `plugin.json`, `.mcp.json` or `settings.json` that isn't valid JSON, so its hooks and servers can't be read. The text rules then scan it as plain text. |
 | medium | `obfuscated` | Base64 or hex blobs of 200 characters or more, `eval`, `new Function`, `atob` followed by execution, packed or minified JS over 5 KB in a skill or plugin. |
 | medium | `network` | URLs and network calls in scripts or hooks, apart from links in docs. |
 | medium | `mcp-server` | Each MCP server it would start, with its command or URL. |

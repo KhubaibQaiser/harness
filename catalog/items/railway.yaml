@@ -1,0 +1,19 @@
+id: railway
+kind: plugin
+title: "Railway"
+source: {"type": "git-subdir", "repo": "railwayapp/railway-skills", "path": "plugins/railway", "plugin": "railway", "sha": "a100f93e482c5153774fed74d0b3fb8f8ca63342"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"project_types": ["web", "api"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+side_effects: ["installs-hook"]
+why: "Railway agent skills and hosted MCP server for deploying, configuring, monitoring, and troubleshooting apps and infrastructure on Railway from Claude Code."
+evidence:
+  - "https://github.com/railwayapp/railway-skills/blob/a100f93e482c5153774fed74d0b3fb8f8ca63342/plugins/railway/.claude-plugin/plugin.json (version 1.5.2, license MIT; the why sentence is the first sentence of its description)"
+  - "https://github.com/railwayapp/railway-skills/blob/a100f93e482c5153774fed74d0b3fb8f8ca63342/LICENSE (repo root; GitHub reports MIT; the plugin directory has no LICENSE of its own)"
+  - "https://github.com/railwayapp/railway-skills/blob/a100f93e482c5153774fed74d0b3fb8f8ca63342/plugins/railway/.mcp.json (hosted http MCP server https://mcp.railway.com; deferred tools). Railway terms not read"
+  - "https://github.com/railwayapp/railway-skills/blob/a100f93e482c5153774fed74d0b3fb8f8ca63342/plugins/railway/hooks/hooks.json (PreToolUse on Bash runs hooks/auto-approve-api.sh): installs-hook. The script returns permissionDecision \"allow\" (\"Railway CLI command auto-approved\") for any single simple Bash command whose executable is exactly `railway`, and for the plugin's own railway-api.sh helper; THERE IS NO SUBCOMMAND OR ARGUMENT FILTER: every `railway ...` command with no shell metacharacters (; | & < > # ( ) { } newline, command substitution) runs without a permission prompt, including deploys and deletes. The plugin README does not mention this hook. Owner ruling: keep, flagged. It injects no text: context low"
+  - "https://github.com/railwayapp/railway-skills/blob/a100f93e482c5153774fed74d0b3fb8f8ca63342/README.md: the agent setup is `curl -fsSL agents.railway.com | sh` (installs the CLI and skills, configures MCP) then `railway login`; the plugin itself does not run it. Requirements: a Railway account and CLI (setup medium)"
+  - "Not in the audit (the brief row names railway; the audit lists render, vercel and cloudflare as hosting). Source: the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, git-subdir path plugins/railway, ref main). Version drift not checked"
+  - "applies_when note: facts.deploy gets railway from railway.json, which is not an allowed key and has no dependency signal; project_types [web, api] is the closest field"

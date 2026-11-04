@@ -1,0 +1,18 @@
+id: workos
+kind: plugin
+title: "WorkOS"
+source: {"type": "git-subdir", "repo": "workos/skills", "path": "plugins/workos", "plugin": "workos", "sha": "e25141bae047a7c837d93817347f95977598720f"}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {"any_dep": ["@workos-inc/node", "@workos-inc/authkit-nextjs"]}
+cost: {"context": "low", "setup": "low"}
+stance: optional
+why: "WorkOS integration skills for AuthKit, SSO, Directory Sync, RBAC, Vault, Audit Logs, migrations, and API references."
+evidence:
+  - "https://github.com/workos/skills/blob/e25141bae047a7c837d93817347f95977598720f/plugins/workos/.claude-plugin/plugin.json (version 0.7.3, license MIT; the why sentence is its description)"
+  - "https://github.com/workos/skills/blob/e25141bae047a7c837d93817347f95977598720f/LICENSE (repo root; GitHub reports MIT; plugin.json also says MIT)"
+  - "https://github.com/workos/skills/blob/e25141bae047a7c837d93817347f95977598720f/plugins/workos/mcp.json (a file named mcp.json, not .mcp.json, with one server url https://mcp.workos.com/mcp and no type; plugin.json has no mcpServers key. I did not verify whether Claude Code loads it, so the item does not rely on the server)"
+  - "No hooks directory (404); skills: workos and workos-widgets: context low. repo-root README (not a plugin-directory file): \"Two skills and 40 reference files\". Requirement: a WorkOS account for the app being built"
+  - "audit.html: \"auth0 (you've shipped Auth0) · workos · stripe · revenuecat (mobile in-app purchases)\" and \"Install only when a project uses them.\""
+  - "Source choice: the pin is the official marketplace entry (anthropics/claude-plugins-official at a2e251d9b97b, ref main). Version drift not checked"
+  - "applies_when note: @workos-inc/node and @workos-inc/authkit-nextjs are in the AUTH list of src/install/facts.ts (npm view: 12.1.0 and 4.6.2)"

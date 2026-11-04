@@ -18,6 +18,12 @@ const BATCHES: Record<number, string[]> = {
     'playwright', 'chrome-devtools-mcp', 'webapp-testing',
     'expo', 'react-native-best-practices', 'maestro-mcp', 'mobile-mcp', 'revenuecat',
   ],
+  4: [
+    'postman', '42crunch-api-security-testing', 'supabase', 'supabase-agent-skills', 'prisma', 'neon', 'databases-on-aws', 'auth0', 'workos', 'stripe',
+    'aws-core', 'aws-serverless', 'deploy-on-aws', 'pulumi', 'terraform', 'vercel', 'cloudflare', 'render', 'railway',
+    'mergify',
+    'jfrog', 'sonatype-guide',
+  ],
 };
 
 test.each(Object.entries(BATCHES))('batch %s ids are all in items/ or excluded.yaml', (_n, ids) => {
@@ -67,4 +73,13 @@ test('LSP plugins carry the marketplace lspServers map', () => {
   const servers = { 'typescript-lsp': 'typescript', 'swift-lsp': 'sourcekit-lsp', 'kotlin-lsp': 'kotlin-lsp' } as const;
   for (const [id, name] of Object.entries(servers)) expect([id, Object.keys(by.get(id)?.lsp_servers ?? {})]).toEqual([id, [name]]);
   expect((by.get('kotlin-lsp')?.lsp_servers as any)['kotlin-lsp'].startupTimeout).toBe(120000);
+});
+
+// Batch 4 hook-bearing items (read from each pinned hooks.json) must say so; medium context is only for hooks that inject text.
+test('batch 4 hook-bearing items carry installs-hook and only injectors are medium', () => {
+  const by = new Map(loadCatalog().catalog.items.map((i) => [i.id, i]));
+  const hooked = ['postman', 'stripe', 'vercel', 'databases-on-aws', 'aws-serverless', 'deploy-on-aws', 'render', 'railway', 'jfrog', 'aws-core'];
+  for (const id of hooked) expect([id, by.get(id)?.side_effects.includes('installs-hook')]).toEqual([id, true]);
+  const medium = BATCHES[4].filter((id) => by.get(id)?.cost.context === 'medium').sort();
+  expect(medium).toEqual(['jfrog', 'postman', 'stripe', 'vercel']);
 });

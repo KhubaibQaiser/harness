@@ -1,0 +1,18 @@
+id: 42crunch-api-security-testing
+kind: plugin
+title: "42Crunch API security testing"
+source: {"type": "git-subdir", "repo": "42Crunch-AI/claude-plugins", "path": "plugins/api-security-testing", "plugin": "api-security-testing", "sha": "faf5305385de8afed9468904e8639be737aff39e"}
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when: {"project_types": ["api"]}
+cost: {"context": "low", "setup": "medium"}
+stance: optional
+side_effects: ["downloads-binary"]
+why: "Catch API security issues during development: audit, scan, remediate, validate with AI guardrails in Claude Code."
+evidence:
+  - "https://github.com/42Crunch-AI/claude-plugins/blob/faf5305385de8afed9468904e8639be737aff39e/plugins/api-security-testing/.claude-plugin/plugin.json (version 1.5.5, license \"Apache 2.0\"; the why sentence is its description). The official marketplace entry is named 42crunch-api-security-testing and points at this path with ref v1.5.5 and this sha; the plugin.json name is api-security-testing, which is the `plugin` field"
+  - "https://github.com/42Crunch-AI/claude-plugins/blob/faf5305385de8afed9468904e8639be737aff39e/plugins/api-security-testing/LICENSE (Apache License 2.0 text; the repo license field is null, the plugin directory has its own LICENSE)"
+  - "https://github.com/42Crunch-AI/claude-plugins/blob/faf5305385de8afed9468904e8639be737aff39e/plugins/api-security-testing/README.md Prerequisites: \"A 42Crunch account — freemium or paid (Platform API key)\"; \"The `42c-ast` binary is downloaded and kept up to date automatically on first use\" (downloads-binary); the setup skill \"verifies its checksum\" and stores credentials in `~/.42crunch/conf/env`; `42crunch-scan` needs a running API server"
+  - "No hooks directory or .mcp.json at the sha (404): skills only (42crunch-api-security-testing, 42crunch-audit, 42crunch-scan, 42crunch-setup, code-to-oas): context low. Not stated: what the audit and scan send to 42Crunch; the freemium and platform modes use the 42Crunch service"
+  - "audit.html: \"Add 42crunch-api-security-testing on demand to audit OpenAPI specs.\""
+  - "applies_when note: project_types [api] is the closest field; an OpenAPI file is not in Facts"

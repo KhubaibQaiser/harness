@@ -2,6 +2,7 @@
 // exact count (CountTokens) is the budget build's seam, and M3 never passes one.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parse } from 'yaml';
 import type { Catalog, CatalogItem } from '../catalog/schema.js';
 
 export const DEFAULT_CONTEXT_BUDGET = 2000;
@@ -12,14 +13,12 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 export function alwaysLoadedText(kind: 'agents-block' | 'claude-import' | 'skill' | 'agent', text: string): string {
   if (kind === 'agents-block' || kind === 'claude-import') return text;
   const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? '';
-  const lines = fm.split(/\r?\n/);
-  const out: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (!/^(name|description):/.test(lines[i])) continue;
-    out.push(lines[i]);
-    while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) out.push(lines[++i]); // a folded or block value
+  try {
+    const y = parse(fm) as Record<string, unknown> | null;
+    return (['name', 'description'] as const).filter((k) => y?.[k] != null).map((k) => `${k}: ${String(y![k]).trim()}`).join('\n');
+  } catch {
+    return fm; // unparseable frontmatter: count all of it; over-counting is safe
   }
-  return out.join('\n');
 }
 
 export interface ContextEntry { id: string; tokens: number | null; exempt?: true }
@@ -52,7 +51,7 @@ export async function measureSelection(
   const byId = new Map(c.items.map((i) => [i.id, i]));
   const exempt = new Set(opts.exempt ?? []);
   const entries: ContextEntry[] = [pluginEntry(dirs.plugin)];
-  for (const id of ids) {
+  for (const id of new Set(ids)) {
     const it = byId.get(id);
     if (!it) continue;
     const e = itemContext(it, dirs);

@@ -7,7 +7,7 @@ import { olderThan } from '../core/min-claude.js';
 
 export interface ChecklistRow {
   id: string; title: string; include: 'recommended' | 'optional'; ticked: boolean; reason: string; cost: string;
-  /** From itemContextLine when checklist gets the templates dir; else ''. */
+  /** From itemContextLine. */
   context: string;
   side_effects: string[]; local_only: boolean; stance_reason: string; no_alternative: string;
 }
@@ -15,7 +15,7 @@ export interface ChecklistRow {
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** One row per pick: recommended first (ticked), then optional, each by id. Picks are validated, so ids exist. */
-export function checklist(p: Picks, c: Catalog, dirs?: { templates: string }): ChecklistRow[] {
+export function checklist(p: Picks, c: Catalog, dirs: { templates: string }): ChecklistRow[] {
   const byId = new Map(c.items.map((i) => [i.id, i]));
   return p.items
     .filter((x) => byId.has(x.id))
@@ -24,7 +24,7 @@ export function checklist(p: Picks, c: Catalog, dirs?: { templates: string }): C
       const it = byId.get(x.id)!;
       return {
         id: x.id, title: it.title, include: x.include, ticked: x.include === 'recommended', reason: x.reason,
-        cost: `context ${it.cost.context}, setup ${it.cost.setup}`, context: dirs ? itemContextLine(itemContext(it, dirs)) : '', side_effects: it.side_effects,
+        cost: `context ${it.cost.context}, setup ${it.cost.setup}`, context: itemContextLine(itemContext(it, dirs)), side_effects: it.side_effects,
         local_only: it.kind === 'plugin' || it.kind === 'external-skill', stance_reason: it.stance_reason, no_alternative: x.no_alternative ?? '',
       };
     });

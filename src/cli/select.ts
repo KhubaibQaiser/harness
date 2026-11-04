@@ -26,7 +26,7 @@ export function select(args: string[], { out }: CliEnv): number {
   if (choose && !choose.length) return out(USAGE), 2;
   const { catalog, errors } = loadCatalog(packageDir('catalog'));
   if (errors.length) return errors.forEach((e) => out(`catalog: ${e}`)), 2;
-  if (!choose) return out(json(checklist(picks, catalog))), 0;
+  if (!choose) return out(json(checklist(picks, catalog, { templates: packageDir('templates') }))), 0;
   const r = resolveSelection(choose, catalog, claudeVersion());
   if (r.errors.length) return r.errors.forEach((e) => out(e)), 2;
   out(json({ ids: r.ids, notices: r.notices, selected: toSelected(picks, r.ids, catalog) }));

@@ -2,16 +2,17 @@ import { expect, test } from 'vitest';
 import { loadCatalog } from '../../src/catalog/load.js';
 import { checklist, resolveSelection, toSelected } from '../../src/install/select.js';
 
+const dirs = { templates: 'templates' };
 const { catalog } = loadCatalog('test/fixtures/catalog');
 const pk = (id: string, include: 'recommended' | 'optional' = 'recommended', over = {}) => ({ id, include, reason: `Why ${id}.`, addresses: [], ...over });
 const picks = (...items: ReturnType<typeof pk>[]) => ({ catalog_version: 1, findings: [], items });
 
 test('checklist order and local_only', () => {
-  const rows = checklist(picks(pk('lead-a', 'optional'), pk('gsap-skills'), pk('base'), pk('extra', 'optional')), catalog);
+  const rows = checklist(picks(pk('lead-a', 'optional'), pk('gsap-skills'), pk('base'), pk('extra', 'optional')), catalog, dirs);
   expect(rows.map((r) => r.id)).toEqual(['base', 'gsap-skills', 'extra', 'lead-a']);
   expect(rows.map((r) => r.ticked)).toEqual([true, true, false, false]);
   expect(rows.map((r) => r.local_only)).toEqual([false, true, false, false]);
-  expect(rows[0]).toMatchObject({ title: 'Fixture base', reason: 'Why base.', cost: 'context low, setup none', context: '', side_effects: [], include: 'recommended' });
+  expect(rows[0]).toMatchObject({ title: 'Fixture base', reason: 'Why base.', cost: 'context low, setup none', context: '~0 tokens (estimate)', side_effects: [], include: 'recommended' });
 });
 
 test('requires auto-selects with a notice, transitively', () => {
@@ -35,7 +36,7 @@ test('conflicts block both', () => {
 });
 
 test('discouraged rows carry stance_reason and no_alternative', () => {
-  const [row] = checklist(picks(pk('quiet', 'optional', { no_alternative: 'nothing else fits' })), catalog);
+  const [row] = checklist(picks(pk('quiet', 'optional', { no_alternative: 'nothing else fits' })), catalog, dirs);
   expect(row).toMatchObject({ stance_reason: 'overlaps lead-a', no_alternative: 'nothing else fits' });
 });
 
@@ -71,6 +72,6 @@ test('C1 controls in an id are escaped', () => {
 });
 
 test('checklist rows show the context line', () => {
-  const rows = checklist(picks(pk('base'), pk('gsap-skills')), catalog, { templates: 'templates' });
+  const rows = checklist(picks(pk('base'), pk('gsap-skills')), catalog, dirs);
   expect(rows.map((r) => r.context)).toEqual(['~0 tokens (estimate)', 'not measured before install']);
 });

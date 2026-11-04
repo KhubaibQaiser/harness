@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
+import { defaults } from '../../src/core/config.js';
 import { loadCatalog } from '../../src/catalog/load.js';
 import type { Catalog, CatalogItem } from '../../src/catalog/schema.js';
-import { alwaysLoadedText, budgetLines, budgetVerdict, estimateTokens, itemContext, itemContextLine, measureSelection, type ContextMeasure } from '../../src/budget/measure.js';
+import { DEFAULT_CONTEXT_BUDGET, alwaysLoadedText, budgetLines, budgetVerdict, estimateTokens, itemContext, itemContextLine, measureSelection, type ContextMeasure } from '../../src/budget/measure.js';
 
 const templates = join(__dirname, '../../templates');
 const plugin = join(__dirname, '../..');
@@ -115,4 +116,20 @@ test('measureSelection reads a real catalog', async () => {
   const { catalog } = loadCatalog(join(__dirname, '../../catalog'));
   const r = await measureSelection(['review-rubric', 'agents-md'], catalog, dirs);
   expect(r.tokens).toBeGreaterThan(0);
+});
+
+test('block descriptions with blank lines count in full; bad frontmatter over-counts', () => {
+  const desc = 'line one\n\nline three';
+  const t = alwaysLoadedText('skill', `---\nname: x\ndescription: |\n  line one\n\n  line three\n---\nbody`);
+  expect(t).toBe(`name: x\ndescription: ${desc}`);
+  expect(alwaysLoadedText('skill', '---\nname: [x\n---\nbody')).toBe('name: [x');
+});
+
+test('duplicate ids count once', async () => {
+  const c = cat(rubric);
+  expect((await measureSelection(['review-rubric', 'review-rubric'], c, dirs)).tokens).toBe((await measureSelection(['review-rubric'], c, dirs)).tokens);
+});
+
+test('config default equals DEFAULT_CONTEXT_BUDGET', () => {
+  expect(defaults().context.budget_tokens).toBe(DEFAULT_CONTEXT_BUDGET);
 });

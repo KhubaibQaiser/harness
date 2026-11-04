@@ -7,7 +7,7 @@ import { ApplyError, type Change, type FsLike, applyChanges, removeEmptyDirs } f
 import { unifiedDiff } from '../install/diff.js';
 import { approvedIds } from '../install/approved.js';
 import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
-import { MANIFEST_REL, mergeManifestFiles, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
+import { MANIFEST_REL, mergeManifestFiles, rawOf, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
 import { pinnedPlugins } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
@@ -129,7 +129,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   let files = mergeManifestFiles(man, changes, `.harness/backup/${at.toISOString().replace(/:/g, '-')}`);
   files = files.filter((f) => !gone.some((g) => g.rel === f.rel));
   try {
-    applyChanges(root, changes, man.version, () => at, cli.fs, { manifest: { ...man, files } });
+    applyChanges(root, changes, man.version, () => at, cli.fs, { manifest: { ...man, files }, manifestBefore: rawOf(man) });
   } catch (e) {
     if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('sync', args) : e.message), 1;
     throw e;

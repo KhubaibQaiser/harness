@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { expect, test } from 'vitest';
 import { parseDocument } from 'yaml';
 import { items } from '../../src/cli/items.js';
+import { doctor } from '../../src/cli/doctor.js';
+import { status } from '../../src/cli/status.js';
 import { sync } from '../../src/cli/sync.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import type { Prompt } from '../../src/cli/prompt.js';
@@ -223,4 +225,42 @@ test('pruneStale drops the dropped blocks of a file with no change and counts th
   expect(m.files[0].blocks).toEqual(['b']);
   expect(m.files[1].blocks).toBeUndefined();
   expect(pruneStale(m, [{ kind: 'delete', rel: '.mcp.json', before: '' }], ['b'])).toBe(0); // a file with a change is left to the merge
+});
+
+// M-a: two commands in one process
+test('a second command applying in the same process still stops the first (explicit manifest text)', async () => {
+  const root = installed([...OWN, 'staff-reviewer']);
+  rmSync(join(root, SR));
+  editItems(root, (list) => { list.find((i) => i.id === 'staff-reviewer').selected = false; }); // A's job: only forget the record
+  // Session B runs to the end inside A's confirm, in this process.
+  const both: Prompt = { async confirm() { await items('add', ['mobile-mcp', '--yes', '--over-budget'], { env: CLAUDE, root, out: () => {}, prompt: say(false), templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null }); return true; }, async edit(_l, v) { return v; } };
+  const r = await syn(root, [], both);
+  expect(readManifest(root)!.files.some((f) => f.rel === '.mcp.json')).toBe(true);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('Another harness command changed the install while this one ran.');
+});
+
+// M-b: a legacy install has no item tags
+test('approvedIds on a legacy install counts staff-reviewer and review-rubric by path', () => {
+  const root = makeRepo(REPO);
+  const facts = detect(root);
+  const config = preset(facts).config; // no items: the legacy own items
+  applyChanges(root, planChanges(root, config, facts, { version: '1.0.0', distDir: join(pkgDir, 'dist'), templatesDir }).changes, '1.0.0');
+  const got = approvedIds(config, readManifest(root)!, loadCatalog().catalog);
+  expect(got).toEqual(expect.arrayContaining(['staff-reviewer', 'review-rubric', 'agents-md', 'agent-guard']));
+});
+
+// M-c: the lock
+test('a locked repo: dry run, doctor and status all say so', async () => {
+  const root = installed();
+  writeFileSync(join(root, '.harness/apply.lock'), 'x\n');
+  const d = await add(root, 'add', ['staff-reviewer', '--dry-run']);
+  expect(d.code).toBe(1);
+  expect(d.out.split('\n')[0]).toContain('To recover');
+  let out = '';
+  expect(doctor([], { root, env: {}, out: (s) => (out += s + '\n') }, { claudeVersion: () => null })).toBe(1);
+  expect(out).toContain('fix .harness/apply.lock exists: ');
+  out = '';
+  status([], { root, env: {}, out: (s) => (out += s + '\n') });
+  expect(out).toContain('Lock: .harness/apply.lock exists.');
 });

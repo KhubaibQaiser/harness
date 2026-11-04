@@ -1,6 +1,6 @@
 import * as nodeFs from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { MANIFEST_REL, ManifestError, manifestSeen, readManifest, type Manifest } from './manifest.js';
+import { MANIFEST_REL, ManifestError, readManifest, type Manifest } from './manifest.js';
 import type { Hunk } from './diff.js';
 import { hashText } from './text.js';
 import { renameWithRetry } from '../core/atomic.js';
@@ -25,7 +25,10 @@ export class ApplyError extends Error {
 }
 
 const TMP = '.harness-tmp';
-const LOCK = '.harness/apply.lock';
+export const LOCK_REL = '.harness/apply.lock';
+const LOCK = LOCK_REL;
+/** What the person does about a lock left by an interrupted run or a rollback that failed. */
+export const LOCK_RECOVERY = 'A previous harness run was interrupted or could not roll back, so the files and `.harness/manifest.json` may disagree. To recover: 1) run `git status` to see what it changed, 2) undo that with `git checkout -- <file>` and `git clean -f <file>` (restore any file named in the earlier rollback message from `.harness/backup/`), 3) delete `.harness/apply.lock`, 4) run the command again.';
 
 export function applyChanges(
   root: string,
@@ -34,12 +37,13 @@ export function applyChanges(
   now: () => Date = () => new Date(),
   fs: FsLike = nodeFs,
   /** `manifest`: write this instead of the computed one, as the transaction's last step (rolled back with the files). */
-  opts: { writeManifest?: boolean; manifest?: Manifest; tddOff?: string[] } = {},
+  /** `manifestBefore`: the manifest text the plan was built from (`rawOf`); the apply stops if the disk no longer holds it. */
+  opts: { writeManifest?: boolean; manifest?: Manifest; tddOff?: string[]; manifestBefore?: string } = {},
 ): Manifest {
   const abs = (rel: string) => join(root, ...rel.split('/'));
   // A kill mid-apply leaves written files the manifest never recorded; the journal below tells the next run.
   if (fs.existsSync(abs(LOCK)))
-    throw new ApplyError('A previous harness run was interrupted or could not roll back, so the files and `.harness/manifest.json` may disagree. To recover: 1) run `git status` to see what it changed, 2) undo that with `git checkout -- <file>` and `git clean -f <file>` (restore any file named in the earlier rollback message from `.harness/backup/`), 3) delete `.harness/apply.lock`, 4) run the command again.');
+    throw new ApplyError(LOCK_RECOVERY);
   const createdAt = now().toISOString();
   const backupRel = `.harness/backup/${createdAt.replace(/:/g, '-')}`;
   const writeManifest = opts.manifest !== undefined || (opts.writeManifest ?? true);
@@ -75,7 +79,7 @@ export function applyChanges(
   if (writeManifest) {
     checkPath(MANIFEST_REL);
     // Another command may have rewritten the manifest since this one read it (no file change of ours would show it).
-    const seen = manifestSeen.get(resolve(root));
+    const seen = opts.manifestBefore;
     let now: string | null = null;
     try { now = fs.readFileSync(abs(MANIFEST_REL), 'utf8'); } catch { /* missing */ }
     if (seen !== undefined && now !== seen) throw new ApplyError('Another harness command changed the install while this one ran. Run it again.');
@@ -129,9 +133,10 @@ export function applyChanges(
     fs.writeFileSync(abs(LOCK), steps.map((s) => s.rel).join('\n') + '\n');
     for (const s of steps) {
       const target = abs(s.rel);
-      touched.push(s.rel);
+      // Pushed once the step is done: an unlink or rename is atomic, so a step that threw left its target as it was.
       if (s.content === null) {
         fs.unlinkSync(target);
+        touched.push(s.rel);
         continue;
       }
       mkParent(target);
@@ -139,6 +144,7 @@ export function applyChanges(
       const mode = s.mode ?? modes.get(s.rel);
       if (mode !== undefined && process.platform !== 'win32') fs.chmodSync(target + TMP, mode);
       renameWithRetry(target + TMP, target, (a, b) => fs.renameSync(a, b));
+      touched.push(s.rel);
     }
     fs.rmSync(abs(LOCK), { force: true });
   } catch (cause) {
@@ -176,7 +182,6 @@ export function applyChanges(
     }
     throw new ApplyError(`apply failed and was rolled back: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
   }
-  manifestSeen.delete(resolve(root));
   return manifest;
 }
 

@@ -279,7 +279,7 @@ test.each([
 // The backstop reads the raw text, so prose that names harness and a change word asks (accepted cost), and `tdd off` is denied.
 test.each(['git commit -m "docs: harness uninstall now asks"', "grep -r 'harness uninstall' docs"])(
   'R2: harness words inside quotes ask through the backstop: %s', (cmd) => expect(kind(cmd)).toBe('ask'));
-test('R2: prose with harness tdd off is denied by the text scan', () => expect(kind('echo "run harness tdd off yourself"')).toBe('deny'));
+test('R2: prose with harness tdd off only asks', () => expect(kind('echo "run harness tdd off yourself"')).toBe('ask'));
 test.each(['harness uninstall --dry-run', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" uninstall --dry-run', 'npx @khubaibqaiser/harness uninstall --dry-run', 'harness status', 'harness doctor', 'git commit -m "uninstall the old hook"'])(
   '%s is allowed', (cmd) => expect(kind(cmd)).toBe('allow'));
 
@@ -632,4 +632,9 @@ test('re-review M1: npm pre/post scripts, aliases, another prefix and the depth 
   const k = (c: string) => decideCommand(c, { ...ctx(), root }).kind;
   for (const c of ['npm run x', 'npm t', 'npm tst', 'npm rum a', 'npm run e', 'npm run d', 'npm --prefix sub run s', 'pnpm -C sub s']) expect(k(c), c).toBe('ask');
   expect(k('npm run quiet')).toBe('allow');
+});
+
+test('tdd off: a real invocation the parser sees is denied, words the text scan only finds ask', () => {
+  for (const c of ['{ harness tdd off; }', '! harness tdd off', 'if true; then harness tdd off; fi', 'node dist/cli.mj? tdd off', 'node dist/c*.mjs tdd off']) expect(kind(c), c).toBe('deny');
+  for (const c of ['echo "harness tdd off"', "grep -r 'harness tdd off' docs", 'git commit -m "docs: harness tdd off"', 'cat <<EOF\nharness tdd off\nEOF', 'h() { node dist/cli.mjs "$@"; }; h tdd off']) expect(kind(c), c).toBe('ask');
 });

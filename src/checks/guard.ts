@@ -147,9 +147,28 @@ function scriptsOf(root: string): Record<string, string> {
   }
 }
 
+/** The command with each here-document body (between `<<WORD` and the line `WORD`) removed. */
+function withoutHeredocBodies(cmd: string): string {
+  if (!cmd.includes('<<')) return cmd;
+  const out: string[] = [];
+  let end: string | null = null;
+  for (const line of cmd.split('\n')) {
+    if (end !== null) {
+      if (line.trim() === end) end = null;
+      continue;
+    }
+    out.push(line);
+    const m = !/<<</.test(line) && /<<-?\s*(['"]?)([A-Za-z_]\w*)\1/.exec(line);
+    if (m) end = m[2];
+  }
+  return out.join('\n');
+}
+
 // Why a harness invocation (in command position) needs the person, or null when the agent may run it.
 // ponytail: a wrapper flag value not listed in WRAPPER_VALUE_FLAGS is read as the command, which then isn't harness.
 function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
+  const whole = command;
+  command = withoutHeredocBodies(command); // a body is data for its command; a shell reading it is handled below, from `whole`
   // A backslash is an escape in a POSIX shell (harn\\ess -> harness) and a path separator on Windows
   // (C:\\x\\cli.mjs): judge the command both ways.
   // Then again with a quoted or escaped space kept inside its word, so a path such as "C:\\Users\\John Smith\\…\\cli.mjs"
@@ -162,7 +181,7 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
     // A -c payload, or a program fed to a shell on stdin (echo … | bash, <<<, a here-document), is a command line of
     // its own: judge it with all the readings (a spaced path inside it is one word).
     (depth < 3
-      ? [...cPayloads(command), ...stdinPrograms(command, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
+      ? [...cPayloads(command), ...stdinPrograms(whole, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
           .reduce<Hit | null>((hit, p) => hit ?? personOnlyInvocation(p, w, depth + 1), null)
       : null)
   );
@@ -201,7 +220,7 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
     }
     const s = rest.findIndex((t) => !t.startsWith('-'));
     if (s < 0) return /^(\$\(|\(|`)$/.test(next ?? '') ? hidden : null; // subcommand comes from a substitution
-    if (/[$`]/.test(rest[s])) return hidden;
+    if (/[$`]/.test(rest[s]) && !/^\$[@*0-9]$/.test(rest[s])) return hidden; // "$@" forwarded by a function is text for the backstop, not a hidden subcommand
     if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return hit(rest[s], toks[k]);
     return null;
   };
@@ -237,7 +256,8 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
     // Whatever the hidden command is, the allowed arguments stay allowed.
     const at = toks[k]?.startsWith('$') && !HARNESS_CMD.test(toks[k]) ? k + 1 : k === 0 && /^[`)]$/.test(parts[i - 1] ?? '') ? 0 : -1;
     if (at >= 0 && isPersonOnly(toks[at]) && !PERSON_ONLY[toks[at]].allowed(toks.slice(at + 1))) return hidden;
-    if (!toks[k] || !HARNESS_CMD.test(toks[k])) continue;
+    // A glob in the CLI path (dist/cli.mj?) is expanded by the shell: judge it as the harness CLI.
+    if (!toks[k] || !(HARNESS_CMD.test(toks[k]) || (/[*?[]/.test(toks[k]) && TARGET.test(toks[k])))) continue;
     const r = judge(toks, k, parts[i + 1]);
     if (r) return r;
   }
@@ -270,7 +290,8 @@ function previewOnly(text: string, depth = 0): boolean {
 }
 function backstop(text: string): Hit | null {
   if (!TARGET.test(text)) return null;
-  if (TDD_OFF.test(text)) return { kind: 'deny', reason: PERSON_ONLY.tdd.why((sub) => `\`harness ${sub}\``) };
+  // Only words: a real `harness tdd off` the parser saw was denied before this. Prose, echo, grep, a commit message or a forwarding function asks.
+  if (TDD_OFF.test(text)) return { kind: 'ask', reason: 'the command names harness and `tdd off`, and the guard cannot tell that it does not run it. Only a person can pause TDD, in their own terminal' };
   if (!CHANGE.test(text) || previewOnly(text)) return null;
   return { kind: 'ask', reason: 'the command names harness and a word that changes it (init, update, add, remove, sync, uninstall, push, pr), and the guard cannot tell that it is only a preview' };
 }
@@ -493,7 +514,6 @@ export function decideCommand(command: string, ctx: GuardCtx): Decision {
   const d = decideCore(command, ctx);
   if (d.kind === 'deny') return d;
   const b = backstop(command);
-  if (b?.kind === 'deny') return { kind: 'deny', reason: b.reason, check: 'guard' };
   return d.kind === 'allow' && b ? toDecision(['ask', b.reason]) : d;
 }
 

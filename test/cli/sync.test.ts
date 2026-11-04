@@ -42,9 +42,9 @@ const installed = (ids: string[] = OWN) => {
 };
 const yes: Prompt = { async confirm() { return true; }, async edit(_l, v) { return v; } };
 const CLAUDE = { CLAUDECODE: '1' };
-const run = async (root: string, args: string[], env: NodeJS.ProcessEnv = CLAUDE, exec?: Exec) => {
+const run = async (root: string, args: string[], env: NodeJS.ProcessEnv = CLAUDE, exec?: Exec, version?: string) => {
   let out = '';
-  const code = await sync(args, { env, root, out: (s) => (out += s + '\n'), prompt: yes, templatesDir, distDir: join(pkgDir, 'dist'), exec });
+  const code = await sync(args, { env, root, out: (s) => (out += s + '\n'), prompt: yes, templatesDir, distDir: join(pkgDir, 'dist'), exec, version });
   return { code, out };
 };
 const tree = (root: string, dir = ''): Record<string, string> => Object.fromEntries(readdirSync(join(root, dir)).filter((n) => n !== '.git').flatMap((n) => {
@@ -59,6 +59,14 @@ const editConfig = (root: string, f: (items: any[]) => void) => {
   doc.set('items', items);
   writeFileSync(p, doc.toString());
   commitAll(root);
+};
+const editConfigNoCommit = (root: string) => { // an uncommitted selection change: the plan rewrites config.yaml
+  const p = join(root, '.harness/config.yaml');
+  const doc = parseDocument(readFileSync(p, 'utf8'));
+  const items = doc.toJS().items;
+  items.find((i: any) => i.id === 'tdd-gate').selected = false;
+  doc.set('items', items);
+  writeFileSync(p, doc.toString());
 };
 const SR = '.claude/agents/staff-reviewer.md';
 
@@ -173,7 +181,9 @@ const hash = (root: string) => readManifest(root)!.files.find((f) => f.rel === S
 test('a plugin installed by hand is recorded with --install-plugins', async () => {
   const root = installed([...OWN, 'impeccable']);
   const p = join(root, SETTINGS);
-  writeFileSync(p, readFileSync(p, 'utf8').replace(/\n$/, '') + '\n\n'); // stands in for claude rewriting the file
+  const j = JSON.parse(readFileSync(p, 'utf8'));
+  j.enabledPlugins['impeccable@harness-pins'] = false; // stands in for claude's own change to the entry
+  writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
   const old = hash(root);
   const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, listing(['impeccable@harness-pins']));
   expect(r.code, r.out).toBe(0);
@@ -235,4 +245,39 @@ test('an edited file of an unselected item is kept', async () => {
   const r = await run(root, ['--yes']);
   expect(r.code, r.out).toBe(0);
   expect(readFileSync(join(root, SR), 'utf8')).toBe('mine\n');
+});
+
+test('a hand install plus another edit is not recorded, and the person\'s key survives uninstall', async () => {
+  const root = installed([...OWN, 'impeccable']);
+  const p = join(root, SETTINGS);
+  const j = JSON.parse(readFileSync(p, 'utf8'));
+  j.enabledPlugins['impeccable@harness-pins'] = false;
+  j.mine = { keep: true };
+  writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+  commitAll(root);
+  const old = hash(root);
+  const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, listing(['impeccable@harness-pins']));
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('settings.json has other edits; not recorded. Run /harness:update to review them.');
+  expect(hash(root)).toBe(old);
+  expect(await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: yes })).toBe(0);
+  expect(JSON.parse(readFileSync(p, 'utf8')).mine).toEqual({ keep: true });
+});
+
+test('sync refuses when the package version differs from the manifest', async () => {
+  const r = await run(installed(), ['--dry-run'], CLAUDE, undefined, '9.9.9');
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('Run /harness:update first');
+});
+
+test('the preview reports uncommitted files and still exits 0', async () => {
+  const root = installed([...OWN, 'staff-reviewer']);
+  rmSync(join(root, SR));
+  commitAll(root);
+  const p = join(root, '.harness/config.yaml');
+  writeFileSync(p, readFileSync(p, 'utf8') + '# note\n');
+  editConfigNoCommit(root);
+  const r = await run(root, ['--dry-run']);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('Commit or stash these files first');
 });

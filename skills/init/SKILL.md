@@ -27,7 +27,7 @@ Run this in the main session: subagents cannot ask questions. Make a temp dir ou
    - On yes, one call: `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" init --answers <answers.json> --product <product.md> --picks <picks.json> --report <report.md> --choose <id,...> --yes`
      Add `--install-plugins` and `--over-budget` only if the person said yes to them.
    - Output has "Claude Code's sandbox blocks harness's own files": show the person that command and stop.
-   - Exit 1 with "Could not install" or "Then run /harness:sync" lines: show them as printed, say the files are applied, and stop (`/harness:sync` is coming in a later release).
+   - Exit 1 with "Could not install" or "Then run /harness:sync" lines: show them as printed, say the files are applied, and stop. Once the person has installed the plugins, `/harness:sync` records it.
 6. Git: ask before each step (yes is recommended, or not now), then run it. If a step prints the sandbox line or fails, show the output and stop.
    - `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" git branch`
    - `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" git commit`

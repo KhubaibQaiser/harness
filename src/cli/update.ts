@@ -13,11 +13,11 @@ import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL, mergeManifestFiles } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
-import { planChanges, selectedIds } from '../install/plan.js';
+import { reconcile } from '../install/reconcile.js';
+import { selectedIds } from '../install/plan.js';
 import { toSelected } from '../install/select.js';
 import { STRUCTURAL } from '../install/merge.js';
 import { loadCatalog } from '../catalog/load.js';
-import { matchesHash } from '../install/text.js';
 import { catalogDelta, contradictions } from '../install/delta.js';
 import { factsJson } from '../install/facts.js';
 import type { Facts } from '../install/detect.js';
@@ -129,12 +129,11 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     for (const id of d.retired) out(`${id}: retired from the catalog, removed.`);
     if (!sel) config = { ...config, items: config.items.filter((i) => !d.retired.includes(i.id)) };
   }
-  let planned: ReturnType<typeof planChanges>;
+  let planned: ReturnType<typeof reconcile>;
   try {
-    planned = planChanges(root, config, detect(root), {
+    planned = reconcile(root, config, m, {
       version, distDir: cli.distDir, templatesDir: cli.templatesDir, legacyDir: LEGACY_RESULTS_DIR,
-      recorded: m.files.find((f) => f.rel === SETTINGS)?.blocks, mcpRecorded: m.files.find((f) => f.rel === MCP)?.blocks,
-      recordedFiles: m.files, ...(aiPath ? { catalog: (sel?.catalog ?? cat!.catalog) } : {}), ...(sel ? { ai: sel.files } : {}),
+      ...(aiPath ? { catalog: (sel?.catalog ?? cat!.catalog) } : {}), ...(sel ? { ai: sel.files } : {}),
     });
   } catch (e) {
     return out(`Cannot build the update plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
@@ -185,12 +184,8 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
   const touched = changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
   if (touched.length && !dryRun) return out(`Commit or stash these files first, so the update can be undone cleanly: ${touched.join(', ')}.`), 1;
 
-  const entry = (rel: string) => m!.files.find((f) => f.rel === rel);
-  const merged = (rel: string) => entry(rel)?.kind === 'update' || !!entry(rel)?.blocks?.length || !!entry(rel)?.replace?.length;
-  const editedRels = changes.filter((c) => c.kind === 'update' && c.rel !== CONFIG && entry(c.rel) && !matchesHash(c.before, entry(c.rel)!.hash)).map((c) => c.rel);
   const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
-  const editedOwned = editedRels.filter((r) => !merged(r));
-  const editedMerged = editedRels.filter(merged);
+  const { owned: editedOwned, merged: editedMerged } = planned.edited;
   out(changes.length ? `Update ${m.version} -> ${version}:` : 'Only the manifest changes.');
   for (const c of changes) {
     out(`  ${c.kind} ${c.rel}`);

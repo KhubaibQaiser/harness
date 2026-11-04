@@ -1,12 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest, type Change, type Manifest } from '../install/apply.js';
-import { removeBlocks, removeSets } from '../install/merge.js';
+import { STRUCTURAL, removeBlocks, removeFromMcp, removeFromSettings } from '../install/merge.js';
 import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
-import { matchesHash, eolOf, jsonIndentOf, withEol } from '../install/text.js';
+import { matchesHash, eolOf, withEol } from '../install/text.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
@@ -16,7 +15,6 @@ export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike };
 
 const USAGE = 'Usage: harness uninstall [--yes] [--force] [--dry-run]';
 const SETTINGS = '.claude/settings.json';
-const isObj = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 const read = (p: string): string | null => {
   try {
@@ -25,55 +23,6 @@ const read = (p: string): string | null => {
     return null;
   }
 };
-
-/** Drops the recorded hook groups, deny rules and set keys. Returns null when the file is not a JSON object. */
-function removeFromSettings(current: string, f: Manifest['files'][number], original: string | null, notes: string[]): { after: string; empty: boolean } | null {
-  let s: any;
-  try {
-    s = JSON.parse(current);
-  } catch {
-    return null;
-  }
-  if (!isObj(s)) return null;
-  // What the file had before init: {} if init created it, the backup if there is one, else unknown (null).
-  let orig: any = f.kind === 'create' ? {} : null;
-  if (orig === null && original !== null) {
-    try {
-      orig = JSON.parse(original);
-    } catch {}
-  }
-  const had = (...path: string[]) => (orig === null ? true : path.reduce((v: any, k) => v?.[k], orig) !== undefined);
-  for (const b of f.blocks ?? []) {
-    let blk: any;
-    try {
-      blk = JSON.parse(b);
-    } catch {
-      continue;
-    }
-    if (typeof blk?.event === 'string') {
-      const list = s.hooks?.[blk.event];
-      const kept = Array.isArray(list) ? list.filter((g: unknown) => !isDeepStrictEqual(g, blk.group)) : [];
-      if (!Array.isArray(list) || kept.length === list.length) notes.push(`\`${SETTINGS}\`: the harness ${blk.event} hook was not found; left as is.`);
-      else s.hooks[blk.event] = kept;
-    } else if (typeof blk?.deny === 'string') {
-      const list = s.permissions?.deny;
-      if (!Array.isArray(list) || !list.includes(blk.deny)) notes.push(`\`${SETTINGS}\`: deny rule \`${blk.deny}\` was not found; left as is.`);
-      else s.permissions.deny = list.filter((d: unknown) => d !== blk.deny);
-    }
-  }
-  for (const k of removeSets(s, f.blocks ?? []).changed) notes.push(`\`${SETTINGS}\`: \`${k}\` was changed; left as is.`);
-  // Drop keys that harness's removal left empty and that did not exist before init.
-  if (isObj(s.hooks)) {
-    for (const [ev, v] of Object.entries(s.hooks)) if (Array.isArray(v) && !v.length && !had('hooks', ev)) delete s.hooks[ev];
-    if (!Object.keys(s.hooks).length && !had('hooks')) delete s.hooks;
-  }
-  if (isObj(s.permissions)) {
-    if (Array.isArray(s.permissions.deny) && !s.permissions.deny.length && !had('permissions', 'deny')) delete s.permissions.deny;
-    if (!Object.keys(s.permissions).length && !had('permissions')) delete s.permissions;
-  }
-  const eol = eolOf(current);
-  return { after: withEol(JSON.stringify(s, null, jsonIndentOf(current)), eol) + (/\n$/.test(current) ? eol : ''), empty: !Object.keys(s).length };
-}
 
 const list = (rels: string[]) => rels.map((k) => `\`${k}\``).join(', ');
 
@@ -121,7 +70,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       continue;
     }
     const backup = f.backup ? read(join(root, f.backup)) : null;
-    if (f.rel === SETTINGS) {
+    if (STRUCTURAL.has(f.rel)) {
       if (matchesHash(cur, f.hash) && f.kind === 'create') {
         changes.push({ kind: 'delete', rel: f.rel, before: cur });
         continue;
@@ -130,8 +79,8 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
         changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
         continue;
       }
-      const r = removeFromSettings(cur, f, backup, notes);
-      if (!r) notes.push(`\`${SETTINGS}\` is not valid JSON; left as is. Remove the harness hooks and deny rules by hand.`);
+      const r = (f.rel === SETTINGS ? removeFromSettings : removeFromMcp)(cur, f, backup, notes);
+      if (!r) notes.push(`\`${f.rel}\` is not valid JSON; left as is. Remove the harness entries by hand.`);
       else if (r.empty && f.kind === 'create') changes.push({ kind: 'delete', rel: f.rel, before: cur });
       else if (r.after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] });
       continue;

@@ -288,3 +288,23 @@ test('uninstall leaves a changed sandbox key, with a note', async () => {
   expect(r.out).toContain('Note: `.claude/settings.json`: `sandbox.enabled` was changed; left as is.');
   expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ sandbox: { enabled: false } });
 });
+
+test('uninstall removes plugin, marketplace and MCP blocks and leaves the personal ones', async () => {
+  const own = '{\n  "enabledPlugins": {\n    "foo@other": true\n  }\n}\n';
+  const root = await installed({ ...REPO, '.claude/settings.json': own, '.mcp.json': '{\n  "mcpServers": {\n    "mine": { "command": "x" }\n  }\n}\n' });
+  const mp = join(root, '.harness/manifest.json');
+  const m = JSON.parse(readFileSync(mp, 'utf8'));
+  const { mergeSettings, mergeMcp } = await import('../../src/install/merge.js');
+  const plugin = { name: 'alpha', item: 'a', source: { source: 'github' as const, repo: 'o/alpha', sha: 'a'.repeat(40) } };
+  const sf = m.files.find((f: { rel: string }) => f.rel === '.claude/settings.json');
+  const s = mergeSettings(readFileSync(join(root, '.claude/settings.json'), 'utf8'), { sandbox: 'unattended', recorded: sf.blocks, plugins: [plugin] });
+  writeFileSync(join(root, '.claude/settings.json'), s.after);
+  sf.blocks.push(...s.blocks);
+  const mcpCfg = mergeMcp(readFileSync(join(root, '.mcp.json'), 'utf8'), [{ name: 'pw', item: 'm', config: { command: 'npx' } }]);
+  writeFileSync(join(root, '.mcp.json'), mcpCfg.after);
+  m.files.push({ rel: '.mcp.json', kind: 'update', hash: 'x', blocks: mcpCfg.blocks });
+  writeFileSync(mp, JSON.stringify(m));
+  expect((await un(root, ['--yes'])).code).toBe(0);
+  expect(JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'))).toEqual({ enabledPlugins: { 'foo@other': true } });
+  expect(JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8'))).toEqual({ mcpServers: { mine: { command: 'x' } } });
+});

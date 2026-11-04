@@ -5,6 +5,8 @@ import { parseModule } from 'magicast';
 import { packageDir } from '../core/package-dir.js';
 import type { SandboxMode } from '../core/config.js';
 import { eolOf, jsonIndentOf, quoteOf, requote, withEol } from './text.js';
+import type { CatalogItem } from '../catalog/schema.js';
+import type { Manifest } from './manifest.js';
 
 export class MergeError extends Error {
   constructor(message: string) { super(message); this.name = 'MergeError'; }
@@ -73,13 +75,15 @@ export function removeSets(s: unknown, blocks: string[]): { sets: string[]; chan
  * and one per inserted deny rule, `{"deny":"Read(./secrets/**)"}`. Uninstall removes them by deep equality.
  * A harness group equal to a `recorded` block but not to the fragment is replaced at its index; its old block is `dropped`.
  */
-export function mergeSettings(before: string | null, opts: { sandbox: SandboxMode; recorded?: string[] }): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
+export function mergeSettings(before: string | null, opts: { sandbox: SandboxMode; recorded?: string[]; plugins?: PinnedPlugin[] }): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
   let s: any;
   try { s = before === null ? {} : JSON.parse(before); } catch (e) { return bad(`is not valid JSON: ${(e as Error).message}`); }
   if (!isObj(s)) bad('must be a JSON object');
   if (s.hooks !== undefined && !isObj(s.hooks)) bad('"hooks" must be an object');
   if (s.permissions !== undefined && !isObj(s.permissions)) bad('"permissions" must be an object');
   if (s.permissions?.deny !== undefined && !Array.isArray(s.permissions.deny)) bad('"permissions.deny" must be an array');
+  if (s.enabledPlugins !== undefined && !isObj(s.enabledPlugins)) bad('"enabledPlugins" must be an object');
+  if (s.extraKnownMarketplaces !== undefined && !isObj(s.extraKnownMarketplaces)) bad('"extraKnownMarketplaces" must be an object');
 
   const frag = settingsFragment();
   const blocks: string[] = [];
@@ -136,9 +140,177 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
     dropped.push(...r.sets);
     for (const p of r.changed) notes.push(`\`${SETTINGS}\`: \`${p}\` was changed; left as is.`);
   }
+  mergePlugins(s, opts.plugins ?? [], opts.recorded ?? [], blocks, dropped, notes);
   const eol = before === null ? '\n' : eolOf(before);
   const tail = before === null || /\n$/.test(before) ? eol : '';
   return { after: withEol(JSON.stringify(s, null, before === null ? 2 : jsonIndentOf(before)), eol) + tail, blocks, dropped, notes };
+}
+
+export const STRUCTURAL: ReadonlySet<string> = new Set([SETTINGS, '.mcp.json']);
+const MCP = '.mcp.json';
+const PINS = 'harness-pins';
+
+export interface PinnedPlugin {
+  name: string;
+  item: string;
+  source: { source: 'github'; repo: string; sha: string } | { source: 'git-subdir'; url: string; path: string; sha: string };
+  lspServers?: Record<string, unknown>;
+}
+
+/** The outside plugins among the selected items, each pinned to its commit. */
+export function pinnedPlugins(items: CatalogItem[]): PinnedPlugin[] {
+  const out: PinnedPlugin[] = [];
+  for (const i of items) {
+    const s = i.source;
+    if (i.kind !== 'plugin' || (s.type !== 'github' && s.type !== 'git-subdir')) continue;
+    out.push({
+      name: s.plugin, item: i.id,
+      source: s.type === 'github' ? { source: 'github', repo: s.repo, sha: s.sha } : { source: 'git-subdir', url: s.repo, path: s.path, sha: s.sha },
+      ...(i.lsp_servers ? { lspServers: i.lsp_servers } : {}),
+    });
+  }
+  return out;
+}
+
+/** enabledPlugins keys and the one inline harness-pins marketplace; the same replace-in-place and drop rules as the hook groups. */
+function mergePlugins(s: any, plugins: PinnedPlugin[], recorded: string[], blocks: string[], dropped: string[], notes: string[]): void {
+  const recs = recorded.map((b) => [b, parse(b)] as [string, any]);
+  const want = new Set(plugins.map((p) => `${p.name}@${PINS}`));
+  for (const [b, r] of recs) {
+    if (!isObj(r) || typeof r.plugin !== 'string' || want.has(r.plugin)) continue;
+    if (isObj(s.enabledPlugins) && s.enabledPlugins[r.plugin] === true) delete s.enabledPlugins[r.plugin];
+    dropped.push(b);
+  }
+  for (const p of plugins) {
+    const key = `${p.name}@${PINS}`;
+    if (isObj(s.enabledPlugins) && Object.hasOwn(s.enabledPlugins, key)) continue;
+    (s.enabledPlugins ??= {})[key] = true;
+    blocks.push(JSON.stringify({ plugin: key, item: p.item }));
+  }
+  // ponytail: a live check (Task 27) confirms that an inline `settings` marketplace honours `lspServers`.
+  const entry = plugins.length ? { source: { source: 'settings', name: PINS, owner: { name: 'harness' }, plugins: plugins.map((p) => ({ name: p.name, source: p.source, ...(p.lspServers ? { lspServers: p.lspServers } : {}) })) } } : null;
+  const have = s.extraKnownMarketplaces?.[PINS];
+  const rec = recs.find(([, r]) => isObj(r) && r.marketplace === PINS && have !== undefined && isDeepStrictEqual(r.entry, have));
+  if (have === undefined) {
+    for (const [b, r] of recs) if (isObj(r) && r.marketplace === PINS) dropped.push(b); // the person removed it; the new entry replaces the record
+    if (entry) {
+      (s.extraKnownMarketplaces ??= {})[PINS] = entry;
+      blocks.push(JSON.stringify({ marketplace: PINS, entry }));
+    }
+  } else if (entry && isDeepStrictEqual(have, entry)) {
+    // already current
+  } else if (rec) {
+    dropped.push(rec[0]);
+    if (entry) {
+      s.extraKnownMarketplaces[PINS] = entry;
+      blocks.push(JSON.stringify({ marketplace: PINS, entry }));
+    } else delete s.extraKnownMarketplaces[PINS];
+  } else if (entry || recs.some(([, r]) => isObj(r) && r.marketplace === PINS)) {
+    notes.push(`\`${SETTINGS}\`: the harness-pins marketplace was edited; left as is. harness doctor checks it.`);
+  }
+  for (const k of ['enabledPlugins', 'extraKnownMarketplaces']) if (isObj(s[k]) && !Object.keys(s[k]).length) delete s[k];
+}
+
+/** `.mcp.json` servers: block `{"mcp":name,"item":id,"server":{...}}`. A same-named server the person wrote is kept and reported. */
+export function mergeMcp(before: string | null, servers: { name: string; item: string; config: Record<string, unknown> }[], recorded: string[] = []): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
+  let s: any;
+  try { s = before === null ? {} : JSON.parse(before); } catch (e) { throw new MergeError(`${MCP}: is not valid JSON: ${(e as Error).message}`); }
+  if (!isObj(s)) throw new MergeError(`${MCP}: must be a JSON object`);
+  if (s.mcpServers !== undefined && !isObj(s.mcpServers)) throw new MergeError(`${MCP}: "mcpServers" must be an object`);
+  const blocks: string[] = [], dropped: string[] = [], notes: string[] = [];
+  const recs = recorded.map((b) => [b, parse(b)] as [string, any]).filter(([, r]) => isObj(r) && typeof r.mcp === 'string');
+  const names = new Set(servers.map((x) => x.name));
+  for (const [b, r] of recs) {
+    if (names.has(r.mcp)) continue;
+    if (isObj(s.mcpServers) && isDeepStrictEqual(s.mcpServers[r.mcp], r.server)) delete s.mcpServers[r.mcp];
+    dropped.push(b);
+  }
+  for (const v of servers) {
+    const have = s.mcpServers?.[v.name];
+    const block = JSON.stringify({ mcp: v.name, item: v.item, server: v.config });
+    if (have === undefined) {
+      (s.mcpServers ??= {})[v.name] = v.config;
+      blocks.push(block);
+      continue;
+    }
+    if (isDeepStrictEqual(have, v.config)) continue;
+    const rec = recs.find(([, r]) => r.mcp === v.name && isDeepStrictEqual(r.server, have));
+    if (!rec) { notes.push(`\`${MCP}\` already has a server named "${v.name}"; left as is.`); continue; }
+    s.mcpServers[v.name] = v.config;
+    dropped.push(rec[0]);
+    blocks.push(block);
+  }
+  if (isObj(s.mcpServers) && !Object.keys(s.mcpServers).length) delete s.mcpServers;
+  const eol = before === null ? '\n' : eolOf(before);
+  const tail = before === null || /\n$/.test(before) ? eol : '';
+  return { after: withEol(JSON.stringify(s, null, before === null ? 2 : jsonIndentOf(before)), eol) + tail, blocks, dropped, notes };
+}
+
+/** The JSON object in `current`, and whether the file had `path` before init (init created it: nothing; else the backup; else unknown, counted as had). */
+function openRemoval(current: string, f: Manifest['files'][number], original: string | null) {
+  let s: any;
+  try { s = JSON.parse(current); } catch { return null; }
+  if (!isObj(s)) return null;
+  let orig: any = f.kind === 'create' ? {} : null;
+  if (orig === null && original !== null) { try { orig = JSON.parse(original); } catch {} }
+  const had = (...path: string[]) => (orig === null ? true : path.reduce((v: any, k) => v?.[k], orig) !== undefined);
+  const blocks = (f.blocks ?? []).map(parse) as any[];
+  const done = () => {
+    const eol = eolOf(current);
+    return { after: withEol(JSON.stringify(s, null, jsonIndentOf(current)), eol) + (/\n$/.test(current) ? eol : ''), empty: !Object.keys(s).length };
+  };
+  return { s, had, blocks, done };
+}
+
+/** Drops the recorded `mcp` servers that still equal what harness wrote. Returns null when the file is not a JSON object. */
+export function removeFromMcp(current: string, f: Manifest['files'][number], original: string | null, notes: string[]): { after: string; empty: boolean } | null {
+  const o = openRemoval(current, f, original);
+  if (!o) return null;
+  const { s, had } = o;
+  for (const blk of o.blocks) {
+    if (typeof blk?.mcp !== 'string') continue;
+    if (isObj(s.mcpServers) && isDeepStrictEqual(s.mcpServers[blk.mcp], blk.server)) delete s.mcpServers[blk.mcp];
+    else notes.push(`\`${MCP}\`: server "${blk.mcp}" was not found or was changed; left as is.`);
+  }
+  if (isObj(s.mcpServers) && !Object.keys(s.mcpServers).length && !had('mcpServers')) delete s.mcpServers;
+  return o.done();
+}
+
+/** Drops the recorded hook groups, deny rules, set keys, plugins and marketplace. Returns null when the file is not a JSON object. */
+export function removeFromSettings(current: string, f: Manifest['files'][number], original: string | null, notes: string[]): { after: string; empty: boolean } | null {
+  const o = openRemoval(current, f, original);
+  if (!o) return null;
+  const { s, had } = o;
+  for (const blk of o.blocks) {
+    if (typeof blk?.event === 'string') {
+      const list = s.hooks?.[blk.event];
+      const kept = Array.isArray(list) ? list.filter((g: unknown) => !isDeepStrictEqual(g, blk.group)) : [];
+      if (!Array.isArray(list) || kept.length === list.length) notes.push(`\`${SETTINGS}\`: the harness ${blk.event} hook was not found; left as is.`);
+      else s.hooks[blk.event] = kept;
+    } else if (typeof blk?.deny === 'string') {
+      const list = s.permissions?.deny;
+      if (!Array.isArray(list) || !list.includes(blk.deny)) notes.push(`\`${SETTINGS}\`: deny rule \`${blk.deny}\` was not found; left as is.`);
+      else s.permissions.deny = list.filter((d: unknown) => d !== blk.deny);
+    } else if (typeof blk?.plugin === 'string') {
+      if (isObj(s.enabledPlugins) && s.enabledPlugins[blk.plugin] === true) delete s.enabledPlugins[blk.plugin];
+      else notes.push(`\`${SETTINGS}\`: plugin \`${blk.plugin}\` was not found or was changed; left as is.`);
+    } else if (typeof blk?.marketplace === 'string') {
+      if (isObj(s.extraKnownMarketplaces) && isDeepStrictEqual(s.extraKnownMarketplaces[blk.marketplace], blk.entry)) delete s.extraKnownMarketplaces[blk.marketplace];
+      else notes.push(`\`${SETTINGS}\`: the ${blk.marketplace} marketplace was not found or was changed; left as is.`);
+    }
+  }
+  for (const k of removeSets(s, f.blocks ?? []).changed) notes.push(`\`${SETTINGS}\`: \`${k}\` was changed; left as is.`);
+  // Drop keys that harness's removal left empty and that did not exist before init.
+  if (isObj(s.hooks)) {
+    for (const [ev, v] of Object.entries(s.hooks)) if (Array.isArray(v) && !v.length && !had('hooks', ev)) delete s.hooks[ev];
+    if (!Object.keys(s.hooks).length && !had('hooks')) delete s.hooks;
+  }
+  if (isObj(s.permissions)) {
+    if (Array.isArray(s.permissions.deny) && !s.permissions.deny.length && !had('permissions', 'deny')) delete s.permissions.deny;
+    if (!Object.keys(s.permissions).length && !had('permissions')) delete s.permissions;
+  }
+  for (const k of ['enabledPlugins', 'extraKnownMarketplaces']) if (isObj(s[k]) && !Object.keys(s[k]).length && !had(k)) delete s[k];
+  return o.done();
 }
 
 /** Separator to put before an appended block: nothing for an empty file, else finish the last line and add a blank one. */

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, test } from 'vitest';
 import { BETA_GROUPS, betaSettings } from './helpers.js';
-import { MergeError, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings, removeBlocks } from '../../src/install/merge.js';
+import { MergeError, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, STRUCTURAL } from '../../src/install/merge.js';
+import { guardedView } from '../../src/core/harness-files.js';
 
 const fx = (p: string) => readFileSync(`test/fixtures/install-repo/${p}`, 'utf8');
 const ARGS = ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'];
@@ -382,5 +383,152 @@ describe('mergeSettings sandbox', () => {
     expect(JSON.parse(r2.after).sandbox).toEqual({ enabled: false });
     expect(r2.notes).toEqual(['`.claude/settings.json`: `sandbox.enabled` was changed; left as is.']);
     expect([...r2.dropped].sort()).toEqual([...rec].sort());
+  });
+});
+
+describe('plugins, marketplace and MCP blocks', () => {
+  const GH = { name: 'alpha', item: 'plugin-alpha', source: { source: 'github', repo: 'o/alpha', sha: 'a'.repeat(40) } } as const;
+  const SUB = { name: 'beta', item: 'plugin-beta', source: { source: 'git-subdir', url: 'o/mono', path: 'plugins/beta', sha: 'b'.repeat(40) } } as const;
+  const GAMMA = { name: 'gamma', item: 'plugin-gamma', source: { source: 'github', repo: 'o/gamma', sha: 'c'.repeat(40) } } as const;
+  const LSP = { name: 'typescript-lsp', item: 'plugin-ts-lsp', source: { source: 'github', repo: 'o/lsp', sha: 'd'.repeat(40) }, lspServers: { typescript: { command: 'tsls', args: ['--stdio'], extensionToLanguage: { '.ts': 'typescript' } } } } as const;
+  const plug = (before: string | null, plugins: any[], recorded?: string[]) => mergeSettings(before, { sandbox: 'unattended', recorded, plugins });
+  const entryOf = (...ps: any[]) => ({ source: { source: 'settings', name: 'harness-pins', owner: { name: 'harness' }, plugins: ps } });
+
+  it('plugins add enabledPlugins and the harness-pins marketplace', () => {
+    const r = plug(null, [GH, SUB]);
+    const s = JSON.parse(r.after);
+    expect(s.enabledPlugins).toEqual({ 'alpha@harness-pins': true, 'beta@harness-pins': true });
+    expect(s.extraKnownMarketplaces).toEqual({
+      'harness-pins': entryOf(
+        { name: 'alpha', source: { source: 'github', repo: 'o/alpha', sha: 'a'.repeat(40) } },
+        { name: 'beta', source: { source: 'git-subdir', url: 'o/mono', path: 'plugins/beta', sha: 'b'.repeat(40) } },
+      ),
+    });
+    expect(s.permissions.deny).toHaveLength(30);
+    expect(s.hooks.Stop[0].hooks[0].args).toEqual(ARGS);
+    const parsed = r.blocks.map((b) => JSON.parse(b));
+    expect(parsed.filter((b) => b.plugin)).toEqual([{ plugin: 'alpha@harness-pins', item: 'plugin-alpha' }, { plugin: 'beta@harness-pins', item: 'plugin-beta' }]);
+    expect(parsed.filter((b) => b.marketplace)).toEqual([{ marketplace: 'harness-pins', entry: s.extraKnownMarketplaces['harness-pins'] }]);
+  });
+
+  it('an LSP plugin entry carries lspServers (golden)', () => {
+    const e = JSON.parse(plug(null, [LSP]).after).extraKnownMarketplaces['harness-pins'];
+    expect(e).toEqual(entryOf({ name: 'typescript-lsp', source: LSP.source, lspServers: LSP.lspServers }));
+  });
+
+  it('harness-pins entry has only documented fields', () => {
+    const e = JSON.parse(plug(null, [GH, SUB, LSP]).after).extraKnownMarketplaces['harness-pins'];
+    expect(Object.keys(e)).toEqual(['source']);
+    expect(Object.keys(e.source).sort()).toEqual(['name', 'owner', 'plugins', 'source']);
+    for (const p of e.plugins ?? e.source.plugins) expect(Object.keys(p).every((k) => ['name', 'source', ...(p.name === 'typescript-lsp' ? ['lspServers'] : [])].includes(k))).toBe(true);
+    expect(e.source.plugins.filter((p: any) => 'lspServers' in p).map((p: any) => p.name)).toEqual(['typescript-lsp']);
+  });
+
+  it('re-merge with recorded replaces the marketplace entry and drops removed plugins', () => {
+    const first = plug(null, [GH, SUB, GAMMA]);
+    const r = plug(first.after, [GH, SUB], first.blocks);
+    const s = JSON.parse(r.after);
+    expect(Object.keys(s.enabledPlugins)).toEqual(['alpha@harness-pins', 'beta@harness-pins']);
+    expect(s.extraKnownMarketplaces['harness-pins'].source.plugins.map((p: any) => p.name)).toEqual(['alpha', 'beta']);
+    const oldMarket = first.blocks.find((b) => b.includes('"marketplace"'))!;
+    const gammaBlock = first.blocks.find((b) => b.includes('gamma@harness-pins'))!;
+    expect([...r.dropped].sort()).toEqual([oldMarket, gammaBlock].sort());
+    expect(r.blocks.map((b) => JSON.parse(b)).filter((b) => b.marketplace)).toHaveLength(1);
+    expect(r.notes).toEqual([]);
+  });
+
+  it('removing the last plugin deletes both keys harness added', () => {
+    const first = plug(null, [GH]);
+    const r = plug(first.after, [], first.blocks);
+    const s = JSON.parse(r.after);
+    expect(s).not.toHaveProperty('enabledPlugins');
+    expect(s).not.toHaveProperty('extraKnownMarketplaces');
+    expect(r.dropped.length).toBeGreaterThan(0);
+  });
+
+  it('with no plugins and nothing recorded neither key is added', () => {
+    const s = JSON.parse(plug(null, []).after);
+    expect(s).not.toHaveProperty('enabledPlugins');
+    expect(s).not.toHaveProperty('extraKnownMarketplaces');
+  });
+
+  it('a user-edited harness-pins entry is left and reported', () => {
+    const first = plug(null, [GH]);
+    const edited = JSON.parse(first.after);
+    edited.extraKnownMarketplaces['harness-pins'].source.owner.name = 'me';
+    const r = plug(JSON.stringify(edited, null, 2), [GH, SUB], first.blocks);
+    expect(JSON.parse(r.after).extraKnownMarketplaces['harness-pins'].source.owner.name).toBe('me');
+    expect(r.notes).toEqual(['`.claude/settings.json`: the harness-pins marketplace was edited; left as is. harness doctor checks it.']);
+  });
+
+  it("the person's own enabledPlugins and marketplaces survive install and uninstall byte-identical", () => {
+    const before = '{\r\n\t"enabledPlugins": {\r\n\t\t"foo@other": true\r\n\t},\r\n\t"extraKnownMarketplaces": {\r\n\t\t"other": { "source": { "source": "github", "repo": "x/y" } }\r\n\t},\r\n\t"sandbox": { "enabled": false }\r\n}\r\n';
+    const m = plug(before, [GH, SUB]);
+    const s = JSON.parse(m.after);
+    expect(s.enabledPlugins['foo@other']).toBe(true);
+    expect(s.extraKnownMarketplaces.other).toBeDefined();
+    expect(m.after).toContain('\r\n\t');
+    const notes: string[] = [];
+    const out = removeFromSettings(m.after, { rel: '.claude/settings.json', kind: 'update', hash: '', blocks: m.blocks }, before, notes);
+    expect(JSON.parse(out!.after)).toEqual(JSON.parse(before));
+    expect(notes).toEqual([]);
+  });
+
+  it('plugin entries leave the ConfigChange guarded view unchanged', () => {
+    const base = merge(null).after;
+    expect(guardedView(plug(base, [GH, SUB, LSP]).after, null)).toEqual(guardedView(base, null));
+  });
+
+  it('pinnedPlugins reads catalog items', () => {
+    const item = (id: string, source: any, extra: any = {}) => ({ id, kind: 'plugin', source, ...extra }) as any;
+    expect(pinnedPlugins([
+      item('a', { type: 'github', repo: 'o/alpha', plugin: 'alpha', sha: 'a'.repeat(40) }),
+      item('b', { type: 'git-subdir', repo: 'o/mono', path: 'p/b', plugin: 'beta', sha: 'b'.repeat(40) }, { lsp_servers: { x: { command: 'y' } } }),
+      { id: 'm', kind: 'mcp', source: { type: 'npm', package: 'p', version: '1.0.0' } } as any,
+    ])).toEqual([
+      { name: 'alpha', item: 'a', source: { source: 'github', repo: 'o/alpha', sha: 'a'.repeat(40) } },
+      { name: 'beta', item: 'b', source: { source: 'git-subdir', url: 'o/mono', path: 'p/b', sha: 'b'.repeat(40) }, lspServers: { x: { command: 'y' } } },
+    ]);
+  });
+});
+
+describe('mergeMcp', () => {
+  const PW = { name: 'playwright', item: 'mcp-playwright', config: { command: 'npx', args: ['@playwright/mcp@1.0.0'] } };
+
+  it('mergeMcp creates .mcp.json, and removal deletes it when harness created it and it ends empty', () => {
+    const r = mergeMcp(null, [PW]);
+    expect(JSON.parse(r.after)).toEqual({ mcpServers: { playwright: PW.config } });
+    expect(r.blocks.map((b) => JSON.parse(b))).toEqual([{ mcp: 'playwright', item: 'mcp-playwright', server: PW.config }]);
+    const out = removeFromMcp(r.after, { rel: '.mcp.json', kind: 'create', hash: '', blocks: r.blocks }, null, []);
+    expect(out).toEqual({ after: '{}\n', empty: true });
+  });
+
+  it('user mcp server with the same name is kept and reported', () => {
+    const before = JSON.stringify({ mcpServers: { playwright: { command: 'mine' } } }, null, 2) + '\n';
+    const r = mergeMcp(before, [PW]);
+    expect(r.after).toBe(before);
+    expect(r.blocks).toEqual([]);
+    expect(r.notes).toEqual(['`.mcp.json` already has a server named "playwright"; left as is.']);
+  });
+
+  it('keeps CRLF and tab indent, and removal gives the original back', () => {
+    const before = '{\r\n\t"mcpServers": {\r\n\t\t"mine": { "command": "x" }\r\n\t}\r\n}\r\n';
+    const r = mergeMcp(before, [PW]);
+    expect(r.after).toContain('\r\n\t');
+    expect(r.after).not.toMatch(/[^\r]\n/);
+    const out = removeFromMcp(r.after, { rel: '.mcp.json', kind: 'update', hash: '', blocks: r.blocks }, before, [])!;
+    expect(out.after).toBe(JSON.stringify(JSON.parse(before), null, '\t').replace(/\n/g, '\r\n') + '\r\n');
+  });
+
+  it('re-merge replaces a changed server and drops removed ones', () => {
+    const first = mergeMcp(null, [PW, { name: 'two', item: 'mcp-two', config: { command: 'b' } }]);
+    const r = mergeMcp(first.after, [{ ...PW, config: { command: 'npx', args: ['@playwright/mcp@2.0.0'] } }], first.blocks);
+    expect(JSON.parse(r.after).mcpServers).toEqual({ playwright: { command: 'npx', args: ['@playwright/mcp@2.0.0'] } });
+    expect([...r.dropped].sort()).toEqual([...first.blocks].sort());
+    expect(r.blocks).toHaveLength(1);
+  });
+
+  it('STRUCTURAL names the two structural files', () => {
+    expect([...STRUCTURAL].sort()).toEqual(['.claude/settings.json', '.mcp.json']);
   });
 });

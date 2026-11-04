@@ -68,6 +68,15 @@ export const missingAi = (cmd: string, ai: AiArgs): string | null => {
   return f ? `${cmd}: --${f} ${f === 'choose' ? '<id,...>' : '<file>'} is required inside Claude Code` : null;
 };
 
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Lays a partial answers file over the existing answers; `project`, `unattended` and `tdd` merge one level deep. */
+function overlayAnswers(base: Record<string, unknown>, part: Record<string, unknown>): Record<string, unknown> {
+  const m: Record<string, unknown> = { ...base, ...part };
+  for (const k of ['project', 'unattended', 'tdd']) if (isObj(part[k])) m[k] = { ...(isObj(base[k]) ? base[k] : {}), ...part[k] };
+  return m;
+}
+
 export interface AiInputs { answers: Answers; picks: Picks; ids: string[]; notices: string[]; files: { picks: string; report: string; product: string }; catalog: Catalog }
 
 /** Reads and validates the AI step's files against the facts and the real catalog, then resolves --choose. */
@@ -93,8 +102,7 @@ export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null,
   const pa = parsed('answers');
   if ('err' in pa) return { ok: false, errors: [pa.err], code: 2 };
   // update: the file holds only the re-asked keys; they go over the existing answers, then the full set is validated.
-  const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
-  const merged = base && obj(pa.v) === pa.v ? { ...base, ...(pa.v as object), ...Object.fromEntries(['project', 'unattended', 'tdd'].filter((k) => k in (pa.v as object) && typeof (pa.v as any)[k] === 'object' && !Array.isArray((pa.v as any)[k])).map((k) => [k, { ...obj(base[k]), ...obj((pa.v as any)[k]) }])) } : pa.v;
+  const merged = base && isObj(pa.v) ? overlayAnswers(base, pa.v) : pa.v;
   const a = validateAnswers(merged, facts);
   if (!a.ok) return { ok: false, errors: a.errors, code: 2 };
   const pp = parsed('picks');

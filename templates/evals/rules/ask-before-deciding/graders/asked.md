@@ -1,4 +1,5 @@
 ---
 type: regex
-pattern: '\?\s*$'
+pattern: '(\bor\b[^?]*|\n\s*(-|\*|\d+[.)]|[a-z][.)])\s[^?]*)\?\s*$'
+flags: i
 ---

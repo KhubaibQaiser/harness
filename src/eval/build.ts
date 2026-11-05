@@ -37,7 +37,7 @@ function rulesText(root: string): string {
   return parts.join('\n\n');
 }
 
-/** Prefixes (without the trailing slash) from `.harness/config.yaml` preset.git.branch_prefixes, else the default. */
+/** Prefixes from `.harness/config.yaml` preset.git.branch_prefixes, else the default. */
 function branchPrefixes(root: string): string[] {
   let list: unknown;
   try {
@@ -45,11 +45,21 @@ function branchPrefixes(root: string): string[] {
   } catch {
     list = undefined;
   }
-  const ok = Array.isArray(list) && list.length > 0 && list.every((p) => typeof p === 'string' && /^[\w.-]+\/?$/.test(p));
-  return (ok ? (list as string[]) : DEFAULT_BRANCH_PREFIXES).map((p) => p.replace(/\/$/, '') + '/');
+  // Same shape as the config's own rule (src/core/config.ts): lowercase letters, digits and hyphens, then a slash.
+  const ok = Array.isArray(list) && list.length > 0 && list.every((p) => typeof p === 'string' && /^[a-z0-9-]+\/$/.test(p));
+  return ok ? (list as string[]) : DEFAULT_BRANCH_PREFIXES;
 }
 
-interface Ctx { root: string; tmp: string; tpl: string; model: string; cases: CaseInfo[]; links: string[] }
+interface Ctx {
+  root: string;
+  tmp: string;
+  tpl: string;
+  model: string;
+  /** Regex alternation of the allowed branch prefixes, read once per build. */
+  prefixes: string;
+  cases: CaseInfo[];
+  links: string[];
+}
 
 /** Copies a template case; the model is written into prompt.md from one place, prefixes into the graders. */
 function writeCase(c: Ctx, name: string, from: string, caseYaml: Record<string, unknown>): void {
@@ -57,10 +67,9 @@ function writeCase(c: Ctx, name: string, from: string, caseYaml: Record<string, 
   cpSync(from, out, { recursive: true });
   const prompt = join(out, 'prompt.md');
   writeFileSync(prompt, readFileSync(prompt, 'utf8').replace(/^---\n/, `---\nmodel: ${c.model}\n`));
-  const prefixes = branchPrefixes(c.root).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
   for (const g of readdirSync(join(out, 'graders'))) {
     const f = join(out, 'graders', g);
-    writeFileSync(f, readFileSync(f, 'utf8').replace('{{prefixes}}', prefixes));
+    writeFileSync(f, readFileSync(f, 'utf8').replace('{{prefixes}}', c.prefixes));
   }
   const body = { schema_version: SCHEMA_VERSION, name, plugins: ['../..'], ...caseYaml };
   writeFileSync(join(out, 'case.yaml'), stringify(body));
@@ -104,8 +113,8 @@ function buildRules(c: Ctx): void {
 
 function checkTmp(root: string, tmp: string): void {
   const rel = relative(resolve(root), tmp);
-  const inside = rel === '' || !(rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel));
-  if (inside) throw new Error('the eval folder must be outside the repo');
+  const outside = rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel);
+  if (!outside) throw new Error('the eval folder must be outside the repo');
   if (existsSync(tmp) && readdirSync(tmp).length) throw new Error('the eval folder must be new or empty, or stale cases would run');
 }
 
@@ -117,7 +126,15 @@ export function buildEvalPlugin(root: string, opts: EvalOpts): EvalBuild {
   mkdirSync(join(tmp, '.claude-plugin'), { recursive: true });
   const manifest = { name: 'harness-eval', version: '0.0.0', description: 'Harness eval cases' };
   writeFileSync(join(tmp, '.claude-plugin/plugin.json'), JSON.stringify(manifest, null, 2));
-  const c: Ctx = { root, tmp, tpl: join(packageDir('templates'), 'evals'), model: opts.model ?? EVAL_MODEL, cases: [], links: [] };
+  const c: Ctx = {
+    root,
+    tmp,
+    tpl: join(packageDir('templates'), 'evals'),
+    model: opts.model ?? EVAL_MODEL,
+    prefixes: branchPrefixes(root).join('|'),
+    cases: [],
+    links: [],
+  };
   const skippedSkills = opts.kinds.includes('skills') ? buildSkills(c) : [];
   if (opts.kinds.includes('rules')) buildRules(c);
   return { dir: tmp, cases: c.cases, skippedSkills, skippedLinks: c.links };

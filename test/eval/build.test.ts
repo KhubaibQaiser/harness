@@ -25,7 +25,10 @@ const fm = (p: string) => {
   if (!m) throw new Error(`no frontmatter in ${p}`);
   return parse(m[1] as string) as Record<string, unknown>;
 };
-const re = (p: string) => new RegExp(String(fm(p).input_match), fm(p).flags as string | undefined);
+const re = (p: string, key = 'input_match') => {
+  const g = fm(p);
+  return new RegExp(String(g[key]), g.flags as string | undefined);
+};
 
 test('skills: three cases per known skill, unknown skills skipped, plugin under tmp', () => {
   const root = repo(['frontend-react', 'my-own']), t = tmp();
@@ -65,8 +68,11 @@ test('no-ai-trailer grader, free graders only, pinned model', () => {
   const g = fm(join(r.dir, 'evals/no-ai-trailer-rules/graders/no-trailer.md'));
   expect(g).toMatchObject({ tool: 'Bash', min: 0, max: 0 });
   const files = all(join(r.dir, 'evals'));
-  for (const f of files.filter((x) => x.includes('/graders/'))) expect(['tool_used', 'regex', 'tool_order', 'file_exists']).toContain(fm(f).type);
-  for (const f of files.filter((x) => x.endsWith('prompt.md'))) expect(fm(f)).toMatchObject({ model: EVAL_MODEL, allowed_tools: expect.any(Array) });
+  const free = ['tool_used', 'regex', 'tool_order', 'file_exists'];
+  for (const f of files.filter((x) => x.includes('/graders/'))) expect(free).toContain(fm(f).type);
+  for (const f of files.filter((x) => x.endsWith('prompt.md'))) {
+    expect(fm(f)).toMatchObject({ model: EVAL_MODEL, allowed_tools: expect.any(Array) });
+  }
 });
 
 test('model: constant by default, option overrides, written to every prompt.md', () => {
@@ -85,8 +91,8 @@ test('case.yaml names the plugin two levels up', () => {
 test('no-ai-trailer matches every trailer spelling and not a plain message', () => {
   const r = buildEvalPlugin(repo([]), opts(tmp(), ['rules']));
   const rx = re(join(r.dir, 'evals/no-ai-trailer-rules/graders/no-trailer.md'));
-  for (const bad of ['Co-Authored-By: X', 'Co-authored-by: X', 'co-authored-by: X', 'Generated with [Claude Code]', 'Generated with Claude'])
-    expect(rx.test(bad), bad).toBe(true);
+  const bad = ['Co-Authored-By: X', 'Co-authored-by: X', 'co-authored-by: X', 'Generated with [Claude Code]', 'Generated with Claude'];
+  for (const b of bad) expect(rx.test(b), b).toBe(true);
   expect(rx.test('git commit -m "rename getUser to fetchUser"')).toBe(false);
 });
 
@@ -152,4 +158,23 @@ test('refuses a non-empty tmp folder so stale cases cannot run', () => {
   const t = tmp();
   writeFileSync(join(t, 'old'), 'x');
   expect(() => buildEvalPlugin(repo([]), opts(t, ['skills']))).toThrow(/new or empty/);
+});
+
+test('ask-before-deciding: needs a question that offers options; a rhetorical one fails', () => {
+  const r = buildEvalPlugin(repo([]), opts(tmp(), ['rules']));
+  const rx = re(join(r.dir, 'evals/ask-before-deciding-rules/graders/asked.md'), 'pattern');
+  expect(rx.test('Done?')).toBe(false);
+  expect(rx.test('I set it up. Want me to proceed?')).toBe(false);
+  expect(rx.test('Should I use Postgres or SQLite?')).toBe(true);
+  expect(rx.test('Options:\n- Postgres\n- SQLite\nWhich one?')).toBe(true);
+  expect(rx.test('Options:\n1) Postgres\n2) SQLite\nWhich do you want?')).toBe(true);
+});
+
+test('branch prefixes: config entries must look like a-z, 0-9, hyphen and a slash, else the default is used', () => {
+  const root = repo([]);
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'preset:\n  git:\n    branch_prefixes: [Team_X/]\n');
+  const rx = prefixRx(root);
+  expect(rx.test(checkout('feature/x'))).toBe(false);
+  expect(rx.test(checkout('Team_X/x'))).toBe(true);
 });

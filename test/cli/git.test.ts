@@ -328,3 +328,20 @@ test('pr says when the size could not be measured', () => {
   const r = run(prRoot(), ['pr'], ghOk([]), fakeGit(0, 0, true).git);
   expect(r.out).toMatch(/^PR size not measured: .+\.\nurl$/);
 });
+
+test('--suggest without a preset exits 1 with a message', () => {
+  const r = run(installed(), ['branch', '--suggest', 'x']);
+  expect(r.code).toBe(1);
+  expect(r.out).toBe('No preset is recorded in .harness/config.yaml; nothing to suggest from.');
+});
+
+test('on a detached HEAD, pr stops with a clear message and measures nothing; --suggest still works', () => {
+  const root = installed({ preset: PRESET() });
+  g(root, 'checkout', '-q', '--detach');
+  const f = fakeGit(512, 14);
+  const r = run(root, ['pr'], ghOk([]), f.git);
+  expect(r.code).toBe(1);
+  expect(r.out).toBe('You are on a detached HEAD. Run harness git branch first.');
+  expect(f.calls).toHaveLength(0);
+  expect(run(root, ['branch', '--suggest', 'x']).code).toBe(0);
+});

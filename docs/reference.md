@@ -252,6 +252,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `vet --clean` | Removes every `harness-vet-*` folder of this OS user, including other projects' folders and runs still in progress. Skips and counts any it can't remove. |
 | `select --picks <file> [--preset <id> --answers <file>] [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `selected` entries. With `--preset` (which needs `--answers` for the project type), the checklist also has ticked rows for the preset's core and skills that match the stack, and for its stack-matched preselects you did not pick; ids of the preset's own items come back as `preset_items`. Each checklist row also has `unpinned` ("Runs unpinned code at launch.") and `unpinned_reason` for items whose catalog entry sets `unpinned_runtime`. |
 | `git branch\|commit\|push\|pr [--title <t>]` | Commits and pushes the harness changes one step at a time. `branch` creates `chore/ai-workflow-<catalog version>`; `commit` stages only the files harness wrote, with your own git name and email; `push` and `pr` never touch the default branch. `pr` needs `gh` signed in, else it prints the command. The agent asks you before `push` and `pr`. |
+| `git branch --suggest <topic>` | Prints one branch name per preset prefix (feature, fix, hotfix, chore, refactor, docs, ci) and creates nothing. With a preset that sets `no_ai_trailer`, `git commit` refuses a set `git.commit_trailer`; with `pr_size_warning`, `git pr` prints a size warning before it creates the PR. |
 
 `scan`, `catalog`, `validate` and `select` write nothing. They are the steps `/harness:init` calls; you can run them to see what it sees.
 
@@ -423,6 +424,5 @@ More detail: [TDD setup details](#tdd-setup-details).
 - `.harnessignore` has no `!` negation.
 - `remove tdd-gate` (or deselecting it) leaves the test-config edits `init` made in place; undo them by hand.
 - `update` doesn't rename a package config and make another edit to it in one run. Run it twice.
-- `harness git branch --suggest <topic>` prints one branch name per preset prefix (feature, fix, hotfix, chore, refactor, docs, ci) and creates nothing. With a preset that sets `no_ai_trailer`, `harness git commit` refuses a set `git.commit_trailer`; with `pr_size_warning`, `harness git pr` prints a size warning before it creates the PR.
 - `harness git` treats `origin/HEAD`, `init.defaultBranch`, `main` and `master` as the default branch. If your default is another name and `origin/HEAD` isn't set, run `git remote set-head origin -a` first.
 - Not in this release: the PR reviewer (M2) and TDD for other languages.

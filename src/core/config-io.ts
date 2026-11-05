@@ -1,14 +1,15 @@
 import { stringify } from 'yaml';
-import { DEFAULT_RESULTS_DIR, defaults, type HarnessConfig, type Issue, overlay } from './config.js';
+import { crossKeyErrors, DEFAULT_RESULTS_DIR, defaults, type HarnessConfig, type Issue, overlay } from './config.js';
 
 export function validateConfig(raw: unknown): { ok: true; config: HarnessConfig } | { ok: false; errors: string[] } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, errors: ['config: must be a mapping'] };
   const config = defaults();
   const issues: Issue[] = [];
   overlay(config as unknown as Record<string, unknown>, raw as Record<string, unknown>, '', issues);
-  if (issues.length === 0) return { ok: true, config };
+  const cross = crossKeyErrors(config).map((m) => m.replace(/^"(pr_size\.target_lines)" /, '$1: '));
+  if (issues.length === 0 && cross.length === 0) return { ok: true, config };
   const text = ({ path, kind, detail }: Issue) => `${path}: ${kind === 'unknown' ? 'unknown key' : kind === 'mapping' ? 'must be a mapping' : detail}`;
-  return { ok: false, errors: issues.map(text) };
+  return { ok: false, errors: [...issues.map(text), ...cross] };
 }
 
 const SECTIONS: Record<keyof HarnessConfig, string> = {
@@ -23,6 +24,7 @@ const SECTIONS: Record<keyof HarnessConfig, string> = {
   context: 'Budget for always-loaded context that harness adds; harness asks before an install passes it.',
   tdd: 'Red-first TDD enforcement (needs checks.tdd).',
   multi_file_gate: 'Multi-file edit gate (needs checks.multiFile).',
+  pr_size: 'Pull request size (needs checks.prSize). Asks above max_lines or max_files; the pr-ship skill aims for target_lines.',
   unattended: 'Behaviour when no human is watching.',
   stop: 'Verification steps that must pass before the agent may stop.',
 };

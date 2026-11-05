@@ -54,12 +54,19 @@ export interface HarnessConfig {
   context: { budget_tokens: number };
   tdd: { paths: string[]; exempt: string[]; diff_coverage: number; coverage_skip: string[]; test_lock: boolean; results_dir: string };
   multi_file_gate: { generated: string[] };
+  pr_size: { target_lines: number; max_lines: number; max_files: number; exclude: string[] };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
   stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
 }
 
 export const DEFAULT_RESULTS_DIR = '.harness/results';
 export const LEGACY_RESULTS_DIR = '.harness/state/test-results';
+
+/** Globs not counted toward a PR's size, in this order. */
+export const PR_SIZE_EXCLUDE: string[] = [
+  '**/pnpm-lock.yaml', '**/package-lock.json', '**/npm-shrinkwrap.json', '**/yarn.lock', '**/bun.lock', '**/bun.lockb', '**/Cargo.lock', '**/poetry.lock',
+  '**/uv.lock', '**/Pipfile.lock', '**/Gemfile.lock', '**/composer.lock', '**/go.sum', '**/.!(npm|harness)ignore', '**/__snapshots__/**', '**/*.snap',
+];
 
 export const defaults = (): HarnessConfig => ({
   version: 1,
@@ -73,6 +80,7 @@ export const defaults = (): HarnessConfig => ({
   context: { budget_tokens: 2000 }, // DEFAULT_CONTEXT_BUDGET in src/budget/measure.ts; not imported, to keep the hook bundle as is
   tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: DEFAULT_RESULTS_DIR },
   multi_file_gate: { generated: [] },
+  pr_size: { target_lines: 200, max_lines: 400, max_files: 20, exclude: [...PR_SIZE_EXCLUDE] },
   unattended: { multi_file_gate: 'block', require_reason: false },
   stop: {
     steps: ['format:check', 'lint', 'typecheck', 'test'],
@@ -179,6 +187,9 @@ const RULES: Record<string, Rule> = {
   'project.team_size': num(0, 10000, true),
   'project.run_budget_usd': num(0, 100000, false),
   'context.budget_tokens': num(0, 200000, true),
+  'pr_size.target_lines': num(1, 100000, true),
+  'pr_size.max_lines': num(1, 100000, true),
+  'pr_size.max_files': num(1, 10000, true),
   apps: listOf('app mappings', appRule),
   items: listOf('item mappings', itemRule),
 };
@@ -188,6 +199,11 @@ function problem(p: string, v: unknown, d: unknown): Fail | null {
   if (rule) return rule(v);
   if (Array.isArray(d)) return isStrs(v) ? null : 'must be a list of strings';
   return typeof v === typeof d ? null : `must be ${typeof d === 'boolean' ? 'a boolean' : typeof d === 'number' ? 'a number' : 'a string'}`;
+}
+
+/** Rules that span keys; loadConfig and validateConfig (doctor, init) both use this. */
+export function crossKeyErrors(c: HarnessConfig): string[] {
+  return c.pr_size.target_lines > c.pr_size.max_lines ? ['"pr_size.target_lines" must not be greater than pr_size.max_lines'] : [];
 }
 
 export type Issue = { path: string; kind: 'unknown' | 'mapping' | 'invalid'; detail?: string };
@@ -248,6 +264,11 @@ export function loadConfig(root: string, read: (p: string, e: 'utf8') => string 
     if (kind === 'unknown') fail(`config: unknown key "${p}" ignored`, `unknown key "${p}"`);
     else if (kind === 'mapping') fail(`config: "${p}" must be a mapping; using default`, `"${p}" must be a mapping`);
     else fail(`config: "${p}" has an invalid value (${detail}); using default`, `"${p}" ${detail}`);
+  }
+  for (const msg of crossKeyErrors(config)) {
+    fail('config: "pr_size.target_lines" is greater than pr_size.max_lines; using defaults', msg);
+    config.pr_size.target_lines = defaults().pr_size.target_lines;
+    config.pr_size.max_lines = defaults().pr_size.max_lines;
   }
   // An absolute path is judged by its repo-relative form, through the same rule as the text check (ruling 8).
   const rel = relative(root, resolve(root, config.tdd.results_dir)).replace(/\\/g, '/');

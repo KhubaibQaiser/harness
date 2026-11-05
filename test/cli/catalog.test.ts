@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
@@ -90,4 +90,13 @@ test('bare catalog prints the load errors and exits 1', () => {
   expect(r.code).toBe(1);
   expect(r.out).toContain('bad.yaml');
   expect(r.out).not.toContain('catalog_version');
+});
+
+test('check also checks shipped presets, prefixed presets/<id>: ', () => {
+  const d = dir({ a: y('a') });
+  mkdirSync(join(d, 'presets'));
+  cpSync('test/fixtures/presets', join(d, 'presets'), { recursive: true });
+  const r = go(['check'], d);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('presets/tiny: ');
 });

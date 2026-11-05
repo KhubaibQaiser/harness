@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -75,4 +75,35 @@ test('picks with an id outside the catalog is an error, not a silent drop', () =
   const r = go(['select', '--picks', f]);
   expect(r.code).toBe(2);
   expect(r.lines.join('\n')).toContain('unknown item "nope"');
+});
+
+const presetRoot = makeRepo({ 'package.json': '{}' }, { git: false });
+mkdirSync(join(presetRoot, '.harness', 'presets'), { recursive: true });
+cpSync('test/fixtures/presets', join(presetRoot, '.harness', 'presets'), { recursive: true });
+const goPreset = (args: string[]) => {
+  process.env.HARNESS_CATALOG_DIR = 'test/fixtures/catalog';
+  process.env.HARNESS_PLAIN_INIT = '1';
+  const lines: string[] = [];
+  try {
+    return { code: run(args, { root: presetRoot, env: {}, out: (l) => lines.push(l) }), lines };
+  } finally {
+    delete process.env.HARNESS_CATALOG_DIR;
+    delete process.env.HARNESS_PLAIN_INIT;
+  }
+};
+const answersFile = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'answers.json');
+writeFileSync(answersFile, JSON.stringify({ project: { type: 'web' } }));
+
+test('select --preset: rows, choose splits preset items, errors exit 2', () => {
+  const rows = goPreset(['select', '--picks', picksFile, '--preset', 'tiny', '--answers', answersFile]);
+  expect(rows.code).toBe(0);
+  expect(JSON.parse(rows.lines.join('\n')).map((r: { id: string }) => r.id)).toEqual(['deep', 'base', 'core-rules', 'alpha', 'beta']);
+  const c = goPreset(['select', '--picks', picksFile, '--preset', 'tiny', '--answers', answersFile, '--choose', 'deep,core-rules,alpha']);
+  expect(c.code).toBe(0);
+  const out = JSON.parse(c.lines.join('\n'));
+  expect(out.preset_items).toEqual(['core-rules', 'alpha']);
+  expect(out.ids).toEqual(['deep', 'extra', 'base']);
+  expect(goPreset(['select', '--picks', picksFile, '--preset', 'tiny']).code).toBe(2);
+  expect(goPreset(['select', '--picks', picksFile, '--preset', 'tiny']).lines[0]).toContain('Usage:');
+  expect(goPreset(['select', '--picks', picksFile, '--preset', 'nope', '--answers', answersFile])).toEqual({ code: 2, lines: ['preset: "nope" is not a shipped or repo preset (harness preset list shows them)'] });
 });

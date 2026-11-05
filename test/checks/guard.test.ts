@@ -726,6 +726,11 @@ test('a glob in the command name is judged as each ruled command it can match', 
     expect(kind(glob), glob).toBe(kind(plain));
   all(['ls src/*.ts', 'cat *.md', "rg 'g?t'", 'echo g?t', '[ -f x ] && echo y', '[[ -n x ]]', 'l? src'], 'allow');
 });
+test('a glob in the harness name or its cli path is read as the harness CLI', () => {
+  all(['h?rness tdd off', 'harnes* tdd off', 'npx h?rness tdd off', '/x/bin/h?rness tdd off', 'node dist/cl?.mjs tdd off'], 'deny');
+  all(['h?rness init', 'node dist/cl?.mjs init'], 'ask');
+  all(['ls dist/cl?.mjs', 'echo h?rness'], 'allow');
+});
 test('git global options before the subcommand do not hide a push rule', () => {
   for (const [c, plain] of [['git -C . push origin main', 'git push origin main'], ['git -c x=y push -f', 'git push -f'], ['git --git-dir=.git push origin main', 'git push origin main'],
     ['git --work-tree=. push -f', 'git push -f'], ['git --git-dir .git --no-pager push -f', 'git push -f'], ['git -C . reset --hard', 'git reset --hard']])

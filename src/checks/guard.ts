@@ -623,7 +623,7 @@ const BUILDS_WHY = 'the command builds words at run time (a variable in command 
 
 // Command names the text rules and checks look for. A command-position glob that can match one is read as it.
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
-  'cdk', 'terraform', 'aws', 'kubectl', 'docker', 'vercel'];
+  'cdk', 'terraform', 'aws', 'kubectl', 'docker', 'vercel', 'harness', 'cli.mjs', 'cli.js'];
 const SPLIT_SEGMENTS = new RegExp(`(${SEGMENTS.source})`);
 /**
  * The readings of a command where the first command-position glob word (g?t, gi[t], *it, /usr/bin/g?t) is each ruled
@@ -636,8 +636,9 @@ export function globReadings(command: string, out: string[] = []): string[] {
   for (let i = 0; i < parts.length; i += 2) {
     const ws = parts[i].split(/([ \t]+)/), toks = ws.filter((_, j) => j % 2 === 0 && ws[j]);
     const tok = toks[commandStart([...toks])];
-    if (!tok || !/[*?[]/.test(tok)) continue;
-    const base = tok.split(/[\\/]/).pop()!.replace(/['"]/g, '');
+    const base = tok?.split(/[\\/]/).pop()!.replace(/['"]/g, '');
+    if (!base || !/[*?[]/.test(base)) continue;
+    const dir = tok.slice(0, tok.length - tok.split(/[\\/]/).pop()!.length); // kept, so dist/cl?.mjs reads as dist/cli.mjs
     const m = picomatch(base, { nocase: true }); // macOS and Windows file systems ignore case
     const names = RULED.filter((n) => m(n));
     if (!names.length) continue;
@@ -645,7 +646,7 @@ export function globReadings(command: string, out: string[] = []): string[] {
     for (const n of names) {
       if (out.length >= 32) break;
       const next = [...parts];
-      next[i] = [...ws.slice(0, j), n, ...ws.slice(j + 1)].join('');
+      next[i] = [...ws.slice(0, j), dir + n, ...ws.slice(j + 1)].join('');
       const t = next.join('');
       out.push(t);
       globReadings(t, out);

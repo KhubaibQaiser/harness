@@ -42,7 +42,10 @@ export function itemFiles(m: Manifest, id: string): { rel: string; blocks: strin
   });
 }
 
-export const MANIFEST_REL = '.harness/manifest.json';
+export interface StatePaths { dir: string; manifest: string; backup: string; lock: string }
+export const statePaths = (dir = '.harness'): StatePaths => ({ dir, manifest: `${dir}/manifest.json`, backup: `${dir}/backup`, lock: `${dir}/apply.lock` });
+export const REPO_STATE = statePaths();
+export const MANIFEST_REL = REPO_STATE.manifest;
 
 export class ManifestError extends Error {
   constructor(options?: { cause?: unknown; message?: string }) {
@@ -56,18 +59,18 @@ export const rawOf = (m: Manifest): string | undefined => (m as { [RAW]?: string
 const RAW = Symbol('raw');
 
 /** True for a manifest backup path: inside `.harness/backup/`, no `..` anywhere. */
-export const isBackupPath = (rel: string): boolean => rel.startsWith('.harness/backup/') && !rel.split(/[\\/]/).includes('..');
+export const isBackupPath = (rel: string, sp: StatePaths = REPO_STATE): boolean => rel.startsWith(`${sp.backup}/`) && !rel.split(/[\\/]/).includes('..');
 
 /** The backup's text, or null when it is missing or its recorded path leaves `.harness/backup/` (a committed manifest is not trusted). */
-export function backupText(root: string, rel: string | undefined): string | null {
-  if (!rel || !isBackupPath(rel)) return null;
+export function backupText(root: string, rel: string | undefined, sp: StatePaths = REPO_STATE): string | null {
+  if (!rel || !isBackupPath(rel, sp)) return null;
   const p = resolve(root, rel);
-  if (!p.startsWith(resolve(root, '.harness/backup') + sep) || !existsSync(p)) return null;
+  if (!p.startsWith(resolve(root, sp.backup) + sep) || !existsSync(p)) return null;
   try { return readFileSync(p, 'utf8'); } catch { return null; }
 }
 
-export function readManifest(root: string, read: (p: string, e: 'utf8') => string = readFileSync): Manifest | null {
-  const p = join(root, MANIFEST_REL);
+export function readManifest(root: string, read: (p: string, e: 'utf8') => string = readFileSync, sp: StatePaths = REPO_STATE): Manifest | null {
+  const p = join(root, sp.manifest);
   if (!existsSync(p)) return null;
   let text: string;
   try {
@@ -75,7 +78,7 @@ export function readManifest(root: string, read: (p: string, e: 'utf8') => strin
   } catch (cause) {
     // A read error (a Windows lock that outlasted the retries) is not a corrupt file: never suggest deleting .harness/.
     const why = (cause as Error).message.split('\n')[0];
-    throw new ManifestError({ cause, message: `\`.harness/manifest.json\` could not be read (${why}). Try again; if it keeps failing, check what holds the file open.` });
+    throw new ManifestError({ cause, message: `\`${sp.manifest}\` could not be read (${why}). Try again; if it keeps failing, check what holds the file open.` });
   }
   try {
     const m = JSON.parse(text);

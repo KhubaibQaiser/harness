@@ -1,10 +1,15 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { currentBranch, type Git, isOver, measure, realGit, type SizeConfig } from '../../../src/checks/pr-size/measure.js';
 import { defaults } from '../../../src/core/config.js';
 import { makeRepo } from '../../install/helpers.js';
+
+vi.mock('node:child_process', async (orig) => {
+  const real = await orig<typeof import('node:child_process')>();
+  return { ...real, spawnSync: vi.fn(real.spawnSync) };
+});
 
 const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i}\n`).join('');
@@ -51,6 +56,19 @@ describe('counting', () => {
     git(root, 'mv', 'ren.ts', 'moved.ts');
     commit(root, { 'old.ts': null, 'bin.dat': Buffer.from([1, 0, 2, 0, 3]) });
     expect(measure(root, {}, cfg())).toMatchObject({ lines: 0, files: 3, top: [{ path: 'bin.dat', lines: 0 }, { path: 'moved.ts', lines: 0 }, { path: 'old.ts', lines: 0 }] });
+  });
+
+  test('a mode-only change is 1 file and 0 lines', () => {
+    const root = repo({ 'run.sh': lines(3) });
+    chmodSync(join(root, 'run.sh'), 0o755);
+    commit(root, {});
+    expect(measure(root, {}, cfg())).toMatchObject({ lines: 0, files: 1, top: [{ path: 'run.sh', lines: 0 }] });
+  });
+
+  test('names with a newline, a tab and a quote survive -z parsing', () => {
+    const root = repo();
+    commit(root, { 'a\nb.ts': lines(1), 'c\td.ts': lines(2), 'e"f.ts': lines(3) });
+    expect(measure(root, {}, cfg())).toMatchObject({ lines: 6, files: 3, top: [{ path: 'e"f.ts', lines: 3 }, { path: 'c\td.ts', lines: 2 }, { path: 'a\nb.ts', lines: 1 }] });
   });
 
   test('a path with a space and a non-ASCII name is counted under its real name', () => {
@@ -111,6 +129,12 @@ describe('base and head', () => {
     expect(measure(root, {}, cfg())).toEqual({ error: 'no base: origin/HEAD is not set and stop.base_ref (origin/main) was not found; fetch it first' });
   });
 
+  test('with origin/HEAD pointing at a missing ref and no stop.base_ref, the reason names both tries', () => {
+    const root = repo();
+    git(root, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/gone');
+    expect(measure(root, {}, cfg([], 'upstream/dev'))).toEqual({ error: 'no base: origin/HEAD (origin/gone) and stop.base_ref (upstream/dev) were not found; fetch it first' });
+  });
+
   test('head feat works from another checked-out branch; a missing head is unmeasured', () => {
     const root = repo();
     commit(root, { 'a.ts': lines(6) });
@@ -151,14 +175,34 @@ describe('failures', () => {
     expect(measure('/x', {}, cfg(), { git: err('ETIMEDOUT') })).toEqual({ error: 'git timed out' });
   });
 
-  test('with 3 s per call the measurement stops within the 6 s budget', () => {
+  test('with 3 s per call the measurement stops at the 6 s budget, making no call with no time left', () => {
     let t = 0;
     const timeouts: number[] = [];
-    const g: Git = (_args, ms) => (timeouts.push(ms), { status: 0, stdout: 'abc\n' });
-    const s = measure('/x', {}, cfg(), { git: g, now: () => (t += 3000) - 3000 });
-    expect(s).toMatchObject({ error: 'git timed out' });
-    expect(t).toBeLessThanOrEqual(9000);
-    expect(timeouts.every((ms) => ms > 0 && ms <= 2000)).toBe(true);
+    const g: Git = (_args, ms) => (timeouts.push(ms), (t += 3000), { status: 0, stdout: 'abc\n' });
+    expect(measure('/x', {}, cfg(), { git: g, now: () => t })).toMatchObject({ error: 'git timed out' });
+    expect(timeouts).toEqual([2000, 2000]);
+    expect(t).toBe(6000);
+  });
+
+  test.each(['EACCES', 'EAGAIN', 'ENOBUFS'])('a %s spawn error is named, never read as a missing ref', (code) => {
+    const { calls, g } = fakeGit({ status: null, stdout: '', error: Object.assign(new Error(code), { code }) });
+    expect(measure('/x', { base: 'main' }, cfg(), { git: g })).toEqual({ error: `git failed (${code})` });
+    expect(measure('/x', {}, cfg(), { git: g })).toEqual({ error: `git failed (${code})` });
+    expect(calls).toHaveLength(2);
+  });
+
+  test('a git killed by a signal is named, never read as a missing ref', () => {
+    expect(measure('/x', { base: 'main' }, cfg(), { git: fakeGit({ status: null, stdout: '' }).g })).toEqual({ error: 'git failed (killed)' });
+  });
+
+  test('the diff runs through spawnSync with the 64 MB buffer', () => {
+    const root = repo();
+    commit(root, { 'a.ts': lines(1) });
+    vi.mocked(spawnSync).mockClear();
+    measure(root, {}, cfg());
+    const diffs = vi.mocked(spawnSync).mock.calls.filter(([, args]) => (args as string[]).includes('diff'));
+    expect(diffs).toHaveLength(2);
+    for (const [, , o] of diffs) expect(o).toMatchObject({ maxBuffer: 64 * 1024 * 1024 });
   });
 
   test('a failing diff is git diff failed', () => {

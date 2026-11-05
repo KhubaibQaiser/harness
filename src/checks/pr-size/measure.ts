@@ -39,6 +39,8 @@ export function measure(root: string, want: { base?: string; head?: string }, co
     const r = git(args, timeout);
     if (r.error?.code === 'ENOENT') throw new Stop('git not found');
     if (r.error?.code === 'ETIMEDOUT') throw new Stop('git timed out');
+    // Any other spawn failure (EACCES, ENOBUFS, a signal) is named, so it is never read as "ref not found".
+    if (r.error || r.status === null) throw new Stop(`git failed (${esc(r.error?.code ?? 'killed')})`);
     return r;
   };
   const sha = (ref: string) => {
@@ -64,7 +66,7 @@ export function measure(root: string, want: { base?: string; head?: string }, co
       if (def && plainBranch(def)) base = findBase(def);
       const ref = config.stop.base_ref;
       if (!base && plainBranch(ref)) base = findBase(ref);
-      if (!base) return { error: `no base: origin/HEAD is not set and stop.base_ref (${esc(ref)}) was not found; fetch it first` };
+      if (!base) return { error: def ? `no base: origin/HEAD (origin/${esc(def)}) and stop.base_ref (${esc(ref)}) were not found; fetch it first` : `no base: origin/HEAD is not set and stop.base_ref (${esc(ref)}) was not found; fetch it first` };
     }
     const b = base;
     const fail = (error: string): Unmeasured => ({ error, base: b.shown });

@@ -36,6 +36,17 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const strs = (v: unknown[]): string[] => v.filter((x): x is string => typeof x === 'string');
 const NO_BASE: Base = { ts: NaN, side: false };
 const ASK_CAP = 50;
+// Ids, keys, paths and commands are kept in memory per record: a hostile line can hold 16 MB of any of them.
+const ID_CAP = 200, PATH_CAP = 1024, CMD_CAP = 2000;
+const NAME_CAP = 128;
+// FNV-1a over the whole string, so two long ids with the same prefix and length still differ.
+const fnv = (v: string): string => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < v.length; i++) h = Math.imul(h ^ v.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, '0');
+};
+/** A cut id keeps its original length and a hash of the whole value. */
+const capId = (v: string): string => (v.length > ID_CAP ? `${v.slice(0, ID_CAP)}#${v.length}#${fnv(v)}` : v);
 const TS_RE = /"timestamp":"([^"\\]{1,40})"/; // fast-path records keep their time without JSON.parse
 
 const count = (v: unknown) => (num(v) !== undefined && (v as number) >= 0 ? (v as number) : undefined);
@@ -47,12 +58,12 @@ const usage = (u: Obj | undefined): Usage | undefined => {
 };
 
 const toolUse = (b: Obj): ToolUse => {
-  const id = str(b.id), name = str(b.name), input = obj(b.input);
+  const id0 = str(b.id), id = id0 === undefined ? undefined : capId(id0), name = str(b.name)?.slice(0, NAME_CAP), input = obj(b.input);
   const t: ToolUse = { id: id ?? '', name: name ?? '' };
   if (id === undefined || name === undefined) t.malformed = true;
-  if (name === 'Skill' && str(input?.skill) !== undefined) t.skill = str(input?.skill);
-  if (str(input?.file_path) !== undefined) t.filePath = str(input?.file_path);
-  if (str(input?.command) !== undefined) t.command = str(input?.command);
+  if (name === 'Skill' && str(input?.skill) !== undefined) t.skill = str(input?.skill)!.slice(0, NAME_CAP);
+  if (str(input?.file_path) !== undefined) t.filePath = str(input?.file_path)!.slice(0, PATH_CAP);
+  if (str(input?.command) !== undefined) t.command = str(input?.command)!.slice(0, CMD_CAP);
   if (name === 'AskUserQuestion' && Array.isArray(input?.questions)) {
     // Spec §4.2: options per question (the largest question), and /recommend/i on any label or description.
     // Only the first ASK_CAP questions and options are inspected: a hostile line can hold hundreds of thousands.
@@ -68,7 +79,7 @@ const assistantRec = (r: Obj) => {
   const blocks = arr(m?.content).map(obj).filter((b): b is Obj => b !== undefined);
   const texts = strs(blocks.filter((b) => b.type === 'text').map((b) => b.text));
   const tools = blocks.filter((b) => b.type === 'tool_use').map(toolUse);
-  return { k: 'assistant' as const, key: id !== undefined && req !== undefined ? JSON.stringify([id, req]) : null, model: str(m?.model), usage: usage(obj(m?.usage)), texts, tools };
+  return { k: 'assistant' as const, key: id !== undefined && req !== undefined ? capId(JSON.stringify([id, req])) : null, model: str(m?.model), usage: usage(obj(m?.usage)), texts, tools };
 };
 
 const blockText = (c: unknown): string => (typeof c === 'string' ? c : strs(arr(c).map((b) => obj(b)?.text)).join('\n'));
@@ -86,7 +97,7 @@ const userRec = (r: Obj) => {
   const permission = decision !== undefined && source !== undefined ? { decision, source } : undefined;
   return trs.map((tr) => {
     const full = blockText(tr.content);
-    return { k: 'result' as const, useId: tr.tool_use_id as string, isError: tr.is_error === true, chars: full.length, text: full.slice(0, TEXT_CAP), permission };
+    return { k: 'result' as const, useId: capId(tr.tool_use_id as string), isError: tr.is_error === true, chars: full.length, text: full.slice(0, TEXT_CAP), permission };
   });
 };
 
@@ -97,7 +108,7 @@ const attachmentRec = (a: Obj | undefined) => {
   if (t === 'invoked_skills') return { k: 'invoked' as const, names: strs(arr(a.skills).map((s) => obj(s)?.name)) };
   if (t === 'instructions') return { k: 'instructions' as const, paths: strs(arr(a.files).map((f) => obj(f)?.path)), reason: str(a.reason) ?? null };
   if (t === 'hook_success' || t === 'hook_cancelled') {
-    return { k: 'hook' as const, event: str(a.hookEvent) ?? '', command: str(a.command) ?? '', ms: num(a.durationMs) ?? null, timedOut: a.timedOut === true, useId: str(a.toolUseID) };
+    return { k: 'hook' as const, event: str(a.hookEvent) ?? '', command: (str(a.command) ?? '').slice(0, CMD_CAP), ms: num(a.durationMs) ?? null, timedOut: a.timedOut === true, useId: str(a.toolUseID) === undefined ? undefined : capId(str(a.toolUseID)!) };
   }
   return { k: 'other' as const, type: `attachment:${t}` };
 };

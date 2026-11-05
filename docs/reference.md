@@ -153,6 +153,8 @@ JS package names are checked on the npm registry first (unless `checks.depVerify
 
 The file is `.harness/config.yaml`. `init` writes it. If the file is not valid YAML, or has an unknown, mistyped or out-of-range key, harness fails closed: every agent edit, including a shell command that writes, moves or deletes a file in the repo, is denied, and Stop blocks (up to `stop.max_attempts` times), with a message naming the key or line, until a person fixes the file. Reads and other shell commands still run, so `harness doctor` can show every problem; it exits 1 until the file is valid.
 
+A list you set, such as `pr_size.exclude`, replaces the whole default list.
+
 Defaults are what harness uses when a key is missing. `init` writes recommended values from your repo instead. It sets `checks.tdd`, `checks.multiFile` (for example `checks.multiFile: true`), `tdd.paths`, `tdd.exempt`, `stop.steps`, `stop.base_ref` and, when it finds one, `stop.package_manager`.
 
 A Stop step is a script name, run with `stop.package_manager`, or a command object run without a shell. For example, in a Python repo:
@@ -346,6 +348,10 @@ The table below is generated from `src/core/config.ts` by `node scripts/gen-conf
 | `tdd.test_lock` | `true` | Changing a test that was written failing needs your approval until it passes. |
 | `tdd.results_dir` | `".harness/results"` | Where the test reporters write JSON results. Keep it inside `.harness/results`, which protect covers. Value must not be inside .harness/state (the sandbox denies it there). |
 | `multi_file_gate.generated` | `[]` | Globs for generated files that the multi-file gate does not count. |
+| `pr_size.target_lines` | `200` | Changed lines the pr-ship skill aims for in each PR. Guidance only; no gate enforces it. Value must be an integer from 1 to 100000. |
+| `pr_size.max_lines` | `400` | Changed lines above which opening or growing a PR asks you first (denied when unattended). Value must be an integer from 1 to 100000. |
+| `pr_size.max_files` | `20` | Changed files above which opening or growing a PR asks you first (denied when unattended). Value must be an integer from 1 to 10000. |
+| `pr_size.exclude` | `["**/pnpm-lock.yaml","**/package-lock.json","**/npm-shrinkwrap.json","**/yarn.lock","**/bun.lock","**/bun.lockb","**/Cargo.lock","**/poetry.lock","**/uv.lock","**/Pipfile.lock","**/Gemfile.lock","**/composer.lock","**/go.sum","**/.!(npm\|harness)ignore","**/__snapshots__/**","**/*.snap"]` | Globs not counted toward a PR's size: lockfiles, `.*ignore` files except `.npmignore` and `.harnessignore`, and snapshots. A list you set replaces the whole default, so keep the defaults you want. |
 | `unattended.multi_file_gate` | `"block"` | What the multi-file gate does when no human is watching. Value must be one of block, allow-log, off. |
 | `unattended.require_reason` | `false` | With `allow-log`, extra files need a one-line reason. No effect while the gate is `block`. |
 | `stop.steps` | `["format:check","lint","typecheck","test"]` | Commands that must pass before the agent may stop. Value must be a list of script names or { name, run } objects. |

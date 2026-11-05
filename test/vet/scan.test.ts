@@ -454,6 +454,13 @@ describe('final review', () => {
     expect(r({ 'plugins/p/.claude-plugin/plugin.json': '{"mcpServers":["./a.json","./mcp/b.conf"]}', 'plugins/p/a.json': '{}', 'plugins/p/mcp/b.conf': servers }, 'plugins/p')).toEqual([['unpinned-remote', 'plugins/p/mcp/b.conf'], ['mcp-server', 'plugins/p/mcp/b.conf']]);
     expect(r({ '.claude-plugin/plugin.json': '{"mcpServers":"./s.json"}', 's.json': '{ broken' })).toEqual([['invalid-manifest', 's.json']]);
   });
+  it('re-review N3: a hooks file that plugin.json names by path is read whatever its extension', () => {
+    const r = (files: Record<string, string>, path = '') => rf(files, path).map((x) => [x.rule, x.file, x.text]).filter(([k]) => k !== 'license');
+    const h = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: './x.sh' }] }] } });
+    expect(r({ '.claude-plugin/plugin.json': '{"hooks":"./h.cfg"}', 'h.cfg': h })).toEqual([['hook-shell', 'h.cfg', 'Stop: ./x.sh']]);
+    expect(r({ 'plugins/p/.claude-plugin/plugin.json': '{"hooks":["./a/h.cfg"]}', 'plugins/p/a/h.cfg': h }, 'plugins/p')).toEqual([['hook-shell', 'plugins/p/a/h.cfg', 'Stop: ./x.sh']]);
+    expect(r({ '.claude-plugin/plugin.json': '{"hooks":"./h.cfg"}', 'h.cfg': '{ broken' })).toEqual([['invalid-manifest', 'h.cfg', 'not valid JSON, so its hooks and servers could not be read']]);
+  });
   const fm = (body: string) => `---\nname: a\ndescription: d\n${body}---\nBody.\n`;
   const HOOK = 'hooks:\n  PreToolUse:\n    - matcher: "Bash"\n      hooks:\n        - type: command\n          command: "./scripts/x.sh"\n';
   it('I3: frontmatter hooks in a skill, command or agent are hook-shell; allowed-tools is permissions', () => {
@@ -474,6 +481,19 @@ describe('final review', () => {
     expect(of(rf({ 'skills/a/SKILL.md': big }), 'invalid-manifest')).toMatchObject([{ severity: 'medium', file: 'skills/a/SKILL.md', line: 0 }]);
     expect(of(rf({ 'skills/a/SKILL.md': fm('hooks: [\n') }), 'invalid-manifest')).toHaveLength(1);
     expect(of(rf({ 'skills/a/SKILL.md': fm('x: [\n') }), 'invalid-manifest')).toEqual([]);
+  });
+  it('re-review N2: frontmatter over 16 KB is always invalid-manifest, however its keys are written; invalid YAML with mcpServers is too', () => {
+    const pad = 'a'.repeat(17000);
+    const forms = [
+      `description: ${pad}\n"hooks":\n  Stop:\n    - hooks:\n        - type: command\n          command: ./scripts/x.sh\n`,
+      `{name: a, description: ${pad}, hooks: {Stop: [{hooks: [{type: command, command: ./scripts/x.sh}]}]}}\n`,
+      `description: ${pad}\n? hooks\n: Stop:\n    - hooks:\n        - type: command\n          command: ./scripts/x.sh\n`,
+      `description: ${pad}\nmcpServers:\n  s:\n    command: node\n    args: [./srv.js]\n`,
+      `description: ${pad}\n`,
+    ];
+    for (const body of forms) expect(of(rf({ 'agents/a.md': `---\n${body}---\nBody.\n` }), 'invalid-manifest'), body.slice(-60)).toMatchObject([{ severity: 'medium', file: 'agents/a.md', line: 0 }]);
+    // small but not valid YAML (a duplicate key)
+    expect(of(rf({ 'agents/a.md': fm('mcpServers:\n  s:\n    command: node\nmcpServers: x\n') }), 'invalid-manifest')).toHaveLength(1);
   });
   it('allow rules are capped at 20 per file with one summary line', () => {
     const j = JSON.stringify({ permissions: { allow: Array.from({ length: 1000 }, (_, i) => `Bash(t${i})`) } }, null, 2);

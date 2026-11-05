@@ -375,12 +375,13 @@ function contextTokens(kind: 'skill' | 'agent', fm: string): number {
 /**
  * Frontmatter that changes what runs: `hooks` in skills, commands and agents, `allowed-tools` in skills and commands, and an agent's
  * `permissionMode` (code.claude.com/docs/en/hooks "Hooks in skills and agents", /docs/en/skills frontmatter reference, /docs/en/sub-agents).
- * Frontmatter that declares one of them but cannot be read is a finding, so padding it past FM_MAX hides nothing.
+ * Frontmatter over FM_MAX, or invalid YAML that names one of them, is a finding, so padding or breaking it hides nothing.
  */
-const FM_DECL = /^[ \t]*["']?(?:hooks|allowed-tools|permissionMode)["']?[ \t]*:/m; // ^[ \t]* under m: each line start is tried once, so linear
+const FM_DECL = /^[ \t]*["']?(?:hooks|allowed-tools|permissionMode|mcpServers)["']?[ \t]*:/m; // ^[ \t]* under m: each line start is tried once, so linear
 const SAFE_MODES = new Set(['default', 'manual', 'plan']);
 function fmRules(file: string, text: string, fr: Front): VetFinding[] {
-  if (!isObj(fr.y)) return FM_DECL.test(fr.fm) ? [{ severity: 'medium', rule: 'invalid-manifest', file, line: 0, text: 'frontmatter could not be read, so its hooks and allowed-tools were not judged' }] : [];
+  // Over FM_MAX nothing is parsed, so any key form ("hooks", ? hooks, a flow mapping) could hide there: always a finding.
+  if (!isObj(fr.y)) return fr.fm.length > FM_MAX || FM_DECL.test(fr.fm) ? [{ severity: 'medium', rule: 'invalid-manifest', file, line: 0, text: 'frontmatter over 16 KB or not valid YAML, so its hooks, allowed-tools and MCP servers were not judged' }] : [];
   const y = fr.y, at = (k: string) => finder(text)(k); // a fresh finder per key: the keys may come in any order
   const out = hookShell(file, text, y, (s) => s);
   // An agent's mcpServers: a list of server names (already configured: no finding) and { name: config } entries, or one mapping.
@@ -434,15 +435,18 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
   let tokens = 0;
   const unmeasured = new Set<string>();
   const rootPrompt = path.split('/').some((d) => PROMPT_DIR.test(d)) || f.files.includes(`${path ? `${path}/` : ''}SKILL.md`);
-  // MCP config files a plugin.json names by path ("mcpServers": "./x.json" or a list): read like .mcp.json, in the direct form too.
-  const mcpRefs = new Set<string>();
+  // Files a plugin.json names by path ("mcpServers" or "hooks": "./x.json" or a list): JSON whatever their extension; MCP ones are
+  // read like .mcp.json, in the direct form too.
+  const mcpRefs = new Set<string>(), hookRefs = new Set<string>();
   for (const rel of files) {
     const m = /^(?:(.*)\/)?\.claude-plugin\/plugin\.json$/.exec(rel);
     if (!m) continue;
     let j: unknown;
     try { j = JSON.parse(read(rel).toString('utf8').replace(/^﻿/, '')); } catch { continue; } // reported in the loop below
-    const v = isObj(j) ? j.mcpServers : undefined;
-    for (const p of typeof v === 'string' ? [v] : Array.isArray(v) ? v : []) if (typeof p === 'string') mcpRefs.add(posix.join(m[1] ?? '', p.replace(/^\$\{CLAUDE_PLUGIN_ROOT\}\//, '')));
+    for (const [key, set] of [['mcpServers', mcpRefs], ['hooks', hookRefs]] as const) {
+      const v = isObj(j) ? j[key] : undefined;
+      for (const p of typeof v === 'string' ? [v] : Array.isArray(v) ? v : []) if (typeof p === 'string') set.add(posix.join(m[1] ?? '', p.replace(/^\$\{CLAUDE_PLUGIN_ROOT\}\//, '')));
+    }
   }
   for (const rel of files) {
     // Medium line findings: at most NET_CAP per rule per file are built; the rest are only counted, for the summary.
@@ -458,7 +462,8 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
     const bare = text.replace(/^﻿/, '');
     const mcpFile = /(?:^|\/)\.mcp\.json$/.test(rel) || mcpRefs.has(rel);
     let textScan = true, obj: Record<string, unknown> | undefined, direct = false;
-    if (/\.json$/i.test(rel) || mcpRefs.has(rel)) {
+    const ref = mcpRefs.has(rel) || hookRefs.has(rel);
+    if (/\.json$/i.test(rel) || ref) {
       let json: unknown;
       try { json = JSON.parse(bare); } catch { /* reported below */ }
       if (isObj(json)) {
@@ -470,7 +475,7 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
         obj = json;
         if (isObj(json.hooks)) for (const [ev, g] of Object.entries(json.hooks)) if (CTX_HOOKS.has(ev) && JSON.stringify(g).includes('"command"')) unmeasured.add(`${rel}: ${ev} hook`);
         textScan = false;
-      } else if (MANIFEST.test(rel) || mcpRefs.has(rel)) {
+      } else if (MANIFEST.test(rel) || ref) {
         findings.push({ severity: 'medium', rule: 'invalid-manifest', file: rel, line: 0, text: 'not valid JSON, so its hooks and servers could not be read' });
       }
     }

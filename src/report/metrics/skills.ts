@@ -15,7 +15,7 @@ export const SKILL_NOTES = {
 /** `unknown`: relevant sessions with an unreadable tool use and no other invocation; they are neither fired nor missed (show it beside the rate).
  *  `sessionsWithListing`: sessions with a main-thread listing record; `listedIn` is out of these. */
 export interface SkillRow {
-  name: string; label: SkillSpec['label']; listedIn: number; sessionsWithListing: number; relevantIn: number; invokedRelevant: number; invokedOther: number; typedOrCarried: number; sessions: number; dropped: boolean; unknown: number; undercounted: boolean; stackUnknown?: true;
+  name: string; label: SkillSpec['label']; listedIn: number; sessionsWithListing: number; relevantIn: number; invokedRelevant: number; invokedOther: number; typedOrCarried: number; sessions: number; dropped: boolean; unknown: number; undercounted: boolean; splitUnplaced: number; duplicates: number; stackUnknown?: true;
   byBucket: Record<Bucket, { r: number; i: number }>; byCompact: { pre: { r: number; i: number }; post: { r: number; i: number } };
 }
 
@@ -76,14 +76,18 @@ export function skillSpecs(root: string, installed: { name: string; paths?: stri
 
 const rc = () => ({ r: 0, i: 0 });
 const row = (s: SkillSpec): SkillRow => ({
-  name: s.name, label: s.label, ...(s.stackUnknown ? { stackUnknown: true as const } : {}), listedIn: 0, sessionsWithListing: 0, undercounted: false, relevantIn: 0, invokedRelevant: 0, invokedOther: 0, typedOrCarried: 0, sessions: 0, dropped: false, unknown: 0,
+  name: s.name, label: s.label, ...(s.stackUnknown ? { stackUnknown: true as const } : {}), listedIn: 0, sessionsWithListing: 0, undercounted: false, splitUnplaced: 0, duplicates: 0, relevantIn: 0, invokedRelevant: 0, invokedOther: 0, typedOrCarried: 0, sessions: 0, dropped: false, unknown: 0,
   byBucket: { '1-10': rc(), '11-30': rc(), '31-100': rc(), '100+': rc() }, byCompact: { pre: rc(), post: rc() },
 });
 
 export function skillsAcc(specs: SkillSpec[]): Acc<SkillRow[]> {
-  const rows = specs.map(row);
+  // two skills with one name: keep the first, count the rest
+  const seen = new Set<string>(), dups = new Map<string, number>();
+  const uniq = specs.filter((x) => (seen.has(x.name) ? (dups.set(x.name, (dups.get(x.name) ?? 0) + 1), false) : (seen.add(x.name), true)));
+  const rows = uniq.map(row);
+  rows.forEach((o) => { o.duplicates = dups.get(o.name) ?? 0; });
   // per session: listing names, Skill tool uses split by compaction, attachment names, any unreadable tool use
-  let listed: Set<string> | undefined, tool = new Map<string, { pre: boolean; post: boolean }>(), carried = new Set<string>(), bad = false, compacted = false, compactTs = NaN, subEdit = false;
+  let listed: Set<string> | undefined, tool = new Map<string, { pre: boolean; post: boolean; unplaced: boolean }>(), carried = new Set<string>(), bad = false, compacted = false, compactTs = NaN, subEdit = false;
   const reset = () => { listed = undefined; tool = new Map(); carried = new Set(); bad = false; compacted = false; compactTs = NaN; subEdit = false; };
   return {
     rec(_s: SessionCtx, r) {
@@ -97,10 +101,11 @@ export function skillsAcc(specs: SkillSpec[]): Acc<SkillRow[]> {
           if (t.malformed) bad = true;
           else if (r.side && t.filePath !== undefined && EDITS.has(t.name)) subEdit = true;
           if (!t.malformed && t.skill !== undefined) {
-            const e = tool.get(t.skill) ?? { pre: false, post: false };
+            const e = tool.get(t.skill) ?? { pre: false, post: false, unplaced: false };
             // a subagent record is placed by its own time against the main thread's first compact; no usable time is unplaced
             const where = !r.side ? (compacted ? 'post' : 'pre') : !compacted ? 'pre' : Number.isNaN(r.ts) || Number.isNaN(compactTs) ? undefined : r.ts < compactTs ? 'pre' : 'post';
             if (where) e[where] = true;
+            else e.unplaced = true;
             tool.set(t.skill, e);
           }
         }
@@ -108,7 +113,7 @@ export function skillsAcc(specs: SkillSpec[]): Acc<SkillRow[]> {
     },
     endSession(s) {
       const b = bucketOf(s.turns);
-      specs.forEach((sp, k) => {
+      uniq.forEach((sp, k) => {
         const o = rows[k]!, t = tool.get(sp.name), rel = sp.relevant?.(s.edited) === true;
         o.sessions++;
         if (listed !== undefined) o.sessionsWithListing++;
@@ -120,6 +125,7 @@ export function skillsAcc(specs: SkillSpec[]): Acc<SkillRow[]> {
         o.relevantIn++; o.byBucket[b].r++; o.byCompact.pre.r++;
         if (s.compactions > 0) o.byCompact.post.r++;
         if (t === undefined) return void (bad && o.unknown++);
+        if (t.unplaced) o.splitUnplaced++;
         o.invokedRelevant++; o.byBucket[b].i++;
         if (t.pre) o.byCompact.pre.i++;
         if (t.post) o.byCompact.post.i++;

@@ -106,6 +106,12 @@ describe('fix round 1', () => {
     expect(r(early)).toEqual({ pre: { r: 1, i: 1 }, post: { r: 1, i: 0 } });
     expect(r(late)).toEqual({ pre: { r: 1, i: 0 }, post: { r: 1, i: 1 } });
     expect(r(none)).toEqual({ pre: { r: 1, i: 0 }, post: { r: 1, i: 0 } });
+    const cnt = (sub: TRec[]) => run(sp(), { rs: compact, sub, edited: edit, compactions: 1 })['engineering-principles']!.splitUnplaced;
+    expect([cnt(none), cnt(early)]).toEqual([1, 0]);
+  });
+  it('keeps the first of two specs with one name and counts the duplicates', () => {
+    const rows = skillsAcc(specs([{ name: 'a', paths: ['*.ts'] }, { name: 'a' }, { name: 'b' }])).result();
+    expect(rows.map((x) => [x.name, x.label, x.duplicates])).toEqual([['a', 'paths', 1], ['b', 'none', 0]]);
   });
   it('ignores subagent listings and counts sessions with a main listing', () => {
     const o = run(sp(), { rs: recs(listing('engineering-principles')), sub: side(recs(listing('x'))), edited: [] }, { rs: [], sub: side(recs(listing('x'))), edited: [] })['engineering-principles']!;

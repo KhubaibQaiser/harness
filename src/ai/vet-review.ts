@@ -1,4 +1,4 @@
-import { CONTROL, esc } from '../core/config.js';
+import { CONTROL, esc, isObj } from '../core/config.js';
 import type { ScanResult } from '../vet/scan.js';
 
 /** The reviewer's vet-review.json. */
@@ -12,7 +12,6 @@ export interface VetReview {
 }
 
 const MAX = 200; // a list longer than this is not a real review; keeps a huge file cheap to check
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const text = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 // Echoed values are cut to 120 code points: a hostile 5 MB value must not become a 5 MB error line.
 const cut = (s: string) => { const a = [...s.slice(0, 480)]; return esc(a.slice(0, 120).join('')) + (a.length > 120 || s.length > 480 ? '…' : ''); };

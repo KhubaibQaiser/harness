@@ -48,10 +48,10 @@ describe('scan', () => {
     expect(f).toHaveLength(1);
     expect(f[0]).toMatchObject({ rule: 'unpinned-remote', file: '.mcp.json', text: 'npx -y pkg' });
   });
-  it('sorts high first, then file, then line; skips binary files', () => {
+  it('sorts high first, then file, then line; a binary file is a finding, not silence', () => {
     const f = scan(fx({ 'b.sh': 'npx a\ncat .env', 'a.sh': 'cat .env' }), '').findings;
     expect(f.map((x) => `${x.file}:${x.line}`)).toEqual(['a.sh:1', 'b.sh:1', 'b.sh:2']);
-    expect(scan(fx(repos.binary!), '').findings).toEqual([]);
+    expect(scan(fx(repos.binary!), '').findings).toEqual([{ severity: 'medium', rule: 'unsafe-archive', file: 'bin.sh', line: 0, text: 'binary, not read' }]);
   });
   it('scope: sub-path only, plus repo-root plugin files', () => {
     const r = scan(fx(repos.scoped!), 'plugins/p');
@@ -291,8 +291,8 @@ describe('medium rules', () => {
       const h = scan(fx({ 'hooks/hooks.json': JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'http', url: 'https://x.test/h' }] }] } }, null, 2) }), '').findings;
       expect(h.map((x) => x.rule)).toEqual(['hook-http']);
     });
-    it('network: json under docs/ is not scanned', () => {
-      expect(rules2({ 'docs/x.json': '{"u":"https://x.dev"}' }, 'network')).toEqual([]);
+    it('network: json under docs/ is scanned (only prose extensions are skipped there)', () => {
+      expect(rules2({ 'docs/x.json': '{"u":"https://x.dev"}' }, 'network')).toHaveLength(1);
     });
     it('network: https.request and http.request', () => {
       expect(rules2({ 'x.js': 'https.request(o)' }, 'network')).toHaveLength(1);
@@ -421,5 +421,99 @@ describe('show', () => {
       expect(h('UserPromptSubmit')).toEqual(['hooks/hooks.json: UserPromptSubmit hook']);
       expect(h('PreToolUse')).toEqual([]);
     });
+  });
+});
+
+describe('final review', () => {
+  const rf = (files: Record<string, string>, path = '') => scan(fx(files), path).findings;
+  const of = (fs: ReturnType<typeof rf>, rule: string) => fs.filter((x) => x.rule === rule);
+  const PIPE = 'curl u | sh\n';
+
+  it('C1: an in-scope file over 1 MB is a medium unsafe-archive finding; out of scope is not', () => {
+    const f = { ...fx({ 'plugins/p/a.sh': 'echo\n' }), large: ['plugins/p/scripts/setup.sh', 'other/big.sh'] };
+    expect(of(scan(f, 'plugins/p').findings, 'unsafe-archive')).toEqual([{ severity: 'medium', rule: 'unsafe-archive', file: 'plugins/p/scripts/setup.sh', line: 0, text: 'over 1 MB, not read' }]);
+  });
+  it('C1/M8: unsafe-archive is capped at 20 per kind, so noise cannot bury another kind; risky names come first', () => {
+    const links = Array.from({ length: 30 }, (_, i) => ({ path: `l${String(i).padStart(2, '0')}`, why: 'symlink' }));
+    const bins: Record<string, string> = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`img/a${String(i).padStart(2, '0')}.png`, '\u0000png']));
+    const f = { ...fx({ ...bins, 'hooks/z.js': '// \u0000\nrun()\n' }), skipped: links };
+    const u = of(scan(f, '').findings, 'unsafe-archive');
+    expect(u.filter((x) => x.text === 'symlink')).toHaveLength(20);
+    expect(u.filter((x) => x.text === 'binary, not read')).toHaveLength(20);
+    expect(u.find((x) => x.file === 'hooks/z.js')).toBeDefined();
+    expect(u.filter((x) => x.line === 0 && x.file === '').map((x) => x.text).sort()).toEqual(['10 more: symlink', '6 more: binary, not read']);
+  });
+  it('I1: scripts named like prose, and scripts under docs/, are scanned; prose stays skipped', () => {
+    for (const n of ['scripts/security-check.js', 'scripts/docs/run.js', 'DOCS/a.sh', 'readme.sh', 'security-check', 'changelog.js']) expect(of(rf({ [n]: PIPE }), 'unpinned-remote'), n).toHaveLength(1);
+    for (const n of ['README.md', 'docs/a.md', 'docs/b.txt', 'CHANGELOG', 'SECURITY.md', 'CONTRIBUTING.rst']) expect(of(rf({ [n]: PIPE }), 'unpinned-remote'), n).toEqual([]);
+  });
+  it('I2: an MCP file that plugin.json points to is read in the direct form, also as a list and under a sub-path', () => {
+    const servers = JSON.stringify({ evil: { command: 'npx', args: ['-y', 'evil-pkg@latest'] } });
+    const r = (files: Record<string, string>, path = '') => rf(files, path).map((x) => [x.rule, x.file]).filter(([k]) => k !== 'license');
+    expect(r({ '.claude-plugin/plugin.json': '{"name":"p","mcpServers":"./servers.json"}', 'servers.json': servers })).toEqual([['unpinned-remote', 'servers.json'], ['mcp-server', 'servers.json']]);
+    expect(r({ 'plugins/p/.claude-plugin/plugin.json': '{"mcpServers":["./a.json","./mcp/b.conf"]}', 'plugins/p/a.json': '{}', 'plugins/p/mcp/b.conf': servers }, 'plugins/p')).toEqual([['unpinned-remote', 'plugins/p/mcp/b.conf'], ['mcp-server', 'plugins/p/mcp/b.conf']]);
+    expect(r({ '.claude-plugin/plugin.json': '{"mcpServers":"./s.json"}', 's.json': '{ broken' })).toEqual([['invalid-manifest', 's.json']]);
+  });
+  it('re-review N3: a hooks file that plugin.json names by path is read whatever its extension', () => {
+    const r = (files: Record<string, string>, path = '') => rf(files, path).map((x) => [x.rule, x.file, x.text]).filter(([k]) => k !== 'license');
+    const h = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: './x.sh' }] }] } });
+    expect(r({ '.claude-plugin/plugin.json': '{"hooks":"./h.cfg"}', 'h.cfg': h })).toEqual([['hook-shell', 'h.cfg', 'Stop: ./x.sh']]);
+    expect(r({ 'plugins/p/.claude-plugin/plugin.json': '{"hooks":["./a/h.cfg"]}', 'plugins/p/a/h.cfg': h }, 'plugins/p')).toEqual([['hook-shell', 'plugins/p/a/h.cfg', 'Stop: ./x.sh']]);
+    expect(r({ '.claude-plugin/plugin.json': '{"hooks":"./h.cfg"}', 'h.cfg': '{ broken' })).toEqual([['invalid-manifest', 'h.cfg', 'not valid JSON, so its hooks and servers could not be read']]);
+  });
+  const fm = (body: string) => `---\nname: a\ndescription: d\n${body}---\nBody.\n`;
+  const HOOK = 'hooks:\n  PreToolUse:\n    - matcher: "Bash"\n      hooks:\n        - type: command\n          command: "./scripts/x.sh"\n';
+  it('I3: frontmatter hooks in a skill, command or agent are hook-shell; allowed-tools is permissions', () => {
+    for (const n of ['skills/a/SKILL.md', 'commands/c.md', 'agents/b.md', '.claude/skills/a/SKILL.md']) {
+      expect(rf({ [n]: fm(HOOK) }).map((x) => [x.severity, x.rule, x.file, x.line, x.text]), n).toEqual([['high', 'hook-shell', n, 9, 'PreToolUse: ./scripts/x.sh']]);
+    }
+    expect(rf({ 'skills/a/SKILL.md': fm('allowed-tools: Bash, Read\n') }).map((x) => [x.severity, x.rule, x.line, x.text])).toEqual([['medium', 'permissions', 4, 'allowed-tools: Bash, Read']]);
+    expect(rf({ 'commands/c.md': fm('allowed-tools:\n  - Bash(git:*)\n  - Read\n') }).map((x) => x.text)).toEqual(['allowed-tools: Bash(git:*), Read']);
+    expect(rf({ 'agents/b.md': fm('permissionMode: bypassPermissions\n') }).map((x) => [x.rule, x.text])).toEqual([['permissions', 'permissionMode: bypassPermissions']]);
+    expect(rf({ 'agents/b.md': fm('permissionMode: default\n') })).toEqual([]);
+  });
+  it('I3: a frontmatter hook command is also judged by the command rules, once per line', () => {
+    const f = rf({ 'skills/a/SKILL.md': fm(HOOK.replace('./scripts/x.sh', PIPE.trim())) });
+    expect(f.map((x) => x.rule).sort()).toEqual(['hook-shell', 'unpinned-remote']);
+  });
+  it('I3: frontmatter too long to parse, or not valid YAML, that declares hooks is invalid-manifest, not silence', () => {
+    const big = fm('x: ' + 'a'.repeat(17000) + '\n' + HOOK);
+    expect(of(rf({ 'skills/a/SKILL.md': big }), 'invalid-manifest')).toMatchObject([{ severity: 'medium', file: 'skills/a/SKILL.md', line: 0 }]);
+    expect(of(rf({ 'skills/a/SKILL.md': fm('hooks: [\n') }), 'invalid-manifest')).toHaveLength(1);
+    expect(of(rf({ 'skills/a/SKILL.md': fm('x: [\n') }), 'invalid-manifest')).toEqual([]);
+  });
+  it('re-review N2: frontmatter over 16 KB is always invalid-manifest, however its keys are written; invalid YAML with mcpServers is too', () => {
+    const pad = 'a'.repeat(17000);
+    const forms = [
+      `description: ${pad}\n"hooks":\n  Stop:\n    - hooks:\n        - type: command\n          command: ./scripts/x.sh\n`,
+      `{name: a, description: ${pad}, hooks: {Stop: [{hooks: [{type: command, command: ./scripts/x.sh}]}]}}\n`,
+      `description: ${pad}\n? hooks\n: Stop:\n    - hooks:\n        - type: command\n          command: ./scripts/x.sh\n`,
+      `description: ${pad}\nmcpServers:\n  s:\n    command: node\n    args: [./srv.js]\n`,
+      `description: ${pad}\n`,
+    ];
+    for (const body of forms) expect(of(rf({ 'agents/a.md': `---\n${body}---\nBody.\n` }), 'invalid-manifest'), body.slice(-60)).toMatchObject([{ severity: 'medium', file: 'agents/a.md', line: 0 }]);
+    // small but not valid YAML (a duplicate key)
+    expect(of(rf({ 'agents/a.md': fm('mcpServers:\n  s:\n    command: node\nmcpServers: x\n') }), 'invalid-manifest')).toHaveLength(1);
+  });
+  it('allow rules are capped at 20 per file with one summary line', () => {
+    const j = JSON.stringify({ permissions: { allow: Array.from({ length: 1000 }, (_, i) => `Bash(t${i})`) } }, null, 2);
+    const p = of(rf({ '.claude/settings.json': j }), 'permissions');
+    expect(p).toHaveLength(21);
+    expect(p[0]).toMatchObject({ line: 0, text: '980 more permissions findings in this file' });
+    expect(p[1]).toMatchObject({ line: 4, text: 'allow: Bash(t0)' });
+  });
+  it("an agent's inline mcpServers in frontmatter is read like .mcp.json; a named server is not a finding", () => {
+    const body = 'mcpServers:\n  - slack\n  - evil:\n      command: npx\n      args: ["-y", "evil-pkg@latest"]\n  - web:\n      type: http\n      url: https://h.test/mcp\n';
+    expect(rf({ 'agents/b.md': fm(body) }).map((x) => [x.severity, x.rule, x.line, x.text])).toEqual([
+      ['high', 'unpinned-remote', 7, 'npx -y evil-pkg@latest'], ['medium', 'mcp-server', 6, 'evil: npx -y evil-pkg@latest'], ['medium', 'mcp-server', 9, 'web: https://h.test/mcp'], ['medium', 'network', 11, 'url: https://h.test/mcp'],
+    ]);
+    expect(rf({ 'agents/b.md': fm('mcpServers:\n  s:\n    command: node\n    args: [s.js]\n') }).map((x) => x.text)).toEqual(['s: node s.js']);
+  });
+  it('M3: settings keys that run a shell command are hook-shell with the command rules', () => {
+    const keys = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'gcpAuthRefresh', 'otelHeadersHelper', 'processWrapper'];
+    const s = JSON.stringify({ statusLine: { type: 'command', command: PIPE.trim() }, ...Object.fromEntries(keys.map((k) => [k, `${k}.sh`])), subagentStatusLine: { command: 's.sh' }, fileSuggestion: { type: 'command', command: 'f.sh' } }, null, 2);
+    expect(rf({ '.claude/settings.json': s }).map((x) => [x.rule, x.text])).toEqual([
+      ['hook-shell', `statusLine: ${PIPE.trim()}`], ['unpinned-remote', `statusLine: ${PIPE.trim()}`], ...keys.map((k) => ['hook-shell', `${k}: ${k}.sh`]), ['hook-shell', 'subagentStatusLine: s.sh'], ['hook-shell', 'fileSuggestion: f.sh'],
+    ]);
   });
 });

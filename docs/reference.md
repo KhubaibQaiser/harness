@@ -241,7 +241,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
 | `validate vet-review <file> --scan <file> [--attempt 1\|2]` | Checks a vet reviewer's `vet-review.json` against the scan (`harness vet --json`) and the installed items. |
 | `vet <target> [--json]` | Pins a GitHub plugin or skill to a commit, scans it without running it, and writes `.harness/vet/<id>-<sha>.md`. Installs nothing. |
-| `vet <target> --json [--keep]` | Prints the scan as JSON and writes no report. `--keep` adds `dir` and `map` and keeps the unpacked folder (under the OS temp dir) for a reviewer. |
+| `vet <target> --json [--keep]` | Prints the scan as JSON and writes no report. `--keep` adds `dir` and `map` and keeps the unpacked folder (under the OS temp dir) for a reviewer. `map` lists only the in-scope files unpacked under another name (such as `CLAUDE.md.vetted`), keyed by the file name the findings use. |
 | `vet --finish <scan.json> --review <file>` | Checks the reviewer's file like `validate vet-review`, writes the report with the review, then deletes the kept folder. |
 | `vet --install <scan.json>` | Prints the install commands and the sha-pinned marketplace entry from that scan's report. |
 | `vet --clean` | Removes every `harness-vet-*` folder of this OS user, including other projects' folders and runs still in progress. Skips and counts any it can't remove. |
@@ -295,6 +295,13 @@ Catalog items can be Claude Code plugins or MCP servers.
 2. The reviewer reads only the flagged files and rates relevance, overlaps with installed items and injection-like text.
 3. You get the summary and choose: show the install command, skip, or open the report.
 4. If any finding is high, you must say yes a second time, with each high finding named.
+
+What the scan reads:
+
+- **Hooks wherever they are declared.** `hooks/hooks.json`, `plugin.json`, settings files and the `hooks:` frontmatter of skills, commands and agents. A hook that runs a shell command is high, and so are settings keys that run one (`statusLine`, `apiKeyHelper` and the like). `allowed-tools` in a skill or command, and an agent's `permissionMode` other than `default` or `plan`, are medium `permissions` findings.
+- **MCP servers** in `.mcp.json`, in `plugin.json`, and in a file that `plugin.json`'s `mcpServers` names by path.
+- **Every text file except prose.** Prose is a README, LICENSE, CHANGELOG, CONTRIBUTING, CODE_OF_CONDUCT or SECURITY file with no extension or a `.md`, `.txt`, `.rst` or `.adoc` one, and a file with one of those extensions under `docs/`. A script with such a name, or under `docs/`, is scanned.
+- **Files it can't read are findings, not silence.** An in-scope file over 1 MB or a binary file is a medium `unsafe-archive` finding (`over 1 MB, not read`, `binary, not read`), and the summary's `Findings` line counts them. Like the other medium rules, each kind lists 20 files and then one `N more` line.
 
 A scan can't prove an item is safe. It checks for known risky patterns only; read the high findings yourself before you install.
 

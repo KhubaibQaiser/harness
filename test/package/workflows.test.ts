@@ -93,7 +93,43 @@ test('release tag check compares against package.json version and exits 1', () =
 test('publish uses trusted publishing: OIDC permission, no npm token', () => {
   const rel = load('release.yml');
   expect(rel.jobs.publish.permissions['id-token']).toBe('write');
-  for (const f of ['release.yml', 'ci.yml']) expect(raw(f)).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN/);
+  for (const f of ['release.yml', 'ci.yml']) expect(raw(f)).not.toMatch(/NPM_TOKEN/);
+  expect(raw('ci.yml')).not.toMatch(/NODE_AUTH_TOKEN/);
+  // The only auth token is GitHub's own, and only on the GitHub Packages step.
+  const withToken = allSteps('release.yml').filter((s) => s.env && 'NODE_AUTH_TOKEN' in s.env);
+  expect(withToken).toHaveLength(1);
+  expect(withToken[0].env.NODE_AUTH_TOKEN).toBe('${{ secrets.GITHUB_TOKEN }}');
+  expect(rel.jobs['github-packages'].steps).toContainEqual(withToken[0]);
+});
+
+test('check-tag fails before CI when the release notes for the version are missing', () => {
+  const steps = load('release.yml').jobs['check-tag'].steps;
+  const s = steps.find((x: any) => /release notes/i.test(x.name ?? ''));
+  expect(s.run).toContain('docs/release-notes/$v.md');
+  expect(s.run).toContain('exit 1');
+});
+
+test('after npm, the same version goes to GitHub Packages with only packages: write', () => {
+  const job = load('release.yml').jobs['github-packages'];
+  expect(job.needs).toBe('publish');
+  expect(job.permissions).toEqual({ contents: 'read', packages: 'write' });
+  const node = job.steps.find((s: any) => /setup-node@/.test(s.uses ?? ''));
+  expect(node.with['registry-url']).toBe('https://npm.pkg.github.com');
+  expect(node.with.scope).toBe('@khubaibqaiser');
+  const pub = job.steps.find((s: any) => /npm publish/.test(s.run ?? ''));
+  expect(pub.run).toContain('--registry https://npm.pkg.github.com');
+  expect(pub.run).toContain('--tag "$tag"');
+});
+
+test('after npm, a GitHub release is made from the release notes, marked prerelease for beta versions', () => {
+  const job = load('release.yml').jobs['github-release'];
+  expect(job.needs).toBe('publish');
+  expect(job.permissions).toEqual({ contents: 'write' });
+  const s = job.steps.find((x: any) => /gh release create/.test(x.run ?? ''));
+  expect(s.run).toContain('--verify-tag');
+  expect(s.run).toContain('--notes-file "docs/release-notes/$v.md"');
+  expect(s.run).toContain('--prerelease');
+  expect(s.env).toEqual({ GH_TOKEN: '${{ github.token }}' });
 });
 
 test('prerelease versions publish with --tag beta, others latest', () => {

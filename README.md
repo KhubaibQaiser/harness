@@ -10,7 +10,7 @@ The hooks are committed into the repo, so every teammate gets the same rules.
 
 Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, and in every session with `sandbox: always`. Elsewhere, and on native Windows always, the guard and protect checks are a seatbelt.
 
-**Status:** beta, version `0.2.0-beta.0`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. Release notes: [docs/release-notes/0.2.0-beta.0.md](docs/release-notes/0.2.0-beta.0.md).
+**Status:** beta, version `0.2.0-beta.0`. It isn't on npm yet (npm still has the older `0.1.0-beta.0`), so build from source for now (see Quick start). Release notes: [docs/release-notes/0.2.0-beta.0.md](docs/release-notes/0.2.0-beta.0.md).
 
 ## Why
 
@@ -328,7 +328,7 @@ pnpm typecheck
 node scripts/gen-config-docs.mjs --write   # after changing a config key
 ```
 
-Releases go through a protected GitHub environment; see [docs/release.md](docs/release.md).
+A `v*` tag publishes to npm after an approval step, then mirrors the package to GitHub Packages and creates a GitHub release. See [docs/release.md](docs/release.md).
 
 CI runs on macOS and Windows with Node 22, plus gitleaks, a pack check, real Vitest and Jest installs, and `claude plugin validate`.
 

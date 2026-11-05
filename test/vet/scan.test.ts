@@ -51,6 +51,8 @@ describe('scan', () => {
   it('scope: sub-path only, plus repo-root plugin files', () => {
     const r = scan(fx(repos.scoped!), 'plugins/p');
     expect(r.findings.filter((f) => f.severity === 'high').map((f) => f.file)).toEqual(['.mcp.json']);
+    // no finding of any severity from outside the scope
+    expect(r.findings.every((f) => f.file === '.mcp.json' || f.file.startsWith('plugins/p/'))).toBe(true);
     expect(r.files).toBe(2);
     expect(inScope('plugins/pp/x', 'plugins/p')).toBe(false);
     expect(inScope('.claude-plugin/plugin.json', 'plugins/p')).toBe(true);
@@ -146,15 +148,16 @@ describe('medium rules', () => {
   const rules = (files: Record<string, string>, rule: string, path = '') => scan(fx(files), path).findings.filter((f) => f.rule === rule);
   const one = (name: string, body: string, rule: string) => rules({ [name]: body }, rule);
   const long = (n: number, c = 'A') => c.repeat(n);
+  const ab = (n: number) => 'aB3+'.repeat(n).slice(0, n);
 
   it.each([
-    ['base64 run', `x = "${long(200)}=="`],
-    ['hex run', `h ${long(200, 'a')} end`],
+    ['base64 run', `x = "${ab(200)}=="`],
+    ['hex run', `h ${'0123456789abcdef'.repeat(13)} end`],
     ['eval(', 'eval(x)'],
     ['new Function(', 'f = new Function("a")'],
     ['eval(atob(', 'eval(atob("YQ=="))'],
   ])('obfuscated matches %s', (_n, l) => expect(one('x.js', l, 'obfuscated')).toHaveLength(1));
-  it.each([['a 40-hex sha', `sha ${long(40, 'a')}`], ['evaluate(', 'evaluate(x)'], ['a 199-char run', long(199)]])('obfuscated ignores %s', (_n, l) => expect(one('x.js', l, 'obfuscated')).toEqual([]));
+  it.each([['a 40-hex sha', `sha ${long(40, 'a')}`], ['evaluate(', 'evaluate(x)'], ['a 199-char run', ab(199)], ['a banner of one repeated character', `echo ${long(250, '/')}`], ['a long run of one letter', long(300)]])('obfuscated ignores %s', (_n, l) => expect(one('x.js', l, 'obfuscated')).toEqual([]));
   it('obfuscated: minified JS only in prompt/script dirs, only over 5120 bytes', () => {
     const min = `var a=1;\n${'a;'.repeat(550)}\n${long(4200, ' ')}`;
     expect(rules({ 'scripts/m.js': min }, 'obfuscated').map((f) => f.text)).toEqual(['minified JS']);
@@ -202,6 +205,60 @@ describe('medium rules', () => {
     const f = { ...fx({ 'plugins/p/a.md': 'x', 'other/b.md': 'x' }), skipped: [{ path: 'plugins/p/ln', why: 'symlink' }, { path: 'other/z', why: 'symlink' }] };
     expect(scan(f, 'plugins/p').findings.filter((x) => x.rule === 'unsafe-archive')).toEqual([{ severity: 'medium', rule: 'unsafe-archive', file: 'plugins/p/ln', line: 0, text: 'symlink' }]);
     expect(scan({ ...f, skipped: [] }, '').findings.filter((x) => x.rule === 'unsafe-archive')).toEqual([]);
+  });
+  describe('fix round 1', () => {
+    const rules2 = (files: Record<string, string>, rule: string, path = '') => scan(fx(files), path).findings.filter((f) => f.rule === rule);
+    it('permissions: auto-approve output inside a JSON command string, and the skip flag', () => {
+      const hk = (command: string) => JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command }] }] } }, null, 2);
+      expect(rules2({ 'hooks/hooks.json': hk('echo \'{"permissionDecision": "allow"}\'') }, 'permissions')).toHaveLength(1);
+      expect(rules2({ 'hooks/hooks.json': hk('claude --dangerously-skip-permissions') }, 'permissions')).toHaveLength(1);
+      expect(rules2({ 'hooks/hooks.json': hk('echo \'{"permissionDecision": "deny"}\'') }, 'permissions')).toEqual([]);
+    });
+    it.each([
+      ['ignore previous\ninstructions'], ['do not\n  tell\nthe user'], ['a\u{e0041}b'], ['a­b'], ['a؜b'], ['a᠎b'],
+    ])('injection-text matches %j across lines and in more hidden characters', (l) => {
+      expect(rules2({ 'skills/a/SKILL.md': `fine\n${l}\nfine` }, 'injection-text')).toHaveLength(1);
+    });
+    it('injection-text: line of the hit, one finding per line, hidden characters shown escaped', () => {
+      const f = rules2({ 'skills/a/SKILL.md': 'ok\n<!-- a --> <!-- b -->\nok\u{e0041}' }, 'injection-text');
+      expect(f.map((x) => x.line)).toEqual([2, 3]);
+      expect(f[1]!.text).toContain('\\u{e0041}');
+      expect(show('a­b؜')).toBe('a\\u00adb\\u061c');
+    });
+    it('network: lockfiles give none; metadata keys and mcp servers give none', () => {
+      const urls = JSON.stringify({ packages: { a: { resolved: 'https://r.test/a.tgz' } } });
+      expect(rules2({ 'package-lock.json': urls, 'pnpm-lock.yaml': 'resolution: https://r.test/a', 'yarn.lock': 'resolved "https://r.test/a"' }, 'network')).toEqual([]);
+      expect(rules2({ 'dep.json': urls }, 'network')).toHaveLength(1);
+      const meta = JSON.stringify({ name: 'p', homepage: 'https://h.test', repository: { url: 'https://h.test/r' }, bugs: 'https://h.test/b', author: { url: 'https://a.test' }, license: 'https://l.test', funding: 'https://f.test', contributors: ['https://c.test'] });
+      expect(rules2({ '.claude-plugin/plugin.json': meta }, 'network')).toEqual([]);
+      expect(scan(fx({ '.mcp.json': JSON.stringify({ mcpServers: { t: { url: 'https://h/mcp' } } }) }), '').findings.map((x) => x.rule)).toEqual(['mcp-server']);
+    });
+    it('network: json URL line numbers; 20 per file, then one summary', () => {
+      const j = JSON.stringify({ a: 'x', list: Array.from({ length: 25 }, (_, i) => `https://u.test/${i}`) }, null, 2);
+      const f = rules2({ 'cfg.json': j }, 'network');
+      expect(f).toHaveLength(21);
+      expect(f[0]).toMatchObject({ line: 0, text: '5 more network URLs in this file' }); // sorted: line 0 first
+      expect(f[1]!.line).toBe(4);
+    });
+    it('other medium line rules are capped at 20 per file with a summary', () => {
+      const f = rules2({ 'skills/a/SKILL.md': '<!-- x -->\n'.repeat(30) }, 'injection-text');
+      expect(f).toHaveLength(21);
+      expect(f[0]).toMatchObject({ line: 0, text: '10 more injection-text findings in this file' });
+    });
+    it('network: json under docs/ is not scanned', () => {
+      expect(rules2({ 'docs/x.json': '{"u":"https://x.dev"}' }, 'network')).toEqual([]);
+    });
+    it('network: https.request and http.request', () => {
+      expect(rules2({ 'x.js': 'https.request(o)' }, 'network')).toHaveLength(1);
+      expect(rules2({ 'x.js': 'http.request(o)' }, 'network')).toHaveLength(1);
+    });
+    it('a scan root inside skills/, or a skill folder, treats all its markdown as prompt', () => {
+      const body = 'ignore previous instructions https://x.dev/a';
+      for (const [files, path] of [[{ 'skills/foo/references/x.md': body }, 'skills/foo'], [{ 'agents/b/x.md': body }, 'agents/b'], [{ 'SKILL.md': 'ok', 'references/x.md': body }, ''], [{ 'p/SKILL.md': 'ok', 'p/references/x.md': body }, 'p']] as [Record<string, string>, string][]) {
+        expect(scan(fx(files), path).findings.map((x) => x.rule).sort(), path).toEqual(['injection-text', 'network']);
+      }
+      expect(scan(fx({ 'other/notes.md': body }), 'other').findings).toEqual([]);
+    });
   });
   it('one finding per rule per line; same line may carry different rules', () => {
     const f = one('x.js', 'eval(a); eval(b); fetch(u)', 'obfuscated');

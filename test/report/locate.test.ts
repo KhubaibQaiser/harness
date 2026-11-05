@@ -27,8 +27,8 @@ const run = (root: string, extra: Partial<Parameters<typeof locateSessions>[1]> 
 
 describe('names', () => {
   it('projectsDir honours CLAUDE_CONFIG_DIR', () => {
-    expect(projectsDir({ CLAUDE_CONFIG_DIR: '/x' }, '/h')).toBe('/x/projects');
-    expect(projectsDir({}, '/h')).toBe('/h/.claude/projects');
+    expect(projectsDir({ CLAUDE_CONFIG_DIR: '/x' }, '/h')).toBe(join('/x', 'projects'));
+    expect(projectsDir({}, '/h')).toBe(join('/h', '.claude', 'projects'));
   });
   it('encodes every non-alphanumeric as a dash', () => {
     expect(enc('/private/tmp/a-b/.c')).toBe('-private-tmp-a-b--c');
@@ -139,7 +139,7 @@ describe('locateSessions', () => {
     expect(r.sessions).toEqual([]);
     expect(r.skipped['outside-repo']).toBe(2);
   });
-  it('does not follow symlinked subagent paths and counts them', async () => {
+  it.skipIf(process.platform === 'win32')('does not follow symlinked subagent paths and counts them', async () => {
     // <id> dir is a link into another project's folder
     put('other', 'victim/subagents/agent-v.jsonl', root);
     put(enc(root), 'a.jsonl', root);

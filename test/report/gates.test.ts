@@ -79,6 +79,26 @@ describe('deny then retry', () => {
     expect(far.falseBlocks).toEqual([]);
     expect(far.notes.denyUnlinked).toBe(1);
   });
+  describe('fuzzy deny link', () => {
+    const recs = (text: string) => [...rec(0, prompt('go')), ...rec(10, assistant({ content: [use('t1', 'Edit', { file_path: 'a.ts' })] })), ...rec(20, toolResult('t1', { isError: true, content: text })), ...rec(30, assistant({ content: [use('t2', 'Edit', { file_path: 'a.ts' })] })), ...rec(40, toolResult('t2'))];
+    it('does not link when the reason is not in the result text', () => {
+      const r = run([ev(5, 'tdd', 'deny', { reason: 'write a test first' })], recs('ENOENT: no such file'));
+      expect(r.falseBlocks).toEqual([]);
+      expect(r.notes.denyUnlinked).toBe(1);
+    });
+    it('does not link an empty or short reason to any error', () => {
+      for (const reason of [undefined, '', '  no  ']) {
+        const r = run([ev(5, 'tdd', 'deny', reason === undefined ? {} : { reason })], recs('anything at all'));
+        expect(r.falseBlocks).toEqual([]);
+        expect(r.notes.denyUnlinked).toBe(1);
+      }
+    });
+    it('pairs a co deny with its twin instead of counting it unlinked', () => {
+      const r = run([ev(5, 'tdd', 'deny', { reason: 'write a test first' }), ev(6, 'guard', 'deny', { reason: 'protected file here', co: true })], recs('Blocked: write a test first'));
+      expect(r.falseBlocks).toHaveLength(1);
+      expect(r.notes.denyUnlinked).toBe(0);
+    });
+  });
   it('matches a Bash retry by first word and path arguments', () => {
     const bash = (c: string) => [...rec(0, prompt('go')), ...rec(10, assistant({ content: [use('t1', 'Bash', { command: 'rm -rf dist/x' })] })), ...rec(30, assistant({ content: [use('t2', 'Bash', { command: c })] })), ...rec(40, toolResult('t2'))];
     expect(run(deny, bash('rm dist/x')).falseBlocks).toHaveLength(1);
@@ -102,6 +122,10 @@ describe('stop gate', () => {
     const sh = (c: string) => rec(30_000, assistant({ content: [use('b1', 'Bash', { command: c })] }));
     expect(run([blocked], [...rec(0, prompt('go')), ...stop(500), ...sh('sed -i s/a/b/ a.ts'), ...stop(60_000)]).stopSteps[0]).toMatchObject({ flakes: 0 });
     expect(run([blocked], [...rec(0, prompt('go')), ...stop(500), ...sh('ls'), ...stop(60_000)]).stopSteps[0]).toMatchObject({ flakes: 1 });
+  });
+  it('says when there is no timing log to give step latency', () => {
+    expect(run([blocked], []).notes.noTimingLog).toBe(true);
+    expect(run([blocked], [], [timing(5)]).notes.noTimingLog).toBe(false);
   });
   it('merges runs and percentiles from the timing log', () => {
     const t = [10, 20, 30].map((ms) => timing(ms, { event: 'Stop', step: 'lint' }));

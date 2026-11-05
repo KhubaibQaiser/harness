@@ -10,14 +10,18 @@ export type Signal = 'ask-approved' | 'deny-retry' | 'stop-flake' | 'gave-up' | 
 export interface FalseBlock { signal: Signal; check: string; session: string; date: string; turn?: number; fuzzy: boolean; step?: string; quote?: string }
 export interface LatencyRow { source: 'timing' | 'transcript' | 'events'; event: string; outcome?: string; n: number; p50: number; p95: number; max: number; timeouts: number }
 /** `notes` counts what the heuristics could not place or what a cap left out: nothing is dropped silently. */
+/**
+ * `notes.noTimingLog`: stopSteps p50 and p95 come only from the timing log, so they are null without one.
+ * Known limit: a deny-retry is not excluded when the retry has a harness event without `use` (such as `allow-log`).
+ */
 export interface GatesResult {
   tally: Record<string, number>; overrides: Record<string, number>; falseBlocks: FalseBlock[]; latency: LatencyRow[];
   stopSteps: { step: string; runs: number; blocks: number; flakes: number; p50: number | null; p95: number | null }[];
   hallucination: { typecheckBlocks: number; testBlocks: number; registryChecks: number; registryDenies: number };
-  notes: { badEvents: number; badTiming: number; noTime: number; falseBlocksCut: number; denyUnlinked: number; unknownTools: number /* malformed tool uses seen */; truncatedTurns: number; samplesCut: number; keysCut: number };
+  notes: { badEvents: number; badTiming: number; noTime: number; falseBlocksCut: number; denyUnlinked: number; unknownTools: number /* malformed tool uses seen */; truncatedTurns: number; samplesCut: number; keysCut: number; noTimingLog: boolean };
 }
 
-const WINDOW_MS = 2000, MAX_FALSE = 500, MAX_KEYS = 64, MAX_TALLY = 500, MAX_SAMPLES = 50_000, MAX_IDS = 20_000, QUOTE = 600;
+const WINDOW_MS = 2000, MAX_FALSE = 500, MAX_KEYS = 64, MAX_TALLY = 500, MAX_SAMPLES = 50_000, MAX_IDS = 20_000, MIN_REASON = 10, QUOTE = 600;
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const DISPATCH = '.harness/hooks/dispatch.mjs';
 const day = (ms: number) => (Number.isNaN(ms) ? 'unknown' : new Date(ms).toISOString().slice(0, 10));
@@ -37,7 +41,7 @@ const target = (t: ToolUse): string | undefined => {
 interface Ev { e: HarnessEvent; ms: number; done: boolean; fuzzy?: boolean; linked?: boolean }
 
 export function gatesAcc(events: HarnessEvent[], timing: TimingLine[], sinceMs: number): Acc<GatesResult> {
-  const notes: GatesResult['notes'] = { badEvents: 0, badTiming: 0, noTime: 0, falseBlocksCut: 0, denyUnlinked: 0, unknownTools: 0, truncatedTurns: 0, samplesCut: 0, keysCut: 0 };
+  const notes: GatesResult['notes'] = { badEvents: 0, badTiming: 0, noTime: 0, falseBlocksCut: 0, denyUnlinked: 0, unknownTools: 0, truncatedTurns: 0, samplesCut: 0, keysCut: 0, noTimingLog: timing.length === 0 };
   const tally = Object.create(null) as Record<string, number>;
   let tallyKeys = 0;
   const overrides = { 'tdd paused': 0, 'multi-file approvals': 0, 'allow-log': 0 };
@@ -131,10 +135,15 @@ export function gatesAcc(events: HarnessEvent[], timing: TimingLine[], sinceMs: 
     if (at === undefined || byUse.has(r.useId)) return;
     let best: Ev | undefined;
     for (const c of denies.get(id) ?? []) {
-      const reason = (c.e.reason ?? '').slice(0, 30);
-      if (!c.linked && Math.abs(c.ms - at) <= WINDOW_MS && r.text.includes(reason) && (!best || Math.abs(c.ms - at) < Math.abs(best.ms - at))) best = c;
+      const reason = (c.e.reason ?? '').trim().slice(0, 30);
+      if (reason.length >= MIN_REASON && !c.linked && Math.abs(c.ms - at) <= WINDOW_MS && r.text.includes(reason) && (!best || Math.abs(c.ms - at) < Math.abs(best.ms - at))) best = c;
     }
-    if (best && byUse.size < MAX_IDS) { best.linked = best.fuzzy = true; byUse.set(r.useId, best); }
+    if (best && byUse.size < MAX_IDS) {
+      best.linked = best.fuzzy = true;
+      byUse.set(r.useId, best);
+      // a `co` deny is a second deny on the same call: it shares this result with its twin
+      for (const c of denies.get(id) ?? []) if (c.e.co && !c.linked && Math.abs(c.ms - best.ms) <= WINDOW_MS) c.linked = true;
+    }
   };
   return {
     rec(s: SessionCtx, r: TRec) {

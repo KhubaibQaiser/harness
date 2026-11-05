@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { esc } from '../core/config.js';
 import type { Picks } from '../ai/picks.js';
+import { PROJECT_TYPES } from '../catalog/schema.js';
 import { loadCatalog } from '../catalog/load.js';
 import { claudeVersion } from '../core/min-claude.js';
 import { packageDir } from '../core/package-dir.js';
-import { findPreset, loadPreset, presetRows } from '../catalog/presets.js';
+import { checkPreset, findPreset, loadPreset, presetRows } from '../catalog/presets.js';
 import { detect } from '../install/detect.js';
 import { checklist, notPicked, resolveSelection, toSelected } from '../install/select.js';
 import type { CliEnv } from './index.js';
@@ -22,13 +23,12 @@ export function select(args: string[], { out, root }: CliEnv): number {
     flags[args[i]] = args[i + 1];
   }
   if (!flags['--picks'] || ('--preset' in flags) !== ('--answers' in flags)) return out(USAGE), 2;
-  args = ['--picks', flags['--picks']];
   let picks: Picks;
   try {
-    picks = JSON.parse(readFileSync(args[1], 'utf8'));
+    picks = JSON.parse(readFileSync(flags['--picks'], 'utf8'));
     if (!Array.isArray(picks?.items) || !Array.isArray(picks.findings) || !picks.items.every(ok)) throw new Error('malformed');
   } catch (e) {
-    return out(`picks: could not read a picks file at "${esc(args[1])}" (${(e as NodeJS.ErrnoException).code ?? 'invalid'})`), 2;
+    return out(`picks: could not read a picks file at "${esc(flags['--picks'])}" (${(e as NodeJS.ErrnoException).code ?? 'invalid'})`), 2;
   }
   const choose = '--choose' in flags ? flags['--choose'].split(',').filter(Boolean) : null;
   if (choose && !choose.length) return out(USAGE), 2;
@@ -48,8 +48,10 @@ export function select(args: string[], { out, root }: CliEnv): number {
     if (!lp.ok) return lp.errors.forEach((e) => out(`preset: ${e}`)), 2;
     let type: unknown;
     try { type = JSON.parse(readFileSync(flags['--answers'], 'utf8'))?.project?.type; } catch { /* reported below */ }
-    if (typeof type !== 'string') return out(`answers: could not read a project type from "${esc(flags['--answers'])}"`), 2;
+    if (typeof type !== 'string' || !(PROJECT_TYPES as string[]).includes(type)) return out(`answers: project.type in "${esc(flags['--answers'])}" must be one of ${PROJECT_TYPES.join(', ')}`), 2;
     const l = lp.loaded;
+    const bad = checkPreset(l, catalog);
+    if (bad.length) return bad.forEach((e) => out(`preset: ${e}`)), 2;
     own = [l.preset.core, ...l.items.map((i) => i.id)];
     const extra = presetRows(l, catalog, detect(root), type, picks.items.map((x) => x.id), dirs);
     extra.forEach((r) => { reasons[r.id] = r.reason; });

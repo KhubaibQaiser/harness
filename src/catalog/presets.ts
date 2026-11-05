@@ -6,6 +6,7 @@ import { PREFIX_RE } from '../core/branch-prefix.js';
 import type { PresetGit } from '../core/branch-prefix.js';
 import { packageDir } from '../core/package-dir.js';
 import { ID_RE, validateItem } from './schema.js';
+import { TELEMETRY_ENV } from './telemetry-env.js';
 import type { AppliesWhen, Catalog, CatalogItem } from './schema.js';
 import type { Facts } from '../install/detect.js';
 import { checklist, type ChecklistRow } from '../install/select.js';
@@ -18,14 +19,7 @@ export type { PresetGit } from '../core/branch-prefix.js';
 export interface Preset { id: string; title: string; description: string; core: string; preselect: string[]; skills: string[]; settings: { attribution?: 'off'; telemetry_off: string[] }; git: PresetGit }
 export interface LoadedPreset { preset: Preset; base: string; yamlPath: string; items: CatalogItem[] }
 
-/** Catalog id -> the environment variable that turns its telemetry off. */
-export const TELEMETRY_ENV: Record<string, { name: string; value: string }> = {
-  // catalog/items/impeccable.yaml evidence: README Telemetry section, "DO_NOT_TRACK=1".
-  impeccable: { name: 'DO_NOT_TRACK', value: '1' },
-  // obra/superpowers@2ce8aa15 README.md line 400 says "any true value"; skills/brainstorming/scripts/server.cjs
-  // lines 107-112 and 227-232 treat anything but empty, 0, false, no or off as true. 'true' is what its tests use (owner ruling).
-  superpowers: { name: 'SUPERPOWERS_DISABLE_TELEMETRY', value: 'true' },
-};
+export { TELEMETRY_ENV };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const strs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
@@ -228,12 +222,12 @@ export const presetReason = (id: string): string => `Preselected by the ${id} pr
 export function presetRows(l: LoadedPreset, c: Catalog, facts: Pick<Facts, 'deps' | 'frameworks'>, projectType: string, picked: string[], dirs: { templates: string }): ChecklistRow[] {
   const reason = presetReason(l.preset.id);
   const byId = new Map(c.items.map((i) => [i.id, i]));
-  const pre = l.preset.preselect.filter((id) => !picked.includes(id) && appliesTo(byId.get(id)?.applies_when ?? {}, facts, projectType) && byId.has(id));
+  const pre = l.preset.preselect.filter((id) => !picked.includes(id) && byId.has(id) && appliesTo(byId.get(id)!.applies_when, facts, projectType));
   const rows = pre.flatMap((id) => checklist({ catalog_version: 0, findings: [], items: [{ id, include: 'recommended', reason, addresses: [] }] }, c, dirs));
   const own = [l.preset.core, ...l.items.filter((i) => i.id !== l.preset.core && appliesTo(i.applies_when, facts, projectType)).map((i) => i.id)];
   const ctx = presetContext(l, own);
   return [...rows, ...own.map((id, n): ChecklistRow => ({
-    id, title: l.items.find((i) => i.id === id)!.title, include: 'recommended', ticked: true, reason, cost: '', context: itemContextLine(ctx[n]),
+    id, title: l.items.find((i) => i.id === id)!.title, include: 'recommended', ticked: true, reason, cost: 'own text, no setup', context: itemContextLine(ctx[n]),
     side_effects: [], unpinned: '', unpinned_reason: '', local_only: false, stance_reason: '', no_alternative: '',
   }))];
 }

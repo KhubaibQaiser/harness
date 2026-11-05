@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -80,6 +80,9 @@ test('picks with an id outside the catalog is an error, not a silent drop', () =
 const presetRoot = makeRepo({ 'package.json': '{}' }, { git: false });
 mkdirSync(join(presetRoot, '.harness', 'presets'), { recursive: true });
 cpSync('test/fixtures/presets', join(presetRoot, '.harness', 'presets'), { recursive: true });
+// The fixture catalog has no ponytail, so the copied preset preselects a fixture item instead.
+const tinyYaml = join(presetRoot, '.harness', 'presets', 'tiny.yaml');
+writeFileSync(tinyYaml, readFileSync(tinyYaml, 'utf8').replace('- ponytail', '- extra'));
 const goPreset = (args: string[]) => {
   process.env.HARNESS_CATALOG_DIR = 'test/fixtures/catalog';
   process.env.HARNESS_PLAIN_INIT = '1';
@@ -97,7 +100,7 @@ writeFileSync(answersFile, JSON.stringify({ project: { type: 'web' } }));
 test('select --preset: rows, choose splits preset items, errors exit 2', () => {
   const rows = goPreset(['select', '--picks', picksFile, '--preset', 'tiny', '--answers', answersFile]);
   expect(rows.code).toBe(0);
-  expect(JSON.parse(rows.lines.join('\n')).map((r: { id: string }) => r.id)).toEqual(['deep', 'base', 'core-rules', 'alpha', 'beta']);
+  expect(JSON.parse(rows.lines.join('\n')).map((r: { id: string }) => r.id)).toEqual(['deep', 'base', 'extra', 'core-rules', 'alpha', 'beta']);
   const c = goPreset(['select', '--picks', picksFile, '--preset', 'tiny', '--answers', answersFile, '--choose', 'deep,core-rules,alpha']);
   expect(c.code).toBe(0);
   const out = JSON.parse(c.lines.join('\n'));
@@ -106,4 +109,23 @@ test('select --preset: rows, choose splits preset items, errors exit 2', () => {
   expect(goPreset(['select', '--picks', picksFile, '--preset', 'tiny']).code).toBe(2);
   expect(goPreset(['select', '--picks', picksFile, '--preset', 'tiny']).lines[0]).toContain('Usage:');
   expect(goPreset(['select', '--picks', picksFile, '--preset', 'nope', '--answers', answersFile])).toEqual({ code: 2, lines: ['preset: "nope" is not a shipped or repo preset (harness preset list shows them)'] });
+});
+
+test('select --preset: a bad preset or project type exits 2 instead of dropping or crashing', () => {
+  const presets = join(presetRoot, '.harness', 'presets');
+  const args = (id: string) => ['select', '--picks', picksFile, '--preset', id, '--answers', answersFile];
+  writeFileSync(join(presets, 'typo.yaml'), readFileSync(tinyYaml, 'utf8').replace('id: tiny', 'id: typo').replace('- extra', '- extrx'));
+  cpSync(join(presets, 'tiny'), join(presets, 'typo'), { recursive: true });
+  expect(goPreset(args('typo'))).toEqual({ code: 2, lines: ['preset: preselect "extrx" is not in the catalog'] });
+  writeFileSync(join(presets, 'nocore.yaml'), readFileSync(tinyYaml, 'utf8').replace('id: tiny', 'id: nocore'));
+  cpSync(join(presets, 'tiny'), join(presets, 'nocore'), { recursive: true });
+  rmSync(join(presets, 'nocore', 'templates', 'core.md'));
+  const r = goPreset(args('nocore'));
+  expect(r.code).toBe(2);
+  expect(r.lines.join('\n')).toContain('core.md not found');
+  const banana = join(mkdtempSync(join(tmpdir(), 'h-select-')), 'a.json');
+  writeFileSync(banana, JSON.stringify({ project: { type: 'banana' } }));
+  const b = goPreset(['select', '--picks', picksFile, '--preset', 'tiny', '--answers', banana]);
+  expect(b.code).toBe(2);
+  expect(b.lines[0]).toContain('project.type');
 });

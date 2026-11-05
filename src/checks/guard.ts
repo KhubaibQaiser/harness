@@ -197,8 +197,10 @@ function withoutHeredocBodies(cmd: string): string {
 /** One command segment of one reading: `k = commandStart(toks)`, `prev`/`next` the separators around it, `words` all the words of the reading. */
 export type Seg = { toks: string[]; k: number; prev?: string; next?: string; words: string[] };
 export type Visit<T> = (seg: Seg) => T | null;
-/** `whole` sees each reading's words before its segments; `script` sees each package-script body after it is walked;
- *  `tooDeep` is the result for a script body at depth 3 or more. */
+/** `whole` sees each reading's words before that reading's segments; readings are interleaved (reading 2's `whole` runs
+ *  after reading 1's visits, and payload readings come after all four). `script` sees each package-script body after it
+ *  is walked. `tooDeep` is the result for a script body at depth 3 or more; without `tooDeep`, a body at depth 3 or more
+ *  is not walked and the walk goes on. */
 export interface WalkHooks<T> { whole?: (words: string[]) => T | null; script?: (body: string) => T | null; tooDeep?: T }
 
 /** Walks every command segment of `command` the way the shell could read it; the first non-null result wins. */
@@ -278,8 +280,9 @@ function walkReading<T>(plain: string, w: Where, visit: Visit<T>, hooks: WalkHoo
       const args = toks.slice(j + 1).filter((t) => t !== '--').join(' ');
       // npm also runs pre<name> and post<name>.
       const bodies = [`pre${name}`, name, `post${name}`].filter((n) => typeof scripts[n] === 'string').map((n) => `${scripts[n]}${n === name ? ` ${args}` : ''}`);
-      if (bodies.length && depth >= 3) return hooks.tooDeep ?? null;
-      for (const b of bodies) {
+      if (bodies.length && depth >= 3) {
+        if (hooks.tooDeep !== undefined) return hooks.tooDeep;
+      } else for (const b of bodies) {
         const r = walkCommands(b, w, visit, hooks, depth + 1) ?? hooks.script?.(b) ?? null;
         if (r !== null) return r;
       }

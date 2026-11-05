@@ -49,9 +49,21 @@ describe('walkCommands', () => {
   test('whole gets every word of each reading before any visit', () => {
     const log: string[] = [];
     walkCommands('a && b', w, (s) => (log.push(`visit:${s.toks.join(' ')}`), null), { whole: (words) => (log.push(`whole:${words.join(' ')}`), null) });
-    expect(log[0]).toBe('whole:a && b');
-    expect(log.indexOf('visit:a')).toBeGreaterThan(0);
-    for (let i = 0; i < log.length; i++) if (log[i].startsWith('whole:')) expect(log[i + 1]).toMatch(/^visit:/);
+    // Four readings of a plain command, each its whole then its two segments; no payloads.
+    expect(log).toEqual(Array(4).fill(['whole:a && b', 'visit:a', 'visit:b']).flat());
+  });
+
+  describe('a script body at depth 3', () => {
+    const scripts = { quiet: 'true', L1: 'npm run quiet && gh pr create --base dev', L2: 'npm run L1', L3: 'npm run L2' };
+    const root = makeRepo({ 'package.json': JSON.stringify({ scripts }) }, { git: false });
+
+    test('without tooDeep is not walked, and the walk goes on', () => {
+      expect(record('npm run L3', { root, env: {} })).toContain('gh pr create --base dev');
+    });
+
+    test('with tooDeep returns it', () => {
+      expect(walkCommands('npm run L3', { root, env: {} }, () => null, { tooDeep: 'X' })).toBe('X');
+    });
   });
 
   test('the first non-null result wins and nothing after it is visited', () => {

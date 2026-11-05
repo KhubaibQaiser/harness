@@ -1,6 +1,6 @@
 # Usage and adherence report: design spec
 
-- Status: owner decisions complete. Section 1 holds them: U1 to U17 come from the interview, and O1 to O9 are the owner's answers to this spec's questions (2026-11-05). Section 12 lists the one item left: the size numbers, which the owner sets before build.
+- Status: owner-approved (2026-11-05). Section 1 holds the decisions: U1 to U17 come from the interview, O1 to O9 are the owner's answers to this spec's questions, and O10 holds the size numbers. Nothing is open.
 - Date: 2026-11-05
 - Owner: khubaibqaiser
 - Inputs:
@@ -46,6 +46,7 @@ Labels: **Estimate** means my arithmetic or a proposed default, not a measuremen
 | O7 | **Pin the agent model** for every eval run. | answer to Q7 |
 | O8 | **One paid probe during planning**, with a cost estimate shown and the owner's OK before it runs (7.6). If plugin hooks don't run in eval sessions, gate evals are dropped, and the attack suite is the only gate proof. | answer to Q8 |
 | O9 | **Export ids.** Harness and catalog ids only; every other name is counted as `other`. | answer to Q9 |
+| O10 | **Size numbers (2026-11-05).** `max-lines` 300, not counting blank lines and comments; `max-lines-per-function` 50; `max-depth` 4; `max-params` 4; `complexity` 20; `@typescript-eslint/no-magic-numbers` with `ignore: [0, 1, -1]`, `ignoreArrayIndexes: true`, `ignoreEnums: true` (5.3). | owner, after O6 |
 
 ## 2. Scope
 
@@ -269,7 +270,7 @@ The person approves after seeing the counts. When ESLint or `tsc` can't run (tim
 
 **Selector rules (O5).** `no-restricted-syntax` and `no-restricted-imports` are allowed. They take AST selectors and import names written by harness, not owner regex.
 
-The mapping. The P-codes are PP's anti-pattern lists. Rule names come from the plugins' docs as I know them; a name marked UNVERIFIED is checked against the installed plugin version before it is written. The size numbers are in 5.3; the owner sets them before build (O6).
+The mapping. The P-codes are PP's anti-pattern lists. Rule names come from the plugins' docs as I know them; a name marked UNVERIFIED is checked against the installed plugin version before it is written. The size numbers are in 5.3 (O10).
 
 **General JS/TS (P4, F11, F12)**
 
@@ -342,20 +343,20 @@ The mapping. The P-codes are PP's anti-pattern lists. Rule names come from the p
 | Expo Go-only assumptions; font scaling | — | **no lint equivalent** |
 | missing accessibility props | `eslint-plugin-react-native-a11y` recommended (rule names UNVERIFIED) | partial |
 
-### 5.3 Size numbers: the owner sets them before build
+### 5.3 Size numbers (O10)
 
-These are my suggestions. All are **estimates**, not measured on any repo. The owner sets each number before the `harness rules` build starts (O6). The build never uses these values in place of the owner's.
+The owner set these numbers on 2026-11-05.
 
-| Rule | Suggested value (estimate) | Reason |
-|---|---|---|
-| `max-lines` | 400 per file, not counting blank lines and comments | Big enough for a real module, small enough to flag a god file (P4). |
-| `max-lines-per-function` | 80, not counting blank lines and comments | A function that fits on one screen can be read in one pass. |
-| `max-depth` | 3 | Deeper nesting is the cue to switch to early returns (P4). |
-| `max-params` | 3 | A fourth parameter, often a boolean flag, should become an options object (P4). |
-| `complexity` | 15 | Flags functions with too many branches to test well, without firing on ordinary code. |
-| `@typescript-eslint/no-magic-numbers` | `ignore: [0, 1, -1]`, `ignoreArrayIndexes: true`, `ignoreEnums: true` | Keeps the rule on real magic numbers and off indexes and counters. |
+| Rule | Value |
+|---|---|
+| `max-lines` | 300 per file, not counting blank lines and comments (`skipBlankLines: true`, `skipComments: true`) |
+| `max-lines-per-function` | 50. The owner set no options, so ESLint's defaults apply, and blank lines and comments count |
+| `max-depth` | 4 |
+| `max-params` | 4 |
+| `complexity` | 20 |
+| `@typescript-eslint/no-magic-numbers` | `ignore: [0, 1, -1]`, `ignoreArrayIndexes: true`, `ignoreEnums: true` |
 
-With O4 these are errors from day one, so the preview's violation counts (5.2) show how much existing code each number would fail.
+With O4 these are errors from day one, so the preview's violation counts (5.2) show how much existing code each number fails.
 
 ## 6. `harness report`
 
@@ -528,11 +529,7 @@ The owner's transcripts on this machine total about 2.1 GB (observed, all projec
 
 ## 12. Open questions for the owner
 
-The owner answered Q1 to Q9 on 2026-11-05. The answers are O1 to O9 in section 1. One item is left:
-
-| # | Item | Status |
-|---|---|---|
-| S1 | The size numbers in 5.3: `max-lines`, `max-lines-per-function`, `max-depth`, `max-params`, `complexity`, and the `no-magic-numbers` options | **The owner sets them before build.** This blocks build piece 12 only. |
+None open. The owner answered Q1 to Q9 on 2026-11-05 (O1 to O9, section 1) and set the size numbers the same day (O10).
 
 ## 13. Build order
 
@@ -551,7 +548,7 @@ The owner answered Q1 to Q9 on 2026-11-05. The answers are O1 to O9 in section 1
 | 9 | Rule coverage matrix reading `config.preset` | `src/report/rules.ts` | **After the preset**: needs the `preset` key |
 | 10 | `.harness/reports/` in `mergeGitignore`; drop the self-`.gitignore` | `src/install/merge.ts` | **After the preset** |
 | 11 | Guard: `report` ask (O2) and `eval` deny in `PERSON_ONLY` | `src/checks/guard.ts` | **After the preset** |
-| 12 | `harness rules`: proposal at `error` (O4), violation counts, diff, apply through the manifest | `src/rules/*.ts`, `src/install/*` | **After the preset**, and after the owner sets the 5.3 numbers |
+| 12 | `harness rules`: proposal at `error` (O4), violation counts, diff, apply through the manifest | `src/rules/*.ts`, `src/install/*` | **After the preset** |
 | 13 | `harness eval`: plugin builder, case templates, model pin, plan, consent, run, result import. The gates kind only if the planning probe (7.6) passes | `src/eval/*.ts`, `templates/evals/` | Builder and templates **yes**; the skills it packages and its CLI hook **after the preset** |
 | 14 | README and `docs/reference.md`: "usage and adherence report", `report`, `rules`, `eval`, and the line "start Claude Code inside the repo for the report to see it" (O1); never "telemetry" | `README.md`, `docs/reference.md` | With each PR that adds a command (README every PR) |
 

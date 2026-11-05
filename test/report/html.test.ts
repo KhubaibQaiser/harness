@@ -25,6 +25,7 @@ const data = (over: Partial<ReportData> = {}): ReportData => ({
   gates: { tally: { 'secrets:deny': 2 }, overrides: {}, falseBlocks: [], latency: [{ source: 'timing', event: 'PreToolUse', n: 5, p50: 10, p95: 30, max: 40, timeouts: 0 }], stopSteps: [], hallucination: { typecheckBlocks: 0, testBlocks: 0, registryChecks: 0, registryDenies: 0 }, notes: { badEvents: 0, badTiming: 0, noTime: 0, falseBlocksCut: 0, denyUnlinked: 0, unknownTools: 0, truncatedTurns: 0, samplesCut: 0, keysCut: 0, noTimingLog: true } },
   ...over,
 });
+const EV = { date: '2026-11-05', model: 'claude-x', kind: 'rules' as const, cases: [], deltaByRule: {}, costUsd: null, runs: 0 };
 const method = (html: string) => html.slice(html.indexOf('id="method"'));
 
 describe('renderReport', () => {
@@ -69,7 +70,7 @@ describe('renderReport', () => {
     const html = renderReport(data());
     expect(html).not.toContain('id="rules-matrix"');
     expect(html).not.toContain('id="evals"');
-    const both = renderReport(data({ rules: { a: '<u>' }, evals: [1] }));
+    const both = renderReport(data({ rules: { a: '<u>' }, evals: [EV] }));
     expect(both).toContain('id="rules-matrix"');
     expect(both).toContain('id="evals"');
     expect(both).not.toContain('<u>');
@@ -100,7 +101,7 @@ const hostileData = (): ReportData => {
   const H = HOSTILE, d = data();
   const w = windows({ total: 1, windows: [{ rule: 'tdd', session: H, date: H, turn: 1, prompt: H, texts: H, tools: [H] }], counters: { [H]: 1 } });
   return {
-    ...d, windows: w, always: [{ id: H, tokens: 1 }], skills: [skill({ name: H })], rules: { [H]: H }, evals: [H],
+    ...d, windows: w, always: [{ id: H, tokens: 1 }], skills: [skill({ name: H })], rules: { [H]: H }, evals: [{ ...EV, model: H, date: H, cases: [{ name: H, mean: 1, passK: true, variant: H }] }],
     meta: { ...d.meta, harness: H, generated: H, claudeVersions: [H], untested: [H], sessions: { scanned: 2, skipped: { [H]: 1 }, unknown: 0 } },
     usage: { ...d.usage, byDay: { [H]: U(1) }, byModel: { [H]: U(2) }, toolChars: { [H]: 40 }, sessions: [{ id: H, usage: U(3), responses: 1, compactions: 0, peak: 5 }] },
     gates: {

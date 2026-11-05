@@ -1,6 +1,7 @@
 import { RX } from './windows.js';
 import { h } from './h.js';
 import { CSS, MIN_N, NO_RELEVANT, USAGE_HEAD, chart, n, rate, section, sum, table, usageCells } from './html-parts.js';
+import { evalsSection, type EvalSummary } from './evals.js';
 import { rulesSection } from './html-rules.js';
 import { gatesSection, tokensSection } from './html-tokens-gates.js';
 import { SKILL_NOTES, type SkillRow } from './metrics/skills.js';
@@ -16,7 +17,7 @@ export interface ReportMeta {
 }
 export interface ReportData {
   meta: ReportMeta; usage: UsageResult; always: { id: string; tokens: number | null }[]; skills: SkillRow[];
-  windows: WindowsResult; gates: GatesResult; rules?: unknown /* Task 19 */; evals?: unknown /* Task 16 */;
+  windows: WindowsResult; gates: GatesResult; rules?: unknown /* Task 19 */; evals?: EvalSummary[];
 }
 export const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
 export const NO_SESSIONS = 'No sessions found for this repo. Start Claude Code inside the repo for the report to see it.';
@@ -94,7 +95,7 @@ export function renderReport(d: ReportData): string {
   const body = [
     header(d.meta), summary(d), skillsSection(d.skills), rulesSection(d.windows, d.usage.loads, d.rules),
     tokensSection(d.usage, d.always), gatesSection(d.gates),
-    d.evals === undefined ? '' : section('evals', 'Evals', `<pre>${h(JSON.stringify(d.evals, null, 1))}</pre>`), method(d),
+    d.evals === undefined ? '' : evalsSection(d.evals), method(d),
   ].join('');
   const head = '<meta charset="utf-8">'
     + `<meta http-equiv="Content-Security-Policy" content="${CSP}">`

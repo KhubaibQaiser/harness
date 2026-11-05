@@ -231,3 +231,7 @@ test('pr_size target above max is an error and both reset', () => {
 test('pr_size.exclude replaces the whole list', () => {
   expect(loadConfig(withPrSize("  exclude: ['**/x']")).config.pr_size.exclude).toEqual(['**/x']);
 });
+
+test('pr_size: only max_lines below the default target names both keys and the fix', () => {
+  expect(loadConfig(withPrSize('  max_lines: 100')).errors).toEqual(['"pr_size.target_lines" is 200, the default, above pr_size.max_lines (100); set target_lines too']);
+});

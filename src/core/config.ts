@@ -202,8 +202,11 @@ function problem(p: string, v: unknown, d: unknown): Fail | null {
 }
 
 /** Rules that span keys; loadConfig and validateConfig (doctor, init) both use this. */
-export function crossKeyErrors(c: HarnessConfig): string[] {
-  return c.pr_size.target_lines > c.pr_size.max_lines ? ['"pr_size.target_lines" must not be greater than pr_size.max_lines'] : [];
+export function crossKeyErrors(c: HarnessConfig): { path: string; detail: string }[] {
+  const { target_lines: t, max_lines: m } = c.pr_size;
+  if (t <= m) return [];
+  const detail = t === defaults().pr_size.target_lines ? `is ${t}, the default, above pr_size.max_lines (${m}); set target_lines too` : 'must not be greater than pr_size.max_lines';
+  return [{ path: 'pr_size.target_lines', detail }];
 }
 
 export type Issue = { path: string; kind: 'unknown' | 'mapping' | 'invalid'; detail?: string };
@@ -265,8 +268,8 @@ export function loadConfig(root: string, read: (p: string, e: 'utf8') => string 
     else if (kind === 'mapping') fail(`config: "${p}" must be a mapping; using default`, `"${p}" must be a mapping`);
     else fail(`config: "${p}" has an invalid value (${detail}); using default`, `"${p}" ${detail}`);
   }
-  for (const msg of crossKeyErrors(config)) {
-    fail('config: "pr_size.target_lines" is greater than pr_size.max_lines; using defaults', msg);
+  for (const { path: p, detail } of crossKeyErrors(config)) {
+    fail('config: "pr_size.target_lines" is greater than pr_size.max_lines; using defaults', `"${p}" ${detail}`);
     config.pr_size.target_lines = defaults().pr_size.target_lines;
     config.pr_size.max_lines = defaults().pr_size.max_lines;
   }

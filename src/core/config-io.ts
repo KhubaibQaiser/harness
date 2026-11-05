@@ -6,7 +6,7 @@ export function validateConfig(raw: unknown): { ok: true; config: HarnessConfig 
   const config = defaults();
   const issues: Issue[] = [];
   overlay(config as unknown as Record<string, unknown>, raw as Record<string, unknown>, '', issues);
-  const cross = crossKeyErrors(config).map((m) => m.replace(/^"(pr_size\.target_lines)" /, '$1: '));
+  const cross = crossKeyErrors(config).map(({ path, detail }) => `${path}: ${detail}`);
   if (issues.length === 0 && cross.length === 0) return { ok: true, config };
   const text = ({ path, kind, detail }: Issue) => `${path}: ${kind === 'unknown' ? 'unknown key' : kind === 'mapping' ? 'must be a mapping' : detail}`;
   return { ok: false, errors: [...issues.map(text), ...cross] };

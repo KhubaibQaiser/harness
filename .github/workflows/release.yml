@@ -96,7 +96,7 @@ jobs:
           scope: '@khubaibqaiser'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      # npm publish runs prepack, which builds dist/.
       - name: Publish to GitHub Packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

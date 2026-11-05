@@ -99,7 +99,11 @@ test('publish uses trusted publishing: OIDC permission, no npm token', () => {
   const withToken = allSteps('release.yml').filter((s) => s.env && 'NODE_AUTH_TOKEN' in s.env);
   expect(withToken).toHaveLength(1);
   expect(withToken[0].env.NODE_AUTH_TOKEN).toBe('${{ secrets.GITHUB_TOKEN }}');
-  expect(rel.jobs['github-packages'].steps).toContainEqual(withToken[0]);
+  expect(rel.jobs['github-packages'].steps.filter((s: any) => s.env && 'NODE_AUTH_TOKEN' in s.env)).toHaveLength(1);
+  // Nothing sets it at workflow or job level, where every step would see it.
+  expect(rel.env).toBeUndefined();
+  for (const j of Object.values<any>(rel.jobs)) expect(j.env).toBeUndefined();
+  expect(raw('release.yml').match(/NODE_AUTH_TOKEN/g)).toHaveLength(1);
 });
 
 test('check-tag fails before CI when the release notes for the version are missing', () => {
@@ -119,6 +123,9 @@ test('after npm, the same version goes to GitHub Packages with only packages: wr
   const pub = job.steps.find((s: any) => /npm publish/.test(s.run ?? ''));
   expect(pub.run).toContain('--registry https://npm.pkg.github.com');
   expect(pub.run).toContain('--tag "$tag"');
+  // GitHub's registry takes no npm provenance, and this job has no id-token.
+  expect(pub.run).not.toContain('--provenance');
+  expect(job.permissions).not.toHaveProperty('id-token');
 });
 
 test('after npm, a GitHub release is made from the release notes, marked prerelease for beta versions', () => {
@@ -128,7 +135,8 @@ test('after npm, a GitHub release is made from the release notes, marked prerele
   const s = job.steps.find((x: any) => /gh release create/.test(x.run ?? ''));
   expect(s.run).toContain('--verify-tag');
   expect(s.run).toContain('--notes-file "docs/release-notes/$v.md"');
-  expect(s.run).toContain('--prerelease');
+  // $pre is unquoted, so it may only ever be empty or the one fixed flag.
+  expect(s.run.match(/pre=\S*/g)).toEqual(['pre=""', 'pre="--prerelease"']);
   expect(s.env).toEqual({ GH_TOKEN: '${{ github.token }}' });
 });
 

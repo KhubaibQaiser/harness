@@ -46,7 +46,7 @@ Labels: **Estimate** means my arithmetic or a proposed default, not a measuremen
 | O7 | **Pin the agent model** for every eval run. | answer to Q7 |
 | O8 | **One paid probe during planning**, with a cost estimate shown and the owner's OK before it runs (7.6). If plugin hooks don't run in eval sessions, gate evals are dropped, and the attack suite is the only gate proof. | answer to Q8 |
 | O9 | **Export ids.** Harness and catalog ids only; every other name is counted as `other`. | answer to Q9 |
-| O10 | **Size numbers (2026-11-05).** `max-lines` 300, not counting blank lines and comments; `max-lines-per-function` 50; `max-depth` 4; `max-params` 4; `complexity` 20; `@typescript-eslint/no-magic-numbers` with `ignore: [0, 1, -1]`, `ignoreArrayIndexes: true`, `ignoreEnums: true` (5.3). | owner, after O6 |
+| O10 | **Size numbers (2026-11-05).** `max-lines` 300 and `max-lines-per-function` 50, both not counting blank lines and comments; `max-depth` 4; `max-params` 4; `complexity` 20; `@typescript-eslint/no-magic-numbers` with `ignore: [0, 1, -1]`, `ignoreArrayIndexes: true`, `ignoreEnums: true` (5.3). | owner, after O6 |
 
 ## 2. Scope
 
@@ -119,7 +119,7 @@ Not read: attachment `content`, `nested_memory` content, `file-history-snapshot`
 - **Decisions** include `deny`, `ask`, `block`, `context`, `ask-ignored`, `allow-log`, `approved`, `reason-required`, `reason-found-late`, `reason-not-found`, `paused`, `resumed`, `refused`, `stop-gave-up`, `stop-no-git`, `stop-diff-failed`, `stop-tool-missing`, `stop-nothing-to-run`, `coverage-skipped`, `coverage-diff-failed`, `harness-files-changed`, `config-change-blocked`, `sandbox-unavailable`.
 - **Joins.** `session` equals the transcript's `sessionId`. Today the log has no tool-use id and no duration, so a join to a tool call goes by session and time, which is fuzzy.
 - **Two new optional fields** on `HarnessEvent`, written by the `log` helper in `dispatch.ts` and the stop gate's own `log`:
-  - `use?: string`: the hook input's `tool_use_id`. Claude Code's hook input carrying `tool_use_id` is UNVERIFIED in this codebase (`HookInput` has no such field); planning confirms it with a live check, as TD R3 did. The transcript's `hook_success.toolUseID` (observed) suggests it exists.
+  - `use?: string`: the hook input's `tool_use_id`. Claude Code's hook input carrying `tool_use_id` is UNVERIFIED in this codebase (`HookInput` has no such field); planning confirms it with a live check, as TD R3 did. The transcript's `hook_success.toolUseID` (observed) suggests it exists. **L1 (2026-11-05): not run.** The approved check needs `claude -p`, and the Claude Code CLI in the agent's environment (2.1.285) is not logged in (`claude auth status`: `loggedIn: false`; the agent session is authenticated through the desktop app, not the CLI). Still UNVERIFIED. The owner runs it in a logged-in terminal (plan, L1).
   - `ms?: number`: time from process start to the decision, using `PROCESS_START` in `dispatch.ts`; for the stop gate, the run time of each step.
 - Old lines without the fields still parse. `harness stats` ignores them.
 - **Timing log (O3).** Events cover only non-allow decisions, so allowed calls get their own log: `.harness/logs/timing.jsonl`.
@@ -350,7 +350,7 @@ The owner set these numbers on 2026-11-05.
 | Rule | Value |
 |---|---|
 | `max-lines` | 300 per file, not counting blank lines and comments (`skipBlankLines: true`, `skipComments: true`) |
-| `max-lines-per-function` | 50. The owner set no options, so ESLint's defaults apply, and blank lines and comments count |
+| `max-lines-per-function` | 50, not counting blank lines and comments (`skipBlankLines: true`, `skipComments: true`) |
 | `max-depth` | 4 |
 | `max-params` | 4 |
 | `complexity` | 20 |
@@ -469,6 +469,12 @@ One paid run during planning answers whether plugin hooks run inside eval sessio
 - **Size.** 1 case, 1 run, `--ablation none`, free graders only, no judge calls. That is 1 agent run.
 - **Cost estimate.** Unmeasured, because there is no earlier eval result to base it on. One short agent run with a one-line prompt should cost well under the ceiling (estimate). The probe runs with `--max-cost-usd 0.50` as the hard bound. So the owner is asked to approve up to $0.50, plus at most one run's overshoot (7.4).
 - **Result.** If the marker exists and the deny shows, gate evals stay. Otherwise gate evals are dropped from v1, and section 7.2 and the build order are updated to match.
+- **Run of 2026-11-05: no result.** Approved by the owner on Haiku and run once from a scratch folder, with Claude Code 2.1.285:
+  - command, from the probe folder: `claude plugin eval plugin --ablation none --runs 1 --model haiku --max-cost-usd 0.50 --scaffold --trust-plugin --no-publish --json out/result.json --report out/report.html --output-dir out`;
+  - exit 2; `result.json`: `partial: true`, `partialReason: "auth_failed"`, run error `exit 1: Not logged in · Please run /login`, `costUsd: 0`, `durationSeconds: 0`;
+  - the hook's marker file was never written, and the deny grader found nothing in the trace. The agent run never started, so this says nothing about hooks either way;
+  - cause: the CLI in the agent's environment isn't logged in (`claude auth status`: `loggedIn: false`). Logging it in means entering credentials, which the agent doesn't do.
+- **Docs evidence (not a run).** The plugin-evals page says `claude plugin eval` "loads the target plugin's skills, hooks, and agents", and that "hooks and servers run outside the agent's sandbox". So plugin hooks are expected to fire; the probe is still the proof. Gate evals stay **pending** until the owner reruns the probe in a logged-in terminal (plan, P0).
 
 ## 8. Privacy and security
 

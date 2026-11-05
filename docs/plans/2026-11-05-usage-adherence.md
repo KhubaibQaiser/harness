@@ -41,7 +41,7 @@
 | 12 Doctor branch-protection note | A | none | `src/cli/doctor.ts` |
 | 13 Lint rule table and proposal | A | none | `src/rules/table.ts`, `src/rules/propose.ts` (new) |
 | 14 Violation counts | A | 13 | `src/rules/count.ts` (new) |
-| 15 Eval plugin builder and case templates | A | P0 answered (gates kind only) | `src/eval/build.ts` (new), `templates/evals/**` (new) |
+| 15 Eval plugin builder and case templates | A | none; the gates kind waits for the P0 rerun | `src/eval/build.ts` (new), `templates/evals/**` (new) |
 | 16 Eval runner and result import | A | 15, 8 | `src/eval/run.ts`, `src/cli/eval.ts`, `src/report/evals.ts` (new); `src/report/html.ts` (its own section) |
 | 17 Dispatcher hookup: `use`, `ms`, timing | B | 5, L1, **PR-size 8** | `src/hooks/dispatch.ts`, `src/hooks/types.ts` |
 | 18 Route `report` and `eval`; README | B | 10, 16, **preset 1b** | `src/cli/index.ts`, `README.md`, `docs/reference.md`, `test/package/readme.test.ts` |
@@ -87,9 +87,14 @@
   - Result:
     - The marker exists and the deny shows: gates stay in Task 15.
     - Otherwise Task 15 ships no gates kind, and the spec's §7.2 gets a one-line update in Task 15's PR.
+  - **Run of 2026-11-05 (owner-approved, Haiku): no result.** Exit 2, `partialReason: "auth_failed"` (`Not logged in · Please run /login`), `costUsd: 0`. The agent run never started, and the marker file wasn't written. The CLI in the agent's environment isn't logged in (Claude Code 2.1.285, `claude auth status`: `loggedIn: false`). Details are in spec §7.6.
+  - **Status: gate evals pending.** The docs say plugin hooks load in eval runs, but nothing has proved it yet. Task 15 builds the skills and rules kinds now; the gates kind waits for the rerun.
+  - **Rerun (owner, in a logged-in terminal):** `cd /private/tmp/claude-502/-Users-khubaib-work-Documents/7f1150f4-e779-4eb2-82ea-54c67cd14c3f/scratchpad/p0 && rm -rf out marker.jsonl && mkdir out && claude plugin eval plugin --ablation none --runs 1 --model haiku --max-cost-usd 0.50 --scaffold --trust-plugin --no-publish --json out/result.json --report out/report.html --output-dir out`. Evidence: `marker.jsonl` exists with `"ran":true`, and `out/result.json` has the `deny-shown` grader passed. Cost: `costUsd` in `out/result.json`.
 - **L1, live check for `tool_use_id` (spec §3.3).** Not paid beyond normal plan use, but it is a live Claude Code run, so it needs the owner's OK.
   - In a scratch repo, add a `PreToolUse` command hook that writes its stdin keys (not values) to a file, then run one Read.
   - If `tool_use_id` is present, Task 17 writes `use`. If not, Task 17 skips `use`, and Task 6's signals stay "fuzzy match" only.
+  - **2026-11-05: not run.** It was approved, but `claude -p` can't run in the agent's environment for the same reason as P0 (CLI not logged in; Claude Code 2.1.285). So `tool_use_id` is still UNVERIFIED, and **Task 17 stays blocked**. Everything else in lane A is unaffected.
+  - **Ready to run (owner, in a logged-in terminal):** the repo is `/private/tmp/claude-502/-Users-khubaib-work-Documents/7f1150f4-e779-4eb2-82ea-54c67cd14c3f/scratchpad/l1` (git repo, one commit). Its `.claude/settings.json` has a `PreToolUse` hook (`Read|Bash`) that appends only field names, the type of `tool_use_id` and its first 6 characters to `hook-keys.jsonl`. Command: `cd /private/tmp/claude-502/-Users-khubaib-work-Documents/7f1150f4-e779-4eb2-82ea-54c67cd14c3f/scratchpad/l1 && claude -p "Read hello.txt, then run the command: echo done" --max-turns 3 --model haiku --allowedTools Read "Bash(echo:*)" && cat hook-keys.jsonl`. Claude Code may ask to trust the folder first.
 
 ## Plan decisions the spec leaves open (the owner can change them in review)
 
@@ -120,7 +125,7 @@
 - **Lint settings are `error` from day one (O4).** The preview shows per-rule violation counts and the stop-gate warning before the yes.
 - **Size numbers (O10):**
   - `max-lines` 300 with `skipBlankLines: true, skipComments: true`;
-  - `max-lines-per-function` 50 (ESLint defaults otherwise);
+  - `max-lines-per-function` 50 with `skipBlankLines: true, skipComments: true`;
   - `max-depth` 4; `max-params` 4; `complexity` 20;
   - `@typescript-eslint/no-magic-numbers` with `ignore: [0, 1, -1], ignoreArrayIndexes: true, ignoreEnums: true`.
 - **Evals.**
@@ -588,7 +593,7 @@
   - With stacks `{ts, react, next}` and all plugins present, the rule ids equal the expected list for those stacks: core, `@typescript-eslint/*`, `react/*`, `react-hooks/*`, `@next/next/*`, `tailwindcss/no-arbitrary-value`, `import/no-default-export`, `unicorn/filename-case`, `@eslint-community/eslint-comments/require-description`, `jsx-a11y` set.
   - The O10 values are exact:
     - `['error', { max: 300, skipBlankLines: true, skipComments: true }]` for `max-lines`;
-    - `['error', { max: 50 }]` for `max-lines-per-function`;
+    - `['error', { max: 50, skipBlankLines: true, skipComments: true }]` for `max-lines-per-function`;
     - `['error', 4]` for `max-depth`;
     - `['error', 4]` for `max-params`;
     - `['error', 20]` for `complexity`;
@@ -914,7 +919,8 @@
 
 ## Owner questions
 
-None about the design. Three things need the owner before they happen:
-- **P0:** OK for the paid probe, and which model to pin. Estimate: about $0.10 on Haiku 4.5, about $0.19 on Sonnet 5.5 (not measured).
-- **L1:** OK for one live Claude Code run in a scratch repo, to see whether hook input has `tool_use_id`.
-- **Execution method** for this plan: subagent-driven (recommended: 23 tasks across three lanes, with interfaces passed between them) or native.
+None about the design. The execution method is subagent-driven (owner, 2026-11-05).
+
+Two runs are approved but need the owner's logged-in terminal, because the agent's CLI isn't logged in:
+- **P0 rerun** (gates kind of Task 15). Estimate: about $0.10 on Haiku 4.5 (not measured).
+- **L1** (Task 17).

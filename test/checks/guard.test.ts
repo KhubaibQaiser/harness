@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { readCliPath, recordCliPath } from '../../src/core/cli-path.js';
 import { decideCommand, decidePaths, fileWriteTargets, guard } from '../../src/checks/guard.js';
+import { protect } from '../../src/checks/protect.js';
 import { loadConfig } from '../../src/core/config.js';
 import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
 
@@ -689,4 +690,24 @@ test('rereview2 M2: --prefix=, --dir= and -C= are read', () => {
 test('rereview2: harness inside a path is not a command word', () => {
   all(['cd /x/harness && git add -A', 'cd /x/harness && git push origin feat', 'git -C /x/harness push origin feat', 'cd ~/Documents/khubaib-personal/harness && git add -A', 'git -C /x/harness add -A', 'rg "update" ~/harness/src', 'grep -rn init src/harness', 'pnpm -C /x/harness test'], 'allow');
   for (const c of ['/x/harness/bin/harness init', 'node /x/harness/dist/cli.mjs init']) expect(kind(c), c).toBe('ask');
+});
+describe('IFS: unquoted $IFS splits words, $9 $@ $* are empty in a fresh shell', () => {
+  test('person-only commands built with $IFS', () => {
+    all(['harness$IFS"tdd"$IFS"off"', 'harness${IFS}tdd${IFS}off', `sh -c 'harness$IFS"tdd"$IFS"off"'`], 'deny');
+    all(['harness$IFS$9init', 'sh -c "harness\\$IFS\\$9init"'], 'ask');
+  });
+  test('the vet target rule reads the IFS form like the plain one', () => {
+    all(['harness vet o/r;harness$IFS"sync"', 'harness vet o/r$IFS;harness$IFS"init"$IFS--yes'], 'ask');
+    expect(kind('harness$IFS"vet"$IFS"push"')).toBe(kind('harness vet push')); // push is the vet target here
+  });
+  test('force push, secrets and tdd-path writes built with $IFS', () => {
+    all(['git${IFS}push${IFS}--force', 'cat$IFS.env', 'rm${IFS}-rf${IFS}/'], 'deny');
+    expect(kind('tee${IFS}packages/core/src/x.ts', tdd)).toBe('ask');
+    const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: '/p', tool_name: 'Bash', tool_input: { command: 'tee${IFS}.harness/config.yaml' } };
+    expect(protect.run({ input, ...ctx() } as unknown as Ctx)).toMatchObject({ kind: 'deny', check: 'protect' });
+  });
+  test('an $IFS the guard cannot read asks; a plain one stays allowed', () => {
+    all(['IFS=x; echo$IFS"hi"', 'echo${IFS#?}hi'], 'ask');
+    all(['echo${IFS}hi', 'ls$IFS-la'], 'allow');
+  });
 });

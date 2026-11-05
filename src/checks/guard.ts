@@ -593,8 +593,28 @@ export function decidePaths(paths: string[]): Decision {
   return { kind: 'allow' };
 }
 
+/**
+ * The command as the shell splits it when it uses $IFS: `$IFS`, `${IFS}` and `${IFS:N[:M]}` become a space (a word
+ * separator), and `$1`-`$9`, `$@`, `$*` become nothing (empty in a fresh shell). Null when the command has no $IFS.
+ * ponytail: quote-blind, so a quoted "$IFS" is read as a space too; an extra reading only adds hits, never removes one.
+ */
+export function ifsReading(command: string): string | null {
+  if (!/\$\{?IFS(?!\w)/.test(command)) return null;
+  return command.replace(/\$(?:IFS(?!\w)|\{IFS(?::\d+){0,2}\})/g, ' ').replace(/\$(?:[1-9@*]|\{[1-9@*]\})/g, '');
+}
+const IFS_WHY = 'the command uses $IFS in a way the guard cannot read (IFS is changed, or expanded with an operator)';
+
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
   command = command.replace(/\\\r?\n/g, ''); // a backslash-newline joins the lines for the shell
+  const d = decideRead(command, ctx);
+  const ifs = ifsReading(command);
+  if (ifs === null || d.kind === 'deny') return d;
+  // Any IFS left after the reading (IFS=, ${IFS#?}, ${!IFS}) means the guard cannot tell how the words split.
+  const r = /\bIFS\b/.test(ifs) ? toDecision(['ask', IFS_WHY]) : decideRead(ifs, ctx);
+  return r.kind === 'deny' || (r.kind === 'ask' && d.kind === 'allow') ? r : d;
+}
+
+function decideRead(command: string, ctx: GuardCtx): Decision {
   const d = decideCore(command, ctx);
   if (d.kind === 'deny') return d;
   const b = backstop(command);

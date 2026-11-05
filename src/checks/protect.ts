@@ -6,7 +6,7 @@ import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
-import { commandStart, fileWriteTargets, gitArgs, rmTargets } from './guard.js';
+import { commandStart, fileWriteTargets, gitArgs, ifsReading, rmTargets } from './guard.js';
 import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
@@ -239,8 +239,10 @@ export const protect: Check = {
     else if (isShell(tool_name)) {
       const cmd = String(tool_input.command ?? '');
       // A program fed to a shell on stdin is a command line of its own (echo 'rm -rf node_modules' | bash).
-      for (const p of stdinProgramsOf(cmd).filter((p) => SHELLS.has(p.name))) {
-        const d = protect.run({ ...ctx, input: { ...input, tool_input: { command: p.text } } }) as Decision;
+      // So is the command as the shell splits it on $IFS (tee$IFS.harness/x).
+      const ifs = ifsReading(cmd);
+      for (const text of [...stdinProgramsOf(cmd).filter((p) => SHELLS.has(p.name)).map((p) => p.text), ...(ifs === null || ifs === cmd ? [] : [ifs])]) {
+        const d = protect.run({ ...ctx, input: { ...input, tool_input: { command: text } } }) as Decision;
         if (d.kind === 'deny') return d;
       }
       // A text match can't tell a read from a write, so inline code that names these paths is denied whatever it does.

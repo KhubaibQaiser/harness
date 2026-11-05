@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { scan, show, inScope } from '../../src/vet/scan.js';
 import type { Fetched } from '../../src/vet/fetch.js';
+import { alwaysLoadedText, estimateTokens } from '../../src/budget/measure.js';
 import { makeRepo } from '../install/helpers.js';
 import { notSecretLines, pinnedLines, remoteLines, repos, scriptNames, secretLines } from '../fixtures/vet/repos.js';
 
+const MIT = 'MIT License\n\nPermission is hereby granted, free of charge, to any person\n';
+
 /** Builds a Fetched the way fetchTarball does: instruction names get .vetted (D12), `map` keeps the original path. */
-const fx = (files: Record<string, string>): Fetched => {
+const fx = (files: Record<string, string>, license = true): Fetched => {
+  // A real MIT LICENSE by default, so the licence rule stays quiet in tests about other rules; `license = false` opts out.
+  if (license && !Object.keys(files).some((p) => /^(?:licen[cs]e|copying|unlicense)/i.test(p))) files = { ...files, LICENSE: MIT };
   const map: Record<string, string> = {};
   const written: Record<string, string> = {};
   for (const [p, body] of Object.entries(files)) {
@@ -59,7 +64,8 @@ describe('scan', () => {
     expect(inScope('anything', '')).toBe(true);
   });
   it('docs are not scanned for high findings; scripts and prompt files are', () => {
-    expect(scan(fx(repos.docs!), '').findings).toEqual([]);
+    // the fixture's LICENSE holds no licence text, so only the licence rule fires
+    expect(scan(fx(repos.docs!), '').findings.map((f) => f.rule)).toEqual(['license']);
     expect(scan(fx(repos.prompts!), '').findings.map((f) => f.file)).toEqual(['agents/b.md', 'commands/c.md', 'skills/a/SKILL.md']);
   });
   it('unpinned-remote: a pipe continued on the next line', () => {
@@ -110,7 +116,7 @@ describe('scan', () => {
     expect(scan(fx({ [name]: scriptNames[name]! }), '').findings.map((f) => [f.rule, f.file])).toEqual([['unpinned-remote', name]]);
   });
   it('prose docs are skipped, case-insensitively', () => {
-    expect(scan(fx(repos.prose!), '').findings).toEqual([]);
+    expect(scan(fx(repos.prose!), '').findings.map((f) => f.rule)).toEqual(['license']);
   });
   it('prompt dirs, skill siblings and shebang files are always scanned', () => {
     expect(scan(fx(repos.always!), '').findings.map((f) => f.file)).toEqual(['.claude/x.md', 'REFERENCE.md', 'docs/run.sh', 'output-styles/s.md', 'skills/a/README.md', 'skills/a/docs/b.md']);
@@ -312,5 +318,108 @@ describe('show', () => {
   it('escapes invisible and bidi characters, and controls', () => {
     expect(show('a​b‮c')).toBe('a\\u200bb\\u202ec');
     expect(show('\x1b[31m')).toBe('\\u001b[31m');
+  });
+  describe('low rules and context', () => {
+    const low = (f: Fetched, rule: string, path = '') => scan(f, path).findings.filter((x) => x.rule === rule);
+    const BAD = 'All rights reserved';
+    it('license: missing at both places', () => {
+      expect(low(fx({ 'x.sh': 'a' }, false), 'license')).toEqual([{ severity: 'low', rule: 'license', file: '', line: 0, text: 'no licence file' }]);
+    });
+    it.each(['LICENSE', 'LICENCE', 'COPYING', 'LICENSE.md', 'license.txt', 'LICENSE-MIT', 'LICENCE-APACHE', 'UNLICENSE', 'COPYING.md'])('license: %s is read; MIT clears it, other text does not', (n) => {
+      expect(low(fx({ [n]: BAD }), 'license')).toMatchObject([{ file: n, text: 'not an OSI licence (unrecognised text)' }]);
+      expect(low(fx({ [n]: MIT }), 'license')).toEqual([]);
+    });
+    it.each([
+      'Apache License\nVersion 2.0, January 2004', 'Redistribution and use in source and binary forms, with', 'GNU LESSER GENERAL PUBLIC LICENSE', 'GNU AFFERO GENERAL PUBLIC LICENSE',
+      'GNU GENERAL PUBLIC LICENSE', 'Mozilla Public License Version 2.0', 'Permission to use, copy, modify, and/or distribute this', 'This is free and unencumbered software released',
+    ])('license: recognises %s', (t) => {
+      expect(low(fx({ LICENSE: BAD }), 'license')).toHaveLength(1);
+      expect(low(fx({ LICENSE: t }), 'license')).toEqual([]);
+    });
+    it('license: only the first 4 KB count', () => {
+      expect(low(fx({ LICENSE: ' '.repeat(5000) + MIT }), 'license')).toHaveLength(1);
+    });
+    it('license: found at the target path or the repo root', () => {
+      expect(low(fx({ 'plugins/p/x.sh': 'a', LICENSE: BAD }), 'license', 'plugins/p')).toHaveLength(1);
+      expect(low(fx({ 'plugins/p/x.sh': 'a', LICENSE: MIT }), 'license', 'plugins/p')).toEqual([]);
+      expect(low(fx({ 'plugins/p/x.sh': 'a', 'plugins/p/LICENSE': MIT }, false), 'license', 'plugins/p')).toEqual([]);
+      expect(low(fx({ 'plugins/p/x.sh': 'a' }, false), 'license', 'plugins/p')).toHaveLength(1);
+    });
+    it.each(['POSTHOG_KEY=1', 'MY_TELEMETRY_URL=u', "import '@segment/analytics-node'", 'import mixpanel', "require('@sentry/node')", 'opentelemetry'])('telemetry matches %s', (l) => {
+      expect(hit([l], 'telemetry')).toMatchObject([{ severity: 'low', line: 1 }]);
+    });
+    it('telemetry: ignores analysis; opt-out lines get their own finding', () => {
+      expect(hit(['analysis'], 'telemetry')).toEqual([]);
+      for (const l of ['DO_NOT_TRACK=1', 'TELEMETRY_DISABLED=1', 'OPT_OUT=1', 'run --no-telemetry']) {
+        expect(hit([l], 'telemetry').map((f) => f.text)).toContain(`opt-out: ${l}`);
+      }
+    });
+    it.each(['unmixpanelled', 'retelemetry', 'amixpanelx', 'xposthogx'])('telemetry: %s is inside a longer word', (l) => expect(hit([l], 'telemetry')).toEqual([]));
+    it('telemetry: opt_output is not an opt-out; OPT_OUT, OPTOUT and underscores still match', () => {
+      expect(hit(['opt_output'], 'telemetry')).toEqual([]);
+      expect(hit(['OPTOUT=1'], 'telemetry').map((f) => f.text)).toContain('opt-out: OPTOUT=1');
+      expect(hit(['MY_TELEMETRY_URL'], 'telemetry')).toHaveLength(1);
+    });
+    it('telemetry: the bare word in a skill is still a low finding', () => {
+      expect(low(fx({ 'skills/a/SKILL.md': '---\nname: a\n---\nNever add telemetry.\n' }), 'telemetry')).toHaveLength(1);
+    });
+    it('telemetry: not in a lockfile, still in package.json', () => {
+      const dep = '    "node_modules/@sentry/node": {\n';
+      expect(low(fx({ 'package-lock.json': `{\n  "lockfileVersion": 3,\n  "packages": {\n${dep}      "version": "1.0.0"\n    }\n  }\n}\n` }), 'telemetry')).toEqual([]);
+      expect(low(fx({ 'package.json': '{\n  "dependencies": {\n    "@sentry/node": "1.0.0"\n  }\n}\n' }), 'telemetry')).toHaveLength(1);
+      expect(low(fx({ 'package-lock.json': dep }), 'telemetry')).toHaveLength(1); // not a lockfile by content
+    });
+    it('telemetry: telemetry and opt-out lines share one cap of 20 per file', () => {
+      const f = hit([...Array.from({ length: 15 }, () => 'mixpanel'), ...Array.from({ length: 15 }, () => 'DO_NOT_TRACK')], 'telemetry');
+      expect(f).toHaveLength(21);
+      expect(f.filter((x) => x.line === 0)).toMatchObject([{ text: '10 more telemetry findings in this file' }]);
+      const g = hit(Array.from({ length: 30 }, () => 'TELEMETRY_DISABLED=1'), 'telemetry');
+      expect(g).toHaveLength(21);
+      expect(g.filter((x) => x.line === 0)).toMatchObject([{ text: '40 more telemetry findings in this file' }]);
+    });
+    const skill = '---\nname: a\ndescription: d\n---\nbody\n', agent = '---\nname: b\ndescription: e\n---\nx\n', cmd = '---\ndescription: c\n---\ny\n';
+    const tok = (k: 'skill' | 'agent', t: string) => estimateTokens(alwaysLoadedText(k, t));
+    it('context: sums skill, agent and command always-loaded text', () => {
+      const r = scan(fx({ 'skills/a/SKILL.md': skill, 'agents/b.md': agent, 'commands/c.md': cmd }), '');
+      expect(r.context).toEqual({ tokens: tok('skill', skill) + tok('agent', agent) + tok('skill', cmd), unmeasured: [] });
+      const r2 = scan(fx({ 'skills/a/SKILL.md': skill + 'much longer body '.repeat(50), 'agents/b.md': agent, 'commands/c.md': cmd }), '');
+      expect(r2.context.tokens).toBe(r.context.tokens);
+    });
+    it('context: only the plugin layout counts, also under .claude/', () => {
+      const t = (files: Record<string, string>, path = '') => scan(fx(files), path).context.tokens;
+      expect(t({ 'docs/commands/x.md': cmd, 'x/agents/y.md': agent, 'skills/a/ref/SKILL.md': skill, 'skills/a/notes.md': skill })).toBe(0);
+      expect(t({ '.claude/agents/b.md': agent, '.claude/commands/c.md': cmd, '.claude/skills/a/SKILL.md': skill })).toBe(tok('agent', agent) + tok('skill', cmd) + tok('skill', skill));
+      expect(t({ 'plugins/p/agents/b.md': agent, 'agents/other.md': agent }, 'plugins/p')).toBe(tok('agent', agent));
+    });
+    it('context: nested commands count, nested agents and skills do not', () => {
+      const t = (files: Record<string, string>, path = '') => scan(fx(files), path).context.tokens;
+      expect(t({ 'commands/ns/sub/c.md': cmd, '.claude/commands/ns/d.md': cmd })).toBe(2 * tok('skill', cmd));
+      expect(t({ 'plugins/p/commands/ns/c.md': cmd }, 'plugins/p/commands')).toBe(tok('skill', cmd));
+      expect(t({ 'agents/ns/b.md': agent })).toBe(0);
+      expect(t({ 'docs/commands/ns/c.md': cmd })).toBe(0);
+    });
+    it('context: huge frontmatter is counted raw, not parsed; the body never reaches the parser', () => {
+      const fm = 'name: a\n' + Array.from({ length: 4000 }, (_, i) => `k${i}: v\n`).join(''); // over 16384 characters, parses fine
+      expect(scan(fx({ 'agents/a.md': `---\n${fm}---\nbody\n` }), '').context.tokens).toBe(estimateTokens(fm.slice(0, -1)));
+      expect(scan(fx({ 'agents/a.md': '---\nname: a\n---\n' + 'x'.repeat(50000) }), '').context.tokens).toBe(tok('agent', '---\nname: a\n---\n'));
+    });
+    it('license: names are LICENSE/LICENCE/COPYING/UNLICENSE with -suffix and .md/.txt/.rst only', () => {
+      for (const n of ['license-checker.js', 'LICENSE.js', 'license-notes.sh', 'COPYING.png']) expect(low(fx({ [n]: MIT }, false), 'license'), n).toMatchObject([{ file: '', text: 'no licence file' }]);
+      for (const n of ['LICENSE-MIT', 'LICENSE.md', 'COPYING.txt', 'LICENSE-APACHE-2.0.txt', 'unlicense.rst', 'LICENSE-GPL+']) expect(low(fx({ [n]: MIT }, false), 'license'), n).toEqual([]);
+    });
+    it('context: a target that is a skills, agents or commands dir, or a skill folder, uses its own kind', () => {
+      const t = (files: Record<string, string>, path: string) => scan(fx(files), path).context.tokens;
+      expect(t({ 'plugins/p/commands/c.md': cmd }, 'plugins/p/commands')).toBe(tok('skill', cmd));
+      expect(t({ 'agents/b.md': agent }, 'agents')).toBe(tok('agent', agent));
+      expect(t({ 'skills/a/SKILL.md': skill }, 'skills')).toBe(tok('skill', skill));
+      expect(t({ 'skills/a/SKILL.md': skill }, 'skills/a')).toBe(tok('skill', skill));
+      expect(t({ 'x/y/SKILL.md': skill }, 'x/y')).toBe(tok('skill', skill));
+    });
+    it('context: SessionStart and UserPromptSubmit command hooks are unmeasured, PreToolUse is not', () => {
+      const h = (ev: string) => scan(fx({ 'hooks/hooks.json': JSON.stringify({ hooks: { [ev]: [{ hooks: [{ type: 'command', command: 'x' }] }] } }) }), '').context.unmeasured;
+      expect(h('SessionStart')).toEqual(['hooks/hooks.json: SessionStart hook']);
+      expect(h('UserPromptSubmit')).toEqual(['hooks/hooks.json: UserPromptSubmit hook']);
+      expect(h('PreToolUse')).toEqual([]);
+    });
   });
 });

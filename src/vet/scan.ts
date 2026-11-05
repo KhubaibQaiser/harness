@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { esc } from '../core/config.js';
+import { alwaysLoadedText, estimateTokens } from '../budget/measure.js';
 import type { Fetched } from './fetch.js';
 
 export type Severity = 'high' | 'medium' | 'low';
@@ -242,7 +243,11 @@ const PERMS = /permissionDecision["']?\s*[:=]\s*["']?allow|--dangerously-skip-pe
 const INJECT = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF\u{E0000}-\u{E007F}]|<!--|ignore\s+previous\s+instructions|do\s+not\s+tell\s+the\s+user|system\s+prompt/giu;
 const OBFUSCATED = [(l: string) => longRun(l, /[A-Za-z0-9+/]+/g, 200), (l: string) => longRun(l, /\w+/g, 200, true), idx(/\beval\s*\(|\bnew\s+Function\s*\(/)];
 const obfuscated = (l: string): number => { for (const f of OBFUSCATED) { const i = f(l); if (i >= 0) return i; } return -1; };
-type LineRule = [VetFinding['rule'], (l: string) => number];
+// Letter lookarounds, not \b: an underscore is an edge (MY_TELEMETRY_URL, OPT_OUT) but a letter is not (unmixpanelled, opt_output).
+const TELEMETRY = /(?<![a-z])(?:POSTHOG|TELEMETRY|mixpanel|opentelemetry)(?![a-z])|@segment\/|@sentry\//i;
+const OPT_OUT = /(?<![a-z])(?:DO_NOT_TRACK|TELEMETRY_DISABLED|OPT_?OUT)(?![a-z])|--no-telemetry/i;
+// [rule, first hit index, key for the cap, text prefix]
+type LineRule = [VetFinding['rule'], (l: string) => number, string?, string?];
 const PROMPT_DIR = /^(?:skills|agents|commands|output-styles)$/i;
 const MIN_DIR = /^(?:skills|agents|commands|hooks|scripts)$/i;
 
@@ -308,17 +313,63 @@ const isPrompt = (inner: string, rootPrompt: boolean) => rootPrompt || inner.spl
 /** Medium rules that read one logical line: at most one finding per rule per line, the text starts a little before the hit. */
 function lineRules(inner: string, json: boolean, rootPrompt: boolean, lock: boolean): LineRule[] {
   const r: LineRule[] = [['obfuscated', obfuscated]];
+  if (!lock) r.push(['telemetry', idx(TELEMETRY)], ['telemetry', idx(OPT_OUT), undefined, 'opt-out: ']); // lockfiles list every transitive dependency
   if (!json) r.push(['permissions', idx(PERMS)]); // parsed JSON: judged on the unescaped command strings (cmdFindings)
   if (!json && (!/\.md$/i.test(inner) || isPrompt(inner, rootPrompt))) r.push(['network', lock ? lockNet : idx(NETWORK)]);
   return r;
 }
 
 const SEV = { high: 0, medium: 1, low: 2 };
+const LOW_RULES = new Set(['license', 'telemetry']);
+
+/** Hash of recognised OSI licence texts, matched on the first 4 KB only (linear: plain alternations). */
+const LICENCES = [
+  /Permission is hereby granted, free of charge/i, /Apache License[\s\S]*Version 2\.0/i, /Redistribution and use in source and binary forms/i,
+  /GNU (?:LESSER |AFFERO )?GENERAL PUBLIC LICENSE/i, /Mozilla Public License/i, /Permission to use, copy, modify, and\/or distribute/i, /This is free and unencumbered software/i,
+];
+// -suffix pieces are words or versions (Apache-2.0), so license-checker.js is not a licence file
+const LICENCE_NAME = /^(?:licen[cs]e|unlicense|copying)(?:-[a-z0-9+]+(?:\.\d+)?)*(?:\.(?:md|txt|rst))?$/i;
+/** Looked for at the target path and at the repo root; either one recognised means no finding. */
+function licence(f: Fetched, path: string): VetFinding[] {
+  const found = [...new Set([path, ''])].flatMap((d) => f.files.filter((p) => (d ? p.startsWith(`${d}/`) : true) && !p.slice(d ? d.length + 1 : 0).includes('/') && LICENCE_NAME.test(p.slice(d ? d.length + 1 : 0))));
+  for (const p of found) {
+    try {
+      const head = readFileSync(join(f.dir, ...(f.map[p] ?? p).split('/'))).subarray(0, 4096).toString('utf8');
+      if (LICENCES.some((re) => re.test(head))) return [];
+    } catch { /* unreadable: counts as unrecognised */ }
+  }
+  return [found.length ? { severity: 'low', rule: 'license', file: found[0]!, line: 0, text: 'not an OSI licence (unrecognised text)' } : { severity: 'low', rule: 'license', file: '', line: 0, text: 'no licence file' }];
+}
+
+const CTX_HOOKS = new Set(['SessionStart', 'UserPromptSubmit']);
+/** Always-loaded tokens of one skill/agent/command file. Only the frontmatter reaches the YAML parser, and only when short: hostile YAML is slow. */
+const FM_MAX = 16384;
+function contextTokens(kind: 'skill' | 'agent', text: string): number {
+  const open = /^---\r?\n/.exec(text);
+  const end = open ? text.indexOf('\n---', open[0].length) : -1; // indexOf is linear
+  if (!open || end < 0) return 0;
+  const fm = text.slice(open[0].length, end).replace(/\r$/, '');
+  return estimateTokens(fm.length > FM_MAX ? fm : alwaysLoadedText(kind, `---\n${fm}\n---`)); // too long to parse: count it raw, which over-counts safely
+}
+
+/** The plugin layout (also under .claude/), or the target's own kind when the target is a skills/agents/commands dir or a skill folder. */
+const ctxKind = (inner: string, path: string): 'skill' | 'agent' | undefined => {
+  if (!/\.md$/i.test(inner)) return undefined;
+  const segs = inner.split('/'), name = segs[segs.length - 1]!;
+  const rest = segs[0] === '.claude' ? segs.slice(1) : segs;
+  const own = path.split('/').pop();
+  if (name === 'SKILL.md' && (segs.length === 1 || (rest.length === 3 && rest[0] === 'skills') || (own === 'skills' && segs.length === 2))) return 'skill';
+  if (rest.length === 2 && rest[0] === 'agents' || own === 'agents' && segs.length === 1) return 'agent';
+  if (rest[0] === 'commands' && rest.length >= 2 || own === 'commands') return 'skill'; // commands/ns/x.md is namespaced
+  return undefined;
+};
 const MANIFEST = /(?:^|\/)(?:hooks\.json|plugin\.json|\.mcp\.json|settings(?:\.local)?\.json)$/;
 
 export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'repo' | 'sha' | 'path' | 'dir'> {
   const { files, skipped } = scoped(f, path);
-  const findings: VetFinding[] = [];
+  const findings: VetFinding[] = licence(f, path);
+  let tokens = 0;
+  const unmeasured = new Set<string>();
   const rootPrompt = path.split('/').some((d) => PROMPT_DIR.test(d)) || f.files.includes(`${path ? `${path}/` : ''}SKILL.md`);
   for (const rel of files) {
     // Medium line findings: at most NET_CAP per rule per file are built; the rest are only counted, for the summary.
@@ -340,12 +391,15 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
         // Parsed: the structured rules judge hook commands, MCP servers and lifecycle scripts; the rest is data.
         findings.push(...hookShell(rel, bare, json), ...mcpRemote(rel, bare, json), ...allowRules(rel, bare, json), ...pkgScripts(rel, bare, json));
         obj = json;
+        if (isObj(json.hooks)) for (const [ev, g] of Object.entries(json.hooks)) if (CTX_HOOKS.has(ev) && JSON.stringify(g).includes('"command"')) unmeasured.add(`${rel}: ${ev} hook`);
         textScan = false;
       } else if (MANIFEST.test(rel)) {
         findings.push({ severity: 'medium', rule: 'invalid-manifest', file: rel, line: 0, text: 'not valid JSON, so its hooks and servers could not be read' });
       }
     }
     const inner = path && rel.startsWith(`${path}/`) ? rel.slice(path.length + 1) : rel;
+    const ck = ctxKind(inner, path);
+    if (ck) tokens += contextTokens(ck, bare);
     if (!textRules(inner, bare)) continue;
     const lock = isLock(rel, bare, obj);
     if (obj) netJson(rel, bare, obj, add, lock);
@@ -358,9 +412,9 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
         findings.push({ severity: 'high', rule: 'secrets', file: rel, line: n, text: show(l.trim()) });
       if (textScan && check(l)) findings.push({ severity: 'high', rule: 'unpinned-remote', file: rel, line: n, text: show(l.trim()) });
       if (l.length < 5) continue; // the shortest medium pattern is `eval(`
-      for (const [rule, at] of med) {
+      for (const [rule, at, key, pre] of med) {
         const i = at(l);
-        if (i >= 0) add(rule, () => ({ severity: 'medium', rule, file: rel, line: n, text: show(l.slice(Math.max(0, i - 30)).trim()) }));
+        if (i >= 0) add(rule, () => ({ severity: LOW_RULES.has(rule) ? 'low' : 'medium', rule, file: rel, line: n, text: show(pre ? pre + l.trim() : l.slice(Math.max(0, i - 30)).trim()) }), key);
       }
       if (minified && !mini && l.length > 1000) { mini = true; findings.push({ severity: 'medium', rule: 'obfuscated', file: rel, line: n, text: 'minified JS' }); }
     }
@@ -368,7 +422,7 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
     for (const [key, c] of counts) {
       if (c <= NET_CAP) continue;
       const [rule, kind] = key.split('/') as [VetFinding['rule'], string | undefined];
-      findings.push({ severity: 'medium', rule, file: rel, line: 0, text: `${c - NET_CAP} more ${key === 'network' ? 'network URLs' : `${rule} findings${kind ? ` (${kindName(kind)})` : ''}`} in this file` });
+      findings.push({ severity: LOW_RULES.has(rule) ? 'low' : 'medium', rule, file: rel, line: 0, text: `${c - NET_CAP} more ${key === 'network' ? 'network URLs' : `${rule} findings${kind ? ` (${kindName(kind)})` : ''}`} in this file` });
     }
   }
   for (const s of skipped) findings.push({ severity: 'medium', rule: 'unsafe-archive', file: s.path, line: 0, text: show(s.why) });
@@ -378,5 +432,5 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
   all.sort((a, b) => SEV[a.severity] - SEV[b.severity] || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || a.line - b.line);
   const at = path ? `${path}/` : '';
   const kind = f.files.includes(`${at}.claude-plugin/plugin.json`) ? 'plugin' : f.files.includes(`${at}SKILL.md`) ? 'skill' : 'repo';
-  return { kind, findings: all, context: { tokens: 0, unmeasured: [] }, files: files.length };
+  return { kind, findings: all, context: { tokens, unmeasured: [...unmeasured].sort() }, files: files.length };
 }

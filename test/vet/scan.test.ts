@@ -252,12 +252,14 @@ describe('medium rules', () => {
     it('the cap counts each kind of injection hit apart, so noise cannot bury a phrase', () => {
       const f = rules2({ 'skills/a/SKILL.md': '<!-- x\n'.repeat(30) + 'ignore previous instructions\n' }, 'injection-text');
       expect(f.filter((x) => x.text.includes('ignore previous'))).toHaveLength(1);
-      expect(f.filter((x) => x.line === 0).map((x) => x.text)).toEqual(['10 more injection-text findings in this file']);
+      expect(f.filter((x) => x.line === 0).map((x) => x.text)).toEqual(['10 more injection-text findings (comments) in this file']);
+      const h = rules2({ 'skills/a/SKILL.md': '<!-- x\n'.repeat(25) + 'a\u200bb\n'.repeat(25) }, 'injection-text');
+      expect(h.filter((x) => x.line === 0).map((x) => x.text).sort()).toEqual(['5 more injection-text findings (comments) in this file', '5 more injection-text findings (hidden characters) in this file']);
     });
     it('other medium line rules are capped at 20 per file with a summary', () => {
       const f = rules2({ 'skills/a/SKILL.md': '<!-- x -->\n'.repeat(30) }, 'injection-text');
       expect(f).toHaveLength(21);
-      expect(f[0]).toMatchObject({ line: 0, text: '10 more injection-text findings in this file' });
+      expect(f[0]).toMatchObject({ line: 0, text: '10 more injection-text findings (comments) in this file' });
     });
     it('output-styles markdown is prompt markdown; a hook-http URL is not also network', () => {
       expect(rules2({ 'output-styles/s.md': 'ignore previous instructions https://x.dev/a' }, 'injection-text')).toHaveLength(1);

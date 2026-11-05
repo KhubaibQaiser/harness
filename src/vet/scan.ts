@@ -260,6 +260,7 @@ const META_FILE = /(?:^|\/)(?:package\.json|\.claude-plugin\/plugin\.json|market
 const META = new Set(['homepage', 'repository', 'bugs', 'author', 'contributors', 'funding', 'license']);
 /** `key` tells the cap which kind of hit this is: injection comments, hidden characters and phrases are counted apart. */
 type Add = (rule: string, mk: () => VetFinding, key?: string) => void;
+const KIND: Record<string, string> = { hidden: 'hidden characters', comment: 'comments', phrase: 'phrases' };
 const NET_CAP = 20; // per rule per file, so a hostile file cannot flood the report
 
 /** network for a parsed JSON file: string values only (iterative, so deep nesting cannot overflow), manifest metadata skipped. */
@@ -354,7 +355,7 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
       if (minified && !mini && l.length > 1000) { mini = true; findings.push({ severity: 'medium', rule: 'obfuscated', file: rel, line: n, text: 'minified JS' }); }
     }
     if (/\.md$/i.test(rel) && (isPrompt(inner, rootPrompt) || /(?:^|\/)SKILL\.md$/.test(inner))) injection(rel, bare, add);
-    for (const [key, c] of counts) if (c > NET_CAP) findings.push({ severity: 'medium', rule: key.split('/')[0] as VetFinding['rule'], file: rel, line: 0, text: `${c - NET_CAP} more ${key === 'network' ? 'network URLs' : `${key.split('/')[0]} findings`} in this file` });
+    for (const [key, c] of counts) if (c > NET_CAP) findings.push({ severity: 'medium', rule: key.split('/')[0] as VetFinding['rule'], file: rel, line: 0, text: `${c - NET_CAP} more ${key === 'network' ? 'network URLs' : `${key.split('/')[0]} findings${KIND[key.split('/')[1] ?? ''] ? ` (${KIND[key.split('/')[1]!]})` : ''}`} in this file` });
   }
   for (const s of skipped) findings.push({ severity: 'medium', rule: 'unsafe-archive', file: s.path, line: 0, text: show(s.why) });
   const seen = new Set<string>();

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, test } from 'vitest';
 import { BETA_GROUPS, betaSettings } from './helpers.js';
-import { MergeError, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, STRUCTURAL } from '../../src/install/merge.js';
+import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, STRUCTURAL } from '../../src/install/merge.js';
+import { TELEMETRY_ENV, type LoadedPreset } from '../../src/catalog/presets.js';
 import { guardedView } from '../../src/core/harness-files.js';
 
 const fx = (p: string) => readFileSync(`test/fixtures/install-repo/${p}`, 'utf8');
@@ -620,5 +621,78 @@ describe('uninstall trusts created-key blocks', () => {
     expect(JSON.parse(removeFromSettings(ownEmpty, F('.claude/settings.json', blk), null, [])!.after)).toEqual({ enabledPlugins: {} });
     const mcp = removeFromMcp('{"mcpServers":{"pw":{"command":"x"}}}\n', F('.mcp.json', [JSON.stringify({ mcp: 'pw', item: 'm', server: { command: 'x' } })]), null, [])!;
     expect(JSON.parse(mcp.after)).toEqual({ mcpServers: {} });
+  });
+});
+
+describe('preset merge kinds', () => {
+  // Invented for these tests only.
+  TELEMETRY_ENV.a = { name: 'DO_NOT_TRACK', value: '1' };
+  TELEMETRY_ENV.b = { name: 'B_OFF', value: 'x' };
+  const core = `${PRESET_START}\n\n## Rules\n\n- one\n${PRESET_END}\n`;
+  const lp = { preset: { settings: { attribution: 'off', telemetry_off: ['a', 'b'] } } } as unknown as LoadedPreset;
+  const want = presetSets(lp, { selected: ['a', 'b'], env: true });
+  const F = (blocks: string[]) => ({ rel: '.claude/settings.json', kind: 'update' as const, hash: '', blocks });
+  const envOf = (s: string) => JSON.parse(s)['env'];
+
+  it('agents block: create, append, order, exact removal, replace, errors', () => {
+    expect(mergeAgentsPreset(null, core).after).toBe(core);
+    expect(mergeAgentsPreset('# Mine\n', core).after).toBe('# Mine\n\n' + core);
+    const h = mergeAgents(null);
+    expect(mergeAgentsPreset(h.after, core).after.indexOf(PRESET_START)).toBeGreaterThan(h.after.indexOf(E));
+    for (const eol of ['\n', '\r\n']) {
+      const orig = `# Mine${eol}`;
+      const m = mergeAgentsPreset(orig, core.replace(/\n/g, eol));
+      expect(removeBlocks(m.after, m.blocks)).toBe(orig);
+    }
+    const a = mergeAgentsPreset('# Mine\n', core).after;
+    expect(mergeAgentsPreset(a, core.replace('one', 'two')).after).toBe(a.replace('one', 'two'));
+    expect(() => mergeAgentsPreset(a + PRESET_START, core)).toThrow('AGENTS.md has a repeated preset marker; fix it by hand');
+    expect(() => mergeAgentsPreset(`${PRESET_END}\n${PRESET_START}`, core)).toThrow(/missing or misordered preset marker/);
+  });
+
+  it('presetSets returns leaf keys only', () => {
+    expect(want).toEqual([
+      { set: ['attribution'], value: false },
+      { set: ['env', 'DO_NOT_TRACK'], value: '1' },
+      { set: ['env', 'B_OFF'], value: 'x' },
+    ]);
+    expect(presetSets(lp, { selected: ['b'], env: true }).map((x) => x.set.at(-1))).toEqual(['attribution', 'B_OFF']);
+    expect(presetSets(lp, { selected: ['a', 'b'], env: false })).toEqual([{ set: ['attribution'], value: false }]);
+  });
+
+  it('settings: adds into {} and restores', () => {
+    const r = mergePresetSettings('{}\n', want, []);
+    expect(JSON.parse(r.after)).toEqual({ attribution: false, env: { DO_NOT_TRACK: '1', B_OFF: 'x' } });
+    expect(r.blocks).toContain('{"set":["env"],"value":{}}');
+    expect(removeFromSettings(r.after, F(r.blocks), '{}\n', [])!.after).toBe('{}\n');
+  });
+
+  it('settings: keeps FOO, leaves differing values with a note', () => {
+    const b = '{\n  "env": {\n    "FOO": "1"\n  }\n}\n';
+    const r = mergePresetSettings(b, want, []);
+    expect(r.blocks).not.toContain('{"set":["env"],"value":{}}');
+    expect(removeFromSettings(r.after, F(r.blocks), b, [])!.after).toBe(b);
+    const n = mergePresetSettings('{"env":{"B_OFF":"other"}}', want, []);
+    expect(envOf(n.after)).toEqual({ B_OFF: 'other', DO_NOT_TRACK: '1' });
+    expect(n.notes).toEqual(['`.claude/settings.json`: `env.B_OFF` is already "other"; left as is (the preset would set "x").']);
+    const at = mergePresetSettings('{"attribution":{"commit":"x"}}', want, []);
+    expect(JSON.parse(at.after).attribution).toEqual({ commit: 'x' });
+    expect(at.notes[0]).toContain('`attribution` is already {"commit":"x"}');
+  });
+
+  it('settings: drops recorded blocks no longer wanted', () => {
+    const r = mergePresetSettings('{}\n', want, []);
+    const g = mergePresetSettings(r.after, presetSets(lp, { selected: [], env: false }), r.blocks);
+    expect(JSON.parse(g.after)).toEqual({ attribution: false });
+    expect(g.dropped.length).toBe(3);
+  });
+
+  it('mergeSettings off always keeps preset set blocks (review focus 1)', () => {
+    const p = mergePresetSettings(null, want, []);
+    const h = merge(p.after);
+    const m = mergeSettings(p.after, { sandbox: 'unattended', recorded: [...h.blocks, ...p.blocks] });
+    expect(JSON.parse(m.after).attribution).toBe(false);
+    expect(envOf(m.after)).toEqual({ DO_NOT_TRACK: '1', B_OFF: 'x' });
+    expect(m.dropped.filter((b) => b.startsWith('{"set"'))).toEqual([]);
   });
 });

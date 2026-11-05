@@ -7,6 +7,7 @@ import type { SandboxMode } from '../core/config.js';
 import { eolOf, jsonIndentOf, quoteOf, requote, withEol } from './text.js';
 import type { CatalogItem } from '../catalog/schema.js';
 import type { Manifest } from './manifest.js';
+import { TELEMETRY_ENV, type LoadedPreset } from '../catalog/presets.js';
 
 export class MergeError extends Error {
   constructor(message: string) { super(message); this.name = 'MergeError'; }
@@ -46,6 +47,12 @@ const bad = (msg: string): never => { throw new MergeError(`${SETTINGS}: ${msg}`
 /** A harness hook runs the repo's dispatcher: `command`, or any string in `args`, names it. */
 export const isHarnessHook = (h: unknown): boolean =>
   isObj(h) && [h.command, ...(Array.isArray(h.args) ? h.args : [])].some((x) => typeof x === 'string' && x.includes('.harness/hooks/dispatch.mjs'));
+
+/** `s` as JSON text in the file's own indent and line endings (2 spaces and LF for a new file). */
+const dump = (s: unknown, before: string | null): string => {
+  const eol = before === null ? '\n' : eolOf(before);
+  return withEol(JSON.stringify(s, null, before === null ? 2 : jsonIndentOf(before)), eol) + (before === null || /\n$/.test(before) ? eol : '');
+};
 
 const parse = (b: string): unknown => { try { return JSON.parse(b); } catch { return null; } };
 
@@ -136,14 +143,55 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
       } else if (!isDeepStrictEqual(s.sandbox[k], v)) notes.push(`${SETTINGS}: sandbox.${k} is already ${JSON.stringify(s.sandbox[k])}; left as is (harness would set ${JSON.stringify(v)}).`);
     }
   } else {
-    const r = removeSets(s, opts.recorded ?? []);
+    const r = removeSets(s, (opts.recorded ?? []).filter((b) => (parse(b) as any)?.set?.[0] === 'sandbox')); // preset set blocks are not ours to drop here
     dropped.push(...r.sets);
     for (const p of r.changed) notes.push(`\`${SETTINGS}\`: \`${p}\` was changed; left as is.`);
   }
   mergePlugins(s, opts.plugins ?? [], opts.recorded ?? [], blocks, dropped, notes);
-  const eol = before === null ? '\n' : eolOf(before);
-  const tail = before === null || /\n$/.test(before) ? eol : '';
-  return { after: withEol(JSON.stringify(s, null, before === null ? 2 : jsonIndentOf(before)), eol) + tail, blocks, dropped, notes };
+  return { after: dump(s, before), blocks, dropped, notes };
+}
+
+export type SetBlock = { set: string[]; value: unknown };
+
+/** The leaf settings keys a preset wants. `env` is false for the global path, which writes no environment variables. */
+export function presetSets(l: LoadedPreset, opts: { selected: string[]; env: boolean }): SetBlock[] {
+  const out: SetBlock[] = [];
+  if (l.preset.settings.attribution === 'off') out.push({ set: ['attribution'], value: false });
+  if (opts.env) {
+    const seen = new Set<string>();
+    for (const id of l.preset.settings.telemetry_off) {
+      const e = TELEMETRY_ENV[id];
+      if (!opts.selected.includes(id) || !e || seen.has(e.name)) continue;
+      seen.add(e.name);
+      out.push({ set: ['env', e.name], value: e.value });
+    }
+  }
+  return out;
+}
+
+/** Adds the wanted keys that are missing (a created parent first), keeps a differing value with a note, and drops recorded non-sandbox set blocks no longer wanted. */
+export function mergePresetSettings(before: string | null, want: SetBlock[], recorded: string[], label = SETTINGS): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
+  let s: any;
+  try { s = before === null ? {} : JSON.parse(before); } catch (e) { throw new MergeError(`${label}: is not valid JSON: ${(e as Error).message}`); }
+  if (!isObj(s)) throw new MergeError(`${label}: must be a JSON object`);
+  const blocks: string[] = [], notes: string[] = [];
+  const keep = (set: string[]) => want.some((w) => set.every((k, i) => w.set[i] === k));
+  const stale = recorded.filter((b) => { const p: any = parse(b); return Array.isArray(p?.set) && p.set[0] !== 'sandbox' && !keep(p.set); });
+  const r = removeSets(s, stale);
+  const dropped = [...r.sets];
+  for (const p of r.changed) notes.push(`\`${label}\`: \`${p}\` was changed; left as is.`);
+  for (const { set, value } of want) {
+    const path = set.join('.');
+    const parent = set.slice(0, -1).reduce((o: any, k, i) => {
+      if (o[k] === undefined) { o[k] = {}; blocks.push(JSON.stringify({ set: set.slice(0, i + 1), value: {} })); }
+      if (!isObj(o[k])) throw new MergeError(`${label}: "${set.slice(0, i + 1).join('.')}" must be an object`);
+      return o[k];
+    }, s);
+    const k = set.at(-1)!;
+    if (!Object.hasOwn(parent, k)) { parent[k] = value; blocks.push(JSON.stringify({ set, value })); }
+    else if (!isDeepStrictEqual(parent[k], value)) notes.push(`\`${label}\`: \`${path}\` is already ${JSON.stringify(parent[k])}; left as is (the preset would set ${JSON.stringify(value)}).`);
+  }
+  return { after: dump(s, before), blocks, dropped, notes };
 }
 
 export const STRUCTURAL: ReadonlySet<string> = new Set([SETTINGS, '.mcp.json']);
@@ -255,9 +303,7 @@ export function mergeMcp(before: string | null, servers: { name: string; item: s
     blocks.push(block);
   }
   dropCreated(s, 'mcpServers', recorded, dropped);
-  const eol = before === null ? '\n' : eolOf(before);
-  const tail = before === null || /\n$/.test(before) ? eol : '';
-  return { after: withEol(JSON.stringify(s, null, before === null ? 2 : jsonIndentOf(before)), eol) + tail, blocks, dropped, notes };
+  return { after: dump(s, before), blocks, dropped, notes };
 }
 
 /** The JSON object in `current`, and whether the file had `path` before init (init created it: nothing; else the backup; else unknown, counted as had). */
@@ -335,18 +381,22 @@ const sep = (before: string, eol: string) => (before === '' ? '' : (before.endsW
 
 const START = '<!-- harness:start -->';
 const END = '<!-- harness:end -->';
-export function mergeAgents(before: string | null): { after: string; blocks: string[] } {
+export const PRESET_START = '<!-- harness:preset:start -->';
+export const PRESET_END = '<!-- harness:preset:end -->';
+export const mergeAgents = (before: string | null) => mergeMarked(before, template('agents-block.md'), START, END, 'harness');
+export const mergeAgentsPreset = (before: string | null, core: string) => mergeMarked(before, core, PRESET_START, PRESET_END, 'preset');
+function mergeMarked(before: string | null, text: string, START: string, END: string, who: string): { after: string; blocks: string[] } {
   const eol = before === null ? '\n' : eolOf(before);
-  const block = withEol(template('agents-block.md').trimEnd(), eol);
+  const block = withEol(text.trimEnd(), eol);
   if (before === null) return { after: block + eol, blocks: [block + eol] };
   const count = (m: string) => before.split(m).length - 1;
-  if (count(START) > 1 || count(END) > 1) throw new MergeError('AGENTS.md has a repeated harness marker; fix it by hand');
+  if (count(START) > 1 || count(END) > 1) throw new MergeError(`AGENTS.md has a repeated ${who} marker; fix it by hand`);
   const s = before.indexOf(START), e = before.indexOf(END);
   if (s === -1 && e === -1) {
     const added = sep(before, eol) + block + eol; // separator is part of the block so removal is exact
     return { after: before + added, blocks: [added] };
   }
-  if (s === -1 || e === -1 || e < s) throw new MergeError('AGENTS.md has a missing or misordered harness marker; fix it by hand');
+  if (s === -1 || e === -1 || e < s) throw new MergeError(`AGENTS.md has a missing or misordered ${who} marker; fix it by hand`);
   // Marker replace: removing the block gives back the text outside the markers only; the user's
   // original text between the markers was overwritten and cannot be restored.
   return { after: before.slice(0, s) + block + before.slice(e + END.length), blocks: [block] };

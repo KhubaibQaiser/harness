@@ -226,6 +226,29 @@ describe('name@market: pins and --finish', () => {
     expect(f.read(P_REPORT)).toContain('HEAD is 5 commits past');
     expect(existsSync(dir)).toBe(false);
   });
+  test('--finish lists the installed marketplaces once', () => {
+    const root = makeRepo({}, { git: false });
+    const { args } = keptP(root);
+    const g = gm({ ref: 'stable' });
+    expect(go(args, { exec: g.exec }, root).code).toBe(0);
+    expect(g.calls.filter((c) => c[0] === 'claude')).toEqual([['claude', 'plugin', 'marketplace', 'list', '--json']]);
+  });
+  test('--finish stops when the entry now pins another sha: exit 1, no report, folder kept', () => {
+    const root = makeRepo({}, { git: false });
+    const r = go(['p@m', '--json', '--keep'], { exec: gm({ sha: SHA }).exec }, root);
+    const d = mkdtempSync(join(TMP, 'side-'));
+    writeFileSync(join(d, 'scan.json'), r.out.join('\n'));
+    writeFileSync(join(d, 'review.json'), JSON.stringify({ relevance: 'low', why: 'w', overlaps: [], injection: [], recommendation: 'skip', summary: 's' }));
+    const args = ['--finish', join(d, 'scan.json'), '--review', join(d, 'review.json')];
+    const other = 'b'.repeat(40);
+    const g = gm({ sha: other });
+    const exec: Exec = (c, a) => (a[1] === `repos/o/r/commits/${other}` ? ok(other) : g.exec(c, a));
+    const f = go(args, { exec }, root);
+    expect([f.code, f.out]).toEqual([1, ['scan: the marketplace entry for p@m changed since the scan; run harness vet --json --keep again']]);
+    expect(existsSync(join(root, '.harness'))).toBe(false);
+    expect(existsSync(JSON.parse(r.out.join('\n')).dir)).toBe(true);
+    expect(go(args, { exec: gm({ sha: SHA }).exec }, root).code).toBe(0);
+  });
   test('--finish stops when the marketplace can no longer be read, or the entry moved: exit 1, no report, folder kept', () => {
     const root = makeRepo({}, { git: false });
     const { args, dir } = keptP(root);

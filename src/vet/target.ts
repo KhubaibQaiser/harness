@@ -82,10 +82,10 @@ export function marketList(exec: Exec): Record<string, unknown>[] | 'missing' | 
 /** An installed marketplace's GitHub repo, if it names one. */
 export const marketRepoOf = (m: Record<string, unknown>): unknown => (typeof m.repo === 'string' ? m.repo : J(m.source) ? m.source.repo : undefined);
 
-function resolvePlugin(t: { name: string; market: string }, exec: Exec): Resolved | Err {
+function resolvePlugin(t: { name: string; market: string }, exec: Exec, pre?: ReturnType<typeof marketList>): Resolved | Err {
   const name = esc(t.name), market = esc(t.market);
   const notInstalled = { error: `Marketplace "${market}" is not installed. Run harness vet with the plugin's GitHub URL instead, such as https://github.com/<owner>/<repo>.` };
-  const list = marketList(exec);
+  const list = pre ?? marketList(exec);
   if (list === 'missing') return notInstalled;
   if (list === 'unreadable') return { error: UNREADABLE };
   const m = list.find((x) => x.name === t.market);
@@ -139,8 +139,9 @@ function resolvePlugin(t: { name: string; market: string }, exec: Exec): Resolve
   return { error: `Plugin "${name}" in "${market}" has a ${esc(type)} source; vet checks github, git-subdir and relative-path sources only. ${URL_INSTEAD}` };
 }
 
-export function resolveTarget(t: Target, exec: Exec): Resolved | Err {
-  if (t.kind === 'plugin') return resolvePlugin(t, exec);
+/** `list`: the installed marketplaces when the caller already read them, so claude runs once. */
+export function resolveTarget(t: Target, exec: Exec, list?: ReturnType<typeof marketList>): Resolved | Err {
+  if (t.kind === 'plugin') return resolvePlugin(t, exec, list);
   const p = pin(t.repo, t.ref, exec);
   return 'error' in p ? p : { repo: t.repo, path: t.path, ...p };
 }

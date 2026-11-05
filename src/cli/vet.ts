@@ -119,9 +119,9 @@ function finish(scanFile: string, reviewFile: string, root: string, out: Out, ex
     const list = marketList(exec);
     const mr = typeof list === 'string' ? undefined : marketRepoOf(list.find((x) => x.name === t.market) ?? {});
     if (typeof mr !== 'string' || !REPO.test(mr)) return out(UNREADABLE), 1;
-    const fresh = resolveTarget(t, exec);
+    const fresh = resolveTarget(t, exec, list);
     if ('error' in fresh) return out(fresh.error), 1;
-    if (fresh.repo !== v.s.repo || fresh.path !== v.s.path) return out(`scan: the marketplace entry for ${t.name}@${t.market} changed since the scan; run harness vet --json --keep again`), 1;
+    if (fresh.repo !== v.s.repo || fresh.path !== v.s.path || (fresh.follows === null && fresh.sha !== v.s.sha)) return out(`scan: the marketplace entry for ${t.name}@${t.market} changed since the scan; run harness vet --json --keep again`), 1;
     r = { ...r, marketRepo: fresh.marketRepo, ...('follows' in fresh ? { follows: fresh.follows } : {}) };
   }
   const code = report(root, out, v.s, r, res.review, installFor(v.s, r, v.s.dir, exec));

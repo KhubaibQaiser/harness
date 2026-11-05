@@ -641,7 +641,17 @@ test('doctor: gh failing without a status is "not available"; a signed-out gh is
     return out;
   };
   expect(go(() => ({ status: null, stdout: '' }))).toContain('note branch protection unknown (gh not available)');
-  expect(go(() => ({ status: 1, stdout: '' }))).toContain('note branch protection unknown (gh is not signed in, or this is not a GitHub repository)');
+  expect(go(() => ({ status: 1, stdout: 'HTTP 503: unavailable\nsecond line' }))).toContain('note branch protection unknown (gh could not read it: HTTP 503: unavailable)');
+  const hostile = go(() => ({ status: 1, stdout: `\x1b[31m\x07evil${'x'.repeat(200)}` }));
+  const line = hostile.split('\n').find((l) => l.startsWith('note branch protection unknown'))!;
+  expect(line).toMatch(/^note branch protection unknown \(gh could not read it: \[31mevilx+\)$/);
+  expect(line).not.toMatch(/[\x00-\x1f]/);
+  expect(line.length).toBeLessThan(200);
+});
+
+test('doctor: a workflow file over 1 MB is skipped', async () => {
+  const big = CI + '# ' + 'x'.repeat(1 << 20) + '\n';
+  expect((await protectionRun(prot({ contexts: ['test'] }), big)).out).toMatch(/note main is protected but no required check matches/);
 });
 
 test('doctor: an unsafe branch name from gh is not used in the api path', async () => {

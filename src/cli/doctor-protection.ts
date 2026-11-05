@@ -13,6 +13,11 @@ const SAFE_CONTEXT = /^[\w .\/()@:+-]{1,100}$/; // printable, no control charact
 const NOT_FOUND = /"status":\s*"?404|Branch not protected/; // a bare "Not Found" can be a token without admin rights, so it is unknown
 const unknown = (why: string): Protection => ({ state: 'unknown', detail: `branch protection unknown (${why})` });
 
+const MAX_REASON = 120;
+// First line of gh's output, control characters stripped: gh output is untrusted.
+const failed = (r: { status: number | null; stdout: string }): Protection =>
+  unknown(r.status === null ? 'gh not available' : `gh could not read it: ${r.stdout.split('\n')[0].replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, MAX_REASON)}`);
+
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
 const json = (stdout: string): Record<string, unknown> | null => {
   try { return asRecord(JSON.parse(stdout)); } catch { return null; }
@@ -44,8 +49,7 @@ function ciJobNames(root: string): string[] {
 export function branchProtection(root: string, gh: Gh | undefined): Protection {
   if (!gh) return unknown('gh not available');
   const view = gh(['repo', 'view', '--json', 'nameWithOwner,defaultBranchRef']);
-  if (view.status === null) return unknown('gh not available');
-  if (view.status !== 0) return unknown('gh is not signed in, or this is not a GitHub repository');
+  if (view.status !== 0) return failed(view);
   const repo = json(view.stdout);
   const slug = repo?.nameWithOwner;
   const branch = asRecord(repo?.defaultBranchRef).name;
@@ -53,7 +57,7 @@ export function branchProtection(root: string, gh: Gh | undefined): Protection {
   const res = gh(['api', `repos/${slug}/branches/${branch}/protection`]);
   if (res.status !== 0) return NOT_FOUND.test(res.stdout)
     ? { state: 'missing', detail: `${branch} is not protected: add a branch protection rule so merges require the CI checks (lint and test)` }
-    : unknown('gh could not read the protection settings');
+    : failed(res);
   const rsc = asRecord(json(res.stdout)?.required_status_checks);
   const checks = Array.isArray(rsc.checks) ? rsc.checks.map((c) => asRecord(c).context) : [];
   const contexts = [...(Array.isArray(rsc.contexts) ? rsc.contexts : []), ...checks]

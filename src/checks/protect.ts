@@ -6,7 +6,7 @@ import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
-import { buildsGuardedWords, commandStart, fileWriteTargets, gitArgs, ifsReading, rmTargets } from './guard.js';
+import { commandStart, decodeAnsiC, fileWriteTargets, gitArgs, ifsReading, PROTECTED_TEXT, quoteFree, rmTargets } from './guard.js';
 import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
@@ -204,7 +204,22 @@ const stdinProgramsOf = (cmd: string) =>
 // A protected name as a path segment (not node_modules.txt or my_node_modules).
 const NM_SEG = /(^|[\\/'"`\s(,=:])node_modules([\\/'"`\s),;:]|$)/i;
 const H_SEG = /(^|[\\/'"`\s(,=:])(\.harness|\.claude[\\/]settings[^\\/'"`\s),;:]*)([\\/'"`\s),;:]|$)/i;
-const BUILT_REASON = "This command builds a word at run time ($'…', a variable, ${…}) and names a protected path, so protect cannot read where it writes.";
+const BUILT_REASON = 'This command names a protected harness path and also expands words, uses a glob or a redirect, cds, sources or runs a script, sets a variable (read, printf -v, declare, an array) or defines a function, so protect cannot tell what it writes.';
+// Commands that change what a later word means, or run another file.
+const BINDS = new Set(['cd', 'pushd', 'source', '.', 'read', 'mapfile', 'readarray', 'declare', 'typeset', 'export', 'local', 'readonly']);
+const binds = (seg: string): boolean => {
+  const ws = words(seg).map(unquote);
+  const n = ws.length ? commandName(ws[0]) : '';
+  return BINDS.has(n) || (n === 'printf' && ws.includes('-v')) || (SHELLS.has(n) && ws.length > 1 && !ws.includes('-c')); // bash FILE
+};
+/** The command names a protected path as text (any word, value or glob) and also has an expansion or substitution, an
+ *  array or function definition, a redirect to a file, a glob or brace in a harness or claude word, or a segment that
+ *  binds or runs something (cd, source, ., read, printf -v, declare, bash FILE). Plain reads (cat, ls, git diff) and
+ *  writes protect parses (cp .harness/x /tmp) are judged as before. ponytail: a name built from pieces (x=.har; y=ness) is not seen. */
+const touchesProtectedText = (cmd: string): boolean =>
+  [cmd, quoteFree(cmd), decodeAnsiC(cmd)].some((t) => PROTECTED_TEXT.test(t)) && // decodeAnsiC: x='\x2eharness'; ${x@E}
+  (/[$`]|\w=\(|\(\s*\)|\bfunction\s/.test(cmd) || /\d*>>?\s*(?!&|\/dev\/null\b)\S/.test(cmd) ||
+    words(cmd).some((w) => /[*?[{]/.test(w) && /harness|claude/i.test(w)) || segments(cmd).some(binds));
 const GLOB = /[*?[{]/;
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
@@ -260,8 +275,8 @@ export const protect: Check = {
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       paths = [...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)];
-      // A path built at run time (tee $'.harness/x', tee${S}.harness/x) is not parsed: ask when the text names a protected path.
-      const built = /harness[\\/]|claude[\\/]settings|node_modules/i.test(cmd) && buildsGuardedWords(cmd, { root, env: ctx.env });
+      // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
+      const built = touchesProtectedText(cmd);
       if (!paths.some((p) => p && isProtected(root, p))) return built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
     }
     return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };

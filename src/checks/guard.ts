@@ -607,11 +607,14 @@ export function ifsReading(command: string): string | null {
 // Shell constructs that build words the guard cannot read: ${!x}, zsh ${(s:_:)x} ${=x}, ${x//a/b} ${x%a} ${x#a} ${x:…}
 // (not the ${IFS…} forms, which ifsReading reads), $'…' and $"…", an IFS= assignment, eval with an expansion, and an
 // expansion in command position.
-const GUARDED_WORD = /harness|cli\.m|\.claude[\\/]settings|node_modules/i;
-const BUILDS = /\$\{[!(=~^]|\$\{(?!IFS\W)[^}]*?[/%#:]|\$['"]|(?<!\w)IFS=/;
-/** True when the command builds words at run time and names harness, its CLI or a protected path: the guard and protect ask. */
+/** A protected harness path named in the text: `.harness`, `.harness/…`, `.claude/settings*.json`. */
+export const PROTECTED_TEXT = /\.harness(?![\w.-])|\.claude(?![\w./-])|\.claude[\\/]settings/i;
+const BUILDS = /\$\{[!(=~^]|\$\{(?!IFS\W)[^}]*?[/%#:,^@]|\$['"]|(?<!\w)IFS=/; // , ^ @: bash ${x,,} ${x^^} ${x@E}
+/** True when the command builds words at run time and names harness or its CLI as a word (never a directory in a path:
+ *  `cd /x/harness && …` does not count) or a protected path: the guard asks. ${CLAUDE_PLUGIN_ROOT…} is the skills' own form. */
 export function buildsGuardedWords(command: string, w: Where): boolean {
-  if (!GUARDED_WORD.test(command)) return false;
+  command = command.replace(/\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/g, 'PLUGIN_ROOT');
+  if (!names(NORM(command)) && !PROTECTED_TEXT.test(quoteFree(command))) return false;
   if (BUILDS.test(command) || (/\beval\b/.test(command) && command.includes('$'))) return true;
   return walkCommands(ifsReading(command) ?? command, w, ({ toks, k }) => (toks[k]?.includes('$') && !HARNESS_CMD.test(toks[k]) ? true : null)) ?? false;
 }
@@ -629,12 +632,12 @@ export function decideCommand(command: string, ctx: GuardCtx): Decision {
 
 const ANSI_C: Record<string, string> = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v' };
 /** The body of a bash `$'…'` string, decoded: \xHH, \NNN, \uHHHH, \UHHHHHHHH, \n and the other letters. */
-const decodeAnsiC = (s: string): string =>
+export const decodeAnsiC = (s: string): string =>
   s.replace(/\\(x[\da-fA-F]{1,2}|u[\da-fA-F]{1,4}|U[\da-fA-F]{1,8}|[0-7]{1,3}|.)/g, (_, e: string) =>
     /^[xuU]./.test(e) ? String.fromCodePoint(Math.min(parseInt(e.slice(1), 16), 0x10ffff)) : /^[0-7]/.test(e) ? String.fromCharCode(parseInt(e, 8)) : ANSI_C[e] ?? e);
 /** The text rules' reading: $'…' decoded, $"…" read as "…", quotes taken off a word with no space inside ("push", pu""sh),
  *  and a backslash before a letter, digit or - dropped (g\it). Quoted prose with spaces keeps its quotes. */
-const quoteFree = (c: string): string =>
+export const quoteFree = (c: string): string =>
   c.replace(/\$'((?:[^'\\]|\\.)*)'/g, (_, b: string) => decodeAnsiC(b)).replace(/\$"/g, '"').replace(/(?<!\\)(['"])([^'"\s\\]*)\1/g, '$2').replace(/\\(?=[\w-])/g, '');
 
 function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {

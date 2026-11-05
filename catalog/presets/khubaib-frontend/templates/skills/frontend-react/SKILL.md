@@ -49,7 +49,7 @@ Shared React rules for this repo. The Next.js and React Native rules live in the
 
 ## Performance
 
-- Structure first: colocate state, lift content up as `children`, use narrow selectors and split contexts.
+- Structure first, before reaching for memo: colocate state, lift content up as `children`, use narrow selectors and split contexts.
 - With the React Compiler on, rely on it and skip manual memo.
 - Use narrow store selectors.
 - Virtualize long lists.

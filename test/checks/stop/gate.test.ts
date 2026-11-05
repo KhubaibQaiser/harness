@@ -5,6 +5,7 @@ import { expect, test } from 'vitest';
 import { defaultExec, type Exec, killTree, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
 import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
+import { readTiming } from '../../../src/core/timing.js';
 import { readState, writeState } from '../../../src/core/state.js';
 import { type Ctx, detectBaseHead, dispatch, registry } from '../../../src/hooks/dispatch.js';
 
@@ -412,4 +413,24 @@ test('no steps with tdd on: allowed, coverage gate not run', async () => {
   expect(s.ctx.config.checks.tdd).toBe(true);
   expect(await runStop(s.ctx, s.exec(SRC))).toEqual({ kind: 'allow' });
   expect(s.calls.every((c) => c.cmd === 'git' && c.args[0] === 'status')).toBe(true);
+});
+
+test('each step run writes one timing line (step, outcome); events.jsonl is unchanged', async () => {
+  const s = setup({ scripts: ['lint', 'test'], yaml: 'stop:\n  steps: [lint, test]\n' });
+  const d = await runStop(s.ctx, s.exec(SRC, 'test'));
+  expect(d.kind).toBe('block');
+  const t = readTiming(s.root);
+  expect(t.map((x) => [x.event, x.step, x.outcome])).toEqual([['Stop', 'lint', 'allow'], ['Stop', 'test', 'block']]);
+  expect(t.every((x) => x.session === 's' && Number.isFinite(x.ms))).toBe(true);
+  expect(readEvents(s.root)).toEqual([]);
+});
+
+test('a timed-out step and a spent budget log outcome timeout, not block', async () => {
+  const a = setup({ scripts: ['lint'], yaml: 'stop:\n  steps: [lint]\n' });
+  await runStop(a.ctx, a.exec(SRC, '', 'lint'));
+  expect(readTiming(a.root).map((x) => x.outcome)).toEqual(['timeout']);
+  const b = setup({ scripts: ['lint'], yaml: 'stop:\n  steps: [lint]\n  timeout_s: 30\n' });
+  let t = 0;
+  await runStop(b.ctx, b.exec(SRC), () => (t += 60000));
+  expect(readTiming(b.root).map((x) => x.outcome)).toEqual(['timeout']);
 });

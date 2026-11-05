@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { retryTransient } from './atomic.js';
 import { join, posix, relative, resolve } from 'node:path';
 import { parse } from 'yaml';
-import { PROJECT_TYPES, type ProjectType } from '../catalog/schema.js';
+import { ID_RE, PROJECT_TYPES, type ProjectType } from '../catalog/schema.js';
+import { PREFIX_RE, type PresetGit } from './branch-prefix.js';
 
 export type StopStep = string | { name: string; run: string[] };
 export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun' | 'none';
@@ -57,6 +58,8 @@ export interface HarnessConfig {
   pr_size: { target_lines: number; max_lines: number; max_files: number; exclude: string[] };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
   stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
+  /** Absent until init records a chosen preset. */
+  preset?: { id: string; version: string; items: string[]; git: PresetGit };
 }
 
 export const DEFAULT_RESULTS_DIR = '.harness/results';
@@ -173,7 +176,18 @@ const resultsDirRule: Rule = (v) => {
   const p = posix.normalize(v.replace(/\\/g, '/')).toLowerCase();
   return p === '.harness/state' || p.startsWith('.harness/state/') ? IN_STATE : null;
 };
+const presetRule = objRule({
+  id: (v) => (typeof v === 'string' && ID_RE.test(v) ? null : 'must be lowercase letters, digits and hyphens'),
+  version: str,
+  items: strs,
+  git: objRule({
+    branch_prefixes: listOf('prefixes', (v) => (typeof v === 'string' && PREFIX_RE.test(v) ? null : 'must match ^[a-z0-9-]+/$')),
+    no_ai_trailer: bool,
+    pr_size_warning: bool,
+  }),
+});
 const RULES: Record<string, Rule> = {
+  preset: presetRule,
   'tdd.results_dir': resultsDirRule,
   version: (v) => (v === 1 ? null : 'must be 1'),
   'stop.max_attempts': num(1, 10, true),
@@ -216,8 +230,12 @@ export function overlay(base: Record<string, unknown>, user: Record<string, unkn
   for (const [k, v] of Object.entries(user)) {
     const p = path ? `${path}.${esc(k)}` : esc(k);
     const d = Object.hasOwn(base, k) ? base[k] : undefined; // own keys only: no __proto__/constructor lookups
-    if (d === undefined) issues.push({ path: p, kind: 'unknown' });
-    else if (isObj(d)) {
+    if (d === undefined && !Object.hasOwn(RULES, p)) issues.push({ path: p, kind: 'unknown' });
+    else if (d === undefined) { // an optional key with no default (preset): its rule checks it
+      const bad = problem(p, v, d);
+      if (bad) issues.push({ path: typeof bad === 'string' ? p : p + bad.at, kind: 'invalid', detail: typeof bad === 'string' ? bad : bad.msg });
+      else base[k] = v;
+    } else if (isObj(d)) {
       if (isObj(v)) overlay(d, v, p, issues);
       else issues.push({ path: p, kind: 'mapping' });
     } else {

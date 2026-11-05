@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
-import { answersToConfig, validateAnswers } from '../../src/ai/answers.js';
+import { answersToConfig, configToAnswers, validateAnswers } from '../../src/ai/answers.js';
 import { defaults } from '../../src/core/config.js';
 import { detect } from '../../src/install/detect.js';
 import { makeRepo } from '../install/helpers.js';
@@ -97,4 +98,19 @@ test('every project, tdd and unattended key is required', () => {
 test('dotenv check is per segment: .env and .env.local rejected, .environments passes', () => {
   for (const p of ['.env', '.env.local', 'web/.env.production']) expect(errs(answers({ scope: { paths: [p] } })), p).toHaveLength(1);
   expect(errs(answers({ scope: { paths: ['.environments/a'] } }))).toEqual([]);
+});
+
+test('preset answer: absent, null, a repo preset; unknown rejected', () => {
+  const r = makeRepo({ '.harness/presets/tiny.yaml': readFileSync('test/fixtures/presets/tiny.yaml', 'utf8') }, { git: false });
+  const f = { ...detect(r), apps: [{ dir: 'web', kind: 'web' as const }] };
+  const ok = (raw: unknown) => validateAnswers(raw, f);
+  const a = ok(answers());
+  expect(a.ok && a.answers.preset).toBe(null);
+  expect(ok(answers({ preset: null })).ok).toBe(true);
+  const t = ok(answers({ preset: 'tiny' }));
+  expect(t.ok && t.answers.preset).toBe('tiny');
+  const bad = ok(answers({ preset: 'nope' }));
+  expect(!bad.ok && bad.errors).toContain('preset: "nope" is not a shipped or repo preset (harness preset list shows them)');
+  expect(configToAnswers({ ...defaults(), preset: { id: 'x', version: '1', items: [], git: { branch_prefixes: [], no_ai_trailer: false, pr_size_warning: false } } }).preset).toBe('x');
+  expect(configToAnswers(defaults()).preset).toBe(null);
 });

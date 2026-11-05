@@ -124,9 +124,9 @@ The first step of Tasks 9 and 10 still reads the merged code. If a merged name d
 - Skill bodies: at most 150 lines. Frontmatter has `name` and `description` (§3).
 - Markers: `<!-- harness:preset:start -->` and `<!-- harness:preset:end -->`, placed after the harness block (§5).
 - **Lean always-loaded context** (estimates, characters / 4 as in `measure.ts`, §5):
-  - core block ~173 tokens; each skill's name and description ~58;
-  - one stack ~347; Next.js and RN ~405; plain React ~289; no React ~231.
-  - The preset rows go through `measureSelection` and `budgetVerdict` against `context.budget_tokens` (2000). The shipped totals must match these within one rule: ± 10 tokens on each total (Task 2b test).
+  - core block ~173 tokens; each frontend skill's name and description ~58, `engineering-principles` ~68;
+  - one stack ~357; Next.js and RN ~415; plain React ~299; no React ~241.
+  - The preset rows go through `measureSelection` and `budgetVerdict` against `context.budget_tokens` (2000). The shipped totals must match these exactly (Task 2b test; owner ruling: the measured totals, core counted with its markers).
 - **Global writes each get their own yes** (O2). The preview lists every global path. `--dry-run` writes nothing. Git checks stay per repo (C2).
 - **No invented data** (Q8, P9). Content is drafted from §1 answers only; doc fills cite a source and carry the docs label. Every number in copy or the README that is an estimate says so. No real name, email or signing key appears in any preset, test or fixture (Q7, §9). The one exception is the commit command below.
 - **Tests:**
@@ -568,7 +568,7 @@ The first step of Tasks 9 and 10 still reads the merged code. If a merged name d
 - [ ] **Step 4: Run the tests and confirm they pass.** Then `pnpm typecheck`.
 - [ ] **Step 5: Docs.**
   - README: add a short "Named presets" section. It covers:
-    - what `khubaib-frontend` adds, and the ~231 to ~405 token cost, labelled as an estimate;
+    - what `khubaib-frontend` adds, and the ~241 to ~415 token cost, labelled as an estimate;
     - that the telemetry variables (`DO_NOT_TRACK=1`, `SUPERPOWERS_DISABLE_TELEMETRY`) apply to the whole session (C3, R1) and only after the folder is trusted (Planning check 1);
     - that `harness git pr` warns on size even when `checks.prSize` is off;
     - how to turn the preset off.

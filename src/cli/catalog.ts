@@ -3,6 +3,9 @@ import { compactCatalog, loadCatalog } from '../catalog/load.js';
 import { resolvePins } from '../catalog/resolve.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { packageDir } from '../core/package-dir.js';
+import { checkPresetDir } from './preset.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { CliEnv } from './index.js';
 
 const USAGE = 'Usage: harness catalog\n       harness catalog check [--resolve] [--only <id,...>]';
@@ -23,6 +26,8 @@ export function catalog(args: string[], { out }: CliEnv, deps: { dir?: string; e
   }
   if (only && (!resolve || !only.length)) return out(USAGE), 2;
   const problems = [...errors, ...checkCatalog(c)];
+  const pd = join(deps.dir ?? packageDir('catalog'), 'presets');
+  if (existsSync(pd)) for (const r of checkPresetDir(pd, c, false)) problems.push(...r.errors.map((e) => `presets/${r.id}: ${e}`));
   let unpinned: { id: string; reason: string }[] = [];
   if (resolve) {
     const r = resolvePins(c, deps.exec ?? defaultExec, only);

@@ -66,3 +66,9 @@ test('--days must be a positive integer', () => {
   const root = seed(lines);
   for (const a of [['--days', '0'], ['--days', '-1'], ['--days', '1.5'], ['--days', 'x'], ['--days']]) expect(stats(root, a).code).toBe(2);
 });
+
+test('use and ms fields on events do not change the output', () => {
+  const plain = stats(seed(lines)).out;
+  const extra = lines.map((l) => { try { return JSON.stringify({ ...JSON.parse(l), use: 'toolu_1', ms: 12 }); } catch { return l; } });
+  expect(stats(seed(extra)).out).toBe(plain);
+});

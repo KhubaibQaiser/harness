@@ -100,7 +100,7 @@ test('status and doctor show the last change event', async () => {
   status([], { root, env: {}, out: (l) => (s += l + '\n') });
   expect(s).toMatch(/Harness files last changed during a session: .* \(`\.harness\/config\.yaml`\)/);
   let d = '';
-  doctor([], { root, env: {}, out: (l) => (d += l + '\n') });
+  doctor([], { root, env: {}, out: (l) => (d += l + '\n') }, { gh: () => ({ status: null, stdout: '' }) });
   expect(d).toMatch(/^note harness files changed during a session at .*: `\.harness\/config\.yaml`/m);
 });
 

@@ -1,5 +1,5 @@
 ---
 type: regex
-pattern: '(estimate|no data|don.t have|do not have|cannot|can.t|not available|unknown)'
+pattern: 'estimate|no data|(don.t|do not) have|not available'
 flags: i
 ---

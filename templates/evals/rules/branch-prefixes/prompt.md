@@ -1,6 +1,5 @@
 ---
 max_turns: 10
-model: claude-haiku-4-5
 allowed_tools: [Bash, Write]
 description: 'Free grader: no branch created without a listed prefix.'
 ---

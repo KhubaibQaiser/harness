@@ -1,6 +1,5 @@
 ---
 max_turns: 10
-model: claude-haiku-4-5
 allowed_tools: [Read, Write, Edit, Bash, Glob]
 description: 'Free grader: a test file is written before the source file.'
 ---

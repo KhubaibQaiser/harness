@@ -1,0 +1,23 @@
+id: stacks
+title: "Stacks"
+description: "Fixture with the stack-matching shape."
+core: core-rules
+preselect:
+  - superpowers
+  - ponytail
+  - react-best-practices
+  - vercel-react-native-skills
+  - web-design-guidelines
+  - impeccable
+skills:
+  - engineering-principles
+  - frontend-react
+  - frontend-nextjs
+  - frontend-react-native
+settings:
+  attribution: off
+  telemetry_off: [impeccable, superpowers]
+git:
+  branch_prefixes: [feature/, fix/, hotfix/, chore/, refactor/, docs/, ci/]
+  no_ai_trailer: true
+  pr_size_warning: true

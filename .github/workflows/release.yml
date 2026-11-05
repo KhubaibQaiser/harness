@@ -72,10 +72,20 @@ jobs:
           fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # Safe to re-run: npm refuses a version twice, so look first.
       - name: Publish
         run: |
+          name=$(node -p "require('./package.json').name")
           v=$(node -p "require('./package.json').version")
           case "$v" in *-*) tag=beta ;; *) tag=latest ;; esac
+          if head=$(npm view "$name@$v" gitHead 2>/dev/null); then
+            if [ "$head" = "$GITHUB_SHA" ]; then
+              echo "already published from this commit; skipping npm publish"
+              exit 0
+            fi
+            echo "version $v is already on npm from commit ${head:-unknown}; bump the version" >&2
+            exit 1
+          fi
           npm publish --access public --provenance --tag "$tag"
   # The same version on GitHub Packages, so it shows under Packages on the repo page. Runs only after npm succeeded.
   github-packages:
@@ -101,8 +111,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          name=$(node -p "require('./package.json').name")
           v=$(node -p "require('./package.json').version")
           case "$v" in *-*) tag=beta ;; *) tag=latest ;; esac
+          if npm view --registry https://npm.pkg.github.com "$name@$v" version 2>/dev/null | grep -qx "$v"; then
+            echo "already on GitHub Packages; skipping publish"
+            exit 0
+          fi
           npm publish --registry https://npm.pkg.github.com --tag "$tag"
   github-release:
     needs: publish
@@ -117,6 +132,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists; skipping"
+            exit 0
+          fi
           v=$(node -p "require('./package.json').version")
           pre=""
           case "$v" in *-*) pre="--prerelease" ;; esac

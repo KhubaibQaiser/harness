@@ -68,6 +68,18 @@ describe('runSession subagents', () => {
   });
 });
 
+describe('runSession subagent cap', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'turns-cap-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  it('counts subagent records left out past the cap', async () => {
+    const main = writeSession(dir, 's3', [prompt('a'), assistant()], { subagents: { q: Array.from({ length: 5003 }, (_, i) => use(`u${i}`)) } });
+    let seen = -1;
+    const acc: Acc<null> = { endSession: (s) => (seen = s.subDropped ?? -1), result: () => null };
+    const stats = await runSession({ main, subagents: [join(dir, 's3', 'subagents', 'agent-q.jsonl')] }, 's3', [acc], 0);
+    expect([stats.subDropped, seen]).toEqual([3, 3]);
+  });
+});
+
 describe('runSession', () => {
   const dir = mkdtempSync(join(tmpdir(), 'turns-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));

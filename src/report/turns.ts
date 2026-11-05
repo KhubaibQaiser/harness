@@ -34,29 +34,33 @@ export function turnSplitter(onTurn: (t: Turn) => void): { push(r: TRec): void; 
 }
 
 /** Subagent tool calls and results, kept (capped) so they can join the main turn open at their time. Texts and usage are not kept. */
-async function subSummary(files: string[], sinceMs: number): Promise<TRec[]> {
+async function subSummary(files: string[], sinceMs: number): Promise<{ kept: TRec[]; dropped: number }> {
   const kept: TRec[] = [];
+  let dropped = 0;
   for (const f of files) {
     await streamTranscript(f, (r) => {
-      if (kept.length >= SUB_CAP || Number.isNaN(r.ts)) return;
-      if (r.k === 'assistant' && r.tools.length > 0) kept.push({ ...r, texts: [], usage: undefined });
-      else if (r.k === 'result') kept.push({ ...r, text: '' });
+      if (Number.isNaN(r.ts)) return;
+      const keep = r.k === 'assistant' ? r.tools.length > 0 : r.k === 'result';
+      if (!keep) return;
+      if (kept.length >= SUB_CAP) dropped++;
+      else kept.push(r.k === 'assistant' ? { ...r, texts: [], usage: undefined } : { ...r, text: '' } as TRec);
     }, { sinceMs, side: true });
   }
-  return kept.sort((a, b) => a.ts - b.ts); // ponytail: one capped list; past SUB_CAP later subagent calls miss their turn
+  return { kept: kept.sort((a, b) => a.ts - b.ts), dropped }; // ponytail: one capped list; past SUB_CAP later subagent calls miss their turn
 }
 
 /**
  * Subagent tool calls join the main turn open at their timestamp (one outside every turn is dropped). Subagent files are read twice:
  * once for that summary, once for the accumulators' `rec`, which sees them after the main file.
  */
-export async function runSession(files: { main: string; subagents: string[] }, id: string, accs: Acc<unknown>[], sinceMs: number): Promise<ReadStats> {
-  const s: SessionCtx = { id, turns: 0, compactions: 0, edited: [] };
+export async function runSession(files: { main: string; subagents: string[] }, id: string, accs: Acc<unknown>[], sinceMs: number): Promise<ReadStats & { subDropped: number }> {
+  const s: SessionCtx = { id, turns: 0, compactions: 0, edited: [], subDropped: 0 };
   const edited = new Set<string>();
   const splitter = turnSplitter((t) => {
     accs.forEach((a) => a.turn?.(s, t));
   });
-  const subs = await subSummary(files.subagents, sinceMs);
+  const { kept: subs, dropped } = await subSummary(files.subagents, sinceMs);
+  s.subDropped = dropped; // counted, never silent
   let next = 0;
   const joinUntil = (ts: number) => {
     for (; next < subs.length && subs[next]!.ts < ts; next++) if (s.turns > 0) splitter.push(subs[next]!);
@@ -86,5 +90,5 @@ export async function runSession(files: { main: string; subagents: string[] }, i
   }
   splitter.end();
   accs.forEach((a) => a.endSession?.(s));
-  return total;
+  return { ...total, subDropped: dropped };
 }

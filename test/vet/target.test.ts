@@ -196,3 +196,13 @@ test('no doubled period when gh stderr already ends with one', () => {
 test('source .. reads cleanly', () => {
   expect(resolveTarget(P, fake(market('..')).exec)).toEqual({ error: 'Plugin "p" in "m" has a path outside the marketplace: "..". Pass the plugin\'s GitHub URL instead.' });
 });
+
+test('final review M7: a relative-path entry follows the marketplace ref it was pinned from', () => {
+  const withRef = (cmd: string, a: string[]) => {
+    if (cmd === 'claude') return ok(JSON.stringify([{ name: 'm', source: 'github', repo: 'mo/mr', ref: 'stable' }]));
+    if (a[1] === 'repos/mo/mr/commits/stable') return ok(M);
+    return market('./')(cmd, a);
+  };
+  expect(resolveTarget(P, fake(withRef).exec)).toMatchObject({ repo: 'mo/mr', sha: M, follows: 'stable' });
+  expect(resolveTarget(P, fake(market('./')).exec)).not.toHaveProperty('follows');
+});

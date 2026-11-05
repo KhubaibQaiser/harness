@@ -293,6 +293,8 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
     const at = toks[k]?.startsWith('$') && !HARNESS_CMD.test(toks[k]) ? k + 1 : k === 0 && /^[`)]$/.test(parts[i - 1] ?? '') ? 0 : -1;
     if (at >= 0 && isPersonOnly(toks[at]) && !PERSON_ONLY[toks[at]].allowed(toks.slice(at + 1))) return hidden;
     // A glob in the CLI path (dist/cli.mj?) is expanded by the shell: judge it as the harness CLI.
+    // `function harness { … }` defines a harness that runs something else, like the `harness() { … }` form (caught at the `(` above).
+    if (toks[k] === 'function' && toks[k + 1] && HARNESS_CMD.test(toks[k + 1])) return hidden;
     if (!toks[k] || !(HARNESS_CMD.test(toks[k]) || (/[*?[]/.test(toks[k]) && CLI_RE.test(toks[k])))) continue;
     const r = judge(toks, k, parts[i + 1]);
     if (r) return r;
@@ -335,13 +337,19 @@ function previewOnly(text: string, depth = 0): boolean {
   }
   return true;
 }
+// The one word right after `harness vet` (or `cli.mjs" vet`) is a target, not a subcommand: o/sync names a repo. Target characters
+// only, ended by a space, a redirect or the end, so `vet x;harness sync` is not hidden.
+const VET_TARGET = /((?:harness|cli\.mjs)["']?[ \t]+vet[ \t]+)[\w.@:/#-]+(?=[\s>]|$)/gi;
+const FUNC_DEF = /\bfunction\b|\(\s*\)\s*\{/;
 function backstop(raw: string): Hit | null {
   raw = raw.replace(/\\\r?\n/g, '');
   const norm = NORM(raw); // `in''it` and `in\it` are init
   if (!names(norm)) return null;
   // Only words: a real `harness tdd off` the parser saw was denied before this. Prose, echo, grep, a commit message or a forwarding function asks.
   if (TDD_OFF.test(raw) || TDD_OFF.test(norm)) return { kind: 'ask', reason: 'the command names harness and `tdd off`, and the guard cannot tell that it does not run it. Only a person can pause TDD, in their own terminal' };
-  if (!(CHANGE.test(raw) || CHANGE.test(norm)) || previewOnly(raw)) return null;
+  // A function defined anywhere can forward the masked word (`function harness { command harness "$2"; }`): mask nothing then.
+  const t = (s: string) => (FUNC_DEF.test(s) ? s : s.replace(VET_TARGET, '$1T'));
+  if (!(CHANGE.test(t(raw)) || CHANGE.test(t(norm))) || previewOnly(raw)) return null;
   return { kind: 'ask', reason: 'the command names harness and a word that changes it (init, update, add, remove, sync, uninstall, push, pr), and the guard cannot tell that it is only a preview' };
 }
 const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { esc } from '../core/config.js';
+import { join, posix } from 'node:path';
+import { parse } from 'yaml';
+import { esc, isObj } from '../core/config.js';
 import { alwaysLoadedText, estimateTokens } from '../budget/measure.js';
 import type { Fetched } from './fetch.js';
 
@@ -114,15 +115,17 @@ function envPiped(line: string): boolean {
 const secretHit = (l: string): boolean => SECRET_RE.some((re) => re.test(l)) || envPiped(l);
 
 /**
- * What the text rules read. Fails closed: every in-scope text file except prose docs. `rel` is relative to the scanned path,
- * so an item that itself lives under docs/ is still scanned.
+ * What the text rules read. Fails closed: every in-scope text file except prose docs, which are a prose name (README, LICENSE, ...)
+ * with no extension or a prose one, or a prose-extension file under docs/. `rel` is relative to the scanned path, so an item
+ * that itself lives under docs/ is still scanned. A script named security-check.js or kept in docs/ is scanned.
  */
-const PROSE = /^(?:readme|license|licence|changelog|contributing|code_of_conduct|security)/i;
+const PROSE_EXT = /\.(?:md|txt|rst|adoc)$/i;
+const PROSE = /^(?:readme|license|licence|changelog|contributing|code_of_conduct|security)(?:(?:[-_.][a-z0-9]+)*\.(?:md|txt|rst|adoc))?$/i; // separators and pieces never overlap: no backtracking blowup
 const ALWAYS = /^(?:skills|agents|commands|output-styles|\.claude[^/]*)$/i;
 function textRules(rel: string, text: string): boolean {
-  const segs = rel.split('/'), dirs = segs.slice(0, -1);
+  const segs = rel.split('/'), dirs = segs.slice(0, -1), name = segs[segs.length - 1]!;
   if (dirs.some((s) => ALWAYS.test(s)) || text.startsWith('#!')) return true;
-  return !PROSE.test(segs[segs.length - 1]!) && !dirs.some((s) => s.toLowerCase() === 'docs');
+  return !PROSE.test(name) && !(PROSE_EXT.test(name) && dirs.some((s) => s.toLowerCase() === 'docs'));
 }
 
 /** Line numbers for offsets, found by looking forward from the last hit; gives up after one miss (escaped text) and uses the last hit's line. */
@@ -147,7 +150,6 @@ function finder(text: string): (needle: string) => number {
     return lineAt(cursor);
   };
 }
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Text rules for one command string from a JSON config. `tag` prefixes the shown text (a package.json script name). */
 function cmdFindings(file: string, line: number, cmd: string, tag = ''): VetFinding[] {
@@ -159,51 +161,63 @@ function cmdFindings(file: string, line: number, cmd: string, tag = ''): VetFind
   return out;
 }
 
-/** hook-shell, hook-http: every hook under a top-level `hooks`, one finding per hook with its event. */
-function hookShell(file: string, text: string, json: Record<string, unknown>): VetFinding[] {
+/** hook-shell, hook-http: every hook under a top-level `hooks`, one finding per hook with its event. `q` gives the text a value has in the file. */
+function hookShell(file: string, text: string, json: Record<string, unknown>, q: (s: string) => string = JSON.stringify): VetFinding[] {
   if (!isObj(json.hooks)) return [];
   const out: VetFinding[] = [];
   const at = finder(text);
   for (const [ev, groups] of Object.entries(json.hooks)) {
-    at(JSON.stringify(ev));
+    at(q(ev));
     const list = Array.isArray(groups) ? groups : [groups];
     const hooks = list.flatMap((g) => (isObj(g) && g.hooks !== undefined ? (Array.isArray(g.hooks) ? g.hooks : [g.hooks]) : [g]));
     for (const h of hooks) {
       if (!isObj(h)) continue;
-      if (h.type === 'http' && typeof h.url === 'string') out.push({ severity: 'high', rule: 'hook-http', file, line: at(JSON.stringify(h.url)), text: show(`${ev}: ${h.url}`) });
+      if (h.type === 'http' && typeof h.url === 'string') out.push({ severity: 'high', rule: 'hook-http', file, line: at(q(h.url)), text: show(`${ev}: ${h.url}`) });
       if (typeof h.command !== 'string' || (h.type !== undefined && h.type !== 'command')) continue;
-      const line = at(JSON.stringify(h.command));
+      const line = at(q(h.command));
       out.push({ severity: 'high', rule: 'hook-shell', file, line, text: show(`${ev}: ${h.command}`) }, ...cmdFindings(file, line, h.command));
     }
   }
   return out;
 }
 
-/** A plugin .mcp.json may list its servers at the top level, with no mcpServers wrapper. */
-const directMcp = (file: string, json: Record<string, unknown>) => /(?:^|\/)\.mcp\.json$/.test(file) && !('mcpServers' in json);
+/** Settings keys whose value Claude Code runs as a shell command (code.claude.com/docs/en/settings-reference). */
+const SHELL_KEYS = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'gcpAuthRefresh', 'otelHeadersHelper', 'processWrapper'];
+const SHELL_OBJ_KEYS = ['statusLine', 'subagentStatusLine', 'fileSuggestion'];
+// ponytail: policyHelper.path, sandbox.* paths and sshHostCommands are not judged; add them if plugins start shipping them.
+function settingsShell(file: string, text: string, json: Record<string, unknown>): VetFinding[] {
+  const at = finder(text);
+  // In file order: the finder only looks forward.
+  return Object.entries(json).flatMap(([k, v]) => {
+    const c = SHELL_KEYS.includes(k) ? v : SHELL_OBJ_KEYS.includes(k) && isObj(v) ? v.command : undefined;
+    if (typeof c !== 'string') return [];
+    const line = at(JSON.stringify(k));
+    return [{ severity: 'high', rule: 'hook-shell', file, line, text: show(`${k}: ${c}`) } as VetFinding, ...cmdFindings(file, line, c, k)];
+  });
+}
 
-/** MCP servers: one medium finding each, and `command + args` is what launches (checked for secrets and unpinned fetches). */
-function mcpRemote(file: string, text: string, json: Record<string, unknown>): VetFinding[] {
-  const servers = isObj(json.mcpServers) ? json.mcpServers : directMcp(file, json) ? json : undefined;
+/** MCP servers: one medium finding each, and `command + args` is what launches (checked for secrets and unpinned fetches). `direct`: the servers sit at the top level, with no mcpServers wrapper. */
+function mcpRemote(file: string, text: string, json: Record<string, unknown>, direct: boolean, q: (s: string) => string = JSON.stringify): VetFinding[] {
+  const servers = isObj(json.mcpServers) ? json.mcpServers : direct ? json : undefined;
   if (!servers) return [];
   const out: VetFinding[] = [];
   const at = finder(text);
   for (const [name, s] of Object.entries(servers)) {
     if (!isObj(s)) continue;
-    const line = at(JSON.stringify(name));
+    const line = at(q(name));
     const cmd = typeof s.command === 'string' ? [s.command, ...(Array.isArray(s.args) ? s.args.map(String) : [])].join(' ') : typeof s.url === 'string' ? s.url : '';
     if (cmd) out.push({ severity: 'medium', rule: 'mcp-server', file, line, text: show(`${name}: ${cmd}`) });
-    if (typeof s.command === 'string') out.push(...cmdFindings(file, at(JSON.stringify(s.command)), cmd));
+    if (typeof s.command === 'string') out.push(...cmdFindings(file, at(q(s.command)), cmd));
   }
   return out;
 }
 
-/** permissions.allow: one medium finding per rule. */
-function allowRules(file: string, text: string, json: Record<string, unknown>): VetFinding[] {
+/** permissions.allow: one medium finding per rule, capped per file like the other medium rules (`add`). */
+function allowRules(file: string, text: string, json: Record<string, unknown>, add: Add): void {
   const allow = isObj(json.permissions) ? json.permissions.allow : undefined;
-  if (!Array.isArray(allow)) return [];
+  if (!Array.isArray(allow)) return;
   const at = finder(text);
-  return allow.filter((r): r is string => typeof r === 'string').map((r) => ({ severity: 'medium', rule: 'permissions', file, line: at(JSON.stringify(r)), text: show(`allow: ${r}`) }));
+  for (const r of allow) if (typeof r === 'string') add('permissions', () => ({ severity: 'medium', rule: 'permissions', file, line: at(JSON.stringify(r)), text: show(`allow: ${r}`) }));
 }
 
 /** package.json lifecycle scripts run on `npm install`; the other scripts only run when asked. */
@@ -278,9 +292,9 @@ const kindName = (k: string): string => (k.startsWith('phrase:') ? `phrase "${es
 const NET_CAP = 20; // per rule per file, so a hostile file cannot flood the report
 
 /** network for a parsed JSON file: string values only (iterative, so deep nesting cannot overflow), manifest metadata skipped. */
-function netJson(file: string, text: string, json: Record<string, unknown>, add: Add, lock: boolean): void {
+function netJson(file: string, text: string, json: Record<string, unknown>, add: Add, lock: boolean, direct: boolean): void {
   const at = finder(text);
-  const direct = directMcp(file, json), meta = META_FILE.test(file);
+  const meta = META_FILE.test(file);
   // [value, inside the top-level hooks]; a hook-http url is reported as hook-http, not again here
   const stack: [unknown, boolean][] = Object.entries(json)
     .filter(([k, v]) => k !== 'mcpServers' && !(meta && META.has(k)) && !(direct && isObj(v) && (typeof v.command === 'string' || typeof v.url === 'string')))
@@ -344,12 +358,40 @@ function licence(f: Fetched, path: string): VetFinding[] {
 const CTX_HOOKS = new Set(['SessionStart', 'UserPromptSubmit']);
 /** Always-loaded tokens of one skill/agent/command file. Only the frontmatter reaches the YAML parser, and only when short: hostile YAML is slow. */
 const FM_MAX = 16384;
-function contextTokens(kind: 'skill' | 'agent', text: string): number {
+interface Front { fm: string; y?: unknown }
+/** A markdown file's frontmatter, and its parsed value (`y`) when it is short enough to parse and valid YAML. */
+function frontmatter(text: string): Front | undefined {
   const open = /^---\r?\n/.exec(text);
   const end = open ? text.indexOf('\n---', open[0].length) : -1; // indexOf is linear
-  if (!open || end < 0) return 0;
+  if (!open || end < 0) return undefined;
   const fm = text.slice(open[0].length, end).replace(/\r$/, '');
+  if (fm.length > FM_MAX) return { fm };
+  try { return { fm, y: parse(fm) as unknown }; } catch { return { fm }; }
+}
+function contextTokens(kind: 'skill' | 'agent', fm: string): number {
   return estimateTokens(fm.length > FM_MAX ? fm : alwaysLoadedText(kind, `---\n${fm}\n---`)); // too long to parse: count it raw, which over-counts safely
+}
+
+/**
+ * Frontmatter that changes what runs: `hooks` in skills, commands and agents, `allowed-tools` in skills and commands, and an agent's
+ * `permissionMode` (code.claude.com/docs/en/hooks "Hooks in skills and agents", /docs/en/skills frontmatter reference, /docs/en/sub-agents).
+ * Frontmatter over FM_MAX, or invalid YAML that names one of them, is a finding, so padding or breaking it hides nothing.
+ */
+const FM_DECL = /^[ \t]*["']?(?:hooks|allowed-tools|permissionMode|mcpServers)["']?[ \t]*:/m; // ^[ \t]* under m: each line start is tried once, so linear
+const SAFE_MODES = new Set(['default', 'manual', 'plan']);
+function fmRules(file: string, text: string, fr: Front): VetFinding[] {
+  // Over FM_MAX nothing is parsed, so any key form ("hooks", ? hooks, a flow mapping) could hide there: always a finding.
+  if (!isObj(fr.y)) return fr.fm.length > FM_MAX || FM_DECL.test(fr.fm) ? [{ severity: 'medium', rule: 'invalid-manifest', file, line: 0, text: 'frontmatter over 16 KB or not valid YAML, so its hooks, allowed-tools and MCP servers were not judged' }] : [];
+  const y = fr.y, at = (k: string) => finder(text)(k); // a fresh finder per key: the keys may come in any order
+  const out = hookShell(file, text, y, (s) => s);
+  // An agent's mcpServers: a list of server names (already configured: no finding) and { name: config } entries, or one mapping.
+  const ms = Array.isArray(y.mcpServers) ? Object.fromEntries(y.mcpServers.filter(isObj).flatMap((o) => Object.entries(o))) : y.mcpServers; // fromEntries makes own keys, so a __proto__ entry is listed, not applied
+  if (isObj(ms)) out.push(...mcpRemote(file, text, { mcpServers: ms }, false, (s) => s));
+  const tools = y['allowed-tools'];
+  const list = Array.isArray(tools) ? tools.map(String) : typeof tools === 'string' && tools.trim() ? [tools.trim()] : [];
+  if (list.length) out.push({ severity: 'medium', rule: 'permissions', file, line: at('allowed-tools'), text: show(`allowed-tools: ${list.join(', ')}`) });
+  if (typeof y.permissionMode === 'string' && !SAFE_MODES.has(y.permissionMode)) out.push({ severity: 'medium', rule: 'permissions', file, line: at('permissionMode'), text: show(`permissionMode: ${y.permissionMode}`) });
+  return out;
 }
 
 /** The plugin layout (also under .claude/), or the target's own kind when the target is a skills/agents/commands dir or a skill folder. */
@@ -365,56 +407,102 @@ const ctxKind = (inner: string, path: string): 'skill' | 'agent' | undefined => 
 };
 const MANIFEST = /(?:^|\/)(?:hooks\.json|plugin\.json|\.mcp\.json|settings(?:\.local)?\.json)$/;
 
+// Asset names sort after other names when unsafe-archive is capped, so 20 images cannot push a binary script out of view.
+const ASSET = /\.(?:png|jpe?g|gif|webp|ico|bmp|svg|woff2?|ttf|otf|eot|pdf|mp[34]|wav|mov)$/i;
+/** unsafe-archive: every in-scope entry that was skipped or not read, NET_CAP per kind, then one summary line per kind. */
+function unsafeArchive(entries: { path: string; why: string }[]): VetFinding[] {
+  const kinds = new Map<string, { path: string; why: string }[]>();
+  for (const e of entries) {
+    const k = e.why.split(/ (?:with|entry) | \(/)[0]!; // "name collides with x" and "could not write (EACCES)" are one kind each
+    const l = kinds.get(k);
+    if (l) l.push(e); else kinds.set(k, [e]);
+  }
+  const out: VetFinding[] = [];
+  for (const [k, l] of kinds) {
+    l.sort((a, b) => Number(ASSET.test(a.path)) - Number(ASSET.test(b.path)) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    for (const e of l.slice(0, NET_CAP)) out.push({ severity: 'medium', rule: 'unsafe-archive', file: e.path, line: 0, text: show(e.why) });
+    if (l.length > NET_CAP) out.push({ severity: 'medium', rule: 'unsafe-archive', file: '', line: 0, text: show(`${l.length - NET_CAP} more: ${k}`) });
+  }
+  return out;
+}
+export const NOT_READ = { binary: 'binary, not read', large: 'over 1 MB, not read' } as const;
+
 export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'repo' | 'sha' | 'path' | 'dir'> {
-  const { files, skipped } = scoped(f, path);
+  const { files, skipped, large } = scoped(f, path);
+  const read = (rel: string) => readFileSync(join(f.dir, ...(f.map[rel] ?? rel).split('/')));
   const findings: VetFinding[] = licence(f, path);
+  const archive = [...skipped, ...large.map((p) => ({ path: p, why: NOT_READ.large }))];
   let tokens = 0;
   const unmeasured = new Set<string>();
   const rootPrompt = path.split('/').some((d) => PROMPT_DIR.test(d)) || f.files.includes(`${path ? `${path}/` : ''}SKILL.md`);
+  // Files a plugin.json names by path ("mcpServers" or "hooks": "./x.json" or a list): JSON whatever their extension; MCP ones are
+  // read like .mcp.json, in the direct form too.
+  const mcpRefs = new Set<string>(), hookRefs = new Set<string>();
+  for (const rel of files) {
+    const m = /^(?:(.*)\/)?\.claude-plugin\/plugin\.json$/.exec(rel);
+    if (!m) continue;
+    let j: unknown;
+    try { j = JSON.parse(read(rel).toString('utf8').replace(/^﻿/, '')); } catch { continue; } // reported in the loop below
+    for (const [key, set] of [['mcpServers', mcpRefs], ['hooks', hookRefs]] as const) {
+      const v = isObj(j) ? j[key] : undefined;
+      for (const p of typeof v === 'string' ? [v] : Array.isArray(v) ? v : []) if (typeof p === 'string') set.add(posix.join(m[1] ?? '', p.replace(/^\$\{CLAUDE_PLUGIN_ROOT\}\//, '')));
+    }
+  }
   for (const rel of files) {
     // Medium line findings: at most NET_CAP per rule per file are built; the rest are only counted, for the summary.
     const counts = new Map<string, number>();
     const add: Add = (rule, mk, key = rule) => { const c = (counts.get(key) ?? 0) + 1; counts.set(key, c); if (c <= NET_CAP) findings.push(mk()); };
     let text: string, size = 0;
     try {
-      const buf = readFileSync(join(f.dir, ...(f.map[rel] ?? rel).split('/')));
-      if (buf.subarray(0, 8192).includes(0)) continue;
+      const buf = read(rel);
+      if (buf.subarray(0, 8192).includes(0)) { archive.push({ path: rel, why: NOT_READ.binary }); continue; }
       text = buf.toString('utf8');
       size = buf.length;
-    } catch { continue; }
+    } catch { archive.push({ path: rel, why: 'could not read' }); continue; }
     const bare = text.replace(/^﻿/, '');
-    let textScan = true, obj: Record<string, unknown> | undefined;
-    if (/\.json$/i.test(rel)) {
+    const mcpFile = /(?:^|\/)\.mcp\.json$/.test(rel) || mcpRefs.has(rel);
+    let textScan = true, obj: Record<string, unknown> | undefined, direct = false;
+    const ref = mcpRefs.has(rel) || hookRefs.has(rel);
+    if (/\.json$/i.test(rel) || ref) {
       let json: unknown;
       try { json = JSON.parse(bare); } catch { /* reported below */ }
       if (isObj(json)) {
+        direct = mcpFile && !('mcpServers' in json);
         // Parsed: the structured rules judge hook commands, MCP servers and lifecycle scripts; the rest is data.
-        findings.push(...hookShell(rel, bare, json), ...mcpRemote(rel, bare, json), ...allowRules(rel, bare, json), ...pkgScripts(rel, bare, json));
+        // a loop, not push(...x): a file with 100k hooks or allow rules would overflow the call stack
+        for (const x of [hookShell(rel, bare, json), settingsShell(rel, bare, json), mcpRemote(rel, bare, json, direct), pkgScripts(rel, bare, json)].flat()) findings.push(x);
+        allowRules(rel, bare, json, add);
         obj = json;
         if (isObj(json.hooks)) for (const [ev, g] of Object.entries(json.hooks)) if (CTX_HOOKS.has(ev) && JSON.stringify(g).includes('"command"')) unmeasured.add(`${rel}: ${ev} hook`);
         textScan = false;
-      } else if (MANIFEST.test(rel)) {
+      } else if (MANIFEST.test(rel) || ref) {
         findings.push({ severity: 'medium', rule: 'invalid-manifest', file: rel, line: 0, text: 'not valid JSON, so its hooks and servers could not be read' });
       }
     }
     const inner = path && rel.startsWith(`${path}/`) ? rel.slice(path.length + 1) : rel;
     const ck = ctxKind(inner, path);
-    if (ck) tokens += contextTokens(ck, bare);
+    // Frontmatter findings own their lines: the line rules below do not report the same rule on the same line again.
+    const fmSeen = new Set<string>();
+    if (/\.md$/i.test(inner) && (ck || isPrompt(inner, rootPrompt))) {
+      const fr = frontmatter(bare);
+      if (fr && ck) tokens += contextTokens(ck, fr.fm);
+      if (fr) for (const x of fmRules(rel, bare, fr)) { findings.push(x); fmSeen.add(`${x.rule}:${x.line}`); }
+    }
     if (!textRules(inner, bare)) continue;
     const lock = isLock(rel, bare, obj);
-    if (obj) netJson(rel, bare, obj, add, lock);
+    if (obj) netJson(rel, bare, obj, add, lock, direct);
     const check = lineChecker(), med = lineRules(inner, !textScan, rootPrompt, lock);
     const minified = size > 5120 && /\.js$/i.test(rel) && inner.split('/').slice(0, -1).some((d) => MIN_DIR.test(d));
     let mini = false;
     for (const [l, n] of joinContinuations(bare)) {
       if (!l) { check(l); continue; } // blank: only ends a continued pipe
-      if (textScan && l.length >= 4 && secretHit(l)) // 4 = the shortest secret pattern
+      if (textScan && l.length >= 4 && secretHit(l) && !fmSeen.has(`secrets:${n}`)) // 4 = the shortest secret pattern
         findings.push({ severity: 'high', rule: 'secrets', file: rel, line: n, text: show(l.trim()) });
-      if (textScan && check(l)) findings.push({ severity: 'high', rule: 'unpinned-remote', file: rel, line: n, text: show(l.trim()) });
+      if (textScan && check(l) && !fmSeen.has(`unpinned-remote:${n}`)) findings.push({ severity: 'high', rule: 'unpinned-remote', file: rel, line: n, text: show(l.trim()) });
       if (l.length < 5) continue; // the shortest medium pattern is `eval(`
       for (const [rule, at, key, pre] of med) {
         const i = at(l);
-        if (i >= 0) add(rule, () => ({ severity: LOW_RULES.has(rule) ? 'low' : 'medium', rule, file: rel, line: n, text: show(pre ? pre + l.trim() : l.slice(Math.max(0, i - 30)).trim()) }), key);
+        if (i >= 0 && !fmSeen.has(`${rule}:${n}`)) add(rule, () => ({ severity: LOW_RULES.has(rule) ? 'low' : 'medium', rule, file: rel, line: n, text: show(pre ? pre + l.trim() : l.slice(Math.max(0, i - 30)).trim()) }), key);
       }
       if (minified && !mini && l.length > 1000) { mini = true; findings.push({ severity: 'medium', rule: 'obfuscated', file: rel, line: n, text: 'minified JS' }); }
     }
@@ -425,7 +513,7 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
       findings.push({ severity: LOW_RULES.has(rule) ? 'low' : 'medium', rule, file: rel, line: 0, text: `${c - NET_CAP} more ${key === 'network' ? 'network URLs' : `${rule} findings${kind ? ` (${kindName(kind)})` : ''}`} in this file` });
     }
   }
-  for (const s of skipped) findings.push({ severity: 'medium', rule: 'unsafe-archive', file: s.path, line: 0, text: show(s.why) });
+  findings.push(...unsafeArchive(archive));
   const seen = new Set<string>();
   const uniq = findings.filter((x) => { const k = `${x.rule}\0${x.file}\0${x.line}\0${x.text}`; return !seen.has(k) && !!seen.add(k); });
   const all = uniq.map((x) => ({ ...x, file: esc(x.file) }));

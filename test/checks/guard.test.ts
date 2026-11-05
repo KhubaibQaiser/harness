@@ -625,6 +625,20 @@ test('vet is safe for the agent, like scan and catalog; a change word elsewhere 
     expect(decideCommand(c, ctx()), c).toEqual({ kind: 'allow' });
   for (const c of ['harness vet o/r && harness init --yes', 'harness vet --clean; harness add x', 'harness vet --install s.json && node dist/cli.mjs sync']) expect(kind(c), c).toBe('ask');
 });
+test('final review M2: the word after vet is its target, so a repo named like a change word does not ask', () => {
+  for (const c of ['node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" vet o/sync --json --keep > /tmp/x/scan.json', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" vet https://github.com/o/pr --json --keep > /tmp/x/scan.json', 'harness vet add@m --json', 'harness vet o/r --json --keep > /tmp/x/scan.json'])
+    expect(decideCommand(c, ctx()), c).toEqual({ kind: 'allow' });
+  // only the one target word, and only right after the harness command: anything else still asks
+  for (const c of ['harness vet o/r;harness sync', 'v(){ harness "$@"; }; v vet x; v sync', 'f(){ harness "$@"; }; vet sync', 'harness vet o/r; harness sync',
+    // N1: with a function defined anywhere in the command, the target is not masked
+    'function h { command harness "$2"; }; harness vet push', 'h () { command harness "$2"; }; harness vet push']) expect(kind(c), c).toBe('ask');
+});
+test('re-review N1: a function named harness, in the keyword form too, is a harness that runs something else', () => {
+  // the same verdict as the harness() { … } form the parser already denies
+  for (const c of ['function harness { command harness "$2"; }; harness vet push', 'harness() { command harness "$2"; }; harness vet push', 'function harness() { command harness "$2"; }; harness vet push'])
+    expect(kind(c), c).not.toBe('allow');
+  expect(kind('function harness { command harness "$2"; }; harness vet push')).toBe(kind('harness() { command harness "$2"; }; harness vet push'));
+});
 test('backstop: a commit message that mentions harness and a change word asks (accepted cost)', () => {
   expect(kind('git commit -m "fix harness init docs"')).toBe('ask');
   expect(kind('git commit -m "fix docs"')).toBe('allow');

@@ -128,8 +128,26 @@ describe('harness vet --json', () => {
   test('--keep adds dir and map and leaves the folder', () => {
     const j = JSON.parse(go(['o/r', '--json', '--keep']).out.join('\n'));
     expect(existsSync(j.dir)).toBe(true);
-    expect(j.map['hooks/hooks.json']).toBe('hooks/hooks.json');
+    expect(j.map).toEqual({}); // nothing renamed, so the reviewer reads <dir>/<file>
     expect(vetDirs()).toHaveLength(1);
+  });
+  test('final review I5/M5: the --keep map holds only in-scope entries whose unpacked path differs, keyed like the findings', () => {
+    const body = { 'plugins/p/CLAUDE.md': 'x', 'plugins/p/.claude/settings.json': '{}', 'plugins/p/a\u200bb.sh': 'x', 'plugins/p/plain.sh': 'x', 'other/CLAUDE.md': 'x' };
+    const fx = fake({ over: (_c, a) => (a[1] === 'repos/o/r/commits/main' ? ok(SHA) : undefined) });
+    const j = JSON.parse(go(['https://github.com/o/r/tree/main/plugins/p', '--json', '--keep'], { exec: fx.exec, bytes: serve(body) }).out.join('\n'));
+    expect(j.map).toEqual({ 'plugins/p/CLAUDE.md': 'plugins/p/CLAUDE.md.vetted', 'plugins/p/.claude/settings.json': 'plugins/p/.claude.vetted/settings.json', 'plugins/p/a\\u200bb.sh': 'plugins/p/a\u200bb.sh' });
+  });
+  test('final review C1: a script padded past 1 MB and one with a NUL byte are findings in the JSON, the summary and the report', () => {
+    const big = '#!/bin/sh\n' + '#'.repeat(1024 * 1024 + 10) + '\n';
+    const body = { 'scripts/setup.sh': big, 'hooks/x.js': '// \u0000\nrun()\n', LICENSE: 'MIT License\n\nPermission is hereby granted, free of charge, to any person\n' };
+    const j = JSON.parse(go(['o/r', '--json'], { bytes: serve(body) }).out.join('\n'));
+    expect(j.findings).toEqual([
+      { severity: 'medium', rule: 'unsafe-archive', file: 'hooks/x.js', line: 0, text: 'binary, not read' },
+      { severity: 'medium', rule: 'unsafe-archive', file: 'scripts/setup.sh', line: 0, text: 'over 1 MB, not read' },
+    ]);
+    const r = go(['o/r'], { bytes: serve(body) });
+    expect(r.out).toContain('Findings: 0 high, 2 medium, 0 low; 2 files not read (binary or over 1 MB), listed in the report');
+    expect(r.read()).toContain('- unsafe-archive `scripts/setup.sh` over 1 MB, not read');
   });
 });
 
@@ -328,7 +346,10 @@ describe('harness vet --finish, --install, --clean', () => {
     symlinkSync(root, link, 'junction');
     const bad = [{ sha: '../../x' }, { repo: 'a/../b' }, { path: '../up' }, { path: '/abs' }, { dir: root }, { dir: link }, { dir: join(TMP, 'other') }, { findings: 'x' }, { target: 'not a target' }, { findings: [{ severity: 'high', rule: '\u001b[2J', file: 'a', line: 1, text: 't' }] }, { context: null },
       { context: { tokens: '\u001b[2J', unmeasured: [] } }, { context: { tokens: 1, unmeasured: [1] } }, { findings: [{ severity: 'high', rule: 'secrets', file: 'a', line: '1\u001b', text: 't' }] },
-      { findings: [{ severity: 'critical', rule: 'secrets', file: 'a', line: 1, text: 't' }] }, { dir: join(root, basename(scan.dir as string)) }, { dir: TMP }, { dir: join(TMP, 'harness-vet-other-abc1234-x') }];
+      { findings: [{ severity: 'critical', rule: 'secrets', file: 'a', line: 1, text: 't' }] }, { dir: join(root, basename(scan.dir as string)) }, { dir: TMP }, { dir: join(TMP, 'harness-vet-other-abc1234-x') },
+      // findings reach the terminal as they are, so a raw control, C1 or bidi character in one is a tampered scan
+      { findings: [{ severity: 'high', rule: 'secrets', file: 'a', line: 1, text: 'x\u001b[2J' }] }, { findings: [{ severity: 'high', rule: 'secrets', file: 'a\u202eb', line: 1, text: 't' }] },
+      { findings: [{ severity: 'low', rule: 'license', file: '', line: 0, text: 'x\u009b2J' }] }];
     mkdirSync(join(TMP, 'harness-vet-other-abc1234-x'));
     for (const over of bad) {
       writeFileSync(join(d, 'scan.json'), JSON.stringify({ ...scan, ...over }));
@@ -383,6 +404,11 @@ describe('harness vet --finish, --install, --clean', () => {
     } finally {
       chmodSync(join(blocked, 'sub'), 0o755);
     }
+  });
+  test('final review M4: --clean does not count a refused entry as removed', () => {
+    symlinkSync(makeRepo({}, { git: false }), join(TMP, 'harness-vet-link-2'), 'junction');
+    mkdirSync(join(TMP, 'harness-vet-real-1'));
+    expect(go(['--clean']).out).toEqual(['Removed 1 unpacked vet folder(s).']);
   });
   test('--clean removes the unpacked folders', () => {
     mkdirSync(join(TMP, 'harness-vet-x-abc1234-1'));

@@ -243,8 +243,9 @@ const PERMS = /permissionDecision["']?\s*[:=]\s*["']?allow|--dangerously-skip-pe
 const INJECT = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF\u{E0000}-\u{E007F}]|<!--|ignore\s+previous\s+instructions|do\s+not\s+tell\s+the\s+user|system\s+prompt/giu;
 const OBFUSCATED = [(l: string) => longRun(l, /[A-Za-z0-9+/]+/g, 200), (l: string) => longRun(l, /\w+/g, 200, true), idx(/\beval\s*\(|\bnew\s+Function\s*\(/)];
 const obfuscated = (l: string): number => { for (const f of OBFUSCATED) { const i = f(l); if (i >= 0) return i; } return -1; };
-const TELEMETRY = /POSTHOG|TELEMETRY|@segment\/|mixpanel|@sentry\/|opentelemetry/i;
-const OPT_OUT = /DO_NOT_TRACK|TELEMETRY_DISABLED|OPT_?OUT|--no-telemetry/i;
+// Letter lookarounds, not \b: an underscore is an edge (MY_TELEMETRY_URL, OPT_OUT) but a letter is not (unmixpanelled, opt_output).
+const TELEMETRY = /(?<![a-z])(?:POSTHOG|TELEMETRY|mixpanel|opentelemetry)(?![a-z])|@segment\/|@sentry\//i;
+const OPT_OUT = /(?<![a-z])(?:DO_NOT_TRACK|TELEMETRY_DISABLED|OPT_?OUT)(?![a-z])|--no-telemetry/i;
 // [rule, first hit index, key for the cap, text prefix]
 type LineRule = [VetFinding['rule'], (l: string) => number, string?, string?];
 const PROMPT_DIR = /^(?:skills|agents|commands|output-styles)$/i;
@@ -311,7 +312,8 @@ const isPrompt = (inner: string, rootPrompt: boolean) => rootPrompt || inner.spl
 
 /** Medium rules that read one logical line: at most one finding per rule per line, the text starts a little before the hit. */
 function lineRules(inner: string, json: boolean, rootPrompt: boolean, lock: boolean): LineRule[] {
-  const r: LineRule[] = [['obfuscated', obfuscated], ['telemetry', idx(TELEMETRY)], ['telemetry', idx(OPT_OUT), 'telemetry/opt-out', 'opt-out: ']];
+  const r: LineRule[] = [['obfuscated', obfuscated]];
+  if (!lock) r.push(['telemetry', idx(TELEMETRY)], ['telemetry', idx(OPT_OUT), undefined, 'opt-out: ']); // lockfiles list every transitive dependency
   if (!json) r.push(['permissions', idx(PERMS)]); // parsed JSON: judged on the unescaped command strings (cmdFindings)
   if (!json && (!/\.md$/i.test(inner) || isPrompt(inner, rootPrompt))) r.push(['network', lock ? lockNet : idx(NETWORK)]);
   return r;
@@ -325,7 +327,7 @@ const LICENCES = [
   /Permission is hereby granted, free of charge/i, /Apache License[\s\S]*Version 2\.0/i, /Redistribution and use in source and binary forms/i,
   /GNU (?:LESSER |AFFERO )?GENERAL PUBLIC LICENSE/i, /Mozilla Public License/i, /Permission to use, copy, modify, and\/or distribute/i, /This is free and unencumbered software/i,
 ];
-const LICENCE_NAME = /^(?:licen[cs]e(?:\..*)?|copying)$/i;
+const LICENCE_NAME = /^(?:licen[cs]e(?:[.-].*)?|unlicense|copying(?:\..*)?)$/i;
 /** Looked for at the target path and at the repo root; either one recognised means no finding. */
 function licence(f: Fetched, path: string): VetFinding[] {
   const found = [...new Set([path, ''])].flatMap((d) => f.files.filter((p) => (d ? p.startsWith(`${d}/`) : true) && !p.slice(d ? d.length + 1 : 0).includes('/') && LICENCE_NAME.test(p.slice(d ? d.length + 1 : 0))));
@@ -339,12 +341,16 @@ function licence(f: Fetched, path: string): VetFinding[] {
 }
 
 const CTX_HOOKS = new Set(['SessionStart', 'UserPromptSubmit']);
-const ctxKind = (inner: string): 'skill' | 'agent' | undefined => {
-  const segs = inner.split('/');
+/** The plugin layout (also under .claude/), or the target's own kind when the target is a skills/agents/commands dir or a skill folder. */
+const ctxKind = (inner: string, path: string): 'skill' | 'agent' | undefined => {
   if (!/\.md$/i.test(inner)) return undefined;
-  if (segs[segs.length - 1] === 'SKILL.md') return 'skill';
-  const dirs = segs.slice(0, -1).map((d) => d.toLowerCase());
-  return dirs.includes('agents') ? 'agent' : dirs.includes('commands') ? 'skill' : undefined;
+  const segs = inner.split('/'), name = segs[segs.length - 1]!;
+  const rest = segs[0] === '.claude' ? segs.slice(1) : segs;
+  const own = path.split('/').pop();
+  if (name === 'SKILL.md' && (segs.length === 1 || (rest.length === 3 && rest[0] === 'skills') || (own === 'skills' && segs.length === 2))) return 'skill';
+  if (rest.length === 2 && rest[0] === 'agents' || own === 'agents' && segs.length === 1) return 'agent';
+  if (rest.length === 2 && rest[0] === 'commands' || own === 'commands' && segs.length === 1) return 'skill';
+  return undefined;
 };
 const MANIFEST = /(?:^|\/)(?:hooks\.json|plugin\.json|\.mcp\.json|settings(?:\.local)?\.json)$/;
 
@@ -381,7 +387,7 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
       }
     }
     const inner = path && rel.startsWith(`${path}/`) ? rel.slice(path.length + 1) : rel;
-    const ck = ctxKind(inner);
+    const ck = ctxKind(inner, path);
     if (ck) tokens += estimateTokens(alwaysLoadedText(ck, bare));
     if (!textRules(inner, bare)) continue;
     const lock = isLock(rel, bare, obj);

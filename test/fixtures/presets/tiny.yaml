@@ -1,0 +1,16 @@
+id: tiny
+title: "Tiny"
+description: "Smallest valid preset."
+core: core-rules
+preselect:
+  - ponytail
+skills:
+  - alpha
+  - beta
+settings:
+  attribution: off
+  telemetry_off: []
+git:
+  branch_prefixes: [feature/, fix/]
+  no_ai_trailer: true
+  pr_size_warning: true

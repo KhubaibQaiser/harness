@@ -1,0 +1,21 @@
+id: pr-ship
+kind: own-skill
+title: PR ship
+source:
+  type: own
+  files:
+    - from: skills/pr-ship/SKILL.md
+      to: .claude/skills/pr-ship/SKILL.md
+license: Apache-2.0
+min_claude_code: 2.1.314
+applies_when:
+  always: true
+cost:
+  context: low
+  setup: none
+stance: default
+why: >-
+  Splits a change that is over the PR-size limit into stacked PRs of about target_lines each: refactors first, then vertical slices with their tests, each opened with an explicit base.
+evidence:
+  - docs/specs/2026-11-03-pr-size-design.md#9-pr-ship-skill
+  - docs/research/2026-11-02-pr-size.md

@@ -18,11 +18,12 @@ import { STRUCTURAL, removeBlocks, mergeAgents, mergeClaudeMd, mergeEslintFlatIg
 import { JEST_REPORTER, resultsRename, testConfigChange } from './test-config.js';
 
 /** The own items a config without `items` (every install before the recommend flow) always has. */
-export const LEGACY_OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'agents-md'];
+export const LEGACY_OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'pr-ship', 'agents-md'];
 // The own files of the legacy items, for a plan without a catalog.
 const LEGACY_FILES = [
   { id: 'staff-reviewer', from: 'agents/staff-reviewer.md', to: '.claude/agents/staff-reviewer.md' },
   { id: 'review-rubric', from: 'skills/review-rubric/SKILL.md', to: '.claude/skills/review-rubric/SKILL.md' },
+  { id: 'pr-ship', from: 'skills/pr-ship/SKILL.md', to: '.claude/skills/pr-ship/SKILL.md' },
 ];
 
 /** The ids with `selected: true`; the legacy own items when the config has no items. */

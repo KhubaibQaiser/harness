@@ -59,6 +59,29 @@ tdd:
 multi_file_gate:
   generated: []
 
+# Pull request size (needs checks.prSize). Asks above max_lines or max_files; the pr-ship skill aims for target_lines.
+pr_size:
+  target_lines: 200
+  max_lines: 400
+  max_files: 20
+  exclude:
+    - "**/pnpm-lock.yaml"
+    - "**/package-lock.json"
+    - "**/npm-shrinkwrap.json"
+    - "**/yarn.lock"
+    - "**/bun.lock"
+    - "**/bun.lockb"
+    - "**/Cargo.lock"
+    - "**/poetry.lock"
+    - "**/uv.lock"
+    - "**/Pipfile.lock"
+    - "**/Gemfile.lock"
+    - "**/composer.lock"
+    - "**/go.sum"
+    - "**/.!(npm|harness)ignore"
+    - "**/__snapshots__/**"
+    - "**/*.snap"
+
 # Behaviour when no human is watching.
 unattended:
   multi_file_gate: block

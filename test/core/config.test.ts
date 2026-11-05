@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { configReference, esc, loadConfig } from '../../src/core/config.js';
+import { configReference, defaults, esc, loadConfig, PR_SIZE_EXCLUDE } from '../../src/core/config.js';
 
 const emptyDir = () => mkdtempSync(join(tmpdir(), 'h-cfg-'));
 function dirWith(rel: string, body: string) {
@@ -199,4 +199,39 @@ test('RAW_CONTROL and CONTROL share the hidden-character set', async () => {
   for (const c of ['​', '‏', '⁠', '﻿', '‮', '\u009b']) expect([RAW_CONTROL.test(c), CONTROL.test(c)], c.charCodeAt(0).toString(16)).toEqual([true, true]);
   for (const c of ['\u00ad', '\u061c', '\u180e', '\u{e0041}']) expect([RAW_CONTROL.test(c), CONTROL.test(c)], c.codePointAt(0)!.toString(16)).toEqual([true, true]);
   expect([RAW_CONTROL.test('a\tb\r\n'), CONTROL.test('\t')]).toEqual([false, true]);
+});
+
+const withPrSize = (pr_size: string) => dirWith('.harness/config.yaml', `pr_size:\n${pr_size}\n`);
+
+test('pr_size defaults, and no section loads clean', () => {
+  expect(defaults().pr_size).toEqual({ target_lines: 200, max_lines: 400, max_files: 20, exclude: PR_SIZE_EXCLUDE });
+  expect(PR_SIZE_EXCLUDE).toHaveLength(16);
+  const r = loadConfig(dirWith('.harness/config.yaml', 'version: 1\n'));
+  expect(r.warnings).toEqual([]);
+  expect(r.config.pr_size).toEqual(defaults().pr_size);
+});
+
+test.each([
+  ['  max_lines: 0', '"pr_size.max_lines" must be an integer from 1 to 100000'],
+  ['  max_files: 2.5', '"pr_size.max_files" must be an integer from 1 to 10000'],
+  ["  exclude: 'x'", '"pr_size.exclude" must be a list of strings'],
+  ['  extra: 1', 'unknown key "pr_size.extra"'],
+])('pr_size invalid value %s', (yaml, msg) => {
+  expect(loadConfig(withPrSize(yaml)).errors).toEqual([msg]);
+});
+
+test('pr_size target above max is an error and both reset', () => {
+  const r = loadConfig(withPrSize('  target_lines: 500\n  max_lines: 400'));
+  expect(r.errors).toEqual(['"pr_size.target_lines" must not be greater than pr_size.max_lines']);
+  expect(r.warnings).toEqual(['config: "pr_size.target_lines" is greater than pr_size.max_lines; using defaults']);
+  expect([r.config.pr_size.target_lines, r.config.pr_size.max_lines]).toEqual([200, 400]);
+  expect(loadConfig(withPrSize('  target_lines: 400\n  max_lines: 400')).errors).toEqual([]);
+});
+
+test('pr_size.exclude replaces the whole list', () => {
+  expect(loadConfig(withPrSize("  exclude: ['**/x']")).config.pr_size.exclude).toEqual(['**/x']);
+});
+
+test('pr_size: only max_lines below the default target names both keys and the fix', () => {
+  expect(loadConfig(withPrSize('  max_lines: 100')).errors).toEqual(['"pr_size.target_lines" is 200, the default, above pr_size.max_lines (100); set target_lines too']);
 });

@@ -14,8 +14,14 @@ export type { PresetGit } from '../core/branch-prefix.js';
 export interface Preset { id: string; title: string; description: string; core: string; preselect: string[]; skills: string[]; settings: { attribution?: 'off'; telemetry_off: string[] }; git: PresetGit }
 export interface LoadedPreset { preset: Preset; base: string; yamlPath: string; items: CatalogItem[] }
 
-/** Catalog id -> the environment variable that turns its telemetry off. Filled by the content task. */
-export const TELEMETRY_ENV: Record<string, { name: string; value: string }> = {};
+/** Catalog id -> the environment variable that turns its telemetry off. */
+export const TELEMETRY_ENV: Record<string, { name: string; value: string }> = {
+  // catalog/items/impeccable.yaml evidence: README Telemetry section, "DO_NOT_TRACK=1".
+  impeccable: { name: 'DO_NOT_TRACK', value: '1' },
+  // obra/superpowers@2ce8aa15 README.md line 400 says "any true value"; skills/brainstorming/scripts/server.cjs
+  // lines 107-112 and 227-232 treat anything but empty, 0, false, no or off as true. 'true' is what its tests use (owner ruling).
+  superpowers: { name: 'SUPERPOWERS_DISABLE_TELEMETRY', value: 'true' },
+};
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const strs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');

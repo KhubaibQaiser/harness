@@ -1,7 +1,7 @@
-import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { MAX_LINE, type TRec, parseLine, parseRecords, streamTranscript } from '../../src/report/transcript.js';
 import { assistant, attachment, prompt, system, toolResult, writeSession } from '../fixtures/transcripts/make.js';
 
@@ -12,12 +12,23 @@ const read = async (file: string, opts?: { sinceMs?: number; side?: boolean }) =
   const stats = await streamTranscript(file, (r) => recs.push(r), opts);
   return { recs, stats };
 };
-const tmp = () => mkdtempSync(join(tmpdir(), 'tr-'));
+const dirs: string[] = [];
+const tmp = () => {
+  const d = mkdtempSync(join(tmpdir(), 'tr-'));
+  dirs.push(d);
+  return d;
+};
+afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+const lines = (recs: object[]) => {
+  const f = join(tmp(), 'x.jsonl');
+  writeFileSync(f, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  return f;
+};
 
 describe('parseLine maps spec §3.2 rows', () => {
   it('assistant: key, model, usage, texts and tools', () => {
     const r = p(assistant({ id: 'm1', requestId: 'r1', model: 'claude-x', isSidechain: true, content: [{ type: 'text', text: 'hi' }, { type: 'thinking', thinking: 'no' }] }));
-    expect(r).toEqual({ k: 'assistant', ts: Date.parse('2026-11-01T00:00:00.000Z'), side: true, version: '2.1.317', cwd: '/repo', key: 'm1|r1', model: 'claude-x', usage: { input: 10, output: 5, cacheWrite: 2, cacheRead: 100 }, texts: ['hi'], tools: [] });
+    expect(r).toEqual({ k: 'assistant', ts: Date.parse('2026-11-01T00:00:00.000Z'), side: true, version: '2.1.317', cwd: '/repo', key: JSON.stringify(['m1', 'r1']), model: 'claude-x', usage: { input: 10, output: 5, cacheWrite: 2, cacheRead: 100 }, texts: ['hi'], tools: [] });
     const { requestId: _, ...noReq } = assistant();
     expect(p(noReq)).toMatchObject({ key: null });
   });
@@ -30,6 +41,22 @@ describe('parseLine maps spec §3.2 rows', () => {
     const options = [{ label: 'Use X (Recommended)' }, { label: 'Use Y' }, { label: 'Use Z' }];
     expect(p(tool('AskUserQuestion', { questions: [{ question: 'q', options }] }))).toMatchObject({ tools: [{ ask: { options: 3, recommended: true } }] });
     expect(p(tool('AskUserQuestion', { questions: [{ options: options.slice(1) }] }))).toMatchObject({ tools: [{ ask: { options: 2, recommended: false } }] });
+    // Spec §4.2: /recommend/i on a label or a description; options per question (the largest), never summed.
+    expect(p(tool('AskUserQuestion', { questions: [{ options: [{ label: 'A', description: 'I recommend this' }, { label: 'B' }] }] }))).toMatchObject({ tools: [{ ask: { options: 2, recommended: true } }] });
+    expect(p(tool('AskUserQuestion', { questions: [{ options: [{ label: 'A (recommended)' }] }] }))).toMatchObject({ tools: [{ ask: { recommended: true } }] });
+    expect(p(tool('AskUserQuestion', { questions: [{ options: [{ label: 'A' }] }, { options: [{ label: 'B' }] }] }))).toMatchObject({ tools: [{ ask: { options: 1 } }] });
+  });
+  it('a tool_use with no usable id or name is kept and marked malformed, not dropped', () => {
+    const r = p(assistant({ content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git push' } }, { type: 'tool_use', id: 't2', input: {} }, { type: 'tool_use', id: 't3', name: 'Read', input: {} }] }));
+    expect(r).toMatchObject({ tools: [{ id: '', name: 'Bash', command: 'git push', malformed: true }, { id: 't2', name: '', malformed: true }, { id: 't3', name: 'Read' }] });
+    expect(r.k === 'assistant' && r.tools[2]!.malformed).toBeUndefined();
+  });
+  it('the de-dup key cannot collide across the separator', () => {
+    expect(p(assistant({ id: 'a|b', requestId: 'c' }))).not.toMatchObject({ key: (p(assistant({ id: 'a', requestId: 'b|c' })) as { key: string }).key });
+  });
+  it('isMeta user records are other, not prompts', () => {
+    expect(p(prompt('injected skill body', { isMeta: true }))).toMatchObject({ k: 'other', type: 'meta' });
+    expect(p(prompt('real', { isMeta: false }))).toMatchObject({ k: 'prompt' });
   });
   it('user: string content is a prompt, tool_result blocks are a result', () => {
     expect(p(prompt('do it'))).toMatchObject({ k: 'prompt', text: 'do it' });
@@ -69,12 +96,13 @@ describe('parseLine maps spec §3.2 rows', () => {
   it('unknown, not pass: wrong types never throw and never invent values', () => {
     expect(p(assistant({ usage: { input_tokens: 3, output_tokens: 4 } }))).toMatchObject({ usage: { input: 3, output: 4, cacheWrite: 0, cacheRead: 0 } });
     expect(p(assistant({ usage: { input_tokens: 3 } }))).toMatchObject({ usage: undefined });
+    expect(p(assistant({ usage: { input_tokens: 3, output_tokens: 4, cache_creation_input_tokens: null, cache_read_input_tokens: null } }))).toMatchObject({ usage: { cacheWrite: 0, cacheRead: 0 } });
     expect(p(assistant({ usage: { input_tokens: -1, output_tokens: 4 } }))).toMatchObject({ usage: undefined });
     expect(p(assistant({ usage: { input_tokens: 3, output_tokens: 4, cache_read_input_tokens: 'x' } }))).toMatchObject({ usage: undefined });
     expect(p(assistant({ usage: { input_tokens: '10', output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }))).toMatchObject({ k: 'assistant', usage: undefined });
     const noContent = p({ type: 'assistant', message: { id: 'm', model: 3 } });
     expect(noContent).toMatchObject({ k: 'assistant', texts: [], tools: [], model: undefined, key: null });
-    expect(p({ type: 'assistant', message: { content: [null, 7, { type: 'tool_use', name: 5 }] } })).toMatchObject({ texts: [], tools: [] });
+    expect(p({ type: 'assistant', message: { content: [null, 7, { type: 'tool_use', name: 5 }] } })).toMatchObject({ texts: [], tools: [{ id: '', name: '', malformed: true }] });
     expect(parseLine('{"type":"user"}')).toMatchObject({ k: 'bad', why: 'shape' });
     expect(parseLine('[1,2]')).toMatchObject({ k: 'bad', why: 'shape' });
     expect(parseLine('{"type":')).toMatchObject({ k: 'bad', why: 'json', ts: NaN });
@@ -101,6 +129,32 @@ describe('streamTranscript', () => {
     const { recs, stats } = await read(file);
     expect(recs).toEqual([expect.objectContaining({ k: 'prompt', text: 'a' }), expect.objectContaining({ k: 'bad', why: 'too-long' }), expect.objectContaining({ k: 'prompt', text: 'b' })]);
     expect(stats).toMatchObject({ lines: 3, bad: 1, tooLong: 1 });
+  });
+  it('prototype-named types are counted as plain keys', async () => {
+    const { stats } = await read(lines([{ type: 'constructor' }, { type: '__proto__' }, { type: 'toString' }, { type: 'toString' }]));
+    expect(Object.entries(stats.types).sort()).toEqual([['__proto__', 1], ['constructor', 1], ['toString', 2]]);
+    expect(Object.getPrototypeOf(stats.types)).toBeNull();
+  });
+  it('hostile versions and types stay bounded', async () => {
+    const recs = Array.from({ length: 200 }, (_, i) => ({ type: `t${i}`.padEnd(100_000, 'x'), version: `${i}`.padEnd(100_000, 'v') }));
+    const { stats } = await read(lines(recs));
+    expect(stats.versions.size).toBeLessThanOrEqual(32);
+    expect(Object.keys(stats.types).length).toBeLessThanOrEqual(64);
+    expect([...stats.versions, ...Object.keys(stats.types)].every((v) => v.length <= 64)).toBe(true);
+    expect(stats.versions.has('other') && stats.types.other).toBeGreaterThan(0);
+    expect(Object.values(stats.types).reduce((a, b) => a + b, 0)).toBe(200);
+  });
+  it('a leading BOM is stripped', async () => {
+    const f = join(tmp(), 'bom.jsonl');
+    writeFileSync(f, '\uFEFF' + JSON.stringify(prompt('a')) + '\n');
+    expect((await read(f)).recs).toEqual([expect.objectContaining({ k: 'prompt' })]);
+  });
+  it('records with no timestamp are left out of a sinceMs window and counted', async () => {
+    const f = lines([{ type: 'user', message: { content: 'no time' } }, { type: 'mode', mode: 'x' }, { ...prompt('in'), timestamp: '2026-11-01T00:00:00.000Z' }]);
+    const { recs, stats } = await read(f, { sinceMs: 0 });
+    expect(recs.map((r) => r.k)).toEqual(['prompt']);
+    expect(stats.noTime).toBe(2);
+    expect((await read(f)).stats.noTime).toBe(0);
   });
   it('collects versions, counts types, applies sinceMs and side', async () => {
     const dir = tmp();

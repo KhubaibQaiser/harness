@@ -4,7 +4,8 @@ import { createReadStream } from 'node:fs';
 // Transcripts are untrusted: every field is type-checked, and a wrong or missing one gives unknown, never a pass.
 
 export interface Usage { input: number; output: number; cacheWrite: number; cacheRead: number }
-export interface ToolUse { id: string; name: string; skill?: string; filePath?: string; command?: string; ask?: { options: number; recommended: boolean } }
+/** `malformed`: the block had no usable `id` or `name`. Metrics treat it as unknown, never as followed. */
+export interface ToolUse { id: string; name: string; skill?: string; filePath?: string; command?: string; ask?: { options: number; recommended: boolean }; malformed?: true }
 type Base = { ts: number; side: boolean; version?: string; cwd?: string };
 export type TRec = Base & (
   | { k: 'assistant'; key: string | null; model?: string; usage?: Usage; texts: string[]; tools: ToolUse[] }
@@ -34,25 +35,28 @@ const num = (v: unknown): number | undefined => (typeof v === 'number' && Number
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const strs = (v: unknown[]): string[] => v.filter((x): x is string => typeof x === 'string');
 const NO_BASE: Base = { ts: NaN, side: false };
+const TS_RE = /"timestamp":"([^"\\]{1,40})"/; // fast-path records keep their time without JSON.parse
 
 const count = (v: unknown) => (num(v) !== undefined && (v as number) >= 0 ? (v as number) : undefined);
 // Input and output are required; a missing cache field means none was used, a wrong-typed one makes the whole usage unknown.
 const usage = (u: Obj | undefined): Usage | undefined => {
   const input = count(u?.input_tokens), output = count(u?.output_tokens);
-  const [cacheWrite, cacheRead] = ['cache_creation_input_tokens', 'cache_read_input_tokens'].map((f) => (u?.[f] === undefined ? 0 : count(u[f])));
+  const [cacheWrite, cacheRead] = ['cache_creation_input_tokens', 'cache_read_input_tokens'].map((f) => (u?.[f] === undefined || u[f] === null ? 0 : count(u[f])));
   return input === undefined || output === undefined || cacheWrite === undefined || cacheRead === undefined ? undefined : { input, output, cacheWrite, cacheRead };
 };
 
-const toolUse = (b: Obj): ToolUse | undefined => {
+const toolUse = (b: Obj): ToolUse => {
   const id = str(b.id), name = str(b.name), input = obj(b.input);
-  if (id === undefined || name === undefined) return undefined;
-  const t: ToolUse = { id, name };
+  const t: ToolUse = { id: id ?? '', name: name ?? '' };
+  if (id === undefined || name === undefined) t.malformed = true;
   if (name === 'Skill' && str(input?.skill) !== undefined) t.skill = str(input?.skill);
   if (str(input?.file_path) !== undefined) t.filePath = str(input?.file_path);
   if (str(input?.command) !== undefined) t.command = str(input?.command);
   if (name === 'AskUserQuestion' && Array.isArray(input?.questions)) {
-    const labels = input.questions.flatMap((q) => arr(obj(q)?.options).map((o) => str(obj(o)?.label) ?? ''));
-    t.ask = { options: labels.length, recommended: labels.some((l) => l.includes('(Recommended)')) };
+    // Spec §4.2: options per question (the largest question), and /recommend/i on any label or description.
+    const qs = input.questions.map((q) => arr(obj(q)?.options).map(obj));
+    const texts = qs.flat().flatMap((o) => [str(o?.label), str(o?.description)]);
+    t.ask = { options: Math.max(0, ...qs.map((q) => q.length)), recommended: texts.some((x) => x !== undefined && /recommend/i.test(x)) };
   }
   return t;
 };
@@ -61,13 +65,15 @@ const assistantRec = (r: Obj) => {
   const m = obj(r.message), id = str(m?.id), req = str(r.requestId);
   const blocks = arr(m?.content).map(obj).filter((b): b is Obj => b !== undefined);
   const texts = strs(blocks.filter((b) => b.type === 'text').map((b) => b.text));
-  const tools = blocks.filter((b) => b.type === 'tool_use').map(toolUse).filter((t): t is ToolUse => t !== undefined);
-  return { k: 'assistant' as const, key: id !== undefined && req !== undefined ? `${id}|${req}` : null, model: str(m?.model), usage: usage(obj(m?.usage)), texts, tools };
+  const tools = blocks.filter((b) => b.type === 'tool_use').map(toolUse);
+  return { k: 'assistant' as const, key: id !== undefined && req !== undefined ? JSON.stringify([id, req]) : null, model: str(m?.model), usage: usage(obj(m?.usage)), texts, tools };
 };
 
 const blockText = (c: unknown): string => (typeof c === 'string' ? c : strs(arr(c).map((b) => obj(b)?.text)).join('\n'));
 
 const userRec = (r: Obj) => {
+  // UNVERIFIED field: injected user messages (skill bodies, command output) are believed to carry isMeta.
+  if (r.isMeta === true) return { k: 'other' as const, type: 'meta' };
   const content = obj(r.message)?.content;
   if (typeof content === 'string') return { k: 'prompt' as const, text: content };
   if (!Array.isArray(content)) return undefined;
@@ -108,7 +114,10 @@ export function parseLine(line: string): TRec {
 /** One line to one or more records, never empty. */
 export function parseRecords(line: string): TRec[] {
   const unused = UNUSED.find((t) => line.includes(`"type":"${t}"`));
-  if (unused !== undefined && !USED.some((m) => line.includes(m))) return [{ ...NO_BASE, k: 'other', type: unused }];
+  if (unused !== undefined && !USED.some((m) => line.includes(m))) {
+    const ts = TS_RE.exec(line)?.[1];
+    return [{ ...NO_BASE, ts: ts === undefined ? NaN : Date.parse(ts), k: 'other', type: unused }];
+  }
   let r: Obj | undefined;
   try {
     r = obj(JSON.parse(line));
@@ -128,13 +137,17 @@ export function parseRecords(line: string): TRec[] {
   return (Array.isArray(body) ? body : [body]).map((b) => ({ ...base, ...b }));
 }
 
-export interface ReadStats { lines: number; bad: number; tooLong: number; versions: Set<string>; types: Record<string, number> }
+/** `types` has a null prototype. `noTime`: records with no timestamp, left out of a `sinceMs` window. */
+export interface ReadStats { lines: number; bad: number; tooLong: number; noTime: number; versions: Set<string>; types: Record<string, number> }
 
+// Hostile input can hold any number of distinct, long versions and types: keep at most this many, each cut to 64 chars.
+const MAX_VERSIONS = 32, MAX_TYPES = 64, MAX_KEY = 64;
 const RAW: Record<string, string> = { assistant: 'assistant', prompt: 'user', result: 'user', listing: 'attachment', invoked: 'attachment', instructions: 'attachment', hook: 'attachment', compact: 'system', stop: 'system' };
 
 /** Streams one transcript line by line. A line over MAX_LINE is discarded up to its newline without buffering it. */
 export async function streamTranscript(path: string, visit: (r: TRec) => void, opts: { sinceMs?: number; side?: boolean } = {}): Promise<ReadStats> {
-  const stats: ReadStats = { lines: 0, bad: 0, tooLong: 0, versions: new Set(), types: {} };
+  const stats: ReadStats = { lines: 0, bad: 0, tooLong: 0, noTime: 0, versions: new Set(), types: Object.create(null) as Record<string, number> };
+  let typeKeys = 0;
   // Stats count the line once (by its first record); every record of the line is visited.
   const emit = (recs: TRec[]) => {
     const r = recs[0]!;
@@ -142,16 +155,22 @@ export async function streamTranscript(path: string, visit: (r: TRec) => void, o
     if (r.k === 'bad') {
       stats.bad++;
       if (r.why === 'too-long') stats.tooLong++;
+    } else if (opts.sinceMs !== undefined && Number.isNaN(r.ts)) {
+      stats.noTime++;
+      return;
     } else if (opts.sinceMs !== undefined && r.ts < opts.sinceMs) return;
     else {
-      const t = r.k === 'other' ? r.type.split(':')[0]! : RAW[r.k]!;
+      let t = (r.k === 'other' ? r.type.split(':')[0]! : RAW[r.k]!).slice(0, MAX_KEY);
+      if (!(t in stats.types) && typeKeys >= MAX_TYPES - 1) t = 'other';
+      if (!(t in stats.types)) typeKeys++;
       stats.types[t] = (stats.types[t] ?? 0) + 1;
-      if (r.version !== undefined) stats.versions.add(r.version);
+      const v = r.version?.slice(0, MAX_KEY);
+      if (v !== undefined) stats.versions.add(stats.versions.has(v) || stats.versions.size < MAX_VERSIONS - 1 ? v : 'other');
     }
     for (const x of recs) visit(opts.side ? { ...x, side: true } : x);
   };
   const finish = (bufs: Buffer[]) => {
-    const line = Buffer.concat(bufs).toString('utf8').replace(/\r$/, '');
+    const line = Buffer.concat(bufs).toString('utf8').replace(/^\uFEFF/, '').replace(/\r$/, '');
     if (line.trim() !== '') emit(parseRecords(line));
   };
   let pending: Buffer[] = [], size = 0, skipping = false;

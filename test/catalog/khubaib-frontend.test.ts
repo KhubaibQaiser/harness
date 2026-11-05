@@ -6,6 +6,8 @@ import { loadCatalog } from '../../src/catalog/load.js';
 import { MIN_CLAUDE_CODE } from '../../src/core/min-claude.js';
 import { TELEMETRY_ENV, checkPreset, identityProblems, loadPreset } from '../../src/catalog/presets.js';
 import type { LoadedPreset } from '../../src/catalog/presets.js';
+import { alwaysLoadedText, estimateTokens } from '../../src/budget/measure.js';
+import { mergeAgentsPreset } from '../../src/install/merge.js';
 
 const DIR = 'catalog/presets';
 const BASE = join(DIR, 'khubaib-frontend');
@@ -73,4 +75,29 @@ test('skill descriptions are the spec section 7 text', () => {
 test('telemetry opt-out variables', () => {
   expect(TELEMETRY_ENV.impeccable).toEqual({ name: 'DO_NOT_TRACK', value: '1' });
   expect(TELEMETRY_ENV.superpowers).toEqual({ name: 'SUPERPOWERS_DISABLE_TELEMETRY', value: 'true' });
+});
+
+const body = (name: string) => readFileSync(join(BASE, 'templates/skills', name, 'SKILL.md'), 'utf8').replace(/^---\n[\s\S]*?\n---\n/, '');
+
+test('no skill body is a placeholder', () => {
+  for (const name of SKILLS) expect(body(name), name).not.toContain('Body: see Task 2b.');
+});
+
+test('frontend-react quotes F3 verbatim', () => {
+  const f3 = /^\| F3 \| Client state \| (".+") \|$/m.exec(SPEC)![1];
+  expect(body('frontend-react')).toContain(f3);
+});
+
+test('frontend-react has the P7 Tailwind sizing rule', () => {
+  const b = body('frontend-react');
+  expect(b).toContain('h-[98px]');
+  expect(b).toMatch(/closest built-in or breakpoint class/);
+});
+
+test('always-loaded totals match spec section 5 (estimate, core counted with its markers)', () => {
+  const core = estimateTokens(mergeAgentsPreset(null, readFileSync(join(BASE, 'templates/core.md'), 'utf8')).after);
+  const t = Object.fromEntries(SKILLS.map((n) => [n, estimateTokens(alwaysLoadedText('skill', readFileSync(join(BASE, 'templates/skills', n, 'SKILL.md'), 'utf8')))]));
+  const base = core + t['engineering-principles'];
+  expect([base + t['frontend-react'] + t['frontend-nextjs'], base + t['frontend-react'] + t['frontend-nextjs'] + t['frontend-react-native'], base + t['frontend-react'], base]).toEqual([357, 415, 299, 241]);
+  for (const n of [357, 415, 299, 241]) expect(SPEC, `spec section 5 shows ~${n}`).toContain(`| ~${n} |`);
 });

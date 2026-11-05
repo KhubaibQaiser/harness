@@ -6,7 +6,7 @@ import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
-import { commandStart, fileWriteTargets, gitArgs, rmTargets } from './guard.js';
+import { commandStart, decodeAnsiC, fileWriteTargets, gitArgs, ifsReading, PROTECTED_TEXT, quoteFree, rmTargets, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
@@ -204,7 +204,79 @@ const stdinProgramsOf = (cmd: string) =>
 // A protected name as a path segment (not node_modules.txt or my_node_modules).
 const NM_SEG = /(^|[\\/'"`\s(,=:])node_modules([\\/'"`\s),;:]|$)/i;
 const H_SEG = /(^|[\\/'"`\s(,=:])(\.harness|\.claude[\\/]settings[^\\/'"`\s),;:]*)([\\/'"`\s),;:]|$)/i;
+const BUILT_REASON = 'This command names a protected harness path and also expands words, uses a glob or a redirect, cds, sources or runs a script, sets a variable (read, printf -v, declare, an array) or defines a function, so protect cannot tell what it writes.';
+// Commands that change what a later word means, or run another file. cd and pushd count only into a protected dir, or
+// a glob or expansion that could be one.
+const BINDS = new Set(['source', '.', 'read', 'mapfile', 'readarray', 'declare', 'typeset', 'export', 'local', 'readonly']);
+const binds = (ws: string[]): boolean => {
+  const n = ws.length ? commandName(ws[0]) : '';
+  if (n === 'cd' || n === 'pushd') {
+    const t = ws.slice(1).find((w) => !w.startsWith('-')) ?? '';
+    return /[$`]/.test(t) || PROTECTED_TEXT.test(unquote(t)) || globNamesProtected([t]);
+  }
+  return BINDS.has(n) || (n === 'printf' && ws.includes('-v')) || (SHELLS.has(n) && ws.length > 1 && !ws.includes('-c')); // bash FILE
+};
+const REDIRECT_TO_FILE = /\d*>>?\|?\s*(?!&|\/dev\/null\b)\S/;
+const READ_ONLY = new Set(['cat', 'ls', 'head', 'tail', 'grep', 'egrep', 'fgrep', 'rg', 'jq', 'wc', 'diff', 'stat', 'file', 'less']);
+const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'blame', 'grep', 'ls-files', 'rev-parse']);
+const HARNESS_READ = new Set(['doctor', 'status', 'explain', 'why', 'stats']);
+/** A plain read: a read-only command with no redirect to a file. Its globs (ls .harness/*) and quotes are not writes. */
+const readOnly = (ws: string[]): boolean => {
+  const u = ws.map(unquote);
+  const n = u.length ? commandName(u[0]) : '';
+  return (READ_ONLY.has(n) || (n === 'git' && GIT_READ.has(gitArgs(u)[0])) || (n === 'harness' && HARNESS_READ.has(u[1]))) && !REDIRECT_TO_FILE.test(ws.join(' '));
+};
+const MESSAGE_FLAGS = new Set(['-m', '--message', '-F', '--file', '-b', '--body', '--body-file', '-t', '--title']);
+// `$(cat <<'EOF' … EOF)`, Claude Code's commit and PR body form, and a one-word `.harness` in backticks are message text.
+const HEREDOC_CAT = /\$\(cat\s+<<-?\s*(['"]?)(\w+)\1\n[\s\S]*?\n\s*\2\s*\n?\s*\)/g;
+const isMessage = (w: string): boolean => !/\$\(|`/.test(w.replace(HEREDOC_CAT, '').replace(/`[^`\s]*`/g, ''));
+/** A segment's words without its data: the text of an echo or printf whose output nobody reads as code (no redirect, no
+ *  substitution in the command), and the message, body and title values of git and gh that run no other substitution. */
+const codeWords = (ws: string[], consumed: boolean): string[] => {
+  const n = ws.length ? commandName(ws[0]) : '';
+  if ((n === 'echo' || n === 'printf') && !ws.includes('-v') && !consumed && !ws.some((w) => /[<>]/.test(w))) return ws.slice(0, 1);
+  if (n === 'git' || n === 'gh') return ws.filter((w, i) => !((MESSAGE_FLAGS.has(ws[i - 1]) || /^--(message|body|body-file|title|file)=/.test(w)) && isMessage(w)));
+  return ws;
+};
+const WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'dd', 'ln', 'rsync', 'truncate', 'touch']);
+/** xargs or find -exec/-execdir/-ok running a writer (or sed -i, or a redirect): the path comes from another program. */
+const feedsWriter = (ws: string[]): boolean => {
+  const u = ws.map(unquote);
+  const k = commandStart([...u]);
+  if (!u.slice(0, k).some((w) => ['xargs', 'find'].includes(commandName(w)))) return false;
+  const n = commandName(u[k] ?? '');
+  return WRITERS.has(n) || (n === 'sed' && u.slice(k).some((w) => /^-[a-zA-Z]*i|^--in-place/.test(w))) || u.slice(k).some((w) => />/.test(w));
+};
+/** The command names a protected path (heredoc bodies, echo/printf text and commit or PR messages are data, not names) and
+ *  also has an expansion or substitution, an array or function definition, a redirect to a file, or a segment that binds or
+ *  runs something (cd into a protected dir, source, ., read, printf -v, declare, bash FILE). Outside a plain read, a glob that
+ *  can match a protected name, or a quote or backslash inside a protected path (tee .harness/"config.yaml"), counts on its
+ *  own. xargs or find -exec feeding a writer asks, and so does any xargs when the text names a protected path. Plain reads
+ *  (cat, ls, git diff) and writes protect parses (cp .harness/x /tmp) are judged as before.
+ *  ponytail: a name built from pieces (x=.har; y=ness), or a path passed to a script the agent wrote, is not seen. */
+const touchesProtectedText = (cmd: string): boolean => {
+  const body = withoutHeredocBodies(cmd);
+  const consumed = /\$\(|`|\|/.test(body.replace(HEREDOC_CAT, '')); // echo output read by a substitution or a pipe
+  const segs = segments(body).map((s) => codeWords(words(s), consumed));
+  const text = segs.map((ws) => ws.join(' ')).join(' ; ');
+  const names = (t: string) => [t, quoteFree(t), decodeAnsiC(t)].some((x) => PROTECTED_TEXT.test(x)); // decodeAnsiC: x='\x2eharness'; ${x@E}
+  if (segs.some(feedsWriter) || (names(cmd) && segs.some((ws) => ws.some((w) => commandName(unquote(w)) === 'xargs')))) return true;
+  const writes = segs.filter((ws) => !readOnly(ws));
+  if (writes.some((ws) => globNamesProtected(ws) || ws.some((w) => /['"\\]/.test(w) && PROTECTED_TEXT.test(unquote(w))))) return true;
+  return names(text) && (/`/.test(body.replace(HEREDOC_CAT, "").replace(/`[^`\s]*`/g, "")) || /[$`]|\w=\(|\(\s*\)|\bfunction\s/.test(text) || REDIRECT_TO_FILE.test(text) ||
+    writes.some((ws) => ws.some((w) => /[*?[{]/.test(w) && /harness|claude/i.test(w))) || segs.some(binds));
+};
 const GLOB = /[*?[{]/;
+/** A glob word that can match a protected name: a component that matches `.harness` or `.claude` (cd .har*ss, tee
+ *  .har?ess/x), or the whole word matching a protected path. As in bash, * and ? do not match a leading dot, so
+ *  `ls src/*.ts` and `cat *.md` do not count. */
+function globNamesProtected(ws: string[]): boolean {
+  return ws.map(unquote).some((w) => {
+    if (!/[*?[]/.test(w)) return false;
+    const m = (p: string) => picomatch(p, { nocase: true }); // macOS and Windows ignore case
+    return w.split(/[\\/]/).some((c) => /[*?[]/.test(c) && ['.harness', '.claude'].some((n) => m(c)(n))) || PROTECTED_CONCRETE.some((p) => m(w.replace(/^\.\//, ''))(p));
+  });
+}
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
   return !!rel && PROTECTED_CONCRETE.some((c) => picomatch(rel, { dot: true })(c));
@@ -239,8 +311,10 @@ export const protect: Check = {
     else if (isShell(tool_name)) {
       const cmd = String(tool_input.command ?? '');
       // A program fed to a shell on stdin is a command line of its own (echo 'rm -rf node_modules' | bash).
-      for (const p of stdinProgramsOf(cmd).filter((p) => SHELLS.has(p.name))) {
-        const d = protect.run({ ...ctx, input: { ...input, tool_input: { command: p.text } } }) as Decision;
+      // So is the command as the shell splits it on $IFS (tee$IFS.harness/x).
+      const ifs = ifsReading(cmd);
+      for (const text of [...stdinProgramsOf(cmd).filter((p) => SHELLS.has(p.name)).map((p) => p.text), ...(ifs === null || ifs === cmd ? [] : [ifs])]) {
+        const d = protect.run({ ...ctx, input: { ...input, tool_input: { command: text } } }) as Decision;
         if (d.kind === 'deny') return d;
       }
       // A text match can't tell a read from a write, so inline code that names these paths is denied whatever it does.
@@ -257,7 +331,9 @@ export const protect: Check = {
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       paths = [...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)];
-      if (!paths.some((p) => p && isProtected(root, p))) return switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
+      // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
+      const built = touchesProtectedText(cmd);
+      if (!paths.some((p) => p && isProtected(root, p))) return built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
     }
     return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };
   },

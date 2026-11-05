@@ -10,6 +10,7 @@ The full detail behind the [README](../README.md). Start there; come here when y
 - **Fails closed where it matters.** If the dispatcher can't start or crashes, Claude Code blocks the tool call, the prompt or the settings change (`onFailure: "block"`). The Stop gate fails open if its process can't run. If `.harness/config.yaml` is invalid, agent edits are denied and Stop blocks until a person fixes it. The guard and protected-path checks deny the call if they crash.
 - **Repo-level.** `init` writes plain files into the repo (`.harness/`, `.claude/settings.json`, `AGENTS.md`). Commit them, and the hooks run for anyone who opens the repo in Claude Code, with or without the plugin.
 - **Local-first.** Events go to `.harness/logs/events.jsonl` in the repo. Nothing is sent anywhere, except an npm registry lookup for a package name when you allow an install, and `update --check`.
+- **Timing log.** `.harness/logs/timing.jsonl` holds one line per hook call or Stop step (event, tool, outcome, ms), with no paths or command text. At 5 MB it is renamed to `timing.1.jsonl`, replacing the old one.
 - **Reversible.** `init` backs up every file it changes and records every edit in `.harness/manifest.json`. `uninstall` removes exactly what the manifest lists and restores your files.
 - **You confirm every write.** `init` and `update` show the full plan and diff first. Neither commits, pushes or opens a PR.
 
@@ -238,6 +239,8 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `scan` | Prints the facts harness detects about your repo, as JSON. Writes nothing. |
 | `catalog` | Prints the catalog of items harness can install, as JSON. |
 | `catalog check [--resolve] [--only <id,...>]` | Checks the catalog for problems. `--resolve` also looks up each pin, which needs the network. `--only` limits that to the listed ids. |
+| `preset list` | Prints `<id>  <description>` for each shipped and repo preset (`.harness/presets/`), or `No presets.`. Writes nothing. |
+| `preset check <dir>` | Checks every `<id>.yaml` in `<dir>` with its `<id>/` folder: schema, items, templates, skill limits, no email or git identity, and an id that isn't a shipped preset's (unless `<dir>` is the shipped folder). Prints `ok` or one error per line. `catalog check` also checks each shipped preset, as `presets/<id>: <error>`. |
 | `validate answers\|product <file> [--merge-config]` | Checks an interview answers file or a product file. With `--merge-config`, an answers file holding only some keys is laid over the answers in `.harness/config.yaml` first (what `/harness:update` uses). |
 | `validate picks <file> --answers <file> [--merge-config] [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. `--merge-config` works as above. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
@@ -362,6 +365,8 @@ The table below is generated from `src/core/config.ts` by `node scripts/gen-conf
 | `stop.coverage_globs` | `["**/coverage/coverage-final.json"]` | Globs for the coverage files that diff coverage reads. |
 <!-- config:end -->
 
+`preset` is not in the table because it has no default: the key is absent until init records a chosen preset. It is a mapping of `id` (a shipped or repo preset id), `version`, `items` (the item ids it chose) and `git` (`branch_prefixes`, each matching `^[a-z0-9-]+/$`, plus `no_ai_trailer` and `pr_size_warning`). Any other key under it is an error.
+
 ## Troubleshooting
 
 Start with `harness doctor`, which prints a fix for each problem.
@@ -378,6 +383,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 ## Known limits
 
 - The guard recognises the commands `harness` and `cli.mjs` by name. A renamed copy or symlink of the CLI (`node h.mjs add x --yes`) isn't recognised, so it doesn't ask first.
+- Two hooks writing at once can lose or double a `timing.jsonl` rotation (rename after a size check). Lines are append-only and never torn.
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
 - The `PowerShell(...)` deny rules, and the `Read` and `Edit` rules on PowerShell commands, are unverified until a live check on Windows passes.
 - The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop).
@@ -385,6 +391,10 @@ More detail: [TDD setup details](#tdd-setup-details).
 - Interactive sessions under the default `unattended` mode keep the text-check gaps (a `cd` before a write, shell reads of secrets, writes protect doesn't parse, and scripts that turn TDD off) unless the person turns the sandbox on before the session starts or uses `always`.
 - A blocked settings change still sits on disk; the next session loads it. Change detection reports it at the next prompt and Stop.
 - Force-push and push-to-main rules are text rules; branch protection is the real stop.
+- The guard reads `$IFS` and every `${IFS…}` form as a space, and `$'…'` and `$"…"` quoting, a one-word quote (`git "push"`) and an escaped letter (`g\it`) as plain words. Other words built at run time (a variable in command position, `${!x}`, `${x//a/b}` and the other operators, zsh `${(s:_:)x}`, `IFS=`, `eval` with an expansion) ask only when the command names `harness` or `cli.mjs` as a word (a directory in a path, as in `cd /x/harness && …`, does not count), `.harness` or `.claude/settings`. A built force push or secrets read with none of those words (`S=' '; git${S}push${S}-f`, `F=-f; git push $F`, `git pu${Z}sh -f`) is not caught, and neither is a name built from pieces (`x=har; y=ness; $x$y init`, `$(printf '.har%sness/x')`); a glob counts as naming a protected path when it can match `.harness`, `.claude` or a protected file (`cd .har*ss`).
+- Protect asks for any command that names `.harness`, `.claude` or `.claude/settings` and also has an expansion or substitution, a redirect to a file, an array or function definition, or a `cd` into a protected dir, `source`, `.`, `read`, `printf -v`, `declare`/`typeset`/`export`, or `bash FILE`. Outside a plain read (`cat`, `ls`, `grep`, `jq`, `git log`/`diff`/`show`, `harness doctor`/`status` with no redirect), a glob that can match a protected name or a quote or backslash inside a protected path (`tee .harness/"config.yaml"`) asks on its own. Heredoc bodies, `echo`/`printf` text whose output nobody reads, and `git commit -m`/`gh pr create --body` values are data. `xargs` or `find -exec` feeding a writer asks, and so does any `xargs` when the command names a protected path. This includes harmless forms such as `cat .harness/config.yaml > /tmp/c`, `rg ".harness" src > /tmp/hits` and `for f in .harness/logs/*; do wc -l "$f"; done`. `node_modules` keeps its own rules and is not part of this check.
+- A script or program the agent wrote that takes the protected path as an argument (`node w.js .harness/config.yaml`, `python3 w.py …`), or writes a path it builds itself, is not caught: protect can't read what it does. Change detection still reports the edit at the next prompt and at Stop.
+- Other force-push forms the text rule misses: git global options before `push` (`git -C . push -f`), bundled or abbreviated flags (`-uf`, `--forc`), a `+ref`, brace expansion (`git {push,-f}`), a forwarding function, and a quoted separator before `main` (`git push origin x "&&" main`). An earlier ask (an `rm -rf` or a harness command) can also hide a later deny in the same command line when attended.
 - `HARNESS_SANDBOX=1` is the launcher's claim; harness can't see `--settings`.
 - `sandbox-required` doesn't read `sandbox.excludedCommands`: commands listed there run outside the sandbox. A mid-session change to it is blocked like any sandbox change.
 - Results in `.harness/results/` can be forged by a program the agent runs.

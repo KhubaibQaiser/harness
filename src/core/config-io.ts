@@ -27,12 +27,13 @@ const SECTIONS: Record<keyof HarnessConfig, string> = {
   pr_size: 'Pull request size (needs checks.prSize). Asks above max_lines or max_files; the pr-ship skill aims for target_lines.',
   unattended: 'Behaviour when no human is watching.',
   stop: 'Verification steps that must pass before the agent may stop.',
+  preset: 'Named preset chosen at init (rules, skills, git checks).',
 };
 
 // `version` is the harness version stamped by init; the placeholder keeps the example file deterministic.
 export function serializeConfig(c: HarnessConfig, version = '<version>'): string {
   const head = `# .harness/config.yaml — written by harness init ${version}. Edit freely; run harness doctor after.\n`;
-  const body = (Object.keys(SECTIONS) as (keyof HarnessConfig)[]).map((k) => `# ${SECTIONS[k]}\n${stringify({ [k]: c[k] })}`);
+  const body = (Object.keys(SECTIONS) as (keyof HarnessConfig)[]).filter((k) => c[k] !== undefined).map((k) => `# ${SECTIONS[k]}\n${stringify({ [k]: c[k] })}`);
   return `${head}\n${body.join('\n')}`;
 }
 

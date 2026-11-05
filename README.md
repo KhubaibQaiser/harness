@@ -96,6 +96,7 @@ Run them as `harness <command>`. From a source build there's no `harness` binary
 | `vet <target>` | Scans a plugin or skill before you install it. Installs nothing. |
 | `uninstall [--dry-run]` | Removes what harness added and restores your files. |
 | `scan` / `catalog` | Prints what harness detects about your repo, or the catalog. Both write nothing. |
+| `preset list\|check <dir>` | Lists the shipped and repo presets, or checks a preset folder. Both write nothing. |
 | `git branch\|commit\|push\|pr` | Commits and pushes the harness changes one step at a time. |
 
 ## Unattended runs and CI

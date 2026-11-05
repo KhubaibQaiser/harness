@@ -128,3 +128,13 @@ test('serializeConfig round-trips the new sections', () => {
   expect(load(serializeConfig(c)).config).toEqual(c);
   expect(load(serializeConfig(c)).warnings).toEqual([]);
 });
+
+test('validateConfig rejects pr_size target above max, accepts equal', () => {
+  expect(validateConfig({ pr_size: { target_lines: 500, max_lines: 400 } })).toEqual({ ok: false, errors: ['pr_size.target_lines: must not be greater than pr_size.max_lines'] });
+  expect(validateConfig({ pr_size: { target_lines: 400, max_lines: 400 } }).ok).toBe(true);
+});
+
+test('validateConfig reports an invalid pr_size value and the default-target hint', () => {
+  expect(validateConfig({ pr_size: { max_files: 0 } })).toEqual({ ok: false, errors: ['pr_size.max_files: must be an integer from 1 to 10000'] });
+  expect(validateConfig({ pr_size: { max_lines: 100 } })).toEqual({ ok: false, errors: ['pr_size.target_lines: is 200, the default, above pr_size.max_lines (100); set target_lines too'] });
+});

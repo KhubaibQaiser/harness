@@ -16,6 +16,7 @@ import { ESLINT } from '../install/plan.js';
 import { JEST_REPORTER, hasResultsOutput, resultsRename, testConfigChange } from '../install/test-config.js';
 import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
+import { branchProtection, type Gh } from './doctor-protection.js';
 import type { CliEnv } from './index.js';
 import { dirtyPaths } from '../install/git-status.js';
 import { loadCatalog } from '../catalog/load.js';
@@ -25,12 +26,14 @@ import { pluginList } from '../install/plugin-install.js';
 import { reconcile } from '../install/reconcile.js';
 import { selectedIds } from '../install/plan.js';
 
-export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJS.Platform; pluginList?: typeof pluginList };
+export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJS.Platform; pluginList?: typeof pluginList; gh?: Gh };
 
 const DISPATCH = '.harness/hooks/dispatch.mjs';
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd'];
 export const BLOCKING = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange']; // the events whose hook carries onFailure "block"
 const SANDBOX_WHY = { unattended: 'required for unattended runs', always: 'on in every session', off: 'text checks only' };
+const GH_TIMEOUT_MS = 5000;
+const GH_MAX_BUFFER = 1 << 20;
 const NODE_MIN_S = '22.11.0';
 
 const readText = (p: string): string | null => {
@@ -227,6 +230,10 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     if (config.stop.steps.length)
       note("Stop steps were checked against this terminal's PATH", "Claude Code's hooks may see a different one (for example when Claude Code starts from the GUI); if Stop warns that a tool is not on its PATH, make the tool available there");
   }
+  const gh = deps.gh ?? ((a: string[]) => { const r = spawnSync('gh', a, { cwd: root, env, encoding: 'utf8', timeout: GH_TIMEOUT_MS, maxBuffer: GH_MAX_BUFFER }); return { status: r.status, stdout: r.stdout ?? '' }; });
+  const prot = branchProtection(root, gh);
+  if (prot.state === 'ok') ok(prot.detail);
+  else note(prot.detail);
   if (config.items.length) itemChecks(root, config, manifest, deps.pluginList ?? pluginList, { ok, fix, note });
   if (bad) out(`${bad} problem${bad === 1 ? '' : 's'} found.`);
   return bad ? 1 : 0;

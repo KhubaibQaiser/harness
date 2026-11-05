@@ -8,7 +8,7 @@ Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, a
 
 In plain terms: with the sandbox on, the operating system enforces the guard. Without it, the guard is a best-effort text check that catches mistakes but can be bypassed.
 
-**Status:** beta, version `0.2.0-beta.1`. It is on npm under the `beta` tag (`npm i -g @khubaibqaiser/harness@beta`). Release notes: [docs/release-notes/0.2.0-beta.1.md](docs/release-notes/0.2.0-beta.1.md).
+**Status:** beta, version `0.2.0-beta.2` (unreleased until tagged; the published beta is `0.2.0-beta.1`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`). Release notes: [docs/release-notes/0.2.0-beta.2.md](docs/release-notes/0.2.0-beta.2.md).
 
 ## Why harness
 

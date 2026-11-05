@@ -4,12 +4,15 @@ import { parse as parseYaml } from 'yaml';
 import { expect, test } from 'vitest';
 
 const readme = readFileSync('README.md', 'utf8');
+// The full command flags, config keys and known limits live in docs/reference.md; the README links there.
+const reference = readFileSync('docs/reference.md', 'utf8');
 const spec = readFileSync('docs/specs/2026-11-01-harness-beta-design.md', 'utf8');
 const between = (s: string, a: string, b: string) => s.slice(s.indexOf(a), s.indexOf(b, s.indexOf(a)) + b.length);
 
 test('config reference equals the generator output', () => {
   const generated = execFileSync('node', ['scripts/gen-config-docs.mjs'], { encoding: 'utf8' }).trimEnd();
-  expect(between(readme, '<!-- config:start -->', '<!-- config:end -->')).toBe(generated);
+  expect(between(reference, '<!-- config:start -->', '<!-- config:end -->')).toBe(generated);
+  expect(readme).not.toContain('<!-- config:start -->');
 });
 
 test('README names the minimum Claude Code version from the source', () => {
@@ -20,7 +23,7 @@ test('README names the minimum Claude Code version from the source', () => {
 test('known limits are spec section 10, verbatim', () => {
   const limits = between(spec, '## 10.', '## 11.').split('\n').filter((l) => l.startsWith('- '));
   expect(limits).toHaveLength(5);
-  for (const l of limits) expect(readme).toContain(l + '\n');
+  for (const l of limits) expect(reference).toContain(l + '\n');
 });
 
 test('gate table is spec section 3, verbatim', () => {
@@ -38,10 +41,10 @@ test('install commands match the spec and every CLI command is documented', () =
 
 const pe = readFileSync('docs/specs/2026-11-03-platform-enforcement-design.md', 'utf8');
 
-test('README carries the platform enforcement known limits, verbatim', () => {
+test('the reference carries the platform enforcement known limits, verbatim', () => {
   const limits = between(pe, '## 11.', '## 12.').split('\n').filter((l) => l.startsWith('- '));
   expect(limits).toHaveLength(7);
-  for (const l of limits) expect(readme).toContain(l + '\n');
+  for (const l of limits) expect(reference).toContain(l + '\n');
 });
 
 test('README carries the unattended launch command', () => {
@@ -69,10 +72,11 @@ test('README carries neither test variable and names the budget key', () => {
 test('README has no stale out-of-scope line and promises no telemetry', () => {
   expect(readme).not.toContain('the interview and catalog, committing');
   expect(readme.toLowerCase()).not.toContain('telemetry');
+  expect(reference.toLowerCase()).not.toContain('telemetry');
 });
 
-test('README states the M3 known limits, with C1 unverified', () => {
-  for (const s of ['local only', 'extraKnownMarketplaces', 'folder trust', '`CLAUDECODE`', '`git-subdir`', '`!` prefix', 'Unverified, pending the live check']) expect(readme, s).toContain(s);
+test('the reference states the M3 known limits, with C1 unverified', () => {
+  for (const s of ['local only', 'extraKnownMarketplaces', 'folder trust', '`CLAUDECODE`', '`git-subdir`', '`!` prefix', 'Unverified, pending the live check']) expect(reference, s).toContain(s);
 });
 
 test('release notes list every excluded id and every unpinned git-subdir item', () => {

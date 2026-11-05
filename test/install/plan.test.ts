@@ -92,6 +92,12 @@ test('own items set checks: unselecting tdd-gate turns tdd off and edits no test
   expect(get(off.changes, 'vitest.config.ts')).toBeUndefined();
 });
 
+test('checks.prSize is on exactly when pr-ship is selected (AI path)', () => {
+  const root = makeRepo(REPO);
+  expect(text(get(plan(root, OWN, { ai: true }).changes, '.harness/config.yaml'))).toMatch(/prSize: true/);
+  expect(text(get(plan(root, OWN.filter((i) => i !== 'pr-ship'), { off: ['pr-ship'], ai: true }).changes, '.harness/config.yaml'))).toMatch(/prSize: false/);
+});
+
 test('items never change sandbox', () => {
   const root = makeRepo(REPO);
   const p = plan(root, OWN, { sandbox: 'always' });

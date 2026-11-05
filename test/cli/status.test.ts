@@ -41,6 +41,7 @@ test('status shows gates on and not-installed', async () => {
   });
   expect(r.out).toMatch(/tdd: on/);
   expect(r.out).toMatch(/guard: on/);
+  expect(r.out).toMatch(/^  pr-size: on$/m);
   let out = '';
   expect(status([], { root: makeRepo({ a: 'b' }), env: {}, out: (s) => (out += s) })).toBe(1);
   expect(out).toContain('not installed');

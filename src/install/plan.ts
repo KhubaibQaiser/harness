@@ -95,7 +95,7 @@ export function planChanges(
   }
   // checks come from the selected own items (any kind); sandbox is not derived
   if (catalog) {
-    const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false };
+    const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false, prSize: false };
     for (const i of chosen) if (i.source.type === 'own') for (const k of i.source.checks ?? []) checks[k] = true;
     config = { ...config, checks };
   }

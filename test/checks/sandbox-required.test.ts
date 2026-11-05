@@ -61,7 +61,7 @@ describe('the check', () => {
     JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, permission_mode: 'bypassPermissions', tool_name, tool_input });
 
   test('is registered after protect, fail-closed, on PreToolUse', () => {
-    expect(registry.map((c) => c.name).slice(0, 3)).toEqual(['guard', 'protect', 'sandbox-required']);
+    expect(registry.map((c) => c.name).slice(0, 4)).toEqual(['guard', 'pr-size', 'protect', 'sandbox-required']);
     expect(sandboxRequired.failClosed).toBe(true);
     expect(sandboxRequired.events).toEqual(['PreToolUse']);
     expect(sandboxRequired.pure).toBeFalsy();

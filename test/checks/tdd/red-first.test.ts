@@ -31,7 +31,7 @@ const A = 'packages/core/src/a.ts';
 const T = 'packages/core/src/a.test.ts';
 
 test('registered after protect, not fail-closed, PreToolUse', () => {
-  expect(registry.map((c) => c.name).slice(0, 4)).toEqual(['guard', 'protect', 'sandbox-required', 'redFirst']);
+  expect(registry.map((c) => c.name).slice(0, 5)).toEqual(['guard', 'pr-size', 'protect', 'sandbox-required', 'redFirst']);
   expect(redFirst.failClosed).toBeFalsy();
   expect(redFirst.events).toEqual(['PreToolUse']);
 });

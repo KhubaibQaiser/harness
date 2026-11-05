@@ -21,7 +21,7 @@ const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : 
 const OFF_CONFIG = 'turned off in `.harness/config.yaml`';
 
 const GATES: [string, keyof ReturnType<typeof loadConfig>['config']['checks']][] = [
-  ['guard', 'guard'], ['protect', 'protect'], ['dep-verify', 'depVerify'], ['multi-file', 'multiFile'], ['tdd', 'tdd'], ['stop', 'stop'],
+  ['guard', 'guard'], ['protect', 'protect'], ['dep-verify', 'depVerify'], ['multi-file', 'multiFile'], ['tdd', 'tdd'], ['stop', 'stop'], ['pr-size', 'prSize'],
 ];
 
 export type StatusDeps = { platform?: NodeJS.Platform; pluginList?: typeof pluginList };

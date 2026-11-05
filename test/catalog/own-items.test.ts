@@ -8,7 +8,8 @@ import { packageDir } from '../../src/core/package-dir.js';
 
 const NOT_BUILT = ['post-edit-format', 'gitleaks-commit', 'session-context', 'researcher', 'ui-verify', 'seo-audit', 'webgl-landing', 'rn-a11y', 'perf-budget', 'adr', 'session-structure', 'ci-tdd', 'harness-integrity', 'lefthook-baseline', 'claude-code-action', 'harness-devdep'];
 const CORE = ['config-change-guard', 'sandbox-settings'];
-const REVIEWER = ['harness-review', 'pr-create-trigger', 'ui-verifier'];
+const REVIEWER = ['harness-review', 'ui-verifier'];
+const REPLACED = ['pr-create-trigger'];
 
 test('every own item maps to an existing check, template or merge', () => {
   const { catalog, excluded, errors } = loadCatalog();
@@ -26,10 +27,11 @@ test('every own item maps to an existing check, template or merge', () => {
     expect(s.merge ?? []).not.toContain('permissions');
   }
   expect([...checks].sort()).toEqual(Object.keys(defaults().checks).sort());
-  const ownIds = new Set([...NOT_BUILT, ...CORE, ...REVIEWER]);
+  const ownIds = new Set([...NOT_BUILT, ...CORE, ...REVIEWER, ...REPLACED]);
   const reasons = new Map(excluded.filter((e) => ownIds.has(e.id)).map((e) => [e.id, e.reason]));
   expect(reasons.size).toBe(21);
   for (const id of NOT_BUILT) expect(reasons.get(id)).toBe('not built yet (this release ships existing own items only)');
   for (const id of CORE) expect(reasons.get(id)).toBe('in the core install since platform enforcement; not a selectable item');
   for (const id of REVIEWER) expect(reasons.get(id)).toBe('part of the PR reviewer (M2)');
+  for (const id of REPLACED) expect(reasons.get(id)).toBe('replaced by the pr-size check (pr-ship item)');
 });

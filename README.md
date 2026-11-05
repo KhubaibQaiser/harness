@@ -39,6 +39,7 @@ In plain terms: with the sandbox on, the operating system enforces the guard. Wi
 | npm registry check when the user allows an install | no | yes |
 | Red-first TDD, test-lock, tamper check | no | yes |
 | Changed-line coverage | no | yes |
+| PR size: asks above 400 changed lines or 20 files, with a skill that splits into stacked PRs | yes | yes |
 
 In short: secrets and risky commands are blocked, harness's own files are off limits to the agent, and a change that spreads to a second file needs your OK. A source edit needs a test that failed first, and the agent can't stop until your format, lint, typecheck and test commands pass.
 
@@ -136,7 +137,6 @@ The full list: [docs/reference.md](docs/reference.md#known-limits).
 ## Roadmap
 
 Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Coming next:
-- a PR size check;
 - an opt-in personal preset of working rules and stack skills;
 - local reports that show whether agents actually follow the installed rules and skills;
 - memory, the PR reviewer, and TDD for other languages.

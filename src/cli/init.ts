@@ -40,7 +40,7 @@ export type InitEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: 
 
 export const AI_USAGE = '[--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]';
 const USAGE = `Usage: /harness:init [--yes] [--dry-run] [--config <file>] ${AI_USAGE}`;
-const GATES: Record<string, string> = { guard: 'guard', protect: 'protect', depVerify: 'dep-verify', multiFile: 'multi-file', tdd: 'TDD', stop: 'stop' };
+const GATES: Record<string, string> = { guard: 'guard', protect: 'protect', depVerify: 'dep-verify', multiFile: 'multi-file', tdd: 'TDD', stop: 'stop', prSize: 'PR size' };
 
 const at = (o: any, path: string): unknown => path.split('.').reduce((v, k) => v?.[k], o);
 

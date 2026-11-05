@@ -5,7 +5,8 @@ import { COUNT_FIELDS, COUNTERS, type WindowRule, type WindowsResult } from './w
 export interface Known { ids: Set<string> }
 
 const OTHER = 'other';
-const MODEL_RE = /^claude-[a-z0-9.-]+$/;
+// Model ids: a family word plus version digits and an optional date, so free text can't ride along.
+const MODEL_RE = /^claude-(?:(?:\d+-){0,2}(?:opus|sonnet|haiku|fable)(?:-\d+){0,3}|(?:opus|sonnet|haiku|fable)(?:-\d+){1,3})(?:-\d{8})?$/;
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 const WEEK_RE = /^\d{4}-W\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

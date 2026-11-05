@@ -19,7 +19,7 @@ const hostile = (): ReportData => ({
   usage: {
     total: U(10), main: U(8), sub: U(2),
     byDay: { '2026-11-04': U(5), '2026-11-05': U(7), [`${L}day`]: U(1) },
-    byModel: { 'claude-opus-4.5': U(5), '<synthetic>': U(3), [`${L}model`]: U(2) },
+    byModel: { 'claude-opus-4-5': U(5), 'claude-my-private-repo': U(1), '<synthetic>': U(3), [`${L}model`]: U(2) },
     sessions: [{ id: `${L}session-id`, usage: U(1), responses: 1, compactions: 0, peak: 1 }], responses: 4, unknown: 0,
     loads: { sessions: 3, agentsMd: 2, claudeMd: 1, unknown: 0, compactions: 1, reloaded: 1 }, toolChars: { [`${L}tool`]: 4 },
   },
@@ -55,8 +55,9 @@ describe('buildExport', () => {
   it('counts a synthetic model under other and passes the check', () => {
     const out = buildExport(hostile(), known);
     const models = out.models as { id: string; input: number }[];
-    expect(models.find((m) => m.id === 'other')!.input).toBe(5);
-    expect(models.map((m) => m.id)).toContain('claude-opus-4.5');
+    expect(models.find((m) => m.id === 'other')!.input).toBe(6); // synthetic 3 + canary 2 + private-repo 1
+    expect(models.map((m) => m.id)).toContain('claude-opus-4-5');
+    expect(JSON.stringify(out)).not.toContain('private-repo');
     expect(exportProblems(out, known)).toEqual([]);
   });
   it('buckets weeks as ISO weeks and the date has no time', () => {

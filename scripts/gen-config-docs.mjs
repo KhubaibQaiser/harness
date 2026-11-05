@@ -1,5 +1,5 @@
-// Prints the README config reference (between the markers) from the key-rule table in src/core/config.ts.
-// `node scripts/gen-config-docs.mjs --write` rewrites that section in README.md.
+// Prints the config reference in docs/reference.md (between the markers) from the key-rule table in src/core/config.ts.
+// `node scripts/gen-config-docs.mjs --write` rewrites that section in docs/reference.md.
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -64,6 +64,6 @@ const rows = configReference().map(({ key, default: d, rule }) => {
 const section = ['<!-- config:start -->', '| Key | Default | What it does |', '|---|---|---|', ...rows, '<!-- config:end -->'].join('\n');
 
 if (process.argv.includes('--write')) {
-  const md = readFileSync('README.md', 'utf8');
-  writeFileSync('README.md', md.replace(/<!-- config:start -->[\s\S]*<!-- config:end -->/, () => section));
+  const md = readFileSync('docs/reference.md', 'utf8');
+  writeFileSync('docs/reference.md', md.replace(/<!-- config:start -->[\s\S]*<!-- config:end -->/, () => section));
 } else console.log(section);

@@ -1,0 +1,10 @@
+id: engineering-principles
+kind: own-skill
+title: "engineering-principles"
+source: {type: own, files: [{from: skills/engineering-principles/SKILL.md, to: .claude/skills/engineering-principles/SKILL.md}]}
+license: MIT
+min_claude_code: 2.1.0
+applies_when: {always: true}
+cost: {context: low, setup: none}
+stance: default
+why: "Fixture item for loader tests."

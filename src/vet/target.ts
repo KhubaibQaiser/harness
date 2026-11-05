@@ -1,5 +1,5 @@
 import { DIR_JQ, isNotFound } from '../catalog/resolve.js';
-import { esc } from '../core/config.js';
+import { esc, isObj } from '../core/config.js';
 import type { Exec } from '../core/exec.js';
 
 export type Target = { kind: 'repo'; repo: string; ref?: string; path: string } | { kind: 'plugin'; name: string; market: string };
@@ -66,7 +66,6 @@ function pinSha(repo: string, sha: string, exec: Exec): { ref: string; sha: stri
 }
 
 export const UNREADABLE = `Could not read the installed marketplaces from claude. Run claude plugin marketplace list yourself, or ${URL_INSTEAD.charAt(0).toLowerCase()}${URL_INSTEAD.slice(1)}`;
-const J = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** The installed marketplaces (`claude plugin marketplace list --json`, free, no model call), or why they can't be read. */
 export function marketList(exec: Exec): Record<string, unknown>[] | 'missing' | 'unreadable' {
@@ -76,11 +75,11 @@ export function marketList(exec: Exec): Record<string, unknown>[] | 'missing' | 
   try { list = JSON.parse(l.stdout); } catch { return 'unreadable'; }
   // ponytail: assumed shape, not verified against a real claude (check in the Task 27 live run): a JSON array of
   // { name, source: 'github', repo: 'owner/repo' } (or { name, repo }); anything else is "could not read".
-  if (l.status !== 0 || !Array.isArray(list) || !list.every((x) => J(x) && typeof x.name === 'string')) return 'unreadable';
+  if (l.status !== 0 || !Array.isArray(list) || !list.every((x) => isObj(x) && typeof x.name === 'string')) return 'unreadable';
   return list as Record<string, unknown>[];
 }
 /** An installed marketplace's GitHub repo, if it names one. */
-export const marketRepoOf = (m: Record<string, unknown>): unknown => (typeof m.repo === 'string' ? m.repo : J(m.source) ? m.source.repo : undefined);
+export const marketRepoOf = (m: Record<string, unknown>): unknown => (typeof m.repo === 'string' ? m.repo : isObj(m.source) ? m.source.repo : undefined);
 
 function resolvePlugin(t: { name: string; market: string }, exec: Exec, pre?: ReturnType<typeof marketList>): Resolved | Err {
   const name = esc(t.name), market = esc(t.market);
@@ -90,7 +89,7 @@ function resolvePlugin(t: { name: string; market: string }, exec: Exec, pre?: Re
   if (list === 'unreadable') return { error: UNREADABLE };
   const m = list.find((x) => x.name === t.market);
   if (!m) return notInstalled;
-  const mtype = J(m.source) ? m.source.source : m.source;
+  const mtype = isObj(m.source) ? m.source.source : m.source;
   const mrepo = marketRepoOf(m);
   if ((mtype !== undefined && mtype !== 'github') || typeof mrepo !== 'string' || !REPO.test(mrepo)) return { error: `Marketplace "${market}" has a ${esc(String(mtype ?? 'unknown'))} source; vet reads GitHub marketplaces only. ${URL_INSTEAD}` };
   const marketRepo = mrepo;
@@ -101,7 +100,7 @@ function resolvePlugin(t: { name: string; market: string }, exec: Exec, pre?: Re
   if (rf) return rf;
   let plugins: unknown;
   try { plugins = (JSON.parse((raw as { out: string }).out) as { plugins?: unknown }).plugins; } catch { plugins = undefined; }
-  const entry = (Array.isArray(plugins) ? plugins : []).find((x) => J(x) && x.name === t.name) as Record<string, unknown> | undefined;
+  const entry = (Array.isArray(plugins) ? plugins : []).find((x) => isObj(x) && x.name === t.name) as Record<string, unknown> | undefined;
   if (!entry) return { error: `Plugin "${name}" is not in marketplace "${market}". Check the plugin name, or ${URL_INSTEAD.charAt(0).toLowerCase()}${URL_INSTEAD.slice(1)}` };
   const base = { name: t.name, market: t.market, marketRepo };
   const src = entry.source;
@@ -117,10 +116,11 @@ function resolvePlugin(t: { name: string; market: string }, exec: Exec, pre?: Re
       if (f) return f;
       if ((d as { out: string }).out !== 'dir') return { error: `Plugin "${name}" in "${market}": ${where} is not a folder in ${marketRepo} at ${mp.sha.slice(0, 7)}. ${URL_INSTEAD}` };
     }
-    return { repo: marketRepo, path, ref: mp.sha, sha: mp.sha, ...base };
+    // HEAD for this entry is the marketplace ref it was pinned from, else the marketplace's default branch.
+    return { repo: marketRepo, path, ref: mp.sha, sha: mp.sha, ...base, ...(typeof m.ref === 'string' && safe(m.ref) ? { follows: m.ref } : {}) };
   }
 
-  if (J(src) && (src.source === 'github' || src.source === 'git-subdir')) {
+  if (isObj(src) && (src.source === 'github' || src.source === 'git-subdir')) {
     const url = typeof src.url === 'string' ? /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(src.url)?.[1] : undefined;
     const repo = src.source === 'github' ? src.repo : url;
     const path = src.source === 'git-subdir' && typeof src.path === 'string' ? src.path.replace(/\/+$/, '') : '';
@@ -135,7 +135,7 @@ function resolvePlugin(t: { name: string; market: string }, exec: Exec, pre?: Re
     const p = pin(repo, ref, exec);
     return 'error' in p ? p : { repo, path, ...p, ...base, ...(ref ? { follows: ref } : {}) };
   }
-  const type = J(src) ? String(src.source) : String(src);
+  const type = isObj(src) ? String(src.source) : String(src);
   return { error: `Plugin "${name}" in "${market}" has a ${esc(type)} source; vet checks github, git-subdir and relative-path sources only. ${URL_INSTEAD}` };
 }
 

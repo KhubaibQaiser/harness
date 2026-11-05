@@ -25,13 +25,12 @@ function unsafe(path: string): string | undefined {
 }
 
 /** D12: names Claude Code reads as instructions get a .vetted suffix, so nothing in the unpacked tree is auto-loaded. */
-function neutralise(path: string): string {
+export function neutralise(path: string): string {
   if (path === '.gitignore') return '.gitignore.vetted'; // the folder's own .gitignore (*) must stay
   const segs = path.split('/');
   return segs.map((s, i) => (i === segs.length - 1 ? /^(claude\.md|claude\.local\.md|agents\.md)$/i.test(s) : /^\.claude$/i.test(s)) ? `${s}.vetted` : s).join('/');
 }
 
-// ponytail: Task 3 must filter files, skipped and large to the scan scope (r.path, .claude-plugin/, .mcp.json), or out-of-scope entries become findings.
 // ponytail: the live `gh api repos/o/r/tarball/<sha>` (redirect to codeload, raw binary stdout) is checked only in the Task 27 live run.
 export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: string } {
   const at = `${r.repo}@${r.sha.slice(0, 7)}`;
@@ -97,16 +96,18 @@ export function isVetTmp(dir: string): boolean {
   return dirname(p) === t && basename(p).startsWith(PREFIX);
 }
 
-/** Removes an unpacked folder. Refuses anything that is not a harness-vet-* folder directly under the OS temp dir. */
-export function cleanTmp(dir: string): void {
-  if (isVetTmp(dir)) rmSync(dir, { recursive: true, force: true });
+/** Removes an unpacked folder; false when it refuses: anything that is not a harness-vet-* folder directly under the OS temp dir. */
+export function cleanTmp(dir: string): boolean {
+  if (!isVetTmp(dir)) return false;
+  rmSync(dir, { recursive: true, force: true });
+  return true;
 }
 
 /** `harness vet --clean`: removes every unpacked folder of this OS user; one it can't remove is skipped and counted. */
 export function cleanAllTmp(): { removed: number; failed: number } {
   let removed = 0, failed = 0;
   for (const n of readdirSync(tmpdir()).filter((x) => x.startsWith(PREFIX))) {
-    try { cleanTmp(join(tmpdir(), n)); removed++; } catch { failed++; }
+    try { if (cleanTmp(join(tmpdir(), n))) removed++; } catch { failed++; } // a refused entry (a symlink) is neither
   }
   return { removed, failed };
 }

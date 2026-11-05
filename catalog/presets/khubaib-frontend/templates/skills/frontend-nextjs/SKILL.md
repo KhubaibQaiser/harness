@@ -42,9 +42,7 @@ Client creep:
 - No server-only code or secrets in client bundles.
 
 Data waterfalls:
-- No sequential awaits for calls that don't depend on each other.
 - No client-effect fetching the server could do.
-- No missing Suspense boundaries.
 
 Caching mistakes:
 - No wrong or implicit cache and revalidate settings.

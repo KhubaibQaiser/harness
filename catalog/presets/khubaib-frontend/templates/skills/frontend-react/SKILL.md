@@ -50,12 +50,10 @@ Shared React rules for this repo. The Next.js and React Native rules live in the
 ## Performance
 
 - Structure first: colocate state, lift content up as `children`, use narrow selectors and split contexts.
-- Then use `memo`, `useMemo` or `useCallback` when profiling or an obvious cost shows a need: a heavy list item, an expensive computation, or a stable prop for a memoized child.
 - With the React Compiler on, rely on it and skip manual memo.
 - Use narrow store selectors.
 - Virtualize long lists.
 - In plain React, use lazy loading and similar techniques.
-- Use transitions (the newer React APIs) wherever they give a better client UX.
 
 ## Style
 
@@ -73,7 +71,6 @@ Shared React rules for this repo. The Next.js and React Native rules live in the
 ## Anti-patterns
 
 useEffect misuse:
-- No derived state in effects.
 - No syncing props to state.
 - No fetching in effects.
 - No effect chains.
@@ -88,6 +85,3 @@ Key and state bugs:
 - No index keys in dynamic lists.
 - No state for values you can compute.
 - No server data in Zustand.
-
-Inline components:
-- Don't define a component inside another component.

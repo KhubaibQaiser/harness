@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { parse } from 'yaml';
 import { loadCatalog } from '../../src/catalog/load.js';
+import { MIN_CLAUDE_CODE } from '../../src/core/min-claude.js';
 import { TELEMETRY_ENV, checkPreset, identityProblems, loadPreset } from '../../src/catalog/presets.js';
 import type { LoadedPreset } from '../../src/catalog/presets.js';
 
@@ -35,6 +36,13 @@ test('YAML values', () => {
   expect(preset.git).toEqual({ branch_prefixes: ['feature/', 'fix/', 'hotfix/', 'chore/', 'refactor/', 'docs/', 'ci/'], no_ai_trailer: true, pr_size_warning: true });
 });
 
+test('item kinds, core id and min_claude_code', () => {
+  const { preset, items } = load();
+  expect(preset.core).toBe('core-rules');
+  expect(Object.fromEntries(items.map((i) => [i.id, i.kind]))).toEqual({ 'core-rules': 'rule', ...Object.fromEntries(SKILLS.map((n) => [n, 'own-skill'])) });
+  for (const i of items) expect(i.min_claude_code, i.id).toBe(MIN_CLAUDE_CODE);
+});
+
 test('caveman is nowhere in the preset', () => {
   for (const f of [join(DIR, 'khubaib-frontend.yaml'), ...files(BASE)]) expect(readFileSync(f, 'utf8').toLowerCase(), f).not.toContain('caveman');
 });
@@ -56,8 +64,9 @@ test('core.md is the spec section 5 block, line for line', () => {
 
 test('skill descriptions are the spec section 7 text', () => {
   for (const name of SKILLS) {
-    const row = new RegExp(`^\\| \`${name}\` \\| (.+?Use when.+?) \\| `, 'm').exec(SPEC)![1];
-    expect(frontmatter(name)).toEqual({ name, description: row });
+    const row = new RegExp(`^\\| \`${name}\` \\| (.+?Use when.+?) \\| `, 'm').exec(SPEC);
+    expect(row, `spec section 7 has no "Use when" row for ${name}`).not.toBeNull();
+    expect(frontmatter(name)).toEqual({ name, description: row![1] });
   }
 });
 

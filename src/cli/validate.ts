@@ -55,6 +55,13 @@ export function validate(argv: string[], { root, out }: CliEnv): number {
   return 2;
 }
 
+/** The ids a vet review may name as overlaps: the set `harness explain` lists. null: installed but the config can't be read. */
+export function installedIds(root: string): string[] | null {
+  if (!existsSync(join(root, MANIFEST_REL))) return [];
+  const lc = loadConfig(root);
+  return lc.errors.length ? null : selectedIds(lc.config);
+}
+
 const read = (file: string): string | { error: string } => {
   try {
     return readFileSync(file, 'utf8');
@@ -101,10 +108,7 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
     const raw = json(text as string);
     if (raw === undefined) errors = ['vet-review: not valid JSON'];
     else {
-      // Same set `harness explain` lists. null: installed but the config can't be read, so overlaps can't be checked.
-      const lc = loadConfig(root);
-      const installed = !existsSync(join(root, MANIFEST_REL)) ? [] : lc.errors.length ? null : selectedIds(lc.config);
-      const r = validateVetReview(raw, sideRaw as ScanResult, installed);
+      const r = validateVetReview(raw, sideRaw as ScanResult, installedIds(root));
       errors = r.ok ? [] : r.errors;
     }
   } else {

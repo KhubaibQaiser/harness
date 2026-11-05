@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { isNotFound } from '../catalog/resolve.js';
@@ -29,7 +29,6 @@ function neutralise(path: string): string {
   return segs.map((s, i) => (i === segs.length - 1 ? /^(claude\.md|claude\.local\.md|agents\.md)$/i.test(s) : /^\.claude$/i.test(s)) ? `${s}.vetted` : s).join('/');
 }
 
-// ponytail: Task 8 must call cleanTmp(dir) in a try/finally around the whole run (spec 3.5); fetchTarball only cleans up after its own failures.
 // ponytail: Task 3 must filter files, skipped and large to the scan scope (r.path, .claude-plugin/, .mcp.json), or out-of-scope entries become findings.
 // ponytail: the live `gh api repos/o/r/tarball/<sha>` (redirect to codeload, raw binary stdout) is checked only in the Task 27 live run.
 export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: string } {
@@ -89,8 +88,21 @@ export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: s
   return { dir, files: Object.keys(map).sort(), map, skipped, large };
 }
 
+/** True for a harness-vet-* folder directly under the OS temp dir, judged after symlinks where it exists. */
+export function isVetTmp(dir: string): boolean {
+  let p = resolve(dir), t = resolve(tmpdir());
+  try { p = realpathSync(p); t = realpathSync(t); } catch { /* gone: judge the path as written */ }
+  return dirname(p) === t && basename(p).startsWith(PREFIX);
+}
+
 /** Removes an unpacked folder. Refuses anything that is not a harness-vet-* folder directly under the OS temp dir. */
 export function cleanTmp(dir: string): void {
-  if (dirname(resolve(dir)) !== resolve(tmpdir()) || !basename(dir).startsWith(PREFIX)) return;
-  rmSync(dir, { recursive: true, force: true });
+  if (isVetTmp(dir)) rmSync(dir, { recursive: true, force: true });
+}
+
+/** `harness vet --clean`: removes every unpacked folder; returns how many there were. */
+export function cleanAllTmp(): number {
+  const all = readdirSync(tmpdir()).filter((n) => n.startsWith(PREFIX));
+  for (const n of all) cleanTmp(join(tmpdir(), n));
+  return all.length;
 }

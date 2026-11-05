@@ -68,14 +68,17 @@ export function aheadBy(r: Resolved, exec: Exec): number | null {
   return o.status === 0 && /^\d+$/.test(t) ? Number(t) : null;
 }
 
-export function installLines(s: ScanResult, info: InstallInfo, ahead: number | null): string[] {
+/** `taken`: the repo of an installed marketplace with info.market's name; null when none clashes; undefined when it could not be checked. */
+export function installLines(s: ScanResult, info: InstallInfo, ahead: number | null, taken?: string | null): string[] {
   const sha7 = s.sha.slice(0, 7);
   const entry = s.path
     ? { name: info.name, source: { source: 'git-subdir', url: s.repo, path: s.path, sha: s.sha } }
     : { name: info.name, source: { source: 'github', repo: s.repo, sha: s.sha } };
   return [
     ...(info.market
-      ? [`claude plugin marketplace add ${info.marketRepo ?? s.repo}`, `claude plugin install ${info.name}@${info.market} --scope project`, `Check that no other installed marketplace is already named ${info.market}.`]
+      ? [`claude plugin marketplace add ${info.marketRepo ?? s.repo}`, `claude plugin install ${info.name}@${info.market} --scope project`,
+        ...(taken === null ? [] : [taken === undefined ? `Check that no other installed marketplace is already named ${info.market}.`
+          : `An installed marketplace is already named ${info.market} (${esc(taken)}); claude plugin install ${info.name}@${info.market} would use it, not the vetted repo.`])]
       : ['No marketplace lists this item; add the pinned entry below to a marketplace you control.']),
     ...(ahead === null ? [`Could not check how far HEAD is past the vetted ${sha7}.`]
       : ahead > 0 ? [`HEAD is ${ahead} commits past the vetted ${sha7}; marketplace add installs HEAD, not what was vetted.`] : []),

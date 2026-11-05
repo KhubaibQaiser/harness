@@ -7,13 +7,13 @@ export interface Resolved { repo: string; ref: string; sha: string; path: string
 type Err = { error: string };
 
 const REPO_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
-const REPO = { test: (s: string): boolean => REPO_RE.test(s) && !['.', '..', '.git'].includes(s.split('/')[1]) };
+export const REPO = { test: (s: string): boolean => REPO_RE.test(s) && !['.', '..', '.git'].includes(s.split('/')[1]) };
 const NAME = /^[A-Za-z0-9._-]+$/;
 const SHA40 = /^[0-9a-f]{40}$/;
 const VERIFY = 'Check your network or run gh auth status, then try again.';
 const URL_INSTEAD = "Pass the plugin's GitHub URL instead.";
 /** A ref or path that is safe to put in a gh api endpoint: allowed characters, no `..` segment, no leading `/`. */
-const safe = (s: string): boolean => /^[A-Za-z0-9._/-]+$/.test(s) && !s.startsWith('/') && !s.split('/').some((x) => x === '' || x === '.' || x === '..');
+export const safe = (s: string): boolean => /^[A-Za-z0-9._/-]+$/.test(s) && !s.startsWith('/') && !s.split('/').some((x) => x === '' || x === '.' || x === '..');
 const bad = (s: string): Err => ({ error: `Not a GitHub repo, tree URL or plugin@marketplace: ${esc(s)}. Use https://github.com/<owner>/<repo>, owner/repo[#ref] or plugin@marketplace.` });
 const noGh = { error: 'harness vet needs the GitHub CLI (gh). Install the GitHub CLI (gh), then run harness vet again.' };
 
@@ -66,21 +66,30 @@ function pinSha(repo: string, sha: string, exec: Exec): { ref: string; sha: stri
 
 const J = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** The installed marketplaces (`claude plugin marketplace list --json`, free, no model call), or why they can't be read. */
+export function marketList(exec: Exec): Record<string, unknown>[] | 'missing' | 'unreadable' {
+  const l = exec('claude', ['plugin', 'marketplace', 'list', '--json']);
+  if (l.missing) return 'missing';
+  let list: unknown;
+  try { list = JSON.parse(l.stdout); } catch { return 'unreadable'; }
+  // ponytail: assumed shape, not verified against a real claude (check in the Task 27 live run): a JSON array of
+  // { name, source: 'github', repo: 'owner/repo' } (or { name, repo }); anything else is "could not read".
+  if (l.status !== 0 || !Array.isArray(list) || !list.every((x) => J(x) && typeof x.name === 'string')) return 'unreadable';
+  return list as Record<string, unknown>[];
+}
+/** An installed marketplace's GitHub repo, if it names one. */
+export const marketRepoOf = (m: Record<string, unknown>): unknown => (typeof m.repo === 'string' ? m.repo : J(m.source) ? m.source.repo : undefined);
+
 function resolvePlugin(t: { name: string; market: string }, exec: Exec): Resolved | Err {
   const name = esc(t.name), market = esc(t.market);
   const notInstalled = { error: `Marketplace "${market}" is not installed. Run harness vet with the plugin's GitHub URL instead, such as https://github.com/<owner>/<repo>.` };
-  const l = exec('claude', ['plugin', 'marketplace', 'list', '--json']);
-  if (l.missing) return notInstalled;
-  const unreadable = { error: `Could not read the installed marketplaces from claude. Run claude plugin marketplace list yourself, or ${URL_INSTEAD.charAt(0).toLowerCase()}${URL_INSTEAD.slice(1)}` };
-  let list: unknown;
-  try { list = JSON.parse(l.stdout); } catch { return unreadable; }
-  // ponytail: assumed shape, not verified against a real claude (check in the Task 27 live run): a JSON array of
-  // { name, source: 'github', repo: 'owner/repo' } (or { name, repo }); anything else is "could not read".
-  if (l.status !== 0 || !Array.isArray(list) || !list.every((x) => J(x) && typeof x.name === 'string')) return unreadable;
-  const m = (list as Record<string, unknown>[]).find((x) => x.name === t.market);
+  const list = marketList(exec);
+  if (list === 'missing') return notInstalled;
+  if (list === 'unreadable') return { error: `Could not read the installed marketplaces from claude. Run claude plugin marketplace list yourself, or ${URL_INSTEAD.charAt(0).toLowerCase()}${URL_INSTEAD.slice(1)}` };
+  const m = list.find((x) => x.name === t.market);
   if (!m) return notInstalled;
   const mtype = J(m.source) ? m.source.source : m.source;
-  const mrepo = typeof m.repo === 'string' ? m.repo : J(m.source) ? m.source.repo : undefined;
+  const mrepo = marketRepoOf(m);
   if ((mtype !== undefined && mtype !== 'github') || typeof mrepo !== 'string' || !REPO.test(mrepo)) return { error: `Marketplace "${market}" has a ${esc(String(mtype ?? 'unknown'))} source; vet reads GitHub marketplaces only. ${URL_INSTEAD}` };
   const marketRepo = mrepo;
   const mp = pin(marketRepo, typeof m.ref === 'string' && safe(m.ref) ? m.ref : undefined, exec);

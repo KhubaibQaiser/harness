@@ -45,7 +45,7 @@ test.each([[0, 0], [6, 6], [7, 5], [9, 5]])('summary caps at 12 lines with %i hi
 const info = { name: 'p', market: 'm', marketRepo: 'mo/mr' };
 test('install text', () => {
   const s = scan([]);
-  expect(installLines(s, info, 0)).toEqual(['claude plugin marketplace add mo/mr', 'claude plugin install p@m --scope project', expect.any(String), expect.any(String)]);
+  expect(installLines(s, info, 0)).toEqual(['claude plugin marketplace add mo/mr', 'claude plugin install p@m --scope project', expect.any(String), expect.any(String), expect.any(String)]);
   expect(installLines(s, { name: 'p', market: null, marketRepo: null }, 0)).toContain('No marketplace lists this item; add the pinned entry below to a marketplace you control.');
   expect(installLines(s, info, 3)).toContain('HEAD is 3 commits past the vetted abc1234; marketplace add installs HEAD, not what was vetted.');
   expect(installLines(s, info, 0).join('\n')).not.toContain('HEAD is');
@@ -119,4 +119,55 @@ test('installInfo: malformed or hostile marketplace.json falls through', () => {
   expect(installInfo(evilMarket, R('plugins/p')).market).toBeNull();
   const evilJson = tree({ 'plugins/p/.claude-plugin/plugin.json': JSON.stringify({ name: 'a\nb' }) });
   expect(installInfo(evilJson, R('plugins/p')).name).toBe('p');
+});
+
+const RULES: [VetFinding['severity'], VetFinding['rule']][] = [
+  ['high', 'hook-shell'], ['high', 'hook-http'], ['high', 'secrets'], ['high', 'unpinned-remote'],
+  ['medium', 'invalid-manifest'], ['medium', 'permissions'], ['medium', 'injection-text'], ['medium', 'network'], ['medium', 'mcp-server'], ['medium', 'obfuscated'], ['medium', 'unsafe-archive'],
+  ['low', 'license'], ['low', 'telemetry'],
+];
+test('every rule renders in its severity table', () => {
+  const md = reportMarkdown(scan(RULES.map(([s, r], i) => f(s, r, i + 1, `f${i}.json`))), null, []);
+  RULES.forEach(([sev, r], i) => {
+    const sec = md.split(`### ${sev[0]!.toUpperCase()}${sev.slice(1)}`)[1]!.split(/\n###? /)[0]!;
+    expect(sec).toContain(`- ${r} \`f${i}.json:${i + 1}\``);
+  });
+});
+
+test('backtick in a file name does not break the code span', () => {
+  const md = reportMarkdown(scan([f('high', 'secrets', 1, 'a`b.json')]), null, []);
+  expect(md).toContain('- secrets `` a`b.json:1 ``');
+});
+
+test('names and paths with .. or a leading - fall back', () => {
+  const d1 = tree({ '.claude-plugin/marketplace.json': mp([{ name: '--scope', source: './plugins/p' }, { name: '..', source: './plugins/p' }]) });
+  expect(installInfo(d1, R('plugins/p')).market).toBeNull();
+  expect(installInfo(tree({ '.claude-plugin/marketplace.json': mp([{ name: 'p', source: './plugins/p' }], '-x') }), R('plugins/p')).market).toBeNull();
+  expect(installInfo(tree({ 'plugins/p/.claude-plugin/plugin.json': '{"name":"--scope"}' }), R('plugins/p')).name).toBe('p');
+  expect(installInfo(tree({}), R('plugins/-x')).name).toBe('r');
+  expect(installInfo(tree({}), R('plugins/..')).name).toBe('r');
+});
+
+test('marketplace install text notes possible name clash', () => {
+  expect(installLines(scan([]), info, 0)).toContain('Check that no other installed marketplace is already named m.');
+});
+
+test('reportRel prints as is', () => {
+  expect(summaryLines(scan([]), null, '.harness\\vet\\x.md').at(-1)).toBe('Full report: .harness\\vet\\x.md');
+});
+
+test('reviewer prose: no cut, labelled lines, line 0 has no :0', () => {
+  const long = 'x'.repeat(300);
+  const md = reportMarkdown(scan([]), { ...rev, why: long, summary: '## Install', overlaps: [{ id: 'x', how: '# h' }], injection: [{ file: 'a.md', line: 0, verdict: 'benign', why: '# w' }] }, []);
+  expect(md).toContain(`Why: ${long}`);
+  expect(md).toContain('Summary: ## Install');
+  expect(md).toContain('- Overlaps x: # h');
+  expect(md).toContain('- Injection a.md benign: # w');
+  expect(md.match(/^## Install$/gm)).toHaveLength(1);
+  expect(md).not.toMatch(/^#+ (h|w)$/m);
+});
+
+test('fence is longer than any backtick run in the install lines', () => {
+  const md = reportMarkdown(scan([]), null, ['a ```` b']);
+  expect(md).toContain('`````\na ```` b\n`````');
 });

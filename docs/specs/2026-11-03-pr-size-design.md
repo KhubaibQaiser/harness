@@ -3,7 +3,7 @@
 - Status: owner-approved design, amended 2026-11-05.
   - The 2026-11-02 decisions are in section 1. The owner's answers of 2026-11-03 are in section 12.
   - The owner's in-progress warning decisions of 2026-11-05 (N1 to N4) are in section 14.
-  - Two design questions in section 14.9 are open; the rest of section 14 is the proposed design for them to review.
+  - The owner's answers of 2026-11-05 (N5 to N7) are in section 14.11. Nothing is open.
 - Date: 2026-11-03
 - Owner: khubaibqaiser
 - Inputs: [`../research/2026-11-02-pr-size.md`](../research/2026-11-02-pr-size.md) (the evidence and the owner decisions), [`2026-11-03-platform-enforcement-design.md`](2026-11-03-platform-enforcement-design.md) ("PE"), and the code on `feature/pe-6-config-change`: `src/checks/guard.ts`, `src/core/config.ts`, `src/checks/multi-file.ts`, `src/hooks/dispatch.ts`.
@@ -179,7 +179,7 @@ An own item, installed by `init` from `templates/skills/pr-ship/SKILL.md` into `
 
 > Confirm: this pull request is 512 changed lines in 14 files against `origin/main`, over the limit of 400 lines or 20 files (aim for 200). Largest: `src/a.ts` 210, `src/b.ts` 150, `test/a.test.ts` 90. Not counted: `pnpm-lock.yaml`. Approve to open it as it is, or say no and run the pr-ship skill to split it into stacked PRs.
 
-For a push, the first sentence becomes: "this push grows the pull request for `feat/x` to 512 changed lines in 14 files (it was 380 in 9)".
+For a push, the first sentence becomes: "this push grows the pull request for `feat/x` to 512 changed lines in 14 files (it was 380 in 9)". The last sentence becomes "Approve to push it as it is, or say no and run the pr-ship skill to split it." (N7, 2026-11-05).
 
 ### 10.2 Deny (unattended)
 
@@ -283,7 +283,7 @@ The delivery follows from that:
 - **Attended, at Stop:** a `systemMessage` only. The turn is ending, so the person is about to get control and can answer directly. Stop's `additionalContext` would keep the agent running without the person, and would count toward the 8-continuation cap, which is the opposite of a pause.
   - The dispatcher currently emits a Stop `context` decision as `systemMessage` (`src/hooks/io.ts`). That stays.
   - If another Stop check blocks in the same Stop, the dispatcher keeps the warning as a `systemMessage` beside the block (a small dispatcher change), so it isn't lost.
-- **The pause is guidance, not enforcement.** No hook output stops the agent's next edit (14.9, Q2).
+- **The pause is enforced once (N6).** No PostToolUse output stops the next edit. So after an attended warning, the next edit on that branch gets one PreToolUse `ask`: the permission dialog (14.7). The ask isn't repeated once it is answered: after the edit ran, after the person's next prompt, or after a raise. Unattended runs keep the note only, with no deny.
 
 ### 14.4 Raising the limit for a branch
 
@@ -295,16 +295,17 @@ Raising needs the person, through a real permission dialog:
   - Attended, it asks: `` Confirm: raise the pull request size limit for `<branch>` to <n> lines and <f> files. Harness then warns again only above that. ``
   - Unattended, it denies: `Blocked by pr-size: only a person can raise the size limit, and no person is here to approve it.`
 - **PostToolUse.** The same detection, after the approved command ran, records the raise in the state file (14.5). PostToolUse runs in the hook process, not in the agent's sandbox. Its detection is the same function on the same text as at PreToolUse, so only an approved command is ever recorded.
-- **What a raise changes.** It replaces the max for this branch's warnings. Whether it also changes the PR-time ask is open (14.9, Q1).
+- **What a raise changes (N5).** It replaces the max for this branch's warnings and for the PR-time ask. The PR-time ask still fires above the raised limit.
 
 ### 14.5 State file
 
 `.harness/state/pr-progress.json` is repo-level, like `pr-branches.json`, because a branch outlives a session. It is written atomically. The agent's file tools and the sandbox can't write it.
 
 ```json
-{ "<branch>": { "base": "origin/main", "fired": ["target", "max"], "lines": 0, "files": 0, "ts": "…", "raise": { "lines": 600, "files": 30, "ts": "…" } } }
+{ "<branch>": { "base": "origin/main", "fired": ["target", "max"], "lines": 0, "files": 0, "ts": "…", "raise": { "lines": 600, "files": 30, "ts": "…" }, "pending": { "lines": 214, "files": 6 } } }
 ```
 
+- `pending` is set on an attended announcement, and cleared by the edit's PostToolUse, by any UserPromptSubmit, or by a raise. While it is set, the next edit on the branch asks (N6).
 - `fired` holds the thresholds already announced.
   - At each measurement: a size at or under `target_lines` removes `target` and `max`; a size not over the max removes `max`.
   - Then a newly passed threshold fires and is added.
@@ -366,20 +367,21 @@ Placeholders follow section 10. `fired` decides the wording.
   - **Raise:** asked attended, denied unattended, recorded only after an allowed run. A hidden form (`$X --pr-size-raise`) is never recorded.
   - **State:** a corrupt state file; a branch named `constructor`; control characters in names.
 - **Perf:** a perf case times a counted edit in a small repo. The latency figure in 14.2 is an estimate until that case runs.
-- **Live (gated, with the section 11 batch):** in a real session, the agent stops and asks after the warning.
+- **Pause:**
+  - after an attended warning, the next edit asks once;
+  - after a no, it asks again until the person types;
+  - after the edit ran, a prompt or a raise, it doesn't ask;
+  - unattended, there is no ask and no deny.
+- **Live (gated, with the section 11 batch):** in a real session, the agent stops and asks after the warning, and the pause dialog shows.
 
-### 14.9 Open questions (owner)
+### 14.9 Pause copy
 
-- **Q1. Does a per-branch raise also lift the PR-time ask for that branch?**
-  - (a) Recommended: yes, up to the raised limit. The person already approved that size in a permission dialog. The PR-time ask still fires above the raised limit.
-  - (b) No. Raise affects the warnings only, and PR time asks at the repo max.
-- **Q2. Is the pause enforced?**
-  - (a) Recommended: guidance only (14.3), plus the person's `systemMessage`. A yes/no permission dialog can't carry three choices, and it would come right after the agent's own question.
-  - (b) Also a one-time PreToolUse ask on the next edit after a warning, so the pause holds even if the agent ignores it.
+The PreToolUse ask (N6): `` Confirm: `<branch>` is now L changed lines in F files (target T, limit ML lines or MF files). Approve to keep going with this edit, or say no and tell Claude to split it with the pr-ship skill or raise the limit for this branch. ``
 
 ### 14.10 Known limits
 
-- The pause depends on the agent following the warning. No PostToolUse output stops the next edit (14.3). The person's `systemMessage` is the backstop.
+- The pause dialog is yes/no. The three choices (split, keep going, raise) are spoken by the person after a no, or offered by the agent's own question. After a no, every edit asks again until the person types something.
+- The pause ask covers edit tools only. A shell command that writes files doesn't trigger it.
 - Changes made by shell commands are measured only at Stop, so a large codegen step in mid-turn is announced at the end of the turn.
 - A stacked branch with no PR yet is measured against the default branch, so it counts the branches below it. Once its PR is created and recorded, its own base is used.
 - A size that crosses a threshold and drops back between two measurements isn't announced.
@@ -388,3 +390,11 @@ Placeholders follow section 10. `fired` decides the wording.
 - Where AskUserQuestion isn't available (some subagents, `claude -p`), the agent can only ask in text.
 - A raise is kept by branch name. A renamed branch starts again from the repo limits.
 - The latency per counted edit is unverified until the perf case runs.
+
+### 14.11 Owner decisions (2026-11-05, second round)
+
+| # | Decision |
+|---|---|
+| N5 | **A raise lifts the PR-time ask too.** A per-branch raise also lifts the PR-time ask for that branch, up to the raised limit (14.4). |
+| N6 | **The pause is enforced.** After an in-progress warning, the next Edit/Write/MultiEdit/NotebookEdit on that branch gets a one-time PreToolUse `ask` with the 14.9 copy. Once it is answered, it doesn't ask again until the next threshold crossing. Unattended runs keep the note only, with no deny (14.3, 14.5). |
+| N7 | **Push wording.** "Approve to push it as it is, or say no and run the pr-ship skill to split it." (10.1) |

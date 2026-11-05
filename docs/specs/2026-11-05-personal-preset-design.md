@@ -174,19 +174,20 @@ A second marked block in AGENTS.md, written by a new merge kind `agents-md-prese
 
 The lines are drafted from Q7 to Q9, O5, O6 and O8; the owner reviews the wording. The override sentence on the first line carries O5's rule that asking wins over taste-skill's "just apply taste decisions" text. The TDD line stays even when the harness block's TDD section is present (O8).
 
-**Cost (estimates, characters / 4 as in `measure.ts`):**
+**Cost (estimates, characters / 4 as in `measure.ts`, measured on the shipped files; the core block is counted with its markers):**
 
 | Part | Tokens |
 |---|---|
 | Core block | ~173 |
-| Each skill's name and description | ~58 |
-| Preset total, one stack (core + principles + `frontend-react` + one stack skill) | ~347 |
-| Preset total, Next.js and RN (core + 4 skills) | ~405 |
-| Preset total, plain React (core + principles + `frontend-react`) | ~289 |
-| Preset total, no React (core + principles) | ~231 |
+| Each frontend skill's name and description | ~58 |
+| `engineering-principles` name and description | ~68 |
+| Preset total, one stack (core + principles + `frontend-react` + one stack skill) | ~357 |
+| Preset total, Next.js and RN (core + 4 skills) | ~415 |
+| Preset total, plain React (core + principles + `frontend-react`) | ~299 |
+| Preset total, no React (core + principles) | ~241 |
 | Today's harness block, for scale | ~275 |
 
-The preset's own text is about 12% to 20% of the 2000-token budget (estimate). `engineering-principles` (P1) adds ~58 tokens to every repo. The preselected plugins can't be measured before install by `itemContext`, so a preset with them always raises the budget ask for unmeasured items. That is the current rule, not a new one.
+The preset's own text is about 12% to 21% of the 2000-token budget (estimate). `engineering-principles` (P1) adds ~68 tokens to every repo. The preselected plugins can't be measured before install by `itemContext`, so a preset with them always raises the budget ask for unmeasured items. That is the current rule, not a new one.
 
 ## 6. Third-party picks
 

@@ -18,8 +18,6 @@
   reason: not built yet (this release ships existing own items only)
 - id: adr
   reason: not built yet (this release ships existing own items only)
-- id: pr-ship
-  reason: not built yet (this release ships existing own items only)
 - id: session-structure
   reason: not built yet (this release ships existing own items only)
 - id: ci-tdd

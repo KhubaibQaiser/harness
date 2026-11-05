@@ -44,7 +44,7 @@ const bin = (name: string) => {
 };
 const run = (root: string, o: { claude?: string | null; path?: string; platform?: NodeJS.Platform } = {}) => {
   let out = '';
-  const code = doctor([], { root, env: { PATH: withNode(o.path) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => (o.claude === undefined ? MIN_CLAUDE_CODE : o.claude), platform: o.platform });
+  const code = doctor([], { root, env: { PATH: withNode(o.path) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => (o.claude === undefined ? MIN_CLAUDE_CODE : o.claude), platform: o.platform });
   return { code, out, lines: out.trim().split('\n') };
 };
 const setConfig = (root: string, edit: (s: string) => string) => {
@@ -203,7 +203,7 @@ const JEST_TEXT = { 'package.json': JSON.stringify({ name: 'app', scripts: { tes
 test('doctor: a Jest coverage config the gate cannot read is a note when skipped, a fix when it is not', async () => {
   const root = makeRepo(JEST_TEXT);
   await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
-  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE }); return { code, out }; };
+  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE }); return { code, out }; };
   const a = await run();
   expect(a.out).toMatch(/^note the coverage gate is off for the root package: `package.json` "jest" sets `coverageReporters` without 'json'/m);
   const p = join(root, '.harness/config.yaml');
@@ -219,7 +219,7 @@ test('doctor: a package with working coverage that the user lists in tdd.coverag
   writeFileSync(p, readFileSync(p, 'utf8').replace(/coverage_skip: \[\]/, 'coverage_skip:\n    - src/**'));
   expect(readFileSync(p, 'utf8')).toContain('    - src/**');
   let out = '';
-  const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE });
+  const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE });
   expect(out).toMatch(/^note the coverage gate is off for the root package: it is listed in tdd.coverage_skip/m);
   expect(code).toBe(0);
 });
@@ -231,7 +231,7 @@ test.each([
   const root = await installed();
   writeFileSync(join(root, '.harness/config.yaml'), yaml);
   let out = '';
-  expect(await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE })).toBe(1);
+  expect(await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE })).toBe(1);
   expect(out).toMatch(/^fix `\.harness\/config\.yaml` is (invalid|not valid YAML)/m);
 });
 
@@ -241,7 +241,7 @@ test('doctor: a format or lint Stop step that would check the .harness/ files is
   pkg.devDependencies.prettier = '^3.0.0';
   const root = makeRepo({ ...REPO, 'package.json': JSON.stringify(pkg, null, 2) + '\n', 'eslint.config.js': 'export default makeConfig();\n' });
   await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
-  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE }); return { code, out }; };
+  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE }); return { code, out }; };
   const a = await run(); // init wrote .prettierignore, but could not edit the computed ESLint config
   expect(a.out).not.toMatch(/runs Prettier/);
   expect(a.out).toMatch(/^fix Stop step `lint` runs ESLint, which lints the `\.harness\/` files: add `\{ ignores: \['\.harness\/'\] \}` to the exported array in `eslint\.config\.js`/m);
@@ -260,7 +260,7 @@ test('N6: the restore advice says to commit or stash first when the file has unc
   g('add', '-A'); g('commit', '-q', '-m', 'harness');
   const p = join(root, '.harness/hooks/dispatch.mjs');
   writeFileSync(p, readFileSync(p, 'utf8') + '\n// tampered\n');
-  const run = async () => { let out = ''; await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE }); return out; };
+  const run = async () => { let out = ''; await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE }); return out; };
   expect(await run()).toMatch(/does not match the installed version: commit or stash your changes, then run \/harness:update to restore it$/m);
   g('commit', '-q', '-am', 'tampered');
   expect(await run()).toMatch(/does not match the installed version: run \/harness:update to restore it$/m);
@@ -330,7 +330,7 @@ test('a missing dispatcher gives one line, not also "does not run"', async () =>
 test('no node on the PATH: the dispatcher does not run', async () => {
   const root = await installed();
   let out = '';
-  const code = doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE });
+  const code = doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE });
   expect(out).toMatch(/^fix the dispatcher does not run \(.*ENOENT.*\): check that node is on the PATH/m);
   expect(code).toBe(1);
 });
@@ -419,7 +419,7 @@ test('sandbox lines per platform and mode', async () => {
   expect(lin.code).toBe(0);
   const both = withNode(bin('npm')) + delimiter + bin('bwrap') + delimiter + bin('socat');
   let out = '';
-  doctor([], { root, env: { PATH: both }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, platform: 'linux' });
+  doctor([], { root, env: { PATH: both }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, platform: 'linux' });
   if (process.platform !== 'win32') expect(out).not.toMatch(/bwrap/); // a linux PATH splits on ':', which a Windows PATH breaks
   setConfig(root, (s) => s.replace('sandbox: unattended', 'sandbox: always'));
   const always = run(root, { path: bin('npm'), platform: 'linux' });
@@ -488,7 +488,7 @@ const itemsRepo = (ids: string[], catalogVersion = loadCatalog().catalog.version
 const runItems = (root: string, list: PL | (() => PL)) => {
   let out = '';
   let calls = 0;
-  const code = doctor([], { root, env: { PATH: withNode() }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, pluginList: () => (calls++, typeof list === 'function' ? list() : list) });
+  const code = doctor([], { root, env: { PATH: withNode() }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, pluginList: () => (calls++, typeof list === 'function' ? list() : list) });
   return { code, out, calls };
 };
 const CAVE = 'caveman@harness-pins';
@@ -568,18 +568,19 @@ test('items: a missing or unreadable claude prints one note and skips the plugin
   expect(r.out).toMatch(/^ok catalog /m);
 });
 
-// Branch protection: a fake gh, never the real GitHub.
+// Branch protection: a fake gh, never the real GitHub (test/setup-no-gh.ts makes a real spawn throw).
 const VIEW = { status: 0, stdout: JSON.stringify({ nameWithOwner: 'o/r', defaultBranchRef: { name: 'main' } }) };
-const protectionRun = async (api: { status: number | null; stdout: string }, workflow = 'name: ci\njobs:\n  ci:\n    name: test\n    steps:\n      - run: pnpm test\n') => {
+const CI = 'name: ci\njobs:\n  ci:\n    name: test\n    steps:\n      - run: pnpm test\n';
+const protectionRun = async (api: { status: number | null; stdout: string }, workflow = CI, files: Record<string, string> = {}) => {
   const root = await installed();
   mkdirSync(join(root, '.github/workflows'), { recursive: true });
   writeFileSync(join(root, '.github/workflows/ci.yml'), workflow);
+  for (const [f, t] of Object.entries(files)) writeFileSync(join(root, '.github/workflows', f), t);
   const calls: string[][] = [];
   const gh = (a: string[]) => (calls.push(a), a[0] === 'repo' ? VIEW : api);
   let out = '';
   const code = doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, gh });
-  const base = doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE, gh: () => ({ status: null, stdout: '' }) });
-  return { out, code, base, calls, root };
+  return { out, code, calls };
 };
 const prot = (required: object) => ({ status: 0, stdout: JSON.stringify({ required_status_checks: required }) });
 
@@ -587,7 +588,7 @@ test('doctor: a required check matching a CI job is ok', async () => {
   const r = await protectionRun(prot({ contexts: [], checks: [{ context: 'ci / test' }] }));
   expect(r.out).toContain('ok main is protected and requires `ci / test`');
   expect(r.calls[1]).toEqual(['api', 'repos/o/r/branches/main/protection']);
-  expect(r.code).toBe(r.base);
+  expect(r.code).toBe(0);
 });
 
 test('doctor: legacy contexts also count', async () => {
@@ -597,20 +598,50 @@ test('doctor: legacy contexts also count', async () => {
 test('doctor: a 404 says the branch is not protected, exit code unchanged', async () => {
   const r = await protectionRun({ status: 1, stdout: '{"message":"Branch not protected","status":"404"}' });
   expect(r.out).toMatch(/note main is not protected: .*require the CI checks/);
-  expect(r.code).toBe(r.base);
+  expect(r.code).toBe(0);
+});
+
+test.each([
+  ['a 403', '{"message":"Resource not accessible","status":"403"}'],
+  ['a Not Found without a 404 status', 'gh: Not Found'],
+])('doctor: %s is unknown, not "not protected"', async (_n, stdout) => {
+  const r = await protectionRun({ status: 1, stdout });
+  expect(r.out).not.toContain('is not protected');
+  expect(r.out).toContain('note branch protection unknown');
 });
 
 test('doctor: protected with no matching required checks is a note', async () => {
   const r = await protectionRun(prot({ contexts: ['deploy'] }));
   expect(r.out).toMatch(/note main is protected but no required check matches/);
-  expect(r.code).toBe(r.base);
+  expect(r.code).toBe(0);
 });
 
-test('doctor: missing gh is a note, exit code unchanged', async () => {
-  const r = await protectionRun({ status: 0, stdout: '' });
-  let out = '';
-  doctor([], { root: r.root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, gh: () => ({ status: null, stdout: '' }) });
-  expect(out).toContain('note branch protection unknown (gh not available)');
+test('doctor: a required check can match a job of a local reusable workflow', async () => {
+  const caller = 'jobs:\n  ci:\n    uses: ./.github/workflows/callee.yml\n';
+  const callee = 'jobs:\n  lint-job:\n    name: lint\n    steps:\n      - run: pnpm lint\n';
+  const r = await protectionRun(prot({ contexts: ['ci / lint'] }), caller, { 'callee.yml': callee });
+  expect(r.out).toContain('ok main is protected and requires `ci / lint`');
+});
+
+test('doctor: malformed workflow YAML is a note, not a crash', async () => {
+  const r = await protectionRun(prot({ contexts: ['test'] }), 'jobs: [unclosed\n  : :');
+  expect(r.out).toMatch(/note main is protected but no required check matches/);
+});
+
+test('doctor: only the first 100 required contexts are read', async () => {
+  const contexts = [...Array.from({ length: 100 }, (_v, i) => `other-${i}`), 'test'];
+  expect((await protectionRun(prot({ contexts }))).out).toMatch(/note main is protected but no required check matches/);
+});
+
+test('doctor: gh failing without a status is "not available"; a signed-out gh is not', async () => {
+  const root = await installed();
+  const go = (gh: () => { status: number | null; stdout: string }) => {
+    let out = '';
+    doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, gh });
+    return out;
+  };
+  expect(go(() => ({ status: null, stdout: '' }))).toContain('note branch protection unknown (gh not available)');
+  expect(go(() => ({ status: 1, stdout: '' }))).toContain('note branch protection unknown (gh is not signed in, or this is not a GitHub repository)');
 });
 
 test('doctor: an unsafe branch name from gh is not used in the api path', async () => {
@@ -619,4 +650,9 @@ test('doctor: an unsafe branch name from gh is not used in the api path', async 
   const gh = (a: string[]) => (calls.push(a), { status: 0, stdout: JSON.stringify({ nameWithOwner: 'o/r', defaultBranchRef: { name: 'x; echo hi' } }) });
   doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE, gh });
   expect(calls).toHaveLength(1);
+});
+
+test('doctor: the test setup stops a real gh from being spawned', async () => {
+  const root = await installed();
+  expect(() => doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE })).toThrow(/real gh/);
 });

@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 
@@ -6,10 +6,11 @@ export type Gh = (args: string[]) => { status: number | null; stdout: string };
 export type Protection = { state: 'ok' | 'missing' | 'unknown'; detail: string };
 
 const MAX_FILES = 50;
+const MAX_WORKFLOW_BYTES = 1 << 20;
 const MAX_CONTEXTS = 100;
 const SAFE_NAME = /^[\w.-]{1,100}$/; // owner, repo, branch: gh output is untrusted
 const SAFE_CONTEXT = /^[\w .\/()@:+-]{1,100}$/; // printable, no control characters
-const NOT_FOUND = /"status":\s*"?404|Branch not protected|Not Found/;
+const NOT_FOUND = /"status":\s*"?404|Branch not protected/; // a bare "Not Found" can be a token without admin rights, so it is unknown
 const unknown = (why: string): Protection => ({ state: 'unknown', detail: `branch protection unknown (${why})` });
 
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
@@ -17,7 +18,7 @@ const json = (stdout: string): Record<string, unknown> | null => {
   try { return asRecord(JSON.parse(stdout)); } catch { return null; }
 };
 const read = (p: string): Record<string, unknown> => {
-  try { return asRecord(parseYaml(readFileSync(p, 'utf8'), { maxAliasCount: 100 })); } catch { return {}; }
+  try { if (statSync(p).size > MAX_WORKFLOW_BYTES) return {}; return asRecord(parseYaml(readFileSync(p, 'utf8'), { maxAliasCount: 100 })); } catch { return {}; }
 };
 
 /** Names of the lint or test jobs in the workflows, plus the callee jobs of local reusable workflows. */
@@ -43,7 +44,8 @@ function ciJobNames(root: string): string[] {
 export function branchProtection(root: string, gh: Gh | undefined): Protection {
   if (!gh) return unknown('gh not available');
   const view = gh(['repo', 'view', '--json', 'nameWithOwner,defaultBranchRef']);
-  if (view.status !== 0) return unknown('gh not available');
+  if (view.status === null) return unknown('gh not available');
+  if (view.status !== 0) return unknown('gh is not signed in, or this is not a GitHub repository');
   const repo = json(view.stdout);
   const slug = repo?.nameWithOwner;
   const branch = asRecord(repo?.defaultBranchRef).name;

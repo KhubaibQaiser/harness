@@ -296,3 +296,27 @@ describe('applyChanges: M3 final review', () => {
     expect(existsSync(join(root, 'x'))).toBe(false);
   });
 });
+
+describe('applyChanges: state paths', () => {
+  it('writes manifest, backup and lock under the given state dir', async () => {
+    const { statePaths } = await import('../../src/install/manifest.js');
+    const { dropRestoredBackups } = await import('../../src/install/finish.js');
+    const sp = statePaths('.claude/harness');
+    const root = makeRepo({ 'a.txt': 'old\n' });
+    const m = applyChanges(root, [{ kind: 'update', rel: 'a.txt', before: 'old\n', after: 'new\n', blocks: [] }], '1', () => new Date('2026-01-01T00:00:00Z'), realFs, { state: sp });
+    expect(existsSync(join(root, sp.manifest))).toBe(true);
+    expect(existsSync(join(root, '.harness'))).toBe(false);
+    expect(existsSync(join(root, sp.lock))).toBe(false);
+    const b = m.files[0].backup!;
+    expect(b.startsWith('.claude/harness/backup/')).toBe(true);
+    expect(readFileSync(join(root, b), 'utf8')).toBe('old\n');
+    dropRestoredBackups(root, [{ kind: 'update', rel: 'a.txt', before: '', after: '', blocks: [], restored: b }], sp);
+    expect(existsSync(join(root, b))).toBe(false);
+  });
+  it('refuses while the state-dir lock exists', async () => {
+    const { statePaths } = await import('../../src/install/manifest.js');
+    const sp = statePaths('.claude/harness');
+    const root = makeRepo({ [sp.lock]: 'x\n' });
+    expect(() => applyChanges(root, [], '1', undefined, undefined, { state: sp })).toThrow(ApplyError);
+  });
+});

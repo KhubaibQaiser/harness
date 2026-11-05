@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Change, Manifest } from './apply.js';
 import { dirtyPaths } from './git-status.js';
-import { isBackupPath } from './manifest.js';
+import { REPO_STATE, isBackupPath, type StatePaths } from './manifest.js';
 import { STRUCTURAL } from './merge.js';
 
 /** A structural file with no change still loses its dropped blocks (in `m`, in place). Returns how many it dropped. */
@@ -26,6 +26,6 @@ export function dirtyTouched(root: string, changes: Change[]): string[] {
 }
 
 /** The original is back in place: delete its backup. The path comes from the manifest, so only inside .harness/backup/. */
-export function dropRestoredBackups(root: string, changes: Change[]): void {
-  for (const c of changes) if (c.kind === 'update' && c.restored && isBackupPath(c.restored)) rmSync(join(root, c.restored), { force: true });
+export function dropRestoredBackups(root: string, changes: Change[], sp: StatePaths = REPO_STATE): void {
+  for (const c of changes) if (c.kind === 'update' && c.restored && isBackupPath(c.restored, sp)) rmSync(join(root, c.restored), { force: true });
 }

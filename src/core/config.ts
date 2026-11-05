@@ -90,7 +90,7 @@ export const HIDDEN_CLASS = '\\u007f-\\u009f\\u200b-\\u200f\\u202a-\\u202e\\u206
 export const CONTROL = new RegExp(`[\\u0000-\\u001f${HIDDEN_CLASS}]`, 'u');
 /** Control characters in user-supplied keys become \\uXXXX, so an error line can't drive the terminal. */
 export const esc = (s: string): string => JSON.stringify(s).slice(1, -1).replace(new RegExp(`[${HIDDEN_CLASS}]`, 'gu'), (c) => (c.codePointAt(0)! > 0xffff ? `\\u{${c.codePointAt(0)!.toString(16)}}` : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`));
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+export const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStrs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
 // The one table of key rules, shared by loadConfig (lenient) and validateConfig (strict).

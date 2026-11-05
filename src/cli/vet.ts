@@ -2,11 +2,11 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { validateVetReview, type VetReview } from '../ai/vet-review.js';
 import { writeAtomic } from '../core/atomic.js';
-import { CONTROL, esc } from '../core/config.js';
+import { CONTROL, esc, isObj } from '../core/config.js';
 import { defaultExec, defaultExecBytes, type Exec, type ExecBytes } from '../core/exec.js';
 import { cleanAllTmp, cleanTmp, fetchTarball, isVetTmp, tmpPrefix } from '../vet/fetch.js';
 import { aheadBy, installInfo, installLines, reportMarkdown, summaryLines } from '../vet/report.js';
-import { scan, type ScanResult } from '../vet/scan.js';
+import { inScope, scan, type ScanResult } from '../vet/scan.js';
 import { REPO, UNREADABLE, marketList, marketRepoOf, parseTarget, resolveTarget, safe, vetId, type Resolved, type Target } from '../vet/target.js';
 import type { CliEnv } from './index.js';
 import { installedIds } from './validate.js';
@@ -14,7 +14,6 @@ import { installedIds } from './validate.js';
 const USAGE = 'Usage: harness vet <target> [--json [--keep]]\n       harness vet --finish <scan.json> --review <file>\n       harness vet --install <scan.json>\n       harness vet --clean   (removes every harness-vet-* folder of this OS user: other projects\' and runs in progress too)';
 const NOT_SCAN = 'scan: not a vet scan; run harness vet --json first';
 type Out = (line: string) => void;
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Scans a GitHub plugin or skill without running it and writes `.harness/vet/<id>-<sha>.md`. Installs nothing; safe for the agent. */
 export function vet(args: string[], { root, out }: CliEnv, deps: { exec?: Exec; bytes?: ExecBytes } = {}): number {
@@ -39,7 +38,9 @@ export function vet(args: string[], { root, out }: CliEnv, deps: { exec?: Exec; 
   if ('error' in f) return out(f.error), 1;
   try {
     const s: ScanResult = { target: a, repo: r.repo, sha: r.sha, path: r.path, ...scan(f, r.path) };
-    if (json) return out(JSON.stringify(keep ? { ...s, dir: f.dir, map: f.map } : s, null, 2)), 0;
+    // The reviewer reads <dir>/<file>; map lists only the in-scope files that are elsewhere, keyed like the findings' (escaped) file.
+    const map = Object.fromEntries(Object.entries(f.map).filter(([k, v]) => inScope(k, r.path) && (k !== v || esc(k) !== k)).map(([k, v]) => [esc(k), v]));
+    if (json) return out(JSON.stringify(keep ? { ...s, dir: f.dir, map } : s, null, 2)), 0;
     return report(root, out, s, r, null, installFor(s, r, f.dir, exec));
   } finally {
     if (!keep) cleanTmp(f.dir); // spec 3.5: gone after success and failure alike
@@ -90,7 +91,7 @@ function readScan(file: string): { s: ScanResult; t: Target } | null {
     && typeof path === 'string' && (path === '' || safe(path)) && typeof target === 'string'
     && isObj(context) && Number.isFinite(context.tokens) && Array.isArray(context.unmeasured) && context.unmeasured.every((x) => typeof x === 'string')
     && Array.isArray(findings) && findings.every((x) => isObj(x) && ['high', 'medium', 'low'].includes(x.severity as string) && typeof x.rule === 'string' && /^[a-z-]+$/.test(x.rule)
-      && typeof x.file === 'string' && Number.isInteger(x.line) && typeof x.text === 'string');
+      && typeof x.file === 'string' && Number.isInteger(x.line) && typeof x.text === 'string' && !CONTROL.test(x.file) && !CONTROL.test(x.text)); // printed as is
   const t = fine ? parseTarget(target as string) : null;
   if (!t || 'error' in t) return null;
   const s = v as unknown as ScanResult;

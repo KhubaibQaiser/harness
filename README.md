@@ -42,7 +42,7 @@ In plain terms: with the sandbox on, the operating system enforces the guard. Wi
 
 In short: secrets and risky commands are blocked, harness's own files are off limits to the agent, and a change that spreads to a second file needs your OK. A source edit needs a test that failed first, and the agent can't stop until your format, lint, typecheck and test commands pass.
 
-- **Vet before you install.** `harness vet <github-url>` pins a plugin or skill to a commit and scans it without running it: hooks, secrets, network calls, prompt-injection text, licence and context cost. The report lists each finding by `file:line`. Needs the GitHub CLI (`gh`). `/harness:vet` is the guided flow: the reviewer reads the flagged files, and any high finding needs a second yes before you see the install command.
+- **Vet before you install.** `harness vet <github-url>` pins a plugin or skill to a commit and scans it without running it: hooks (also those declared in skill and agent frontmatter), secrets, network calls, prompt-injection text, licence and context cost. The report lists each finding by `file:line`, and names any file it could not read (binary, or over 1 MB). Needs the GitHub CLI (`gh`). `/harness:vet` is the guided flow: the reviewer reads the flagged files, and any high finding needs a second yes before you see the install command.
 - **Review agent (experimental).** A `staff-reviewer` agent reviews a diff in a fresh context and can't edit files.
 
 The exact rules for each gate are in [docs/reference.md](docs/reference.md).

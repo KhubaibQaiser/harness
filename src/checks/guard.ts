@@ -153,7 +153,7 @@ function scriptsOf(root: string): Record<string, string> {
  * out (`<<E"O"F` is EOF); `<<-` ignores leading tabs on the end line, `<<` wants the line exactly. If anything is odd (a
  * delimiter with an expansion, a body with no end line) the command is returned whole, so nothing is hidden from the parser.
  */
-function withoutHeredocBodies(cmd: string): string {
+export function withoutHeredocBodies(cmd: string): string {
   if (!cmd.includes('<<')) return cmd;
   const lines = cmd.split('\n');
   const out: string[] = [];

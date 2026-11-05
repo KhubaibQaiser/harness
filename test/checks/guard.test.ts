@@ -759,3 +759,24 @@ test('a glob that can match a protected name counts as naming it', () => {
     expect(prot(c), c).toMatchObject({ kind: 'ask', check: 'protect' });
   for (const c of ['ls src/*.ts', 'cat *.md', 'ls */*', 'cat *.json', 'rm -rf dist/*', 'pnpm vitest run test/*.test.ts']) expect(prot(c).kind, c).toBe('allow');
 });
+test('a quote or backslash inside a protected path does not hide it from protect', () => {
+  for (const c of ['tee .harness/"config.yaml"', 'tee .harn\\ess/config.yaml', 'tee ".harness"/config.yaml', "tee '.claude'/settings.json", "tee .harness/conf'ig'.yaml", 'cp /tmp/x .h"arness"/config.yaml'])
+    expect(prot(c).kind, c).not.toBe('allow');
+});
+test('commit and PR text, a cd prefix and plain reads over a protected dir stay allowed', () => {
+  for (const c of [`git commit -m "$(cat <<'EOF'\nfix(protect): ask on .harness/config.yaml built paths\nEOF\n)"`,
+    `gh pr create --title "fix(protect)" --body "$(cat <<'EOF'\nProtect asks for .claude/settings.json writes\nEOF\n)"`,
+    'git commit -m "fix: `.harness` paths ask"', 'cd /Users/k/harness && cat .harness/config.yaml', 'cd /Users/k/harness && git log --oneline -5 -- .harness',
+    'cd /Users/k/harness && git diff -- .harness', 'cd src && ls ../.claude', 'echo "$PATH"; ls .claude', 'ls .harness/*', 'ls .harness/state/*', 'jq . .harness/state/*.json']) {
+    expect(kind(c), c).toBe('allow');
+    expect(prot(c).kind, c).toBe('allow');
+  }
+  // A substitution in the message, or an echo whose output is used, is still code.
+  for (const c of ['git commit -m "$(tee .harness/config.yaml </tmp/x)"', 'tee `echo .harness/config.yaml`', 'tee $(echo .harness/config.yaml)', "echo 'tee .harness/config.yaml' > x.sh; . x.sh"])
+    expect(prot(c).kind, c).toBe('ask');
+});
+test('a path fed to a writer by xargs or find -exec asks', () => {
+  for (const c of ['echo .harness/config.yaml | xargs tee', 'find . -name config.yaml -exec tee {} \;', "printf '.harness/c' | xargs -I{} cp x {}", 'find . -name x -execdir sed -i s/a/b/ {} +'])
+    expect(prot(c), c).toMatchObject({ kind: 'ask', check: 'protect' });
+  for (const c of ["find . -name '*.ts'", 'git ls-files | xargs grep -n todo', 'find src -name "*.ts" -exec wc -l {} +']) expect(prot(c).kind, c).toBe('allow');
+});

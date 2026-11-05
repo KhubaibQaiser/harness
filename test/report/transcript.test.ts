@@ -1,7 +1,7 @@
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { MAX_LINE, type TRec, parseLine, parseRecords, streamTranscript } from '../../src/report/transcript.js';
 import { assistant, attachment, prompt, system, toolResult, writeSession } from '../fixtures/transcripts/make.js';
 
@@ -143,6 +143,25 @@ describe('streamTranscript', () => {
     expect([...stats.versions, ...Object.keys(stats.types)].every((v) => v.length <= 64)).toBe(true);
     expect(stats.versions.has('other') && stats.types.other).toBeGreaterThan(0);
     expect(Object.values(stats.types).reduce((a, b) => a + b, 0)).toBe(200);
+  });
+  it('a huge AskUserQuestion line neither throws nor rejects the stream', async () => {
+    const questions = Array.from({ length: 300_000 }, () => ({ options: [{ label: 'a' }] }));
+    questions[10]!.options.push({ label: 'b' }, { label: 'c (recommended)' });
+    const { recs, stats } = await read(lines([assistant({ content: [{ type: 'tool_use', id: 't', name: 'AskUserQuestion', input: { questions } }] }), prompt('next')]));
+    expect(recs).toEqual([expect.objectContaining({ tools: [expect.objectContaining({ ask: { options: 3, recommended: true } })] }), expect.objectContaining({ k: 'prompt' })]);
+    expect(stats.bad).toBe(0);
+  });
+  it('an unexpected throw while extracting one line gives bad/shape and the stream goes on', async () => {
+    const spy = vi.spyOn(Date, 'parse').mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    try {
+      const { recs, stats } = await read(lines([prompt('a', { timestamp: '2026-11-01T00:00:00.000Z' }), prompt('b', { timestamp: '2026-11-01T00:00:01.000Z' })]));
+      expect(recs).toEqual([expect.objectContaining({ k: 'bad', why: 'shape' }), expect.objectContaining({ k: 'prompt', text: 'b' })]);
+      expect(stats.bad).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
   it('a leading BOM is stripped', async () => {
     const f = join(tmp(), 'bom.jsonl');

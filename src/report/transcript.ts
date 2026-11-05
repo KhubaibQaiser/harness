@@ -35,6 +35,7 @@ const num = (v: unknown): number | undefined => (typeof v === 'number' && Number
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const strs = (v: unknown[]): string[] => v.filter((x): x is string => typeof x === 'string');
 const NO_BASE: Base = { ts: NaN, side: false };
+const ASK_CAP = 50;
 const TS_RE = /"timestamp":"([^"\\]{1,40})"/; // fast-path records keep their time without JSON.parse
 
 const count = (v: unknown) => (num(v) !== undefined && (v as number) >= 0 ? (v as number) : undefined);
@@ -54,9 +55,10 @@ const toolUse = (b: Obj): ToolUse => {
   if (str(input?.command) !== undefined) t.command = str(input?.command);
   if (name === 'AskUserQuestion' && Array.isArray(input?.questions)) {
     // Spec §4.2: options per question (the largest question), and /recommend/i on any label or description.
-    const qs = input.questions.map((q) => arr(obj(q)?.options).map(obj));
-    const texts = qs.flat().flatMap((o) => [str(o?.label), str(o?.description)]);
-    t.ask = { options: Math.max(0, ...qs.map((q) => q.length)), recommended: texts.some((x) => x !== undefined && /recommend/i.test(x)) };
+    // Only the first ASK_CAP questions and options are inspected: a hostile line can hold hundreds of thousands.
+    const qs = input.questions.slice(0, ASK_CAP).map((q) => arr(obj(q)?.options));
+    const texts = qs.flatMap((q) => q.slice(0, ASK_CAP).map(obj)).flatMap((o) => [str(o?.label), str(o?.description)]);
+    t.ask = { options: qs.reduce((m, q) => Math.max(m, q.length), 0), recommended: texts.some((x) => x !== undefined && /recommend/i.test(x)) };
   }
   return t;
 };
@@ -113,6 +115,14 @@ export function parseLine(line: string): TRec {
 
 /** One line to one or more records, never empty. */
 export function parseRecords(line: string): TRec[] {
+  try {
+    return extract(line);
+  } catch {
+    return [{ ...NO_BASE, k: 'bad', why: 'shape' }]; // defence in depth: one odd line never aborts the report
+  }
+}
+
+function extract(line: string): TRec[] {
   const unused = UNUSED.find((t) => line.includes(`"type":"${t}"`));
   if (unused !== undefined && !USED.some((m) => line.includes(m))) {
     const ts = TS_RE.exec(line)?.[1];

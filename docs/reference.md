@@ -10,6 +10,7 @@ The full detail behind the [README](../README.md). Start there; come here when y
 - **Fails closed where it matters.** If the dispatcher can't start or crashes, Claude Code blocks the tool call, the prompt or the settings change (`onFailure: "block"`). The Stop gate fails open if its process can't run. If `.harness/config.yaml` is invalid, agent edits are denied and Stop blocks until a person fixes it. The guard and protected-path checks deny the call if they crash.
 - **Repo-level.** `init` writes plain files into the repo (`.harness/`, `.claude/settings.json`, `AGENTS.md`). Commit them, and the hooks run for anyone who opens the repo in Claude Code, with or without the plugin.
 - **Local-first.** Events go to `.harness/logs/events.jsonl` in the repo. Nothing is sent anywhere, except an npm registry lookup for a package name when you allow an install, and `update --check`.
+- **Timing log.** `.harness/logs/timing.jsonl` holds one line per hook call or Stop step (event, tool, outcome, ms), with no paths or command text. At 5 MB it is renamed to `timing.1.jsonl`, replacing the old one.
 - **Reversible.** `init` backs up every file it changes and records every edit in `.harness/manifest.json`. `uninstall` removes exactly what the manifest lists and restores your files.
 - **You confirm every write.** `init` and `update` show the full plan and diff first. Neither commits, pushes or opens a PR.
 
@@ -382,6 +383,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 ## Known limits
 
 - The guard recognises the commands `harness` and `cli.mjs` by name. A renamed copy or symlink of the CLI (`node h.mjs add x --yes`) isn't recognised, so it doesn't ask first.
+- Two hooks writing at once can lose or double a `timing.jsonl` rotation (rename after a size check). Lines are append-only and never torn.
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
 - The `PowerShell(...)` deny rules, and the `Read` and `Edit` rules on PowerShell commands, are unverified until a live check on Windows passes.
 - The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop).

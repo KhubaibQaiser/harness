@@ -23,7 +23,7 @@
 | O2 | **Preset builder in v1 (scope change).** Other people go through an interview that captures their own preferences. Those preferences become personalised skills and rules. The person chooses a repo-level or a global install. Global installs are a deliberate exception to harness's repo-level rule: they write to `~/.claude/`, are tracked in a separate global manifest and are removed by `harness uninstall --global`. Every global write is listed in the preview and gets its own yes. The owner's preset is the first output of the same format (section 8). |
 | O3 | **Team memory.** The preset stays separate from team memory. |
 | O4 | **ponytail only; caveman is dropped.** The owner's reason: caveman's blunt tone clashes with the plain-communication rule, and ponytail fits staff-level engineering. |
-| O5 | **Picks.** `react-best-practices`, `vercel-react-native-skills`, `web-design-guidelines` and `impeccable`, each on its own stack. Impeccable's telemetry is off by default (`DO_NOT_TRACK=1`). Its hooks and binary download are listed in the preview. `taste-skill` (Leonxlnx/taste-skill) is wanted next to Impeccable if the two don't conflict and keeping both makes sense; otherwise Impeccable alone. Even with taste-skill, Claude always asks the user before making any decision, and that overrides taste-skill's "just apply taste decisions" text. taste-skill is added only after a `harness vet` run and a licence check (section 6). |
+| O5 | **Picks.** `react-best-practices`, `vercel-react-native-skills`, `web-design-guidelines` and `impeccable`, each on its own stack. Impeccable's telemetry is off by default (`DO_NOT_TRACK=1`). Its hooks and binary download are listed in the preview. `taste-skill` (Leonxlnx/taste-skill) was wanted next to Impeccable if the two didn't conflict. Owner ruling 2026-11-05: they conflict, so a repo picks one, and Impeccable is the preselect. Even with taste-skill, Claude always asks the user before making any decision, and that overrides taste-skill's "just apply taste decisions" text. taste-skill is added only after a `harness vet` run and a licence check (section 6). |
 | O6 | **Branch prefixes.** `feature/`, `fix/`, `hotfix/`, `chore/`, `refactor/`, `docs/`, `ci/` (from the owner's existing git conventions). |
 | O7 | **Plain React.** The shared React skill also loads on plain React repos. |
 | O8 | **TDD line.** The core keeps its TDD line. |
@@ -105,7 +105,7 @@ preselect:                     # neutral catalog ids; each still filtered by its
   - react-best-practices
   - vercel-react-native-skills
   - web-design-guidelines
-  - impeccable                 # taste-skill joins only after section 6's preconditions
+  - impeccable                 # or taste-skill instead, never both (section 6)
 skills:                        # preset items; each item's applies_when picks the stacks (Q4, O7)
   - engineering-principles     # P1; every repo
   - frontend-react
@@ -191,12 +191,11 @@ The preset's own text is about 12% to 20% of the 2000-token budget (estimate). `
 ## 6. Third-party picks
 
 - **Impeccable.** Its catalog side effects stay as they are: `installs-hook`, `downloads-binary` and `telemetry-on-by-default`. The preset turns telemetry off by merging `"env": { "DO_NOT_TRACK": "1" }` into `.claude/settings.json` as a recorded block, shown in the preview. Claude Code passes this env to every command in the session, so other tools that honour `DO_NOT_TRACK` stop sending telemetry too. The README says so (C3).
-- **taste-skill.** It's in `catalog/items/taste-skill.yaml` today (pinned at `12af471`, `license: MIT`, `applies_when: project_types: [landing]`). It joins the preselect only when all three of these hold:
+- **taste-skill.** It's in `catalog/items/taste-skill.yaml` (pinned at `12af471`, `license: MIT`, `applies_when: project_types: [web, landing]`). Owner ruling (2026-11-05): a repo gets one lead design skill. Impeccable, taste-skill, ui-ux-pro-max and superdesign list each other in `conflicts_with`, so the two never install together. The preset preselects Impeccable, and taste-skill is the alternative the owner can pick instead for a web or landing repo. Before it can be picked in the preset:
   1. `harness vet Leonxlnx/taste-skill` passes at the pinned sha, and the owner accepts any high findings;
-  2. the licence check confirms MIT with no commercial-use restriction at that sha (one listing mentions one), and the item records the evidence;
-  3. the planning-time conflict check (section 13, C1) finds that Impeccable and taste-skill don't conflict and keeping both makes sense.
+  2. the licence check reads the LICENSE file at that sha. The README at `12af471` says MIT and lists no commercial-use restriction; the restriction seen earlier came from a third-party listing.
 
-  If any of these fails, the preset ships with Impeccable alone.
+  taste-skill is web-only: its inspector renders pages in Chrome, and its stack list names no React Native or native app. It's never offered for `mobile` repos.
 - **Asking wins.** The core block's first line overrides taste-skill's "just apply taste decisions" text. A test checks that the line is in the core template.
 
 ## 7. The frontend skills
@@ -340,5 +339,5 @@ These two are checks to run during planning, not open owner questions. Their res
 
 | # | Check | How | Then |
 |---|---|---|---|
-| C1 | **Planning-time check:** conflict analysis of Impeccable and taste-skill. Both give design direction, and taste-skill tells the agent to apply taste decisions on its own. | After `harness vet` on taste-skill, compare their skills, hooks and commands for overlap, and run both together on one fixture repo. | The owner decides whether taste-skill joins (O5). |
-| C4 | **Planning-time check:** taste-skill's catalog entry targets `landing` repos only, while Impeccable targets `web`. | Once C1 is done, compare which repos each item should apply to. | The owner picks `landing` only, or `web` and `landing`, for taste-skill in the preselect. |
+| C1 | **Decided (2026-11-05):** Impeccable and taste-skill conflict; a repo picks one. | Encoded as `conflicts_with` in the catalog. | Nothing left to check. |
+| C4 | **Decided (2026-11-05):** taste-skill applies to `web` and `landing` repos. | Changed in `catalog/items/taste-skill.yaml`. | Nothing left to check. |

@@ -5,10 +5,12 @@ source: {"type":"github","repo":"Leonxlnx/taste-skill","plugin":"taste-skill","s
 license: MIT
 min_claude_code: 2.1.314
 plugin_version: "2.1.5"
-applies_when: {"project_types":["landing"]}
+applies_when: {"project_types":["web","landing"]}
+conflicts_with: ["impeccable", "superdesign", "ui-ux-pro-max"]
 cost: {"context":"low","setup":"low"}
 stance: optional
-why: "Art direction for websites, product pages, dashboards and app screens, with a library of researched directions and a real-browser inspector."
+why: "Art direction for websites, web apps, dashboards and landing pages, with a library of researched directions and a real-browser inspector. Web only: the inspector renders in Chrome, so it does not check native mobile screens."
 evidence:
   - "https://github.com/Leonxlnx/taste-skill/blob/12af471f627f866411b4bd785b19646d3672784c/.claude-plugin/marketplace.json"
   - "https://github.com/Leonxlnx/taste-skill/blob/12af471f627f866411b4bd785b19646d3672784c/README.md (needs Node 22+ and Chrome, Edge or Chromium; network access to find pictures)"
+  - "https://github.com/Leonxlnx/taste-skill/blob/12af471f627f866411b4bd785b19646d3672784c/skills/taste-skill/SKILL.md (stacks listed: HTML/CSS, React, Next.js, Vue, Svelte, Astro, Tailwind; inspector at 1440/768/390 px in a real browser; no React Native or native apps)"

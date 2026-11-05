@@ -122,3 +122,17 @@ test('probity conflicts with tdd-gate and tdd-guard, and no other batch 5 item d
   for (const id of ['tdd-gate', 'tdd-guard']) expect(by.has(id)).toBe(true);
   expect(BATCHES[5].filter((id) => id !== 'probity' && (by.get(id)?.conflicts_with.length ?? 0) > 0)).toEqual([]);
 });
+
+// Spec §5: one lead design skill per repo. frontend-design is light and may sit beside the lead.
+test('the four lead design skills conflict with each other, and frontend-design with none', async () => {
+  const { conflictPairs } = await import('../../src/catalog/relations.js');
+  const { catalog } = loadCatalog();
+  const lead = ['impeccable', 'superdesign', 'taste-skill', 'ui-ux-pro-max'];
+  expect(conflictPairs(lead, catalog)).toHaveLength(6);
+  expect(conflictPairs([...lead, 'frontend-design'], catalog).filter((p) => p.includes('frontend-design'))).toEqual([]);
+});
+
+test('taste-skill applies to web and landing repos, not mobile', () => {
+  const t = loadCatalog().catalog.items.find((i) => i.id === 'taste-skill');
+  expect(t?.applies_when.project_types).toEqual(['web', 'landing']);
+});

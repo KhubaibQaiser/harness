@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { exportKnown, report } from '../../src/cli/report.js';
+import { exportKnown, openCommand, report } from '../../src/cli/report.js';
 import { encodeProjectDir } from '../../src/report/locate.js';
 import { exportProblems } from '../../src/report/export.js';
 import { assistant, prompt, writeSession } from '../fixtures/transcripts/make.js';
@@ -94,7 +94,7 @@ describe('harness report', () => {
     await go(world(1), [], { open });
     expect(open).not.toHaveBeenCalled();
   });
-  it('exits 1 when .harness is read-only', async () => {
+  it.skipIf(process.getuid?.() === 0)('exits 1 when .harness is read-only', async () => {
     const w = world(1);
     mkdirSync(join(w.root, '.harness'), { recursive: true });
     chmodSync(join(w.root, '.harness'), 0o500);
@@ -109,5 +109,26 @@ describe('harness report', () => {
     writeSession(proj, 'out', [prompt('x', { cwd: '/elsewhere' }), assistant()]);
     const r = await go(w, []);
     expect(r.text).toContain('Start Claude Code inside the repo');
+  });
+  it('stays within 8 lines with every optional line present, and says rules are not computed', async () => {
+    const r = await go(world(0), ['--export']);
+    expect(r.lines.length).toBeLessThanOrEqual(8);
+    expect(r.text).toContain('Rules enforced');
+    expect(r.lines.at(-1)).toContain('.harness/reports/2026-11-05.html');
+  });
+  it('rejects a huge --days', async () => {
+    expect((await go(world(0), ['--days', '99999999'])).code).toBe(2);
+  });
+  it('turns a failure while collecting into one calm line and exit 1', async () => {
+    const r = await go(world(1), [], { now: () => Number.NaN });
+    expect(r.code).toBe(1);
+    expect(r.lines).toHaveLength(1);
+    expect(r.text).toContain('Could not build the report');
+  });
+  it('passes the path as one argv element, and never through cmd', () => {
+    const p = 'C:\\a & b\\x^y.html';
+    expect(openCommand('win32', p)).toEqual(['explorer.exe', [p]]);
+    expect(openCommand('darwin', p)).toEqual(['open', [p]]);
+    expect(openCommand('linux', p)).toEqual(['xdg-open', [p]]);
   });
 });

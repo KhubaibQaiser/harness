@@ -25,14 +25,14 @@ import type { CliEnv } from './index.js';
 
 declare const __HARNESS_VERSION__: string;
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness report [--days N] [--open] [--export]';
+export const USAGE = 'Usage: harness report [--days N] [--open] [--export]';
 const DEFAULT_DAYS = 14, DAY = 86_400_000, DATE_LEN = 10;
 const REPORTS = '.harness/reports';
-const BAD_ARGS = 2;
+const BAD_ARGS = 2, INDENT = 2, SEP_LEN = 2, MAX_DAYS = 3650;
 
 export type ReportEnv = CliEnv & {
   home?: string; git?: GitRun; now?: () => number; open?: (path: string) => void;
-  /** Test seam: replaces the export builder. */
+  /** Test seam only (the refusal path can't be reached with real data): replaces the export builder. */
   buildExport?: typeof buildExport;
 };
 
@@ -42,16 +42,21 @@ function parseArgs(args: string[]): { days: number; open: boolean; exp: boolean 
     const a = args[i];
     if (a === '--open') r.open = true;
     else if (a === '--export') r.exp = true;
-    else if (a === '--days' && /^[1-9]\d*$/.test(args[i + 1] ?? '')) r.days = Number(args[++i]);
+    else if (a === '--days' && /^[1-9]\d*$/.test(args[i + 1] ?? '') && Number(args[i + 1]) <= MAX_DAYS) r.days = Number(args[++i]);
     else return null;
   }
   return r;
 }
 
-/** Opens the file with the platform's opener; no shell, the path is one argument. */
+/** The opener per platform. The path is always one array element; Windows uses explorer.exe, never cmd, so `&` in a path means nothing. */
+export function openCommand(platform: NodeJS.Platform, path: string): [string, string[]] {
+  if (platform === 'darwin') return ['open', [path]];
+  if (platform === 'win32') return ['explorer.exe', [path]];
+  return ['xdg-open', [path]];
+}
 function defaultOpen(path: string): void {
-  const [cmd, ...pre] = process.platform === 'darwin' ? ['open'] : process.platform === 'win32' ? ['cmd', '/c', 'start', ''] : ['xdg-open'];
-  spawn(cmd!, [...pre, path], { stdio: 'ignore', detached: true, shell: false }).on('error', () => undefined).unref();
+  const [cmd, argv] = openCommand(process.platform, path);
+  spawn(cmd, argv, { stdio: 'ignore', detached: true, shell: false }).on('error', () => undefined).unref();
 }
 
 const num = (v: string): number[] => v.split('.').map(Number);
@@ -85,7 +90,10 @@ async function collect(root: string, cli: ReportEnv, days: number, now: number):
   const vs = [...versions].sort();
   const dirs = { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) };
   return {
-    meta: { generated: new Date(now).toISOString(), days, harness: VERSION, claudeVersions: vs, untested: untested(vs), sessions: { scanned: located.sessions.length - unknown, skipped: located.skipped as Record<string, number>, unknown } },
+    meta: {
+      generated: new Date(now).toISOString(), days, harness: VERSION, claudeVersions: vs, untested: untested(vs),
+      sessions: { scanned: located.sessions.length - unknown, skipped: located.skipped as Record<string, number>, unknown },
+    },
     usage: usage.result(), always: alwaysLoaded(root, dirs), skills: skills.result(), windows: windows.result(), gates: gates.result(),
   };
 }
@@ -98,9 +106,9 @@ function summary(d: ReportData, rel: string, expRel?: string): string[] {
   return [
     `Sessions: ${m.sessions.scanned} scanned, ${skipped} skipped, ${m.sessions.unknown} unknown (last ${m.days} days)`,
     ...(m.sessions.scanned === 0 ? [NO_SESSIONS] : []),
-    `Skills invoked when relevant: ${hit} of ${rel2}`,
+    `Skills invoked when relevant: ${hit} of ${rel2}; probable false blocks: ${d.gates.falseBlocks.length}`,
+    'Rules enforced: not computed yet',
     `Tokens: input ${t.input}, cache write ${t.cacheWrite}, cache read ${t.cacheRead}, output ${t.output}`,
-    `Probable false blocks: ${d.gates.falseBlocks.length}`,
     `Windows notes: ${notes}`,
     ...(expRel ? [`Export: ${expRel}`] : []),
     `Report: ${rel}`,
@@ -112,14 +120,19 @@ export async function report(args: string[], cli: ReportEnv): Promise<number> {
   if (!a) return cli.out(USAGE), BAD_ARGS;
   if (insideClaude(cli.env)) return cli.out('Run harness report in your own terminal for now.'), 1;
   const now = (cli.now ?? Date.now)();
-  const data = await collect(cli.root, cli, a.days, now);
+  let data: ReportData;
+  try {
+    data = await collect(cli.root, cli, a.days, now);
+  } catch (e) {
+    return cli.out(`Could not build the report: ${e instanceof Error ? e.message.split('\n')[0] : 'unknown error'}`), 1;
+  }
   const day = data.meta.generated.slice(0, DATE_LEN);
   const known = exportKnown();
   const exported = a.exp ? (cli.buildExport ?? buildExport)(data, known) : undefined;
   const problems = exported ? exportProblems(exported, known) : [];
   if (problems.length > 0) {
     // kinds only: a problem's path can carry hostile text
-    cli.out(`Export refused, nothing written: ${[...new Set(problems.map((p) => p.slice(p.lastIndexOf(': ') + 2)))].join('; ')}`);
+    cli.out(`Export refused, nothing written: ${[...new Set(problems.map((p) => p.slice(p.lastIndexOf(': ') + SEP_LEN)))].join('; ')}`);
     return 1;
   }
   const dir = join(cli.root, REPORTS), html = join(dir, `${day}.html`);
@@ -127,7 +140,7 @@ export async function report(args: string[], cli: ReportEnv): Promise<number> {
     mkdirSync(dir, { recursive: true });
     if (!existsSync(join(dir, '.gitignore'))) writeAtomic(join(dir, '.gitignore'), '*'); // ponytail: Task 21 moves this into mergeGitignore
     writeAtomic(html, renderReport(data));
-    if (exported) writeAtomic(join(dir, `${day}-export.json`), JSON.stringify(exported, null, 2) + '\n');
+    if (exported) writeAtomic(join(dir, `${day}-export.json`), JSON.stringify(exported, null, INDENT) + '\n');
   } catch {
     return cli.out(`Could not write ${REPORTS}/ (check its permissions).`), 1;
   }

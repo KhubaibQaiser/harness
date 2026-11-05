@@ -423,5 +423,6 @@ More detail: [TDD setup details](#tdd-setup-details).
 - `.harnessignore` has no `!` negation.
 - `remove tdd-gate` (or deselecting it) leaves the test-config edits `init` made in place; undo them by hand.
 - `update` doesn't rename a package config and make another edit to it in one run. Run it twice.
+- `harness git branch --suggest <topic>` prints one branch name per preset prefix (feature, fix, hotfix, chore, refactor, docs, ci) and creates nothing. With a preset that sets `no_ai_trailer`, `harness git commit` refuses a set `git.commit_trailer`; with `pr_size_warning`, `harness git pr` prints a size warning before it creates the PR.
 - `harness git` treats `origin/HEAD`, `init.defaultBranch`, `main` and `master` as the default branch. If your default is another name and `origin/HEAD` isn't set, run `git remote set-head origin -a` first.
 - Not in this release: the PR reviewer (M2) and TDD for other languages.

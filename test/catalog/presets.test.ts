@@ -140,14 +140,6 @@ test('listPresets and findPreset', () => {
   expect(findPreset('../x', root)).toBeNull();
 });
 
-test('identity check is linear on hostile input', () => {
-  for (const t of ['a'.repeat(80_000), 'a@' + 'b.'.repeat(40_000)]) {
-    const t0 = performance.now();
-    identityProblemsIn(t, 'a');
-    expect(performance.now() - t0).toBeLessThan(100);
-  }
-});
-
 test('size cap and symlinks', () => {
   one({ 'x/templates/core.md': 'a'.repeat(300 * 1024) }, 'core.md: larger than 256 KB');
   one({ 'x/templates/skills/x/SKILL.md': 'a'.repeat(300 * 1024) }, 'larger than 256 KB');

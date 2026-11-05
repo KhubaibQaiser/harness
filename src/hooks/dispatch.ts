@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { configChange } from '../checks/config-change.js';
 import { guard } from '../checks/guard.js';
+import { prSizeEntry } from '../checks/pr-size/entry.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect, shellWriteTargets } from '../checks/protect.js';
 import { sandboxRequired } from '../checks/sandbox-required.js';
@@ -354,6 +355,10 @@ export async function runHook(raw: string, run: (raw: string) => Promise<string>
 async function main(): Promise<void> {
   if (process.argv.includes('--self-test')) {
     process.stdout.write(`ok ${process.version}\n`);
+    return;
+  }
+  if (process.argv.includes('--pr-size')) {
+    process.exitCode = prSizeEntry(process.argv.slice(2), process.cwd(), (l) => process.stdout.write(l + '\n'));
     return;
   }
   let raw = '';

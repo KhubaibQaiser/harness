@@ -95,6 +95,10 @@ test('installInfo: name@market uses its own fields', () => {
   expect(installInfo(tree({}), { ...R(''), name: 'p', market: 'm', marketRepo: 'mo/mr' })).toEqual({ name: 'p', market: 'm', marketRepo: 'mo/mr' });
 });
 
+test('installInfo: an unsafe name@market falls back', () => {
+  for (const [name, market] of [['--scope', 'm'], ['p', '..'], ['..', 'm']]) expect(installInfo(tree({}), { ...R(''), name, market, marketRepo: 'mo/mr' }).name).not.toBe(name);
+});
+
 test('installInfo: marketplace.json in the repo', () => {
   const d = tree({ '.claude-plugin/marketplace.json': mp([{ name: 'other', source: './x' }, { name: 'p', source: './plugins/p' }]) });
   expect(installInfo(d, R('plugins/p'))).toEqual({ name: 'p', market: 'mkt', marketRepo: 'o/r' });

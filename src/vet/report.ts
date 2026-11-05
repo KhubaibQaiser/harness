@@ -44,7 +44,7 @@ const safeName = (v: unknown): v is string => typeof v === 'string' && SAFE.test
 
 /** The marketplace.json comes from the untrusted repo: read as data, names must match the safe shape. */
 export function installInfo(dir: string, r: Resolved): InstallInfo {
-  if (r.name && r.market) return { name: r.name, market: r.market, marketRepo: r.marketRepo ?? null };
+  if (safeName(r.name) && safeName(r.market)) return { name: r.name, market: r.market, marketRepo: r.marketRepo ?? null };
   const m = existsSync(join(dir, '.claude-plugin', 'marketplace.json')) ? readJson(join(dir, '.claude-plugin', 'marketplace.json')) : null;
   if (m && safeName(m.name) && Array.isArray(m.plugins)) {
     for (const e of m.plugins as unknown[]) {

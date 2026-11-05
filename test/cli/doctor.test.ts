@@ -567,3 +567,56 @@ test('items: a missing or unreadable claude prints one note and skips the plugin
   expect(r.out).not.toContain('not installed');
   expect(r.out).toMatch(/^ok catalog /m);
 });
+
+// Branch protection: a fake gh, never the real GitHub.
+const VIEW = { status: 0, stdout: JSON.stringify({ nameWithOwner: 'o/r', defaultBranchRef: { name: 'main' } }) };
+const protectionRun = async (api: { status: number | null; stdout: string }, workflow = 'name: ci\njobs:\n  ci:\n    name: test\n    steps:\n      - run: pnpm test\n') => {
+  const root = await installed();
+  mkdirSync(join(root, '.github/workflows'), { recursive: true });
+  writeFileSync(join(root, '.github/workflows/ci.yml'), workflow);
+  const calls: string[][] = [];
+  const gh = (a: string[]) => (calls.push(a), a[0] === 'repo' ? VIEW : api);
+  let out = '';
+  const code = doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, gh });
+  const base = doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE, gh: () => ({ status: null, stdout: '' }) });
+  return { out, code, base, calls, root };
+};
+const prot = (required: object) => ({ status: 0, stdout: JSON.stringify({ required_status_checks: required }) });
+
+test('doctor: a required check matching a CI job is ok', async () => {
+  const r = await protectionRun(prot({ contexts: [], checks: [{ context: 'ci / test' }] }));
+  expect(r.out).toContain('ok main is protected and requires `ci / test`');
+  expect(r.calls[1]).toEqual(['api', 'repos/o/r/branches/main/protection']);
+  expect(r.code).toBe(r.base);
+});
+
+test('doctor: legacy contexts also count', async () => {
+  expect((await protectionRun(prot({ contexts: ['test'] }))).out).toContain('ok main is protected and requires `test`');
+});
+
+test('doctor: a 404 says the branch is not protected, exit code unchanged', async () => {
+  const r = await protectionRun({ status: 1, stdout: '{"message":"Branch not protected","status":"404"}' });
+  expect(r.out).toMatch(/note main is not protected: .*require the CI checks/);
+  expect(r.code).toBe(r.base);
+});
+
+test('doctor: protected with no matching required checks is a note', async () => {
+  const r = await protectionRun(prot({ contexts: ['deploy'] }));
+  expect(r.out).toMatch(/note main is protected but no required check matches/);
+  expect(r.code).toBe(r.base);
+});
+
+test('doctor: missing gh is a note, exit code unchanged', async () => {
+  const r = await protectionRun({ status: 0, stdout: '' });
+  let out = '';
+  doctor([], { root: r.root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, gh: () => ({ status: null, stdout: '' }) });
+  expect(out).toContain('note branch protection unknown (gh not available)');
+});
+
+test('doctor: an unsafe branch name from gh is not used in the api path', async () => {
+  const root = await installed();
+  const calls: string[][] = [];
+  const gh = (a: string[]) => (calls.push(a), { status: 0, stdout: JSON.stringify({ nameWithOwner: 'o/r', defaultBranchRef: { name: 'x; echo hi' } }) });
+  doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE, gh });
+  expect(calls).toHaveLength(1);
+});

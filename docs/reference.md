@@ -379,6 +379,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 ## Known limits
 
 - The guard recognises the commands `harness` and `cli.mjs` by name. A renamed copy or symlink of the CLI (`node h.mjs add x --yes`) isn't recognised, so it doesn't ask first.
+- Two hooks writing at once can lose or double a `timing.jsonl` rotation (rename after a size check). Lines are append-only and never torn.
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
 - The `PowerShell(...)` deny rules, and the `Read` and `Edit` rules on PowerShell commands, are unverified until a live check on Windows passes.
 - The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop).

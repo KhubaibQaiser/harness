@@ -180,7 +180,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     // On Windows pass the resolved path so a .cmd shim can be recognised and wrapped.
     const t0 = now();
     const r = remaining > 0 ? await exec(process.platform === 'win32' ? found : rs.cmd, rs.args, remaining) : null;
-    appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: rs.label, outcome: r?.status === 0 && !r.timedOut ? 'allow' : 'block', ms: Math.max(0, now() - t0) });
+    appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: rs.label, outcome: !r || r.timedOut ? 'timeout' : r.status === 0 ? 'allow' : 'block', ms: Math.max(0, now() - t0) });
     if (!r || r.timedOut) {
       return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };
     }

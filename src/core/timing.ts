@@ -8,7 +8,7 @@ export interface TimingLine {
   event: string;
   tool?: string;
   step?: string;
-  outcome: 'allow' | 'deny' | 'ask' | 'block' | 'context';
+  outcome: 'allow' | 'deny' | 'ask' | 'block' | 'context' | 'timeout';
   ms: number;
 }
 

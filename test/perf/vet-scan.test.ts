@@ -72,7 +72,7 @@ describe('vet scan with many files', () => {
     };
     run(100);
     const small = run(1250), large = run(5000);
-    expect(large, `5000 files took ${large.toFixed(0)} ms`).toBeLessThan(1000);
+    expect(large, `5000 files took ${large.toFixed(0)} ms`).toBeLessThan(3000); // gross-blowup ceiling only; slow Windows runners took 1.1 s. The ratio below catches quadratic paths.
     expect(large / Math.max(small, 2), `${small.toFixed(1)} ms -> ${large.toFixed(1)} ms`).toBeLessThan(8);
   });
 });

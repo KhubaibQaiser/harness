@@ -42,7 +42,7 @@ Before the agent may stop, harness runs the steps in `stop.steps`: script names 
 
 ## Review agent (experimental)
 
-Experimental: it has not had live review runs yet. `init` also adds a `staff-reviewer` agent (`.claude/agents/staff-reviewer.md`) and its `review-rubric` skill (`.claude/skills/review-rubric/SKILL.md`). The agent reviews a diff you give it in a fresh context and reports findings. It cannot edit files.
+Experimental: it has not had live review runs yet. `init` also adds a `staff-reviewer` agent (`.claude/agents/staff-reviewer.md`) and its `review-rubric` skill (`.claude/skills/review-rubric/SKILL.md`). The agent reviews a diff you give it in a fresh context and reports findings. It cannot edit files. With `Mode: vet` (used by `/harness:vet`) it reads only the files a scan flagged and replies with one JSON review; it can add context to a scan but never lower a finding's severity.
 
 ## What `init` checks first
 
@@ -208,7 +208,7 @@ The hooks are in the repo, so a teammate needs nothing for them. Plugins you pic
 
 ## Commands in full
 
-The plugin adds `/harness:init`, `/harness:doctor`, `/harness:status`, `/harness:update`, `/harness:add`, `/harness:sync` and `/harness:uninstall`. In a plain terminal, `init` and `update` print `Run /harness:init inside Claude Code` and exit.
+The plugin adds `/harness:init`, `/harness:doctor`, `/harness:status`, `/harness:update`, `/harness:add`, `/harness:sync`, `/harness:uninstall` and `/harness:vet`. In a plain terminal, `init` and `update` print `Run /harness:init inside Claude Code` and exit.
 
 Run each terminal command as `harness <command>`. From source, use `node /path/to/harness/dist/cli.mjs <command>`.
 
@@ -286,6 +286,19 @@ Catalog items can be Claude Code plugins or MCP servers.
 - **Plugins.** Harness pins each plugin to an exact source in an inline marketplace named `harness-pins`, written to `.claude/settings.json` along with `enabledPlugins`. It's committed, so every contributor gets the same pins. Each contributor still installs the plugins in their own Claude Code. `--install-plugins` runs `claude plugin install … --scope project` for you. If one fails, harness prints the command to run yourself.
 - **MCP servers.** Harness writes them to `.mcp.json`. Claude Code asks each user to approve a project server before it runs. Harness can't approve it for them. A server with the same name that you wrote is kept and reported.
 - **Removal.** `uninstall` removes the pins and servers it added and leaves yours.
+
+## Vetting a plugin or skill
+
+`/harness:vet <target>` runs `harness vet` and puts the staff-reviewer between the scan and the summary:
+
+1. It unpacks the target to a temporary folder and scans it without running anything.
+2. The reviewer reads only the flagged files and rates relevance, overlaps with installed items and injection-like text.
+3. You get the summary and choose: show the install command, skip, or open the report.
+4. If any finding is high, you must say yes a second time, with each high finding named.
+
+A scan can't prove an item is safe. It checks for known risky patterns only; read the high findings yourself before you install.
+
+harness doesn't install or track vetted items: it only prints the install command for you to run.
 
 ## Configuration keys
 

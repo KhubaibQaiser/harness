@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { writeAtomic } from '../core/atomic.js';
 import type { Exec } from '../core/exec.js';
@@ -29,6 +29,9 @@ export function resolveBin(root: string, pkg: string, name: string): string | nu
   try {
     const manifest = createRequire(join(root, 'package.json')).resolve(`${pkg}/package.json`);
     const bin = (JSON.parse(readFileSync(manifest, 'utf8')) as { bin?: string | Record<string, string> }).bin;
+    // Only this repo's own install counts: a parent node_modules or NODE_PATH is somebody else's tool.
+    const out = relative(realpathSync(join(root, 'node_modules')), manifest);
+    if (out.startsWith('..') || isAbsolute(out)) return null;
     const rel = typeof bin === 'string' ? bin : bin?.[name];
     const file = typeof rel === 'string' ? resolve(dirname(manifest), rel) : null;
     return file && existsSync(file) ? file : null;

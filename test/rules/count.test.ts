@@ -1,10 +1,10 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { realpathSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { defaultExec, type Exec } from '../../src/core/exec.js';
-import { countViolations } from '../../src/rules/count.js';
+import { countViolations, resolveBin } from '../../src/rules/count.js';
 import { LINT_RULES } from '../../src/rules/table.js';
 import type { Proposal } from '../../src/rules/propose.js';
 
@@ -38,16 +38,17 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 const leftovers = () => (existsSync(state(root)) ? readdirSync(state(root)) : []);
 
 const tscOut = (n: number) => Array.from({ length: n }, (_, i) => `a.ts(${i},1): error TS2322: x`).join('\n');
-const fake = (o: { eslint?: ReturnType<Exec>[]; tsc?: (args: string[]) => ReturnType<Exec> }): { exec: Exec; calls: string[][] } => {
+const fake = (o: { eslint?: ReturnType<Exec>[]; tsc?: (args: string[]) => ReturnType<Exec> }): { exec: Exec; calls: string[][]; cmds: string[] } => {
   const calls: string[][] = [];
+  const cmds: string[] = [];
   const queue = [...(o.eslint ?? [])];
   const exec: Exec = (cmd, [bin = '', ...args]) => {
-    expect(cmd).toBe(process.execPath);
+    cmds.push(cmd);
     calls.push([bin, ...args]);
     if (bin.endsWith('eslint.js')) return queue.shift() ?? { status: 0, stdout: '[]' };
     return o.tsc ? o.tsc(args) : { status: 0, stdout: '' };
   };
-  return { exec, calls };
+  return { exec, calls, cmds };
 };
 
 describe('countViolations', () => {
@@ -55,6 +56,7 @@ describe('countViolations', () => {
     const f = fake({ eslint: [{ status: 1, stdout: report(['max-depth', 'max-depth', 'react/no-array-index-key', 'other/x']) }] });
     const c = await countViolations(root, proposal(), f.exec);
     expect(c.eslint.byRule).toEqual({ 'max-depth': 2, 'react/no-array-index-key': 1 });
+    expect(new Set(f.cmds)).toEqual(new Set([process.execPath]));
     expect(f.calls[0]!.slice(1, 3)).toEqual(['--config', join(state(root), 'rules-preview.mjs')]);
     expect(leftovers()).toEqual([]);
   });
@@ -175,5 +177,32 @@ describe('countViolations', () => {
     const c = await countViolations(root, proposal(), defaultExec, 300);
     expect(c.eslint.error).toBe('eslint timed out');
     expect(c.ts.baseline).toBeNull();
+  });
+
+  it('resolves a string-form bin', () => {
+    const dir = join(root, 'node_modules', 'strbin');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'strbin', bin: 'cli.js' }));
+    writeFileSync(join(dir, 'cli.js'), '');
+    expect(resolveBin(root, 'strbin', 'strbin')).toBe(realpathSync(join(dir, 'cli.js')));
+  });
+
+  it('ignores a tool found only outside the repo node_modules', async () => {
+    const parent = realpathSync(mkdtempSync(join(tmpdir(), 'count-parent-')));
+    const sub = join(parent, 'repo');
+    mkdirSync(sub);
+    writeFileSync(join(sub, 'tsconfig.json'), '{}');
+    fakePkg(parent, 'eslint', 'bin/eslint.js', '');
+    fakePkg(parent, 'typescript', 'bin/tsc', '');
+    try {
+      expect(resolveBin(sub, 'eslint', 'eslint')).toBeNull();
+      const f = fake({});
+      const c = await countViolations(sub, proposal(), f.exec);
+      expect(c.eslint.error).toBe('eslint is not installed');
+      expect(c.ts.baseline).toBeNull();
+      expect(f.calls).toEqual([]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 });

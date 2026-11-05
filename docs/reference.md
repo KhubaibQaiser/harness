@@ -10,7 +10,7 @@ The full detail behind the [README](../README.md). Start there; come here when y
 - **Fails closed where it matters.** If the dispatcher can't start or crashes, Claude Code blocks the tool call, the prompt or the settings change (`onFailure: "block"`). The Stop gate fails open if its process can't run. If `.harness/config.yaml` is invalid, agent edits are denied and Stop blocks until a person fixes it. The guard and protected-path checks deny the call if they crash.
 - **Repo-level.** `init` writes plain files into the repo (`.harness/`, `.claude/settings.json`, `AGENTS.md`). Commit them, and the hooks run for anyone who opens the repo in Claude Code, with or without the plugin.
 - **Local-first.** Events go to `.harness/logs/events.jsonl` in the repo. Nothing is sent anywhere, except an npm registry lookup for a package name when you allow an install, and `update --check`.
-- **Timing log.** `.harness/logs/timing.jsonl` holds one line per hook call or Stop step (event, tool, outcome, ms), with no paths or command text. At 5 MB it is renamed to `timing.1.jsonl`, replacing the old one.
+- **Timing log.** `.harness/logs/timing.jsonl` holds one line per Stop step (event, step, outcome, ms; hook calls are added in a later release), with no paths or command text. At 5 MB it is renamed to `timing.1.jsonl`, replacing the old one.
 - **Reversible.** `init` backs up every file it changes and records every edit in `.harness/manifest.json`. `uninstall` removes exactly what the manifest lists and restores your files.
 - **You confirm every write.** `init` and `update` show the full plan and diff first. Neither commits, pushes or opens a PR.
 
@@ -354,8 +354,8 @@ The table below is generated from `src/core/config.ts` by `node scripts/gen-conf
 | `tdd.results_dir` | `".harness/results"` | Where the test reporters write JSON results. Keep it inside `.harness/results`, which protect covers. Value must not be inside .harness/state (the sandbox denies it there). |
 | `multi_file_gate.generated` | `[]` | Globs for generated files that the multi-file gate does not count. |
 | `pr_size.target_lines` | `200` | Changed lines the pr-ship skill aims for in each PR. Guidance only; no gate enforces it. Value must be an integer from 1 to 100000. |
-| `pr_size.max_lines` | `400` | Changed lines above which opening or growing a PR asks you first (denied when unattended). Value must be an integer from 1 to 100000. |
-| `pr_size.max_files` | `20` | Changed files above which opening or growing a PR asks you first (denied when unattended). Value must be an integer from 1 to 10000. |
+| `pr_size.max_lines` | `400` | Changed lines above which opening or growing a PR asks you first (denied when unattended); the check that asks is not active yet, while `--pr-size` measures today. Value must be an integer from 1 to 100000. |
+| `pr_size.max_files` | `20` | Changed files above which opening or growing a PR asks you first (denied when unattended); the check that asks is not active yet, while `--pr-size` measures today. Value must be an integer from 1 to 10000. |
 | `pr_size.exclude` | `["**/pnpm-lock.yaml","**/package-lock.json","**/npm-shrinkwrap.json","**/yarn.lock","**/bun.lock","**/bun.lockb","**/Cargo.lock","**/poetry.lock","**/uv.lock","**/Pipfile.lock","**/Gemfile.lock","**/composer.lock","**/go.sum","**/.!(npm\|harness)ignore","**/__snapshots__/**","**/*.snap"]` | Globs not counted toward a PR's size: lockfiles, `.*ignore` files except `.npmignore` and `.harnessignore`, and snapshots. A list you set replaces the whole default, so keep the defaults you want. |
 | `unattended.multi_file_gate` | `"block"` | What the multi-file gate does when no human is watching. Value must be one of block, allow-log, off. |
 | `unattended.require_reason` | `false` | With `allow-log`, extra files need a one-line reason. No effect while the gate is `block`. |

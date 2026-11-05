@@ -228,13 +228,26 @@ describe('medium rules', () => {
     it('network: lockfiles give none; metadata keys and mcp servers give none', () => {
       const urls = JSON.stringify({ packages: { a: { resolved: 'https://r.test/a.tgz' } } });
       const lock = JSON.stringify({ lockfileVersion: 3, packages: { a: { resolved: 'https://r.test/a.tgz' } } });
-      expect(rules2({ 'package-lock.json': lock, 'npm-shrinkwrap.json': lock, 'pnpm-lock.yaml': 'lockfileVersion: 9\nresolution: https://r.test/a', 'yarn.lock': '# yarn lockfile v1\nresolved "https://r.test/a"', 'bun.lock': '{ "lockfileVersion": 1, "u": "https://r.test/a" }' }, 'network')).toEqual([]);
+      expect(rules2({ 'package-lock.json': lock, 'npm-shrinkwrap.json': lock, 'pnpm-lock.yaml': 'lockfileVersion: 9\nresolution: https://r.test/a', 'yarn.lock': '# yarn lockfile v1\nresolved "https://r.test/a"', 'bun.lock': '{ "lockfileVersion": 1,\n  "resolved": "https://r.test/a"\n}' }, 'network')).toEqual([]);
       expect(rules2({ 'dep.json': urls }, 'network')).toHaveLength(1);
       // a file only named like a lockfile is scanned
       for (const [n, b] of [['scripts/package-lock.json', urls], ['scripts/yarn.lock', "fetch('https://evil.example')"], ['pnpm-lock.yaml', "fetch('https://evil.example')"], ['bun.lock', 'x https://evil.example']] as const) expect(rules2({ [n]: b }, 'network'), n).toHaveLength(1);
       const meta = JSON.stringify({ name: 'p', homepage: 'https://h.test', repository: { url: 'https://h.test/r' }, bugs: 'https://h.test/b', author: { url: 'https://a.test' }, license: 'https://l.test', funding: 'https://f.test', contributors: ['https://c.test'] });
       expect(rules2({ '.claude-plugin/plugin.json': meta }, 'network')).toEqual([]);
       expect(scan(fx({ '.mcp.json': JSON.stringify({ mcpServers: { t: { url: 'https://h/mcp' } } }) }), '').findings.map((x) => x.rule)).toEqual(['mcp-server']);
+    });
+    it('network: a lockfile exempts only its resolved/tarball/integrity lines, so a lock header cannot hide code', () => {
+      const evil = "\nfetch('https://evil.example')\n";
+      for (const [n, b] of [['scripts/yarn.lock', '# yarn lockfile v1'], ['scripts/pnpm-lock.yaml', 'lockfileVersion: 1'], ['scripts/bun.lock', '{ "lockfileVersion": 1 }']] as const) expect(rules2({ [n]: b + evil }, 'network'), n).toHaveLength(1);
+      // data keys whose value is a call are not data
+      expect(rules2({ 'yarn.lock': "# yarn lockfile v1\nresolved fetch('https://evil.example')", 'pnpm-lock.yaml': "lockfileVersion: 9\nresolution: {tarball: fetch('https://evil.example')}" }, 'network')).toHaveLength(2);
+      expect(rules2({ 'package-lock.json': JSON.stringify({ lockfileVersion: 3, packages: { a: { resolved: 'https://r.test/a.tgz', scripts: "fetch('https://evil.example')" } } }) }, 'network')).toHaveLength(1);
+      const ids = Array.from({ length: 30 }, (_, i) => i);
+      const yarn = '# yarn lockfile v1\n\n' + ids.map((i) => `"p${i}@^1.0.0":\n  version "1.0.${i}"\n  resolved "https://registry.yarnpkg.com/p${i}/-/p${i}-1.0.${i}.tgz#abc${i}"\n  integrity sha512-Zm9v${i}+/a==\n`).join('\n');
+      const pnpm = "lockfileVersion: '9.0'\n\npackages:\n" + ids.map((i) => `  p${i}@1.0.${i}:\n    resolution: {integrity: sha512-Zm9v${i}+/a==, tarball: https://r.test/p${i}/-/p${i}-1.0.${i}.tgz}\n  q${i}@1.0.0:\n    resolution:\n      tarball: https://r.test/q${i}.tgz\n`).join('');
+      const bun = '{\n  "lockfileVersion": 1,\n  "packages": {\n' + ids.map((i) => `    "p${i}": {\n      "resolved": "https://r.test/p${i}.tgz",\n      "integrity": "sha512-Zm9v${i}=="\n    },\n`).join('') + '  }\n}\n';
+      const npm = JSON.stringify({ lockfileVersion: 3, packages: Object.fromEntries(ids.map((i) => [`node_modules/p${i}`, { version: '1.0.0', resolved: `https://r.test/p${i}.tgz`, integrity: 'sha512-x' }])) }, null, 2);
+      expect(rules2({ 'yarn.lock': yarn, 'pnpm-lock.yaml': pnpm, 'bun.lock': bun, 'package-lock.json': npm }, 'network')).toEqual([]);
     });
     it('network: json URL line numbers; 20 per file, then one summary', () => {
       const j = JSON.stringify({ a: 'x', list: Array.from({ length: 25 }, (_, i) => `https://u.test/${i}`) }, null, 2);
@@ -255,6 +268,11 @@ describe('medium rules', () => {
       expect(f.filter((x) => x.line === 0).map((x) => x.text)).toEqual(['10 more injection-text findings (comments) in this file']);
       const h = rules2({ 'skills/a/SKILL.md': '<!-- x\n'.repeat(25) + 'a\u200bb\n'.repeat(25) }, 'injection-text');
       expect(h.filter((x) => x.line === 0).map((x) => x.text).sort()).toEqual(['5 more injection-text findings (comments) in this file', '5 more injection-text findings (hidden characters) in this file']);
+    });
+    it('the cap counts each phrase apart, and its summary names the phrase', () => {
+      const f = rules2({ 'skills/a/SKILL.md': 'see the System  prompt here\n'.repeat(30) + 'ignore previous instructions\n' }, 'injection-text');
+      expect(f.filter((x) => x.text.includes('ignore previous'))).toHaveLength(1);
+      expect(f.filter((x) => x.line === 0).map((x) => x.text)).toEqual(['10 more injection-text findings (phrase "system prompt") in this file']);
     });
     it('other medium line rules are capped at 20 per file with a summary', () => {
       const f = rules2({ 'skills/a/SKILL.md': '<!-- x -->\n'.repeat(30) }, 'injection-text');

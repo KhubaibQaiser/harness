@@ -255,16 +255,25 @@ function isLock(rel: string, text: string, obj: Record<string, unknown> | undefi
   if (name === 'pnpm-lock.yaml') return /^\s*lockfileVersion:/.test(text);
   return name === 'yarn.lock' && /^# yarn lockfile|^__metadata:/m.test(text);
 }
+/**
+ * In a lockfile, only lockfile data is exempt from network: a trimmed line whose whole value is a resolved/resolution/tarball/integrity
+ * entry (`"resolved": "..."`, yarn `resolved "..."`, pnpm `resolution: {tarball: ...}`, `tarball: ...`). Values cannot hold ( ) ; ' or `,
+ * so a call never passes as data. Each part is delimited by a different character, so the match stays linear.
+ */
+const LOCK_KEYS = new Set(['resolved', 'resolution', 'tarball', 'integrity']);
+const LOCK_LINE = /^(?:"(?:resolved|resolution|tarball|integrity)"\s*:|(?:resolved|resolution|tarball|integrity)\b:?)\s*(?:"[^"`\\]*"|\{[\w :,./@+=#%~-]*\}|[\w:./@+=#%~?&-]+),?$/;
+const lockNet = (l: string): number => (LOCK_LINE.test(l.trim()) ? -1 : l.search(NETWORK));
 // Top-level metadata keys of a manifest hold the author's own links; mcpServers is already reported as mcp-server.
 const META_FILE = /(?:^|\/)(?:package\.json|\.claude-plugin\/plugin\.json|marketplace\.json)$/;
 const META = new Set(['homepage', 'repository', 'bugs', 'author', 'contributors', 'funding', 'license']);
 /** `key` tells the cap which kind of hit this is: injection comments, hidden characters and phrases are counted apart. */
 type Add = (rule: string, mk: () => VetFinding, key?: string) => void;
-const KIND: Record<string, string> = { hidden: 'hidden characters', comment: 'comments', phrase: 'phrases' };
+const KIND: Record<string, string> = { hidden: 'hidden characters', comment: 'comments' };
+const kindName = (k: string): string => (k.startsWith('phrase:') ? `phrase "${esc(k.slice(7))}"` : KIND[k] ?? k);
 const NET_CAP = 20; // per rule per file, so a hostile file cannot flood the report
 
 /** network for a parsed JSON file: string values only (iterative, so deep nesting cannot overflow), manifest metadata skipped. */
-function netJson(file: string, text: string, json: Record<string, unknown>, add: Add): void {
+function netJson(file: string, text: string, json: Record<string, unknown>, add: Add, lock: boolean): void {
   const at = finder(text);
   const direct = directMcp(file, json), meta = META_FILE.test(file);
   // [value, inside the top-level hooks]; a hook-http url is reported as hook-http, not again here
@@ -275,7 +284,7 @@ function netJson(file: string, text: string, json: Record<string, unknown>, add:
     const [v, hk] = stack.pop()!;
     if (typeof v === 'string') { if (NETWORK.test(v)) add('network', () => ({ severity: 'medium', rule: 'network', file, line: at(JSON.stringify(v)), text: show(v) })); }
     else if (Array.isArray(v)) for (let i = v.length - 1; i >= 0; i--) stack.push([v[i], hk]);
-    else if (isObj(v)) { const es = Object.entries(v).filter(([k]) => !(hk && k === 'url' && v.type === 'http')); for (let i = es.length - 1; i >= 0; i--) stack.push([es[i]![1], hk]); }
+    else if (isObj(v)) { const es = Object.entries(v).filter(([k, x]) => !(hk && k === 'url' && v.type === 'http') && !(lock && typeof x === 'string' && LOCK_KEYS.has(k))); for (let i = es.length - 1; i >= 0; i--) stack.push([es[i]![1], hk]); }
   }
 }
 
@@ -284,7 +293,8 @@ function injection(file: string, text: string, add: Add): void {
   const lineAt = lineIndex(text);
   const ends: Record<string, number> = {};
   for (const m of text.matchAll(INJECT)) {
-    const kind = m[0].length === 1 || m[0].length === 2 ? 'hidden' : m[0] === '<!--' ? 'comment' : 'phrase';
+    // each phrase has its own cap, so benign "system prompt" lines cannot bury "ignore previous instructions"
+    const kind = m[0].length === 1 || m[0].length === 2 ? 'hidden' : m[0] === '<!--' ? 'comment' : `phrase:${m[0].toLowerCase().replace(/\s+/g, ' ')}`;
     if (m.index < (ends[kind] ?? -1)) continue;
     const nl = text.indexOf('\n', m.index);
     ends[kind] = nl < 0 ? Infinity : nl;
@@ -299,7 +309,7 @@ const isPrompt = (inner: string, rootPrompt: boolean) => rootPrompt || inner.spl
 function lineRules(inner: string, json: boolean, rootPrompt: boolean, lock: boolean): LineRule[] {
   const r: LineRule[] = [['obfuscated', obfuscated]];
   if (!json) r.push(['permissions', idx(PERMS)]); // parsed JSON: judged on the unescaped command strings (cmdFindings)
-  if (!json && !lock && (!/\.md$/i.test(inner) || isPrompt(inner, rootPrompt))) r.push(['network', idx(NETWORK)]);
+  if (!json && (!/\.md$/i.test(inner) || isPrompt(inner, rootPrompt))) r.push(['network', lock ? lockNet : idx(NETWORK)]);
   return r;
 }
 
@@ -338,7 +348,7 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
     const inner = path && rel.startsWith(`${path}/`) ? rel.slice(path.length + 1) : rel;
     if (!textRules(inner, bare)) continue;
     const lock = isLock(rel, bare, obj);
-    if (obj && !lock) netJson(rel, bare, obj, add);
+    if (obj) netJson(rel, bare, obj, add, lock);
     const check = lineChecker(), med = lineRules(inner, !textScan, rootPrompt, lock);
     const minified = size > 5120 && /\.js$/i.test(rel) && inner.split('/').slice(0, -1).some((d) => MIN_DIR.test(d));
     let mini = false;
@@ -355,7 +365,11 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
       if (minified && !mini && l.length > 1000) { mini = true; findings.push({ severity: 'medium', rule: 'obfuscated', file: rel, line: n, text: 'minified JS' }); }
     }
     if (/\.md$/i.test(rel) && (isPrompt(inner, rootPrompt) || /(?:^|\/)SKILL\.md$/.test(inner))) injection(rel, bare, add);
-    for (const [key, c] of counts) if (c > NET_CAP) findings.push({ severity: 'medium', rule: key.split('/')[0] as VetFinding['rule'], file: rel, line: 0, text: `${c - NET_CAP} more ${key === 'network' ? 'network URLs' : `${key.split('/')[0]} findings${KIND[key.split('/')[1] ?? ''] ? ` (${KIND[key.split('/')[1]!]})` : ''}`} in this file` });
+    for (const [key, c] of counts) {
+      if (c <= NET_CAP) continue;
+      const [rule, kind] = key.split('/') as [VetFinding['rule'], string | undefined];
+      findings.push({ severity: 'medium', rule, file: rel, line: 0, text: `${c - NET_CAP} more ${key === 'network' ? 'network URLs' : `${rule} findings${kind ? ` (${kindName(kind)})` : ''}`} in this file` });
+    }
   }
   for (const s of skipped) findings.push({ severity: 'medium', rule: 'unsafe-archive', file: s.path, line: 0, text: show(s.why) });
   const seen = new Set<string>();

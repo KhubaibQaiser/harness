@@ -261,7 +261,7 @@ function isLock(rel: string, text: string, obj: Record<string, unknown> | undefi
  * so a call never passes as data. Each part is delimited by a different character, so the match stays linear.
  */
 const LOCK_KEYS = new Set(['resolved', 'resolution', 'tarball', 'integrity']);
-const LOCK_LINE = /^(?:"(?:resolved|resolution|tarball|integrity)"\s*:|(?:resolved|resolution|tarball|integrity)\b:?)\s*(?:"[^"`\\]*"|\{[\w :,./@+=#%~-]*\}|[\w:./@+=#%~?&-]+),?$/;
+const LOCK_LINE = /^(?:"(?:resolved|resolution|tarball|integrity)"\s*:|(?:resolved|resolution|tarball|integrity)\b:?)\s*(?:"[^"`\\();'$]*"|\{[\w :,./@+=#%~-]*\}|[\w:./@+=#%~?&-]+),?$/;
 const lockNet = (l: string): number => (LOCK_LINE.test(l.trim()) ? -1 : l.search(NETWORK));
 // Top-level metadata keys of a manifest hold the author's own links; mcpServers is already reported as mcp-server.
 const META_FILE = /(?:^|\/)(?:package\.json|\.claude-plugin\/plugin\.json|marketplace\.json)$/;

@@ -35,7 +35,7 @@ export function stackedBars(cols: { label: string; parts: number[] }[], legend: 
       return `<rect x="${i * COL_W + PAD}" y="${y}" width="${COL_W - GUTTER}" height="${hh}" class="${seriesClass(k)}">`
         + `<title>${h(c.label)} ${h(legend[k] ?? '')}: ${p}</title></rect>`;
     }).join('');
-    return `${rects}<text x="${i * COL_W + PAD}" y="${CHART_H + AXIS_H - PAD}" class="lbl">${h(c.label.slice(DAY_TAIL))}</text>`;
+    return `${rects}<text x="${i * COL_W + PAD}" y="${CHART_H + AXIS_H - PAD}" class="lbl">${h(Array.from(c.label).slice(DAY_TAIL).join(''))}</text>`;
   }).join('');
   const ly = CHART_H + AXIS_H + PAD;
   const key = legend.map((l, k) => `<rect x="${legendX(k)}" y="${ly}" width="${SWATCH}" height="${SWATCH}" class="${seriesClass(k)}"/>`

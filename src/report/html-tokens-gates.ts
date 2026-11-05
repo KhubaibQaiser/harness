@@ -10,14 +10,14 @@ export function tokensSection(u: UsageResult, always: { id: string; tokens: numb
   const top = [...u.sessions].sort((a, b) => b.peak - a.peak).slice(0, TOP);
   const tools = Object.entries(u.toolChars).sort(([, a], [, b]) => b - a);
   return section('tokens', 'Tokens', [
-    '<p>Measured per API response. The four parts are never added together.</p>',
+    '<p>Measured per API response. The four parts are shown separately.</p>',
     chart(stackedBars(cols, USAGE_HEAD, 'Tokens by day'), ['Day', ...USAGE_HEAD], days.map(([d, x]) => row(d, x))),
     '<h3>By model</h3>', table(['Model', ...USAGE_HEAD], Object.entries(u.byModel).map(([k, x]) => row(k, x))),
     '<h3>Main thread vs subagents</h3>',
     table(['Where', ...USAGE_HEAD], [row('main', u.main), row('subagents', u.sub), row('total', u.total)]),
     `<h3>Top ${TOP} sessions by peak context</h3>`,
-    '<p class="mute">Ranked by the largest single response (input + cache write + cache read). '
-      + 'The four parts stay separate in the columns.</p>',
+    '<p class="mute">Peak context is the context size of one response: uncached input + cache write + cache read, '
+      + 'not output. It is measured on the main thread only. The four parts stay separate in the columns.</p>',
     table(['Session', ...USAGE_HEAD, 'Responses', 'Compactions', 'Peak context'],
       top.map((s) => [...row(s.id, s.usage), s.responses, s.compactions, s.peak])),
     `<h3>Always-loaded (${ESTIMATE})</h3>`, table(['Item', `Tokens (${ESTIMATE})`], always.map((a) => [a.id, a.tokens ?? 'unknown'])),

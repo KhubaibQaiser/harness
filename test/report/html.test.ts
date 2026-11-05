@@ -171,6 +171,24 @@ describe('fix round 1', () => {
   });
 });
 
+describe('fix round 2', () => {
+  it('cuts the day label by code point', () => {
+    const svg = stackedBars([{ label: 'ab\u{1F600}\u{1F600}\u{1F600}', parts: [1] }], ['x']);
+    expect(svg).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+    expect(svg).not.toMatch(/(?<![\ud800-\udbff])[\udc00-\udfff]/);
+  });
+  it('names the skills chart', () => {
+    expect(renderReport(data())).toContain('aria-label="Skills invoked when relevant"');
+  });
+  it('states what the token and ranking notes mean', () => {
+    const html = renderReport(data());
+    expect(html).not.toContain('never added together');
+    expect(html).toContain('The four parts are shown separately.');
+    expect(html).toContain('main thread only');
+    expect(html).toContain('not output');
+  });
+});
+
 describe('svg', () => {
   it('escapes labels in bars', () => {
     expect(hbars([{ label: '<i>', value: 1, max: 2, note: '"x"' }])).not.toContain('<i>');

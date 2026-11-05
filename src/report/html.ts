@@ -68,7 +68,7 @@ function skillsSection(skills: SkillRow[]): string {
   return section('skills', 'Skills', [
     table(['Skill', 'Listed in', 'Invoked when relevant', 'Invoked otherwise', 'Typed or carried', 'Unknown', 'Notes'], cells),
     `<p class="mute">${h(Object.values(SKILL_NOTES).join(' '))}</p>`,
-    chart(hbars(bars), ['Skill', 'Invoked when relevant', 'Relevant sessions (r)'], bars.map((b) => [b.label, b.value, b.max])),
+    chart(hbars(bars, 'Skills invoked when relevant'), ['Skill', 'Invoked when relevant', 'Relevant sessions (r)'], bars.map((b) => [b.label, b.value, b.max])),
   ].join(''));
 }
 

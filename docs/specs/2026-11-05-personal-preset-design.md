@@ -1,6 +1,6 @@
 # Personal preset: design spec
 
-- Status: draft for the owner's review. The owner decisions are in section 1: Q1 to Q9 and F1 to F12 came from the interview, O1 to O12 answered the first draft's open questions, and C2 and C3 answered the second draft's. Section 13 lists the checks left for planning.
+- Status: draft for the owner's review. The owner decisions are in section 1: Q1 to Q9 and F1 to F12 came from the interview, O1 to O12 answered the first draft's open questions, C2 and C3 answered the second draft's, and P1 to P9 came from a follow-up interview on design principles and anti-patterns. Section 13 lists the checks left for planning.
 - Date: 2026-11-05
 - Owner: khubaibqaiser
 - Inputs: the owner interview of 2026-11-05 (Q1 to Q9, then the frontend architecture interview) and the owner's answers to the draft (O1 to O12). The code on main: `src/catalog/schema.ts`, `src/catalog/load.ts`, `src/catalog/check.ts`, `src/install/facts.ts`, `src/install/select.ts`, `src/install/merge.ts` (`mergeAgents`), `src/budget/measure.ts`, `src/cli/git.ts`, `src/checks/guard.ts` (`PERSON_ONLY`), `skills/init/{SKILL,interview}.md`, and [`2026-11-03-pr-size-design.md`](2026-11-03-pr-size-design.md) ("PR-size").
@@ -33,6 +33,15 @@
 | O12 | **Attribution setting.** The preset sets Claude Code's attribution setting in `.claude/settings.json`, merged like the other harness blocks and shown in the preview. The key name is checked against the Claude Code docs during planning. |
 | C2 | **Global scope.** A global install includes the core rules, the personalised skills and the attribution setting at user scope (`~/.claude/settings.json`). The git checks stay per repo. |
 | C3 | **Telemetry.** `DO_NOT_TRACK=1` goes in the repo's `.claude/settings.json` `env`. It applies to the whole session, and the README says so. |
+| P1 | **Principles skill (added after the draft).** A new on-demand skill, `engineering-principles`, for every repo the preset installs into. It covers DRY, SOLID, KISS and YAGNI, plus the general JS/TS anti-patterns. |
+| P2 | **DRY.** Rule of three: duplicate once, and extract on the third copy, only when the copies change for the same reason. |
+| P3 | **SOLID.** In the owner's words: "Full solid incl classes but only where it fits naturally no forced enforcement". |
+| P4 | **General JS/TS anti-patterns:** type escapes (`as` to silence errors, `@ts-ignore`, an unexplained `!`, untyped `JSON.parse`); swallowed errors (empty or log-only catch, unhandled promises, a missing `await`); god files and functions (huge modules, long functions, boolean-flag parameters, deep nesting instead of early returns); mutation and magic (mutating arguments or shared state, magic numbers and strings, enums where union types fit). |
+| P5 | **React anti-patterns:** useEffect misuse (derived state, syncing props to state, fetching in effects, effect chains); prop drilling and bloat (many layers, oversized props, boolean prop soup); key and state bugs (index keys in dynamic lists, state for computable values, server data in Zustand); inline component definitions. The owner added "proper memoization techniques to avoid needless re-renders", settled in P6. |
+| P6 | **Memoization (refines F9).** Structure first: colocate state, lift content up as `children`, use narrow selectors and split contexts. Then use `memo`, `useMemo` or `useCallback` when profiling or an obvious cost shows a need: a heavy list item, an expensive computation, or a stable prop for a memoized child. With the React Compiler on, rely on it and skip manual memo. |
+| P7 | **Next.js anti-patterns:** client creep (`"use client"` high in the tree, client components only to fetch, server-only code or secrets in client bundles); data waterfalls (sequential awaits, client-effect fetching the server could do, missing Suspense); caching mistakes (wrong or implicit cache and revalidate, no revalidation after mutations, route handlers where server actions fit); asset and SEO misses (raw `<img>` or `<a>`, no metadata API, layout shift). The owner added, for React and Next.js with Tailwind: "to not use hardcoded classes like h-[98px] instead of using closest builtin breakpoint prefix class for a more responsive design". |
+| P8 | **React Native/Expo anti-patterns:** list misuse (ScrollView or map for long lists, FlatList where FlashList fits, unstable keys or inline `renderItem`); JS-thread animation (state or timers instead of Reanimated worklets, heavy JS work during gestures); native workflow drift (hand-edited `ios/` or `android/`, ejecting, Expo Go-only assumptions); platform blind spots (ignoring safe areas and font scaling, missing accessibility props, web-only APIs in shared code). |
+| P9 | **Sources and placement.** Each list starts from the owner's answers (P4 to P8). Gaps are filled from official docs (react.dev, the Next.js, Expo and TypeScript docs). Every filled item cites its source and is labelled as coming from the docs, not from the owner, and the owner reviews the draft. The general JS/TS list goes in `engineering-principles`, and each stack list goes in that stack's own skill. Items Vercel's `react-best-practices` already covers aren't repeated. |
 
 **Frontend answers** (the owner's words or choices; quotes are verbatim):
 
@@ -98,6 +107,7 @@ preselect:                     # neutral catalog ids; each still filtered by its
   - web-design-guidelines
   - impeccable                 # taste-skill joins only after section 6's preconditions
 skills:                        # preset items; each item's applies_when picks the stacks (Q4, O7)
+  - engineering-principles     # P1; every repo
   - frontend-react
   - frontend-nextjs
   - frontend-react-native
@@ -123,11 +133,12 @@ git:
 
 | Skill | `applies_when` |
 |---|---|
+| `engineering-principles` | `always: true` (P1). harness installs into JS/TS repos, so no language match is needed. |
 | `frontend-react` | `frameworks: [react, next, react-native, expo]` (Q4, O7) |
 | `frontend-nextjs` | `frameworks: [next]` |
 | `frontend-react-native` | `frameworks: [react-native, expo]` |
 
-`facts.frameworks` is the union over every package, so a monorepo with a Next.js app and an Expo app gets all three skills at repo level. That is the intended result of Q4. The preselects keep their catalog `applies_when` (O5): `react-best-practices` on react or next, `vercel-react-native-skills` on react-native or expo, `web-design-guidelines` on web or landing, and `impeccable` on web.
+`facts.frameworks` is the union over every package, so a monorepo with a Next.js app and an Expo app gets all three frontend skills at repo level, plus `engineering-principles`. That is the intended result of Q4. The preselects keep their catalog `applies_when` (O5): `react-best-practices` on react or next, `vercel-react-native-skills` on react-native or expo, `web-design-guidelines` on web or landing, and `impeccable` on web.
 
 ## 4. How init offers it
 
@@ -169,12 +180,13 @@ The lines are drafted from Q7 to Q9, O5, O6 and O8; the owner reviews the wordin
 |---|---|
 | Core block | ~173 |
 | Each skill's name and description | ~58 |
-| Preset total, one stack (core + `frontend-react` + one stack skill) | ~289 |
-| Preset total, Next.js and RN (core + 3 skills) | ~347 |
-| Preset total, plain React (core + `frontend-react`) | ~231 |
+| Preset total, one stack (core + principles + `frontend-react` + one stack skill) | ~347 |
+| Preset total, Next.js and RN (core + 4 skills) | ~405 |
+| Preset total, plain React (core + principles + `frontend-react`) | ~289 |
+| Preset total, no React (core + principles) | ~231 |
 | Today's harness block, for scale | ~275 |
 
-The preset's own text is about 12% to 17% of the 2000-token budget (estimate). The preselected plugins can't be measured before install by `itemContext`, so a preset with them always raises the budget ask for unmeasured items. That is the current rule, not a new one.
+The preset's own text is about 12% to 20% of the 2000-token budget (estimate). `engineering-principles` (P1) adds ~58 tokens to every repo. The preselected plugins can't be measured before install by `itemContext`, so a preset with them always raises the budget ask for unmeasured items. That is the current rule, not a new one.
 
 ## 6. Third-party picks
 
@@ -189,15 +201,21 @@ The preset's own text is about 12% to 17% of the 2000-token budget (estimate). T
 
 ## 7. The frontend skills
 
-Own skills at `.claude/skills/<name>/SKILL.md`, from `catalog/presets/khubaib-frontend/templates/skills/<name>/SKILL.md`. Only the name and description load until a skill is used (Q5). Each body is drafted from section 1 only and reviewed by the owner (Q3).
+Own skills at `.claude/skills/<name>/SKILL.md`, from `catalog/presets/khubaib-frontend/templates/skills/<name>/SKILL.md`. Only the name and description load until a skill is used (Q5). Each body is drafted from section 1 only, plus the cited doc fills that P9 allows, and is reviewed by the owner (Q3).
 
 | Skill | Description (always loaded) | Stacks |
 |---|---|---|
+| `engineering-principles` | Design principles and general JS/TS anti-patterns for this repo (DRY by the rule of three, SOLID where it fits, KISS, YAGNI, type escapes, swallowed errors, god files, mutation). Use when designing, refactoring or reviewing code. | Every repo |
 | `frontend-react` | Shared React architecture rules for this repo (folders, state, components, forms, server data, testing, UI states, performance, style, accessibility, env). Use when writing or reviewing React code. | React, Next.js, React Native, Expo |
 | `frontend-nextjs` | Next.js rules for this repo (Server Components first, "use client" at the smallest leaf, loading.tsx and error.tsx, next/image, SEO). Use when working on Next.js routes, layouts or data loading. | Next.js |
 | `frontend-react-native` | React Native rules for this repo (Expo dev builds, Expo Router, expo-image, FlashList, Reanimated, config plugins). Use when working on React Native or Expo screens, lists or native config. | React Native, Expo |
 
 **Outlines:**
+- `engineering-principles`:
+  - DRY by the rule of three (P2);
+  - SOLID where it fits naturally, with no forced enforcement (P3);
+  - KISS and YAGNI, worded to agree with ponytail's smallest-change rule;
+  - the general JS/TS anti-patterns (P4).
 - `frontend-react`:
   - folders (F1);
   - client state, with F3 quoted verbatim;
@@ -206,21 +224,24 @@ Own skills at `.claude/skills/<name>/SKILL.md`, from `catalog/presets/khubaib-fr
   - API layer (F8);
   - UI states: error boundaries with retry around widgets, an empty state for every list (F7);
   - testing: Testing Library, MSW, Storybook and visual tests (F6);
-  - performance: memoize only when measured, narrow selectors, virtualize long lists, transitions, lazy loading in plain React (F9);
+  - performance: structure first, then memoize when there's a need (P6); narrow selectors, virtualized long lists, transitions, lazy loading in plain React (F9);
   - style (F11);
-  - the accessibility baseline and `env.ts` (F12).
+  - the accessibility baseline and `env.ts` (F12);
+  - React anti-patterns (P5), and Tailwind sizing: no arbitrary values like `h-[98px]` where a built-in scale or breakpoint class fits (P7).
 - `frontend-nextjs`:
   - Server Components for the first load, then TanStack Query (F2);
   - Server Components by default, `"use client"` at the smallest leaf (F9);
   - Suspense, `loading.tsx` and `error.tsx` (F7);
   - the next Image component (F9);
   - SEO from the start (F12);
-  - E2E with Playwright for key flows (F6).
+  - E2E with Playwright for key flows (F6);
+  - Next.js anti-patterns (P7).
 - `frontend-react-native`:
   - Expo with dev builds, Expo Router, expo-image, FlashList, Reanimated; config plugins, never eject (F10);
   - TanStack Query (F2);
   - E2E with Maestro or Detox for key flows (F6);
-  - RN accessibility props (F12).
+  - RN accessibility props (F12);
+  - React Native/Expo anti-patterns (P8).
 
 ## 8. The preset builder (O2)
 
@@ -282,7 +303,8 @@ Own skills at `.claude/skills/<name>/SKILL.md`, from `catalog/presets/khubaib-fr
 ## 11. Testing
 
 - **Format:** a valid preset; each check in section 3 with a failing fixture (unknown or discouraged preselect id, missing skill item or template, id clash, bad prefix, a body over 150 lines, unknown key).
-- **Stacks:** fixture facts for Next.js only, Expo only, bare React Native, plain React (Vite), a Next.js plus Expo monorepo, and no React. Each gets exactly the skills and preselects in section 3.
+- **Stacks:** fixture facts for Next.js only, Expo only, bare React Native, plain React (Vite), a Next.js plus Expo monorepo, and no React. Each gets exactly the skills and preselects in section 3. `engineering-principles` is installed in every one, including the repo with no React.
+- **Doc fills (P9):** every skill item that came from the docs, not the owner, carries a source link and the docs label. A check fails a skill body with a docs-labelled line that has no link.
 - **Select:** preset rows are ticked, carry their reason, aren't duplicated when the reviewer picked the same id, and pass `notPicked`. caveman never appears.
 - **Merge:** the preset block appends after the harness block, is replaced in place on update, and removes exactly. Repeated or misordered preset markers stop with the same error as `mergeAgents`. The attribution and `DO_NOT_TRACK` blocks merge into existing settings and remove exactly.
 - **Byte-identical, end to end:** init with the preset, then uninstall; init without, update with, update without. Both leave the repo byte-identical. A global install then `uninstall --global` leaves a fake `HOME` byte-identical.
@@ -307,7 +329,7 @@ All numbers are estimates.
 | Global manifest and `uninstall --global` | ~150 |
 | **Total** | **~750** |
 
-- **Content:** the preset YAML, four items, the core template and three skill bodies of at most 150 lines each, all reviewed by the owner. The builder skill and its interview guide come to about 120 lines.
+- **Content:** the preset YAML, five items, the core template and four skill bodies of at most 150 lines each, all reviewed by the owner. The builder skill and its interview guide come to about 120 lines.
 - **Tests:** about as many lines as the code again.
 - **AI cost:** installing a preset adds no AI step. A builder run is one interview plus drafting in the person's own session, with no subagent. The runtime cost is the always-loaded text in section 5.
 - **Build order:** PR-size lands first (O10), so the PR-size warning needs no count of its own.

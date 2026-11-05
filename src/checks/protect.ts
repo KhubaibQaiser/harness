@@ -217,10 +217,21 @@ const binds = (seg: string): boolean => {
  *  binds or runs something (cd, source, ., read, printf -v, declare, bash FILE). Plain reads (cat, ls, git diff) and
  *  writes protect parses (cp .harness/x /tmp) are judged as before. ponytail: a name built from pieces (x=.har; y=ness) is not seen. */
 const touchesProtectedText = (cmd: string): boolean =>
+  globNamesProtected(cmd) ||
   [cmd, quoteFree(cmd), decodeAnsiC(cmd)].some((t) => PROTECTED_TEXT.test(t)) && // decodeAnsiC: x='\x2eharness'; ${x@E}
   (/[$`]|\w=\(|\(\s*\)|\bfunction\s/.test(cmd) || /\d*>>?\s*(?!&|\/dev\/null\b)\S/.test(cmd) ||
     words(cmd).some((w) => /[*?[{]/.test(w) && /harness|claude/i.test(w)) || segments(cmd).some(binds));
 const GLOB = /[*?[{]/;
+/** A glob word that can match a protected name: a component that matches `.harness` or `.claude` (cd .har*ss, tee
+ *  .har?ess/x), or the whole word matching a protected path. As in bash, * and ? do not match a leading dot, so
+ *  `ls src/*.ts` and `cat *.md` do not count. */
+function globNamesProtected(cmd: string): boolean {
+  return words(cmd).map(unquote).some((w) => {
+    if (!/[*?[]/.test(w)) return false;
+    const m = (p: string) => picomatch(p, { nocase: true }); // macOS and Windows ignore case
+    return w.split(/[\\/]/).some((c) => /[*?[]/.test(c) && ['.harness', '.claude'].some((n) => m(c)(n))) || PROTECTED_CONCRETE.some((p) => m(w.replace(/^\.\//, ''))(p));
+  });
+}
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
   return !!rel && PROTECTED_CONCRETE.some((c) => picomatch(rel, { dot: true })(c));

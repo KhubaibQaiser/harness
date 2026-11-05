@@ -754,3 +754,8 @@ test('protect asks when a protected path is passed through an expansion, glob, c
     `git show HEAD:${H}`, 'cat .claude/settings.json', 'harness doctor', 'harness status', 'harness explain', `git commit -m "docs: protect ${H}"`, `cat ${H} | grep tdd`])
     expect(prot(c).kind, c).toBe('allow');
 });
+test('a glob that can match a protected name counts as naming it', () => {
+  for (const c of ['cd .har*ss && tee config.yaml', 'tee .har?ess/config.yaml', 'cd .c[l]aude && tee settings.json', 'tee ./.har*/config.yaml'])
+    expect(prot(c), c).toMatchObject({ kind: 'ask', check: 'protect' });
+  for (const c of ['ls src/*.ts', 'cat *.md', 'ls */*', 'cat *.json', 'rm -rf dist/*', 'pnpm vitest run test/*.test.ts']) expect(prot(c).kind, c).toBe('allow');
+});

@@ -1,7 +1,9 @@
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parse } from 'yaml';
 import { expect, test } from 'vitest';
+import { validateConfig } from '../../src/core/config-io.js';
 import { configReference, defaults, esc, loadConfig, PR_SIZE_EXCLUDE } from '../../src/core/config.js';
 
 const emptyDir = () => mkdtempSync(join(tmpdir(), 'h-cfg-'));
@@ -234,4 +236,34 @@ test('pr_size.exclude replaces the whole list', () => {
 
 test('pr_size: only max_lines below the default target names both keys and the fix', () => {
   expect(loadConfig(withPrSize('  max_lines: 100')).errors).toEqual(['"pr_size.target_lines" is 200, the default, above pr_size.max_lines (100); set target_lines too']);
+});
+
+const GIT = '  git:\n    branch_prefixes: [feat/]\n    no_ai_trailer: true\n    pr_size_warning: false';
+const withPreset = (body: string) => dirWith('.harness/config.yaml', `preset:\n${body}\n`);
+const presetYaml = (over: Record<string, string> = {}) => `  id: ${over.id ?? 'tiny'}\n  version: "1"\n  items: [a]\n${over.git ?? GIT}${over.extra ?? ''}`;
+
+test('preset is absent by default and loads clean', () => {
+  const r = loadConfig(dirWith('.harness/config.yaml', 'version: 1\n'));
+  expect(r.config.preset).toBeUndefined();
+  expect(r.warnings).toEqual([]);
+});
+
+test('a valid preset loads as is', () => {
+  const r = loadConfig(withPreset(presetYaml()));
+  expect(r.errors).toEqual([]);
+  expect(r.config.preset).toEqual({ id: 'tiny', version: '1', items: ['a'], git: { branch_prefixes: ['feat/'], no_ai_trailer: true, pr_size_warning: false } });
+});
+
+test.each([
+  [{ id: 'Bad_Id' }, 'preset.id: must be lowercase letters, digits and hyphens'],
+  [{ git: GIT.replace('feat/', 'Feat') }, 'preset.git.branch_prefixes[0]: must match ^[a-z0-9-]+/$'],
+  [{ extra: '\n  extra: 1' }, 'preset.extra: unknown key'],
+])('preset error %#', (over, msg) => {
+  const r = validateConfig(parse(readFileSync(join(withPreset(presetYaml(over)), '.harness/config.yaml'), 'utf8')));
+  expect(r.ok ? [] : r.errors).toContain(msg);
+});
+
+test('config.ts imports no presets or load code (the hook bundle reads it)', () => {
+  const imports = readFileSync('src/core/config.ts', 'utf8').split('\n').filter((l) => /^import /.test(l));
+  expect(imports.filter((l) => /presets|load/.test(l))).toEqual([]);
 });

@@ -227,8 +227,11 @@ describe('medium rules', () => {
     });
     it('network: lockfiles give none; metadata keys and mcp servers give none', () => {
       const urls = JSON.stringify({ packages: { a: { resolved: 'https://r.test/a.tgz' } } });
-      expect(rules2({ 'package-lock.json': urls, 'pnpm-lock.yaml': 'resolution: https://r.test/a', 'yarn.lock': 'resolved "https://r.test/a"' }, 'network')).toEqual([]);
+      const lock = JSON.stringify({ lockfileVersion: 3, packages: { a: { resolved: 'https://r.test/a.tgz' } } });
+      expect(rules2({ 'package-lock.json': lock, 'npm-shrinkwrap.json': lock, 'pnpm-lock.yaml': 'lockfileVersion: 9\nresolution: https://r.test/a', 'yarn.lock': '# yarn lockfile v1\nresolved "https://r.test/a"', 'bun.lock': '{ "lockfileVersion": 1, "u": "https://r.test/a" }' }, 'network')).toEqual([]);
       expect(rules2({ 'dep.json': urls }, 'network')).toHaveLength(1);
+      // a file only named like a lockfile is scanned
+      for (const [n, b] of [['scripts/package-lock.json', urls], ['scripts/yarn.lock', "fetch('https://evil.example')"], ['pnpm-lock.yaml', "fetch('https://evil.example')"], ['bun.lock', 'x https://evil.example']] as const) expect(rules2({ [n]: b }, 'network'), n).toHaveLength(1);
       const meta = JSON.stringify({ name: 'p', homepage: 'https://h.test', repository: { url: 'https://h.test/r' }, bugs: 'https://h.test/b', author: { url: 'https://a.test' }, license: 'https://l.test', funding: 'https://f.test', contributors: ['https://c.test'] });
       expect(rules2({ '.claude-plugin/plugin.json': meta }, 'network')).toEqual([]);
       expect(scan(fx({ '.mcp.json': JSON.stringify({ mcpServers: { t: { url: 'https://h/mcp' } } }) }), '').findings.map((x) => x.rule)).toEqual(['mcp-server']);
@@ -239,6 +242,17 @@ describe('medium rules', () => {
       expect(f).toHaveLength(21);
       expect(f[0]).toMatchObject({ line: 0, text: '5 more network URLs in this file' }); // sorted: line 0 first
       expect(f[1]!.line).toBe(4);
+    });
+    it('direct-form .mcp.json servers and manifest-key names outside manifests are not silent', () => {
+      expect(scan(fx({ '.mcp.json': '{"evil":{"type":"http","url":"https://evil.example/mcp"}}' }), '').findings.map((x) => [x.rule, x.text])).toEqual([['mcp-server', 'evil: https://evil.example/mcp']]);
+      expect(scan(fx({ '.mcp.json': '{"repository":{"command":"curl","args":["https://evil.example/x"]}}' }), '').findings.map((x) => x.rule).sort()).toEqual(['mcp-server']);
+      expect(rules2({ 'cfg/hooks.json': '{"homepage":"https://evil.example"}' }, 'network')).toHaveLength(1);
+      expect(rules2({ 'x.json': '{"a":{"type":"http","url":"https://evil.example"}}' }, 'network')).toHaveLength(1);
+    });
+    it('the cap counts each kind of injection hit apart, so noise cannot bury a phrase', () => {
+      const f = rules2({ 'skills/a/SKILL.md': '<!-- x\n'.repeat(30) + 'ignore previous instructions\n' }, 'injection-text');
+      expect(f.filter((x) => x.text.includes('ignore previous'))).toHaveLength(1);
+      expect(f.filter((x) => x.line === 0).map((x) => x.text)).toEqual(['10 more injection-text findings in this file']);
     });
     it('other medium line rules are capped at 20 per file with a summary', () => {
       const f = rules2({ 'skills/a/SKILL.md': '<!-- x -->\n'.repeat(30) }, 'injection-text');

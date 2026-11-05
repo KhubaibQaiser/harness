@@ -75,6 +75,7 @@ function lineChecker(): (line: string) => boolean {
   let carry = false;
   return (line) => {
     if (!line.trim()) { carry = false; return false; } // blank: nothing to match, and it ends a continued pipe
+    if (line.length < 5 && !carry && !outs.size) return false; // nothing in 4 characters can fetch, launch or run a download
     let hit = SUBST.test(line);
     let seen = carry;
     for (const seg of line.split(SEG)) {
@@ -177,12 +178,16 @@ function hookShell(file: string, text: string, json: Record<string, unknown>): V
   return out;
 }
 
+/** A plugin .mcp.json may list its servers at the top level, with no mcpServers wrapper. */
+const directMcp = (file: string, json: Record<string, unknown>) => /(?:^|\/)\.mcp\.json$/.test(file) && !('mcpServers' in json);
+
 /** MCP servers: one medium finding each, and `command + args` is what launches (checked for secrets and unpinned fetches). */
 function mcpRemote(file: string, text: string, json: Record<string, unknown>): VetFinding[] {
-  if (!isObj(json.mcpServers)) return [];
+  const servers = isObj(json.mcpServers) ? json.mcpServers : directMcp(file, json) ? json : undefined;
+  if (!servers) return [];
   const out: VetFinding[] = [];
   const at = finder(text);
-  for (const [name, s] of Object.entries(json.mcpServers)) {
+  for (const [name, s] of Object.entries(servers)) {
     if (!isObj(s)) continue;
     const line = at(JSON.stringify(name));
     const cmd = typeof s.command === 'string' ? [s.command, ...(Array.isArray(s.args) ? s.args.map(String) : [])].join(' ') : typeof s.url === 'string' ? s.url : '';
@@ -241,34 +246,48 @@ type LineRule = [VetFinding['rule'], (l: string) => number];
 const PROMPT_DIR = /^(?:skills|agents|commands|output-styles)$/i;
 const MIN_DIR = /^(?:skills|agents|commands|hooks|scripts)$/i;
 
-/** Hosts, lockfiles and metadata: URLs there are data. mcpServers is already reported as mcp-server. */
-const LOCK = /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/;
-const META = new Set(['homepage', 'repository', 'bugs', 'author', 'contributors', 'funding', 'license', 'mcpServers']);
-type Add = (rule: string, mk: () => VetFinding) => void;
+/** Lockfiles are data, but only a file whose content says it is one: a script named yarn.lock is still scanned. */
+const LOCK_NAME = /(?:^|\/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lock)$/;
+function isLock(rel: string, text: string, obj: Record<string, unknown> | undefined): boolean {
+  const name = LOCK_NAME.exec(rel)?.[1];
+  if (name === 'package-lock.json' || name === 'npm-shrinkwrap.json') return !!obj && 'lockfileVersion' in obj;
+  if (name === 'bun.lock') return /^\s*\{\s*"lockfileVersion"\s*:/.test(text);
+  if (name === 'pnpm-lock.yaml') return /^\s*lockfileVersion:/.test(text);
+  return name === 'yarn.lock' && /^# yarn lockfile|^__metadata:/m.test(text);
+}
+// Top-level metadata keys of a manifest hold the author's own links; mcpServers is already reported as mcp-server.
+const META_FILE = /(?:^|\/)(?:package\.json|\.claude-plugin\/plugin\.json|marketplace\.json)$/;
+const META = new Set(['homepage', 'repository', 'bugs', 'author', 'contributors', 'funding', 'license']);
+/** `key` tells the cap which kind of hit this is: injection comments, hidden characters and phrases are counted apart. */
+type Add = (rule: string, mk: () => VetFinding, key?: string) => void;
 const NET_CAP = 20; // per rule per file, so a hostile file cannot flood the report
 
-/** network for a parsed JSON file: string values only (iterative, so deep nesting cannot overflow), top-level metadata keys skipped. */
+/** network for a parsed JSON file: string values only (iterative, so deep nesting cannot overflow), manifest metadata skipped. */
 function netJson(file: string, text: string, json: Record<string, unknown>, add: Add): void {
   const at = finder(text);
-  const stack: unknown[] = Object.entries(json).filter(([k]) => !META.has(k)).map(([, v]) => v).reverse();
+  const direct = directMcp(file, json), meta = META_FILE.test(file);
+  // [value, inside the top-level hooks]; a hook-http url is reported as hook-http, not again here
+  const stack: [unknown, boolean][] = Object.entries(json)
+    .filter(([k, v]) => k !== 'mcpServers' && !(meta && META.has(k)) && !(direct && isObj(v) && (typeof v.command === 'string' || typeof v.url === 'string')))
+    .map(([k, v]): [unknown, boolean] => [v, k === 'hooks']).reverse();
   while (stack.length) {
-    const v = stack.pop();
+    const [v, hk] = stack.pop()!;
     if (typeof v === 'string') { if (NETWORK.test(v)) add('network', () => ({ severity: 'medium', rule: 'network', file, line: at(JSON.stringify(v)), text: show(v) })); }
-    else if (Array.isArray(v)) for (let i = v.length - 1; i >= 0; i--) stack.push(v[i]);
-    else if (isObj(v)) { const vs = Object.entries(v).filter(([k]) => !(k === 'url' && v.type === 'http')).map(([, x]) => x); // hook-http / mcp-server report these
-     for (let i = vs.length - 1; i >= 0; i--) stack.push(vs[i]); }
+    else if (Array.isArray(v)) for (let i = v.length - 1; i >= 0; i--) stack.push([v[i], hk]);
+    else if (isObj(v)) { const es = Object.entries(v).filter(([k]) => !(hk && k === 'url' && v.type === 'http')); for (let i = es.length - 1; i >= 0; i--) stack.push([es[i]![1], hk]); }
   }
 }
 
-/** injection-text over the whole file: one finding per line. */
+/** injection-text over the whole file: one finding per line per kind of hit. After the cap a hit costs one indexOf, not a line lookup. */
 function injection(file: string, text: string, add: Add): void {
   const lineAt = lineIndex(text);
-  let last = 0;
+  const ends: Record<string, number> = {};
   for (const m of text.matchAll(INJECT)) {
-    const n = lineAt(m.index);
-    if (n === last) continue;
-    last = n;
-    add('injection-text', () => ({ severity: 'medium', rule: 'injection-text', file, line: n, text: show(text.slice(Math.max(0, m.index - 30), m.index + 150).trim()) }));
+    const kind = m[0].length === 1 || m[0].length === 2 ? 'hidden' : m[0] === '<!--' ? 'comment' : 'phrase';
+    if (m.index < (ends[kind] ?? -1)) continue;
+    const nl = text.indexOf('\n', m.index);
+    ends[kind] = nl < 0 ? Infinity : nl;
+    add('injection-text', () => ({ severity: 'medium', rule: 'injection-text', file, line: lineAt(m.index), text: show(text.slice(Math.max(0, m.index - 30), m.index + 150).trim()) }), `injection-text/${kind}`);
   }
 }
 
@@ -276,10 +295,10 @@ function injection(file: string, text: string, add: Add): void {
 const isPrompt = (inner: string, rootPrompt: boolean) => rootPrompt || inner.split('/').slice(0, -1).some((d) => PROMPT_DIR.test(d));
 
 /** Medium rules that read one logical line: at most one finding per rule per line, the text starts a little before the hit. */
-function lineRules(inner: string, json: boolean, rootPrompt: boolean): LineRule[] {
+function lineRules(inner: string, json: boolean, rootPrompt: boolean, lock: boolean): LineRule[] {
   const r: LineRule[] = [['obfuscated', obfuscated]];
   if (!json) r.push(['permissions', idx(PERMS)]); // parsed JSON: judged on the unescaped command strings (cmdFindings)
-  if (!json && !LOCK.test(inner) && (!/\.md$/i.test(inner) || isPrompt(inner, rootPrompt))) r.push(['network', idx(NETWORK)]);
+  if (!json && !lock && (!/\.md$/i.test(inner) || isPrompt(inner, rootPrompt))) r.push(['network', idx(NETWORK)]);
   return r;
 }
 
@@ -293,7 +312,7 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
   for (const rel of files) {
     // Medium line findings: at most NET_CAP per rule per file are built; the rest are only counted, for the summary.
     const counts = new Map<string, number>();
-    const add: Add = (rule, mk) => { const c = (counts.get(rule) ?? 0) + 1; counts.set(rule, c); if (c <= NET_CAP) findings.push(mk()); };
+    const add: Add = (rule, mk, key = rule) => { const c = (counts.get(key) ?? 0) + 1; counts.set(key, c); if (c <= NET_CAP) findings.push(mk()); };
     let text: string, size = 0;
     try {
       const buf = readFileSync(join(f.dir, ...(f.map[rel] ?? rel).split('/')));
@@ -317,12 +336,15 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
     }
     const inner = path && rel.startsWith(`${path}/`) ? rel.slice(path.length + 1) : rel;
     if (!textRules(inner, bare)) continue;
-    if (obj && !LOCK.test(rel)) netJson(rel, bare, obj, add);
-    const check = lineChecker(), med = lineRules(inner, !textScan, rootPrompt);
+    const lock = isLock(rel, bare, obj);
+    if (obj && !lock) netJson(rel, bare, obj, add);
+    const check = lineChecker(), med = lineRules(inner, !textScan, rootPrompt, lock);
     const minified = size > 5120 && /\.js$/i.test(rel) && inner.split('/').slice(0, -1).some((d) => MIN_DIR.test(d));
     let mini = false;
     for (const [l, n] of joinContinuations(bare)) {
-      if (textScan && secretHit(l)) findings.push({ severity: 'high', rule: 'secrets', file: rel, line: n, text: show(l.trim()) });
+      if (!l) { check(l); continue; } // blank: only ends a continued pipe
+      if (textScan && l.length >= 4 && secretHit(l)) // 4 = the shortest secret pattern
+        findings.push({ severity: 'high', rule: 'secrets', file: rel, line: n, text: show(l.trim()) });
       if (textScan && check(l)) findings.push({ severity: 'high', rule: 'unpinned-remote', file: rel, line: n, text: show(l.trim()) });
       if (l.length < 5) continue; // the shortest medium pattern is `eval(`
       for (const [rule, at] of med) {
@@ -332,7 +354,7 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
       if (minified && !mini && l.length > 1000) { mini = true; findings.push({ severity: 'medium', rule: 'obfuscated', file: rel, line: n, text: 'minified JS' }); }
     }
     if (/\.md$/i.test(rel) && (isPrompt(inner, rootPrompt) || /(?:^|\/)SKILL\.md$/.test(inner))) injection(rel, bare, add);
-    for (const [rule, c] of counts) if (c > NET_CAP) findings.push({ severity: 'medium', rule: rule as VetFinding['rule'], file: rel, line: 0, text: `${c - NET_CAP} more ${rule === 'network' ? 'network URLs' : `${rule} findings`} in this file` });
+    for (const [key, c] of counts) if (c > NET_CAP) findings.push({ severity: 'medium', rule: key.split('/')[0] as VetFinding['rule'], file: rel, line: 0, text: `${c - NET_CAP} more ${key === 'network' ? 'network URLs' : `${key.split('/')[0]} findings`} in this file` });
   }
   for (const s of skipped) findings.push({ severity: 'medium', rule: 'unsafe-archive', file: s.path, line: 0, text: show(s.why) });
   const seen = new Set<string>();

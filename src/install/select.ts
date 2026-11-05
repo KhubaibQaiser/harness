@@ -32,8 +32,8 @@ export function checklist(p: Picks, c: Catalog, dirs: { templates: string }): Ch
 }
 
 /** Errors for chosen ids the reviewer never picked. Ids that a picked, chosen item requires are allowed. */
-export function notPicked(chosen: string[], p: Picks, c: Catalog): string[] {
-  const picked = new Set(p.items.map((x) => x.id));
+export function notPicked(chosen: string[], p: Picks, c: Catalog, extra: string[] = []): string[] {
+  const picked = new Set([...p.items.map((x) => x.id), ...extra]);
   const allowed = new Set([...picked, ...requiresClosure(chosen.filter((id) => picked.has(id)), c).ids]);
   return chosen.filter((id) => !allowed.has(id)).map((id) => `"${esc(id)}" was not in the picks; run the recommend step again or pick from the checklist.`);
 }
@@ -68,7 +68,7 @@ export function resolveSelection(chosen: string[], c: Catalog, claudeVersion: st
 export const pinOf = (s: object): string => ((s as OutsideSource & { sha?: string; version?: string }).sha ?? (s as { version?: string }).version ?? '');
 
 /** Every pick (selected when chosen) plus every id that requires pulled in. */
-export function toSelected(p: Picks, ids: string[], c: Catalog): Selected[] {
+export function toSelected(p: Picks, ids: string[], c: Catalog, reasons: Record<string, string> = {}): Selected[] {
   const byId = new Map(c.items.map((i) => [i.id, i]));
   const chosen = new Set(ids);
   const picked = new Set(p.items.map((x) => x.id));
@@ -76,7 +76,7 @@ export function toSelected(p: Picks, ids: string[], c: Catalog): Selected[] {
   const rows: Selected[] = p.items.map((x) => ({ id: x.id, include: x.include, selected: chosen.has(x.id), reason: x.reason, addresses: x.addresses, pin: pin(x.id) }));
   for (const id of ids) if (!picked.has(id)) {
     const by = ids.find((o) => o !== id && byId.get(o)?.requires.includes(id));
-    rows.push({ id, include: 'optional', selected: true, reason: by ? `Required by ${by}.` : 'Chosen by you.', addresses: [], pin: pin(id) });
+    rows.push({ id, include: 'optional', selected: true, reason: reasons[id] ?? (by ? `Required by ${by}.` : 'Chosen by you.'), addresses: [], pin: pin(id) });
   }
   return rows;
 }

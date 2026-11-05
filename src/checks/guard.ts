@@ -153,7 +153,7 @@ function scriptsOf(root: string): Record<string, string> {
  * out (`<<E"O"F` is EOF); `<<-` ignores leading tabs on the end line, `<<` wants the line exactly. If anything is odd (a
  * delimiter with an expansion, a body with no end line) the command is returned whole, so nothing is hidden from the parser.
  */
-function withoutHeredocBodies(cmd: string): string {
+export function withoutHeredocBodies(cmd: string): string {
   if (!cmd.includes('<<')) return cmd;
   const lines = cmd.split('\n');
   const out: string[] = [];
@@ -593,17 +593,78 @@ export function decidePaths(paths: string[]): Decision {
   return { kind: 'allow' };
 }
 
+/**
+ * The command as the shell splits it when it uses $IFS: `$IFS` and every `${IFS…}` (`${IFS:0:1}`, `${IFS%?}`,
+ * `${IFS[0]}`) become a space (a word separator, or nothing, with the default IFS), and `$1`-`$9`, `$@`, `$*` become
+ * nothing (empty in a fresh shell). Null when the command has no $IFS.
+ * ponytail: quote-blind, so a quoted "$IFS" is read as a space too; an extra reading only adds hits, never removes one.
+ */
+export function ifsReading(command: string): string | null {
+  if (!/\$\{?IFS(?!\w)/.test(command)) return null;
+  return command.replace(/\$(?:IFS(?!\w)|\{IFS(?!\w)[^}]*\})/g, ' ').replace(/\$(?:[1-9@*]|\{[1-9@*]\})/g, '');
+}
+
+// Shell constructs that build words the guard cannot read: ${!x}, zsh ${(s:_:)x} ${=x}, ${x//a/b} ${x%a} ${x#a} ${x:…}
+// (not the ${IFS…} forms, which ifsReading reads), $'…' and $"…", an IFS= assignment, eval with an expansion, and an
+// expansion in command position.
+/** A protected harness path named in the text: `.harness`, `.harness/…`, `.claude/settings*.json`. */
+export const PROTECTED_TEXT = /\.harness(?![\w.-])|\.claude(?![\w./-])|\.claude[\\/]settings/i;
+const BUILDS = /\$\{[!(=~^]|\$\{(?!IFS\W)[^}]*?[/%#:,^@]|\$['"]|(?<!\w)IFS=/; // , ^ @: bash ${x,,} ${x^^} ${x@E}
+/** True when the command builds words at run time and names harness or its CLI as a word (never a directory in a path:
+ *  `cd /x/harness && …` does not count) or a protected path: the guard asks. ${CLAUDE_PLUGIN_ROOT…} is the skills' own form. */
+export function buildsGuardedWords(command: string, w: Where): boolean {
+  command = command.replace(/\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/g, 'PLUGIN_ROOT');
+  if (!names(NORM(command)) && !PROTECTED_TEXT.test(quoteFree(command))) return false;
+  if (BUILDS.test(command) || (/\beval\b/.test(command) && command.includes('$'))) return true;
+  return walkCommands(ifsReading(command) ?? command, w, ({ toks, k }) => (toks[k]?.includes('$') && !HARNESS_CMD.test(toks[k]) ? true : null)) ?? false;
+}
+const BUILDS_WHY = 'the command builds words at run time (a variable in command position, ${!…}, ${…/…}, $\'…\', IFS=, or eval) and names harness or a protected path, so the guard cannot read what it runs';
+
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
   command = command.replace(/\\\r?\n/g, ''); // a backslash-newline joins the lines for the shell
+  const d = decideRead(command, ctx);
+  if (d.kind === 'deny') return d;
+  const ifs = ifsReading(command);
+  const r = ifs === null ? d : decideRead(ifs, ctx);
+  if (r.kind === 'deny') return r;
+  return [d, r].find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
+}
+
+const ANSI_C: Record<string, string> = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v' };
+/** The body of a bash `$'…'` string, decoded: \xHH, \NNN, \uHHHH, \UHHHHHHHH, \n and the other letters. */
+export const decodeAnsiC = (s: string): string =>
+  s.replace(/\\(x[\da-fA-F]{1,2}|u[\da-fA-F]{1,4}|U[\da-fA-F]{1,8}|[0-7]{1,3}|.)/g, (_, e: string) =>
+    /^[xuU]./.test(e) ? String.fromCodePoint(Math.min(parseInt(e.slice(1), 16), 0x10ffff)) : /^[0-7]/.test(e) ? String.fromCharCode(parseInt(e, 8)) : ANSI_C[e] ?? e);
+/** The text rules' reading: $'…' decoded, $"…" read as "…", quotes taken off a word with no space inside ("push", pu""sh),
+ *  and a backslash before a letter, digit or - dropped (g\it). Quoted prose with spaces keeps its quotes. */
+export const quoteFree = (c: string): string =>
+  c.replace(/\$'((?:[^'\\]|\\.)*)'/g, (_, b: string) => decodeAnsiC(b)).replace(/\$"/g, '"').replace(/(?<!\\)(['"])([^'"\s\\]*)\1/g, '$2').replace(/\\(?=[\w-])/g, '');
+
+function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
   const d = decideCore(command, ctx);
   if (d.kind === 'deny') return d;
   const b = backstop(command);
-  return d.kind === 'allow' && b ? toDecision(['ask', b.reason]) : d;
+  let own = d.kind === 'allow' && b ? toDecision(['ask', b.reason]) : d;
+  if (depth >= 3) return own;
+  // A -c payload, a program fed to a shell, or eval's words is a command line of its own, so its quotes do not hide a
+  // text rule (sh -c 'git push -f'): judge it too.
+  const inner = [
+    ...cPayloads(command),
+    ...stdinPrograms(command, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text),
+    ...[...command.matchAll(/(?<![\w-])eval\s+([^;&|\n]*)/g)].map((m) => m[1].replace(/['"\\]/g, '')),
+  ];
+  for (const p of inner) {
+    const r = decideRead(p, ctx, depth + 1);
+    if (r.kind === 'deny') return r;
+    if (r.kind === 'ask' && own.kind === 'allow') own = r;
+  }
+  return own;
 }
 
 function decideCore(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
-  const tokens = command.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
+  const unq = quoteFree(command); // `"git" push`, `g\it push`, `git $'push'`: quotes and escapes hide no text rule
+  const tokens = `${command} ${unq}`.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');
   const personOnly = personOnlyInvocation(command, ctx);
   if (personOnly) return personOnly.kind === 'deny' ? { kind: 'deny', reason: personOnly.reason, check: 'guard' } : toDecision(['ask', personOnly.reason]);
@@ -615,15 +676,15 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   for (const { targets } of rmTargets(command)) {
     if (targets.some((t) => { const rel = inTdd(t); return rel !== null && isTestFile(rel); })) return deny('deleting a test file in a TDD path');
   }
-  const early = checkRm(command) ?? checkPushToMain(command);
+  const early = checkRm(command) ?? checkPushToMain(command) ?? checkPushToMain(unq);
   if (early) return toDecision(early);
-  for (const [re, why] of DENY) if (re.test(command)) return deny(why);
+  for (const [re, why] of DENY) if (re.test(command) || re.test(unq)) return deny(why);
   if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {
     return { kind: 'ask', reason: msg('ask', 'shell write into a TDD path; use the Edit or Write tool so the TDD gates see it'), check: 'guard' };
   }
   const install = checkInstall(command, ctx);
   if (install) return install;
-  for (const [re, why] of ASK) if (re.test(command)) return toDecision(['ask', why]);
+  for (const [re, why] of ASK) if (re.test(command) || re.test(unq)) return toDecision(['ask', why]);
   return { kind: 'allow' };
 }
 

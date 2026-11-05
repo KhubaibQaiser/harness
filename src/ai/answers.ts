@@ -1,3 +1,4 @@
+import { findPreset } from '../catalog/presets.js';
 import { harnessIgnore } from '../install/harnessignore.js';
 import type { Facts } from '../install/detect.js';
 import { type App, defaults, esc, type HarnessConfig, relPathProblem } from '../core/config.js';
@@ -9,6 +10,7 @@ export interface Answers {
   apps: App[];
   unattended: HarnessConfig['unattended'];
   tdd: { paths: string[]; diff_coverage: number };
+  preset: string | null;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -29,7 +31,7 @@ export function validateAnswers(raw: unknown, facts: Facts): { ok: true; answers
   if (!isObj(raw)) return { ok: false, errors: ['answers: must be a mapping'] };
   const errors: string[] = [];
   const ignored = harnessIgnore(facts.root);
-  for (const k of Object.keys(raw)) if (!['scope', 'project', 'apps', 'unattended', 'tdd'].includes(k)) errors.push(`${esc(k)}: unknown key`);
+  for (const k of Object.keys(raw)) if (!['scope', 'project', 'apps', 'unattended', 'tdd', 'preset'].includes(k)) errors.push(`${esc(k)}: unknown key`);
 
   const paths = (list: unknown, at: string) => {
     if (!Array.isArray(list)) return errors.push(`${at}: must be a list of paths`);
@@ -70,10 +72,12 @@ export function validateAnswers(raw: unknown, facts: Facts): { ok: true; answers
       if (isObj(a) && typeof a.dir === 'string' && !dirs.has(a.dir)) errors.push(`apps[${i}].dir: no app at "${esc(a.dir)}" in this repo`);
     });
   }
+  const preset = raw.preset ?? null;
+  if (preset !== null && (typeof preset !== 'string' || !findPreset(preset, facts.root))) errors.push(`preset: "${esc(String(preset))}" is not a shipped or repo preset (harness preset list shows them)`);
   if (errors.length) return { ok: false, errors };
   const c = (v as { config: HarnessConfig }).config;
   const { scope_paths: _drop, ...p } = c.project;
-  return { ok: true, answers: { scope: raw.scope as Answers['scope'], project: p, apps: c.apps, unattended: c.unattended, tdd: { paths: c.tdd.paths, diff_coverage: c.tdd.diff_coverage } } };
+  return { ok: true, answers: { scope: raw.scope as Answers['scope'], project: p, apps: c.apps, unattended: c.unattended, tdd: { paths: c.tdd.paths, diff_coverage: c.tdd.diff_coverage }, preset: preset as string | null } };
 }
 
 /** Never changes sandbox, tdd.results_dir or checks (ruling 15). */
@@ -90,5 +94,5 @@ export function answersToConfig(base: HarnessConfig, a: Answers): HarnessConfig 
 /** The answers a config already holds, in the shape of an answers file (the base a partial update file goes over). */
 export function configToAnswers(c: HarnessConfig): Record<string, unknown> {
   const { scope_paths, ...project } = c.project;
-  return { scope: { paths: scope_paths }, project, apps: c.apps, unattended: c.unattended, tdd: { paths: c.tdd.paths, diff_coverage: c.tdd.diff_coverage } };
+  return { scope: { paths: scope_paths }, project, apps: c.apps, unattended: c.unattended, tdd: { paths: c.tdd.paths, diff_coverage: c.tdd.diff_coverage }, preset: c.preset?.id ?? null };
 }

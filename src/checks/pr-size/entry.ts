@@ -16,10 +16,16 @@ export function prSizeEntry(argv: string[], cwd: string, out: (line: string) => 
     if (v === undefined) return fail(USAGE);
     want[m[1] as 'base' | 'head'] = v;
   }
-  const root = repoRoot(cwd);
-  const { config, errors } = loadConfig(root);
-  if (errors.length) return fail(`\`.harness/config.yaml\` is invalid: ${errors.join('; ')}`);
-  const s = measure(root, want, config, git ? { git } : {});
+  let root: string, config: ReturnType<typeof loadConfig>['config'], s: ReturnType<typeof measure>;
+  try {
+    root = repoRoot(cwd);
+    const loaded = loadConfig(root);
+    if (loaded.errors.length) return fail(`\`.harness/config.yaml\` is invalid: ${loaded.errors.join('; ')}`);
+    config = loaded.config;
+    s = measure(root, want, config, git ? { git } : {});
+  } catch (e) {
+    return fail(`could not measure: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`); // e.g. not a git repo
+  }
   if ('error' in s) return fail(s.error);
   const over = isOver(s, config.pr_size);
   const { target_lines, max_lines, max_files } = config.pr_size;

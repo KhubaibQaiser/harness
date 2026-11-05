@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { prSizeEntry } from '../../../src/checks/pr-size/entry.js';
@@ -83,4 +84,20 @@ describe('prSizeEntry', () => {
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toMatchObject({ lines: 15, over: false });
   });
+});
+
+test('outside a git repo it prints a JSON error and exits 2, never throws', () => {
+  const lines: string[] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'harness-prsize-nogit-'));
+  const code = prSizeEntry(['--pr-size'], dir, (l) => lines.push(l));
+  expect(code).toBe(2);
+  expect(JSON.parse(lines[0]!)).toHaveProperty('error');
+});
+
+test('a git seam that throws gives a JSON error and exit 2, never an uncaught throw', () => {
+  const lines: string[] = [];
+  const boom: Git = () => { throw new Error('spawn exploded\nsecond line'); };
+  const code = prSizeEntry(['--pr-size'], makeRepo({ 'a.ts': 'x' }), (l) => lines.push(l), boom);
+  expect(code).toBe(2);
+  expect(JSON.parse(lines[0]!).error).toBe('could not measure: spawn exploded');
 });

@@ -11,7 +11,7 @@ body{margin:0 auto;max-width:1000px;padding:0 16px 48px;background:var(--bg);col
 h1,h2,h3{line-height:1.25}section{margin-top:32px}.banner{background:var(--card);border:1px solid var(--warn);padding:8px 12px;border-radius:6px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.tile{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px}.tile b{display:block;font-size:1.3em}
 table{border-collapse:collapse;width:100%;margin:8px 0}th,td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}.scroll{overflow-x:auto}
-svg{width:100%;height:auto;max-width:640px}.lbl{fill:var(--fg);font-size:11px}.track{fill:var(--card)}.bar,.s0{fill:var(--s0)}.s1{fill:var(--s1)}.s2{fill:var(--s2)}.s3{fill:var(--s3)}
+svg{width:100%;height:auto;max-width:640px}svg.wide{max-width:none}.lbl{fill:var(--fg);font-size:11px}.track{fill:var(--card)}.bar,.s0{fill:var(--s0)}.s1{fill:var(--s1)}.s2{fill:var(--s2)}.s3{fill:var(--s3)}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--card);padding:8px;border-radius:6px}.mute{color:var(--mute)}`;
 
 export const n = (x: number): string => String(x);

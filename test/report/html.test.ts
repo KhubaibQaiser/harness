@@ -34,24 +34,18 @@ describe('renderReport', () => {
     expect(html.slice(0, html.indexOf('id="method"'))).not.toMatch(/https?:/);
     expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="${CSP}">`);
   });
-  it('escapes hostile text, including hidden characters, in cells, titles and svg', () => {
-    const bad = '<script>alert(1)</script>‮​';
-    const html = renderReport(data({
-      windows: windows({ total: 1, windows: [{ rule: 'tdd', session: bad, date: '2026-11-05', turn: 1, prompt: bad, texts: bad, tools: [bad] }] }),
-      skills: [skill({ name: bad })],
-    }));
-    expect(html).not.toContain('<script');
-    expect(html).toContain('&lt;script&gt;');
-    expect(html).toContain('\\u202e');
-    expect(html).toContain('\\u200b');
-    expect(html).not.toMatch(/[‮​]/);
-    expect(h(`"'&`)).toBe('&quot;&#39;&amp;');
-  });
-  it('follows each svg with a table', () => {
-    const html = renderReport(data());
+  it('pairs each svg with the table right after it, with the same numbers', () => {
+    const html = renderReport(data({ windows: windows(), gates: { ...data().gates, stopSteps: [] } }));
     const parts = html.split('<svg').slice(1);
-    expect(parts.length).toBeGreaterThan(1);
-    for (const p of parts) expect(p.slice(p.indexOf('</svg>'))).toMatch(/^<\/svg>\s*(<div class="scroll">)?<table/);
+    expect(parts.length).toBeGreaterThanOrEqual(3);
+    for (const p of parts) {
+      const [svg, rest] = [p.slice(0, p.indexOf('</svg>')), p.slice(p.indexOf('</svg>'))];
+      expect(rest.startsWith('</svg><div class="scroll"><table')).toBe(true);
+      const tbl = rest.slice(0, rest.indexOf('</table>'));
+      const nums = [...svg.matchAll(/<title>[^<]*<\/title>/g)].flatMap((m) => (m[0].split(': ').pop() ?? '').match(/\d+/g) ?? []);
+      expect(nums.length).toBeGreaterThan(0);
+      for (const num of nums) expect(tbl).toContain(`<td>${num}</td>`);
+    }
   });
   it('shows no relevant sessions, and counts only under n of 5', () => {
     expect(renderReport(data({ skills: [skill({ relevantIn: 0, invokedRelevant: 0 })] }))).toContain('no relevant sessions');
@@ -98,6 +92,82 @@ describe('renderReport', () => {
     const html = renderReport(data({ windows: windows({ total: 1, windows: [{ rule: 'tdd', session: 's1', date: '2026-11-05', turn: 2, prompt: 'do it', texts: 'done', tools: ['Edit'] }] }) }));
     expect(html).toContain('<details');
     expect(html).toContain('needs a look');
+  });
+});
+
+const HOSTILE = ['"><img src=x onerror=alert(1)>', '</style>', 'javascript:alert(1)', '<script>', '\u202e', '\u200b'].join(' ');
+const hostileData = (): ReportData => {
+  const H = HOSTILE, d = data();
+  const w = windows({ total: 1, windows: [{ rule: 'tdd', session: H, date: H, turn: 1, prompt: H, texts: H, tools: [H] }], counters: { [H]: 1 } });
+  return {
+    ...d, windows: w, always: [{ id: H, tokens: 1 }], skills: [skill({ name: H })], rules: { [H]: H }, evals: [H],
+    meta: { ...d.meta, harness: H, generated: H, claudeVersions: [H], untested: [H], sessions: { scanned: 2, skipped: { [H]: 1 }, unknown: 0 } },
+    usage: { ...d.usage, byDay: { [H]: U(1) }, byModel: { [H]: U(2) }, toolChars: { [H]: 40 }, sessions: [{ id: H, usage: U(3), responses: 1, compactions: 0, peak: 5 }] },
+    gates: {
+      ...d.gates, tally: { [H]: 1 }, overrides: { [H]: 1 },
+      falseBlocks: [{ signal: 'deny-retry', check: H, session: H, date: H, quote: H, fuzzy: false }],
+      latency: [{ source: 'timing', event: H, outcome: H, n: 5, p50: 1, p95: 2, max: 3, timeouts: 0 }],
+      stopSteps: [{ step: H, runs: 6, blocks: 3, flakes: 0, p50: 1, p95: 2 }],
+    },
+  };
+};
+describe('hostile strings', () => {
+  const html = renderReport(hostileData());
+  it('leaves no raw markup, handler, or hidden character from any string field', () => {
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<script');
+    expect(html).not.toMatch(/"\s*onerror=/);
+    expect(html.match(/<\/style>/g)).toHaveLength(1);
+    expect(html).not.toMatch(/[\u202e\u200b]/);
+    expect(html).not.toMatch(/<[^>]*\b(href|src)=/);
+  });
+  it('shows the escaped forms', () => {
+    expect(html).toContain('&quot;&gt;&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).toContain('&lt;/style&gt;');
+    expect(html).toContain('\\u202e');
+    expect(html).toContain('\\u200b');
+  });
+});
+
+describe('fix round 1', () => {
+  const step = (runs: number, blocks: number) => ({ step: 'typecheck', runs, blocks, flakes: 0, p50: null, p95: null });
+  const withSteps = (steps: ReturnType<typeof step>[]) => renderReport(data({ gates: { ...data().gates, stopSteps: steps } }));
+  it('stop steps show a fail rate, counts only under 5 runs', () => {
+    expect(withSteps([step(10, 5)])).toContain('<td>50% (5 of 10)</td>');
+    const small = withSteps([step(4, 1)]);
+    expect(small).toContain('<td>1 of 4</td>');
+    expect(small).not.toContain('25%');
+  });
+  it('ranks sessions by peak, not by the sum of the four parts', () => {
+    const big = { id: 'big-sum', usage: U(1000), responses: 1, compactions: 0, peak: 1 };
+    const peaky = { id: 'peaky', usage: U(1), responses: 1, compactions: 0, peak: 900 };
+    const d = data(); d.usage.sessions = [big, peaky];
+    const html = renderReport(d);
+    expect(html.indexOf('peaky')).toBeLessThan(html.indexOf('big-sum'));
+    expect(html).toContain('by peak context');
+  });
+  it('lays out the legend without overlap', () => {
+    const svg = stackedBars([{ label: 'a', parts: [1, 1, 1, 1] }], ['Uncached input', 'Cache write', 'Cache read', 'Output']);
+    const xs = [...svg.matchAll(/<rect x="(\d+)" y="\d+" width="10" height="10"/g)].map((m) => Number(m[1]));
+    expect(xs).toHaveLength(4);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(130);
+    expect(Number(/viewBox="0 0 (\d+)/.exec(svg)![1])).toBeGreaterThanOrEqual(xs[3]! + 130);
+  });
+  it('cuts labels by code point and names charts', () => {
+    const svg = hbars([{ label: `${'a'.repeat(25)}\u{1F600}tail`, value: 1, max: 1 }], 'My chart');
+    expect(svg).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+    expect(svg).toContain('aria-label="My chart"');
+    expect(renderReport(data())).toContain('aria-label="Hook latency p50 and p95"');
+  });
+  it('draws p50 and p95 bars, keeps the two note lists apart, and words the rules note plainly', () => {
+    const html = renderReport(data());
+    expect(html).toContain('PreToolUse p50');
+    expect(html).toContain('PreToolUse p95');
+    expect(html).toContain('<h4>Transcripts</h4>');
+    expect(html).toContain('<h4>Harness events and timing</h4>');
+    expect(html).not.toContain('no window never');
+    expect(html).toContain('AGENTS.md in 2 of 3');
+    expect(html).toContain('<td>1-10</td>');
   });
 });
 

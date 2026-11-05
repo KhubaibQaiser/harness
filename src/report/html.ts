@@ -37,7 +37,7 @@ function summary(d: ReportData): string {
   return section('summary', 'Summary', `<div class="tiles">${[
     tile('Skills invoked when relevant', rate(hit, rel, NO_RELEVANT)),
     tile('Rules enforced', d.rules === undefined ? 'not computed' : 'see Rules'),
-    tile('Rules loaded', `AGENTS.md ${l.agentsMd}, CLAUDE.md ${l.claudeMd}, of ${l.sessions} sessions`),
+    tile('Rules loaded', `AGENTS.md in ${l.agentsMd} of ${l.sessions}, CLAUDE.md in ${l.claudeMd} of ${l.sessions} sessions`),
     tile('Tokens', USAGE_HEAD.map((c, i) => `${c.toLowerCase()} ${usageCells(t)[i]}`).join(', ')),
     tile('Probable false blocks', n(d.gates.falseBlocks.length)),
     tile('Harness hook p95', d.gates.latency.length === 0 ? 'n/a' : `${p95} ms`),
@@ -49,7 +49,7 @@ function skillNote(s: SkillRow): string {
 }
 function skillsSection(skills: SkillRow[]): string {
   const rows = [...skills].sort((a, b) => Number(b.dropped) - Number(a.dropped));
-  const cells = rows.map((s) => [s.name, `${s.listedIn} of ${s.sessionsWithListing}`, s.relevantIn === 0 ? NO_RELEVANT : rate(s.invokedRelevant, s.relevantIn), s.invokedOther, s.typedOrCarried, s.unknown, skillNote(s)]);
+  const cells = rows.map((s) => [s.name, `${s.listedIn} of ${s.sessionsWithListing}`, rate(s.invokedRelevant, s.relevantIn, NO_RELEVANT), s.invokedOther, s.typedOrCarried, s.unknown, skillNote(s)]);
   const bars = rows.filter((s) => s.relevantIn > 0).map((s) => ({ label: s.name, value: s.invokedRelevant, max: s.relevantIn, note: `r=${s.relevantIn}` }));
   return section('skills', 'Skills', [
     table(['Skill', 'Listed in', 'Invoked when relevant', 'Invoked otherwise', 'Typed or carried', 'Unknown', 'Notes'], cells),
@@ -59,9 +59,8 @@ function skillsSection(skills: SkillRow[]): string {
 }
 
 function dataNotes(d: ReportData): string {
-  const notes = { ...d.windows.notes, ...d.gates.notes };
-  const items = Object.entries(notes).map(([k, v]) => `<li>${h(k)}: ${h(String(v))}</li>`).join('');
-  return `<h3>Data notes</h3><ul>${items}</ul>`;
+  const list = (title: string, o: object) => `<h4>${h(title)}</h4><ul>${Object.entries(o).map(([k, v]) => `<li>${h(k)}: ${h(String(v))}</li>`).join('')}</ul>`;
+  return `<h3>Data notes</h3>${list('Transcripts', d.windows.notes)}${list('Harness events and timing', d.gates.notes)}`;
 }
 function method(d: ReportData): string {
   const heur = Object.entries(RX).map(([k, r]) => `<li><code>${h(k)}</code>: <code>${h(r.source)}</code> (case-insensitive)</li>`).join('');

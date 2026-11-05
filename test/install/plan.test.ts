@@ -21,7 +21,7 @@ const REPO = {
   'vitest.config.ts': "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: {} });\n",
   '.gitignore': 'node_modules\n',
 };
-const OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'agents-md'];
+const OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'pr-ship', 'agents-md'];
 const sel = (id: string, selected = true): Selected => ({ id, include: 'recommended', selected, reason: 'r', addresses: [], pin: '' });
 const AI = { picks: '{}\n', report: '# R\n\n## Findings\n\nx\n\n## Limits\n\nsome\n', product: '# P\n' };
 

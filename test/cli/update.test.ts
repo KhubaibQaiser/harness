@@ -666,7 +666,7 @@ test('leaving always with only a changed key left drops the set blocks from the 
 });
 
 // The recommend flow's install: the plan carries the selected items, and update and uninstall follow the manifest.
-const OWN_IDS = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'agents-md'];
+const OWN_IDS = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'pr-ship', 'agents-md'];
 const aiInstalled = (files: Record<string, string>, ids: string[]) => {
   const root = makeRepo(files);
   const facts = detect(root);

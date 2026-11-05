@@ -45,7 +45,7 @@ test('init --yes on an npm+vitest repo writes every file and a manifest', async 
   const root = makeRepo(NPM_VITEST);
   const r = await go(root, ['--yes']);
   expect(r.code).toBe(0);
-  for (const f of ['.harness/hooks/dispatch.mjs', '.harness/config.yaml', '.claude/agents/staff-reviewer.md', '.claude/skills/review-rubric/SKILL.md', '.claude/settings.json', 'AGENTS.md', 'CLAUDE.md', '.harness/manifest.json'])
+  for (const f of ['.harness/hooks/dispatch.mjs', '.harness/config.yaml', '.claude/agents/staff-reviewer.md', '.claude/skills/review-rubric/SKILL.md', '.claude/skills/pr-ship/SKILL.md', '.claude/settings.json', 'AGENTS.md', 'CLAUDE.md', '.harness/manifest.json'])
     expect(existsSync(join(root, f)), f).toBe(true);
   expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).toContain('written by harness init 1.2.3');
   expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.harness/state/');
@@ -166,12 +166,12 @@ test('planChanges omits unchanged files and decides create vs update', () => {
 test('templates checked out with CRLF are installed with LF', () => {
   const crlf = mkdtempSync(join(tmpdir(), 'harness-tpl-'));
   cpSync(templatesDir, crlf, { recursive: true });
-  const files = ['agents/staff-reviewer.md', 'skills/review-rubric/SKILL.md'];
+  const files = ['agents/staff-reviewer.md', 'skills/review-rubric/SKILL.md', 'skills/pr-ship/SKILL.md'];
   for (const f of files) writeFileSync(join(crlf, f), readFileSync(join(templatesDir, f), 'utf8').replace(/\r?\n/g, '\r\n'));
   const root = makeRepo(NPM_VITEST);
   const facts = detect(root);
   const p = planChanges(root, preset(facts).config, facts, { version: '1.2.3', distDir, templatesDir: crlf });
-  for (const [f, rel] of [[files[0], '.claude/agents/staff-reviewer.md'], [files[1], '.claude/skills/review-rubric/SKILL.md']] as const) {
+  for (const [f, rel] of [[files[0], '.claude/agents/staff-reviewer.md'], [files[1], '.claude/skills/review-rubric/SKILL.md'], [files[2], '.claude/skills/pr-ship/SKILL.md']] as const) {
     const c = p.changes.find((x) => x.rel === rel);
     expect(c && c.kind === 'create' && c.content, rel).toBe(readFileSync(join(templatesDir, f), 'utf8').replace(/\r\n/g, '\n'));
   }

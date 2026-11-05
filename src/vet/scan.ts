@@ -9,8 +9,7 @@ export interface VetFinding { severity: Severity; rule: Rule; file: string; line
 export interface ScanResult { target: string; repo: string; sha: string; path: string; kind: 'plugin' | 'skill' | 'repo'; findings: VetFinding[]; context: { tokens: number; unmeasured: string[] }; files: number; dir?: string }
 
 /** Matched text for output: cut to 120 code points, controls and invisible/bidi characters escaped (esc does both). */
-export const show = (s: string): string =>
-  esc([...s.slice(0, 480)].slice(0, 120).join('')).replace(/[\u00ad\u061c\u180e]|[\u{E0000}-\u{E007F}]/gu, (c) => (c.codePointAt(0)! > 0xffff ? `\\u{${c.codePointAt(0)!.toString(16)}}` : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`));
+export const show = (s: string): string => esc([...s.slice(0, 480)].slice(0, 120).join(''));
 
 /** Under the sub-path, or a repo-root file a plugin there loads (spec 3, step 4). */
 export function inScope(rel: string, path: string): boolean {
@@ -239,7 +238,7 @@ const INJECT = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF
 const OBFUSCATED = [(l: string) => longRun(l, /[A-Za-z0-9+/]+/g, 200), (l: string) => longRun(l, /\w+/g, 200, true), idx(/\beval\s*\(|\bnew\s+Function\s*\(/)];
 const obfuscated = (l: string): number => { for (const f of OBFUSCATED) { const i = f(l); if (i >= 0) return i; } return -1; };
 type LineRule = [VetFinding['rule'], (l: string) => number];
-const PROMPT_DIR = /^(?:skills|agents|commands)$/i;
+const PROMPT_DIR = /^(?:skills|agents|commands|output-styles)$/i;
 const MIN_DIR = /^(?:skills|agents|commands|hooks|scripts)$/i;
 
 /** Hosts, lockfiles and metadata: URLs there are data. mcpServers is already reported as mcp-server. */
@@ -256,7 +255,8 @@ function netJson(file: string, text: string, json: Record<string, unknown>, add:
     const v = stack.pop();
     if (typeof v === 'string') { if (NETWORK.test(v)) add('network', () => ({ severity: 'medium', rule: 'network', file, line: at(JSON.stringify(v)), text: show(v) })); }
     else if (Array.isArray(v)) for (let i = v.length - 1; i >= 0; i--) stack.push(v[i]);
-    else if (isObj(v)) { const vs = Object.values(v); for (let i = vs.length - 1; i >= 0; i--) stack.push(vs[i]); }
+    else if (isObj(v)) { const vs = Object.entries(v).filter(([k]) => !(k === 'url' && v.type === 'http')).map(([, x]) => x); // hook-http / mcp-server report these
+     for (let i = vs.length - 1; i >= 0; i--) stack.push(vs[i]); }
   }
 }
 

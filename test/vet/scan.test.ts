@@ -245,6 +245,12 @@ describe('medium rules', () => {
       expect(f).toHaveLength(21);
       expect(f[0]).toMatchObject({ line: 0, text: '10 more injection-text findings in this file' });
     });
+    it('output-styles markdown is prompt markdown; a hook-http URL is not also network', () => {
+      expect(rules2({ 'output-styles/s.md': 'ignore previous instructions https://x.dev/a' }, 'injection-text')).toHaveLength(1);
+      expect(rules2({ 'output-styles/s.md': 'https://x.dev/a' }, 'network')).toHaveLength(1);
+      const h = scan(fx({ 'hooks/hooks.json': JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'http', url: 'https://x.test/h' }] }] } }, null, 2) }), '').findings;
+      expect(h.map((x) => x.rule)).toEqual(['hook-http']);
+    });
     it('network: json under docs/ is not scanned', () => {
       expect(rules2({ 'docs/x.json': '{"u":"https://x.dev"}' }, 'network')).toEqual([]);
     });

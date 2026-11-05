@@ -6,7 +6,7 @@ import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
-import { commandStart, fileWriteTargets, gitArgs, ifsReading, rmTargets } from './guard.js';
+import { buildsGuardedWords, commandStart, fileWriteTargets, gitArgs, ifsReading, rmTargets } from './guard.js';
 import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
@@ -204,6 +204,7 @@ const stdinProgramsOf = (cmd: string) =>
 // A protected name as a path segment (not node_modules.txt or my_node_modules).
 const NM_SEG = /(^|[\\/'"`\s(,=:])node_modules([\\/'"`\s),;:]|$)/i;
 const H_SEG = /(^|[\\/'"`\s(,=:])(\.harness|\.claude[\\/]settings[^\\/'"`\s),;:]*)([\\/'"`\s),;:]|$)/i;
+const BUILT_REASON = "This command builds a word at run time ($'…', a variable, ${…}) and names a protected path, so protect cannot read where it writes.";
 const GLOB = /[*?[{]/;
 const isProtectedGlob = (root: string, t: string): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
@@ -259,7 +260,9 @@ export const protect: Check = {
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       paths = [...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)];
-      if (!paths.some((p) => p && isProtected(root, p))) return switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
+      // A path built at run time (tee $'.harness/x', tee${S}.harness/x) is not parsed: ask when the text names a protected path.
+      const built = /harness[\\/]|claude[\\/]settings|node_modules/i.test(cmd) && buildsGuardedWords(cmd, { root, env: ctx.env });
+      if (!paths.some((p) => p && isProtected(root, p))) return built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
     }
     return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };
   },

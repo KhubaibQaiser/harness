@@ -11,6 +11,8 @@ const GH_VALUE_FLAGS = new Set([
 ]);
 const PUSH_VALUE_FLAGS = new Set(['--repo', '-o', '--push-option', '--receive-pack', '--exec']);
 const PUSH_DELETE_FLAGS = new Set(['--delete', '-d']);
+// Bundled short flags such as -fd or -df include the delete flag.
+const BUNDLED_DELETE = /^-[A-Za-z]*d[A-Za-z]*$/;
 const PUSH_ALL_FLAGS = new Set(['--all', '--branches', '--mirror']);
 
 /** The words after `pr create`, or null when `rest` (the words after gh) is not `pr create`; -R/--repo may come between. */
@@ -45,7 +47,7 @@ function pushTarget(args: string[]): PrTarget {
     const a = args[i];
     if (PUSH_VALUE_FLAGS.has(a)) i++;
     else if (PUSH_ALL_FLAGS.has(a)) all = true;
-    else if (PUSH_DELETE_FLAGS.has(a)) del = true;
+    else if (PUSH_DELETE_FLAGS.has(a) || BUNDLED_DELETE.test(a)) del = true;
     else if (!a.startsWith('-') && positional++ > 0) {
       const [src, ...rest] = a.replace(/^\+/, '').split(':');
       const dst = rest.join(':').replace(/^refs\/heads\//, '') || src.replace(/^refs\/heads\//, '');

@@ -77,6 +77,7 @@ describe('fix round 1', () => {
     expect(pushes('git push origin feat:')[0]).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
     expect(pushes('git push --delete origin feat')[0]).toMatchObject({ refs: [] });
     expect(pushes('git push -d origin feat')[0]).toMatchObject({ refs: [] });
+    expect(pushes('git push -fd origin feat')[0]).toMatchObject({ refs: [] });
   });
   test('Monitor and PowerShell are shell tools whose text is read with the given Where', () => {
     expect(isShell('Monitor')).toBe(true);

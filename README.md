@@ -42,7 +42,7 @@ In plain terms: with the sandbox on, the operating system enforces the guard. Wi
 
 In short: secrets and risky commands are blocked, harness's own files are off limits to the agent, and a change that spreads to a second file needs your OK. A source edit needs a test that failed first, and the agent can't stop until your format, lint, typecheck and test commands pass.
 
-- **Vet before you install.** `harness vet <github-url>` pins a plugin or skill to a commit and scans it without running it: hooks, secrets, network calls, prompt-injection text, licence and context cost. The report lists each finding by `file:line`. Needs the GitHub CLI (`gh`).
+- **Vet before you install.** `harness vet <github-url>` pins a plugin or skill to a commit and scans it without running it: hooks, secrets, network calls, prompt-injection text, licence and context cost. The report lists each finding by `file:line`. Needs the GitHub CLI (`gh`). `/harness:vet` is the guided flow: the reviewer reads the flagged files, and any high finding needs a second yes before you see the install command.
 - **Review agent (experimental).** A `staff-reviewer` agent reviews a diff in a fresh context and can't edit files.
 
 The exact rules for each gate are in [docs/reference.md](docs/reference.md).
@@ -79,7 +79,7 @@ You need Node 22.11 or newer, git, and Claude Code 2.1.314 or newer.
 
 ## Commands
 
-Run them as `harness <command>`. From a source build there's no `harness` binary, so read `harness` in this README as `node /path/to/harness/dist/cli.mjs`. `init`, `update`, `add` and `sync` work only inside Claude Code, as `/harness:<command>`; `doctor`, `status` and `uninstall` also have `/harness:` skills. Every flag is in [docs/reference.md](docs/reference.md#commands-in-full).
+Run them as `harness <command>`. From a source build there's no `harness` binary, so read `harness` in this README as `node /path/to/harness/dist/cli.mjs`. `init`, `update`, `add` and `sync` work only inside Claude Code, as `/harness:<command>`; `doctor`, `status`, `uninstall` and `vet` also have `/harness:` skills. Every flag is in [docs/reference.md](docs/reference.md#commands-in-full).
 
 | Command | What it does |
 |---|---|
@@ -135,7 +135,6 @@ The full list: [docs/reference.md](docs/reference.md#known-limits).
 ## Roadmap
 
 Shipped in 0.2.0-beta.0: per-project recommendations from a pinned catalog. Coming next:
-- `/harness:vet`, the guided review flow on top of `harness vet`;
 - a PR size check;
 - an opt-in personal preset of working rules and stack skills;
 - local reports that show whether agents actually follow the installed rules and skills;

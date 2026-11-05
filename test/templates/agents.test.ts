@@ -81,3 +81,12 @@ test('agents-block: blank line after the start marker and every heading (prettie
     if (l === '' && i < lines.length - 1) expect(lines[i + 1], `double blank at line ${i + 1}`).not.toBe('');
   });
 });
+
+test('vet mode: switch, contract words, lean description', () => {
+  const s = read('templates/agents/staff-reviewer.md');
+  expect(s).toContain('If the caller says `Mode: vet`, skip to Vet mode below.');
+  expect(s.indexOf('Mode: vet`, skip')).toBeLessThan(s.indexOf('If no diff was supplied'));
+  const v = s.slice(s.indexOf('## Vet mode'));
+  for (const t of ['fenced `json` block', 'relevance', 'overlaps', 'injection', 'recommendation', 'never lower a severity', 'Read only the flagged files, inside the folder the caller names', 'dotenv', 'single line']) expect(v, t).toContain(t);
+  expect(String(fm(s).description)).toBe('Fresh-context staff-level reviewer for repo audits and PR diffs. Use before a commit or PR, after a feature or fix is implemented. Reports findings only; never edits.');
+});

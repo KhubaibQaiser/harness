@@ -6,8 +6,9 @@ export interface Known { ids: Set<string> }
 
 const OTHER = 'other';
 // Model ids: a family word plus version digits and an optional date, so free text can't ride along.
-const MODEL_RE = /^claude-(?:(?:\d+-){0,2}(?:opus|sonnet|haiku|fable)(?:-\d+){0,3}|(?:opus|sonnet|haiku|fable)(?:-\d+){1,3})(?:-\d{8})?$/;
-const VERSION_RE = /^\d+\.\d+\.\d+$/;
+const MODEL_RE = /^claude-(?:(?:\d{1,2}-){0,2}(?:opus|sonnet|haiku|fable)(?:-\d{1,2}){0,3}|(?:opus|sonnet|haiku|fable)(?:-\d{1,2}){1,3})(?:-\d{8})?$/;
+// Semver with an optional alpha/beta/rc number only, digits bounded, so no free text fits.
+const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}(?:-(?:alpha|beta|rc)\.\d{1,4})?$/;
 const WEEK_RE = /^\d{4}-W\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SOURCES = ['timing', 'transcript', 'events'];

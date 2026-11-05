@@ -60,6 +60,16 @@ describe('buildExport', () => {
     expect(JSON.stringify(out)).not.toContain('private-repo');
     expect(exportProblems(out, known)).toEqual([]);
   });
+  it('keeps real versions and model ids, and bounds their digits', () => {
+    const d = hostile();
+    d.meta.harness = '0.2.0-beta.0';
+    d.usage.byModel = { [`claude-sonnet-${'9'.repeat(300)}`]: U(1), 'claude-haiku-5-5': U(1) };
+    const out = buildExport(d, known);
+    expect(JSON.stringify(out)).toContain('0.2.0-beta.0');
+    expect(JSON.stringify(out)).not.toContain('9'.repeat(300));
+    expect((out.models as { id: string }[]).map((m) => m.id)).toContain('claude-haiku-5-5');
+    expect(exportProblems(out, known)).toEqual([]);
+  });
   it('buckets weeks as ISO weeks and the date has no time', () => {
     const out = buildExport(hostile(), known);
     for (const w of out.weekly as { week: string }[]) expect(w.week).toMatch(/^(\d{4}-W\d{2}|other)$/);

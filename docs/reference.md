@@ -238,6 +238,8 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `scan` | Prints the facts harness detects about your repo, as JSON. Writes nothing. |
 | `catalog` | Prints the catalog of items harness can install, as JSON. |
 | `catalog check [--resolve] [--only <id,...>]` | Checks the catalog for problems. `--resolve` also looks up each pin, which needs the network. `--only` limits that to the listed ids. |
+| `preset list` | Prints `<id>  <description>` for each shipped and repo preset (`.harness/presets/`), or `No presets.`. Writes nothing. |
+| `preset check <dir>` | Checks every `<id>.yaml` in `<dir>` with its `<id>/` folder: schema, items, templates, skill limits, no email or git identity, and an id that isn't a shipped preset's (unless `<dir>` is the shipped folder). Prints `ok` or one error per line. `catalog check` also checks each shipped preset, as `presets/<id>: <error>`. |
 | `validate answers\|product <file> [--merge-config]` | Checks an interview answers file or a product file. With `--merge-config`, an answers file holding only some keys is laid over the answers in `.harness/config.yaml` first (what `/harness:update` uses). |
 | `validate picks <file> --answers <file> [--merge-config] [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. `--merge-config` works as above. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
@@ -247,7 +249,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `vet --finish <scan.json> --review <file>` | Checks the reviewer's file like `validate vet-review`, writes the report with the review, then deletes the kept folder. |
 | `vet --install <scan.json>` | Prints the install commands and the sha-pinned marketplace entry from that scan's report. |
 | `vet --clean` | Removes every `harness-vet-*` folder of this OS user, including other projects' folders and runs still in progress. Skips and counts any it can't remove. |
-| `select --picks <file> [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `selected` entries. Each checklist row also has `unpinned` ("Runs unpinned code at launch.") and `unpinned_reason` for items whose catalog entry sets `unpinned_runtime`. |
+| `select --picks <file> [--preset <id> --answers <file>] [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `selected` entries. With `--preset` (which needs `--answers` for the project type), the checklist also has ticked rows for the preset's core and skills that match the stack, and for its stack-matched preselects you did not pick; ids of the preset's own items come back as `preset_items`. Each checklist row also has `unpinned` ("Runs unpinned code at launch.") and `unpinned_reason` for items whose catalog entry sets `unpinned_runtime`. |
 | `git branch\|commit\|push\|pr [--title <t>]` | Commits and pushes the harness changes one step at a time. `branch` creates `chore/ai-workflow-<catalog version>`; `commit` stages only the files harness wrote, with your own git name and email; `push` and `pr` never touch the default branch. `pr` needs `gh` signed in, else it prints the command. The agent asks you before `push` and `pr`. |
 
 `scan`, `catalog`, `validate` and `select` write nothing. They are the steps `/harness:init` calls; you can run them to see what it sees.

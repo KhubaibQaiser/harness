@@ -98,3 +98,11 @@ test('an unknown Claude Code version is a notice', () => {
   expect(resolveSelection(['base'], catalog, null).notices).toEqual(['Claude Code version unknown; not checking which items need a newer Claude Code.']);
   expect(resolveSelection(['base'], catalog, '2.1.500').notices).toEqual([]);
 });
+
+test('extra ids count as picked; toSelected takes a reason for a chosen non-pick', () => {
+  const p = picks(pk('base'));
+  expect(notPicked(['lead-a'], p, catalog)).toHaveLength(1);
+  expect(notPicked(['lead-a'], p, catalog, ['lead-a'])).toEqual([]);
+  const s = toSelected(p, ['base', 'lead-a', 'lead-b'], catalog, { 'lead-a': 'Preselected by the x preset' });
+  expect(s.map((x) => x.reason)).toEqual(['Why base.', 'Preselected by the x preset', 'Chosen by you.']);
+});

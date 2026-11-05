@@ -38,7 +38,7 @@ const takesValue = (wrapper: string, t: string): boolean => {
   return i === t.length - 2;
 };
 /** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
-const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
+export const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
@@ -89,7 +89,7 @@ const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
 const ANY_WHY = 'Only a person can change or remove the harness gates: run the harness command in your own terminal.';
 type Hit = { kind: 'deny' | 'ask'; reason: string };
-type Where = { root: string; env: NodeJS.ProcessEnv };
+export type Where = { root: string; env: NodeJS.ProcessEnv };
 
 /**
  * How the person runs `harness <sub>` in their own terminal, in backticks: a trusted CLI path (the typed one, or the
@@ -194,9 +194,17 @@ function withoutHeredocBodies(cmd: string): string {
   return out.join('\n');
 }
 
-// Why a harness invocation (in command position) needs the person, or null when the agent may run it.
-// ponytail: a wrapper flag value not listed in WRAPPER_VALUE_FLAGS is read as the command, which then isn't harness.
-function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
+/** One command segment of one reading: `k = commandStart(toks)`, `prev`/`next` the separators around it, `words` all the words of the reading. */
+export type Seg = { toks: string[]; k: number; prev?: string; next?: string; words: string[] };
+export type Visit<T> = (seg: Seg) => T | null;
+/** `whole` sees each reading's words before that reading's segments; readings are interleaved (reading 2's `whole` runs
+ *  after reading 1's visits, and payload readings come after all four). `script` sees each package-script body after it
+ *  is walked. `tooDeep` is the result for a script body at depth 3 or more; without `tooDeep`, a body at depth 3 or more
+ *  is not walked and the walk goes on. */
+export interface WalkHooks<T> { whole?: (words: string[]) => T | null; script?: (body: string) => T | null; tooDeep?: T }
+
+/** Walks every command segment of `command` the way the shell could read it; the first non-null result wins. */
+export function walkCommands<T>(command: string, w: Where, visit: Visit<T>, hooks: WalkHooks<T> = {}, depth = 0): T | null {
   command = command.replace(/\\\r?\n/g, '');
   const whole = command;
   command = withoutHeredocBodies(command); // a body is data for its command; a shell reading it is handled below, from `whole`
@@ -205,17 +213,28 @@ function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null 
   // Then again with a quoted or escaped space kept inside its word, so a path such as "C:\\Users\\John Smith\\…\\cli.mjs"
   // or ./my\\ dir/cli.mjs stays one word. (The ungrouped readings still see a command inside quotes: sh -c "harness …".)
   return (
-    walkInvocation(command.replace(/['"\\]/g, ''), w, depth) ??
-    walkInvocation(command.replace(/['"]/g, '').replace(/\\/g, '/'), w, depth) ??
-    walkInvocation(grouped(command, true), w, depth) ??
-    walkInvocation(grouped(command, false), w, depth) ??
+    walkReading(command.replace(/['"\\]/g, ''), w, visit, hooks, depth) ??
+    walkReading(command.replace(/['"]/g, '').replace(/\\/g, '/'), w, visit, hooks, depth) ??
+    walkReading(grouped(command, true), w, visit, hooks, depth) ??
+    walkReading(grouped(command, false), w, visit, hooks, depth) ??
     // A -c payload, or a program fed to a shell on stdin (echo … | bash, <<<, a here-document), is a command line of
     // its own: judge it with all the readings (a spaced path inside it is one word).
     (depth < 3
       ? [...cPayloads(command), ...stdinPrograms(whole, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
-          .reduce<Hit | null>((hit, p) => hit ?? personOnlyInvocation(p, w, depth + 1), null)
+          .reduce<T | null>((hit, p) => hit ?? walkCommands(p, w, visit, hooks, depth + 1), null)
       : null)
   );
+}
+
+// Why a harness invocation (in command position) needs the person, or null when the agent may run it.
+// ponytail: a wrapper flag value not listed in WRAPPER_VALUE_FLAGS is read as the command, which then isn't harness.
+function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
+  return walkCommands(command, w, personOnlyVisit(w), {
+    // eval re-parses its input, so any eval near a harness token and a person-only subcommand is denied.
+    whole: (words) => (words.includes('eval') && words.some(isPersonOnly) && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, ''))) ? { kind: 'deny', reason: ANY_WHY } : null),
+    script: backstop,
+    tooDeep: { kind: 'ask', reason: 'a chain of npm scripts is too deep for the guard to read; run it yourself or read the scripts first' },
+  }, depth);
 }
 
 const KEPT_SPACE = '\u0001'; // a space inside a word: not matched by \s, turned back into a space when printed
@@ -236,30 +255,10 @@ function grouped(command: string, escapes: boolean): string {
   return out;
 }
 
-function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
+function walkReading<T>(plain: string, w: Where, visit: Visit<T>, hooks: WalkHooks<T>, depth: number): T | null {
   const words = plain.split(/[ \t]+/); // not \s: the shell does not split on NBSP, \f, \v or Unicode spaces
-  const hit = (name: string, tok: string): Hit => ({ kind: PERSON_ONLY[name].kind, reason: PERSON_ONLY[name].why((sub) => terminalCommand(tok, sub, w)) });
-  const hidden: Hit = { kind: 'deny', reason: ANY_WHY };
-  // The harness token at toks[k]: which person-only subcommand it runs, if any. `next` is the separator after it.
-  const judge = (toks: string[], k: number, next: string | undefined): Hit | null => {
-    const rest = toks.slice(k + 1);
-    if (rest[0]?.startsWith('-')) { // no global flags in M1, so flag values cannot be told apart from subcommands
-      for (const [name, rule] of Object.entries(PERSON_ONLY)) {
-        const t = rest.indexOf(name);
-        if (t >= 0 && !rule.allowed(rest.slice(t + 1))) return hit(name, toks[k]);
-      }
-    }
-    const s = rest.findIndex((t) => !t.startsWith('-'));
-    // `xargs harness` with no written subcommand: the words come from stdin.
-    if (s < 0) return /^(\$\(|\(|`)$/.test(next ?? '') ? hidden : toks.slice(0, k).some((t) => runnerName(t) === 'xargs') ? { kind: 'ask', reason: BUILT } : null;
-    if (/[$`]/.test(rest[s])) return /^\$[@*0-9]$/.test(rest[s]) ? { kind: 'ask', reason: BUILT } : hidden; // "$@", $*, $1: the caller's words
-    // A brace, glob or character class the shell expands into the subcommand: `tdd off` shaped is denied, the rest asks.
-    if (/[{*?[]/.test(rest[s])) return rest[s + 1] === 'off' ? hit('tdd', toks[k]) : { kind: 'ask', reason: BUILT };
-    if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return hit(rest[s], toks[k]);
-    return null;
-  };
-  // eval re-parses its input, so any eval near a harness token and a person-only subcommand is denied.
-  if (words.includes('eval') && words.some(isPersonOnly) && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, '')))) return hidden;
+  const all = hooks.whole?.(words) ?? null;
+  if (all !== null) return all;
   // A lone & separates commands; 2>&1, >&2 and &> are redirections.
   const parts = plain.split(/(&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`])/);
   for (let i = 0; i < parts.length; i += 2) {
@@ -281,25 +280,52 @@ function walkInvocation(plain: string, w: Where, depth: number): Hit | null {
       const args = toks.slice(j + 1).filter((t) => t !== '--').join(' ');
       // npm also runs pre<name> and post<name>.
       const bodies = [`pre${name}`, name, `post${name}`].filter((n) => typeof scripts[n] === 'string').map((n) => `${scripts[n]}${n === name ? ` ${args}` : ''}`);
-      if (bodies.length && depth >= 3) return { kind: 'ask', reason: 'a chain of npm scripts is too deep for the guard to read; run it yourself or read the scripts first' };
-      for (const b of bodies) {
-        const r = personOnlyInvocation(b, w, depth + 1) ?? backstop(b);
-        if (r) return r;
+      if (bodies.length && depth >= 3) {
+        if (hooks.tooDeep !== undefined) return hooks.tooDeep;
+      } else for (const b of bodies) {
+        const r = walkCommands(b, w, visit, hooks, depth + 1) ?? hooks.script?.(b) ?? null;
+        if (r !== null) return r;
       }
     }
-    const k = commandStart(toks);
+    const r = visit({ toks, k: commandStart(toks), prev: parts[i - 1], next: parts[i + 1], words });
+    if (r !== null) return r;
+  }
+  return null;
+}
+
+/** The person-only rules for one segment: a harness token in command position, or a person-only word after a hidden command. */
+function personOnlyVisit(w: Where): Visit<Hit> {
+  const hit = (name: string, tok: string): Hit => ({ kind: PERSON_ONLY[name].kind, reason: PERSON_ONLY[name].why((sub) => terminalCommand(tok, sub, w)) });
+  const hidden: Hit = { kind: 'deny', reason: ANY_WHY };
+  // The harness token at toks[k]: which person-only subcommand it runs, if any. `next` is the separator after it.
+  const judge = (toks: string[], k: number, next: string | undefined): Hit | null => {
+    const rest = toks.slice(k + 1);
+    if (rest[0]?.startsWith('-')) { // no global flags in M1, so flag values cannot be told apart from subcommands
+      for (const [name, rule] of Object.entries(PERSON_ONLY)) {
+        const t = rest.indexOf(name);
+        if (t >= 0 && !rule.allowed(rest.slice(t + 1))) return hit(name, toks[k]);
+      }
+    }
+    const s = rest.findIndex((t) => !t.startsWith('-'));
+    // `xargs harness` with no written subcommand: the words come from stdin.
+    if (s < 0) return /^(\$\(|\(|`)$/.test(next ?? '') ? hidden : toks.slice(0, k).some((t) => runnerName(t) === 'xargs') ? { kind: 'ask', reason: BUILT } : null;
+    if (/[$`]/.test(rest[s])) return /^\$[@*0-9]$/.test(rest[s]) ? { kind: 'ask', reason: BUILT } : hidden; // "$@", $*, $1: the caller's words
+    // A brace, glob or character class the shell expands into the subcommand: `tdd off` shaped is denied, the rest asks.
+    if (/[{*?[]/.test(rest[s])) return rest[s + 1] === 'off' ? hit('tdd', toks[k]) : { kind: 'ask', reason: BUILT };
+    if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return hit(rest[s], toks[k]);
+    return null;
+  };
+  return ({ toks, k, prev, next }) => {
     // $X tdd …, `…` tdd … or $(…) tdd …: the command name is hidden in a variable or substitution.
     // Whatever the hidden command is, the allowed arguments stay allowed.
-    const at = toks[k]?.startsWith('$') && !HARNESS_CMD.test(toks[k]) ? k + 1 : k === 0 && /^[`)]$/.test(parts[i - 1] ?? '') ? 0 : -1;
+    const at = toks[k]?.startsWith('$') && !HARNESS_CMD.test(toks[k]) ? k + 1 : k === 0 && /^[`)]$/.test(prev ?? '') ? 0 : -1;
     if (at >= 0 && isPersonOnly(toks[at]) && !PERSON_ONLY[toks[at]].allowed(toks.slice(at + 1))) return hidden;
     // A glob in the CLI path (dist/cli.mj?) is expanded by the shell: judge it as the harness CLI.
     // `function harness { … }` defines a harness that runs something else, like the `harness() { … }` form (caught at the `(` above).
     if (toks[k] === 'function' && toks[k + 1] && HARNESS_CMD.test(toks[k + 1])) return hidden;
-    if (!toks[k] || !(HARNESS_CMD.test(toks[k]) || (/[*?[]/.test(toks[k]) && CLI_RE.test(toks[k])))) continue;
-    const r = judge(toks, k, parts[i + 1]);
-    if (r) return r;
-  }
-  return null;
+    if (!toks[k] || !(HARNESS_CMD.test(toks[k]) || (/[*?[]/.test(toks[k]) && CLI_RE.test(toks[k])))) return null;
+    return judge(toks, k, next);
+  };
 }
 // Backstop: the parser reads words, but the shell has more ways to hide a command (globs, renamed copies, comments,
 // redirections, odd whitespace). Text that names harness or its CLI and a word that changes things asks, unless the parser

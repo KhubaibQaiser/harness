@@ -38,7 +38,12 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
    - C1: `impeccable`, `taste-skill`, `ui-ux-pro-max` and `superdesign` each list the other three in `conflicts_with`.
    - C4: `taste-skill` has `project_types: [web, landing]`.
    - The other §3 claims also match the catalog: `react-best-practices` on `frameworks: [react, next]`, `vercel-react-native-skills` on `[react-native, expo]`, `web-design-guidelines` on `project_types: [web, landing]`, `impeccable` on `[web]`, and `ponytail` and `superpowers` on `always: true`. `caveman` is `discouraged` ("overlaps ponytail"), and the preset never preselects it (O4).
-4. **Found while planning (owner question 1):** `superpowers` is preselected and is marked `telemetry-on-by-default` in the catalog. Its evidence says the opt-out is `SUPERPOWERS_DISABLE_TELEMETRY`, not `DO_NOT_TRACK`, and that the telemetry applies only to its optional visual companion. The spec's `telemetry_off: [impeccable]` doesn't cover it.
+4. **Found while planning:** `superpowers` is preselected and is marked `telemetry-on-by-default` in the catalog. Its evidence says the opt-out is `SUPERPOWERS_DISABLE_TELEMETRY`, not `DO_NOT_TRACK`, and that the telemetry applies only to its optional visual companion. The spec's `telemetry_off: [impeccable]` doesn't cover it. The owner ruled on this (see Owner rulings).
+
+## Owner rulings (2026-11-05)
+
+- **R1, superpowers telemetry (option a).** `telemetry_off` is `[impeccable, superpowers]`. Each id maps to its own opt-out variable in `TELEMETRY_ENV` (`src/catalog/presets.ts`): `impeccable` → `DO_NOT_TRACK=1` (catalog evidence), and `superpowers` → `SUPERPOWERS_DISABLE_TELEMETRY=<value>`. The value is read from the pinned superpowers README (`obra/superpowers` at `2ce8aa15d05bd57213e6f746f953aafb7ded7a8b`, section "Visual companion telemetry") in Task 2. It is never guessed. If the README gives no value, Task 2 stops and asks the owner. Both variables go in the repo's `.claude/settings.json` `env` as set blocks, and both appear in the preview (Task 8).
+- **R2, execution.** Subagent-driven (superpowers:subagent-driven-development).
 
 ## Owner actions (not tasks; no code)
 
@@ -111,6 +116,7 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
   - `export interface Preset { id: string; title: string; description: string; core: string; preselect: string[]; skills: string[]; settings: { attribution?: 'off'; telemetry_off: string[] }; git: PresetGit }`
   - `export interface LoadedPreset { preset: Preset; base: string /* the <id>/ folder */; items: CatalogItem[] /* core + skills */ }`
   - `export const PREFIX_RE = /^[a-z0-9-]+\/$/`
+  - `export const TELEMETRY_ENV: Record<string, { name: string; value: string }>`: filled in Task 2 (R1). It starts empty here.
   - `export function loadPreset(yamlPath: string): { ok: true; loaded: LoadedPreset } | { ok: false; errors: string[] }`
   - `export function checkPreset(l: LoadedPreset, catalog: Catalog): string[]`
   - `export function identityProblems(dir: string): string[]` (every file under the preset folder)
@@ -131,6 +137,7 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
     - 151 body lines → `skills/x/SKILL.md: body has 151 lines; the limit is 150`;
     - `branch_prefixes: []` → must be a non-empty list; `[feature]` → `branch_prefixes[0]: must match ^[a-z0-9-]+/$`;
     - `telemetry_off: [ponytail]` with ponytail not in `preselect` → `telemetry_off "ponytail" is not in preselect`;
+    - a `telemetry_off` id in `preselect` but with no `TELEMETRY_ENV` entry → `telemetry_off "x": harness knows no opt-out variable for it`;
     - an unknown top-level key → `unknown key "extra"`;
     - a body line `- Use X. [docs]` → `skills/x/SKILL.md:3: a docs-labelled line needs a link: [docs: https://…]`.
   - `identityProblems`: a template containing `jane@example.com` fails; one containing `user.email` fails; `react@19.0.0`, `expo@~52.0.0` and `@tanstack/react-query` pass (Review focus 4).
@@ -151,19 +158,23 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
 
 **Files:**
 - Create: `catalog/presets/khubaib-frontend.yaml`; `catalog/presets/khubaib-frontend/items/{core-rules,engineering-principles,frontend-react,frontend-nextjs,frontend-react-native}.yaml`; `catalog/presets/khubaib-frontend/templates/core.md`; `catalog/presets/khubaib-frontend/templates/skills/{engineering-principles,frontend-react,frontend-nextjs,frontend-react-native}/SKILL.md`
+- Modify: `src/catalog/presets.ts` (`TELEMETRY_ENV` entries, R1)
 - Test: `test/catalog/khubaib-frontend.test.ts`
 
 **Interfaces:**
-- Consumes: `loadPreset`, `checkPreset`, `identityProblems` (Task 1); `estimateTokens`, `alwaysLoadedText` (`src/budget/measure.ts`).
-- Produces: the shipped preset. Later tasks' tests use it as the reference fixture (§8).
+- Consumes: `loadPreset`, `checkPreset`, `identityProblems`, `TELEMETRY_ENV` (Task 1); `estimateTokens`, `alwaysLoadedText` (`src/budget/measure.ts`).
+- Produces: the shipped preset. Later tasks' tests use it as the reference fixture (§8). `TELEMETRY_ENV` = `{ impeccable: { name: 'DO_NOT_TRACK', value: '1' }, superpowers: { name: 'SUPERPOWERS_DISABLE_TELEMETRY', value: <from the README> } }`.
+
+- [ ] **Step 0: Read the superpowers opt-out value (R1).** Fetch `https://raw.githubusercontent.com/obra/superpowers/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/README.md` (one unauthenticated file; the only network use in this plan, done by the implementer, never in a test). Copy the exact value the "Visual companion telemetry" section gives for `SUPERPOWERS_DISABLE_TELEMETRY`. Quote that sentence and the URL in the PR body, and add the README line as an `evidence` note in the PR. If the section names no value, stop and ask the owner. Never assume `1`.
 
 - [ ] **Step 1: Write the failing tests:**
   - `preset check` passes on `catalog/presets/khubaib-frontend/` with zero identity problems.
-  - YAML values are exactly the §3 example: id `khubaib-frontend`; the six preselects in the order of Global constraints; skills `[engineering-principles, frontend-react, frontend-nextjs, frontend-react-native]`; `settings: { attribution: off, telemetry_off: [impeccable] }`; git prefixes per O6, `no_ai_trailer: true`, `pr_size_warning: true`. `caveman` is not anywhere in the folder.
+  - YAML values are exactly the §3 example: id `khubaib-frontend`; the six preselects in the order of Global constraints; skills `[engineering-principles, frontend-react, frontend-nextjs, frontend-react-native]`; `settings: { attribution: off, telemetry_off: [impeccable, superpowers] }` (R1); git prefixes per O6, `no_ai_trailer: true`, `pr_size_warning: true`. `caveman` is not anywhere in the folder.
   - `applies_when`: `engineering-principles` `{always: true}`; `frontend-react` `{frameworks: [react, next, react-native, expo]}`; `frontend-nextjs` `{frameworks: [next]}`; `frontend-react-native` `{frameworks: [react-native, expo]}`.
   - `core.md` equals the §5 block's inner text line for line (between the markers). Its first line contains `This overrides any skill that says to decide on its own.` (§6 "Asking wins").
   - The four descriptions are the §7 table's text verbatim.
   - **Budget (estimate, §5):** `estimateTokens(core.md)` is 173 ± 5. Each `alwaysLoadedText('skill', …)` is 58 ± 8. The four totals (one stack, Next.js and RN, plain React, no React) are 347, 405, 289 and 231, each ± 10.
+  - `TELEMETRY_ENV.superpowers` is `{ name: 'SUPERPOWERS_DISABLE_TELEMETRY', value: '<the README value from Step 0>' }`, and `TELEMETRY_ENV.impeccable` is `{ name: 'DO_NOT_TRACK', value: '1' }`. Every `telemetry_off` id has an entry (the Task 1 check passes).
   - F3 is quoted verbatim in `frontend-react` (the whole §1 F3 string). The P7 Tailwind sentence's intent is present (no `h-[98px]`-style arbitrary values where a scale class fits).
 - [ ] **Step 2: Run them and confirm they fail.** Run `pnpm vitest run --project unit test/catalog/khubaib-frontend.test.ts`.
 - [ ] **Step 3: Write the content.**
@@ -258,7 +269,7 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
   - `export const PRESET_START = '<!-- harness:preset:start -->'` and `PRESET_END = '<!-- harness:preset:end -->'`
   - `export function mergeAgentsPreset(before: string | null, core: string): { after: string; blocks: string[] }`. It is `mergeAgents`'s logic with these markers and the given core text, and the same `MergeError` messages with "preset" in place of "harness".
   - `export type SetBlock = { set: string[]; value: unknown }`
-  - `export function presetSets(l: LoadedPreset): SetBlock[]`. `attribution: off` gives `{ set: ['attribution'], value: false }` (Planning check 1). A non-empty `telemetry_off` gives `{ set: ['env'], value: {} }` (only when `env` is absent) and `{ set: ['env', 'DO_NOT_TRACK'], value: '1' }`.
+  - `export function presetSets(l: LoadedPreset): SetBlock[]`. `attribution: off` gives `{ set: ['attribution'], value: false }` (Planning check 1). A non-empty `telemetry_off` gives `{ set: ['env'], value: {} }` (only when `env` is absent), then one `{ set: ['env', name], value }` per id from `TELEMETRY_ENV`, each variable once (R1). For `khubaib-frontend` that is `env.DO_NOT_TRACK = '1'` and `env.SUPERPOWERS_DISABLE_TELEMETRY = <README value>`.
   - `export function mergePresetSettings(before: string | null, want: SetBlock[], recorded: string[], label = '.claude/settings.json'): { after: string; blocks: string[]; dropped: string[]; notes: string[] }`. It adds each missing key as a set block. A key that already holds another value is kept, with the note `` `<label>`: `<path>` is already <json>; left as is (the preset would set <json>). `` It drops recorded non-sandbox set blocks no longer wanted, through `removeSets`.
 
 - [ ] **Step 1: Write the failing tests:**
@@ -271,10 +282,12 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
     - End before start → `…missing or misordered preset marker…`.
   - **Settings:**
     - Into `{}`, attribution and `env` are added.
-    - Into `{"env":{"FOO":"1"}}`, only `env.DO_NOT_TRACK` is added and `FOO` stays.
+    - Into `{"env":{"FOO":"1"}}`, only `env.DO_NOT_TRACK` and `env.SUPERPOWERS_DISABLE_TELEMETRY` are added and `FOO` stays.
+    - Into `{"env":{"SUPERPOWERS_DISABLE_TELEMETRY":"other"}}`, that key is left as is, with the note, and `DO_NOT_TRACK` is still added.
+    - `presetSets` for a preset with `telemetry_off: [impeccable]` only writes no `SUPERPOWERS_DISABLE_TELEMETRY`.
     - Into `{"attribution":{"commit":"x"}}`, it is left as is, with the note.
     - `removeFromSettings` with the recorded blocks restores the original object deep-equal and byte-equal for the `{}` and `FOO` cases.
-  - **Review focus 1:** `mergeSettings(after, { sandbox: 'unattended', recorded: [...hookBlocks, ...presetBlocks] })` keeps `attribution` and `env.DO_NOT_TRACK`, and its `dropped` holds no preset block. It still drops recorded `sandbox` set blocks when leaving `always` (the existing test stays green).
+  - **Review focus 1:** `mergeSettings(after, { sandbox: 'unattended', recorded: [...hookBlocks, ...presetBlocks] })` keeps `attribution`, `env.DO_NOT_TRACK` and `env.SUPERPOWERS_DISABLE_TELEMETRY`, and its `dropped` holds no preset block. It still drops recorded `sandbox` set blocks when leaving `always` (the existing test stays green).
 - [ ] **Step 2: Run them and confirm they fail.** Run `pnpm vitest run --project unit test/install/merge.test.ts`.
 - [ ] **Step 3: Implement.**
   - The fix: in `mergeSettings`'s non-`always` branch, pass `removeSets` only the recorded blocks whose parsed `set[0] === 'sandbox'`.
@@ -301,7 +314,7 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
 
 - [ ] **Step 1: Write the failing tests:**
   - **Plan:**
-    - With the preset on a Next.js fixture, the plan holds AGENTS.md (both blocks), `.claude/skills/{engineering-principles,frontend-react,frontend-nextjs}/SKILL.md` with `item: preset:<id>`, and settings with attribution and DO_NOT_TRACK.
+    - With the preset on a Next.js fixture, the plan holds AGENTS.md (both blocks), `.claude/skills/{engineering-principles,frontend-react,frontend-nextjs}/SKILL.md` with `item: preset:<id>`, and settings with attribution, `DO_NOT_TRACK` and `SUPERPOWERS_DISABLE_TELEMETRY`.
     - Without a preset, the plan is unchanged from today (the existing plan tests stay green).
   - **Review focus 2:** a config with `agents-md` deselected and the preset on removes only the harness block. AGENTS.md keeps the preset block, and CLAUDE.md keeps `@AGENTS.md`.
   - **Byte-identical (§11):**
@@ -351,12 +364,14 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
     - `Impeccable installs hooks: SessionStart, PostToolUse on Edit and Write, and Stop.`
     - `Impeccable downloads its engine into ~/.impeccable/bin/ on first use.`
   - The preset itself adds these lines:
-    - `Telemetry: DO_NOT_TRACK=1 goes in .claude/settings.json env; it applies to every command in the session.`
+    - one telemetry line per selected `telemetry_off` id, built from `TELEMETRY_ENV` (R1):
+      - `Telemetry: DO_NOT_TRACK=1 goes in .claude/settings.json env for impeccable; it applies to every command in the session.`
+      - `Telemetry: SUPERPOWERS_DISABLE_TELEMETRY=<value> goes in .claude/settings.json env for superpowers; it applies to every command in the session.`
     - `Attribution: .claude/settings.json sets "attribution": false, so commits and PRs get no AI trailer.`
 
 - [ ] **Step 1: Write the failing tests:**
   - `budgetGate` with the preset on a Next.js fixture prints a total that includes the core and skill entries. The preselected plugins are listed under `Not measured before install:`, which is the current rule (§5).
-  - The init `--dry-run` output with the preset holds the four preview lines exactly once each. Without the preset, it holds none.
+  - The init `--dry-run` output with the preset on a web fixture holds the five preview lines (two Impeccable, two telemetry, one attribution) exactly once each. On an api fixture (no Impeccable), it holds only the superpowers telemetry line and the attribution line. Without the preset, it holds none.
   - **Skill text:**
     - `interview.md` asks "Use a named preset?" after scope and before the gaps, with "No preset (neutral catalog, the default)" first, and says to run `harness preset list`.
     - `SKILL.md` step 4 passes `--preset <id> --answers <answers.json>` to select, and says which rows came from the preset.
@@ -365,7 +380,7 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
 - [ ] **Step 3: Implement** the code and the skill lines. Keep `interview.md` and `SKILL.md` within their current length plus 4 lines each (lean context; they load only on use).
 - [ ] **Step 4: Run the tests and confirm they pass.** Then `pnpm typecheck`.
 - [ ] **Step 5: Docs.**
-  - README: add a short "Named presets" section. It covers what `khubaib-frontend` adds, the ~231 to ~405 token cost (labelled as an estimate), that `DO_NOT_TRACK=1` applies to the whole session (C3) and only after the folder is trusted (Planning check 1), and how to turn it off.
+  - README: add a short "Named presets" section. It covers what `khubaib-frontend` adds, the ~231 to ~405 token cost (labelled as an estimate), that `DO_NOT_TRACK=1` and `SUPERPOWERS_DISABLE_TELEMETRY` apply to the whole session (C3, R1) and only after the folder is trusted (Planning check 1), and how to turn it off.
   - `docs/reference.md` "The `/harness:init` flow": add the preset question.
   - PR body: both updated.
 - [ ] **Step 6: Commit.** Message: `feat(preset): offer presets in init, with preview and budget lines`.
@@ -551,7 +566,7 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
   | §3 stack matching | 4 |
   | §4 interview, answers, select, preview, budget, config | 3, 4, 8 |
   | §5 core block and cost | 2, 5, 6, 8 |
-  | §6 Impeccable telemetry | 5, 8 |
+  | §6 Impeccable telemetry, R1 superpowers telemetry | 2, 5, 8 |
   | §6 taste-skill | Owner actions, Planning check 2 |
   | §6 asking wins | 2 |
   | §7 skills | 2 |
@@ -572,7 +587,4 @@ The first step of Tasks 9 and 10 reads the merged PR-size code and uses its real
 
 ## Owner questions
 
-1. **superpowers telemetry** (Planning check 4). The options:
-   - (a) Recommended: in Task 2, add `superpowers` to `telemetry_off`, and have `presetSets` also write `SUPERPOWERS_DISABLE_TELEMETRY`. Its value is read from the pinned superpowers README in that task, and is never guessed.
-   - (b) Keep the spec as is, and have the README say that superpowers' optional visual companion has its own opt-out.
-   - (c) Leave superpowers out of the preselects.
+None open. Question 1 (superpowers telemetry) was answered as option (a); see Owner rulings R1.

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { scan, show, inScope } from '../../src/vet/scan.js';
+import { scan as rawScan, show, inScope } from '../../src/vet/scan.js';
 import type { Fetched } from '../../src/vet/fetch.js';
+import { alwaysLoadedText, estimateTokens } from '../../src/budget/measure.js';
 import { makeRepo } from '../install/helpers.js';
 import { notSecretLines, pinnedLines, remoteLines, repos, scriptNames, secretLines } from '../fixtures/vet/repos.js';
+
+/** The older tests are about other rules, so the licence finding (fixtures rarely have a LICENSE) is dropped here. */
+const scan = (f: Fetched, p: string) => { const r = rawScan(f, p); return { ...r, findings: r.findings.filter((x) => x.rule !== 'license') }; };
 
 /** Builds a Fetched the way fetchTarball does: instruction names get .vetted (D12), `map` keeps the original path. */
 const fx = (files: Record<string, string>): Fetched => {
@@ -312,5 +316,53 @@ describe('show', () => {
   it('escapes invisible and bidi characters, and controls', () => {
     expect(show('a​b‮c')).toBe('a\\u200bb\\u202ec');
     expect(show('\x1b[31m')).toBe('\\u001b[31m');
+  });
+  describe('low rules and context', () => {
+    const low = (f: Fetched, rule: string, path = '') => rawScan(f, path).findings.filter((x) => x.rule === rule);
+    const MIT = 'MIT License\n\nPermission is hereby granted, free of charge, to any person\n';
+    it('license: missing at both places', () => {
+      expect(low(fx({ 'x.sh': 'a' }), 'license')).toEqual([{ severity: 'low', rule: 'license', file: '', line: 0, text: 'no licence file' }]);
+    });
+    it.each(['LICENSE', 'LICENCE', 'COPYING', 'LICENSE.md', 'license.txt'])('license: %s with MIT text is fine', (n) => expect(low(fx({ [n]: MIT }), 'license')).toEqual([]));
+    it.each([
+      'Apache License\nVersion 2.0, January 2004', 'Redistribution and use in source and binary forms, with', 'GNU LESSER GENERAL PUBLIC LICENSE', 'GNU AFFERO GENERAL PUBLIC LICENSE',
+      'GNU GENERAL PUBLIC LICENSE', 'Mozilla Public License Version 2.0', 'Permission to use, copy, modify, and/or distribute this', 'This is free and unencumbered software released',
+    ])('license: recognises %s', (t) => expect(low(fx({ LICENSE: t }), 'license')).toEqual([]));
+    it('license: unrecognised text, only the first 4 KB count', () => {
+      expect(low(fx({ LICENSE: 'All rights reserved' }), 'license')).toMatchObject([{ file: 'LICENSE', text: 'not an OSI licence (unrecognised text)' }]);
+      expect(low(fx({ LICENSE: ' '.repeat(5000) + MIT }), 'license')).toHaveLength(1);
+    });
+    it('license: found at the target path or the repo root', () => {
+      expect(low(fx({ 'plugins/p/x.sh': 'a', LICENSE: MIT }), 'license', 'plugins/p')).toEqual([]);
+      expect(low(fx({ 'plugins/p/x.sh': 'a', 'plugins/p/LICENSE': MIT }), 'license', 'plugins/p')).toEqual([]);
+      expect(low(fx({ 'plugins/p/x.sh': 'a' }), 'license', 'plugins/p')).toHaveLength(1);
+    });
+    it.each(['POSTHOG_KEY=1', 'MY_TELEMETRY_URL=u', "import '@segment/analytics-node'", 'import mixpanel', "require('@sentry/node')", 'opentelemetry'])('telemetry matches %s', (l) => {
+      expect(hit([l], 'telemetry')).toMatchObject([{ severity: 'low', line: 1 }]);
+    });
+    it('telemetry: ignores analysis; opt-out lines get their own finding', () => {
+      expect(hit(['analysis'], 'telemetry')).toEqual([]);
+      for (const l of ['DO_NOT_TRACK=1', 'TELEMETRY_DISABLED=1', 'OPT_OUT=1', 'run --no-telemetry']) {
+        expect(hit([l], 'telemetry').map((f) => f.text)).toContain(`opt-out: ${l}`);
+      }
+    });
+    it('telemetry: capped at 20 per file with a summary', () => {
+      const f = hit(Array.from({ length: 30 }, () => 'mixpanel'), 'telemetry');
+      expect(f).toHaveLength(21);
+      expect(f.filter((x) => x.severity === 'low' && x.line === 0)).toMatchObject([{ text: '10 more telemetry findings in this file' }]);
+    });
+    it('context: sums skill, agent and command always-loaded text', () => {
+      const skill = '---\nname: a\ndescription: d\n---\nbody\n', agent = '---\nname: b\ndescription: e\n---\nx\n', cmd = '---\ndescription: c\n---\ny\n';
+      const r = scan(fx({ 'skills/a/SKILL.md': skill, 'agents/b.md': agent, 'commands/c.md': cmd }), '');
+      expect(r.context).toEqual({ tokens: estimateTokens(alwaysLoadedText('skill', skill)) + estimateTokens(alwaysLoadedText('agent', agent)) + estimateTokens(alwaysLoadedText('skill', cmd)), unmeasured: [] });
+      const r2 = scan(fx({ 'skills/a/SKILL.md': skill + 'much longer body '.repeat(50), 'agents/b.md': agent, 'commands/c.md': cmd }), '');
+      expect(r2.context.tokens).toBe(r.context.tokens);
+    });
+    it('context: SessionStart and UserPromptSubmit command hooks are unmeasured, PreToolUse is not', () => {
+      const h = (ev: string) => scan(fx({ 'hooks/hooks.json': JSON.stringify({ hooks: { [ev]: [{ hooks: [{ type: 'command', command: 'x' }] }] } }) }), '').context.unmeasured;
+      expect(h('SessionStart')).toEqual(['hooks/hooks.json: SessionStart hook']);
+      expect(h('UserPromptSubmit')).toEqual(['hooks/hooks.json: UserPromptSubmit hook']);
+      expect(h('PreToolUse')).toEqual([]);
+    });
   });
 });

@@ -1,0 +1,12 @@
+id: engineering-principles
+kind: own-skill
+title: "Engineering principles"
+source: {type: own, files: [{from: skills/engineering-principles/SKILL.md, to: .claude/skills/engineering-principles/SKILL.md}]}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {always: true}
+cost: {context: low, setup: none}
+stance: default
+why: "Design principles and general JS/TS anti-patterns, on demand."
+evidence:
+  - "docs/specs/2026-11-05-personal-preset-design.md section 1: P1, P2, P3, P4, P9, O4 (outline, section 7)"

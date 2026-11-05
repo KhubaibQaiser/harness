@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { writeAtomic } from '../core/atomic.js';
 import type { Exec } from '../core/exec.js';
@@ -19,6 +20,22 @@ const RULE_IN_ERROR = /rule ["']([^"']+)["']/;
 const TSC_ERROR = /error TS\d+/g;
 
 type Run = ReturnType<Exec>;
+
+/**
+ * The tool's JS entry inside the target repo, to run with node: the same on Windows (no .cmd shim) and a timeout kills the real process.
+ * null when the package, its package.json or its bin entry cannot be found.
+ */
+export function resolveBin(root: string, pkg: string, name: string): string | null {
+  try {
+    const manifest = createRequire(join(root, 'package.json')).resolve(`${pkg}/package.json`);
+    const bin = (JSON.parse(readFileSync(manifest, 'utf8')) as { bin?: string | Record<string, string> }).bin;
+    const rel = typeof bin === 'string' ? bin : bin?.[name];
+    const file = typeof rel === 'string' ? resolve(dirname(manifest), rel) : null;
+    return file && existsSync(file) ? file : null;
+  } catch {
+    return null;
+  }
+}
 interface Ctx { root: string; p: Proposal; exec: Exec; timeoutMs: number; dir: string }
 const first = (s: string | undefined) => (s ?? '').split('\n').find((l) => l.trim())?.trim().slice(0, MAX_ERROR) ?? '';
 
@@ -57,10 +74,11 @@ async function runEslint({ root, p, exec, timeoutMs, dir }: Ctx): Promise<Counts
   const known = (id: string) => p.rules.some((r) => r.id === id || id.startsWith(`${r.id}/`)) && !dropped.some((d) => d.rule === id);
   writeAtomic(join(dir, 'rules-preview.proposal.mjs'), p.configText);
   const preview = join(dir, 'rules-preview.mjs');
-  const bin = join(root, 'node_modules', '.bin', 'eslint');
+  const bin = resolveBin(root, 'eslint', 'eslint');
+  if (!bin) return { byRule: {}, dropped, error: 'eslint is not installed' };
   for (let i = 0; i <= MAX_RETRIES; i++) {
     writeAtomic(preview, previewConfig(root, dropped.map((d) => d.rule)));
-    const r: Run = exec(bin, ['--config', preview, '--format', 'json', '--ignore-pattern', '.harness/**', '.'], { timeoutMs, cwd: root });
+    const r: Run = exec(process.execPath, [bin, '--config', preview, '--format', 'json', '--ignore-pattern', '.harness/**', '.'], { timeoutMs, cwd: root });
     if (r.timedOut) return { byRule: {}, dropped, error: 'eslint timed out' };
     if (r.missing) return { byRule: {}, dropped, error: 'eslint is not installed' };
     const bad = r.status > 1 ? RULE_IN_ERROR.exec(r.stderr ?? '')?.[1] : undefined;
@@ -77,8 +95,8 @@ async function runEslint({ root, p, exec, timeoutMs, dir }: Ctx): Promise<Counts
 }
 
 /** Error count of one tsc run, or null when it did not finish. */
-function tscErrors(root: string, exec: Exec, project: string, timeoutMs: number): number | null {
-  const r = exec(join(root, 'node_modules', '.bin', 'tsc'), ['--noEmit', '--pretty', 'false', '-p', project], { timeoutMs, cwd: root });
+function tscErrors(root: string, bin: string, exec: Exec, project: string, timeoutMs: number): number | null {
+  const r = exec(process.execPath, [bin, '--noEmit', '--pretty', 'false', '-p', project], { timeoutMs, cwd: root });
   if (r.timedOut || r.missing || r.stdout.length > MAX_OUTPUT) return null;
   const n = r.stdout.match(TSC_ERROR)?.length ?? 0;
   return n === 0 && r.status !== 0 ? null : n; // failed to run (not a type error): unknown, never 0
@@ -87,12 +105,13 @@ function tscErrors(root: string, exec: Exec, project: string, timeoutMs: number)
 function runTs({ root, p, exec, timeoutMs, dir }: Ctx): Counts['ts'] {
   const options = tsOptions(p);
   const byOption: Record<string, number | null> = Object.fromEntries(options.map((o) => [o, null]));
-  const baseline = tscErrors(root, exec, join(root, 'tsconfig.json'), timeoutMs);
-  if (baseline === null) return { byOption, baseline };
+  const bin = resolveBin(root, 'typescript', 'tsc');
+  const baseline = bin ? tscErrors(root, bin, exec, join(root, 'tsconfig.json'), timeoutMs) : null;
+  if (baseline === null || !bin) return { byOption, baseline };
   for (const o of options) {
     const file = join(dir, `tsconfig.${o}.json`);
     writeAtomic(file, JSON.stringify({ extends: join(root, 'tsconfig.json'), compilerOptions: { [o]: true } }));
-    const n = tscErrors(root, exec, file, timeoutMs);
+    const n = tscErrors(root, bin, exec, file, timeoutMs);
     byOption[o] = n === null ? null : Math.max(0, n - baseline);
   }
   return { byOption, baseline };

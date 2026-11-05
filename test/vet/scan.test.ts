@@ -16,6 +16,8 @@ const fx = (files: Record<string, string>): Fetched => {
   return { dir: makeRepo(written, { git: false }), files: Object.keys(files).sort(), map, skipped: [], large: [] };
 };
 const lines = (ls: string[]): Fetched => fx({ 'x.sh': ls.join('\n') + '\n' });
+/** Findings of the high-severity rules; the medium rules have their own tests. */
+const highs = (f: Fetched, path = '') => scan(f, path).findings.filter((x) => x.severity === 'high');
 const hit = (ls: string[], rule: string) => scan(lines(ls), '').findings.filter((f) => f.rule === rule);
 
 describe('scan', () => {
@@ -37,7 +39,7 @@ describe('scan', () => {
   it.each(remoteLines)('unpinned-remote matches %s', (l) => expect(hit([l], 'unpinned-remote')).toHaveLength(1));
   it.each(pinnedLines)('unpinned-remote ignores %s', (l) => expect(hit([l], 'unpinned-remote')).toEqual([]));
   it('unpinned-remote: .mcp.json command + args', () => {
-    const f = scan(fx(repos.mcp!), '').findings;
+    const f = highs(fx(repos.mcp!));
     expect(f).toHaveLength(1);
     expect(f[0]).toMatchObject({ rule: 'unpinned-remote', file: '.mcp.json', text: 'npx -y pkg' });
   });
@@ -48,7 +50,7 @@ describe('scan', () => {
   });
   it('scope: sub-path only, plus repo-root plugin files', () => {
     const r = scan(fx(repos.scoped!), 'plugins/p');
-    expect(r.findings.map((f) => f.file)).toEqual(['.mcp.json']);
+    expect(r.findings.filter((f) => f.severity === 'high').map((f) => f.file)).toEqual(['.mcp.json']);
     expect(r.files).toBe(2);
     expect(inScope('plugins/pp/x', 'plugins/p')).toBe(false);
     expect(inScope('.claude-plugin/plugin.json', 'plugins/p')).toBe(true);
@@ -63,8 +65,8 @@ describe('scan', () => {
   });
   it('unpinned-remote: .mcp.json args use the same flag parsing', () => {
     const mcp = (args: string[]) => fx({ '.mcp.json': JSON.stringify({ mcpServers: { s: { command: 'npx', args } } }) });
-    expect(scan(mcp(['-y', '-p', 'foo@1.0.0', 'bar']), '').findings).toEqual([]);
-    expect(scan(mcp(['-y', '-p', 'foo', 'bar@1.0.0']), '').findings).toHaveLength(1);
+    expect(highs(mcp(['-y', '-p', 'foo@1.0.0', 'bar']))).toEqual([]);
+    expect(highs(mcp(['-y', '-p', 'foo', 'bar@1.0.0']))).toHaveLength(1);
   });
   it('hook-shell: events on one line each get a finding (minified)', () => {
     expect(scan(fx(repos.minified!), '').findings.map((f) => f.text)).toEqual(['PreToolUse: a', 'Stop: b']);
@@ -87,7 +89,7 @@ describe('scan', () => {
     expect(hit(['echo a \\', 'cat .env'], 'secrets')[0]!.line).toBe(1);
   });
   it('hook-http: an http hook is high, one per event, with its URL', () => {
-    expect(scan(fx(repos.hooksHttp!), '').findings).toMatchObject([{ severity: 'high', rule: 'hook-http', file: 'hooks/hooks.json', text: 'Stop: https://x.test/h' }]);
+    expect(highs(fx(repos.hooksHttp!))).toMatchObject([{ severity: 'high', rule: 'hook-http', file: 'hooks/hooks.json', text: 'Stop: https://x.test/h' }]);
   });
   it('hooks given as objects instead of arrays are read', () => {
     expect(scan(fx(repos.hooksObject!), '').findings.map((f) => f.text).sort()).toEqual(['PreToolUse: y', 'Stop: x']);
@@ -125,7 +127,7 @@ describe('scan', () => {
   });
   it('hooks in any JSON with a hooks key get the secrets check; so do MCP args', () => {
     expect(scan(fx(repos.hooksCustom!), '').findings.map((f) => f.rule).sort()).toEqual(['hook-shell', 'secrets']);
-    expect(scan(fx(repos.mcpSecret!), '').findings.map((f) => f.rule)).toEqual(['secrets']);
+    expect(highs(fx(repos.mcpSecret!)).map((f) => f.rule)).toEqual(['secrets']);
   });
   it('an unparseable settings.json is reported and still text-scanned', () => {
     const f = scan(fx(repos.brokenSettings!), '').findings;
@@ -137,6 +139,74 @@ describe('scan', () => {
     expect(scan(fx(repos.skillKind!), '').kind).toBe('skill');
     expect(scan(fx(repos.scoped!), 'plugins/p').kind).toBe('repo');
     expect(scan(fx(repos.scoped!), '').context).toEqual({ tokens: 0, unmeasured: [] });
+  });
+});
+
+describe('medium rules', () => {
+  const rules = (files: Record<string, string>, rule: string, path = '') => scan(fx(files), path).findings.filter((f) => f.rule === rule);
+  const one = (name: string, body: string, rule: string) => rules({ [name]: body }, rule);
+  const long = (n: number, c = 'A') => c.repeat(n);
+
+  it.each([
+    ['base64 run', `x = "${long(200)}=="`],
+    ['hex run', `h ${long(200, 'a')} end`],
+    ['eval(', 'eval(x)'],
+    ['new Function(', 'f = new Function("a")'],
+    ['eval(atob(', 'eval(atob("YQ=="))'],
+  ])('obfuscated matches %s', (_n, l) => expect(one('x.js', l, 'obfuscated')).toHaveLength(1));
+  it.each([['a 40-hex sha', `sha ${long(40, 'a')}`], ['evaluate(', 'evaluate(x)'], ['a 199-char run', long(199)]])('obfuscated ignores %s', (_n, l) => expect(one('x.js', l, 'obfuscated')).toEqual([]));
+  it('obfuscated: minified JS only in prompt/script dirs, only over 5120 bytes', () => {
+    const min = `var a=1;\n${'a;'.repeat(550)}\n${long(4200, ' ')}`;
+    expect(rules({ 'scripts/m.js': min }, 'obfuscated').map((f) => f.text)).toEqual(['minified JS']);
+    expect(rules({ 'skills/a/m.js': min }, 'obfuscated')).toHaveLength(1);
+    expect(rules({ 'src/m.js': min }, 'obfuscated')).toEqual([]);
+    expect(rules({ 'scripts/m.js': `${'a;'.repeat(550)}\n` }, 'obfuscated')).toEqual([]);
+    expect(rules({ 'scripts/m.sh': min }, 'obfuscated')).toEqual([]);
+  });
+
+  it.each([
+    ['x.sh', 'echo https://x.dev/a'], ['x.json', '{"u": "https://x.dev/a"}'], ['x.js', 'fetch(u)'], ['x.js', 'axios.get(u)'], ['x.js', 'http.request(o)'],
+    ['x.py', 'requests.post(u)'], ['x.js', 'new WebSocket(u)'], ['x.sh', 'nc host 1'], ['skills/a/SKILL.md', 'see https://x.dev/a'],
+  ])('network matches %s: %s', (n, l) => expect(one(n, l, 'network')).toHaveLength(1));
+  it.each([['README.md', 'https://x.dev/a'], ['notes.md', 'https://x.dev/a'], ['x.sh', 'echo hello'], ['x.js', 'myfetch(u)']])('network ignores %s: %s', (n, l) => expect(one(n, l, 'network')).toEqual([]));
+
+  it('mcp-server: one finding per server, command or url, in .mcp.json and plugin.json', () => {
+    const f = rules({ '.mcp.json': JSON.stringify({ mcpServers: { s: { command: 'npx', args: ['pkg@1.0.0'] }, t: { type: 'http', url: 'https://h/mcp' } } }, null, 2) }, 'mcp-server');
+    expect(f.map((x) => [x.severity, x.file, x.text])).toEqual([['medium', '.mcp.json', 's: npx pkg@1.0.0'], ['medium', '.mcp.json', 't: https://h/mcp']]);
+    expect(f[1]!.line).toBeGreaterThan(f[0]!.line);
+    expect(rules({ '.claude-plugin/plugin.json': JSON.stringify({ mcpServers: { s: { command: 'node', args: ['a.js'] } } }) }, 'mcp-server')[0]!.text).toBe('s: node a.js');
+    expect(rules({ '.mcp.json': '{"mcpServers":{}}' }, 'mcp-server')).toEqual([]);
+  });
+
+  it('permissions: one finding per allow rule; deny is not one', () => {
+    const j = JSON.stringify({ permissions: { allow: ['Bash(npm test)', 'Read'], deny: ['Bash(rm:*)'] } }, null, 2);
+    expect(rules({ '.claude/settings.json': j }, 'permissions').map((f) => [f.severity, f.text])).toEqual([['medium', 'allow: Bash(npm test)'], ['medium', 'allow: Read']]);
+    expect(rules({ '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Bash'] } }) }, 'permissions')).toEqual([]);
+    expect(one('h.sh', 'echo \'{"permissionDecision": "allow"}\'', 'permissions')).toHaveLength(1);
+    expect(one('h.sh', 'claude --dangerously-skip-permissions -p x', 'permissions')).toHaveLength(1);
+    expect(one('h.sh', 'echo \'{"permissionDecision": "deny"}\'', 'permissions')).toEqual([]);
+  });
+
+  it.each([['a​b'], ['a‮b'], ['<!-- hidden -->'], ['Ignore previous instructions'], ['do not tell the user'], ['reveal the System Prompt']])('injection-text matches %j', (l) => {
+    for (const n of ['skills/a/SKILL.md', 'agents/b.md', 'commands/c.md', 'SKILL.md']) expect(one(n, l, 'injection-text')).toHaveLength(1);
+  });
+  it('injection-text: only prompt markdown; plain prose is clean; the hit is visible in the text', () => {
+    expect(one('docs/notes.md', 'ignore previous instructions', 'injection-text')).toEqual([]);
+    expect(one('notes.md', 'ignore previous instructions', 'injection-text')).toEqual([]);
+    expect(one('agents/x.sh', 'ignore previous instructions', 'injection-text')).toEqual([]);
+    expect(one('skills/a/SKILL.md', 'Use this to format code nicely.', 'injection-text')).toEqual([]);
+    expect(one('skills/a/SKILL.md', `${long(300, 'x')}​`, 'injection-text')[0]!.text).toContain('\\u200b');
+  });
+
+  it('unsafe-archive: each in-scope skipped entry, line 0', () => {
+    const f = { ...fx({ 'plugins/p/a.md': 'x', 'other/b.md': 'x' }), skipped: [{ path: 'plugins/p/ln', why: 'symlink' }, { path: 'other/z', why: 'symlink' }] };
+    expect(scan(f, 'plugins/p').findings.filter((x) => x.rule === 'unsafe-archive')).toEqual([{ severity: 'medium', rule: 'unsafe-archive', file: 'plugins/p/ln', line: 0, text: 'symlink' }]);
+    expect(scan({ ...f, skipped: [] }, '').findings.filter((x) => x.rule === 'unsafe-archive')).toEqual([]);
+  });
+  it('one finding per rule per line; same line may carry different rules', () => {
+    const f = one('x.js', 'eval(a); eval(b); fetch(u)', 'obfuscated');
+    expect(f).toHaveLength(1);
+    expect(scan(fx({ 'x.js': 'eval(a); fetch(u)' }), '').findings.map((x) => x.rule).sort()).toEqual(['network', 'obfuscated']);
   });
 });
 

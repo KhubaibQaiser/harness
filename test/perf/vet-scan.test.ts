@@ -11,6 +11,10 @@ const servers = (n: number) => JSON.stringify({ mcpServers: Object.fromEntries(A
 // Each case is a 1 MB file that used to (or could) make a scan path quadratic.
 const cases: [string, string, string][] = [
   ...['curl -o x ', 'env ', 'npx ', 'curl u | sudo ', 'sh -c ', 'curl ', 'curl -o x;', 'curl -o x && ', 'printenv a | ', 'a\\\n'].map((u): [string, string, string] => [`1 MB of ${JSON.stringify(u)}`, 'x.sh', rep(u)]),
+  ...['a'.repeat(199) + ' ', 'a'.repeat(199) + '+', '0'.repeat(199) + ' ', 'eval ', 'new ', 'nc ', ';   ', 'ignore ', 'ignore' + ' '.repeat(50), 'system ', 'do not ', 'permissionDecision', 'permissionDecision:', 'requests.', 'https', 'a;'].map((u): [string, string, string] => [`1 MB of ${JSON.stringify(u)} in a skill`, 'skills/a/SKILL.md', rep(u)]),
+  ['a long minified script', 'scripts/m.js', rep('a;b=1;')],
+  ['a long run of one base64 character', 'skills/a/SKILL.md', 'A'.repeat(MB)],
+  ['a settings.json with many allow rules', '.claude/settings.json', JSON.stringify({ permissions: { allow: Array.from({ length: 60000 }, (_, i) => `R${i}`) } }, null, 2)],
   ['a pretty hooks.json', 'hooks/hooks.json', hooks(14000, true)],
   ['a minified hooks.json', 'hooks/hooks.json', hooks(28000, false)],
   ['an .mcp.json with many servers', '.mcp.json', servers(9000)],

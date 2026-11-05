@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { retryTransient } from './atomic.js';
 import { join, posix, relative, resolve } from 'node:path';
 import { parse } from 'yaml';
-import { PROJECT_TYPES, type ProjectType } from '../catalog/schema.js';
+import { ID_RE, PROJECT_TYPES, type ProjectType } from '../catalog/schema.js';
+import { PREFIX_RE, type PresetGit } from './branch-prefix.js';
 
 export type StopStep = string | { name: string; run: string[] };
 export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun' | 'none';
@@ -54,12 +55,21 @@ export interface HarnessConfig {
   context: { budget_tokens: number };
   tdd: { paths: string[]; exempt: string[]; diff_coverage: number; coverage_skip: string[]; test_lock: boolean; results_dir: string };
   multi_file_gate: { generated: string[] };
+  pr_size: { target_lines: number; max_lines: number; max_files: number; exclude: string[] };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
   stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
+  /** Absent until init records a chosen preset. */
+  preset?: { id: string; version: string; items: string[]; git: PresetGit };
 }
 
 export const DEFAULT_RESULTS_DIR = '.harness/results';
 export const LEGACY_RESULTS_DIR = '.harness/state/test-results';
+
+/** Globs not counted toward a PR's size, in this order. */
+export const PR_SIZE_EXCLUDE: string[] = [
+  '**/pnpm-lock.yaml', '**/package-lock.json', '**/npm-shrinkwrap.json', '**/yarn.lock', '**/bun.lock', '**/bun.lockb', '**/Cargo.lock', '**/poetry.lock',
+  '**/uv.lock', '**/Pipfile.lock', '**/Gemfile.lock', '**/composer.lock', '**/go.sum', '**/.!(npm|harness)ignore', '**/__snapshots__/**', '**/*.snap',
+];
 
 export const defaults = (): HarnessConfig => ({
   version: 1,
@@ -73,6 +83,7 @@ export const defaults = (): HarnessConfig => ({
   context: { budget_tokens: 2000 }, // DEFAULT_CONTEXT_BUDGET in src/budget/measure.ts; not imported, to keep the hook bundle as is
   tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: DEFAULT_RESULTS_DIR },
   multi_file_gate: { generated: [] },
+  pr_size: { target_lines: 200, max_lines: 400, max_files: 20, exclude: [...PR_SIZE_EXCLUDE] },
   unattended: { multi_file_gate: 'block', require_reason: false },
   stop: {
     steps: ['format:check', 'lint', 'typecheck', 'test'],
@@ -165,7 +176,18 @@ const resultsDirRule: Rule = (v) => {
   const p = posix.normalize(v.replace(/\\/g, '/')).toLowerCase();
   return p === '.harness/state' || p.startsWith('.harness/state/') ? IN_STATE : null;
 };
+const presetRule = objRule({
+  id: (v) => (typeof v === 'string' && ID_RE.test(v) ? null : 'must be lowercase letters, digits and hyphens'),
+  version: str,
+  items: strs,
+  git: objRule({
+    branch_prefixes: listOf('prefixes', (v) => (typeof v === 'string' && PREFIX_RE.test(v) ? null : 'must match ^[a-z0-9-]+/$')),
+    no_ai_trailer: bool,
+    pr_size_warning: bool,
+  }),
+});
 const RULES: Record<string, Rule> = {
+  preset: presetRule,
   'tdd.results_dir': resultsDirRule,
   version: (v) => (v === 1 ? null : 'must be 1'),
   'stop.max_attempts': num(1, 10, true),
@@ -179,6 +201,9 @@ const RULES: Record<string, Rule> = {
   'project.team_size': num(0, 10000, true),
   'project.run_budget_usd': num(0, 100000, false),
   'context.budget_tokens': num(0, 200000, true),
+  'pr_size.target_lines': num(1, 100000, true),
+  'pr_size.max_lines': num(1, 100000, true),
+  'pr_size.max_files': num(1, 10000, true),
   apps: listOf('app mappings', appRule),
   items: listOf('item mappings', itemRule),
 };
@@ -190,6 +215,14 @@ function problem(p: string, v: unknown, d: unknown): Fail | null {
   return typeof v === typeof d ? null : `must be ${typeof d === 'boolean' ? 'a boolean' : typeof d === 'number' ? 'a number' : 'a string'}`;
 }
 
+/** Rules that span keys; loadConfig and validateConfig (doctor, init) both use this. */
+export function crossKeyErrors(c: HarnessConfig): { path: string; detail: string }[] {
+  const { target_lines: t, max_lines: m } = c.pr_size;
+  if (t <= m) return [];
+  const detail = t === defaults().pr_size.target_lines ? `is ${t}, the default, above pr_size.max_lines (${m}); set target_lines too` : 'must not be greater than pr_size.max_lines';
+  return [{ path: 'pr_size.target_lines', detail }];
+}
+
 export type Issue = { path: string; kind: 'unknown' | 'mapping' | 'invalid'; detail?: string };
 
 // Overlay `user` onto `base` in place; unknown, mistyped or out-of-range keys keep the default and are reported.
@@ -197,8 +230,12 @@ export function overlay(base: Record<string, unknown>, user: Record<string, unkn
   for (const [k, v] of Object.entries(user)) {
     const p = path ? `${path}.${esc(k)}` : esc(k);
     const d = Object.hasOwn(base, k) ? base[k] : undefined; // own keys only: no __proto__/constructor lookups
-    if (d === undefined) issues.push({ path: p, kind: 'unknown' });
-    else if (isObj(d)) {
+    if (d === undefined && !Object.hasOwn(RULES, p)) issues.push({ path: p, kind: 'unknown' });
+    else if (d === undefined) { // an optional key with no default (preset): its rule checks it
+      const bad = problem(p, v, d);
+      if (bad) issues.push({ path: typeof bad === 'string' ? p : p + bad.at, kind: 'invalid', detail: typeof bad === 'string' ? bad : bad.msg });
+      else base[k] = v;
+    } else if (isObj(d)) {
       if (isObj(v)) overlay(d, v, p, issues);
       else issues.push({ path: p, kind: 'mapping' });
     } else {
@@ -248,6 +285,11 @@ export function loadConfig(root: string, read: (p: string, e: 'utf8') => string 
     if (kind === 'unknown') fail(`config: unknown key "${p}" ignored`, `unknown key "${p}"`);
     else if (kind === 'mapping') fail(`config: "${p}" must be a mapping; using default`, `"${p}" must be a mapping`);
     else fail(`config: "${p}" has an invalid value (${detail}); using default`, `"${p}" ${detail}`);
+  }
+  for (const { path: p, detail } of crossKeyErrors(config)) {
+    fail('config: "pr_size.target_lines" is greater than pr_size.max_lines; using defaults', `"${p}" ${detail}`);
+    config.pr_size.target_lines = defaults().pr_size.target_lines;
+    config.pr_size.max_lines = defaults().pr_size.max_lines;
   }
   // An absolute path is judged by its repo-relative form, through the same rule as the text check (ruling 8).
   const rel = relative(root, resolve(root, config.tdd.results_dir)).replace(/\\/g, '/');

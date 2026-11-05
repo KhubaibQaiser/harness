@@ -6,7 +6,12 @@ import { PREFIX_RE } from '../core/branch-prefix.js';
 import type { PresetGit } from '../core/branch-prefix.js';
 import { packageDir } from '../core/package-dir.js';
 import { ID_RE, validateItem } from './schema.js';
-import type { Catalog, CatalogItem } from './schema.js';
+import { TELEMETRY_ENV } from './telemetry-env.js';
+import type { AppliesWhen, Catalog, CatalogItem } from './schema.js';
+import type { Facts } from '../install/detect.js';
+import { checklist, type ChecklistRow } from '../install/select.js';
+import { mergeAgentsPreset } from '../install/merge.js';
+import { estimateTokens, itemContext, itemContextLine, type ContextEntry } from '../budget/measure.js';
 
 export { PREFIX_RE, slug, suggestBranches } from '../core/branch-prefix.js';
 export type { PresetGit } from '../core/branch-prefix.js';
@@ -14,8 +19,7 @@ export type { PresetGit } from '../core/branch-prefix.js';
 export interface Preset { id: string; title: string; description: string; core: string; preselect: string[]; skills: string[]; settings: { attribution?: 'off'; telemetry_off: string[] }; git: PresetGit }
 export interface LoadedPreset { preset: Preset; base: string; yamlPath: string; items: CatalogItem[] }
 
-/** Catalog id -> the environment variable that turns its telemetry off. Filled by the content task. */
-export const TELEMETRY_ENV: Record<string, { name: string; value: string }> = {};
+export { TELEMETRY_ENV };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const strs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
@@ -193,4 +197,37 @@ export function listPresets(root: string): { id: string; description: string; wh
 export function findPreset(id: string, root: string): string | null {
   if (!ID_RE.test(id)) return null;
   return presetDirs(root).map((d) => join(d, `${id}.yaml`)).find(existsSync) ?? null;
+}
+
+/** `always` is true; otherwise every key present must hold. */
+export function appliesTo(aw: AppliesWhen, facts: Pick<Facts, 'deps' | 'frameworks'>, projectType: string): boolean {
+  if (aw.always) return true;
+  return (!aw.any_dep || aw.any_dep.some((d) => facts.deps.includes(d)))
+    && (!aw.frameworks || aw.frameworks.some((f) => facts.frameworks.includes(f)))
+    && (!aw.project_types || (aw.project_types as string[]).includes(projectType));
+}
+
+/** The core is counted with its markers, as mergeAgentsPreset writes it. Templates come from the preset folder. */
+export function presetContext(l: LoadedPreset, ids: string[]): ContextEntry[] {
+  const templates = join(l.base, 'templates');
+  return ids.map((id) => {
+    if (id === l.preset.core) return { id, tokens: estimateTokens(mergeAgentsPreset(null, readFileSync(join(templates, 'core.md'), 'utf8')).after) };
+    return itemContext(l.items.find((i) => i.id === id)!, { templates });
+  });
+}
+
+export const presetReason = (id: string): string => `Preselected by the ${id} preset`;
+
+/** Stack-matched preselects the reviewer did not pick, then the core and the matched skills; all ticked. */
+export function presetRows(l: LoadedPreset, c: Catalog, facts: Pick<Facts, 'deps' | 'frameworks'>, projectType: string, picked: string[], dirs: { templates: string }): ChecklistRow[] {
+  const reason = presetReason(l.preset.id);
+  const byId = new Map(c.items.map((i) => [i.id, i]));
+  const pre = l.preset.preselect.filter((id) => !picked.includes(id) && byId.has(id) && appliesTo(byId.get(id)!.applies_when, facts, projectType));
+  const rows = pre.flatMap((id) => checklist({ catalog_version: 0, findings: [], items: [{ id, include: 'recommended', reason, addresses: [] }] }, c, dirs));
+  const own = [l.preset.core, ...l.items.filter((i) => i.id !== l.preset.core && appliesTo(i.applies_when, facts, projectType)).map((i) => i.id)];
+  const ctx = presetContext(l, own);
+  return [...rows, ...own.map((id, n): ChecklistRow => ({
+    id, title: l.items.find((i) => i.id === id)!.title, include: 'recommended', ticked: true, reason, cost: 'own text, no setup', context: itemContextLine(ctx[n]),
+    side_effects: [], unpinned: '', unpinned_reason: '', local_only: false, stance_reason: '', no_alternative: '',
+  }))];
 }

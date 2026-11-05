@@ -1,0 +1,12 @@
+id: core-rules
+kind: rule
+title: "Working rules"
+source: {type: own}
+license: MIT
+min_claude_code: 2.1.314
+applies_when: {always: true}
+cost: {context: low, setup: none}
+stance: default
+why: "Always-on working rules in AGENTS.md."
+evidence:
+  - "docs/specs/2026-11-05-personal-preset-design.md section 1: Q5, Q7, Q8, Q9, O5, O6, O8 (core block, section 5)"

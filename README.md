@@ -8,7 +8,7 @@ Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, a
 
 In plain terms: with the sandbox on, the operating system enforces the guard. Without it, the guard is a best-effort text check that catches mistakes but can be bypassed.
 
-**Status:** beta, version `0.2.0-beta.0`. It isn't on npm yet (npm still has the older `0.1.0-beta.0`), so build from source for now (see [Quick start](#quick-start)). Release notes: [docs/release-notes/0.2.0-beta.0.md](docs/release-notes/0.2.0-beta.0.md).
+**Status:** beta, version `0.2.0-beta.1`. It is on npm under the `beta` tag (`npm i -g @khubaibqaiser/harness@beta`). Release notes: [docs/release-notes/0.2.0-beta.1.md](docs/release-notes/0.2.0-beta.1.md).
 
 ## Why harness
 
@@ -51,16 +51,16 @@ The exact rules for each gate are in [docs/reference.md](docs/reference.md).
 
 You need Node 22.11 or newer, git, and Claude Code 2.1.314 or newer.
 
-1. **Build the plugin from source** (pnpm comes with `corepack enable`):
-   ```bash
-   git clone https://github.com/KhubaibQaiser/harness.git
-   cd harness && pnpm install && pnpm build
-   ```
-   Then start Claude Code in your project with the built plugin loaded: `claude --plugin-dir /path/to/harness`.
-   After the first 0.2 release, install it as a plugin instead:
+1. **Install the plugin:**
    ```bash
    claude plugin marketplace add KhubaibQaiser/harness
    claude plugin install harness@harness
+   ```
+   Or build it from source (pnpm comes with `corepack enable`) and load it with `--plugin-dir`:
+   ```bash
+   git clone https://github.com/KhubaibQaiser/harness.git
+   cd harness && pnpm install && pnpm build
+   claude --plugin-dir /path/to/harness
    ```
 2. **Run `/harness:init` inside Claude Code**, in the repo you want to protect. It scans, interviews you one question at a time, recommends items, and shows the full plan. Nothing is written until you say yes. A terminal `npx @khubaibqaiser/harness init` doesn't install; it tells you to use `/harness:init`.
 3. **Commit the files it lists.** Branch, commit, push and PR are each a separate question.
@@ -96,6 +96,7 @@ Run them as `harness <command>`. From a source build there's no `harness` binary
 | `vet <target>` | Scans a plugin or skill before you install it. Installs nothing. |
 | `uninstall [--dry-run]` | Removes what harness added and restores your files. |
 | `scan` / `catalog` | Prints what harness detects about your repo, or the catalog. Both write nothing. |
+| `preset list\|check <dir>` | Lists the shipped and repo presets, or checks a preset folder. Both write nothing. |
 | `git branch\|commit\|push\|pr` | Commits and pushes the harness changes one step at a time. |
 
 ## Unattended runs and CI
@@ -134,7 +135,7 @@ The full list: [docs/reference.md](docs/reference.md#known-limits).
 
 ## Roadmap
 
-Shipped in 0.2.0-beta.0: per-project recommendations from a pinned catalog. Coming next:
+Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Coming next:
 - a PR size check;
 - an opt-in personal preset of working rules and stack skills;
 - local reports that show whether agents actually follow the installed rules and skills;

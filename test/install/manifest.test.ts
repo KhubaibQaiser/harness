@@ -86,3 +86,22 @@ test('rehashManifest stamps the harness files', () => {
   rehashManifest(root, [SET]);
   expect(changedFiles(readRepoSnapshot(root).cli!.files, snapshotHarnessFiles(root))).toEqual([]);
 });
+
+test('state paths: a global dir is read by backupText; the repo default refuses it', async () => {
+  const { backupText, statePaths, REPO_STATE } = await import('../../src/install/manifest.js');
+  const root = makeRepo({ '.claude/harness/backup/x/f': 'old\n' });
+  const rel = '.claude/harness/backup/x/f';
+  expect(backupText(root, rel, statePaths('.claude/harness'))).toBe('old\n');
+  expect(backupText(root, rel, REPO_STATE)).toBeNull();
+  expect(statePaths()).toEqual({ dir: '.harness', manifest: '.harness/manifest.json', backup: '.harness/backup', lock: '.harness/apply.lock' });
+});
+
+test('state paths: no .harness/backup literal outside the statePaths default', () => {
+  for (const f of ['apply', 'manifest', 'finish'])
+    expect(readFileSync(join(__dirname, `../../src/install/${f}.ts`), 'utf8').split('\n').filter((l) => /'\.harness\/backup/.test(l) && !l.includes('statePaths'))).toEqual([]);
+});
+
+test('LOCK_REL equals the default state lock', async () => {
+  const { REPO_STATE } = await import('../../src/install/manifest.js');
+  expect((await import('../../src/install/apply.js')).LOCK_REL).toBe(REPO_STATE.lock);
+});

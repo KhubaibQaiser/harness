@@ -197,27 +197,27 @@ function settingsShell(file: string, text: string, json: Record<string, unknown>
 }
 
 /** MCP servers: one medium finding each, and `command + args` is what launches (checked for secrets and unpinned fetches). `direct`: the servers sit at the top level, with no mcpServers wrapper. */
-function mcpRemote(file: string, text: string, json: Record<string, unknown>, direct: boolean): VetFinding[] {
+function mcpRemote(file: string, text: string, json: Record<string, unknown>, direct: boolean, q: (s: string) => string = JSON.stringify): VetFinding[] {
   const servers = isObj(json.mcpServers) ? json.mcpServers : direct ? json : undefined;
   if (!servers) return [];
   const out: VetFinding[] = [];
   const at = finder(text);
   for (const [name, s] of Object.entries(servers)) {
     if (!isObj(s)) continue;
-    const line = at(JSON.stringify(name));
+    const line = at(q(name));
     const cmd = typeof s.command === 'string' ? [s.command, ...(Array.isArray(s.args) ? s.args.map(String) : [])].join(' ') : typeof s.url === 'string' ? s.url : '';
     if (cmd) out.push({ severity: 'medium', rule: 'mcp-server', file, line, text: show(`${name}: ${cmd}`) });
-    if (typeof s.command === 'string') out.push(...cmdFindings(file, at(JSON.stringify(s.command)), cmd));
+    if (typeof s.command === 'string') out.push(...cmdFindings(file, at(q(s.command)), cmd));
   }
   return out;
 }
 
-/** permissions.allow: one medium finding per rule. */
-function allowRules(file: string, text: string, json: Record<string, unknown>): VetFinding[] {
+/** permissions.allow: one medium finding per rule, capped per file like the other medium rules (`add`). */
+function allowRules(file: string, text: string, json: Record<string, unknown>, add: Add): void {
   const allow = isObj(json.permissions) ? json.permissions.allow : undefined;
-  if (!Array.isArray(allow)) return [];
+  if (!Array.isArray(allow)) return;
   const at = finder(text);
-  return allow.filter((r): r is string => typeof r === 'string').map((r) => ({ severity: 'medium', rule: 'permissions', file, line: at(JSON.stringify(r)), text: show(`allow: ${r}`) }));
+  for (const r of allow) if (typeof r === 'string') add('permissions', () => ({ severity: 'medium', rule: 'permissions', file, line: at(JSON.stringify(r)), text: show(`allow: ${r}`) }));
 }
 
 /** package.json lifecycle scripts run on `npm install`; the other scripts only run when asked. */
@@ -383,6 +383,9 @@ function fmRules(file: string, text: string, fr: Front): VetFinding[] {
   if (!isObj(fr.y)) return FM_DECL.test(fr.fm) ? [{ severity: 'medium', rule: 'invalid-manifest', file, line: 0, text: 'frontmatter could not be read, so its hooks and allowed-tools were not judged' }] : [];
   const y = fr.y, at = (k: string) => finder(text)(k); // a fresh finder per key: the keys may come in any order
   const out = hookShell(file, text, y, (s) => s);
+  // An agent's mcpServers: a list of server names (already configured: no finding) and { name: config } entries, or one mapping.
+  const ms = Array.isArray(y.mcpServers) ? Object.fromEntries(y.mcpServers.filter(isObj).flatMap((o) => Object.entries(o))) : y.mcpServers; // fromEntries makes own keys, so a __proto__ entry is listed, not applied
+  if (isObj(ms)) out.push(...mcpRemote(file, text, { mcpServers: ms }, false, (s) => s));
   const tools = y['allowed-tools'];
   const list = Array.isArray(tools) ? tools.map(String) : typeof tools === 'string' && tools.trim() ? [tools.trim()] : [];
   if (list.length) out.push({ severity: 'medium', rule: 'permissions', file, line: at('allowed-tools'), text: show(`allowed-tools: ${list.join(', ')}`) });
@@ -462,7 +465,8 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
         direct = mcpFile && !('mcpServers' in json);
         // Parsed: the structured rules judge hook commands, MCP servers and lifecycle scripts; the rest is data.
         // a loop, not push(...x): a file with 100k hooks or allow rules would overflow the call stack
-        for (const x of [hookShell(rel, bare, json), settingsShell(rel, bare, json), mcpRemote(rel, bare, json, direct), allowRules(rel, bare, json), pkgScripts(rel, bare, json)].flat()) findings.push(x);
+        for (const x of [hookShell(rel, bare, json), settingsShell(rel, bare, json), mcpRemote(rel, bare, json, direct), pkgScripts(rel, bare, json)].flat()) findings.push(x);
+        allowRules(rel, bare, json, add);
         obj = json;
         if (isObj(json.hooks)) for (const [ev, g] of Object.entries(json.hooks)) if (CTX_HOOKS.has(ev) && JSON.stringify(g).includes('"command"')) unmeasured.add(`${rel}: ${ev} hook`);
         textScan = false;

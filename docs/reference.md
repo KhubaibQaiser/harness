@@ -299,7 +299,8 @@ Catalog items can be Claude Code plugins or MCP servers.
 What the scan reads:
 
 - **Hooks wherever they are declared.** `hooks/hooks.json`, `plugin.json`, settings files and the `hooks:` frontmatter of skills, commands and agents. A hook that runs a shell command is high, and so are settings keys that run one (`statusLine`, `apiKeyHelper` and the like). `allowed-tools` in a skill or command, and an agent's `permissionMode` other than `default` or `plan`, are medium `permissions` findings.
-- **MCP servers** in `.mcp.json`, in `plugin.json`, and in a file that `plugin.json`'s `mcpServers` names by path.
+- **MCP servers** in `.mcp.json`, in `plugin.json`, in a file that `plugin.json`'s `mcpServers` names by path, and inline in an agent's `mcpServers` frontmatter.
+- **Allow rules** in settings are medium `permissions` findings, 20 per file and then one `N more` line.
 - **Every text file except prose.** Prose is a README, LICENSE, CHANGELOG, CONTRIBUTING, CODE_OF_CONDUCT or SECURITY file with no extension or a `.md`, `.txt`, `.rst` or `.adoc` one, and a file with one of those extensions under `docs/`. A script with such a name, or under `docs/`, is scanned.
 - **Files it can't read are findings, not silence.** An in-scope file over 1 MB or a binary file is a medium `unsafe-archive` finding (`over 1 MB, not read`, `binary, not read`), and the summary's `Findings` line counts them. Like the other medium rules, each kind lists 20 files and then one `N more` line.
 

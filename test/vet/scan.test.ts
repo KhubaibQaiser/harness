@@ -475,6 +475,20 @@ describe('final review', () => {
     expect(of(rf({ 'skills/a/SKILL.md': fm('hooks: [\n') }), 'invalid-manifest')).toHaveLength(1);
     expect(of(rf({ 'skills/a/SKILL.md': fm('x: [\n') }), 'invalid-manifest')).toEqual([]);
   });
+  it('allow rules are capped at 20 per file with one summary line', () => {
+    const j = JSON.stringify({ permissions: { allow: Array.from({ length: 1000 }, (_, i) => `Bash(t${i})`) } }, null, 2);
+    const p = of(rf({ '.claude/settings.json': j }), 'permissions');
+    expect(p).toHaveLength(21);
+    expect(p[0]).toMatchObject({ line: 0, text: '980 more permissions findings in this file' });
+    expect(p[1]).toMatchObject({ line: 4, text: 'allow: Bash(t0)' });
+  });
+  it("an agent's inline mcpServers in frontmatter is read like .mcp.json; a named server is not a finding", () => {
+    const body = 'mcpServers:\n  - slack\n  - evil:\n      command: npx\n      args: ["-y", "evil-pkg@latest"]\n  - web:\n      type: http\n      url: https://h.test/mcp\n';
+    expect(rf({ 'agents/b.md': fm(body) }).map((x) => [x.severity, x.rule, x.line, x.text])).toEqual([
+      ['high', 'unpinned-remote', 7, 'npx -y evil-pkg@latest'], ['medium', 'mcp-server', 6, 'evil: npx -y evil-pkg@latest'], ['medium', 'mcp-server', 9, 'web: https://h.test/mcp'], ['medium', 'network', 11, 'url: https://h.test/mcp'],
+    ]);
+    expect(rf({ 'agents/b.md': fm('mcpServers:\n  s:\n    command: node\n    args: [s.js]\n') }).map((x) => x.text)).toEqual(['s: node s.js']);
+  });
   it('M3: settings keys that run a shell command are hook-shell with the command rules', () => {
     const keys = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'gcpAuthRefresh', 'otelHeadersHelper', 'processWrapper'];
     const s = JSON.stringify({ statusLine: { type: 'command', command: PIPE.trim() }, ...Object.fromEntries(keys.map((k) => [k, `${k}.sh`])), subagentStatusLine: { command: 's.sh' }, fileSuggestion: { type: 'command', command: 'f.sh' } }, null, 2);

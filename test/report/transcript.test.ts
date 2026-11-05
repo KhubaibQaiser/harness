@@ -194,16 +194,33 @@ describe('string caps (hostile ids, keys, paths, commands)', () => {
   it('cuts a huge id, key, path and command, and keeps cut ids matching their results', () => {
     const a = p(assistant({ id: big, requestId: 'r', content: [{ type: 'tool_use', id: big, name: 'Bash', input: { file_path: big, command: big } }] })) as Extract<TRec, { k: 'assistant' }>;
     const t = a.tools[0]!;
-    expect(a.key!.length).toBeLessThanOrEqual(200 + 12);
-    expect(t.id.length).toBeLessThanOrEqual(200 + 12);
+    expect(a.key!.length).toBeLessThanOrEqual(200 + 22);
+    expect(t.id.length).toBeLessThanOrEqual(200 + 22);
     expect(t.filePath!.length).toBe(1024);
     expect(t.command!.length).toBe(2000);
-    expect(t.id.endsWith(`#${big.length}`)).toBe(true);
+    expect(t.id).toMatch(new RegExp(`#${big.length}#[0-9a-f]{8}$`));
     const r = p(toolResult(big)) as Extract<TRec, { k: 'result' }>;
     expect(r.useId).toBe(t.id);
   });
   it('leaves short values alone', () => {
     const a = p(assistant({ id: 'm', requestId: 'r', content: [{ type: 'tool_use', id: 'abc', name: 'Bash', input: { command: 'ls' } }] })) as Extract<TRec, { k: 'assistant' }>;
     expect([a.key, a.tools[0]!.id, a.tools[0]!.command]).toEqual([JSON.stringify(['m', 'r']), 'abc', 'ls']);
+  });
+});
+
+describe('more string caps and cut-id hashing', () => {
+  const big = 'y'.repeat(15 * 1024 * 1024);
+  it('cuts a huge tool name, skill, hook command and hook use id', () => {
+    const a = p(assistant({ content: [{ type: 'tool_use', id: 't', name: big, input: {} }, { type: 'tool_use', id: 't2', name: 'Skill', input: { skill: big } }] })) as Extract<TRec, { k: 'assistant' }>;
+    expect(a.tools[0]!.name.length).toBe(128);
+    expect(a.tools[1]!.skill!.length).toBe(128);
+    const h = p(attachment('hook_success', { hookEvent: 'PreToolUse', command: big, toolUseID: big })) as Extract<TRec, { k: 'hook' }>;
+    expect(h.command.length).toBe(2000);
+    expect(h.useId!.length).toBeLessThanOrEqual(222);
+  });
+  it('keeps two long ids with the same prefix and length apart', () => {
+    const one = 'p'.repeat(300) + 'a', two = 'p'.repeat(300) + 'b';
+    const id = (x: string) => (p(toolResult(x)) as Extract<TRec, { k: 'result' }>).useId;
+    expect(id(one)).not.toBe(id(two));
   });
 });

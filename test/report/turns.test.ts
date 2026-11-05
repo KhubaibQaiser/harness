@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -64,7 +64,58 @@ describe('runSession subagents', () => {
     const acc: Acc<null> = { turn: (_s, t) => got.push(t), result: () => null };
     await runSession({ main, subagents: [join(dir, 's2', 'subagents', 'agent-z.jsonl')] }, 's2', [acc], 0);
     expect(got.map((t) => t.tools.map((x) => x.id))).toEqual([['mid'], ['late']]);
-    expect(got[0]!.results.has('mid')).toBe(true);
+    expect(got[0]!.subResults.has('mid')).toBe(true);
+    expect(got[0]!.results.has('mid')).toBe(false);
+  });
+});
+
+describe('runSession subagent placement edges', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'turns-edge-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const T0 = Date.parse('2026-11-01T00:00:00.000Z');
+  const sub = (name: string, recs: object[]) => {
+    mkdirSync(join(dir, name, 'subagents'), { recursive: true });
+    const f = join(dir, name, 'subagents', 'agent-e.jsonl');
+    writeFileSync(f, recs.map((r) => JSON.stringify({ isSidechain: true, ...r })).join('\n') + '\n');
+    return f;
+  };
+  const run = async (id: string, mainRecs: object[], subRecs: object[]) => {
+    const main = writeSession(dir, id, mainRecs);
+    const got: Turn[] = [];
+    const stats = await runSession({ main, subagents: [sub(id, subRecs)] }, id, [{ turn: (_s, t) => got.push(t), result: () => null } as Acc<null>], 0);
+    return { got, stats };
+  };
+  const iso = (sec: number) => new Date(T0 + sec * 1000).toISOString();
+  it('gives a call at exactly a prompt time to the turn that prompt starts', async () => {
+    const { got } = await run('e1', [prompt('a'), assistant(), prompt('b')], [{ ...use('tie'), timestamp: iso(2) }]);
+    expect(got.map((t) => t.tools.map((x) => x.id))).toEqual([[], ['tie']]);
+  });
+  it('leaves a timeless subagent call out of every turn; the reader counts it in noTime', async () => {
+    const { got, stats } = await run('e2', [prompt('a'), assistant()], [use('nt')]);
+    expect(got[0]!.tools).toEqual([]);
+    expect(stats.noTime).toBe(1);
+  });
+  it('never puts a timeless main prompt or subagent call in the wrong turn', async () => {
+    const main = writeSession(dir, 'e3', [prompt('a'), assistant(), prompt('b'), assistant(), prompt('c')]);
+    const lines = readFileSync(main, 'utf8').split('\n');
+    lines[2] = lines[2]!.replace(/"timestamp":"[^"]*"/, '"timestamp":"bad"'); // prompt b has no time: the reader drops it
+    writeFileSync(main, lines.join('\n'));
+    const got: Turn[] = [];
+    const stats = await runSession({ main, subagents: [sub('e3', [{ ...use('q'), timestamp: iso(2.5) }, use('nt')])] }, 'e3', [{ turn: (_s: unknown, t: Turn) => got.push(t), result: () => null } as Acc<null>], 0);
+    expect(got.map((t) => t.tools.map((x) => x.id))).toEqual([['q'], []]); // q by time into the open turn; the timeless one nowhere
+    expect(stats.noTime).toBe(2);
+    expect(stats.unplaced).toBe(0);
+  });
+  it('bounds what a summary keeps: 50 tools per record, 20000 in all, the rest in subDropped', async () => {
+    const many = (n: number) => assistant({ content: Array.from({ length: n }, (_, i) => ({ type: 'tool_use', id: `m${i}`, name: 'Bash', input: {} })) });
+    const { got, stats } = await run('e4', [prompt('a')], [{ ...many(80), timestamp: iso(1) }]);
+    expect(got[0]!.tools).toHaveLength(50);
+    expect(stats.subDropped).toBe(30);
+    const recs = Array.from({ length: 500 }, (_, i) => ({ ...many(50), timestamp: iso(1 + i / 1000) }));
+    const big = await run('e5', [prompt('a')], recs);
+    expect(big.got[0]!.tools).toHaveLength(500); // the turn's own cap
+    expect(big.got[0]!.dropped.tools).toBe(19500);
+    expect(big.stats.subDropped).toBe(5000);
   });
 });
 

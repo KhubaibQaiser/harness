@@ -173,3 +173,10 @@ describe('locateSessions', () => {
     expect((await run(root, { env: { CLAUDE_CONFIG_DIR: join(home, 'none') } })).sessions).toEqual([]);
   });
 });
+
+it('a filesystem root as the repo matches no session', async () => {
+  const { insideRepo } = await import('../../src/report/locate.js');
+  expect(insideRepo('/home/u/proj', ['/'], 'linux')).toBe(false);
+  expect(insideRepo('C:\\proj', ['C:\\'], 'win32')).toBe(false);
+  expect(insideRepo('/home/u/proj/src', ['/home/u/proj'], 'linux')).toBe(true);
+});

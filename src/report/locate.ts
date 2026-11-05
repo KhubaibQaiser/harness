@@ -1,5 +1,5 @@
 import { closeSync, constants, lstatSync, opendirSync, openSync, readSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isSafeSessionId } from '../core/state.js';
 
 export type GitRun = (args: string[]) => { status: number | null; stdout: string };
@@ -43,6 +43,7 @@ export function insideRepo(cwd: string, paths: string[], platform: NodeJS.Platfo
   const c = fold(cwd, platform);
   return paths.some((p) => {
     const r = fold(p, platform);
+    if (dirname(r) === r) return false; // a filesystem root as the repo would match every session
     return c === r || c.startsWith(r.endsWith(sep) ? r : r + sep);
   });
 }

@@ -24,8 +24,8 @@ export const RX = {
 
 /** `control`: a quoted part holds a control or bidi character (raw here; the HTML escapes it). */
 export interface Window { rule: WindowRule; session: string; date: string; turn: number; prompt: string; texts: string; tools: string[]; control?: true }
-/** Rules that read order from main-thread records only; subagent work is counted in `notes.sideRecords`, not judged. */
-export const MAIN_THREAD_ONLY: WindowRule[] = ['ask-first', 'fix-everything', 'no-invented-data', 'plain-communication'];
+/** Rules that read main-thread records only (readme-per-pr: edits are main-thread); subagent work is counted in `notes.sideRecords`, not judged. */
+export const MAIN_THREAD_ONLY: WindowRule[] = ['ask-first', 'fix-everything', 'no-invented-data', 'plain-communication', 'readme-per-pr'];
 
 type Split = { turns: number; windows: number };
 export interface WindowsResult {

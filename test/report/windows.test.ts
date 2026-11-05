@@ -176,7 +176,7 @@ describe('caps, parts, unknown, decay', () => {
     const r = await run([{ recs: [prompt('fix'), text("I'll go with option A")], sub: [prompt('task'), edit('src/a.ts'), { type: 7 }] }]);
     expect(r.notes).toMatchObject({ sideRecords: 3, sideBad: 1 });
     expect(r.byRule['ask-first'].total).toBe(0);
-    expect(MAIN_THREAD_ONLY).toEqual(['ask-first', 'fix-everything', 'no-invented-data', 'plain-communication']);
+    expect(MAIN_THREAD_ONLY).toEqual(['ask-first', 'fix-everything', 'no-invented-data', 'plain-communication', 'readme-per-pr']);
   });
   it('names the count-only fields an export may take', () => {
     expect(COUNT_FIELDS).toEqual({ rule: ['total', 'counters', 'byBucket', 'byCompact'], top: ['unknown', 'notes'] });

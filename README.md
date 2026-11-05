@@ -6,17 +6,19 @@ A line in `CLAUDE.md` saying "write the test first" or "never read `.env`" is a 
 
 Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, and in every session with `sandbox: always`. Elsewhere, and on native Windows always, the guard and protect checks are a seatbelt.
 
+In plain terms: with the sandbox on, the operating system enforces the guard. Without it, the guard is a best-effort text check that catches mistakes but can be bypassed.
+
 **Status:** beta, version `0.2.0-beta.0`. It isn't on npm yet (npm still has the older `0.1.0-beta.0`), so build from source for now (see [Quick start](#quick-start)). Release notes: [docs/release-notes/0.2.0-beta.0.md](docs/release-notes/0.2.0-beta.0.md).
 
 ## Why harness
 
-- **Rules that hold.** Hooks can deny a call, ask you, or keep the agent working until the checks pass. Every message names the next step, so the agent fixes the problem instead of arguing with it.
-- **No model in the loop.** The hooks decide from the tool call, your own test results, coverage and `git diff`. The same input always gets the same answer, and it costs no tokens.
-- **Fails closed.** If a hook can't run, Claude Code blocks the call. If the config is broken, edits stop until a person fixes it.
+- **Rules that hold.** Hooks can deny a call, ask you, or keep the agent working until the checks pass. Messages say what happened and what to do next, so the agent fixes the problem instead of arguing with it.
+- **No model in the loop.** The hooks decide from the tool call, your own test results, coverage and `git diff`. The same input always gets the same answer, and the checks call no model.
+- **Fails closed.** If the hook dispatcher can't run, Claude Code blocks the tool call, the prompt or the settings change. The Stop gate is the one exception. If the config is broken, edits stop until a person fixes it.
 - **The whole team gets it.** The hooks are committed to the repo. Anyone who opens it in Claude Code gets the same rules, with nothing to install.
 - **Set up for your repo, not a template.** `/harness:init` scans the repo, asks about the product, and recommends tools from a pinned, license-checked catalog of 89 plugins, skills and MCP servers. Each one comes with a reason and its context cost.
 - **Lean context.** Always-loaded text has a budget of 2000 tokens by default (`context.budget_tokens`). Harness asks before going over it.
-- **Safe to try.** You see every change before it's written. `init` backs up what it touches, and `uninstall` puts it all back.
+- **Safe to try.** You see every change before it's written. `init` backs up what it touches. `uninstall` removes what harness added and restores the rest; files you edited are kept and listed.
 
 ## Who it's for
 
@@ -38,12 +40,9 @@ Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, a
 | Red-first TDD, test-lock, tamper check | no | yes |
 | Changed-line coverage | no | yes |
 
-- **Guard.** Denies secret reads, force-push, pushing to `main`, `curl | sh` and package installs. Asks before destructive commands and before the agent changes the harness install.
-- **Protected paths.** The agent can't edit `.harness/`, `.claude/settings*.json` or `node_modules/`.
-- **Multi-file gate.** Asks once per turn before the agent spreads a change to a second source file.
-- **TDD.** An edit needs a related test that failed first. A failing test is locked until it passes, and edits that weaken tests are denied.
-- **Stop gate.** Runs your format, lint, typecheck and test commands, plus changed-line coverage with TDD on, before the agent may stop.
-- **Vet before you install.** `harness vet <github-url>` pins a plugin or skill to a commit and scans it without running it: hooks, secrets, network calls, prompt-injection text, licence and context cost. The report lists each finding by `file:line`.
+In short: secrets and risky commands are blocked, harness's own files are off limits to the agent, and a change that spreads to a second file needs your OK. A source edit needs a test that failed first, and the agent can't stop until your format, lint, typecheck and test commands pass.
+
+- **Vet before you install.** `harness vet <github-url>` pins a plugin or skill to a commit and scans it without running it: hooks, secrets, network calls, prompt-injection text, licence and context cost. The report lists each finding by `file:line`. Needs the GitHub CLI (`gh`).
 - **Review agent (experimental).** A `staff-reviewer` agent reviews a diff in a fresh context and can't edit files.
 
 The exact rules for each gate are in [docs/reference.md](docs/reference.md).
@@ -72,20 +71,22 @@ You need Node 22.11 or newer, git, and Claude Code 2.1.314 or newer.
 
 - **Run `harness doctor` after any change.** It checks the install and prints the fix for each problem.
 - **Turn on branch protection.** Hooks run with your permissions, so branch protection is the real stop for force-pushes.
+- **When the Stop gate blocks, let it work.** Its output shows what failed. The agent fixes it and tries again, up to `stop.max_attempts` (default 3).
 - **Let TDD work for you.** When the agent says "run a test first", that's the gate asking for a failing test. For a spike, run `harness tdd off` in your own terminal, then `harness tdd on` when you're done.
 - **Vet anything new first.** Run `harness vet` before you install a plugin or skill you found online.
-- **Watch the budget.** `harness explain` lists what each item loads into every session. Remove what you don't use with `harness remove <id>`. With `--yes`, a selection over the budget stops unless you pass `--over-budget`.
+- **Watch the budget.** `harness explain` lists what each item loads into every session. Remove what you don't use with `harness remove <id>`. If an install would go over the budget, `--yes` stops unless you also pass `--over-budget`.
 - **Unattended? Use the sandbox.** See [Unattended runs and CI](#unattended-runs-and-ci).
 
 ## Commands
 
-Run them as `harness <command>`, or from source as `node /path/to/harness/dist/cli.mjs <command>`. Commands that change the install run as `/harness:<command>` inside Claude Code. Every flag is in [docs/reference.md](docs/reference.md#commands-in-full).
+Run them as `harness <command>`. From a source build there's no `harness` binary, so read `harness` in this README as `node /path/to/harness/dist/cli.mjs`. `init`, `update`, `add` and `sync` work only inside Claude Code, as `/harness:<command>`; `doctor`, `status` and `uninstall` also have `/harness:` skills. Every flag is in [docs/reference.md](docs/reference.md#commands-in-full).
 
 | Command | What it does |
 |---|---|
 | `init [--dry-run]` (`/harness:init`) | Scans, interviews, recommends, then installs after you confirm. |
 | `update [--check\|--dry-run]` (`/harness:update`) | Re-renders the install for this version and shows the diff first. `--check` only looks for a newer version. |
-| `add <id>` (`/harness:add`) / `remove <id>` | Adds or removes one catalog item, with what it requires. |
+| `add <id>` (`/harness:add`) | Adds one catalog item, with what it requires. Claude Code only. |
+| `remove <id>` | Removes one item and restores your files. |
 | `sync` (`/harness:sync`) | Fixes drift between `config.yaml`, the manifest and the files. |
 | `status` | Shows each gate as on or off, and why. |
 | `doctor` | Checks the install and prints a fix for each problem. |
@@ -99,7 +100,7 @@ Run them as `harness <command>`, or from source as `node /path/to/harness/dist/c
 
 ## Unattended runs and CI
 
-A run is unattended when `CI` or `HARNESS_UNATTENDED` is set, `CLAUDE_CODE_REMOTE` is `true`, or the permission mode is `dontAsk` or `bypassPermissions`. Every question then becomes a deny, and shell commands are denied unless Claude Code's sandbox is on. Start the run like this:
+A run is unattended when `CI` is `true` or `1`, `HARNESS_UNATTENDED` is `1` or `true`, `CLAUDE_CODE_REMOTE` is `true`, or the permission mode is `dontAsk` or `bypassPermissions`. Every question then becomes a deny, and shell commands are denied unless Claude Code's sandbox is on. Start the run like this:
 
 ```sh
 HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false}}'
@@ -149,7 +150,7 @@ pnpm typecheck
 node scripts/gen-config-docs.mjs --write   # after changing a config key
 ```
 
-CI runs on macOS and Windows with Node 22, plus gitleaks, a pack check, real Vitest and Jest installs, and `claude plugin validate`. A `v*` tag publishes to npm after an approval step, then mirrors the package to GitHub Packages and creates a GitHub release. See [docs/release.md](docs/release.md).
+CI runs the tests on macOS and Windows with Node 22, plus Linux jobs for gitleaks, a pack check, real Vitest and Jest installs, and `claude plugin validate`. A `v*` tag publishes to npm after an approval step, then mirrors the package to GitHub Packages and creates a GitHub release. See [docs/release.md](docs/release.md).
 
 ## Feedback and license
 

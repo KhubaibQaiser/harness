@@ -15,6 +15,7 @@ The full detail behind the [README](../README.md). Start there; come here when y
 
 ## Guard and protection (any repo)
 
+- **Harness commands.** Asks before the agent runs `harness init`, `update`, `add`, `remove`, `sync` or `uninstall`, or pushes or opens a PR for harness changes. Previews such as `--dry-run`, and `scan`, `catalog` and `vet`, pass without asking.
 - **Secret files.** Denies reads of `.env` and `.env.*` (but not `.example`, `.sample`, `.template` or `.dist`), SSH and GnuPG keys, AWS credentials, `id_rsa`-style keys, `.pem`, `.p12`, `.pfx`, `.keystore`, `.netrc`, `.pgpass` and Terraform state and vars, through `Read`, `Grep` and shell commands.
 - **Dangerous commands.** Denies force-push (use `--force-with-lease`), pushing to `main` or `master`, `curl | sh`, `chmod 777`, writing to a block device and a recursive delete of root, home, `.` or `..`. Asks before `git reset --hard`, `git clean -f`, `sudo`, `npm publish`, recursive deletes outside build and cache folders, and destructive cloud, Kubernetes, Docker, GitHub and SQL commands.
 - **Installs denied by default.** Package installs (JS or Python) are denied. See [Allowing installs](#allowing-installs).
@@ -45,7 +46,7 @@ Experimental: it has not had live review runs yet. `init` also adds a `staff-rev
 
 ## What `init` checks first
 
-Run `init` anywhere in a git repo: it installs at the repo root and prints that path. It refuses if the directory is not a git repo, if Node is older than 22.11, or if `.harness/manifest.json` already exists (use `update` then). It also stops if files it would change have uncommitted changes.
+Run `init` anywhere in a git repo: it installs at the repo root and prints that path. It refuses if the directory is not a git repo, if Node is older than 22.11, or if `.harness/manifest.json` already exists (use `update` then). It also stops if files it would change have uncommitted changes. `harness doctor` also fails when Claude Code is older than 2.1.314.
 
 ## What `init` changes in your repo
 
@@ -78,7 +79,7 @@ harness uninstall
 
 `doctor`, `update` and `uninstall` compare files with `.harness/manifest.json` ignoring CRLF vs LF, so a teammate's checkout with `core.autocrlf=true` is not treated as edited, and the harness blocks are still found and removed.
 
-The guard asks you before the agent runs `harness uninstall`, and denies it in an unattended run; `uninstall --dry-run` needs no approval. It looks where a command runs: at the start of a command, after `&&`, `;` or `|`, and after the wrappers it knows, with their flags and flag values: `npx`, `npm exec`/`npm x`, `pnpm dlx`/`pnpm exec`, `pnpx`, `yarn dlx`, `bunx`/`bun x`, `node …/cli.mjs`, `env`, `sudo`, `command`, `nohup`, `time`, `nice`, `timeout`, `stdbuf`, `xargs`, `script`, `sh -c`/`bash -c`, `find -exec`, and a package script that runs harness. Windows forms count too: backslash paths with or without a drive letter, quoted or not (a quoted or `\ `-escaped path with a space is one word, also inside an `sh -c`, `bash -c` or `script -c` payload), and the `harness.cmd`/`npx.cmd` shims, in any case. It is a seatbelt, not a sandbox: a wrapper it does not know, or a command built at run time, can still get past it. Harness words in other places, such as a commit message, an `echo`, a `grep` or `rg` pattern, or a path argument, are not treated as a command. When the guard tells you to run a command yourself, it names the harness CLI by its absolute path only when that CLI is the repo's own install: its real path (symlinks resolved) is inside the repo's root `node_modules`, under `@khubaibqaiser/harness`. pnpm's links into `node_modules/.pnpm` count, a link out of the repo does not. This is a location check, not a content check: see [Known limits](../README.md#known-limits). Read the printed command before you run it. The path is the one you typed, or the one the last such CLI run recorded in the gitignored `.harness/state/`, checked again before it is printed. A plugin install, a global install, a workspace package's `node_modules` or any other copy is not trusted. In those cases, and on a fresh clone or from a source checkout, it prints plain `harness tdd off` with a hint that also shows the `npx @khubaibqaiser/harness` and `node /path/to/harness/dist/cli.mjs` forms.
+The guard asks you before the agent runs `harness uninstall`, and denies it in an unattended run; `uninstall --dry-run` needs no approval. It looks where a command runs: at the start of a command, after `&&`, `;` or `|`, and after the wrappers it knows, with their flags and flag values: `npx`, `npm exec`/`npm x`, `pnpm dlx`/`pnpm exec`, `pnpx`, `yarn dlx`, `bunx`/`bun x`, `node …/cli.mjs`, `env`, `sudo`, `command`, `nohup`, `time`, `nice`, `timeout`, `stdbuf`, `xargs`, `script`, `sh -c`/`bash -c`, `find -exec`, and a package script that runs harness. Windows forms count too: backslash paths with or without a drive letter, quoted or not (a quoted or `\ `-escaped path with a space is one word, also inside an `sh -c`, `bash -c` or `script -c` payload), and the `harness.cmd`/`npx.cmd` shims, in any case. It is a seatbelt, not a sandbox: a wrapper it does not know, or a command built at run time, can still get past it. Harness words in other places, such as a commit message, an `echo`, a `grep` or `rg` pattern, or a path argument, are not treated as a command. When the guard tells you to run a command yourself, it names the harness CLI by its absolute path only when that CLI is the repo's own install: its real path (symlinks resolved) is inside the repo's root `node_modules`, under `@khubaibqaiser/harness`. pnpm's links into `node_modules/.pnpm` count, a link out of the repo does not. This is a location check, not a content check: see [Known limits](#known-limits). Read the printed command before you run it. The path is the one you typed, or the one the last such CLI run recorded in the gitignored `.harness/state/`, checked again before it is printed. A plugin install, a global install, a workspace package's `node_modules` or any other copy is not trusted. In those cases, and on a fresh clone or from a source checkout, it prints plain `harness tdd off` with a hint that also shows the `npx @khubaibqaiser/harness` and `node /path/to/harness/dist/cli.mjs` forms.
 
 ## Unattended runs and CI
 
@@ -166,7 +167,7 @@ stop:
 
 After you edit the config, run `harness doctor` to check it.
 
-The key table is in the [README](../README.md#configuration).
+The key table is under [Configuration keys](#configuration-keys).
 
 ## TDD setup details
 
@@ -206,6 +207,8 @@ It writes the same files as `init`, plus `.harness/context/product.md` and `.har
 The hooks are in the repo, so a teammate needs nothing for them. Plugins you picked are pinned in `.claude/settings.json`, but each person installs them in their own Claude Code. After pulling, a teammate runs `claude plugin install <id> --scope project` for each, or `/harness:sync --install-plugins`. `harness doctor` lists the ones that are missing. Claude Code asks each user to approve MCP servers and, for the pinned marketplace, to trust the folder.
 
 ## Commands in full
+
+The plugin adds `/harness:init`, `/harness:doctor`, `/harness:status`, `/harness:update`, `/harness:add`, `/harness:sync` and `/harness:uninstall`. In a plain terminal, `init` and `update` print `Run /harness:init inside Claude Code` and exit.
 
 Run each terminal command as `harness <command>`. From source, use `node /path/to/harness/dist/cli.mjs <command>`.
 
@@ -249,7 +252,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 
 Without a terminal, pass `--yes` or `--dry-run`.
 
-`init` writes `.harness/` (the dispatcher, config and manifest) and merges hook entries and deny rules into `.claude/settings.json`. It also adds a short block to `AGENTS.md` (imported from `CLAUDE.md`), `.gitignore` lines, and the review agent. When TDD is on, it edits your test config so tests write JSON results. It then writes the items you chose, the plugin pins in `.claude/settings.json` and the servers in `.mcp.json`, described below. The full list is in [docs/reference.md](#what-init-changes-in-your-repo).
+`init` writes `.harness/` (the dispatcher, config and manifest) and merges hook entries and deny rules into `.claude/settings.json`. It also adds a short block to `AGENTS.md` (imported from `CLAUDE.md`), `.gitignore` lines, and the review agent. When TDD is on, it edits your test config so tests write JSON results. It then writes the items you chose, the plugin pins in `.claude/settings.json` and the servers in `.mcp.json`, described below. The full list is in [What `init` changes in your repo](#what-init-changes-in-your-repo).
 
 ### AI flags for init and update
 
@@ -343,7 +346,7 @@ Start with `harness doctor`, which prints a fix for each problem.
 - **`doctor` says a plugin is enabled but not installed.** Run the `claude plugin install <id> --scope project` line it prints, or `/harness:sync --install-plugins`.
 - **Format or lint fails on `.harness/` files.** Add `.harness/` to that tool's ignore file.
 
-More detail, including TDD setup: [docs/reference.md](#tdd-setup-details).
+More detail: [TDD setup details](#tdd-setup-details).
 
 ## Known limits
 

@@ -26,6 +26,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
 ## If publish fails
 
 - **`npm error 404 Not Found - PUT https://registry.npmjs.org/@khubaibqaiser%2fharness`.** npm rejected the trusted publisher. Usually the npmjs.com config expired (step 6 above) or a name doesn't match: the repository, `release.yml` or `npm-release`. Redo steps 4–6, then push a new tag for the next version. npm never accepts the same version twice.
-- **GitHub Packages or the GitHub release failed, but npm succeeded.** Re-run only the job that failed, from the Actions tab. It failed before creating anything, so a re-run is fine. Don't re-run a job that succeeded: the package or release already exists, so it fails.
+- **Re-running the release.** A re-run is safe. The publish step first asks npm whether this version exists. If it was published from this same commit, it skips `npm publish` and succeeds, so the GitHub Packages and GitHub release jobs still run. Each of those two jobs also skips itself when its package version or release already exists, so you can re-run the whole workflow, or just a failed job, from the Actions tab.
+- **Version clash.** If the version is already on npm from a different commit (or npm has no commit for it), the publish step fails with "version X is already on npm from commit Y; bump the version". Bump `package.json`, add its release notes, merge to main, then tag the new version.
 
 Installing from GitHub Packages needs a GitHub token even for a public package, so the README points users to npm. The GitHub copy is a mirror that shows the package on the repo page.

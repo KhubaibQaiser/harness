@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -23,8 +23,7 @@ const presetYaml = (o: { preselect?: string; skills?: string; tel?: string; pref
 const skillMd = (body = '- Use X.\n', fm = 'name: x\ndescription: d') => `---\n${fm}\n---\n${body}`;
 
 /** A preset `x` with core-rules and one skill `x`; `files` overrides or adds paths (relative to the presets dir). */
-function mk(files: Record<string, string | null> = {}): string {
-  const d = mkdtempSync(join(tmpdir(), 'harness-preset-'));
+function mk(files: Record<string, string | null> = {}, d = mkdtempSync(join(tmpdir(), 'harness-preset-'))): string {
   const all: Record<string, string | null> = {
     'x.yaml': presetYaml(),
     'x/items/core-rules.yaml': itemYaml('core-rules', 'rule', '{type: own}'),
@@ -108,10 +107,9 @@ test('shipped-id clash only with builtOnly, and only outside the shipped dir', (
   const d = mk();
   expect(errs(d, { builtOnly: true })).toEqual([expect.stringContaining('preset id "x" is already a shipped preset')]);
   expect(errs(d)).toEqual([]);
-  const inside = loadPreset(join(mk(), 'x.yaml'));
+  const inside = loadPreset(join(mk({}, sd), 'x.yaml'));
   if (!inside.ok) throw new Error('load');
-  writeFileSync(join(sd, 'x.yaml'), 'id: x\n');
-  expect(checkPreset({ ...inside.loaded, yamlPath: join(sd, 'x.yaml') }, catalog, { builtOnly: true })).toEqual([]);
+  expect(checkPreset(inside.loaded, catalog, { builtOnly: true })).toEqual([]);
 });
 
 test('identity', () => {
@@ -194,4 +192,36 @@ test('prototype names are not telemetry vars, labels are escaped, missing file i
 test('listPresets skips an id that differs from its file name', () => {
   stubShipped({ 'a.yaml': 'id: other\n', 'b.yaml': 'id: b\n' });
   expect(listPresets(mkdtempSync(join(tmpdir(), 'harness-root-'))).map((p) => p.id)).toEqual(['b']);
+});
+
+/** Move d/sub out of the presets dir and leave a symlink to it. */
+function symlinked(d: string, sub: string): void {
+  const out = mkdtempSync(join(tmpdir(), 'harness-out-'));
+  renameSync(join(d, sub), join(out, 'moved'));
+  symlinkSync(join(out, 'moved'), join(d, sub));
+}
+test('a symlinked preset, items or templates dir is refused', () => {
+  for (const sub of ['x', 'x/items', 'x/templates']) {
+    const d = mk();
+    symlinked(d, sub);
+    const e = errs(d);
+    expect(e.length, sub).toBeGreaterThan(0);
+    expect(e.join(), sub).toContain('symlink');
+  }
+  const d = mk();
+  const r = loadPreset(join(d, 'x.yaml'));
+  if (!r.ok) throw new Error('load');
+  symlinked(d, 'x');
+  expect(identityProblems(r.loaded).join()).toContain('symlink');
+});
+test('a symlinked skills dir under templates is refused', () => {
+  const d = mk();
+  symlinked(d, 'x/templates/skills');
+  expect(errs(d).join()).toContain('skills/x/SKILL.md: outside the presets folder');
+});
+test('listPresets skips symlinked and oversized yaml', () => {
+  const sd = stubShipped({ 'a.yaml': 'id: a\n', 'big.yaml': 'id: big\n# ' + 'a'.repeat(300 * 1024) });
+  writeFileSync(join(sd, '..', 'real.yaml'), 'id: link\n');
+  symlinkSync(join(sd, '..', 'real.yaml'), join(sd, 'link.yaml'));
+  expect(listPresets(mkdtempSync(join(tmpdir(), 'harness-root-'))).map((p) => p.id)).toEqual(['a']);
 });

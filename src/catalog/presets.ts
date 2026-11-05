@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
 import { esc } from '../core/config.js';
 import { PREFIX_RE } from '../core/branch-prefix.js';
@@ -24,10 +24,11 @@ const MAX_BODY = 150;
 const MAX_BYTES = 256 * 1024;
 
 /** Preset folders come from cloned repos: read only regular files (no symlinks) of bounded size. */
-function readSmall(p: string, label: string): { text: string } | { error: string } {
+function readSmall(p: string, label: string, root?: string): { text: string } | { error: string } {
   try {
     const st = lstatSync(p);
     if (!st.isFile()) return { error: `${label}: not a regular file (symlinks are not followed)` };
+    if (root !== undefined && !realpathSync(p).startsWith(realpathSync(root) + sep)) return { error: `${label}: outside the presets folder` };
     if (st.size > MAX_BYTES) return { error: `${label}: larger than 256 KB` };
     return { text: readFileSync(p, 'utf8') };
   } catch {
@@ -74,11 +75,13 @@ export function loadPreset(yamlPath: string): { ok: true; loaded: LoadedPreset }
   const preset = { ...raw, settings: { telemetry_off: [], ...(s as object) } } as unknown as Preset;
   const base = join(dirname(yamlPath), preset.id);
   const items: CatalogItem[] = [];
+  const bad = dirErrors(base, ['', 'items']);
+  if (bad.length) return { ok: false, errors: bad.map((e) => `${file}: ${e}`) };
   for (const [what, id] of [['core', preset.core], ...preset.skills.map((x) => ['skills', x])] as [string, string][]) {
     const rel = `${preset.id}/items/${id}.yaml`;
     const p = join(dirname(yamlPath), rel);
     if (!ID_RE.test(id) || !existsSync(p)) { errors.push(`${file}: ${what} "${esc(id)}": no item at ${esc(rel)}`); continue; }
-    const t = readSmall(p, rel);
+    const t = readSmall(p, rel, dirname(yamlPath));
     if ('error' in t) { errors.push(t.error); continue; }
     let item: unknown;
     try { item = parse(t.text); } catch (e) { errors.push(`${rel}: not valid YAML (${esc((e as Error).message.split('\n')[0])})`); continue; }
@@ -89,6 +92,14 @@ export function loadPreset(yamlPath: string): { ok: true; loaded: LoadedPreset }
     else items.push(r.item);
   }
   return errors.length ? { ok: false, errors } : { ok: true, loaded: { preset, base, yamlPath, items } };
+}
+
+/** The preset folder and its items/ and templates/ must be real directories, not links. */
+function dirErrors(base: string, subs: string[]): string[] {
+  return subs.flatMap((sub) => {
+    const p = join(base, sub);
+    try { return lstatSync(p).isSymbolicLink() ? [`${esc(sub || base.split(/[\\/]/).pop()!)}: symlink not followed`] : []; } catch { return []; }
+  });
 }
 
 function skillErrors(rawLabel: string, text: string): string[] {
@@ -108,7 +119,8 @@ function skillErrors(rawLabel: string, text: string): string[] {
 
 export function checkPreset(l: LoadedPreset, catalog: Catalog, opts: { builtOnly?: boolean } = {}): string[] {
   const { preset: p, base } = l;
-  const out: string[] = [];
+  const out: string[] = dirErrors(base, ['templates']);
+  if (out.length) return out;
   const ids = new Map(catalog.items.map((i) => [i.id, i]));
   for (const id of p.preselect) {
     const it = ids.get(id);
@@ -126,7 +138,7 @@ export function checkPreset(l: LoadedPreset, catalog: Catalog, opts: { builtOnly
     for (const f of files) {
       const path = join(base, 'templates', f.from);
       if (!existsSync(path)) { out.push(`${esc(it.id)}: template ${esc(f.from)} not found`); continue; }
-      const t = readSmall(path, esc(f.from));
+      const t = readSmall(path, esc(f.from), dirname(l.yamlPath));
       if ('error' in t) out.push(t.error);
       else if (it.id !== p.core) out.push(...skillErrors(f.from, t.text));
     }
@@ -157,20 +169,23 @@ function filesUnder(d: string): Found[] {
 }
 export function identityProblems(l: LoadedPreset): string[] {
   const root = dirname(l.yamlPath);
-  const all: Found[] = [{ path: l.yamlPath }, ...(existsSync(l.base) ? filesUnder(l.base) : [])];
-  return all.flatMap((f) => {
+  const bad = dirErrors(l.base, ['']);
+  const all: Found[] = [{ path: l.yamlPath }, ...(existsSync(l.base) && !bad.length ? filesUnder(l.base) : [])];
+  return [...bad, ...all.flatMap((f) => {
     const label = esc(f.path.slice(root.length + 1));
     if (f.skip) return [`${label}: ${f.skip}`];
     const t = readSmall(f.path, label);
     return 'error' in t ? [t.error] : identityProblemsIn(t.text, label);
-  });
+  })];
 }
 
 const yamlIn = (d: string): string[] => (existsSync(d) ? readdirSync(d).filter((f) => f.endsWith('.yaml')).sort() : []);
 export function listPresets(root: string): { id: string; description: string; where: 'shipped' | 'repo' }[] {
   return presetDirs(root).flatMap((d, i) => yamlIn(d).flatMap((f) => {
     try {
-      const y = parse(readFileSync(join(d, f), 'utf8')) as { id?: unknown; description?: unknown };
+      const t = readSmall(join(d, f), f);
+      if ('error' in t) return [];
+      const y = parse(t.text) as { id?: unknown; description?: unknown };
       return typeof y?.id === 'string' && f === `${y.id}.yaml` ? [{ id: y.id, description: typeof y.description === 'string' ? y.description : '', where: i === 0 ? 'shipped' as const : 'repo' as const }] : [];
     } catch { return []; }
   }));

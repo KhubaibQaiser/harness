@@ -90,3 +90,11 @@ test('vet mode: switch, contract words, lean description', () => {
   for (const t of ['fenced `json` block', 'relevance', 'overlaps', 'injection', 'recommendation', 'never lower a severity', 'Read only the flagged files, inside the folder the caller names', 'dotenv', 'single line']) expect(v, t).toContain(t);
   expect(String(fm(s).description)).toBe('Fresh-context staff-level reviewer for repo audits and PR diffs. Use before a commit or PR, after a feature or fix is implemented. Reports findings only; never edits.');
 });
+
+test('vet mode: map for renamed files and the 500-character caps', () => {
+  const v = read('templates/agents/staff-reviewer.md');
+  const m = v.slice(v.indexOf('## Vet mode'));
+  expect(m).toContain('`<dir>/<map[file]>`');
+  expect(m).toContain('`<dir>/<file>`');
+  expect(m.match(/at most 500 characters/g)!.length).toBeGreaterThanOrEqual(3);
+});

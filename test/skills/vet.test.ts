@@ -22,3 +22,8 @@ test('vet skill: steps, options and second-yes rule', () => {
   expect(t.indexOf('vet --install')).toBeGreaterThan(rule);
   expect(t.slice(rule)).toMatch(/second question[^\n]*each high finding/);
 });
+
+test('vet skill: review fixes', () => {
+  for (const x of ['show the contents of `<tmp>/scan.json`', 'do not parse it as a scan', "report's High section, not the summary", 'without its `## Install` section', 'there are no installed items', 'With no [high] line, a yes runs CLI `vet --install <tmp>/scan.json` directly.']) expect(t, x).toContain(x);
+  for (const m of t.matchAll(/`([^`]+)`/g)) expect(m[1], m[1]).not.toMatch(/^(harness|claude|gh) /);
+});

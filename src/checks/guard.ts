@@ -1,6 +1,7 @@
 // Agent guard, ported from fitness-app scripts/agent-hooks/guard.mjs. A seatbelt, not a sandbox.
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import picomatch from 'picomatch';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
@@ -620,15 +621,59 @@ export function buildsGuardedWords(command: string, w: Where): boolean {
 }
 const BUILDS_WHY = 'the command builds words at run time (a variable in command position, ${!…}, ${…/…}, $\'…\', IFS=, or eval) and names harness or a protected path, so the guard cannot read what it runs';
 
+// Command names the text rules and checks look for. A command-position glob that can match one is read as it.
+const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
+  'cdk', 'terraform', 'aws', 'kubectl', 'docker', 'vercel'];
+const SPLIT_SEGMENTS = new RegExp(`(${SEGMENTS.source})`);
+/**
+ * The readings of a command where the first command-position glob word (g?t, gi[t], *it, /usr/bin/g?t) is each ruled
+ * name it can match, recursively: bash expands it against cwd before the lookup. Matched on names only, never the disk.
+ * ponytail: at most 32 readings, enough for a few globs that each match a few names (`*` alone matches all of them).
+ */
+export function globReadings(command: string, out: string[] = []): string[] {
+  if (!/[*?[]/.test(command) || out.length >= 32) return out;
+  const parts = command.split(SPLIT_SEGMENTS);
+  for (let i = 0; i < parts.length; i += 2) {
+    const ws = parts[i].split(/([ \t]+)/), toks = ws.filter((_, j) => j % 2 === 0 && ws[j]);
+    const tok = toks[commandStart([...toks])];
+    if (!tok || !/[*?[]/.test(tok)) continue;
+    const base = tok.split(/[\\/]/).pop()!.replace(/['"]/g, '');
+    const m = picomatch(base, { nocase: true }); // macOS and Windows file systems ignore case
+    const names = RULED.filter((n) => m(n));
+    if (!names.length) continue;
+    const j = ws.indexOf(tok);
+    for (const n of names) {
+      if (out.length >= 32) break;
+      const next = [...parts];
+      next[i] = [...ws.slice(0, j), n, ...ws.slice(j + 1)].join('');
+      const t = next.join('');
+      out.push(t);
+      globReadings(t, out);
+    }
+    return out;
+  }
+  return out;
+}
+
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
   command = command.replace(/\\\r?\n/g, ''); // a backslash-newline joins the lines for the shell
   const d = decideRead(command, ctx);
   if (d.kind === 'deny') return d;
   const ifs = ifsReading(command);
-  const r = ifs === null ? d : decideRead(ifs, ctx);
-  if (r.kind === 'deny') return r;
-  return [d, r].find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
+  const rs = [d];
+  // Stricter verdict wins over every reading: the $IFS one and each command-position glob read as a ruled name.
+  for (const t of [...(ifs === null ? [] : [ifs]), ...globReadings(command), ...(ifs === null ? [] : globReadings(ifs))]) {
+    const r = decideRead(t, ctx);
+    if (r.kind === 'deny') return r;
+    rs.push(r);
+  }
+  // A substitution glued inside a word (git pu``sh -f, pu$(true)sh) prints what the guard cannot know: read without it, a ruled reading asks.
+  const spliced = command.replace(SPLICE, '');
+  if (spliced !== command && decideRead(spliced, ctx).kind !== 'allow') rs.push(toDecision(['ask', SPLICE_WHY]));
+  return rs.find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
 }
+const SPLICE = /(?<=[\w./-])(?:`[^`]*`|\$\([^()]*\))|(?:`[^`]*`|\$\([^()]*\))(?=[\w./-])/g;
+const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 
 const ANSI_C: Record<string, string> = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v' };
 /** The body of a bash `$'…'` string, decoded: \xHH, \NNN, \uHHHH, \UHHHHHHHH, \n and the other letters. */
@@ -661,9 +706,18 @@ function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
   return own;
 }
 
+// git's global options and their values (-C dir, -c k=v, --git-dir[=]x, --no-pager…), so `git -C . push -f` reads as `git push -f`.
+const GIT_GLOBALS = /\bgit(?:[ \t]+(?:-[Cc][ \t]+\S+|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env|attr-source)(?:=\S*|[ \t]+\S+)|--?[\w-]+(?:=\S*)?))+(?=[ \t])/g;
+/** The git reading of the text rules: a separator inside quotes is a literal argument (`git push origin 'a;b' main`),
+ *  quotes are off as in quoteFree, and git's global options are dropped. */
+const gitPlain = (c: string): string =>
+  quoteFree(c.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (q) => q.replace(/[;&|\n]/g, '_'))).replace(GIT_GLOBALS, 'git');
+
 function decideCore(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const unq = quoteFree(command); // `"git" push`, `g\it push`, `git $'push'`: quotes and escapes hide no text rule
+  const git = gitPlain(command);
+  const texts = [command, unq, git];
   const tokens = `${command} ${unq}`.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');
   const personOnly = personOnlyInvocation(command, ctx);
@@ -676,15 +730,15 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   for (const { targets } of rmTargets(command)) {
     if (targets.some((t) => { const rel = inTdd(t); return rel !== null && isTestFile(rel); })) return deny('deleting a test file in a TDD path');
   }
-  const early = checkRm(command) ?? checkPushToMain(command) ?? checkPushToMain(unq);
+  const early = checkRm(command) ?? checkPushToMain(command) ?? checkPushToMain(unq) ?? checkPushToMain(git);
   if (early) return toDecision(early);
-  for (const [re, why] of DENY) if (re.test(command) || re.test(unq)) return deny(why);
+  for (const [re, why] of DENY) if (texts.some((t) => re.test(t))) return deny(why);
   if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {
     return { kind: 'ask', reason: msg('ask', 'shell write into a TDD path; use the Edit or Write tool so the TDD gates see it'), check: 'guard' };
   }
   const install = checkInstall(command, ctx);
   if (install) return install;
-  for (const [re, why] of ASK) if (re.test(command) || re.test(unq)) return toDecision(['ask', why]);
+  for (const [re, why] of ASK) if (texts.some((t) => re.test(t))) return toDecision(['ask', why]);
   return { kind: 'allow' };
 }
 

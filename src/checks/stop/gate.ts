@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { appendEvent } from '../../core/events.js';
+import { appendTiming } from '../../core/timing.js';
 import type { Check, Ctx } from '../../hooks/dispatch.js';
 import type { Decision } from '../../hooks/types.js';
 import { coverageGate } from './coverage-gate.js';
@@ -177,7 +178,9 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     ran++;
     const remaining = timeout_s * 1000 - (now() - stepsStart);
     // On Windows pass the resolved path so a .cmd shim can be recognised and wrapped.
+    const t0 = now();
     const r = remaining > 0 ? await exec(process.platform === 'win32' ? found : rs.cmd, rs.args, remaining) : null;
+    appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: rs.label, outcome: r?.status === 0 && !r.timedOut ? 'allow' : 'block', ms: Math.max(0, now() - t0) });
     if (!r || r.timedOut) {
       return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };
     }

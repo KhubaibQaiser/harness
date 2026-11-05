@@ -238,3 +238,20 @@ test('catalog-pins runs weekly and on catalog changes with --resolve', () => {
   expect(runs.indexOf('node dist/cli.mjs catalog check --resolve')).toBeGreaterThan(runs.indexOf('pnpm build'));
   expect(steps.find((s: any) => s.run === 'node dist/cli.mjs catalog check --resolve').env).toEqual({ GH_TOKEN: '${{ github.token }}' });
 });
+
+test('re-running a release is safe: each publish step checks for the version first', () => {
+  const jobs = load('release.yml').jobs;
+  const pub = jobs.publish.steps.find((s: any) => /npm publish/.test(s.run ?? ''));
+  expect(pub.run).toContain('npm view "$name@$v" gitHead');
+  expect(pub.run).toContain('[ "$head" = "$GITHUB_SHA" ]');
+  expect(pub.run).toContain('already published from this commit; skipping npm publish');
+  expect(pub.run).toContain('is already on npm from commit');
+  expect(pub.run).toContain('bump the version');
+  expect(pub.run.indexOf('npm view')).toBeLessThan(pub.run.indexOf('npm publish'));
+  const gp = jobs['github-packages'].steps.find((s: any) => /npm publish/.test(s.run ?? ''));
+  expect(gp.run).toContain('npm view --registry https://npm.pkg.github.com "$name@$v"');
+  expect(gp.run.indexOf('npm view')).toBeLessThan(gp.run.indexOf('npm publish'));
+  const rel = jobs['github-release'].steps.find((s: any) => /gh release create/.test(s.run ?? ''));
+  expect(rel.run).toContain('gh release view "$GITHUB_REF_NAME"');
+  expect(rel.run.indexOf('gh release view')).toBeLessThan(rel.run.indexOf('gh release create'));
+});

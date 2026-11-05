@@ -635,15 +635,16 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   for (const { targets } of rmTargets(command)) {
     if (targets.some((t) => { const rel = inTdd(t); return rel !== null && isTestFile(rel); })) return deny('deleting a test file in a TDD path');
   }
-  const early = checkRm(command) ?? checkPushToMain(command);
+  const unq = command.replace(/['"\\]/g, ''); // `"git" push`, `g\it push`, `push "-f"`: quotes and escapes hide no text rule
+  const early = checkRm(command) ?? checkPushToMain(command) ?? checkPushToMain(unq);
   if (early) return toDecision(early);
-  for (const [re, why] of DENY) if (re.test(command)) return deny(why);
+  for (const [re, why] of DENY) if (re.test(command) || re.test(unq)) return deny(why);
   if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {
     return { kind: 'ask', reason: msg('ask', 'shell write into a TDD path; use the Edit or Write tool so the TDD gates see it'), check: 'guard' };
   }
   const install = checkInstall(command, ctx);
   if (install) return install;
-  for (const [re, why] of ASK) if (re.test(command)) return toDecision(['ask', why]);
+  for (const [re, why] of ASK) if (re.test(command) || re.test(unq)) return toDecision(['ask', why]);
   return { kind: 'allow' };
 }
 

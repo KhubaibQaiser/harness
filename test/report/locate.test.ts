@@ -119,6 +119,56 @@ describe('locateSessions', () => {
       chmodSync(d, 0o700);
     }
   });
+  it('does not follow a symlinked project folder', async () => {
+    put('other', 's.jsonl', root);
+    symlinkSync(join(proj, 'other'), join(proj, enc(root)));
+    const r = await run(root);
+    expect(r.sessions).toEqual([]);
+    expect(r.skipped.symlink).toBe(1);
+  });
+  it('matches a case-folded folder only on darwin, through locateSessions', async () => {
+    const lower = '/Users/x/repo';
+    put(enc('/Users/X/Repo'), 's.jsonl', '/Users/X/Repo');
+    expect((await run(lower, { platform: 'darwin' })).sessions).toHaveLength(1);
+    expect((await run(lower, { platform: 'linux' })).sessions).toHaveLength(0);
+  });
+  it('fails closed on a cwd with .. or a relative cwd', async () => {
+    put(enc(root), 'dots.jsonl', `${root}/../other`);
+    put(enc(root), 'rel.jsonl', 'src');
+    const r = await run(root);
+    expect(r.sessions).toEqual([]);
+    expect(r.skipped['outside-repo']).toBe(2);
+  });
+  it('does not follow symlinked subagent paths and counts them', async () => {
+    // <id> dir is a link into another project's folder
+    put('other', 'victim/subagents/agent-v.jsonl', root);
+    put(enc(root), 'a.jsonl', root);
+    symlinkSync(join(proj, 'other/victim'), join(proj, enc(root), 'a'));
+    // subagents dir is a link
+    put(enc(root), 'b.jsonl', root);
+    put('other', 'subs/agent-s.jsonl', root);
+    mkdirSync(join(proj, enc(root), 'b'));
+    symlinkSync(join(proj, 'other/subs'), join(proj, enc(root), 'b/subagents'));
+    // a subagent file is a link
+    put(enc(root), 'c.jsonl', root);
+    put(enc(root), 'c/subagents/agent-real.jsonl', root);
+    symlinkSync(join(proj, 'other/subs/agent-s.jsonl'), join(proj, enc(root), 'c/subagents/agent-link.jsonl'));
+    const r = await run(root);
+    const by = Object.fromEntries(r.sessions.map((x) => [x.session, x.subagents.map((p) => p.split('/').pop())]));
+    expect(by).toEqual({ a: [], b: [], c: ['agent-real.jsonl'] });
+    expect(r.skipped.symlink).toBe(3);
+  });
+  it('counts an unreadable file at open', async () => {
+    put(enc(root), 's.jsonl', root);
+    const open = (() => { throw new Error('EACCES'); }) as unknown as typeof openSync;
+    expect((await run(root, { open })).skipped.unreadable).toBe(1);
+  });
+  it('bounds a listing and counts truncation', async () => {
+    for (const i of [1, 2, 3]) put(enc(root), `s${i}.jsonl`, root);
+    const r = await run(root, { maxEntries: 2 });
+    expect(r.sessions.length).toBeLessThanOrEqual(2);
+    expect(r.skipped.truncated).toBe(1);
+  });
   it('uses CLAUDE_CONFIG_DIR and tolerates a missing projects dir', async () => {
     expect((await run(root, { env: { CLAUDE_CONFIG_DIR: join(home, 'none') } })).sessions).toEqual([]);
   });

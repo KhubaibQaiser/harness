@@ -58,14 +58,22 @@ describe('counting', () => {
     expect(measure(root, {}, cfg())).toMatchObject({ lines: 0, files: 3, top: [{ path: 'bin.dat', lines: 0 }, { path: 'moved.ts', lines: 0 }, { path: 'old.ts', lines: 0 }] });
   });
 
-  test('a mode-only change is 1 file and 0 lines', () => {
+  // Windows git does not track the executable bit.
+  test.skipIf(process.platform === 'win32')('a mode-only change is 1 file and 0 lines', () => {
     const root = repo({ 'run.sh': lines(3) });
     chmodSync(join(root, 'run.sh'), 0o755);
     commit(root, {});
     expect(measure(root, {}, cfg())).toMatchObject({ lines: 0, files: 1, top: [{ path: 'run.sh', lines: 0 }] });
   });
 
-  test('names with a newline, a tab and a quote survive -z parsing', () => {
+  test("a name with a space, an apostrophe and an ampersand survives -z parsing on every OS", () => {
+    const root = repo();
+    commit(root, { "it's a & b.ts": lines(2) });
+    expect(measure(root, {}, cfg())).toMatchObject({ lines: 2, files: 1, top: [{ path: "it's a & b.ts", lines: 2 }] });
+  });
+
+  // Newline, tab and double quote are not valid in Windows file names.
+  test.skipIf(process.platform === 'win32')('names with a newline, a tab and a quote survive -z parsing', () => {
     const root = repo();
     commit(root, { 'a\nb.ts': lines(1), 'c\td.ts': lines(2), 'e"f.ts': lines(3) });
     expect(measure(root, {}, cfg())).toMatchObject({ lines: 6, files: 3, top: [{ path: 'e"f.ts', lines: 3 }, { path: 'c\td.ts', lines: 2 }, { path: 'a\nb.ts', lines: 1 }] });

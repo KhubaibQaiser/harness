@@ -11,6 +11,7 @@ export interface Counts {
   ts: { byOption: Record<string, number | null>; baseline: number | null };
 }
 
+const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_RETRIES = 10;
 const MAX_OUTPUT = 50_000_000; // untrusted tool output: ignore anything bigger
 const MAX_ERROR = 200;
@@ -18,6 +19,7 @@ const RULE_IN_ERROR = /rule ["']([^"']+)["']/;
 const TSC_ERROR = /error TS\d+/g;
 
 type Run = ReturnType<Exec>;
+interface Ctx { root: string; p: Proposal; exec: Exec; timeoutMs: number; dir: string }
 const first = (s: string | undefined) => (s ?? '').split('\n').find((l) => l.trim())?.trim().slice(0, MAX_ERROR) ?? '';
 
 function countEslint(stdout: string, known: (id: string) => boolean): Record<string, number> | string {
@@ -49,15 +51,16 @@ export default [...[].concat(repo), ...kept];
 `;
 }
 
-async function runEslint(root: string, p: Proposal, exec: Exec, timeoutMs: number, dir: string): Promise<Counts['eslint']> {
+async function runEslint({ root, p, exec, timeoutMs, dir }: Ctx): Promise<Counts['eslint']> {
   const dropped: Counts['eslint']['dropped'] = [];
+  // jsx-a11y is a whole recommended set: its rule id is the plugin name, so its messages are `jsx-a11y/<rule>`.
   const known = (id: string) => p.rules.some((r) => r.id === id || id.startsWith(`${r.id}/`)) && !dropped.some((d) => d.rule === id);
   writeAtomic(join(dir, 'rules-preview.proposal.mjs'), p.configText);
   const preview = join(dir, 'rules-preview.mjs');
   const bin = join(root, 'node_modules', '.bin', 'eslint');
   for (let i = 0; i <= MAX_RETRIES; i++) {
     writeAtomic(preview, previewConfig(root, dropped.map((d) => d.rule)));
-    const r: Run = exec(bin, ['--config', preview, '--format', 'json', '.'], { timeoutMs, cwd: root });
+    const r: Run = exec(bin, ['--config', preview, '--format', 'json', '--ignore-pattern', '.harness/**', '.'], { timeoutMs, cwd: root });
     if (r.timedOut) return { byRule: {}, dropped, error: 'eslint timed out' };
     if (r.missing) return { byRule: {}, dropped, error: 'eslint is not installed' };
     const bad = r.status > 1 ? RULE_IN_ERROR.exec(r.stderr ?? '')?.[1] : undefined;
@@ -77,11 +80,12 @@ async function runEslint(root: string, p: Proposal, exec: Exec, timeoutMs: numbe
 function tscErrors(root: string, exec: Exec, project: string, timeoutMs: number): number | null {
   const r = exec(join(root, 'node_modules', '.bin', 'tsc'), ['--noEmit', '--pretty', 'false', '-p', project], { timeoutMs, cwd: root });
   if (r.timedOut || r.missing || r.stdout.length > MAX_OUTPUT) return null;
-  return r.stdout.match(TSC_ERROR)?.length ?? 0;
+  const n = r.stdout.match(TSC_ERROR)?.length ?? 0;
+  return n === 0 && r.status !== 0 ? null : n; // failed to run (not a type error): unknown, never 0
 }
 
-function runTs(root: string, p: Proposal, exec: Exec, timeoutMs: number, dir: string): Counts['ts'] {
-  const options = Object.keys(p.ts).filter((o) => /^\w+$/.test(o));
+function runTs({ root, p, exec, timeoutMs, dir }: Ctx): Counts['ts'] {
+  const options = tsOptions(p);
   const byOption: Record<string, number | null> = Object.fromEntries(options.map((o) => [o, null]));
   const baseline = tscErrors(root, exec, join(root, 'tsconfig.json'), timeoutMs);
   if (baseline === null) return { byOption, baseline };
@@ -94,23 +98,29 @@ function runTs(root: string, p: Proposal, exec: Exec, timeoutMs: number, dir: st
   return { byOption, baseline };
 }
 
-/** Counts what each proposed rule/option would flag today, by running the repo's own eslint and tsc. */
-export async function countViolations(root: string, p: Proposal, exec: Exec, timeoutMs = 120_000): Promise<Counts> {
-  const dir = join(root, '.harness', 'state');
-  const files = ['rules-preview.mjs', 'rules-preview.proposal.mjs', ...Object.keys(p.ts).map((o) => `tsconfig.${o}.json`)];
-  const guard = <T>(fn: () => T, fallback: (e: string) => T) => {
-    try {
-      return fn();
-    } catch (e) {
-      return fallback(first((e as Error)?.message) || 'failed');
-    }
-  };
+const tsOptions = (p: Proposal) => Object.keys(p.ts).filter((o) => /^\w+$/.test(o));
+
+const errText = (e: unknown) => first((e as Error)?.message) || 'failed';
+
+/**
+ * Counts what each proposed rule/option would flag today, by running the repo's own eslint and tsc.
+ * timeoutMs applies to each run, so the worst case is about 11 eslint runs plus 1 + N tsc runs.
+ */
+export async function countViolations(root: string, p: Proposal, exec: Exec, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Counts> {
+  const ctx: Ctx = { root, p, exec, timeoutMs, dir: join(root, '.harness', 'state') };
+  const options = tsOptions(p);
+  const files = ['rules-preview.mjs', 'rules-preview.proposal.mjs', ...options.flatMap((o) => [`tsconfig.${o}.json`, `tsconfig.${o}.tsbuildinfo`])];
   try {
-    mkdirSync(dir, { recursive: true });
-    const eslint = await runEslint(root, p, exec, timeoutMs, dir).catch((e: unknown) => ({ byRule: {}, dropped: [], error: first((e as Error)?.message) || 'failed' }));
-    const ts = guard(() => runTs(root, p, exec, timeoutMs, dir), () => ({ byOption: Object.fromEntries(Object.keys(p.ts).map((o) => [o, null])), baseline: null }));
+    mkdirSync(ctx.dir, { recursive: true });
+    const eslint = await runEslint(ctx).catch((e: unknown) => ({ byRule: {}, dropped: [], error: errText(e) }));
+    let ts: Counts['ts'];
+    try {
+      ts = runTs(ctx);
+    } catch {
+      ts = { byOption: Object.fromEntries(options.map((o) => [o, null])), baseline: null };
+    }
     return { eslint, ts };
   } finally {
-    for (const f of files) rmSync(join(dir, f), { force: true });
+    for (const f of files) rmSync(join(ctx.dir, f), { force: true });
   }
 }

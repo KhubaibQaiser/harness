@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Exec } from '../../src/core/exec.js';
 import { countViolations } from '../../src/rules/count.js';
@@ -69,7 +70,7 @@ describe('countViolations', () => {
   it('gives error, not a crash, for malformed json', async () => {
     const f = fake({ eslint: [{ status: 1, stdout: '{not json' }] });
     const c = await countViolations(root, proposal(), f.exec);
-    expect(c.eslint.error).toBeTruthy();
+    expect(c.eslint.error).toBe('eslint output was not valid JSON');
   });
 
   it('gives the ts delta over the baseline', async () => {
@@ -87,5 +88,54 @@ describe('countViolations', () => {
     const c = await countViolations(root, proposal(), exec);
     expect(c.eslint.error).toBeTruthy();
     expect(leftovers()).toEqual([]);
+  });
+
+  it('reports unknown, never 0, when tsc did not run', async () => {
+    const f = fake({ tsc: () => ({ status: 1, stdout: '', stderr: 'spawn ENOENT' }) });
+    expect((await countViolations(root, proposal(), f.exec)).ts).toEqual({ byOption: { noUncheckedIndexedAccess: null }, baseline: null });
+    const g = fake({ tsc: (a) => (a.some((x) => x.includes('tsconfig.noUnchecked')) ? { status: 1, stdout: '' } : { status: 0, stdout: '' }) });
+    expect((await countViolations(root, proposal(), g.exec)).ts).toEqual({ byOption: { noUncheckedIndexedAccess: null }, baseline: 0 });
+    const m = fake({ tsc: () => ({ status: 127, stdout: '', missing: true }) });
+    expect((await countViolations(root, proposal(), m.exec)).ts.baseline).toBeNull();
+  });
+
+  it('counts jsx-a11y style set messages and ignores the preview files', async () => {
+    const p = { ...proposal(), rules: byId(['jsx-a11y', 'max-depth']) };
+    const f = fake({ eslint: [{ status: 1, stdout: report(['jsx-a11y/alt-text', 'jsx-a11y/alt-text', 'max-depth']) }] });
+    const c = await countViolations(root, p, f.exec);
+    expect(c.eslint.byRule).toEqual({ 'jsx-a11y/alt-text': 2, 'max-depth': 1 });
+    expect(f.calls[0]).toContain('--ignore-pattern');
+  });
+
+  it('removes tsbuildinfo files tsc leaves behind', async () => {
+    const f = fake({
+      tsc: () => {
+        mkdirSync(state(root), { recursive: true });
+        writeFileSync(join(state(root), 'tsconfig.noUncheckedIndexedAccess.tsbuildinfo'), '{}');
+        return { status: 0, stdout: '' };
+      },
+    });
+    await countViolations(root, proposal(), f.exec);
+    expect(leftovers()).toEqual([]);
+  });
+
+  it('generates a preview that loads: repo config first, dropped rule filtered out', async () => {
+    const keep = join(root, 'kept');
+    mkdirSync(keep);
+    let runs = 0;
+    const p = proposal();
+    p.configText = "export default [{ files: ['**'], rules: { 'max-depth': 'error', 'react-hooks/set-state-in-effect': 'error' } }];\n";
+    writeFileSync(join(root, 'eslint.config.mjs'), "export default [{ rules: { 'no-var': 'error' } }];\n");
+    const err = { status: 2, stdout: '', stderr: "Definition for rule 'react-hooks/set-state-in-effect' not found." };
+    const exec: Exec = (cmd) => {
+      if (!cmd.endsWith('eslint')) return { status: 0, stdout: '' };
+      for (const f of ['rules-preview.mjs', 'rules-preview.proposal.mjs']) copyFileSync(join(state(root), f), join(keep, f));
+      return runs++ === 0 ? err : { status: 0, stdout: '[]' };
+    };
+    const c = await countViolations(root, p, exec);
+    expect(c.eslint.dropped.map((d) => d.rule)).toEqual(['react-hooks/set-state-in-effect']);
+    const cfg = ((await import(pathToFileURL(join(keep, 'rules-preview.mjs')).href)) as { default: { rules: Record<string, string> }[] }).default;
+    expect(cfg[0]!.rules).toEqual({ 'no-var': 'error' });
+    expect(cfg[1]!.rules).toEqual({ 'max-depth': 'error' });
   });
 });

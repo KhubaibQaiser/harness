@@ -647,6 +647,8 @@ test('doctor: gh failing without a status is "not available"; a signed-out gh is
   expect(line).toMatch(/^note branch protection unknown \(gh could not read it: \[31mevilx+\)$/);
   expect(line).not.toMatch(/[\x00-\x1f]/);
   expect(line.length).toBeLessThan(200);
+  expect(go(() => ({ status: 4, stdout: '' }))).toContain('note branch protection unknown (gh could not read it: exit 4)');
+  expect(go(() => ({ status: 1, stdout: 'bad\u202e\u200bname' }))).toContain('(gh could not read it: badname)');
 });
 
 test('doctor: a workflow file over 1 MB is skipped', async () => {

@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { HIDDEN_CLASS } from '../core/config.js';
 
 export type Gh = (args: string[]) => { status: number | null; stdout: string };
 export type Protection = { state: 'ok' | 'missing' | 'unknown'; detail: string };
@@ -15,8 +16,11 @@ const unknown = (why: string): Protection => ({ state: 'unknown', detail: `branc
 
 const MAX_REASON = 120;
 // First line of gh's output, control characters stripped: gh output is untrusted.
+const STRIP = new RegExp(`[\\u0000-\\u001f${HIDDEN_CLASS}]`, 'gu');
+const reason = (r: { status: number | null; stdout: string }): string =>
+  r.stdout.split('\n')[0].replace(STRIP, '').trim().slice(0, MAX_REASON) || `exit ${r.status}`;
 const failed = (r: { status: number | null; stdout: string }): Protection =>
-  unknown(r.status === null ? 'gh not available' : `gh could not read it: ${r.stdout.split('\n')[0].replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, MAX_REASON)}`);
+  unknown(r.status === null ? 'gh not available' : `gh could not read it: ${reason(r)}`);
 
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
 const json = (stdout: string): Record<string, unknown> | null => {

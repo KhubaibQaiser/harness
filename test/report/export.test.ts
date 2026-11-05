@@ -15,7 +15,7 @@ const skill = (name: string): SkillRow => ({
 });
 const L = 'LEAK_CANARY_';
 const hostile = (): ReportData => ({
-  meta: { generated: '2026-11-05T10:00:00Z', days: 14, harness: '0.2.0', claudeVersions: ['2.1.0', `${L}ver /Users/x`], untested: [`${L}untested`], sessions: { scanned: 3, skipped: { [`${L}reason /Users/x`]: 2 }, unknown: 1 } },
+  meta: { generated: '2026-11-05T10:00:00Z', days: 14, harness: '0.2.0-my-private-repo', claudeVersions: ['2.1.0', `${L}ver /Users/x`, '1.2.3-my-private-repo'], untested: [`${L}untested`], sessions: { scanned: 3, skipped: { [`${L}reason /Users/x`]: 2 }, unknown: 1 } },
   usage: {
     total: U(10), main: U(8), sub: U(2),
     byDay: { '2026-11-04': U(5), '2026-11-05': U(7), [`${L}day`]: U(1) },
@@ -28,17 +28,17 @@ const hostile = (): ReportData => ({
   windows: {
     byRule: Object.fromEntries(RULES.map((r) => [r, {
       windows: [{ rule: r, session: `${L}sess`, date: '2026-11-05', turn: 1, prompt: `${L}prompt /Users/x/repo`, texts: `${L}quote feature/secret-branch`, tools: [`${L}tool`] }],
-      total: 1, counters: { asks: 2 }, byBucket: { '1-10': sp, '11-30': sp, '31-100': sp, '100+': sp }, byCompact: { pre: sp, post: sp },
+      total: 1, counters: { asks: 2, [`${L}ckey`]: 9 }, byBucket: { [`${L}bkey`]: sp, '1-10': sp, '11-30': sp, '31-100': sp, '100+': sp }, byCompact: { pre: sp, post: sp },
     }])) as unknown as ReportData['windows']['byRule'],
-    unknown: 0, notes: { sideRecords: 3, sideBad: 2, beforeFirstPrompt: 1 },
+    unknown: 0, notes: { ...{ [`${L}wkey`]: 9 }, sideRecords: 3, sideBad: 2, beforeFirstPrompt: 1 },
   },
   gates: {
     tally: { 'secrets:deny': 2, [`${L}check`]: 1 }, overrides: { [`${L}ov`]: 1 },
     falseBlocks: [{ signal: 'override', check: `${L}fb`, session: `${L}fbs`, date: '2026-11-05', fuzzy: false, quote: `${L}fbq /Users/x` }],
-    latency: [{ source: 'timing', event: 'PreToolUse', n: 5, p50: 10, p95: 30, max: 40, timeouts: 0 }, { source: 'timing', event: `${L}event`, n: 1, p50: 1, p95: 1, max: 1, timeouts: 0 }],
+    latency: [{ source: 'timing', event: 'PreToolUse', n: 5, p50: 10, p95: 30, max: 40, timeouts: 0 }, { source: `${L}src` as 'timing', event: `${L}event`, n: 1, p50: 1, p95: 1, max: 1, timeouts: 0 }],
     stopSteps: [{ step: `${L}step`, runs: 1, blocks: 0, flakes: 0, p50: 1, p95: 1 }],
-    hallucination: { typecheckBlocks: 1, testBlocks: 2, registryChecks: 3, registryDenies: 4 },
-    notes: { badEvents: 0, badTiming: 0, noTime: 0, falseBlocksCut: 0, denyUnlinked: 0, unknownTools: 0, truncatedTurns: 0, samplesCut: 0, keysCut: 0, noTimingLog: true },
+    hallucination: { ...{ [`${L}hkey`]: 9 }, typecheckBlocks: 1, testBlocks: 2, registryChecks: 3, registryDenies: 4 },
+    notes: { ...{ [`${L}gkey`]: 9 }, badEvents: 0, badTiming: 0, noTime: 0, falseBlocksCut: 0, denyUnlinked: 0, unknownTools: 0, truncatedTurns: 0, samplesCut: 0, keysCut: 0, noTimingLog: true },
   },
 });
 
@@ -67,6 +67,30 @@ describe('buildExport', () => {
   });
 });
 
+describe('round 1', () => {
+  it('drops hostile versions and keys; folds a hostile harness, source and generated to other', () => {
+    const d = hostile();
+    d.meta.generated = `${L}gen`;
+    const out = buildExport(d, known);
+    expect(JSON.stringify(out)).not.toContain('LEAK');
+    expect(JSON.stringify(out)).not.toContain('private-repo');
+    expect(out.harness).toBe('other');
+    expect(out.generated_on).toBe('other');
+    expect(out.claude_versions).toEqual(['2.1.0', 'other', 'other']);
+  });
+  it('merges unknown rule ids into one other row', () => {
+    const out = buildExport(hostile(), { ids: new Set(['tdd-skill']) });
+    const rows = out.rules as { id: string; total: number }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.total).toBe(7);
+  });
+  it('flags a key that is not on the allowlist', () => {
+    const p = exportProblems({ counters: { [`${L}k`]: 1 } }, known);
+    expect(p).toHaveLength(1);
+    expect(p[0]).not.toContain('LEAK');
+  });
+});
+
 describe('exportProblems', () => {
   it('names the path of an injected string, never its value', () => {
     const p = exportProblems({ schema: 1, skills: [{ id: '/Users/x' }] }, known);
@@ -76,5 +100,6 @@ describe('exportProblems', () => {
   });
   it('rejects a version with a trailing path', () => {
     expect(exportProblems({ harness: '1.2.3/Users/x' }, known)).toHaveLength(1);
+    expect(exportProblems({ harness: '1.2.3-x' }, known)).toHaveLength(1);
   });
 });

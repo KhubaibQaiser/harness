@@ -160,7 +160,7 @@ export function presetSets(l: LoadedPreset, opts: { selected: string[]; env: boo
   if (opts.env) {
     const seen = new Set<string>();
     for (const id of l.preset.settings.telemetry_off) {
-      const e = TELEMETRY_ENV[id];
+      const e = Object.hasOwn(TELEMETRY_ENV, id) ? TELEMETRY_ENV[id] : undefined;
       if (!opts.selected.includes(id) || !e || seen.has(e.name)) continue;
       seen.add(e.name);
       out.push({ set: ['env', e.name], value: e.value });
@@ -384,14 +384,18 @@ const END = '<!-- harness:end -->';
 export const PRESET_START = '<!-- harness:preset:start -->';
 export const PRESET_END = '<!-- harness:preset:end -->';
 export const mergeAgents = (before: string | null) => mergeMarked(before, template('agents-block.md'), START, END, 'harness');
-export const mergeAgentsPreset = (before: string | null, core: string) => mergeMarked(before, core, PRESET_START, PRESET_END, 'preset');
-function mergeMarked(before: string | null, text: string, START: string, END: string, who: string): { after: string; blocks: string[] } {
+/** `core` is the inner text only; the preset markers are added here. */
+export function mergeAgentsPreset(before: string | null, core: string): { after: string; blocks: string[] } {
+  if (core.includes(PRESET_START) || core.includes(PRESET_END)) throw new MergeError('the preset core text must not contain the preset markers; they are added when it is written');
+  return mergeMarked(before, `${PRESET_START}\n\n${core.trim()}\n\n${PRESET_END}`, PRESET_START, PRESET_END, 'preset');
+}
+function mergeMarked(before: string | null, text: string, start: string, end: string, who: string): { after: string; blocks: string[] } {
   const eol = before === null ? '\n' : eolOf(before);
   const block = withEol(text.trimEnd(), eol);
   if (before === null) return { after: block + eol, blocks: [block + eol] };
   const count = (m: string) => before.split(m).length - 1;
-  if (count(START) > 1 || count(END) > 1) throw new MergeError(`AGENTS.md has a repeated ${who} marker; fix it by hand`);
-  const s = before.indexOf(START), e = before.indexOf(END);
+  if (count(start) > 1 || count(end) > 1) throw new MergeError(`AGENTS.md has a repeated ${who} marker; fix it by hand`);
+  const s = before.indexOf(start), e = before.indexOf(end);
   if (s === -1 && e === -1) {
     const added = sep(before, eol) + block + eol; // separator is part of the block so removal is exact
     return { after: before + added, blocks: [added] };
@@ -399,7 +403,7 @@ function mergeMarked(before: string | null, text: string, START: string, END: st
   if (s === -1 || e === -1 || e < s) throw new MergeError(`AGENTS.md has a missing or misordered ${who} marker; fix it by hand`);
   // Marker replace: removing the block gives back the text outside the markers only; the user's
   // original text between the markers was overwritten and cannot be restored.
-  return { after: before.slice(0, s) + block + before.slice(e + END.length), blocks: [block] };
+  return { after: before.slice(0, s) + block + before.slice(e + end.length), blocks: [block] };
 }
 
 /** Returns null when there is nothing to import (AGENTS.md absent, or the import is already there). */

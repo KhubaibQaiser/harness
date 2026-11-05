@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, test } from 'vitest';
+import { afterAll, describe, expect, it, test } from 'vitest';
 import { BETA_GROUPS, betaSettings } from './helpers.js';
 import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, STRUCTURAL } from '../../src/install/merge.js';
 import { TELEMETRY_ENV, type LoadedPreset } from '../../src/catalog/presets.js';
@@ -628,26 +628,29 @@ describe('preset merge kinds', () => {
   // Invented for these tests only.
   TELEMETRY_ENV.a = { name: 'DO_NOT_TRACK', value: '1' };
   TELEMETRY_ENV.b = { name: 'B_OFF', value: 'x' };
-  const core = `${PRESET_START}\n\n## Rules\n\n- one\n${PRESET_END}\n`;
+  afterAll(() => { delete TELEMETRY_ENV.a; delete TELEMETRY_ENV.b; });
+  const inner = '## Rules\n\n- one\n';
+  const core = `${PRESET_START}\n\n## Rules\n\n- one\n\n${PRESET_END}\n`; // what the merge writes
   const lp = { preset: { settings: { attribution: 'off', telemetry_off: ['a', 'b'] } } } as unknown as LoadedPreset;
   const want = presetSets(lp, { selected: ['a', 'b'], env: true });
   const F = (blocks: string[]) => ({ rel: '.claude/settings.json', kind: 'update' as const, hash: '', blocks });
   const envOf = (s: string) => JSON.parse(s)['env'];
 
   it('agents block: create, append, order, exact removal, replace, errors', () => {
-    expect(mergeAgentsPreset(null, core).after).toBe(core);
-    expect(mergeAgentsPreset('# Mine\n', core).after).toBe('# Mine\n\n' + core);
+    expect(mergeAgentsPreset(null, inner).after).toBe(core);
+    expect(mergeAgentsPreset('# Mine\n', inner).after).toBe('# Mine\n\n' + core);
+    expect(() => mergeAgentsPreset('# a\n', core)).toThrow(/must not contain the preset markers/);
     const h = mergeAgents(null);
-    expect(mergeAgentsPreset(h.after, core).after.indexOf(PRESET_START)).toBeGreaterThan(h.after.indexOf(E));
+    expect(mergeAgentsPreset(h.after, inner).after.indexOf(PRESET_START)).toBeGreaterThan(h.after.indexOf(E));
     for (const eol of ['\n', '\r\n']) {
       const orig = `# Mine${eol}`;
-      const m = mergeAgentsPreset(orig, core.replace(/\n/g, eol));
+      const m = mergeAgentsPreset(orig, inner);
       expect(removeBlocks(m.after, m.blocks)).toBe(orig);
     }
-    const a = mergeAgentsPreset('# Mine\n', core).after;
-    expect(mergeAgentsPreset(a, core.replace('one', 'two')).after).toBe(a.replace('one', 'two'));
-    expect(() => mergeAgentsPreset(a + PRESET_START, core)).toThrow('AGENTS.md has a repeated preset marker; fix it by hand');
-    expect(() => mergeAgentsPreset(`${PRESET_END}\n${PRESET_START}`, core)).toThrow(/missing or misordered preset marker/);
+    const a = mergeAgentsPreset('# Mine\n', inner).after;
+    expect(mergeAgentsPreset(a, inner.replace('one', 'two')).after).toBe(a.replace('one', 'two'));
+    expect(() => mergeAgentsPreset(a + PRESET_START, inner)).toThrow('AGENTS.md has a repeated preset marker; fix it by hand');
+    expect(() => mergeAgentsPreset(`${PRESET_END}\n${PRESET_START}`, inner)).toThrow(/missing or misordered preset marker/);
   });
 
   it('presetSets returns leaf keys only', () => {
@@ -694,5 +697,18 @@ describe('preset merge kinds', () => {
     expect(JSON.parse(m.after).attribution).toBe(false);
     expect(envOf(m.after)).toEqual({ DO_NOT_TRACK: '1', B_OFF: 'x' });
     expect(m.dropped.filter((b) => b.startsWith('{"set"'))).toEqual([]);
+  });
+
+  it('leaving always drops sandbox blocks and keeps preset blocks', () => {
+    const p = mergePresetSettings(null, want, []);
+    const al = mergeSettings(p.after, { sandbox: 'always' });
+    const rec = [...al.blocks, ...p.blocks];
+    for (const sandbox of ['unattended', 'off'] as const) {
+      const m = mergeSettings(al.after, { sandbox, recorded: rec });
+      expect(JSON.parse(m.after)).not.toHaveProperty('sandbox');
+      expect(JSON.parse(m.after).attribution).toBe(false);
+      expect(envOf(m.after)).toEqual({ DO_NOT_TRACK: '1', B_OFF: 'x' });
+      expect(m.dropped.filter((b) => b.startsWith('{"set"')).every((b) => b.includes('"sandbox"'))).toBe(true);
+    }
   });
 });

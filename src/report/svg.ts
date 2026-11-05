@@ -1,7 +1,8 @@
 import { h } from './h.js';
 
 const LABEL_W = 170, BAR_W = 300, ROW_H = 24, BAR_H = 14, PAD = 6, GUTTER = PAD * 2, NOTE_X = LABEL_W + BAR_W + GUTTER, VIEW_W = 640;
-const LABEL_MAX = 26, DAY_TAIL = -5, INSET = 2, COL_W = 56, CHART_H = 140, AXIS_H = 20, LEGEND_H = 20, SWATCH = 10, SERIES = 4, LEGEND_W = 160;
+const LABEL_MAX = 26, DAY_TAIL = -5, INSET = 2, COL_W = 56, CHART_H = 140, AXIS_H = 20, LEGEND_H = 20;
+const SWATCH = 10, SERIES = 4, LEGEND_W = 160;
 const MIN_ROWS = 1, MIN_TOP = 1;
 
 /** Cut by code points so a surrogate pair is never split. */
@@ -31,12 +32,14 @@ export function stackedBars(cols: { label: string; parts: number[] }[], legend: 
     const rects = c.parts.map((p, k) => {
       const hh = Math.round((p / top) * CHART_H);
       y -= hh;
-      return `<rect x="${i * COL_W + PAD}" y="${y}" width="${COL_W - GUTTER}" height="${hh}" class="${seriesClass(k)}"><title>${h(c.label)} ${h(legend[k] ?? '')}: ${p}</title></rect>`;
+      return `<rect x="${i * COL_W + PAD}" y="${y}" width="${COL_W - GUTTER}" height="${hh}" class="${seriesClass(k)}">`
+        + `<title>${h(c.label)} ${h(legend[k] ?? '')}: ${p}</title></rect>`;
     }).join('');
     return `${rects}<text x="${i * COL_W + PAD}" y="${CHART_H + AXIS_H - PAD}" class="lbl">${h(c.label.slice(DAY_TAIL))}</text>`;
   }).join('');
   const ly = CHART_H + AXIS_H + PAD;
-  const key = legend.map((l, k) => `<rect x="${legendX(k)}" y="${ly}" width="${SWATCH}" height="${SWATCH}" class="${seriesClass(k)}"/><text x="${legendX(k) + SWATCH + PAD}" y="${ly + SWATCH}" class="lbl">${h(l)}</text>`).join('');
+  const key = legend.map((l, k) => `<rect x="${legendX(k)}" y="${ly}" width="${SWATCH}" height="${SWATCH}" class="${seriesClass(k)}"/>`
+    + `<text x="${legendX(k) + SWATCH + PAD}" y="${ly + SWATCH}" class="lbl">${h(l)}</text>`).join('');
   const width = Math.max(cols.length * COL_W, legendX(SERIES));
   return `<svg class="wide" viewBox="0 0 ${width} ${ly + LEGEND_H}" role="img" aria-label="${h(aria)}">${bars}${key}</svg>`;
 }

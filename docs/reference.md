@@ -364,6 +364,8 @@ The table below is generated from `src/core/config.ts` by `node scripts/gen-conf
 | `stop.coverage_globs` | `["**/coverage/coverage-final.json"]` | Globs for the coverage files that diff coverage reads. |
 <!-- config:end -->
 
+`preset` is not in the table because it has no default: the key is absent until init records a chosen preset. It is a mapping of `id` (a shipped or repo preset id), `version`, `items` (the item ids it chose) and `git` (`branch_prefixes`, each matching `^[a-z0-9-]+/$`, plus `no_ai_trailer` and `pr_size_warning`). Any other key under it is an error.
+
 ## Troubleshooting
 
 Start with `harness doctor`, which prints a fix for each problem.

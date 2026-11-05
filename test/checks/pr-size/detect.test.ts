@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { Where } from '../../../src/checks/guard.js';
+import { isShell } from '../../../src/hooks/edit-target.js';
 import { prTargets } from '../../../src/checks/pr-size/detect.js';
 import { makeRepo } from '../../install/helpers.js';
 
@@ -56,6 +57,32 @@ describe('git push', () => {
   });
 });
 
-test('PowerShell and Monitor text is the same command', () => {
-  for (const c of ['gh pr create --base dev', 'git push origin feat']) expect(prTargets(c, w).length).toBeGreaterThan(0);
+describe('fix round 1', () => {
+  test('--recover takes a value', () => {
+    expect(prTargets('gh pr create --recover key --base dev', w)).toEqual([{ kind: 'create', base: 'dev' }]);
+    expect(prTargets('gh pr create --recover --base=x', w)).toEqual([{ kind: 'create' }]);
+  });
+  test('attached short forms and --head=', () => {
+    expect(prTargets('gh pr create -Bdev -Ho:feat', w)).toEqual([{ kind: 'create', base: 'dev', head: 'feat' }]);
+    expect(prTargets('gh pr create --head=o:feat', w)).toEqual([{ kind: 'create', head: 'feat' }]);
+  });
+  test('backtick command name', () => {
+    expect(creates('`which gh` pr create')).toEqual([{ kind: 'create' }]);
+  });
+  test('--mirror and --branches set all', () => {
+    expect(pushes('git push --mirror origin')[0]).toMatchObject({ all: true });
+    expect(pushes('git push --branches origin')[0]).toMatchObject({ all: true });
+  });
+  test('empty dst falls back to src; deletes give no refs', () => {
+    expect(pushes('git push origin feat:')[0]).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
+    expect(pushes('git push --delete origin feat')[0]).toMatchObject({ refs: [] });
+    expect(pushes('git push -d origin feat')[0]).toMatchObject({ refs: [] });
+  });
+  test('Monitor and PowerShell are shell tools whose text is read with the given Where', () => {
+    expect(isShell('Monitor')).toBe(true);
+    expect(isShell('PowerShell')).toBe(true);
+    const root = makeRepo({ 'package.json': JSON.stringify({ scripts: { ship: 'gh pr create --base dev' } }) }, { git: false });
+    expect(prTargets('npm run ship', { root, env: {} })).toEqual([{ kind: 'create', base: 'dev' }]);
+    expect(prTargets('npm run ship', w)).toEqual([]);
+  });
 });

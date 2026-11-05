@@ -5,8 +5,12 @@ export type PrTarget =
   | { kind: 'push'; all: boolean; refs: { src: string; dst: string }[] };
 
 // gh pr create flags that take a value, so a value like `--title "--base x"` is not read as a flag.
-const GH_VALUE_FLAGS = new Set(['-t', '--title', '-b', '--body', '-F', '--body-file', '-a', '--assignee', '-l', '--label', '-m', '--milestone', '-p', '--project', '-r', '--reviewer', '-R', '--repo', '-T', '--template']);
+const GH_VALUE_FLAGS = new Set([
+  '-t', '--title', '-b', '--body', '-F', '--body-file', '-a', '--assignee', '-l', '--label', '-m', '--milestone',
+  '-p', '--project', '-r', '--reviewer', '-R', '--repo', '-T', '--template', '--recover',
+]);
 const PUSH_VALUE_FLAGS = new Set(['--repo', '-o', '--push-option', '--receive-pack', '--exec']);
+const PUSH_DELETE_FLAGS = new Set(['--delete', '-d']);
 const PUSH_ALL_FLAGS = new Set(['--all', '--branches', '--mirror']);
 
 /** The words after `pr create`, or null when `rest` (the words after gh) is not `pr create`; -R/--repo may come between. */
@@ -23,12 +27,12 @@ function afterPrCreate(rest: string[]): string[] | null {
 function createTarget(args: string[]): PrTarget {
   const t: { kind: 'create'; base?: string; head?: string } = { kind: 'create' };
   for (let i = 0; i < args.length; i++) {
-    const m = /^(--base|--head)=(.*)$/s.exec(args[i]);
-    const flag = m ? m[1] : args[i];
+    const m = /^(?:(--base|--head)=|(-B|-H)(?=.))(.*)$/s.exec(args[i]);
+    const flag = m ? m[1] ?? m[2] : args[i];
     const key = flag === '-B' || flag === '--base' ? 'base' : flag === '-H' || flag === '--head' ? 'head' : null;
     if (key) {
-      const v = m ? m[2] : args[++i];
-      if (v !== undefined) t[key] = key === 'head' ? v.split(':').pop()! : v;
+      const v = m ? m[3] : args[++i];
+      if (v !== undefined) t[key] = key === 'head' ? v.slice(v.lastIndexOf(':') + 1) : v;
     } else if (GH_VALUE_FLAGS.has(args[i])) i++;
   }
   return t;
@@ -36,17 +40,19 @@ function createTarget(args: string[]): PrTarget {
 
 function pushTarget(args: string[]): PrTarget {
   const refs: { src: string; dst: string }[] = [];
-  let all = false, positional = 0;
+  let all = false, positional = 0, del = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (PUSH_VALUE_FLAGS.has(a)) i++;
     else if (PUSH_ALL_FLAGS.has(a)) all = true;
+    else if (PUSH_DELETE_FLAGS.has(a)) del = true;
     else if (!a.startsWith('-') && positional++ > 0) {
       const [src, ...rest] = a.replace(/^\+/, '').split(':');
-      if (src) refs.push({ src, dst: (rest.length ? rest.join(':') : src).replace(/^refs\/heads\//, '') });
+      const dst = rest.join(':').replace(/^refs\/heads\//, '') || src.replace(/^refs\/heads\//, '');
+      if (src) refs.push({ src, dst });
     }
   }
-  return { kind: 'push', all, refs };
+  return { kind: 'push', all, refs: del ? [] : refs };
 }
 
 function visitSeg(out: PrTarget[]) {

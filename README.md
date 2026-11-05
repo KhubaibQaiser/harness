@@ -41,6 +41,7 @@ Rules in `CLAUDE.md` or `AGENTS.md` are advice, and a busy agent can skip them. 
   - Denies force-push, pushing to `main`, `curl | sh` and package installs.
   - Asks before destructive commands.
   - Asks before the agent runs `harness init`, `update`, `add`, `remove`, `sync` or `uninstall`, and before it pushes or opens a pull request for harness changes. Previews such as `--dry-run` pass.
+  - Lets the agent run `harness scan`, `catalog` and `vet`, which change no settings and install nothing.
 - **Protected paths.** The agent can't edit `.harness/`, `.claude/settings*.json` or `node_modules/`. Changes to harness's own files are reported at your next prompt.
 - **Multi-file gate.** Asks once per turn before the agent edits a second source file.
 - **TDD gates.**
@@ -131,6 +132,11 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `validate picks <file> --answers <file> [--merge-config] [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. `--merge-config` works as above. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
 | `validate vet-review <file> --scan <file> [--attempt 1\|2]` | Checks a vet reviewer's `vet-review.json` against the scan (`harness vet --json`) and the installed items. |
+| `vet <target> [--json]` | Pins a GitHub plugin or skill to a commit, scans it without running it, and writes `.harness/vet/<id>-<sha>.md`. Installs nothing. |
+| `vet <target> --json [--keep]` | Prints the scan as JSON and writes no report. `--keep` adds `dir` and `map` and keeps the unpacked folder (under the OS temp dir) for a reviewer. |
+| `vet --finish <scan.json> --review <file>` | Checks the reviewer's file like `validate vet-review`, writes the report with the review, then deletes the kept folder. |
+| `vet --install <scan.json>` | Prints the install commands and the sha-pinned marketplace entry from that scan's report. |
+| `vet --clean` | Removes every `harness-vet-*` folder of this OS user, including other projects' folders and runs still in progress. Skips and counts any it can't remove. |
 | `select --picks <file> [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `selected` entries. Each checklist row also has `unpinned` ("Runs unpinned code at launch.") and `unpinned_reason` for items whose catalog entry sets `unpinned_runtime`. |
 | `git branch\|commit\|push\|pr [--title <t>]` | Commits and pushes the harness changes one step at a time. `branch` creates `chore/ai-workflow-<catalog version>`; `commit` stages only the files harness wrote, with your own git name and email; `push` and `pr` never touch the default branch. `pr` needs `gh` signed in, else it prints the command. The agent asks you before `push` and `pr`. |
 

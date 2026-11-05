@@ -620,6 +620,11 @@ test('re-review M2: a renamed or remote copy that names harness or cli.mjs asks'
 test('backstop: genuine previews and read-only commands stay allowed', () => {
   all(['harness update --plan', 'harness status', 'harness doctor', 'harness why x', 'harness explain', 'harness catalog', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" init --answers a.json --product p.md --picks q.json --report r.md --choose a,b --dry-run', 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" update --answers a.json --dry-run'], 'allow');
 });
+test('vet is safe for the agent, like scan and catalog; a change word elsewhere still asks', () => {
+  for (const c of ['harness vet o/r --json --keep', 'node "/p/dist/cli.mjs" vet --finish /tmp/x/scan.json --review /tmp/x/r.json', 'harness vet --install /tmp/x/scan.json', 'harness vet --clean'])
+    expect(decideCommand(c, ctx()), c).toEqual({ kind: 'allow' });
+  for (const c of ['harness vet o/r && harness init --yes', 'harness vet --clean; harness add x', 'harness vet --install s.json && node dist/cli.mjs sync']) expect(kind(c), c).toBe('ask');
+});
 test('backstop: a commit message that mentions harness and a change word asks (accepted cost)', () => {
   expect(kind('git commit -m "fix harness init docs"')).toBe('ask');
   expect(kind('git commit -m "fix docs"')).toBe('allow');

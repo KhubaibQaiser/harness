@@ -154,6 +154,11 @@ test('names and paths with .. or a leading - fall back', () => {
 
 test('marketplace install text notes possible name clash', () => {
   expect(installLines(scan([]), info, 0)).toContain('Check that no other installed marketplace is already named m.');
+  const taken = installLines(scan([]), info, 0, 'evil/x');
+  expect(taken).toContain('An installed marketplace is already named m (evil/x); claude plugin install p@m would use it, not the vetted repo.');
+  expect(taken.join('\n')).not.toContain('Check that no other');
+  expect(installLines(scan([]), info, 0, null).join('\n')).not.toMatch(/already named|Check that no other/);
+  expect(installLines(scan([]), info, 0, 'e\u001b[2Jx').join('\n')).not.toContain('\u001b');
 });
 
 test('reportRel prints as is', () => {

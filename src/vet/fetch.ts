@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { isNotFound } from '../catalog/resolve.js';
@@ -12,6 +12,8 @@ export interface Fetched { dir: string; files: string[]; map: Record<string, str
 
 const WIN = /[<>:"|?*\x00-\x1f]|[. ]$|^(con|prn|aux|nul|com[\d¹²³]|lpt[\d¹²³])(\..*)?$|^con(in|out)\$$/i;
 const PREFIX = 'harness-vet-';
+/** The start of the name of r's unpacked folder (mkdtemp adds a random tail). */
+export const tmpPrefix = (r: Resolved): string => `${PREFIX}${vetId(r).slice(0, 40)}-${r.sha.slice(0, 7)}-`;
 
 /** Why an entry path can't be written safely on any OS, or undefined if it can. */
 function unsafe(path: string): string | undefined {
@@ -29,7 +31,6 @@ function neutralise(path: string): string {
   return segs.map((s, i) => (i === segs.length - 1 ? /^(claude\.md|claude\.local\.md|agents\.md)$/i.test(s) : /^\.claude$/i.test(s)) ? `${s}.vetted` : s).join('/');
 }
 
-// ponytail: Task 8 must call cleanTmp(dir) in a try/finally around the whole run (spec 3.5); fetchTarball only cleans up after its own failures.
 // ponytail: Task 3 must filter files, skipped and large to the scan scope (r.path, .claude-plugin/, .mcp.json), or out-of-scope entries become findings.
 // ponytail: the live `gh api repos/o/r/tarball/<sha>` (redirect to codeload, raw binary stdout) is checked only in the Task 27 live run.
 export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: string } {
@@ -70,7 +71,7 @@ export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: s
   const map: Record<string, string> = {};
   let dir = '';
   try {
-    dir = mkdtempSync(join(tmpdir(), `${PREFIX}${vetId(r).slice(0, 40)}-${r.sha.slice(0, 7)}-`));
+    dir = mkdtempSync(join(tmpdir(), tmpPrefix(r)));
     writeFileSync(join(dir, '.gitignore'), '*\n'); // first, so a crash never leaves stageable files
     for (const t of todo) {
       if (clash.has(t)) continue;
@@ -89,8 +90,23 @@ export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: s
   return { dir, files: Object.keys(map).sort(), map, skipped, large };
 }
 
+/** True for a harness-vet-* folder directly under the OS temp dir, judged after symlinks where it exists. */
+export function isVetTmp(dir: string): boolean {
+  let p = resolve(dir), t = resolve(tmpdir());
+  try { p = realpathSync(p); t = realpathSync(t); } catch { /* gone: judge the path as written */ }
+  return dirname(p) === t && basename(p).startsWith(PREFIX);
+}
+
 /** Removes an unpacked folder. Refuses anything that is not a harness-vet-* folder directly under the OS temp dir. */
 export function cleanTmp(dir: string): void {
-  if (dirname(resolve(dir)) !== resolve(tmpdir()) || !basename(dir).startsWith(PREFIX)) return;
-  rmSync(dir, { recursive: true, force: true });
+  if (isVetTmp(dir)) rmSync(dir, { recursive: true, force: true });
+}
+
+/** `harness vet --clean`: removes every unpacked folder of this OS user; one it can't remove is skipped and counted. */
+export function cleanAllTmp(): { removed: number; failed: number } {
+  let removed = 0, failed = 0;
+  for (const n of readdirSync(tmpdir()).filter((x) => x.startsWith(PREFIX))) {
+    try { cleanTmp(join(tmpdir(), n)); removed++; } catch { failed++; }
+  }
+  return { removed, failed };
 }

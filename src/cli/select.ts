@@ -45,13 +45,13 @@ export function select(args: string[], { out, root }: CliEnv): number {
     const file = findPreset(id, root);
     if (!file) return out(`preset: "${esc(id)}" is not a shipped or repo preset (harness preset list shows them)`), 2;
     const lp = loadPreset(file);
-    if (!lp.ok) return lp.errors.forEach((e) => out(`preset: ${esc(e)}`)), 2;
+    if (!lp.ok) return lp.errors.forEach((e) => out(`preset: ${e}`)), 2;
     let type: unknown;
     try { type = JSON.parse(readFileSync(flags['--answers'], 'utf8'))?.project?.type; } catch { /* reported below */ }
     if (typeof type !== 'string' || !(PROJECT_TYPES as string[]).includes(type)) return out(`answers: project.type in "${esc(flags['--answers'])}" must be one of ${PROJECT_TYPES.join(', ')}`), 2;
     const l = lp.loaded;
     const bad = checkPreset(l, catalog);
-    if (bad.length) return bad.forEach((e) => out(`preset: ${esc(e)}`)), 2;
+    if (bad.length) return bad.forEach((e) => out(`preset: ${e}`)), 2;
     own = [l.preset.core, ...l.items.map((i) => i.id)];
     const extra = presetRows(l, catalog, detect(root), type, picks.items.map((x) => x.id), dirs);
     extra.forEach((r) => { reasons[r.id] = r.reason; });

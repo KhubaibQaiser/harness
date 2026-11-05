@@ -258,7 +258,7 @@ test('a locked repo: dry run, doctor and status all say so', async () => {
   expect(d.code).toBe(1);
   expect(d.out.split('\n')[0]).toContain('To recover');
   let out = '';
-  expect(doctor([], { root, env: {}, out: (s) => (out += s + '\n') }, { claudeVersion: () => null })).toBe(1);
+  expect(doctor([], { root, env: {}, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => null })).toBe(1);
   expect(out).toContain('fix .harness/apply.lock exists: ');
   out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') });

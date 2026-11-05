@@ -78,7 +78,7 @@ test('N1: Prettier failing keeps the edit unformatted, with a note in init and i
   const e = readManifest(root)!.files.find((f) => f.rel === 'vitest.config.ts')!;
   expect(e.unformatted).toBe(true);
   let d = '';
-  await doctor([], { ...quiet, root, out: (s) => (d += s + '\n') });
+  await doctor([], { ...quiet, root, out: (s) => (d += s + '\n') }, { gh: () => ({ status: null, stdout: '' }) });
   expect(d).toMatch(/^note Prettier could not format `vitest\.config\.ts` when harness edited it/m);
   expect((await un(root)).code).toBe(0);
   expect(cfg(root)).toBe('// FAIL_FORMAT\n' + VITEST);

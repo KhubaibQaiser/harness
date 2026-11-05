@@ -23,5 +23,5 @@ test('the repo config is read once per build, not once per case', async () => {
   reads.length = 0;
   const r = buildEvalPlugin(root, { kinds: ['rules'], tmp: mkdtempSync(join(tmpdir(), 'ev-tmp-')), dispatch: '/x' });
   expect(r.cases.length).toBeGreaterThan(1);
-  expect(reads.filter((p) => p.endsWith('.harness/config.yaml'))).toHaveLength(1);
+  expect(reads.filter((p) => p.replace(/\\/g, '/').endsWith('.harness/config.yaml'))).toHaveLength(1);
 });

@@ -80,7 +80,7 @@ function copySkill(c: Ctx, skill: string): void {
   const from = join(c.root, '.claude/skills', skill);
   const filter = (src: string): boolean => {
     if (!lstatSync(src).isSymbolicLink()) return true;
-    c.links.push(relative(c.root, src));
+    c.links.push(relative(c.root, src).split(sep).join('/')); // forward slashes on every OS
     return false;
   };
   cpSync(from, join(c.tmp, 'skills', skill), { recursive: true, filter });

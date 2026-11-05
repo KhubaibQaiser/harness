@@ -16,6 +16,10 @@ export interface LintRule {
   antiPattern: string;
   /** spread the plugin's flat recommended rules, each forced to error */
   recommendedSet?: true;
+  /** rule may be missing from an older installed plugin: the config loads it only if the plugin has it */
+  guard?: true;
+  /** another package that provides the same rule under its own key */
+  alt?: { plugin: string; importName: string; key: string };
 }
 
 const ALL: Stack[] = ['ts', 'react', 'next', 'rn'];
@@ -27,11 +31,11 @@ const core = (id: string, antiPattern: string, setting: unknown = 'error', more:
 const ts = (name: string, antiPattern: string, setting: unknown = 'error'): LintRule =>
   ({ ...TSE, id: `@typescript-eslint/${name}`, setting, antiPattern });
 const hooks = (name: string, antiPattern: string): LintRule =>
-  ({ id: `react-hooks/${name}`, plugin: 'eslint-plugin-react-hooks', importName: 'reactHooks', stacks: WEB, setting: 'error', antiPattern });
-const react = (name: string, antiPattern: string): LintRule =>
-  ({ id: `react/${name}`, plugin: 'eslint-plugin-react', importName: 'react', stacks: WEB, setting: 'error', antiPattern });
+  ({ id: `react-hooks/${name}`, plugin: 'eslint-plugin-react-hooks', importName: 'reactHooks', stacks: WEB, setting: 'error', guard: true, antiPattern });
+const react = (name: string, antiPattern: string, guard?: true): LintRule =>
+  ({ id: `react/${name}`, plugin: 'eslint-plugin-react', importName: 'react', stacks: WEB, setting: 'error', ...(guard && { guard }), antiPattern });
 const next = (name: string, antiPattern: string): LintRule =>
-  ({ id: `@next/next/${name}`, plugin: '@next/eslint-plugin-next', importName: 'nextPlugin', stacks: ['next'], setting: 'error', files: 'next', antiPattern });
+  ({ id: `@next/next/${name}`, plugin: '@next/eslint-plugin-next', importName: 'nextPlugin', stacks: ['next'], setting: 'error', files: 'next', guard: true, antiPattern });
 const rnPath = (importName: string, message: string) => ({ name: 'react-native', importNames: [importName], message });
 
 export const LINT_RULES: LintRule[] = [
@@ -77,6 +81,7 @@ export const LINT_RULES: LintRule[] = [
     stacks: ALL,
     setting: 'error',
     ignores: ['**/page.tsx', '**/layout.tsx', '**/*.config.*', 'app/**/_layout.tsx'],
+    alt: { plugin: 'eslint-plugin-import-x', importName: 'importX', key: 'import-x' },
     antiPattern: 'named exports only',
   },
   {
@@ -84,7 +89,8 @@ export const LINT_RULES: LintRule[] = [
     plugin: 'eslint-plugin-unicorn',
     importName: 'unicorn',
     stacks: ALL,
-    setting: ['error', { case: 'kebabCase' }],
+    // Strings are regex sources (unicorn docs): Next [id] / (group), Expo _layout, +html route files.
+    setting: ['error', { case: 'kebabCase', ignore: ['^\\[.*\\]', '^\\(.*\\)$', '^_', '^\\+'] }],
     antiPattern: 'kebab-case files',
   },
   hooks('rules-of-hooks', 'hooks rules'),
@@ -94,7 +100,7 @@ export const LINT_RULES: LintRule[] = [
   react('no-unstable-nested-components', 'inline component definitions'),
   react('no-array-index-key', 'index keys in dynamic lists'),
   react('jsx-no-constructed-context-values', 'needless re-renders'),
-  react('no-object-type-as-default-prop', 'needless re-renders'),
+  react('no-object-type-as-default-prop', 'needless re-renders', true),
   {
     id: 'jsx-a11y',
     plugin: 'eslint-plugin-jsx-a11y',
@@ -115,6 +121,7 @@ export const LINT_RULES: LintRule[] = [
     importName: 'tailwindcss',
     stacks: ['react', 'next'],
     setting: 'error',
+    guard: true,
     antiPattern: 'Tailwind arbitrary values like h-[98px]',
   },
   core('no-restricted-imports', 'FlatList, Image, SafeAreaView, Animated from react-native', [

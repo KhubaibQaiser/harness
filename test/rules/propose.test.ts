@@ -86,4 +86,72 @@ describe('propose', () => {
     );
     expect(propose(web, pkgs, ALL_PLUGINS).ts).toEqual(TS_OPTIONS);
   });
+
+  const run = (text: string, plugins: Record<string, unknown>) => {
+    // Evaluate the emitted config with fake plugin modules; returns the flat config array.
+    const names = [...text.matchAll(/^import (\w+) from '([^']+)';$/gm)];
+    const body = text.replace(/^import .*$/gm, '').replace('export default', 'return');
+    return new Function(...names.map((m) => m[1]!), body)(
+      ...names.map((m) => plugins[m[2]!] ?? { rules: {}, flatConfigs: { recommended: { rules: {} } }, plugin: {}, parser: {}, configs: { disableTypeChecked: { rules: {} } } }),
+    ) as { files?: string[]; rules?: Record<string, unknown>; settings?: unknown; languageOptions?: any }[];
+  };
+
+  it('skips a version-sensitive rule at load time when the plugin lacks it', () => {
+    const { configText } = propose(web, pkgs, ALL_PLUGINS);
+    const old = run(configText, { 'eslint-plugin-react-hooks': { rules: { 'rules-of-hooks': {} } } });
+    const ids = old.flatMap((b) => Object.keys(b.rules ?? {}));
+    expect(ids).not.toContain('react-hooks/set-state-in-effect');
+    const fresh = run(configText, { 'eslint-plugin-react-hooks': { rules: { 'set-state-in-effect': {} } } });
+    expect(fresh.flatMap((b) => Object.keys(b.rules ?? {}))).toContain('react-hooks/set-state-in-effect');
+  });
+
+  it('reports rules the installed plugin lacks as skipped', () => {
+    const p = propose(web, pkgs, ALL_PLUGINS, new Map([['eslint-plugin-react-hooks', new Set(['rules-of-hooks'])]]));
+    expect(p.skipped).toContainEqual({ rule: 'react-hooks/set-state-in-effect', plugin: 'eslint-plugin-react-hooks' });
+    expect(p.configText).not.toContain('set-state-in-effect');
+    expect(p.rules.map((r) => r.id)).toContain('react-hooks/rules-of-hooks');
+  });
+
+  it('lets out-of-project files parse and turns type-aware rules off there', () => {
+    const { configText } = propose(web, pkgs, ALL_PLUGINS);
+    expect(configText).toContain('allowDefaultProject');
+    expect(configText).toContain('*.config.{js,mjs,cjs,ts}');
+    expect(configText).toContain('scripts/**');
+    expect(configText).toContain('disableTypeChecked');
+  });
+
+  it('keeps off as off in the jsx-a11y spread and sets react version', () => {
+    const { configText } = propose(web, pkgs, ALL_PLUGINS);
+    const cfg = run(configText, {
+      'eslint-plugin-jsx-a11y': { flatConfigs: { recommended: { rules: { a: 'off', b: ['off', {}], c: 0, d: ['warn', { x: 1 }], e: 'warn' } } } },
+    });
+    const rules = Object.assign({}, ...cfg.map((b) => b.rules));
+    expect(rules).toMatchObject({ a: 'off', b: ['off', {}], c: 0, d: ['error', { x: 1 }], e: 'error' });
+    expect(JSON.stringify(cfg[0]!.settings)).toContain('"version":"detect"');
+  });
+
+  it('emits every rule as error and puts ignores on the right block', () => {
+    const cfg = run(propose(web, pkgs, ALL_PLUGINS).configText, {});
+    for (const b of cfg) for (const v of Object.values(b.rules ?? {})) expect([v, (v as unknown[])[0]]).toContain('error');
+    const dflt = cfg.find((b) => b.rules?.['import/no-default-export']) as any;
+    expect(dflt.ignores).toContain('**/page.tsx');
+    expect(propose(new Set<Stack>(['react']), pkgs, ALL_PLUGINS).configText).not.toContain('parser');
+  });
+
+  it('ignores route-file names in filename-case', () => {
+    const [, opts] = entry('unicorn/filename-case').setting as [string, { ignore: string[] }];
+    const hit = (n: string) => opts.ignore.some((s) => new RegExp(s).test(n));
+    for (const n of ['[id].tsx', '(group)', '_layout.tsx', '+html.tsx']) expect(hit(n)).toBe(true);
+    expect(hit('MyFile.tsx')).toBe(false);
+  });
+
+  it('accepts eslint-plugin-import-x when it is the installed package', () => {
+    const deps = new Set(ALL_PLUGINS);
+    deps.delete('eslint-plugin-import');
+    deps.add('eslint-plugin-import-x');
+    const p = propose(web, pkgs, deps);
+    expect(p.missing.map((m) => m.rule)).not.toContain('import/no-default-export');
+    expect(p.configText).toContain('"import-x/no-default-export"');
+    expect(p.configText).toContain("from 'eslint-plugin-import-x'");
+  });
 });

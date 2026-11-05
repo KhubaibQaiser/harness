@@ -188,6 +188,8 @@ test('esc escapes zero-width and bidi characters', () => {
     const e = esc(`a${c}b`);
     expect(e, c.charCodeAt(0).toString(16)).toBe(`a\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}b`);
   }
+  expect(esc('a\u00adb\u061cc\u180ed')).toBe('a\\u00adb\\u061cc\\u180ed');
+  expect(esc('x\u{e0041}y')).toBe('x\\u{e0041}y');
   expect(esc('plain é text')).toBe('plain é text');
 });
 
@@ -195,5 +197,6 @@ test('RAW_CONTROL and CONTROL share the hidden-character set', async () => {
   const { RAW_CONTROL } = await import('../../src/ai/product.js');
   const { CONTROL } = await import('../../src/core/config.js');
   for (const c of ['​', '‏', '⁠', '﻿', '‮', '\u009b']) expect([RAW_CONTROL.test(c), CONTROL.test(c)], c.charCodeAt(0).toString(16)).toEqual([true, true]);
+  for (const c of ['\u00ad', '\u061c', '\u180e', '\u{e0041}']) expect([RAW_CONTROL.test(c), CONTROL.test(c)], c.codePointAt(0)!.toString(16)).toEqual([true, true]);
   expect([RAW_CONTROL.test('a\tb\r\n'), CONTROL.test('\t')]).toEqual([false, true]);
 });

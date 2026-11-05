@@ -391,6 +391,22 @@ describe('show', () => {
       expect(t({ '.claude/agents/b.md': agent, '.claude/commands/c.md': cmd, '.claude/skills/a/SKILL.md': skill })).toBe(tok('agent', agent) + tok('skill', cmd) + tok('skill', skill));
       expect(t({ 'plugins/p/agents/b.md': agent, 'agents/other.md': agent }, 'plugins/p')).toBe(tok('agent', agent));
     });
+    it('context: nested commands count, nested agents and skills do not', () => {
+      const t = (files: Record<string, string>, path = '') => scan(fx(files), path).context.tokens;
+      expect(t({ 'commands/ns/sub/c.md': cmd, '.claude/commands/ns/d.md': cmd })).toBe(2 * tok('skill', cmd));
+      expect(t({ 'plugins/p/commands/ns/c.md': cmd }, 'plugins/p/commands')).toBe(tok('skill', cmd));
+      expect(t({ 'agents/ns/b.md': agent })).toBe(0);
+      expect(t({ 'docs/commands/ns/c.md': cmd })).toBe(0);
+    });
+    it('context: huge frontmatter is counted raw, not parsed; the body never reaches the parser', () => {
+      const fm = 'name: a\n' + Array.from({ length: 4000 }, (_, i) => `k${i}: v\n`).join(''); // over 16384 characters, parses fine
+      expect(scan(fx({ 'agents/a.md': `---\n${fm}---\nbody\n` }), '').context.tokens).toBe(estimateTokens(fm.slice(0, -1)));
+      expect(scan(fx({ 'agents/a.md': '---\nname: a\n---\n' + 'x'.repeat(50000) }), '').context.tokens).toBe(tok('agent', '---\nname: a\n---\n'));
+    });
+    it('license: names are LICENSE/LICENCE/COPYING/UNLICENSE with -suffix and .md/.txt/.rst only', () => {
+      for (const n of ['license-checker.js', 'LICENSE.js', 'license-notes.sh', 'COPYING.png']) expect(low(fx({ [n]: MIT }, false), 'license'), n).toMatchObject([{ file: '', text: 'no licence file' }]);
+      for (const n of ['LICENSE-MIT', 'LICENSE.md', 'COPYING.txt', 'LICENSE-APACHE-2.0.txt', 'unlicense.rst', 'LICENSE-GPL+']) expect(low(fx({ [n]: MIT }, false), 'license'), n).toEqual([]);
+    });
     it('context: a target that is a skills, agents or commands dir, or a skill folder, uses its own kind', () => {
       const t = (files: Record<string, string>, path: string) => scan(fx(files), path).context.tokens;
       expect(t({ 'plugins/p/commands/c.md': cmd }, 'plugins/p/commands')).toBe(tok('skill', cmd));

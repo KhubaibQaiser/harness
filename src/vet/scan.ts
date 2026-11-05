@@ -327,7 +327,8 @@ const LICENCES = [
   /Permission is hereby granted, free of charge/i, /Apache License[\s\S]*Version 2\.0/i, /Redistribution and use in source and binary forms/i,
   /GNU (?:LESSER |AFFERO )?GENERAL PUBLIC LICENSE/i, /Mozilla Public License/i, /Permission to use, copy, modify, and\/or distribute/i, /This is free and unencumbered software/i,
 ];
-const LICENCE_NAME = /^(?:licen[cs]e(?:[.-].*)?|unlicense|copying(?:\..*)?)$/i;
+// -suffix pieces are words or versions (Apache-2.0), so license-checker.js is not a licence file
+const LICENCE_NAME = /^(?:licen[cs]e|unlicense|copying)(?:-[a-z0-9+]+(?:\.\d+)?)*(?:\.(?:md|txt|rst))?$/i;
 /** Looked for at the target path and at the repo root; either one recognised means no finding. */
 function licence(f: Fetched, path: string): VetFinding[] {
   const found = [...new Set([path, ''])].flatMap((d) => f.files.filter((p) => (d ? p.startsWith(`${d}/`) : true) && !p.slice(d ? d.length + 1 : 0).includes('/') && LICENCE_NAME.test(p.slice(d ? d.length + 1 : 0))));
@@ -341,6 +342,16 @@ function licence(f: Fetched, path: string): VetFinding[] {
 }
 
 const CTX_HOOKS = new Set(['SessionStart', 'UserPromptSubmit']);
+/** Always-loaded tokens of one skill/agent/command file. Only the frontmatter reaches the YAML parser, and only when short: hostile YAML is slow. */
+const FM_MAX = 16384;
+function contextTokens(kind: 'skill' | 'agent', text: string): number {
+  const open = /^---\r?\n/.exec(text);
+  const end = open ? text.indexOf('\n---', open[0].length) : -1; // indexOf is linear
+  if (!open || end < 0) return 0;
+  const fm = text.slice(open[0].length, end).replace(/\r$/, '');
+  return estimateTokens(fm.length > FM_MAX ? fm : alwaysLoadedText(kind, `---\n${fm}\n---`)); // too long to parse: count it raw, which over-counts safely
+}
+
 /** The plugin layout (also under .claude/), or the target's own kind when the target is a skills/agents/commands dir or a skill folder. */
 const ctxKind = (inner: string, path: string): 'skill' | 'agent' | undefined => {
   if (!/\.md$/i.test(inner)) return undefined;
@@ -349,7 +360,7 @@ const ctxKind = (inner: string, path: string): 'skill' | 'agent' | undefined => 
   const own = path.split('/').pop();
   if (name === 'SKILL.md' && (segs.length === 1 || (rest.length === 3 && rest[0] === 'skills') || (own === 'skills' && segs.length === 2))) return 'skill';
   if (rest.length === 2 && rest[0] === 'agents' || own === 'agents' && segs.length === 1) return 'agent';
-  if (rest.length === 2 && rest[0] === 'commands' || own === 'commands' && segs.length === 1) return 'skill';
+  if (rest[0] === 'commands' && rest.length >= 2 || own === 'commands') return 'skill'; // commands/ns/x.md is namespaced
   return undefined;
 };
 const MANIFEST = /(?:^|\/)(?:hooks\.json|plugin\.json|\.mcp\.json|settings(?:\.local)?\.json)$/;
@@ -388,7 +399,7 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
     }
     const inner = path && rel.startsWith(`${path}/`) ? rel.slice(path.length + 1) : rel;
     const ck = ctxKind(inner, path);
-    if (ck) tokens += estimateTokens(alwaysLoadedText(ck, bare));
+    if (ck) tokens += contextTokens(ck, bare);
     if (!textRules(inner, bare)) continue;
     const lock = isLock(rel, bare, obj);
     if (obj) netJson(rel, bare, obj, add, lock);

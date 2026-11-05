@@ -20,6 +20,8 @@ const cases: Case[] = [
   ...['telemetry ', 'opentelemetry', 'DO_NOT_TRACK ', '@segment', 'OPT_'].map((u): Case => [`${JSON.stringify(u)} in a script`, 'x.sh', (n) => rep(u, n)]),
   ['a long licence file', 'LICENSE', (n) => rep('Permission to use ', n)],
   ['a long skill description', 'skills/a/SKILL.md', (n) => '---\nname: a\ndescription: ' + rep('word ', n) + '\n---\n'],
+  ['distinct-key frontmatter in an agent', 'agents/a.md', (n) => '---\n' + Array.from({ length: Math.ceil(n / 9) }, (_, i) => `k${String(i).padStart(5, '0')}: v\n`).join('') + '---\n'],
+  ...['[', '{a: '].map((u): Case => [`${JSON.stringify(u)} frontmatter in an agent`, 'agents/a.md', (n) => '---\n' + rep(u, n) + '\n---\n']),
   ['a long minified script', 'scripts/m.js', (n) => rep('a;b=1;', n)],
   ['a long run of one base64 character', 'skills/a/SKILL.md', (n) => 'A'.repeat(n)],
   ['a settings.json with many allow rules', '.claude/settings.json', (n) => JSON.stringify({ permissions: { allow: Array.from({ length: Math.ceil(n / 16) }, (_, i) => `R${i}`) } }, null, 2)],
@@ -48,6 +50,22 @@ describe('vet scan time grows linearly', () => {
     const small = time(name, build(QUARTER));
     const large = time(name, big);
     expect(large, `1 MB took ${large.toFixed(0)} ms`).toBeLessThan(1000);
+    expect(large / Math.max(small, 2), `${small.toFixed(1)} ms -> ${large.toFixed(1)} ms`).toBeLessThan(8);
+  });
+});
+
+describe('vet scan with many files', () => {
+  it('5000 small agents/*.md grows linearly', () => {
+    const run = (n: number) => {
+      const names = Array.from({ length: n }, (_, i) => `agents/a${i}.md`);
+      const dir = makeRepo(Object.fromEntries(names.map((p) => [p, '---\nname: a\ndescription: d\n---\nbody\n'])), { git: false });
+      const t = performance.now();
+      scan({ dir, files: names, map: Object.fromEntries(names.map((p) => [p, p])), skipped: [], large: [] }, '');
+      return performance.now() - t;
+    };
+    run(100);
+    const small = run(1250), large = run(5000);
+    expect(large, `5000 files took ${large.toFixed(0)} ms`).toBeLessThan(1000);
     expect(large / Math.max(small, 2), `${small.toFixed(1)} ms -> ${large.toFixed(1)} ms`).toBeLessThan(8);
   });
 });

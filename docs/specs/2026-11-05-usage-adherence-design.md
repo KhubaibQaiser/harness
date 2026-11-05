@@ -1,6 +1,6 @@
 # Usage and adherence report: design spec
 
-- Status: draft for the owner's review. The owner decisions are in section 1. Section 12 lists the questions left open.
+- Status: owner decisions complete. Section 1 holds them: U1 to U17 come from the interview, and O1 to O9 are the owner's answers to this spec's questions (2026-11-05). Section 12 lists the one item left: the size numbers, which the owner sets before build.
 - Date: 2026-11-05
 - Owner: khubaibqaiser
 - Inputs:
@@ -37,12 +37,21 @@ Labels: **Estimate** means my arithmetic or a proposed default, not a measuremen
 | U15 | **Order.** Spec now; build in parallel with the preset. Pieces that don't touch install code start early. | round 3 |
 | U16 | **Assurance must-haves.** A rule coverage matrix ("X of Y rules enforced deterministically", with known bypasses); a free attack suite in CI with a bypass rate per guard tracked across releases; before-and-after evals measuring pass^k (paid, owner's OK); a free local session scan where missing evidence is unknown, not passed, including decay in long sessions and after compaction; a doctor check that `main` is protected with the CI checks required; a hallucination row. | adherence note |
 | U17 | **Local first.** No server and no automatic upload. Data leaves the machine only when the person sends an export. | telemetry note |
+| O1 | **Strict repo match.** Only sessions whose start folder (`cwd`) is inside the repo or one of its worktrees count. The owner's current sessions, started from `~/Documents`, won't appear. The README must say: "start Claude Code inside the repo for the report to see it". | answer to Q1 |
+| O2 | **The guard asks** before the agent runs `harness report`. | answer to Q2 |
+| O3 | **Latency.** `ms` on existing events, plus `.harness/logs/timing.jsonl` with one line per hook call, capped at 5 MB with one rotation. | answer to Q3 |
+| O4 | **Lint rules are errors from day one.** Before the person approves, the diff preview shows the current violation count for each rule. It also says the stop gate's `lint` step will fail until they are fixed. | answer to Q4 |
+| O5 | **`no-restricted-syntax` and `no-restricted-imports` are allowed.** They are harness-written AST rules, not owner regex. | answer to Q5 |
+| O6 | **The owner sets each size number.** Section 5.3 lists every size rule with a suggested value (estimate) and a reason. The owner sets the numbers before build. | answer to Q6 |
+| O7 | **Pin the agent model** for every eval run. | answer to Q7 |
+| O8 | **One paid probe during planning**, with a cost estimate shown and the owner's OK before it runs (7.6). If plugin hooks don't run in eval sessions, gate evals are dropped, and the attack suite is the only gate proof. | answer to Q8 |
+| O9 | **Export ids.** Harness and catalog ids only; every other name is counted as `other`. | answer to Q9 |
 
 ## 2. Scope
 
 **In:**
 - `harness report [--days N] [--open] [--export]`: transcript reader, metrics, HTML, export;
-- two optional fields on harness events (`use`, `ms`) so gate signals join transcripts exactly (section 3.3);
+- two optional fields on harness events (`use`, `ms`) so gate signals join transcripts exactly, and a timing log for every hook call (section 3.3, O3);
 - the rule coverage matrix and the judgement-rule windows;
 - `harness rules`: the ESLint and TS proposal, its diff and its apply (section 5);
 - `harness eval`: the paid eval runner (section 7);
@@ -69,8 +78,8 @@ Labels: **Estimate** means my arithmetic or a proposed default, not a measuremen
 - **Repo paths.** The repo root from `repoRoot` (`src/core/repo-root.ts`), realpath-resolved, plus every worktree from `git worktree list --porcelain`.
 - **Folder names.** Claude Code names each folder after the session's start directory. Observed: every character that isn't a letter or digit becomes `-` (`/private/tmp/claude-502/-Users` became `-private-tmp-claude-502--Users`). The rule is UNVERIFIED as documented, so it only picks candidates:
   - a folder named `enc(p)` or starting with `enc(p) + '-'`, for each repo path `p` (the second form catches sessions started in a subfolder);
-  - each candidate session is kept only if a record's `cwd` is inside a repo path. A prefix collision (`/a/harness` vs `/a/harness-old`) is dropped here.
-- **Sessions started above the repo.** Observed: the owner starts sessions from `~/Documents` and edits the harness repo by absolute path. All 17 sessions on this machine sit in `-Users-khubaib-work-Documents`; none sits in a harness folder. The strict rule above would find none of them. Section 12 Q1 asks how to treat these.
+  - each candidate session is kept only if its first record with a `cwd` has a `cwd` inside a repo path (O1). A prefix collision (`/a/harness` vs `/a/harness-old`) is dropped here.
+- **Sessions started above the repo don't count (O1).** A session started in a parent folder is never read, even when it edited the repo by absolute path. Observed: the owner starts sessions from `~/Documents`. All 17 sessions on this machine sit in `-Users-khubaib-work-Documents`, none in a harness folder. **So the owner's current sessions won't appear in the report.** The README says: "start Claude Code inside the repo for the report to see it". When the report finds no sessions, its terminal output and its header say the same.
 - **Files.** `<session>.jsonl`, and the session's subagents at `<session>/subagents/agent-<id>.jsonl` (observed; also named in the hooks docs, AR §2.2). Subagent records count under their parent session. `*.meta.json`, `*.prefix.json` and `custom-title.json` are ignored.
 - **Window.** Files whose mtime is older than the window start are skipped unread. Inside a file, records outside the window are dropped by `timestamp`.
 - **Safety on the way in.** Session ids from file names must pass `isSafeSessionId`. Symlinks are not followed (`lstat`). Anything that fails is counted as skipped, with the reason.
@@ -112,6 +121,11 @@ Not read: attachment `content`, `nested_memory` content, `file-history-snapshot`
   - `use?: string`: the hook input's `tool_use_id`. Claude Code's hook input carrying `tool_use_id` is UNVERIFIED in this codebase (`HookInput` has no such field); planning confirms it with a live check, as TD R3 did. The transcript's `hook_success.toolUseID` (observed) suggests it exists.
   - `ms?: number`: time from process start to the decision, using `PROCESS_START` in `dispatch.ts`; for the stop gate, the run time of each step.
 - Old lines without the fields still parse. `harness stats` ignores them.
+- **Timing log (O3).** Events cover only non-allow decisions, so allowed calls get their own log: `.harness/logs/timing.jsonl`.
+  - One line per hook call, written at the end of `dispatchLocked`: `{ ts, session, event, tool?, outcome, ms }`. `outcome` is `allow`, `deny`, `ask`, `block` or `context`; `tool` is `tool_name` for tool events. No paths, no command text.
+  - Cap: before each append, a file over 5 MB is renamed to `timing.1.jsonl`, replacing the old one. So at most about 10 MB is kept (estimate).
+  - A failed write is a `warn` on stderr, like the event log, and never changes the decision.
+  - `.harness/logs/` is already gitignored (`mergeGitignore`) and protected (`protect.ts`).
 - `events.jsonl` is already a protected path (`protect.ts` `PROTECTED`), so the agent can't edit it with Edit tools. It can still change it through a shell outside harness's reach; section 11 lists that.
 
 ### 3.4 Config and install state
@@ -204,7 +218,8 @@ The summary line is "X of Y rules enforced deterministically", counting only rul
 
 **Latency.**
 - From transcripts: `hook_success.durationMs` and `hook_cancelled` where `command` contains `.harness/hooks/dispatch.mjs`, by `hookEvent`: p50, p95, max, timeouts. Observed: `hook_success` appears for `PreToolUse` and `SessionStart` only, and far less often than tool calls, so it may be written only for hooks with output (UNVERIFIED). The page shows the sample size.
-- From events: `ms` on harness events (3.3). Events are written only for non-allow decisions, so this covers blocks, not the common allow path. Section 12 Q3 asks whether to add a log for every hook.
+- From the timing log (3.3, O3): every harness hook call, by event and outcome: p50, p95, max. This is the main latency source; the transcript numbers are a cross-check.
+- From events: `ms` on non-allow decisions, joined to the check that decided.
 - Stop gate: `ms` per step, p50 and p95.
 
 **Hallucination row** (U16). Typecheck and test runs from the stop gate (pass, fail, by step); npm registry checks from `dep-verify` events; and the "no invented data" windows. Shown together under one heading.
@@ -245,11 +260,16 @@ Today on main, with defaults, 0 of these 11 are enforced deterministically by a 
 
 **Plugins.** A rule whose plugin isn't in the repo's devDependencies is left out of the file and listed as "needs `<package>`". Harness doesn't install it: installs are denied by the guard, and the person runs the install.
 
-**Existing violations.** Before showing the diff, `harness rules` runs the repo's ESLint with the proposed file (`--format json`, 120 s timeout) and shows the violation count per rule. Section 12 Q4 asks what to do with rules that already have violations.
+**Errors from day one (O4).** Every proposed rule is `error`. Before the diff is shown, `harness rules` runs the repo's ESLint with the proposed file (`--format json`, 120 s timeout), and `tsc --noEmit` with the proposed `compilerOptions`. The preview then shows:
+- the current violation count for each rule and each TS option, highest first;
+- the total, and the line: "The stop gate's lint and typecheck steps will fail until these <n> violations are fixed. CI fails too if it runs them.";
+- the rules with 0 violations, marked as safe to add now.
 
-**Selector rules.** `no-restricted-syntax` and `no-restricted-imports` take AST selectors and import names, not regex. The owner should confirm these count as "no custom regex" (Q5).
+The person approves after seeing the counts. When ESLint or `tsc` can't run (timeout, crash), the counts show as unknown, and the preview says the effect on the gate is unknown. It never shows 0.
 
-The mapping. The P-codes are PP's anti-pattern lists. Rule names come from the plugins' docs as I know them; a name marked UNVERIFIED is checked against the installed plugin version before it is written. Size limits are estimates for the owner to set.
+**Selector rules (O5).** `no-restricted-syntax` and `no-restricted-imports` are allowed. They take AST selectors and import names written by harness, not owner regex.
+
+The mapping. The P-codes are PP's anti-pattern lists. Rule names come from the plugins' docs as I know them; a name marked UNVERIFIED is checked against the installed plugin version before it is written. The size numbers are in 5.3; the owner sets them before build (O6).
 
 **General JS/TS (P4, F11, F12)**
 
@@ -262,12 +282,12 @@ The mapping. The P-codes are PP's anti-pattern lists. Rule names come from the p
 | empty catch | `no-empty` (core) | full |
 | log-only catch | — | **no lint equivalent** |
 | unhandled promise, missing `await` | `@typescript-eslint/no-floating-promises`, `no-misused-promises`, `await-thenable` | full |
-| huge modules, long functions | `max-lines` (400, estimate), `max-lines-per-function` (80, estimate) | full, by threshold |
-| boolean-flag parameters | `max-params` (3, estimate) | partial |
-| deep nesting instead of early returns | `max-depth` (3, estimate), `no-else-return`, `complexity` (15, estimate) | partial |
+| huge modules, long functions | `max-lines`, `max-lines-per-function` (numbers in 5.3) | full, by threshold |
+| boolean-flag parameters | `max-params` (5.3) | partial |
+| deep nesting instead of early returns | `max-depth` (5.3), `no-else-return`, `complexity` (5.3) | partial |
 | mutating arguments | `no-param-reassign` `{ props: true }` | full |
 | mutating shared state | — | **no lint equivalent** |
-| magic numbers | `@typescript-eslint/no-magic-numbers` (ignore 0, 1, -1; noisy) | partial |
+| magic numbers | `@typescript-eslint/no-magic-numbers` (options in 5.3; noisy) | partial |
 | magic strings | — | **no lint equivalent** |
 | enums where unions fit | `no-restricted-syntax` on `TSEnumDeclaration`; or TS `erasableSyntaxOnly` (TS 5.8+; support in the repo's TypeScript 7 is UNVERIFIED) | full |
 | `process.env` read outside `env.ts` | `no-restricted-properties` `{ object: 'process', property: 'env' }`, off for `env.ts` | full |
@@ -322,6 +342,21 @@ The mapping. The P-codes are PP's anti-pattern lists. Rule names come from the p
 | Expo Go-only assumptions; font scaling | — | **no lint equivalent** |
 | missing accessibility props | `eslint-plugin-react-native-a11y` recommended (rule names UNVERIFIED) | partial |
 
+### 5.3 Size numbers: the owner sets them before build
+
+These are my suggestions. All are **estimates**, not measured on any repo. The owner sets each number before the `harness rules` build starts (O6). The build never uses these values in place of the owner's.
+
+| Rule | Suggested value (estimate) | Reason |
+|---|---|---|
+| `max-lines` | 400 per file, not counting blank lines and comments | Big enough for a real module, small enough to flag a god file (P4). |
+| `max-lines-per-function` | 80, not counting blank lines and comments | A function that fits on one screen can be read in one pass. |
+| `max-depth` | 3 | Deeper nesting is the cue to switch to early returns (P4). |
+| `max-params` | 3 | A fourth parameter, often a boolean flag, should become an options object (P4). |
+| `complexity` | 15 | Flags functions with too many branches to test well, without firing on ordinary code. |
+| `@typescript-eslint/no-magic-numbers` | `ignore: [0, 1, -1]`, `ignoreArrayIndexes: true`, `ignoreEnums: true` | Keeps the rule on real magic numbers and off indexes and counters. |
+
+With O4 these are errors from day one, so the preview's violation counts (5.2) show how much existing code each number would fail.
+
 ## 6. `harness report`
 
 ### 6.1 CLI
@@ -363,7 +398,7 @@ At most 50 windows per rule and top-10 session tables keep the page small. Targe
 
 - JSON, schema `{ schema: 1, harness, window_days, generated_on (date only), claude_versions[], models[], sessions: { scanned, skipped, unknown }, skills[], rules[], tokens, gates, latency, weekly[] }`.
 - Counts and rates only (U11). No paths, no quotes, no repo name, no branch names, no session ids, no timestamps finer than the ISO week.
-- Skill and rule ids: harness's own ids and catalog ids only. Any other skill name is counted under `other`, because a personal skill's name can be private (Q9).
+- Skill and rule ids: harness's own ids and catalog ids only. Any other skill name is counted under `other`, because a personal skill's name can be private (O9).
 - **Allowlist check.** Before writing, a walker checks every string value against a fixed allowlist: known ids, versions (`^\d+\.\d+\.\d+`), model ids (`^claude-[a-z0-9.-]+$`), ISO weeks and the schema's enum values. Any other string stops the export with an error. The check runs in code, not only in tests.
 - The person sends the file themselves. Harness never uploads it.
 
@@ -404,7 +439,7 @@ The delta is pass^k(rules) − pass^k(bare), per rule.
 - `regex` on the trace for harness's deny reason text;
 - `tool_used` with `max: 0` where the action has one clear form.
 
-Plugin hooks running inside eval sessions is UNVERIFIED (AR §2.4 says hooks from `.claude/` don't load; plugin hooks aren't covered). Q8 asks how to verify it. The free attack suite (10) is the main proof that gates catch things. Gate evals only show the hooks fire in a real session.
+Plugin hooks running inside eval sessions is UNVERIFIED (AR §2.4 says hooks from `.claude/` don't load, and it doesn't cover plugin hooks). The planning probe in 7.6 settles it (O8). If the hooks don't run, this kind is dropped, and the free attack suite (10) is the only gate proof. Either way, the attack suite is the main proof; gate evals only show that the hooks fire in a real session.
 
 ### 7.3 pass^k
 
@@ -416,13 +451,23 @@ pass^k for a case means all k runs pass at the threshold (AR §1.2). It needs pe
 - **Estimate.** Total agent runs × the median cost per run from the last saved result of that kind (`costUsd` / runs), labelled "estimate from your last run". On a first run it says "no estimate yet; the $X ceiling caps the spend".
 - **Ceiling.** Whether `--max-cost-usd` stops mid-run or after the run that crosses it is UNVERIFIED, so the page says spend can pass the ceiling by up to one agent run.
 - **Ask every run.** The person types `yes` at the terminal prompt (`readlinePrompt`). Any other answer stops.
+- **Model pinned (O7).** Every run names the agent model. `harness eval` asks which model before it prints the plan. The plan, the result folder name and the report all show it. Results on different models are never merged or compared in one number.
 - **Never unattended.** The command refuses when stdin isn't a TTY (`cli.tty === false`), inside Claude Code (`insideClaude(env)`), or when `CI` is `true` or `1` (as `isUnattended` reads it). After the preset, the guard also denies `harness eval` to the agent (`PERSON_ONLY`, like `tdd off`).
 
 ### 7.5 Eval limits
 
 - Eval sessions don't load project CLAUDE.md, AGENTS.md, `.claude/` or other plugins (AR §2.4). The rules are injected with `execution.append_system_prompt`. That tests the rule text, not its delivery: a rule that never loads in real sessions (AGENTS.md shadowed) still passes here. The load signals in 4.2 cover delivery.
 - Text in `append_system_prompt` sits in the system prompt, while CLAUDE.md arrives as a user message (AR §2.6). Results may be better in evals than in real sessions.
-- Pin the agent model per run (Q7). Results across models aren't comparable.
+- The agent model is pinned per run (O7). Results across models aren't comparable.
+
+### 7.6 Planning probe (O8)
+
+One paid run during planning answers whether plugin hooks run inside eval sessions. It runs only after the owner's OK, given for this probe alone.
+
+- **Case.** One gates case. The plugin's `hooks/hooks.json` has a `PreToolUse` command hook that writes a marker file and denies a `Read` of the scaffolded secrets file. The prompt asks the agent to read that file. Graders: `file_exists` on the marker, and `regex` on the trace for the deny reason.
+- **Size.** 1 case, 1 run, `--ablation none`, free graders only, no judge calls. That is 1 agent run.
+- **Cost estimate.** Unmeasured, because there is no earlier eval result to base it on. One short agent run with a one-line prompt should cost well under the ceiling (estimate). The probe runs with `--max-cost-usd 0.50` as the hard bound. So the owner is asked to approve up to $0.50, plus at most one run's overshoot (7.4).
+- **Result.** If the marker exists and the deny shows, gate evals stay. Otherwise gate evals are dropped from v1, and section 7.2 and the build order are updated to match.
 
 ## 8. Privacy and security
 
@@ -430,8 +475,8 @@ pass^k for a case means all k runs pass at the threshold (AR §1.2). It needs pe
 - **No message text in exports.** The allowlist check in 6.4 enforces it.
 - **The HTML holds quotes.** It is local and gitignored, and its banner says not to share it.
 - **Transcripts are untrusted data.** They are parsed, never executed or evaluated. All text is escaped in the HTML, and the CSP blocks scripts and requests. No transcript text reaches a model in v1. No transcript text goes to the terminal.
-- **Only this repo's sessions** (U4, 3.1). Sessions outside the repo paths are skipped after their `cwd` is read; nothing else in them is read. Q1 may widen this to sessions that edited the repo.
-- **Who runs it.** "Only when the person runs it" (U4): after the preset, the guard asks before the agent runs `harness report` (Q2). Until then, the early build refuses inside Claude Code, as `tdd off` does.
+- **Only this repo's sessions** (U4, O1, 3.1). A session is kept only if its start `cwd` is inside the repo. Other sessions are skipped after that one field is read; nothing else in them is read.
+- **Who runs it.** "Only when the person runs it" (U4). After the preset, the guard asks before the agent runs `harness report` (O2), and unattended runs are denied, as for every guard ask. Until then, the early build refuses inside Claude Code, as `tdd off` does.
 - **Inputs on the way in:** `isSafeSessionId`, `lstat` with no symlink following, a 16 MB line cap, and paths kept inside the projects root.
 - **The ESLint apply** writes only the two files in 5.2 after the yes, through the manifest, and runs only the repo's own ESLint, with a timeout.
 
@@ -446,7 +491,8 @@ All targets are estimates. `test/perf/report.test.ts` measures them on synthetic
 | Skipped files | a file older than the window costs one `stat` |
 | HTML | under 2 MB |
 | Export | under 50 KB |
-| Hook overhead of `use` and `ms` | no new spawn, no new file read; `test/perf/latency.test.ts` still passes with its current `OVERHEAD_MS` |
+| Hook overhead of `use`, `ms` and the timing log | no new spawn; one `stat` and one append per call; `test/perf/latency.test.ts` still passes with its current `OVERHEAD_MS` |
+| Timing log size | at most 5 MB, plus one 5 MB rotation |
 | `harness rules` | the ESLint run has a 120 s timeout; everything else under 2 s |
 
 The owner's transcripts on this machine total about 2.1 GB (observed, all projects). At the target rate, a full 14-day scan of one repo's share should take seconds to under a minute (estimate).
@@ -455,15 +501,15 @@ The owner's transcripts on this machine total about 2.1 GB (observed, all projec
 
 - **Synthetic transcripts only.** A builder, `test/fixtures/transcripts/make.ts`, writes records in the observed shapes. No real transcript is ever copied in. A test scans every fixture for `/Users/`, `/home/`, email-shaped strings and `sk-` keys, and fails on any.
 - **Reader.** Each record type in 3.2. Missing or wrong-typed fields give unknown, not pass. Duplicate `message.id` + `requestId` counts once. Unknown record types are counted. Malformed lines and a line over the cap are skipped and counted. A newer `version` raises the banner. Subagent files join their parent session. Symlinks aren't followed. Unsafe session ids are skipped.
-- **Repo match.** Exact folder; subfolder folder; a prefix collision (`harness` vs `harness-old`) dropped by `cwd`; a worktree; a parent-folder session (behaviour per Q1).
+- **Repo match.** Exact folder; subfolder folder; a prefix collision (`harness` vs `harness-old`) dropped by `cwd`; a worktree. A parent-folder session that edited the repo by absolute path is **not** counted (O1). With no sessions found, the output names the fix: start Claude Code inside the repo.
 - **Metrics.** One fixture per row in 4.1, 4.2 and 4.4: each heuristic with one window that should open and one near miss that shouldn't; each false-block signal; skill dropped from the listing; rules not loaded; reload after compaction; token sums with cache kept apart.
 - **HTML.** No `<script`, no `http:` or `https:` URL outside the method text, the CSP meta present, hostile text (`<script>`, bidi, zero-width) escaped, every chart has its table.
 - **Export.** A fixture full of paths, quotes, branch names and a private skill name gives an export with none of them; any non-allowlisted string stops the export.
-- **Events.** `use` and `ms` written; old lines still parse; `stats` output unchanged.
-- **Rules.** The proposal for fixture repos (Next.js, Expo, plain React, no React) has exactly the rows in 5.2; missing plugins listed, not added; apply and uninstall leave the repo byte-identical; an unparseable config gives the manual lines.
-- **Eval.** The plan prints without running anything; refusal when not a TTY, inside Claude Code and with `CI=true`; a fake `claude` binary on `PATH` records the arguments and returns a canned result, so no test spends money. No test runs the real `claude`.
+- **Events and timing.** `use` and `ms` are written; old lines still parse; `stats` output is unchanged. The timing log gets one line per call, with no path or command text. It rotates at 5 MB and keeps one old file. A write failure doesn't change the decision.
+- **Rules.** The proposal for fixture repos (Next.js, Expo, plain React, no React) has exactly the rows in 5.2, all at `error`. Missing plugins are listed, not added. The preview shows per-rule violation counts and the stop-gate warning before the yes, and "unknown" when ESLint fails. Apply and uninstall leave the repo byte-identical. An unparseable config gives the manual lines.
+- **Eval.** The plan prints without running anything and names the pinned model; refusal when not a TTY, inside Claude Code and with `CI=true`; a fake `claude` binary on `PATH` records the arguments and returns a canned result, so no test spends money. No test runs the real `claude`.
 - **Attack suite** (U16). `test/attacks/<check>.cases.ts` per guard (guard, protect, config-change, sandbox-required, multi-file, red-first, test-lock, tamper): hook inputs that try to get round the check, each marked `blocked` or `known-bypass` (the documented limits). The suite computes a bypass rate per check and compares it with `test/attacks/baseline.json`. A rise fails CI. The release notes record the rates for each release. It runs free, in CI, through `dispatch` with fake inputs.
-- **README.** `readme.test.ts` keeps failing on "telemetry"; a new assertion checks the README names the "usage and adherence report" and documents `report`.
+- **README.** `readme.test.ts` keeps failing on "telemetry". New assertions check that the README names the "usage and adherence report", documents `report`, and contains "start Claude Code inside the repo for the report to see it".
 
 ## 11. Known limits
 
@@ -471,26 +517,22 @@ The owner's transcripts on this machine total about 2.1 GB (observed, all projec
 - "Relevant" is a file-based proxy. A skill can be needed with no matching edit (a design discussion) or not needed despite one.
 - The heuristics have false positives and false negatives. Absence-type judgements score worst even for model judges (JF §2.1, side effects 6.6% to 14.1% precision). No window means "nothing flagged", not "followed".
 - "Probable false block" can't tell a false block from a bypass in the deny-then-retry case.
-- Latency from transcripts covers only hooks that Claude Code records (observed: PreToolUse and SessionStart). The events' `ms` covers non-allow decisions only, unless Q3 adds more.
+- Latency is measured inside the dispatcher (O3), so it leaves out Node start-up and Claude Code's own overhead. The transcript numbers cover only the hooks Claude Code records (observed: PreToolUse and SessionStart).
 - Transcripts and `.harness/reports/` are writable by any process, the agent's shell included. The report shows what the files say; it isn't tamper-proof.
-- Sessions started outside the repo are missed under the strict rule (3.1, Q1).
+- Sessions started outside the repo are never counted (O1), even when they edited it. The owner's current sessions are among them.
+- Lint errors from day one (O4) make the stop gate fail on existing violations until they are fixed.
+- Gate evals may be dropped after the probe (O8).
 - Evals test injected rule text, not delivery (7.5), and may show better adherence than real sessions.
 - ESLint covers part of the anti-pattern lists; 5.2 marks the rest as having no lint equivalent.
 - No money cost in the report (2).
 
 ## 12. Open questions for the owner
 
-| # | Question | Options | Recommendation |
-|---|---|---|---|
-| Q1 | Sessions started above the repo (your own sessions start in `~/Documents`) | A. Strict: only sessions whose `cwd` is inside the repo. B. Also sessions in parent-folder project dirs whose Edit or Write paths, or Bash `cwd`, fall inside the repo. Their other records are not read. C. B behind a `--include-parent` flag. | **B.** Under A, your own report would be empty today (3.1). B still reads only sessions that worked on this repo. |
-| Q2 | Can the agent run `harness report`? | A. Yes, freely: the terminal shows counts only. B. The guard asks first. C. Person only: the guard denies. | **B.** It matches "when the person runs it" without blocking a person who asks the agent to run it. |
-| Q3 | Hook latency for allowed calls | A. Transcript `hook_success` only (partial). B. `ms` on existing events only (non-allow decisions). C. B, plus one line per hook to `.harness/logs/timing.jsonl` (event, check, ms), capped at 5 MB with one rotation. | **C.** Allows are most hook calls, and A's coverage is unclear. Cost: one append per hook, no new spawn (estimate under 1 ms). |
-| Q4 | Proposed lint rules that already have violations | A. Add them as `warn`; promote to `error` later. B. `error` now: the stop gate blocks until they're fixed. C. Leave them out. | **A.** B can block every stop on an existing repo. |
-| Q5 | Do `no-restricted-syntax` and `no-restricted-imports` count as "no custom regex"? | A. Yes: they are AST selectors and import names. B. No: drop them, which loses enums, FlatList, Image, SafeAreaView and Animated. | **A.** |
-| Q6 | Size limits (`max-lines` 400, `max-lines-per-function` 80, `max-depth` 3, `max-params` 3, `complexity` 15) | A. Use these defaults (my estimates). B. You set each number. C. Leave size rules out. | **B.** They are style choices, and "no invented data" says the numbers should be yours. |
-| Q7 | Eval model | A. Pin the agent model per run; `harness eval` asks which. B. The account default. | **A.** Results are only comparable on the same model (AR §1.5). |
-| Q8 | Gate evals depend on plugin hooks running in eval sessions (UNVERIFIED) | A. One paid probe run with your OK during planning, then decide. B. Drop gate evals; rely on the free attack suite. | **A**, and fall back to B if hooks don't run. |
-| Q9 | Skill names in the export | A. Harness and catalog ids only; others counted as `other`. B. All names. | **A.** A personal skill's name can be private. |
+The owner answered Q1 to Q9 on 2026-11-05. The answers are O1 to O9 in section 1. One item is left:
+
+| # | Item | Status |
+|---|---|---|
+| S1 | The size numbers in 5.3: `max-lines`, `max-lines-per-function`, `max-depth`, `max-params`, `complexity`, and the `no-magic-numbers` options | **The owner sets them before build.** This blocks build piece 12 only. |
 
 ## 13. Build order
 
@@ -499,7 +541,7 @@ The owner's transcripts on this machine total about 2.1 GB (observed, all projec
 | # | Piece | Files | Parallel with the preset? |
 |---|---|---|---|
 | 1 | Transcript reader: find this repo's files, stream, tolerant parse, version note | `src/report/transcripts.ts`, `test/fixtures/transcripts/make.ts` | **Yes** |
-| 2 | Event fields `use` and `ms` (after the live check for `tool_use_id`) | `src/core/events.ts`, `src/hooks/dispatch.ts`, `src/hooks/types.ts`, `src/checks/stop/gate.ts` | **Yes** |
+| 2 | Event fields `use` and `ms` (after the live check for `tool_use_id`), and the timing log with rotation (O3) | `src/core/events.ts`, `src/hooks/dispatch.ts`, `src/hooks/types.ts`, `src/checks/stop/gate.ts` | **Yes** |
 | 3 | Metrics: tokens, skills, loads and compaction, gate counts and false-block signals, latency | `src/report/metrics/*.ts` | **Yes** |
 | 4 | Judgement-rule heuristics and windows (4.2) | `src/report/windows.ts` | **Yes** |
 | 5 | HTML renderer and export with the allowlist check | `src/report/html.ts`, `src/report/export.ts` | **Yes** |
@@ -508,9 +550,9 @@ The owner's transcripts on this machine total about 2.1 GB (observed, all projec
 | 8 | Doctor branch-protection check: `gh api repos/{o}/{r}/branches/{default}/protection`, required checks include the CI job that runs lint and test; no `gh` or no access gives "unknown". Rulesets (`/rules/branches/`) are UNVERIFIED | `src/cli/doctor.ts` | **Yes**; the preset plan doesn't touch `doctor.ts` |
 | 9 | Rule coverage matrix reading `config.preset` | `src/report/rules.ts` | **After the preset**: needs the `preset` key |
 | 10 | `.harness/reports/` in `mergeGitignore`; drop the self-`.gitignore` | `src/install/merge.ts` | **After the preset** |
-| 11 | Guard: `report` ask (Q2) and `eval` deny in `PERSON_ONLY` | `src/checks/guard.ts` | **After the preset** |
-| 12 | `harness rules`: proposal, violation counts, diff, apply through the manifest | `src/rules/*.ts`, `src/install/*` | **After the preset** |
-| 13 | `harness eval`: plugin builder, case templates, plan, consent, run, result import | `src/eval/*.ts`, `templates/evals/` | Builder and templates **yes**; the skills it packages and its CLI hook **after the preset** |
-| 14 | README and `docs/reference.md`: "usage and adherence report", `report`, `rules`, `eval`; never "telemetry" | `README.md`, `docs/reference.md` | With each PR that adds a command (README every PR) |
+| 11 | Guard: `report` ask (O2) and `eval` deny in `PERSON_ONLY` | `src/checks/guard.ts` | **After the preset** |
+| 12 | `harness rules`: proposal at `error` (O4), violation counts, diff, apply through the manifest | `src/rules/*.ts`, `src/install/*` | **After the preset**, and after the owner sets the 5.3 numbers |
+| 13 | `harness eval`: plugin builder, case templates, model pin, plan, consent, run, result import. The gates kind only if the planning probe (7.6) passes | `src/eval/*.ts`, `templates/evals/` | Builder and templates **yes**; the skills it packages and its CLI hook **after the preset** |
+| 14 | README and `docs/reference.md`: "usage and adherence report", `report`, `rules`, `eval`, and the line "start Claude Code inside the repo for the report to see it" (O1); never "telemetry" | `README.md`, `docs/reference.md` | With each PR that adds a command (README every PR) |
 
 Each piece is its own small branch and PR off `main`.

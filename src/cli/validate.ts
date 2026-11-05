@@ -9,6 +9,7 @@ import { saveDebug } from '../ai/debug.js';
 import { type Picks, validatePicks } from '../ai/picks.js';
 import { validateReport } from '../ai/report.js';
 import { validateVetReview } from '../ai/vet-review.js';
+import { selectedIds } from '../install/plan.js';
 import type { ScanResult } from '../vet/scan.js';
 import { loadCatalog } from '../catalog/load.js';
 import { packageDir } from '../core/package-dir.js';
@@ -100,7 +101,9 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
     const raw = json(text as string);
     if (raw === undefined) errors = ['vet-review: not valid JSON'];
     else {
-      const installed = loadConfig(root).config.items.filter((i) => i.selected).map((i) => i.id);
+      // Same set `harness explain` lists. null: installed but the config can't be read, so overlaps can't be checked.
+      const lc = loadConfig(root);
+      const installed = !existsSync(join(root, MANIFEST_REL)) ? [] : lc.errors.length ? null : selectedIds(lc.config);
       const r = validateVetReview(raw, sideRaw as ScanResult, installed);
       errors = r.ok ? [] : r.errors;
     }
@@ -113,7 +116,7 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
   for (const e of errors) out(e);
   if (attempt < 2) return 2;
   // Only an installed repo gets a .harness/ folder; anywhere else the raw output is printed.
-  if (!existsSync(join(root, MANIFEST_REL))) return out(`Recommend output failed validation twice. Raw output follows. Stopping.\n${(text as string).split(/\r?\n/).map(esc).join('\n')}`), 1;
+  if (!existsSync(join(root, MANIFEST_REL))) return out(`${what === 'vet-review' ? 'Vet review' : 'Recommend'} output failed validation twice. Raw output follows. Stopping.\n${(text as string).split(/\r?\n/).map(esc).join('\n')}`), 1;
   out(`${what === 'vet-review' ? 'Vet review' : 'Recommend output'} failed validation twice. Raw output is in \`${saveDebug(root, what, text as string)}\`. Stopping.`);
   return 1;
 }

@@ -1,20 +1,23 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MANIFEST_REL } from '../install/manifest.js';
-import { esc } from '../core/config.js';
+import { esc, loadConfig } from '../core/config.js';
 import { configToAnswers, validateAnswers } from '../ai/answers.js';
 import { overlayAnswers } from './init.js';
 import { readConfig } from './preamble.js';
 import { saveDebug } from '../ai/debug.js';
 import { type Picks, validatePicks } from '../ai/picks.js';
 import { validateReport } from '../ai/report.js';
+import { validateVetReview } from '../ai/vet-review.js';
+import { selectedIds } from '../install/plan.js';
+import type { ScanResult } from '../vet/scan.js';
 import { loadCatalog } from '../catalog/load.js';
 import { packageDir } from '../core/package-dir.js';
 import { validateProduct } from '../ai/product.js';
 import { detect } from '../install/detect.js';
 import type { CliEnv } from './index.js';
 
-const USAGE = 'Usage: harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]';
+const USAGE = 'Usage: harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]';
 
 /** Checks what the interview wrote. Exit 0 prints ok; exit 2 prints one error per line. Safe in a plain terminal and in Claude Code. */
 export function validate(argv: string[], { root, out }: CliEnv): number {
@@ -26,7 +29,7 @@ export function validate(argv: string[], { root, out }: CliEnv): number {
     if (typeof c === 'number') return c;
     merge = (raw) => (raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? overlayAnswers(configToAnswers(c), raw as Record<string, unknown>) : raw);
   }
-  if (args[0] === 'picks' || args[0] === 'report') return recommend(args, root, out, merge);
+  if (args[0] === 'picks' || args[0] === 'report' || args[0] === 'vet-review') return recommend(args, root, out, merge);
   const [what, file] = args;
   if (args.length !== 2 || (what !== 'answers' && what !== 'product')) return out(USAGE), 2;
   let text: string;
@@ -68,11 +71,11 @@ const json = (t: string): unknown => {
 };
 
 /** picks/report: exit 0 ok, 2 invalid (a retry is left), 1 invalid on attempt 2 (raw output saved, stop). */
-type Kind = 'picks' | 'report';
+type Kind = 'picks' | 'report' | 'vet-review';
 type Merge = (raw: unknown) => unknown;
 function recommend(args: string[], root: string, out: (l: string) => void, merge: Merge): number {
   const [what, file, flag, other, ...tail] = args as [Kind, ...string[]];
-  const f2 = what === 'picks' ? '--answers' : '--picks';
+  const f2 = what === 'picks' ? '--answers' : what === 'report' ? '--picks' : '--scan';
   let attempt = 1;
   if (tail.length === 2 && tail[0] === '--attempt' && (tail[1] === '1' || tail[1] === '2')) attempt = Number(tail[1]);
   else if (tail.length) return out(USAGE), 2;
@@ -94,6 +97,16 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
       const r = validatePicks(raw, catalog, a.answers);
       errors = r.ok ? [] : r.errors;
     }
+  } else if (what === 'vet-review') {
+    const raw = json(text as string);
+    if (raw === undefined) errors = ['vet-review: not valid JSON'];
+    else {
+      // Same set `harness explain` lists. null: installed but the config can't be read, so overlaps can't be checked.
+      const lc = loadConfig(root);
+      const installed = !existsSync(join(root, MANIFEST_REL)) ? [] : lc.errors.length ? null : selectedIds(lc.config);
+      const r = validateVetReview(raw, sideRaw as ScanResult, installed);
+      errors = r.ok ? [] : r.errors;
+    }
   } else {
     const fs = (sideRaw as Picks | undefined)?.findings;
     if (!Array.isArray(fs) || !fs.every((x) => typeof x?.id === 'string')) errors = ['picks: the picks file is not valid; run harness validate picks first'];
@@ -103,7 +116,7 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
   for (const e of errors) out(e);
   if (attempt < 2) return 2;
   // Only an installed repo gets a .harness/ folder; anywhere else the raw output is printed.
-  if (!existsSync(join(root, MANIFEST_REL))) return out(`Recommend output failed validation twice. Raw output follows. Stopping.\n${(text as string).split(/\r?\n/).map(esc).join('\n')}`), 1;
-  out(`Recommend output failed validation twice. Raw output is in \`${saveDebug(root, what, text as string)}\`. Stopping.`);
+  if (!existsSync(join(root, MANIFEST_REL))) return out(`${what === 'vet-review' ? 'Vet review' : 'Recommend'} output failed validation twice. Raw output follows. Stopping.\n${(text as string).split(/\r?\n/).map(esc).join('\n')}`), 1;
+  out(`${what === 'vet-review' ? 'Vet review' : 'Recommend output'} failed validation twice. Raw output is in \`${saveDebug(root, what, text as string)}\`. Stopping.`);
   return 1;
 }

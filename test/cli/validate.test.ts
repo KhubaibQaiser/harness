@@ -142,3 +142,54 @@ test('--merge-config reads an old default results_dir as update does, without wr
   expect(go(['validate', 'answers', partial, '--merge-config'], repo)).toEqual({ code: 0, lines: ['ok'] });
   expect(readFileSync(join(repo, '.harness/config.yaml'), 'utf8')).toBe(old);
 });
+
+const vscan = JSON.stringify({ sha: 'a'.repeat(40), findings: [] });
+const vgood = JSON.stringify({ relevance: 'low', why: 'w', overlaps: [], injection: [], recommendation: 'skip', summary: 's' });
+
+test('validate vet-review: ok, bad JSON, usage', () => {
+  const s = file('scan.json', vscan);
+  expect(go(['validate', 'vet-review', file('r.json', vgood), '--scan', s], root)).toEqual({ code: 0, lines: ['ok'] });
+  expect(go(['validate', 'vet-review', file('r.json', '{nope'), '--scan', s], root)).toEqual({ code: 2, lines: ['vet-review: not valid JSON'] });
+  expect(go(['validate', 'vet-review', file('r.json', vgood), '--scan', file('s.json', '{}')], root).lines).toEqual(['scan: not a vet scan; run harness vet --json first']);
+  expect(go(['validate', 'vet-review', 'x'], root).code).toBe(2);
+  expect(go(['validate', 'vet-review', 'x', '--scan', 'y', '--attempt', '3'], root).lines[0]).toMatch(/^Usage:/);
+  expect(go(['validate', 'vet-review', '/nonexistent', '--scan', s], root).code).toBe(2);
+});
+
+test('validate vet-review: attempt 2 saves the raw review and stops', () => {
+  const r2 = makeRepo({ 'package.json': '{}' }, { git: false });
+  mkdirSync(join(r2, '.harness'));
+  writeFileSync(join(r2, '.harness/manifest.json'), '{}');
+  const bad = '{"relevance":"x"}';
+  const s = file('scan.json', vscan);
+  expect(go(['validate', 'vet-review', file('r.json', bad), '--scan', s], r2).code).toBe(2);
+  const r = go(['validate', 'vet-review', file('r.json', bad), '--scan', s, '--attempt', '2'], r2);
+  expect(r.code).toBe(1);
+  const [name] = readdirSync(join(r2, '.harness/debug'));
+  expect(name).toMatch(/^vet-review-.*\.txt$/);
+  expect(readFileSync(join(r2, '.harness/debug', name), 'utf8')).toBe(bad);
+  expect(r.lines.at(-1)).toBe(`Vet review failed validation twice. Raw output is in \`.harness/debug/${name}\`. Stopping.`);
+});
+
+test('validate vet-review: installed set matches explain (legacy config, broken config, no install)', () => {
+  const rev = (id: string) => JSON.stringify({ relevance: 'low', why: 'w', overlaps: [{ id, how: 'h' }], injection: [], recommendation: 'skip', summary: 's' });
+  const s = file('scan.json', vscan);
+  const mk = (config?: string) => {
+    const r = makeRepo({ 'package.json': '{}' }, { git: false });
+    mkdirSync(join(r, '.harness'));
+    writeFileSync(join(r, '.harness/manifest.json'), '{}');
+    if (config !== undefined) writeFileSync(join(r, '.harness/config.yaml'), config);
+    return r;
+  };
+  const legacy = mk(serializeConfig(defaults())); // items empty: the legacy own items
+  expect(go(['validate', 'vet-review', file('r.json', rev('stop-gate')), '--scan', s], legacy).code).toBe(0);
+  const broken = mk('items: [');
+  expect(go(['validate', 'vet-review', file('r.json', rev('stop-gate')), '--scan', s], broken).lines).toEqual(["config: .harness/config.yaml could not be read; overlaps can't be checked"]);
+  expect(go(['validate', 'vet-review', file('r.json', rev('stop-gate')), '--scan', s], root).lines).toEqual(['overlaps[0].id: "stop-gate" is not an installed item']);
+});
+
+test('validate vet-review: unsaved failure says Vet review output', () => {
+  const r = go(['validate', 'vet-review', file('r.json', '{}'), '--scan', file('s.json', vscan), '--attempt', '2'], root);
+  expect(r.code).toBe(1);
+  expect(r.lines.join('\n')).toContain('Vet review output failed validation twice. Raw output follows. Stopping.');
+});

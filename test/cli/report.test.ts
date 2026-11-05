@@ -94,7 +94,8 @@ describe('harness report', () => {
     await go(world(1), [], { open });
     expect(open).not.toHaveBeenCalled();
   });
-  it.skipIf(process.getuid?.() === 0)('exits 1 when .harness is read-only', async () => {
+  // chmod can't make a folder read-only on Windows, and root ignores it.
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('exits 1 when .harness is read-only', async () => {
     const w = world(1);
     mkdirSync(join(w.root, '.harness'), { recursive: true });
     chmodSync(join(w.root, '.harness'), 0o500);

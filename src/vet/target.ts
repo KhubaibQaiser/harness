@@ -3,7 +3,8 @@ import { esc } from '../core/config.js';
 import type { Exec } from '../core/exec.js';
 
 export type Target = { kind: 'repo'; repo: string; ref?: string; path: string } | { kind: 'plugin'; name: string; market: string };
-export interface Resolved { repo: string; ref: string; sha: string; path: string; name?: string; market?: string; marketRepo?: string }
+/** `follows`, for a github or git-subdir marketplace entry: the ref it installs, or null when it pins a sha. Unset: the default branch. */
+export interface Resolved { repo: string; ref: string; sha: string; path: string; name?: string; market?: string; marketRepo?: string; follows?: string | null }
 type Err = { error: string };
 
 const REPO_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
@@ -64,6 +65,7 @@ function pinSha(repo: string, sha: string, exec: Exec): { ref: string; sha: stri
   return p.sha === sha ? p : { error: `${esc(repo)}: could not verify ${sha} (gh returned a different commit). ${VERIFY}` };
 }
 
+export const UNREADABLE = `Could not read the installed marketplaces from claude. Run claude plugin marketplace list yourself, or ${URL_INSTEAD.charAt(0).toLowerCase()}${URL_INSTEAD.slice(1)}`;
 const J = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** The installed marketplaces (`claude plugin marketplace list --json`, free, no model call), or why they can't be read. */
@@ -85,7 +87,7 @@ function resolvePlugin(t: { name: string; market: string }, exec: Exec): Resolve
   const notInstalled = { error: `Marketplace "${market}" is not installed. Run harness vet with the plugin's GitHub URL instead, such as https://github.com/<owner>/<repo>.` };
   const list = marketList(exec);
   if (list === 'missing') return notInstalled;
-  if (list === 'unreadable') return { error: `Could not read the installed marketplaces from claude. Run claude plugin marketplace list yourself, or ${URL_INSTEAD.charAt(0).toLowerCase()}${URL_INSTEAD.slice(1)}` };
+  if (list === 'unreadable') return { error: UNREADABLE };
   const m = list.find((x) => x.name === t.market);
   if (!m) return notInstalled;
   const mtype = J(m.source) ? m.source.source : m.source;
@@ -128,10 +130,10 @@ function resolvePlugin(t: { name: string; market: string }, exec: Exec): Resolve
       const sha = typeof src.sha === 'string' && /^[0-9a-fA-F]{40}$/.test(src.sha) ? src.sha.toLowerCase() : undefined;
       if (!sha) return { error: `Plugin "${name}" in "${market}" has a malformed sha: ${esc(String(src.sha))}. ${URL_INSTEAD}` };
       const p = pinSha(repo, sha, exec);
-      return 'error' in p ? p : { repo, path, ...p, ...base };
+      return 'error' in p ? p : { repo, path, ...p, ...base, follows: null };
     }
     const p = pin(repo, ref, exec);
-    return 'error' in p ? p : { repo, path, ...p, ...base };
+    return 'error' in p ? p : { repo, path, ...p, ...base, ...(ref ? { follows: ref } : {}) };
   }
   const type = J(src) ? String(src.source) : String(src);
   return { error: `Plugin "${name}" in "${market}" has a ${esc(type)} source; vet checks github, git-subdir and relative-path sources only. ${URL_INSTEAD}` };

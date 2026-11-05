@@ -61,16 +61,16 @@ const market = (source: unknown, extra: unknown[] = []) => (cmd: string, a: stri
 
 test('marketplace git-subdir with sha', () => {
   const { exec, calls } = fake(market({ source: 'git-subdir', url: 'https://github.com/o/r.git', path: 'x', sha: S }));
-  expect(resolveTarget(P, exec)).toEqual({ repo: 'o/r', path: 'x', ref: S, sha: S, name: 'p', market: 'm', marketRepo: 'mo/mr' });
+  expect(resolveTarget(P, exec)).toEqual({ repo: 'o/r', path: 'x', ref: S, sha: S, name: 'p', market: 'm', marketRepo: 'mo/mr', follows: null });
   expect(calls[0]).toEqual(['claude', 'plugin', 'marketplace', 'list', '--json']);
   expect(calls).toContainEqual(['gh', 'api', `repos/mo/mr/contents/.claude-plugin/marketplace.json?ref=${M}`, '-H', 'Accept: application/vnd.github.raw']);
 });
 
 test('marketplace github source uses sha ?? ref', () => {
   const r = resolveTarget(P, fake(market({ source: 'github', repo: 'o/r', sha: S })).exec);
-  expect(r).toEqual({ repo: 'o/r', path: '', ref: S, sha: S, name: 'p', market: 'm', marketRepo: 'mo/mr' });
+  expect(r).toEqual({ repo: 'o/r', path: '', ref: S, sha: S, name: 'p', market: 'm', marketRepo: 'mo/mr', follows: null });
   const { exec } = fake((c, a) => (c === 'gh' && a[1] === 'repos/o/r/commits/v2' ? ok(S) : market({ source: 'github', repo: 'o/r', ref: 'v2' })(c, a)));
-  expect(resolveTarget(P, exec)).toMatchObject({ repo: 'o/r', ref: 'v2', sha: S });
+  expect(resolveTarget(P, exec)).toMatchObject({ repo: 'o/r', ref: 'v2', sha: S, follows: 'v2' });
 });
 
 test('relative-path source', () => {

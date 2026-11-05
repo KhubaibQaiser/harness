@@ -1,11 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
-import { afterAll, afterEach, describe, expect, test } from 'vitest';
+import { basename, join, relative, sep } from 'node:path';
+import { afterAll, afterEach, describe, expect, test, vi } from 'vitest';
 import { run } from '../../src/cli/index.js';
 import { vet } from '../../src/cli/vet.js';
 import type { Exec, ExecBytes } from '../../src/core/exec.js';
 import { CAVEAT } from '../../src/vet/report.js';
+import { UNREADABLE } from '../../src/vet/target.js';
 import { repos } from '../fixtures/vet/repos.js';
 import { tarGz, type TarSpec } from '../fixtures/vet/tar.js';
 import { makeRepo } from '../install/helpers.js';
@@ -79,9 +80,24 @@ describe('harness vet <target>', () => {
     expect(changed.length).toBeGreaterThan(0);
     expect(changed.every((k) => k.startsWith('.harness/vet/') || k === '.harness/'), changed.join(',')).toBe(true);
   });
-  test('the folder is gone after a failed fetch and after a throw mid-run', () => {
+  test('a corrupt archive exits 1 and never creates a folder', () => {
     expect(go(['o/r'], { bytes: () => ({ status: 0, stdout: Buffer.from('not a tarball') }) }).code).toBe(1);
     expect(vetDirs()).toEqual([]);
+  });
+  test('the folder is gone after a throw once it exists: in the scan, and in the install text', async () => {
+    vi.resetModules();
+    vi.doMock('../../src/vet/scan.js', async (orig) => ({
+      ...(await orig<typeof import('../../src/vet/scan.js')>()),
+      scan: (f: { dir: string }) => { expect(existsSync(f.dir)).toBe(true); throw new Error('scan boom'); },
+    }));
+    try {
+      const { vet: mocked } = await import('../../src/cli/vet.js');
+      expect(() => mocked(['o/r'], cli(makeRepo({}, { git: false })).env, { exec: fake().exec, bytes: serve(repos.hooks) })).toThrow('scan boom');
+      expect(vetDirs()).toEqual([]);
+    } finally {
+      vi.doUnmock('../../src/vet/scan.js');
+      vi.resetModules();
+    }
     const boom = fake({ over: (_c, a) => { if (a[1]?.includes('/compare/')) throw new Error('boom'); return undefined; } });
     expect(() => go(['o/r'], { exec: boom.exec })).toThrow('boom');
     expect(vetDirs()).toEqual([]);
@@ -170,6 +186,61 @@ describe('fixtures (spec 8)', () => {
   });
 });
 
+describe('name@market: pins and --finish', () => {
+  const LIST = [{ name: 'm', source: 'github', repo: 'mo/mr' }];
+  /** p@m whose entry is a github source o/r with `pin`; o/r main is 3 past SHA, stable 5 past. */
+  const gm = (pin: Record<string, string>, list: unknown = LIST) => fake({
+    list, ahead: '3',
+    over: (_c, a) => {
+      const ep = a[1] ?? '';
+      if (ep === 'repos/mo/mr') return ok('main');
+      if (ep === 'repos/mo/mr/commits/main') return ok(M);
+      if (ep.startsWith('repos/mo/mr/contents/.claude-plugin/marketplace.json')) return ok(JSON.stringify({ name: 'm', plugins: [{ name: 'p', source: { source: 'github', repo: 'o/r', ...pin } }] }));
+      if (ep === `repos/o/r/commits/${SHA}` || ep === 'repos/o/r/commits/stable') return ok(SHA);
+      if (ep === `repos/o/r/compare/${SHA}...stable`) return ok('5');
+      return undefined;
+    },
+  });
+  const P_REPORT = `.harness/vet/p-${SHA}.md`;
+  test('an entry pinning a sha gets no HEAD line; a ref is compared against that ref; none against the default branch', () => {
+    const sha = gm({ sha: SHA });
+    const md = go(['p@m'], { exec: sha.exec }).read(P_REPORT);
+    expect(md).not.toMatch(/HEAD is|Could not check/);
+    expect(sha.calls.some((c) => c[2]?.includes('/compare/'))).toBe(false);
+    expect(go(['p@m'], { exec: gm({ ref: 'stable' }).exec }).read(P_REPORT)).toContain(`HEAD is 5 commits past the vetted abc1234`);
+    expect(go(['p@m'], { exec: gm({}).exec }).read(P_REPORT)).toContain(`HEAD is 3 commits past the vetted abc1234`);
+  });
+  const keptP = (root: string) => {
+    const r = go(['p@m', '--json', '--keep'], { exec: gm({ ref: 'stable' }).exec }, root);
+    const d = mkdtempSync(join(TMP, 'side-'));
+    writeFileSync(join(d, 'scan.json'), r.out.join('\n'));
+    writeFileSync(join(d, 'review.json'), JSON.stringify({ relevance: 'low', why: 'w', overlaps: [], injection: [], recommendation: 'skip', summary: 's' }));
+    return { args: ['--finish', join(d, 'scan.json'), '--review', join(d, 'review.json')], dir: JSON.parse(r.out.join('\n')).dir as string };
+  };
+  test('--finish reads the marketplace repo and the pin again', () => {
+    const root = makeRepo({}, { git: false });
+    const { args, dir } = keptP(root);
+    const f = go(args, { exec: gm({ ref: 'stable' }).exec }, root);
+    expect(f.code, f.out.join('\n')).toBe(0);
+    expect(f.read(P_REPORT)).toContain('claude plugin marketplace add mo/mr');
+    expect(f.read(P_REPORT)).toContain('HEAD is 5 commits past');
+    expect(existsSync(dir)).toBe(false);
+  });
+  test('--finish stops when the marketplace can no longer be read, or the entry moved: exit 1, no report, folder kept', () => {
+    const root = makeRepo({}, { git: false });
+    const { args, dir } = keptP(root);
+    const noClaude: Exec = (c, a) => (c === 'claude' ? { status: 127, stdout: '', missing: true } : gm({ ref: 'stable' }).exec(c, a));
+    for (const exec of [gm({ ref: 'stable' }, 'garbage').exec, gm({ ref: 'stable' }, []).exec, noClaude]) {
+      const f = go(args, { exec }, root);
+      expect([f.code, f.out]).toEqual([1, [UNREADABLE]]);
+    }
+    const moved = fake({ list: LIST, over: (c, a) => (a[1]?.startsWith('repos/mo/mr/contents/') ? ok(JSON.stringify({ name: 'm', plugins: [{ name: 'p', source: { source: 'github', repo: 'o/other' } }] })) : a[1] === 'repos/o/other' ? ok('main') : a[1] === 'repos/o/other/commits/main' ? ok(SHA) : gm({ ref: 'stable' }).exec(c, a)) });
+    expect(go(args, { exec: moved.exec }, root).out).toEqual(['scan: the marketplace entry for p@m changed since the scan; run harness vet --json --keep again']);
+    expect(existsSync(join(root, '.harness'))).toBe(false);
+    expect(existsSync(dir)).toBe(true);
+  });
+});
+
 describe('marketplace name collision', () => {
   const own = { '.claude-plugin/marketplace.json': JSON.stringify({ name: 'mk', plugins: [{ name: 'p', source: './' }] }), ...repos.hooks };
   const report = (list?: unknown) => go(['o/r'], { exec: fake({ list }).exec, bytes: serve(own) }).read();
@@ -232,7 +303,10 @@ describe('harness vet --finish, --install, --clean', () => {
     const { d, scan } = kept(root);
     const link = join(TMP, 'harness-vet-link');
     symlinkSync(root, link, 'junction');
-    const bad = [{ sha: '../../x' }, { repo: 'a/../b' }, { path: '../up' }, { path: '/abs' }, { dir: root }, { dir: link }, { dir: join(TMP, 'other') }, { findings: 'x' }, { target: 'not a target' }, { findings: [{ severity: 'high', rule: '\u001b[2J', file: 'a', line: 1, text: 't' }] }, { context: null }];
+    const bad = [{ sha: '../../x' }, { repo: 'a/../b' }, { path: '../up' }, { path: '/abs' }, { dir: root }, { dir: link }, { dir: join(TMP, 'other') }, { findings: 'x' }, { target: 'not a target' }, { findings: [{ severity: 'high', rule: '\u001b[2J', file: 'a', line: 1, text: 't' }] }, { context: null },
+      { context: { tokens: '\u001b[2J', unmeasured: [] } }, { context: { tokens: 1, unmeasured: [1] } }, { findings: [{ severity: 'high', rule: 'secrets', file: 'a', line: '1\u001b', text: 't' }] },
+      { findings: [{ severity: 'critical', rule: 'secrets', file: 'a', line: 1, text: 't' }] }, { dir: join(root, basename(scan.dir as string)) }, { dir: TMP }, { dir: join(TMP, 'harness-vet-other-abc1234-x') }];
+    mkdirSync(join(TMP, 'harness-vet-other-abc1234-x'));
     for (const over of bad) {
       writeFileSync(join(d, 'scan.json'), JSON.stringify({ ...scan, ...over }));
       for (const args of [['--finish', join(d, 'scan.json'), '--review', join(d, 'review.json')], ['--install', join(d, 'scan.json')]]) {
@@ -244,6 +318,48 @@ describe('harness vet --finish, --install, --clean', () => {
     expect(go(['--install', join(d, 'scan.json')], {}, root).code).toBe(2);
     expect(existsSync(join(root, '.harness'))).toBe(false);
     expect(existsSync(scan.dir as string)).toBe(true);
+  });
+  test('--finish after the folder is gone stops with exit 1 and writes nothing', () => {
+    const root = makeRepo({}, { git: false });
+    const { d, scan } = kept(root);
+    rmSync(scan.dir as string, { recursive: true });
+    const f = go(['--finish', join(d, 'scan.json'), '--review', join(d, 'review.json')], {}, root);
+    expect([f.code, f.out]).toEqual([1, ['scan: unpacked folder is gone; run harness vet --json --keep again']]);
+    expect(existsSync(join(root, '.harness'))).toBe(false);
+  });
+  test('a __proto__ key in scan.json is an own key: no pollution', () => {
+    const root = makeRepo({}, { git: false });
+    const { d } = kept(root);
+    const text = readFileSync(join(d, 'scan.json'), 'utf8');
+    writeFileSync(join(d, 'scan.json'), `{"__proto__":{"polluted":1,"tokens":1},${text.slice(1)}`);
+    expect(go(['--finish', join(d, 'scan.json'), '--review', join(d, 'review.json')], {}, root).code).toBe(0);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+  test('--install prints a report line with a control character escaped', () => {
+    const root = makeRepo({}, { git: false });
+    const { d } = kept(root);
+    expect(go(['--finish', join(d, 'scan.json'), '--review', join(d, 'review.json')], {}, root).code).toBe(0);
+    const p = join(root, REPORT);
+    writeFileSync(p, readFileSync(p, 'utf8').replace('Pinned marketplace entry:', 'evil\u001b[2J\nPinned marketplace entry:'));
+    const i = go(['--install', join(d, 'scan.json')], {}, root);
+    expect(i.out).toContain('evil\\u001b[2J');
+    expect(i.out.join('\n')).not.toContain('\u001b');
+  });
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('--clean skips a folder it cannot remove and says so', () => {
+    const blocked = join(TMP, 'harness-vet-blocked-1');
+    mkdirSync(join(blocked, 'sub'), { recursive: true });
+    writeFileSync(join(blocked, 'sub', 'f'), 'x');
+    chmodSync(join(blocked, 'sub'), 0o000);
+    try {
+      mkdirSync(join(TMP, 'harness-vet-ok-1'));
+      const r = go(['--clean']);
+      expect([r.code, r.out]).toEqual([0, ['Removed 1 unpacked vet folder(s); could not remove 1.']]);
+      expect(vetDirs()).toEqual(['harness-vet-blocked-1']);
+      const only = go(['--clean']);
+      expect([only.code, only.out]).toEqual([1, ['Removed 0 unpacked vet folder(s); could not remove 1.']]);
+    } finally {
+      chmodSync(join(blocked, 'sub'), 0o755);
+    }
   });
   test('--clean removes the unpacked folders', () => {
     mkdirSync(join(TMP, 'harness-vet-x-abc1234-1'));

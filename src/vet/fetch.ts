@@ -12,6 +12,8 @@ export interface Fetched { dir: string; files: string[]; map: Record<string, str
 
 const WIN = /[<>:"|?*\x00-\x1f]|[. ]$|^(con|prn|aux|nul|com[\d¹²³]|lpt[\d¹²³])(\..*)?$|^con(in|out)\$$/i;
 const PREFIX = 'harness-vet-';
+/** The start of the name of r's unpacked folder (mkdtemp adds a random tail). */
+export const tmpPrefix = (r: Resolved): string => `${PREFIX}${vetId(r).slice(0, 40)}-${r.sha.slice(0, 7)}-`;
 
 /** Why an entry path can't be written safely on any OS, or undefined if it can. */
 function unsafe(path: string): string | undefined {
@@ -69,7 +71,7 @@ export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: s
   const map: Record<string, string> = {};
   let dir = '';
   try {
-    dir = mkdtempSync(join(tmpdir(), `${PREFIX}${vetId(r).slice(0, 40)}-${r.sha.slice(0, 7)}-`));
+    dir = mkdtempSync(join(tmpdir(), tmpPrefix(r)));
     writeFileSync(join(dir, '.gitignore'), '*\n'); // first, so a crash never leaves stageable files
     for (const t of todo) {
       if (clash.has(t)) continue;
@@ -100,9 +102,11 @@ export function cleanTmp(dir: string): void {
   if (isVetTmp(dir)) rmSync(dir, { recursive: true, force: true });
 }
 
-/** `harness vet --clean`: removes every unpacked folder; returns how many there were. */
-export function cleanAllTmp(): number {
-  const all = readdirSync(tmpdir()).filter((n) => n.startsWith(PREFIX));
-  for (const n of all) cleanTmp(join(tmpdir(), n));
-  return all.length;
+/** `harness vet --clean`: removes every unpacked folder of this OS user; one it can't remove is skipped and counted. */
+export function cleanAllTmp(): { removed: number; failed: number } {
+  let removed = 0, failed = 0;
+  for (const n of readdirSync(tmpdir()).filter((x) => x.startsWith(PREFIX))) {
+    try { cleanTmp(join(tmpdir(), n)); removed++; } catch { failed++; }
+  }
+  return { removed, failed };
 }

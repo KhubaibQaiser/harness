@@ -1,17 +1,17 @@
-import { mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { validateVetReview, type VetReview } from '../ai/vet-review.js';
 import { writeAtomic } from '../core/atomic.js';
 import { CONTROL, esc } from '../core/config.js';
 import { defaultExec, defaultExecBytes, type Exec, type ExecBytes } from '../core/exec.js';
-import { cleanAllTmp, cleanTmp, fetchTarball, isVetTmp } from '../vet/fetch.js';
+import { cleanAllTmp, cleanTmp, fetchTarball, isVetTmp, tmpPrefix } from '../vet/fetch.js';
 import { aheadBy, installInfo, installLines, reportMarkdown, summaryLines } from '../vet/report.js';
 import { scan, type ScanResult } from '../vet/scan.js';
-import { REPO, marketList, marketRepoOf, parseTarget, resolveTarget, safe, vetId, type Resolved, type Target } from '../vet/target.js';
+import { REPO, UNREADABLE, marketList, marketRepoOf, parseTarget, resolveTarget, safe, vetId, type Resolved, type Target } from '../vet/target.js';
 import type { CliEnv } from './index.js';
 import { installedIds } from './validate.js';
 
-const USAGE = 'Usage: harness vet <target> [--json [--keep]]\n       harness vet --finish <scan.json> --review <file>\n       harness vet --install <scan.json>\n       harness vet --clean';
+const USAGE = 'Usage: harness vet <target> [--json [--keep]]\n       harness vet --finish <scan.json> --review <file>\n       harness vet --install <scan.json>\n       harness vet --clean   (removes every harness-vet-* folder of this OS user: other projects\' and runs in progress too)';
 const NOT_SCAN = 'scan: not a vet scan; run harness vet --json first';
 type Out = (line: string) => void;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -20,7 +20,11 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 export function vet(args: string[], { root, out }: CliEnv, deps: { exec?: Exec; bytes?: ExecBytes } = {}): number {
   const exec = deps.exec ?? defaultExec;
   const [a, b, c, d] = args;
-  if (a === '--clean' && args.length === 1) return out(`Removed ${cleanAllTmp()} unpacked vet folder(s).`), 0;
+  if (a === '--clean' && args.length === 1) {
+    const { removed, failed } = cleanAllTmp();
+    out(`Removed ${removed} unpacked vet folder(s)${failed ? `; could not remove ${failed}` : ''}.`);
+    return failed && !removed ? 1 : 0;
+  }
   if (a === '--install' && b && args.length === 2) return install(b, root, out);
   if (a === '--finish' && b && c === '--review' && d && args.length === 4) return finish(b, d, root, out, exec);
   const flags = args.slice(1);
@@ -67,7 +71,9 @@ function clash(market: string, repo: string, exec: Exec): string | null | undefi
 }
 
 function headAhead(r: Resolved, exec: Exec): number | null {
-  // For name@market, r.ref is the pinned sha, so HEAD is the repo's default branch.
+  // For name@market, r.ref is the pinned sha: HEAD is the ref the entry follows, else the repo's default branch.
+  if (r.market && r.follows === null) return 0; // the entry pins a sha, so marketplace install gets exactly that commit
+  if (r.market && r.follows) return aheadBy({ ...r, ref: r.follows }, exec);
   if (!r.market && r.ref) return aheadBy(r, exec);
   const d = exec('gh', ['api', `repos/${r.repo}`, '--jq', '.default_branch']);
   const ref = d.stdout.trim();
@@ -82,12 +88,14 @@ function readScan(file: string): { s: ScanResult; t: Target } | null {
   const { target, repo, sha, path, findings, context, dir } = v;
   const fine = typeof sha === 'string' && /^[0-9a-f]{40}$/.test(sha) && typeof repo === 'string' && REPO.test(repo)
     && typeof path === 'string' && (path === '' || safe(path)) && typeof target === 'string'
-    && (dir === undefined || (typeof dir === 'string' && isVetTmp(dir)))
     && isObj(context) && Number.isFinite(context.tokens) && Array.isArray(context.unmeasured) && context.unmeasured.every((x) => typeof x === 'string')
     && Array.isArray(findings) && findings.every((x) => isObj(x) && ['high', 'medium', 'low'].includes(x.severity as string) && typeof x.rule === 'string' && /^[a-z-]+$/.test(x.rule)
       && typeof x.file === 'string' && Number.isInteger(x.line) && typeof x.text === 'string');
   const t = fine ? parseTarget(target as string) : null;
-  return t && !('error' in t) ? { s: v as unknown as ScanResult, t } : null;
+  if (!t || 'error' in t) return null;
+  const s = v as unknown as ScanResult;
+  // Its own folder only: a dir naming another scan's folder would be read, then deleted.
+  return dir === undefined || (typeof dir === 'string' && isVetTmp(dir) && basename(dir).startsWith(tmpPrefix(rebuilt(s, t)))) ? { s, t } : null;
 }
 
 /** The Resolved a scan came from, as far as the report name and install text need it. */
@@ -97,17 +105,24 @@ const rebuilt = (s: ScanResult, t: Target): Resolved =>
 function finish(scanFile: string, reviewFile: string, root: string, out: Out, exec: Exec): number {
   const v = readScan(scanFile);
   if (!v || typeof v.s.dir !== 'string') return out(NOT_SCAN), 2;
+  if (!existsSync(v.s.dir)) return out('scan: unpacked folder is gone; run harness vet --json --keep again'), 1;
   let text: string;
   try { text = readFileSync(reviewFile, 'utf8'); } catch (e) { return out(`vet-review: could not read "${esc(reviewFile)}" (${(e as NodeJS.ErrnoException).code ?? 'error'})`), 2; }
   let raw: unknown;
   try { raw = JSON.parse(text); } catch { return out('vet-review: not valid JSON'), 2; }
   const res = validateVetReview(raw, v.s, installedIds(root));
   if (!res.ok) { for (const e of res.errors) out(e); return 2; }
-  const r = rebuilt(v.s, v.t);
-  if (r.market) {
+  let r = rebuilt(v.s, v.t);
+  const t = v.t;
+  if (t.kind === 'plugin') {
+    // The install text needs the marketplace repo and what the entry pins; scan.json carries neither, so read them again.
     const list = marketList(exec);
-    const mr = typeof list === 'string' ? undefined : marketRepoOf(list.find((x) => x.name === r.market) ?? {});
-    if (typeof mr === 'string' && REPO.test(mr)) r.marketRepo = mr;
+    const mr = typeof list === 'string' ? undefined : marketRepoOf(list.find((x) => x.name === t.market) ?? {});
+    if (typeof mr !== 'string' || !REPO.test(mr)) return out(UNREADABLE), 1;
+    const fresh = resolveTarget(t, exec);
+    if ('error' in fresh) return out(fresh.error), 1;
+    if (fresh.repo !== v.s.repo || fresh.path !== v.s.path) return out(`scan: the marketplace entry for ${t.name}@${t.market} changed since the scan; run harness vet --json --keep again`), 1;
+    r = { ...r, marketRepo: fresh.marketRepo, ...('follows' in fresh ? { follows: fresh.follows } : {}) };
   }
   const code = report(root, out, v.s, r, res.review, installFor(v.s, r, v.s.dir, exec));
   cleanTmp(v.s.dir); // only once the report is written

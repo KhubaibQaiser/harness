@@ -138,3 +138,12 @@ test('validateConfig reports an invalid pr_size value and the default-target hin
   expect(validateConfig({ pr_size: { max_files: 0 } })).toEqual({ ok: false, errors: ['pr_size.max_files: must be an integer from 1 to 10000'] });
   expect(validateConfig({ pr_size: { max_lines: 100 } })).toEqual({ ok: false, errors: ['pr_size.target_lines: is 200, the default, above pr_size.max_lines (100); set target_lines too'] });
 });
+
+test('serializeConfig adds a preset section last, only when set', () => {
+  expect(serializeConfig(defaults())).not.toMatch(/preset/);
+  const c = { ...defaults(), preset: { id: 'tiny', version: '1', items: ['a'], git: { branch_prefixes: ['feat/'], no_ai_trailer: true, pr_size_warning: false } } };
+  const s = serializeConfig(c);
+  expect(s).toMatch(/\n# Named preset chosen at init \(rules, skills, git checks\)\.\npreset:\n[\s\S]*$/);
+  expect(s.indexOf('# Named preset')).toBeGreaterThan(s.indexOf('# Verification steps'));
+  expect(parseYaml(s).preset.id).toBe('tiny');
+});

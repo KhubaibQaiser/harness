@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { estimateTokens, measureSelectionSync } from '../../budget/measure.js';
 import { loadCatalog } from '../../catalog/load.js';
@@ -48,7 +48,7 @@ export function usageAcc(): Acc<UsageResult> {
       return;
     }
     responses++; res.responses++;
-    peak = Math.max(peak, u.input + u.cacheWrite + u.cacheRead);
+    if (!r.side) peak = Math.max(peak, u.input + u.cacheWrite + u.cacheRead); // a subagent's context is its own
     add(cur, u); add(res.total, u); add(r.side ? res.sub : res.main, u);
     add(slot(res.byDay, Number.isNaN(r.ts) ? 'unknown' : new Date(r.ts).toISOString().slice(0, 10), MAX_DAYS, zero), u);
     add(slot(res.byModel, r.model ?? 'unknown', MAX_KEYS, zero), u);
@@ -63,6 +63,8 @@ export function usageAcc(): Acc<UsageResult> {
           const k = n.slice(0, MAX_KEYS) in res.toolChars || Object.keys(res.toolChars).length < MAX_KEYS ? n.slice(0, MAX_KEYS) : 'other';
           res.toolChars[k] = (res.toolChars[k] ?? 0) + r.chars;
         }
+      } else if (r.side) {
+        // loads and compactions belong to the main thread
       } else if (r.k === 'compact') {
         compactions++; res.loads.compactions++; compacted = true;
       } else if (r.k === 'instructions') {
@@ -96,6 +98,12 @@ export function alwaysLoaded(root: string, dirs: { templates: string; plugin: st
     }
   }
   const rows = measureSelectionSync(ids, lc.catalog, dirs).entries.map(({ id, tokens }) => ({ id, tokens }));
-  const file = (f: string) => ({ id: f, tokens: existsSync(join(root, f)) ? estimateTokens(readFileSync(join(root, f), 'utf8')) : 0 });
+  const file = (f: string) => {
+    try {
+      return { id: f, tokens: estimateTokens(readFileSync(join(root, f), 'utf8')) };
+    } catch {
+      return { id: f, tokens: 0 }; // absent, a directory or unreadable: nothing loaded from it
+    }
+  };
   return [...rows, file('AGENTS.md'), file('CLAUDE.md')];
 }

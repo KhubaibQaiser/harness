@@ -188,3 +188,22 @@ describe('streamTranscript', () => {
     expect(sub.recs).toEqual([expect.objectContaining({ k: 'prompt', side: true })]);
   });
 });
+
+describe('string caps (hostile ids, keys, paths, commands)', () => {
+  const big = 'x'.repeat(15 * 1024 * 1024);
+  it('cuts a huge id, key, path and command, and keeps cut ids matching their results', () => {
+    const a = p(assistant({ id: big, requestId: 'r', content: [{ type: 'tool_use', id: big, name: 'Bash', input: { file_path: big, command: big } }] })) as Extract<TRec, { k: 'assistant' }>;
+    const t = a.tools[0]!;
+    expect(a.key!.length).toBeLessThanOrEqual(200 + 12);
+    expect(t.id.length).toBeLessThanOrEqual(200 + 12);
+    expect(t.filePath!.length).toBe(1024);
+    expect(t.command!.length).toBe(2000);
+    expect(t.id.endsWith(`#${big.length}`)).toBe(true);
+    const r = p(toolResult(big)) as Extract<TRec, { k: 'result' }>;
+    expect(r.useId).toBe(t.id);
+  });
+  it('leaves short values alone', () => {
+    const a = p(assistant({ id: 'm', requestId: 'r', content: [{ type: 'tool_use', id: 'abc', name: 'Bash', input: { command: 'ls' } }] })) as Extract<TRec, { k: 'assistant' }>;
+    expect([a.key, a.tools[0]!.id, a.tools[0]!.command]).toEqual([JSON.stringify(['m', 'r']), 'abc', 'ls']);
+  });
+});

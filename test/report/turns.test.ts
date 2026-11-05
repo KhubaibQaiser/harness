@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -45,6 +45,26 @@ describe('turnSplitter', () => {
   it('caps what one turn keeps', () => {
     const ts = split(recs(prompt('a'), ...Array.from({ length: 1200 }, (_, i) => use(`t${i}`))));
     expect(ts[0]!.tools.length).toBe(500);
+    expect(ts[0]!.dropped).toEqual({ texts: 0, tools: 700, results: 0 });
+  });
+});
+
+describe('runSession subagents', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'turns-sub-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  // writeSession stamps record i at T0 + i seconds, so the timeline below is fixed.
+  it('puts a subagent tool call into the turn open at its timestamp, and drops one outside every turn', async () => {
+    const T0 = Date.parse('2026-11-01T00:00:00.000Z');
+    const at = (sec: number, r: object) => ({ ...r, timestamp: new Date(T0 + sec * 1000).toISOString() });
+    const main = writeSession(dir, 's2', [prompt('a'), assistant(), assistant(), prompt('b'), assistant()]);
+    mkdirSync(join(dir, 's2', 'subagents'), { recursive: true });
+    const sub = [at(-5, use('early')), at(1.5, use('mid')), at(1.6, toolResult('mid')), at(3.5, use('late'))].map((r) => JSON.stringify({ isSidechain: true, ...r })).join('\n') + '\n';
+    writeFileSync(join(dir, 's2', 'subagents', 'agent-z.jsonl'), sub);
+    const got: Turn[] = [];
+    const acc: Acc<null> = { turn: (_s, t) => got.push(t), result: () => null };
+    await runSession({ main, subagents: [join(dir, 's2', 'subagents', 'agent-z.jsonl')] }, 's2', [acc], 0);
+    expect(got.map((t) => t.tools.map((x) => x.id))).toEqual([['mid'], ['late']]);
+    expect(got[0]!.results.has('mid')).toBe(true);
   });
 });
 

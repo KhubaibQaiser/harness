@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -23,6 +23,7 @@ const copyTiny = (name = 'tiny') => {
 function shipTiny() {
   const c = tmp();
   cpSync('catalog', c, { recursive: true });
+  rmSync(join(c, 'presets'), { recursive: true, force: true }); // only tiny, not the shipped presets
   cpSync(copyTiny(), join(c, 'presets'), { recursive: true });
   vi.stubEnv('HARNESS_CATALOG_DIR', c);
   vi.stubEnv('HARNESS_PLAIN_INIT', '1');

@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -49,6 +49,16 @@ test('check: ok on tiny, one error per line on a broken copy, usage otherwise', 
   expect(go(['check']).code).toBe(2);
   expect(go(['nope']).code).toBe(2);
   expect(go(['check', join(d, 'missing')]).code).toBe(1);
+});
+
+test('check: a file is not a folder, and control characters in errors are escaped', () => {
+  const d = copyTiny();
+  expect(go(['check', join(d, 'tiny.yaml')])).toEqual({ code: 1, out: expect.stringContaining('not a folder') });
+  writeFileSync(join(d, 'tiny.yaml'), readFileSync(join(d, 'tiny.yaml'), 'utf8').replace('- ponytail', '- "a\\u001b[31m\\u202eb"'));
+  const r = go(['check', d]);
+  expect(r.code).toBe(1);
+  expect(r.out).not.toMatch(/[\u0000-\u001f\u202e]/u);
+  expect(r.out).toContain('a');
 });
 
 test('check reports the shipped-id clash outside catalog/presets, not inside', () => {

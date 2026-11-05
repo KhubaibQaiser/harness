@@ -2,7 +2,7 @@ import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { MAX_LINE, type TRec, parseLine, streamTranscript } from '../../src/report/transcript.js';
+import { MAX_LINE, type TRec, parseLine, parseRecords, streamTranscript } from '../../src/report/transcript.js';
 import { assistant, attachment, prompt, system, toolResult, writeSession } from '../fixtures/transcripts/make.js';
 
 const p = (r: object) => parseLine(JSON.stringify({ timestamp: '2026-11-01T00:00:00.000Z', version: '2.1.317', cwd: '/repo', ...r }));
@@ -39,6 +39,12 @@ describe('parseLine maps spec §3.2 rows', () => {
     expect(big).toMatchObject({ k: 'result', chars: 100_000, permission: undefined });
     expect(big.k === 'result' && big.text.length).toBe(64 * 1024);
   });
+  it('every tool_result block in one user record is its own result', () => {
+    const two = { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: 'x' }, { type: 'tool_result', tool_use_id: 'b', is_error: true, content: 'yy' }] } };
+    const recs = parseRecords(JSON.stringify(two));
+    expect(recs).toEqual([expect.objectContaining({ k: 'result', useId: 'a', isError: false, chars: 1 }), expect.objectContaining({ k: 'result', useId: 'b', isError: true, chars: 2 })]);
+    expect(parseLine(JSON.stringify(two))).toMatchObject({ useId: 'a' });
+  });
   it('attachments', () => {
     expect(p(attachment('skill_listing', { names: ['a', 'b'], skillCount: 2 }))).toMatchObject({ k: 'listing', names: ['a', 'b'] });
     expect(p(attachment('invoked_skills', { skills: [{ name: 'a' }] }))).toMatchObject({ k: 'invoked', names: ['a'] });
@@ -61,6 +67,10 @@ describe('parseLine maps spec §3.2 rows', () => {
     expect(p(tool('Bash', { command: 'echo {"type":"mode"}' }))).toMatchObject({ k: 'assistant' });
   });
   it('unknown, not pass: wrong types never throw and never invent values', () => {
+    expect(p(assistant({ usage: { input_tokens: 3, output_tokens: 4 } }))).toMatchObject({ usage: { input: 3, output: 4, cacheWrite: 0, cacheRead: 0 } });
+    expect(p(assistant({ usage: { input_tokens: 3 } }))).toMatchObject({ usage: undefined });
+    expect(p(assistant({ usage: { input_tokens: -1, output_tokens: 4 } }))).toMatchObject({ usage: undefined });
+    expect(p(assistant({ usage: { input_tokens: 3, output_tokens: 4, cache_read_input_tokens: 'x' } }))).toMatchObject({ usage: undefined });
     expect(p(assistant({ usage: { input_tokens: '10', output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }))).toMatchObject({ k: 'assistant', usage: undefined });
     const noContent = p({ type: 'assistant', message: { id: 'm', model: 3 } });
     expect(noContent).toMatchObject({ k: 'assistant', texts: [], tools: [], model: undefined, key: null });
@@ -79,6 +89,10 @@ describe('streamTranscript', () => {
     const { recs, stats } = await read(file);
     expect(recs.map((r) => r.k)).toEqual(['prompt', 'assistant', 'result', 'bad']);
     expect(stats).toMatchObject({ lines: 4, bad: 1, tooLong: 0, types: { user: 2, assistant: 1 } });
+    const f2 = writeSession(tmp(), 's4', [{ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'a' }, { type: 'tool_result', tool_use_id: 'b' }] } }]);
+    const two = await read(f2, { side: true });
+    expect(two.recs.map((r) => r.k === 'result' && r.side && r.useId)).toEqual(['a', 'b']);
+    expect(two.stats).toMatchObject({ lines: 1, types: { user: 1 } });
   });
   it('drops a line over MAX_LINE and parses the next one', async () => {
     const file = join(tmp(), 'big.jsonl');

@@ -35,8 +35,11 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const strs = (v: unknown[]): string[] => v.filter((x): x is string => typeof x === 'string');
 const NO_BASE: Base = { ts: NaN, side: false };
 
+const count = (v: unknown) => (num(v) !== undefined && (v as number) >= 0 ? (v as number) : undefined);
+// Input and output are required; a missing cache field means none was used, a wrong-typed one makes the whole usage unknown.
 const usage = (u: Obj | undefined): Usage | undefined => {
-  const [input, output, cacheWrite, cacheRead] = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].map((f) => num(u?.[f]));
+  const input = count(u?.input_tokens), output = count(u?.output_tokens);
+  const [cacheWrite, cacheRead] = ['cache_creation_input_tokens', 'cache_read_input_tokens'].map((f) => (u?.[f] === undefined ? 0 : count(u[f])));
   return input === undefined || output === undefined || cacheWrite === undefined || cacheRead === undefined ? undefined : { input, output, cacheWrite, cacheRead };
 };
 
@@ -68,13 +71,15 @@ const userRec = (r: Obj) => {
   const content = obj(r.message)?.content;
   if (typeof content === 'string') return { k: 'prompt' as const, text: content };
   if (!Array.isArray(content)) return undefined;
-  // ponytail: one tool_result per user record is the observed shape; extra results in the same record are not read.
-  const tr = content.map(obj).find((b) => b?.type === 'tool_result');
-  if (tr === undefined) return { k: 'prompt' as const, text: blockText(content) };
-  const useId = str(tr.tool_use_id);
-  if (useId === undefined) return undefined;
-  const full = blockText(tr.content), pd = obj(r.permissionDecision), decision = str(pd?.decision), source = str(pd?.source);
-  return { k: 'result' as const, useId, isError: tr.is_error === true, chars: full.length, text: full.slice(0, TEXT_CAP), permission: decision !== undefined && source !== undefined ? { decision, source } : undefined };
+  const trs = content.map(obj).filter((b): b is Obj => b?.type === 'tool_result');
+  if (trs.length === 0) return { k: 'prompt' as const, text: blockText(content) };
+  if (trs.some((tr) => str(tr.tool_use_id) === undefined)) return undefined;
+  const pd = obj(r.permissionDecision), decision = str(pd?.decision), source = str(pd?.source);
+  const permission = decision !== undefined && source !== undefined ? { decision, source } : undefined;
+  return trs.map((tr) => {
+    const full = blockText(tr.content);
+    return { k: 'result' as const, useId: tr.tool_use_id as string, isError: tr.is_error === true, chars: full.length, text: full.slice(0, TEXT_CAP), permission };
+  });
 };
 
 const attachmentRec = (a: Obj | undefined) => {
@@ -95,17 +100,23 @@ const systemRec = (r: Obj) => {
   return { k: 'other' as const, type: `system:${str(r.subtype) ?? '?'}` };
 };
 
+/** The first record of a line; see parseRecords for lines that hold several (a user record with several tool results). */
 export function parseLine(line: string): TRec {
+  return parseRecords(line)[0]!;
+}
+
+/** One line to one or more records, never empty. */
+export function parseRecords(line: string): TRec[] {
   const unused = UNUSED.find((t) => line.includes(`"type":"${t}"`));
-  if (unused !== undefined && !USED.some((m) => line.includes(m))) return { ...NO_BASE, k: 'other', type: unused };
+  if (unused !== undefined && !USED.some((m) => line.includes(m))) return [{ ...NO_BASE, k: 'other', type: unused }];
   let r: Obj | undefined;
   try {
     r = obj(JSON.parse(line));
   } catch {
-    return { ...NO_BASE, k: 'bad', why: 'json' };
+    return [{ ...NO_BASE, k: 'bad', why: 'json' }];
   }
   const type = str(r?.type);
-  if (r === undefined || type === undefined) return { ...NO_BASE, k: 'bad', why: 'shape' };
+  if (r === undefined || type === undefined) return [{ ...NO_BASE, k: 'bad', why: 'shape' }];
   const ts = str(r.timestamp), base: Base = { ts: ts === undefined ? NaN : Date.parse(ts), side: r.isSidechain === true, version: str(r.version), cwd: str(r.cwd) };
   const body =
     type === 'assistant' ? assistantRec(r)
@@ -113,7 +124,8 @@ export function parseLine(line: string): TRec {
     : type === 'attachment' ? attachmentRec(obj(r.attachment))
     : type === 'system' ? systemRec(r)
     : { k: 'other' as const, type };
-  return body === undefined ? { ...base, k: 'bad', why: 'shape' } : { ...base, ...body };
+  if (body === undefined) return [{ ...base, k: 'bad', why: 'shape' }];
+  return (Array.isArray(body) ? body : [body]).map((b) => ({ ...base, ...b }));
 }
 
 export interface ReadStats { lines: number; bad: number; tooLong: number; versions: Set<string>; types: Record<string, number> }
@@ -123,7 +135,9 @@ const RAW: Record<string, string> = { assistant: 'assistant', prompt: 'user', re
 /** Streams one transcript line by line. A line over MAX_LINE is discarded up to its newline without buffering it. */
 export async function streamTranscript(path: string, visit: (r: TRec) => void, opts: { sinceMs?: number; side?: boolean } = {}): Promise<ReadStats> {
   const stats: ReadStats = { lines: 0, bad: 0, tooLong: 0, versions: new Set(), types: {} };
-  const emit = (r: TRec) => {
+  // Stats count the line once (by its first record); every record of the line is visited.
+  const emit = (recs: TRec[]) => {
+    const r = recs[0]!;
     stats.lines++;
     if (r.k === 'bad') {
       stats.bad++;
@@ -134,11 +148,11 @@ export async function streamTranscript(path: string, visit: (r: TRec) => void, o
       stats.types[t] = (stats.types[t] ?? 0) + 1;
       if (r.version !== undefined) stats.versions.add(r.version);
     }
-    visit(opts.side ? { ...r, side: true } : r);
+    for (const x of recs) visit(opts.side ? { ...x, side: true } : x);
   };
   const finish = (bufs: Buffer[]) => {
     const line = Buffer.concat(bufs).toString('utf8').replace(/\r$/, '');
-    if (line.trim() !== '') emit(parseLine(line));
+    if (line.trim() !== '') emit(parseRecords(line));
   };
   let pending: Buffer[] = [], size = 0, skipping = false;
   for await (const chunk of createReadStream(path, { highWaterMark: 1024 * 1024 }) as AsyncIterable<Buffer>) {
@@ -154,7 +168,7 @@ export async function streamTranscript(path: string, visit: (r: TRec) => void, o
         size += end - at;
       }
       if (nl === -1) break;
-      if (skipping) emit({ ...NO_BASE, k: 'bad', why: 'too-long' });
+      if (skipping) emit([{ ...NO_BASE, k: 'bad', why: 'too-long' }]);
       else finish(pending);
       pending = [];
       size = 0;
@@ -162,7 +176,7 @@ export async function streamTranscript(path: string, visit: (r: TRec) => void, o
       at = nl + 1;
     }
   }
-  if (skipping) emit({ ...NO_BASE, k: 'bad', why: 'too-long' });
+  if (skipping) emit([{ ...NO_BASE, k: 'bad', why: 'too-long' }]);
   else finish(pending);
   return stats;
 }

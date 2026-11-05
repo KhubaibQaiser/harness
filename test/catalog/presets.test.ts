@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -57,7 +57,7 @@ test('loads the tiny fixture', () => {
   expect(r.loaded.preset.settings.telemetry_off).toEqual([]);
   expect(checkPreset(r.loaded, catalog)).toEqual([]);
 });
-test('the stacks fixture loads and checks', () => {
+test('the stacks fixture loads', () => {
   const r = loadPreset(fx('stacks.yaml'));
   if (!r.ok) throw new Error(r.errors.join('\n'));
   expect(r.loaded.preset.skills).toHaveLength(4);
@@ -140,4 +140,58 @@ test('listPresets and findPreset', () => {
   expect(findPreset('b', root)).toBe(join(root, '.harness', 'presets', 'b.yaml'));
   expect(findPreset('zzz', root)).toBeNull();
   expect(findPreset('../x', root)).toBeNull();
+});
+
+test('identity check is linear on hostile input', () => {
+  for (const t of ['a'.repeat(80_000), 'a@' + 'b.'.repeat(40_000)]) {
+    const t0 = performance.now();
+    identityProblemsIn(t, 'a');
+    expect(performance.now() - t0).toBeLessThan(100);
+  }
+});
+
+test('size cap and symlinks', () => {
+  one({ 'x/templates/core.md': 'a'.repeat(300 * 1024) }, 'core.md: larger than 256 KB');
+  one({ 'x/templates/skills/x/SKILL.md': 'a'.repeat(300 * 1024) }, 'larger than 256 KB');
+  const d = mk();
+  symlinkSync(join(d, 'x'), join(d, 'x', 'templates', 'loop'));
+  writeFileSync(join(d, 'outside.md'), 'jane@example.com');
+  symlinkSync(join(d, 'outside.md'), join(d, 'x', 'templates', 'link.md'));
+  const r = loadPreset(join(d, 'x.yaml'));
+  if (!r.ok) throw new Error(r.errors.join('\n'));
+  const p = identityProblems(r.loaded);
+  expect(p).toHaveLength(2);
+  expect(p.join()).toContain('symlink');
+  writeFileSync(join(d, 'x', 'templates', 'big.md'), 'a'.repeat(300 * 1024));
+  expect(identityProblems(r.loaded).join()).toContain('larger than 256 KB');
+  expect(errs(mk({ 'x.yaml': presetYaml() })).length).toBe(0);
+});
+test('a symlinked item is refused', () => {
+  const d = mk();
+  writeFileSync(join(d, 'real.yaml'), itemYaml('y', 'own-skill', skillSrc('x')));
+  symlinkSync(join(d, 'real.yaml'), join(d, 'x', 'items', 'y.yaml'));
+  writeFileSync(join(d, 'x.yaml'), presetYaml({ skills: '[x, y]' }));
+  expect(errs(d)).toEqual([expect.stringContaining('symlink')]);
+});
+
+test('skills need source.files', () => {
+  one({ 'x/items/x.yaml': itemYaml('x', 'own-skill', '{type: own}') }, 'x: skill needs source.files');
+});
+test('item id, kind and duplicates', () => {
+  one({ 'x/items/x.yaml': itemYaml('y', 'own-skill', skillSrc('x')) }, 'x/items/x.yaml: id must be x');
+  one({ 'x/items/x.yaml': itemYaml('x', 'rule', '{type: own}') }, 'x/items/x.yaml: kind must be own-skill');
+  one({ 'x/items/core-rules.yaml': itemYaml('core-rules', 'own-skill', skillSrc('x')) }, 'x/items/core-rules.yaml: kind must be rule');
+  one({ 'x.yaml': presetYaml({ skills: '[x, x]' }) }, 'skills "x" is listed twice');
+  one({ 'x.yaml': presetYaml({ preselect: '[ponytail, ponytail]' }) }, 'preselect "ponytail" is listed twice');
+  one({ 'x.yaml': presetYaml({ skills: '[core-rules]' }) }, 'skills "core-rules" is listed twice');
+});
+test('prototype names are not telemetry vars, labels are escaped, missing file is unreadable', () => {
+  one({ 'x.yaml': presetYaml({ preselect: '[ponytail]', tel: '[constructor]' }) }, 'telemetry_off "constructor" is not in preselect');
+  const r = loadPreset(join(mk(), 'nope.yaml'));
+  expect(r.ok ? [] : r.errors).toEqual([expect.stringContaining('cannot read')]);
+  one({ 'x/items/x.yaml': itemYaml('x', 'own-skill', '{type: own, files: [{from: "skills/a\\u001bb/SKILL.md", to: .claude/s.md}]}') }, 'template skills/a\\u001bb/SKILL.md not found');
+});
+test('listPresets skips an id that differs from its file name', () => {
+  stubShipped({ 'a.yaml': 'id: other\n', 'b.yaml': 'id: b\n' });
+  expect(listPresets(mkdtempSync(join(tmpdir(), 'harness-root-'))).map((p) => p.id)).toEqual(['b']);
 });

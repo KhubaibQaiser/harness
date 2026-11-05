@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { parse } from 'yaml';
 import { esc } from '../core/config.js';
@@ -21,6 +21,19 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 const strs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
 const bools = ['no_ai_trailer', 'pr_size_warning'] as const;
 const MAX_BODY = 150;
+const MAX_BYTES = 256 * 1024;
+
+/** Preset folders come from cloned repos: read only regular files (no symlinks) of bounded size. */
+function readSmall(p: string, label: string): { text: string } | { error: string } {
+  try {
+    const st = lstatSync(p);
+    if (!st.isFile()) return { error: `${label}: not a regular file (symlinks are not followed)` };
+    if (st.size > MAX_BYTES) return { error: `${label}: larger than 256 KB` };
+    return { text: readFileSync(p, 'utf8') };
+  } catch {
+    return { error: `${label}: cannot read` };
+  }
+}
 
 export const shippedPresetsDir = (): string => join(packageDir('catalog'), 'presets');
 export const presetDirs = (root: string): string[] => [shippedPresetsDir(), join(root, '.harness', 'presets')];
@@ -30,8 +43,10 @@ export function loadPreset(yamlPath: string): { ok: true; loaded: LoadedPreset }
   const errors: string[] = [];
   const err = (path: string, msg: string) => errors.push(`${file}: ${path ? `${path}: ` : ''}${msg}`);
   const unknown = (o: Record<string, unknown>, known: string[], at: string) => { for (const k of Object.keys(o)) if (!known.includes(k)) err(at, `unknown key "${esc(k)}"`); };
+  const src = readSmall(yamlPath, file);
+  if ('error' in src) return { ok: false, errors: [src.error] };
   let raw: unknown;
-  try { raw = parse(readFileSync(yamlPath, 'utf8')); } catch (e) { return { ok: false, errors: [`${file}: not valid YAML (${esc((e as Error).message.split('\n')[0])})`] }; }
+  try { raw = parse(src.text); } catch (e) { return { ok: false, errors: [`${file}: not valid YAML (${esc((e as Error).message.split('\n')[0])})`] }; }
   if (!isObj(raw)) return { ok: false, errors: [`${file}: must be a YAML mapping`] };
   unknown(raw, ['id', 'title', 'description', 'core', 'preselect', 'skills', 'settings', 'git'], '');
   for (const k of ['id', 'title', 'description', 'core']) if (typeof raw[k] !== 'string' || !(raw[k] as string).trim()) err(k, 'must be a non-empty string');
@@ -53,6 +68,8 @@ export function loadPreset(yamlPath: string): { ok: true; loaded: LoadedPreset }
     else bp.forEach((p, i) => PREFIX_RE.test(p) || err(`branch_prefixes[${i}]`, "must match ^[a-z0-9-]+/$"));
     for (const k of bools) if (typeof g[k] !== 'boolean') err(`git.${k}`, 'must be true or false');
   }
+  if (strs(raw.preselect)) for (const [i, id] of raw.preselect.entries()) if (raw.preselect.indexOf(id) !== i) err('', `preselect "${esc(id)}" is listed twice`);
+  if (strs(raw.skills) && typeof raw.core === 'string') for (const [i, id] of [raw.core, ...raw.skills].entries()) if (i > 0 && [raw.core, ...raw.skills].indexOf(id) !== i) err('', `skills "${esc(id)}" is listed twice`);
   if (errors.length) return { ok: false, errors };
   const preset = { ...raw, settings: { telemetry_off: [], ...(s as object) } } as unknown as Preset;
   const base = join(dirname(yamlPath), preset.id);
@@ -61,8 +78,10 @@ export function loadPreset(yamlPath: string): { ok: true; loaded: LoadedPreset }
     const rel = `${preset.id}/items/${id}.yaml`;
     const p = join(dirname(yamlPath), rel);
     if (!ID_RE.test(id) || !existsSync(p)) { errors.push(`${file}: ${what} "${esc(id)}": no item at ${esc(rel)}`); continue; }
+    const t = readSmall(p, rel);
+    if ('error' in t) { errors.push(t.error); continue; }
     let item: unknown;
-    try { item = parse(readFileSync(p, 'utf8')); } catch (e) { errors.push(`${rel}: not valid YAML (${esc((e as Error).message.split('\n')[0])})`); continue; }
+    try { item = parse(t.text); } catch (e) { errors.push(`${rel}: not valid YAML (${esc((e as Error).message.split('\n')[0])})`); continue; }
     const r = validateItem(item, rel);
     if (!r.ok) errors.push(...r.errors);
     else if (r.item.id !== id) errors.push(`${rel}: id must be ${id}`);
@@ -72,7 +91,8 @@ export function loadPreset(yamlPath: string): { ok: true; loaded: LoadedPreset }
   return errors.length ? { ok: false, errors } : { ok: true, loaded: { preset, base, yamlPath, items } };
 }
 
-function skillErrors(label: string, text: string): string[] {
+function skillErrors(rawLabel: string, text: string): string[] {
+  const label = esc(rawLabel);
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   let fm: unknown;
   try { fm = m ? parse(m[1]) : undefined; } catch { /* reported below */ }
@@ -97,15 +117,18 @@ export function checkPreset(l: LoadedPreset, catalog: Catalog, opts: { builtOnly
   }
   for (const id of p.settings.telemetry_off) {
     if (!p.preselect.includes(id)) out.push(`telemetry_off "${esc(id)}" is not in preselect`);
-    else if (!TELEMETRY_ENV[id]) out.push(`telemetry_off "${esc(id)}": harness knows no opt-out variable for it`);
+    else if (!Object.hasOwn(TELEMETRY_ENV, id)) out.push(`telemetry_off "${esc(id)}": harness knows no opt-out variable for it`);
   }
   for (const it of l.items) {
     if (ids.has(it.id)) out.push(`item "${esc(it.id)}" clashes with a catalog id`);
     const files = it.id === p.core ? [{ from: 'core.md' }] : it.source.type === 'own' ? (it.source.files ?? []) : [];
+    if (it.id !== p.core && files.length === 0) out.push(`${esc(it.id)}: skill needs source.files`);
     for (const f of files) {
       const path = join(base, 'templates', f.from);
       if (!existsSync(path)) { out.push(`${esc(it.id)}: template ${esc(f.from)} not found`); continue; }
-      if (it.id !== p.core) out.push(...skillErrors(f.from, readFileSync(path, 'utf8')));
+      const t = readSmall(path, esc(f.from));
+      if ('error' in t) out.push(t.error);
+      else if (it.id !== p.core) out.push(...skillErrors(f.from, t.text));
     }
   }
   if (opts.builtOnly) {
@@ -115,7 +138,8 @@ export function checkPreset(l: LoadedPreset, catalog: Catalog, opts: { builtOnly
   return out;
 }
 
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/;
+// Every quantifier is bounded, so hostile text cannot make the scan quadratic.
+const EMAIL = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63}){0,7}\.[A-Za-z]{2,24}\b/;
 export function identityProblemsIn(text: string, label: string): string[] {
   const out: string[] = [];
   if (EMAIL.test(text)) out.push(`${label}: contains an email address`);
@@ -123,10 +147,23 @@ export function identityProblemsIn(text: string, label: string): string[] {
   return out;
 }
 
-const filesUnder = (d: string): string[] => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? filesUnder(join(d, n)) : [join(d, n)]));
+type Found = { path: string; skip?: string };
+function filesUnder(d: string): Found[] {
+  return readdirSync(d, { withFileTypes: true }).flatMap((e): Found[] => {
+    const p = join(d, e.name);
+    if (e.isSymbolicLink()) return [{ path: p, skip: 'symlink not followed' }];
+    return e.isDirectory() ? filesUnder(p) : [{ path: p }];
+  });
+}
 export function identityProblems(l: LoadedPreset): string[] {
   const root = dirname(l.yamlPath);
-  return [l.yamlPath, ...(existsSync(l.base) ? filesUnder(l.base) : [])].flatMap((f) => identityProblemsIn(readFileSync(f, 'utf8'), esc(f.slice(root.length + 1))));
+  const all: Found[] = [{ path: l.yamlPath }, ...(existsSync(l.base) ? filesUnder(l.base) : [])];
+  return all.flatMap((f) => {
+    const label = esc(f.path.slice(root.length + 1));
+    if (f.skip) return [`${label}: ${f.skip}`];
+    const t = readSmall(f.path, label);
+    return 'error' in t ? [t.error] : identityProblemsIn(t.text, label);
+  });
 }
 
 const yamlIn = (d: string): string[] => (existsSync(d) ? readdirSync(d).filter((f) => f.endsWith('.yaml')).sort() : []);
@@ -134,7 +171,7 @@ export function listPresets(root: string): { id: string; description: string; wh
   return presetDirs(root).flatMap((d, i) => yamlIn(d).flatMap((f) => {
     try {
       const y = parse(readFileSync(join(d, f), 'utf8')) as { id?: unknown; description?: unknown };
-      return typeof y?.id === 'string' ? [{ id: y.id, description: typeof y.description === 'string' ? y.description : '', where: i === 0 ? 'shipped' as const : 'repo' as const }] : [];
+      return typeof y?.id === 'string' && f === `${y.id}.yaml` ? [{ id: y.id, description: typeof y.description === 'string' ? y.description : '', where: i === 0 ? 'shipped' as const : 'repo' as const }] : [];
     } catch { return []; }
   }));
 }

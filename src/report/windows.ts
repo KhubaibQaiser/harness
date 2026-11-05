@@ -46,7 +46,7 @@ const CODE = /\.(ts|tsx|js|jsx|mjs|cjs|py)$/;
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/; // C0/C1 but tab, LF, CR; bidi; zero-width
 const NUMBER_G = new RegExp(RX.number.source, 'gi');
 const SENTENCE = /[.!?]+(?:\s|$)/g;
-const COUNTERS: Record<WindowRule, string[]> = {
+export const COUNTERS: Record<WindowRule, string[]> = {
   'ask-first': ['asks', 'asksWith2Options', 'asksWithRecommendation'],
   'no-invented-data': ['numbers', 'numbersInResults', 'numbersLabelled', 'numbersSkipped', 'textsCut'],
   'fix-everything': ['findingsTurns', 'editsAfter'],

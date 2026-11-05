@@ -45,15 +45,19 @@ export function insideRepo(cwd: string, paths: string[], platform: NodeJS.Platfo
   });
 }
 
-function ls(dir: string): string[] {
-  try { return readdirSync(dir).slice(0, MAX_ENTRIES); } catch { return []; }
+/** Bounded listing; a missing dir is empty, any other failure is counted via `onFail`. */
+function ls(dir: string, onFail: () => void): string[] {
+  try { return readdirSync(dir).slice(0, MAX_ENTRIES); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') onFail();
+    return [];
+  }
 }
 
 /** First string `cwd` in the first 64 lines / 1 MB; undefined when absent, null when unreadable. */
-function firstCwd(file: string): string | undefined | null {
+function firstCwd(file: string, open: typeof openSync): string | undefined | null {
   let fd: number | undefined;
   try {
-    fd = openSync(file, 'r');
+    fd = open(file, 'r');
     const buf = Buffer.alloc(MAX_BYTES);
     const n = readSync(fd, buf, 0, MAX_BYTES, 0);
     for (const line of buf.toString('utf8', 0, n).split('\n').slice(0, MAX_LINES)) {
@@ -70,7 +74,7 @@ function firstCwd(file: string): string | undefined | null {
   }
 }
 
-export async function locateSessions(root: string, opts: { env: NodeJS.ProcessEnv; home: string; sinceMs: number; git: GitRun; platform?: NodeJS.Platform }): Promise<Located> {
+export async function locateSessions(root: string, opts: { env: NodeJS.ProcessEnv; home: string; sinceMs: number; git: GitRun; platform?: NodeJS.Platform; open?: typeof openSync }): Promise<Located> {
   const platform = opts.platform ?? process.platform;
   const dir = projectsDir(opts.env, opts.home);
   const skipped: Located['skipped'] = {};
@@ -78,7 +82,7 @@ export async function locateSessions(root: string, opts: { env: NodeJS.ProcessEn
   const paths = repoPaths(root, opts.git);
   const prefixes = paths.map((p) => fold(encodeProjectDir(p), platform));
   const sessions: SessionFile[] = [];
-  for (const folder of ls(dir)) {
+  for (const folder of ls(dir, () => skip('unreadable'))) {
     const f = fold(folder, platform);
     if (!prefixes.some((e) => f === e || f.startsWith(e + '-'))) continue;
     const fdir = join(dir, folder);
@@ -87,7 +91,7 @@ export async function locateSessions(root: string, opts: { env: NodeJS.ProcessEn
       if (st.isSymbolicLink()) { skip('symlink'); continue; }
       if (!st.isDirectory()) continue;
     } catch { skip('unreadable'); continue; }
-    for (const name of ls(fdir)) {
+    for (const name of ls(fdir, () => skip('unreadable'))) {
       if (!name.endsWith('.jsonl')) continue;
       const id = name.slice(0, -6);
       if (!isSafeSessionId(id)) { skip('unsafe-id'); continue; }
@@ -100,19 +104,19 @@ export async function locateSessions(root: string, opts: { env: NodeJS.ProcessEn
         mtimeMs = st.mtimeMs;
       } catch { skip('unreadable'); continue; }
       if (mtimeMs < opts.sinceMs) { skip('older-than-window'); continue; }
-      const cwd = firstCwd(main);
+      const cwd = firstCwd(main, opts.open ?? openSync);
       if (cwd === null) { skip('unreadable'); continue; }
       if (cwd === undefined) { skip('no-cwd'); continue; }
       if (!insideRepo(cwd, paths, platform)) { skip('outside-repo'); continue; }
-      sessions.push({ session: id, main, subagents: subagentFiles(join(fdir, id, 'subagents')), mtimeMs });
+      sessions.push({ session: id, main, subagents: subagentFiles(join(fdir, id, 'subagents'), () => skip('unreadable')), mtimeMs });
     }
   }
   return { projectsDir: dir, sessions, skipped };
 }
 
-function subagentFiles(sdir: string): string[] {
+function subagentFiles(sdir: string, onFail: () => void): string[] {
   try { if (!lstatSync(sdir).isDirectory()) return []; } catch { return []; }
-  return ls(sdir).filter((n) => /^agent-[A-Za-z0-9._-]+\.jsonl$/.test(n)).map((n) => join(sdir, n)).filter((p) => {
+  return ls(sdir, onFail).filter((n) => /^agent-[A-Za-z0-9._-]+\.jsonl$/.test(n)).map((n) => join(sdir, n)).filter((p) => {
     try { return lstatSync(p).isFile(); } catch { return false; }
   });
 }

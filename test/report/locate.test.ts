@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, openSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -84,13 +84,15 @@ describe('locateSessions', () => {
     put(enc(root), 'a b.jsonl', root);
     const target = put(enc(root), 'real.jsonl', root);
     symlinkSync(target, join(proj, enc(root), 'link.jsonl'));
-    const old = put(enc(root), 'old.jsonl', root, 1000);
-    chmodSync(old, 0); // opening it would give 'unreadable'
+    put(enc(root), 'old.jsonl', root, 1000);
     put(enc(root), 'nocwd.jsonl', null);
-    const r = await run(root, { sinceMs: 5_000_000 });
+    const opened: string[] = [];
+    const open = ((f: string, fl: string) => (opened.push(f), openSync(f, fl))) as typeof openSync;
+    const r = await run(root, { sinceMs: 5_000_000, open });
+    expect(opened.some((f) => f.endsWith('old.jsonl'))).toBe(false);
+    expect(opened.some((f) => f.endsWith('nocwd.jsonl'))).toBe(true);
     expect(r.skipped).toMatchObject({ 'unsafe-id': 1, symlink: 1, 'older-than-window': 1, 'no-cwd': 1 });
     expect(r.skipped.unreadable).toBeUndefined();
-    chmodSync(old, 0o600);
   });
   it('root given as a symlink finds both folder spellings', async () => {
     const real = join(home, 'real');
@@ -106,6 +108,16 @@ describe('locateSessions', () => {
     const git: GitRun = () => ({ status: 0, stdout: 'worktree /w/tree\n' });
     put(enc('/w/tree'), 'w.jsonl', '/w/tree');
     expect((await run(root, { git })).sessions.map((s) => s.session)).toEqual(['w']);
+  });
+  it.skipIf(process.getuid?.() === 0 || process.platform === 'win32')('counts an unreadable folder', async () => {
+    put(enc(root), 's.jsonl', root);
+    const d = join(proj, enc(root));
+    chmodSync(d, 0);
+    try {
+      expect((await run(root)).skipped.unreadable).toBe(1);
+    } finally {
+      chmodSync(d, 0o700);
+    }
   });
   it('uses CLAUDE_CONFIG_DIR and tolerates a missing projects dir', async () => {
     expect((await run(root, { env: { CLAUDE_CONFIG_DIR: join(home, 'none') } })).sessions).toEqual([]);

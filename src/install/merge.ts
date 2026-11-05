@@ -7,7 +7,8 @@ import type { SandboxMode } from '../core/config.js';
 import { eolOf, jsonIndentOf, quoteOf, requote, withEol } from './text.js';
 import type { CatalogItem } from '../catalog/schema.js';
 import type { Manifest } from './manifest.js';
-import { TELEMETRY_ENV, type LoadedPreset } from '../catalog/presets.js';
+import { TELEMETRY_ENV } from '../catalog/telemetry-env.js';
+import type { LoadedPreset } from '../catalog/presets.js';
 
 export class MergeError extends Error {
   constructor(message: string) { super(message); this.name = 'MergeError'; }

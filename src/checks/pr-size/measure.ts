@@ -16,6 +16,8 @@ export const realGit = (root: string): Git => (args, timeout) => {
 /** §4 trust boundary: a name from the agent's command text can never reach git as an option or a range. */
 export const plainBranch = (n: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/.test(n) && !n.includes('..');
 
+export const count = (n: number, one: string): string => `${n} ${one}${n === 1 ? '' : 's'}`;
+
 export type SizeConfig = Pick<HarnessConfig, 'pr_size' | 'multi_file_gate' | 'stop'>;
 export interface Size { base: string; head: string; lines: number; files: number; top: { path: string; lines: number }[]; excluded: string[] }
 export interface Unmeasured { error: string; base?: string }

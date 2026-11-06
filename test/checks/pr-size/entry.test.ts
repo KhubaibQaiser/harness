@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
@@ -116,4 +116,27 @@ test('--worktree ignores --head, even a bad one', () => {
   const r = run(['--worktree', '--head', '--bad'], repo());
   expect(r.code).toBe(0);
   expect(r.json.head).toBe('working tree');
+});
+
+describe('--pr-size-raise', () => {
+  const raise = (argv: string[], cwd: string) => {
+    const lines: string[] = [];
+    const code = prSizeEntry(['--pr-size-raise', ...argv], cwd, (l) => lines.push(l));
+    return { code, json: JSON.parse(lines[0]!) };
+  };
+  test('valid values print the branch and limits, exit 0, and write nothing', () => {
+    const root = repo();
+    expect(raise(['--lines', '600'], root)).toEqual({ code: 0, json: { branch: 'feat', lines: 600, files: 20 } });
+    expect(raise(['--lines', '600', '--files', '30'], root)).toEqual({ code: 0, json: { branch: 'feat', lines: 600, files: 30 } });
+    expect(existsSync(join(root, '.harness', 'state'))).toBe(false);
+  });
+
+  test('a bad value, an unknown word or a detached HEAD exits 2 with error', () => {
+    const root = repo();
+    expect(raise(['--lines', '400'], root)).toEqual({ code: 2, json: { error: '--lines must be an integer from 401 to 100000' } });
+    expect(raise(['--lines', '600', '--files', '19'], root)).toEqual({ code: 2, json: { error: '--files must be an integer from 20 to 10000' } });
+    expect(raise(['--lines', '600', '--x'], root).code).toBe(2);
+    git(root, 'checkout', '-q', '--detach');
+    expect(raise(['--lines', '600'], root)).toEqual({ code: 2, json: { error: expect.stringMatching(/detached/) } });
+  });
 });

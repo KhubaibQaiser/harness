@@ -125,7 +125,7 @@ async function main(): Promise<void> {
     process.stdout.write(`ok ${process.version}\n`);
     return;
   }
-  if (process.argv.includes('--pr-size')) {
+  if (process.argv.includes('--pr-size') || process.argv.includes('--pr-size-raise')) {
     process.exitCode = prSizeEntry(process.argv.slice(2), process.cwd(), (l) => process.stdout.write(l + '\n'));
     return;
   }

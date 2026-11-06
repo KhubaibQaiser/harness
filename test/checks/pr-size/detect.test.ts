@@ -89,3 +89,22 @@ describe('fix round 1', () => {
     expect(prTargets('npm run ship', w)).toEqual([]);
   });
 });
+
+describe('--pr-size-raise', () => {
+  const raises = (c: string) => prTargets(c, w).filter((t) => t.kind === 'raise');
+  test.each([
+    ['node .harness/hooks/dispatch.mjs --pr-size-raise --lines 600', { kind: 'raise', lines: '600' }],
+    ['node ".harness\\hooks\\dispatch.mjs" --pr-size-raise --lines 600 --files 30', { kind: 'raise', lines: '600', files: '30' }],
+    ['cd x && node .harness/hooks/dispatch.mjs --pr-size-raise --lines 600', { kind: 'raise', lines: '600' }],
+  ])('%s is one raise', (c, t) => {
+    expect(raises(c)).toEqual([t]);
+  });
+
+  test('an unknown word drops the values, so the entry fails by itself', () => {
+    expect(raises('node .harness/hooks/dispatch.mjs --pr-size-raise --lines 600 --bogus')).toEqual([{ kind: 'raise' }]);
+  });
+
+  test.each(['echo node .harness/hooks/dispatch.mjs --pr-size-raise', '$X --pr-size-raise --lines 600', 'node other.mjs --pr-size-raise --lines 600'])('%s is no raise', (c) => {
+    expect(raises(c)).toEqual([]);
+  });
+});

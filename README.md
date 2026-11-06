@@ -20,12 +20,6 @@ In plain terms: with the sandbox on, the operating system enforces the guard. Wi
 - **Lean context.** Always-loaded text has a budget of 2000 tokens by default (`context.budget_tokens`). Harness asks before going over it.
 - **Safe to try.** You see every change before it's written. `init` backs up what it touches. `uninstall` removes what harness added and restores the rest; files you edited are kept and listed.
 
-## Who it's for
-
-- Developers who run Claude Code on real code and want TDD, clean commits and passing checks every time, not only when they remember to ask.
-- Teams that want one set of agent rules in the repo, the same for everyone.
-- Anyone running agents unattended, in CI or overnight, where nobody is watching to say no.
-
 ## What you get
 
 | Gate | Any repo | JS/TS (npm, pnpm, yarn, bun; Vitest or Jest) |
@@ -47,6 +41,15 @@ In short: secrets and risky commands are blocked, harness's own files are off li
 - **Review agent (experimental).** A `staff-reviewer` agent reviews a diff in a fresh context and can't edit files.
 
 The exact rules for each gate are in [docs/reference.md](docs/reference.md).
+
+## Usage and adherence report
+
+`harness report` writes a usage and adherence report for this repo: which skills were invoked when they were relevant, which rules were enforced, token use, and where a gate probably blocked something it should not have. It reads your Claude Code session transcripts on your machine and sends nothing anywhere.
+
+- **Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted.
+- The page is `.harness/reports/<date>.html`. The folder is gitignored. The page quotes your sessions, so don't share it.
+- `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose.
+- `harness eval` tests whether skills, rules and gates work in real sessions. It costs money, so it asks you to type `yes` every run, stops at a cost ceiling you set, and runs only in your own terminal.
 
 ## Quick start
 
@@ -102,6 +105,8 @@ Run them as `harness <command>`. From a source build there's no `harness` binary
 | `doctor` | Checks the install and prints a fix for each problem. |
 | `why <id>` / `explain` | Why an item is installed, and what every item loads into context. |
 | `stats [--days N]` | Counts harness events (default: the last 7 days). |
+| `report [--days N] [--open] [--export]` | Writes the usage and adherence report to `.harness/reports/`. Local only. |
+| `eval [--kind skills\|rules] [--runs N] [--max-cost-usd X]` | Paid checks that your skills and rules change what the agent does. Costs money and asks every run. |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. |
 | `vet <target>` | Scans a plugin or skill before you install it. Installs nothing. |
 | `uninstall [--dry-run]` | Removes what harness added and restores your files. |
@@ -147,7 +152,6 @@ The full list: [docs/reference.md](docs/reference.md#known-limits).
 
 Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Coming next:
 - an opt-in personal preset of working rules and stack skills;
-- local reports that show whether agents actually follow the installed rules and skills;
 - memory, the PR reviewer, and TDD for other languages.
 
 ## Development

@@ -102,7 +102,30 @@ describe('hook events come only from Claude Code', () => {
     expect((await pre(root, c, { HARNESS_UNATTENDED: '1' })).permissionDecision).toBe('deny');
   });
 
-  test.each(['node .harness/hooks/dispatch.mjs --pr-size --worktree', 'node .harness/hooks/dispatch.mjs --self-test', 'cat .harness/hooks/dispatch.mjs', 'ls .harness/hooks', 'git diff -- src/hooks/dispatch.ts'])('%s is not a hand run', (c) => {
+  test.each([
+    'node .harness//hooks/dispatch.mjs < /tmp/pre.json', 'node .harness/hooks/./dispatch.mjs < /tmp/pre.json', 'node ./.harness/./hooks/dispatch.mjs < /tmp/pre.json',
+    'cat /tmp/pre.json | node .harness/hooks//dispatch.mjs', 'node .harness/x/../hooks/dispatch.mjs < p', 'cp .harness/./hooks/dispatch.mjs /tmp/d.mjs', 'cp ./.harness//hooks/dispatch.mjs /tmp/d.mjs',
+    'node node_modules/@khubaibqaiser/harness/dist/hooks/dispatch.mjs < p',
+    'cat p | node node_modules/.pnpm/@khubaibqaiser+harness@0.2.0/node_modules/@khubaibqaiser/harness/dist/hooks/dispatch.mjs',
+    'node ~/.npm/_npx/abc123/node_modules/@khubaibqaiser/harness/dist/hooks/dispatch.mjs < p', 'node "$CLAUDE_PLUGIN_ROOT/dist/hooks/dispatch.mjs" < p',
+    'node /tmp/h/hooks/dispatch.mjs < p', 'cp node_modules/@khubaibqaiser/harness/dist/hooks/dispatch.mjs /tmp/d.mjs',
+    'node .harness/hooks/dispatch.mjs x--pr-size < p', 'node .harness/hooks/dispatch.mjs --pr-size=1 < p',
+  ])('%s: every dispatcher copy and spelling is denied', (c) => {
+    for (const unattended of [false, true]) expect(decidePrSize(ctx(repo(), c, { unattended }))).toMatchObject({ kind: 'deny', reason: expect.stringMatching(HAND) });
+  });
+
+  test.each([
+    'cat p | npx tsx .harness/hooks/dispatch.mjs', 'cat p | tsx .harness/hooks/dispatch.mjs', 'cat p | ts-node .harness/hooks/dispatch.mjs', 'cat p | deno run -A .harness/hooks/dispatch.mjs',
+    'tsx .harness/hooks/dispatch.mjs <<< "$(cat p)"', 'cat .harness/hooks/dispatch.mjs >/tmp/d.mjs', 'cat .harness/hooks/dispatch.mjs >>/tmp/d.mjs', 'grep x .harness/hooks/dispatch.mjs | head',
+  ])('%s: stdin into another runner, an unspaced redirect, or a piped hook file is denied', (c) => {
+    expect(decidePrSize(ctx(repo(), c))).toMatchObject({ kind: 'deny', reason: expect.stringMatching(HAND) });
+  });
+
+  test('the deny line names pipes and redirects', () => {
+    expect(decidePrSize(ctx(repo(), 'grep x .harness/hooks/dispatch.mjs | head'))).toMatchObject({ reason: expect.stringContaining('or pipe or redirect them, even to read them') });
+  });
+
+  test.each(['node .harness/hooks/dispatch.mjs --pr-size --worktree', 'node .harness/hooks/dispatch.mjs --pr-size | jq .lines', 'node .harness/hooks/dispatch.mjs --self-test', 'cat .harness/hooks/dispatch.mjs', 'ls .harness/hooks', 'git diff -- src/hooks/dispatch.ts'])('%s is not a hand run', (c) => {
     expect(decidePrSize(ctx(repo(), c))).not.toMatchObject({ kind: 'deny' });
   });
 

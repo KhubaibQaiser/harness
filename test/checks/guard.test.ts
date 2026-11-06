@@ -892,8 +892,8 @@ test('a shell whose "script file" is stdin parses what it reads', () => {
 test('a plain message or -F - body is data only when every command on the line is on the safe list (owner ruling, round 11)', () => {
   const m = 'git commit -m "a; rm -rf ~"';
   all([`git add -A && ${m}`, `cd sub && ${m}`, `${m} && git push`, 'gh pr create --title "a b" --body "Blocks rm -rf ~ in prose"', `${m}; git status; echo done`,
-    `if git diff --quiet; then echo clean; else ${m}; fi`, `mkdir -p d && touch d/x && ${m} && git log -1 | head -1`, `nice -n 5 ${m}`, `env FOO=1 time -p ${m}`,
-    `${m} && pwd && ls`, `[ -f x ] && ${m}`, `git -c user.name=x ${m.slice(4)}`, "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit push"], 'allow');
+    `if git diff --quiet; then echo clean; else ${m}; fi`, `mkdir -p d && touch d/x && ${m} && git log -1 | head -1`, `nice -n 5 ${m}`, `time -p ${m}`,
+    `${m} && pwd && ls`, `git -c user.name=x ${m.slice(4)}`, "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit push"], 'allow');
   // F1: a redirect before the command word; F2: trap; F3: a runner option before its subcommand; the open class.
   all([`${m}; 2>/dev/null sh -c "$(git log -1 --format=%B)"`, `${m} && </dev/null eval "$(git log -1 --format=%B)"`, `${m}; > /dev/null eval x`, `${m}; &>x eval x`,
     `${m}; A=1 >x eval x`, `${m}; ! >x eval x`, "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\n2>/dev/null sh -c \"$(git log -1 --format=%B)\"",
@@ -901,6 +901,21 @@ test('a plain message or -F - body is data only when every command on the line i
     `${m}; strace sh -c x`, `${m}; unshare sh`, `${m}; direnv exec . sh`, `${m}; bundle exec sh`, `${m}; poetry run sh`, `${m}; at now`, `${m}; npm test`,
     `${m}; git config alias.x '!sh'`, `${m}; git x`, `git -c alias.x='!sh' ${m.slice(4)}`, `${m}; echo "$(eval x)"`, `${m} && echo hi | sh`, `${m}; cat f | sh`,
     "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\nnpm test"], 'deny');
+});
+test('the allowlist rejects assignments, env VAR=, unsafe git/gh options, and test/[/[[/printf (owner ruling, round 12)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  const G = 'git log -1 --format=%B|sh'; // a value git would run if the option reached it
+  all([`${m}; GIT_EXTERNAL_DIFF='sh -c "${G}"' git diff HEAD~`, `${m}; env GIT_EXTERNAL_DIFF='sh -c "${G}"' git diff HEAD~`, `${m}; GIT_SSH_COMMAND='${G}' git fetch ssh://h/x`,
+    `${m}; env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0='${G}' git status`, `${m}; GIT_CONFIG_PARAMETERS="'core.fsmonitor=${G}'" git status`,
+    `${m}; LD_PRELOAD=/tmp/x.so git status`, `${m}; env BASH_ENV=/tmp/x git status`], 'deny'); // assignment / env VAR=
+  all([`${m}; git grep -O'${G}' -e x`, `${m}; git grep -Osh -e x`, `${m}; git fetch --upload-pack='${G}' .`, `${m}; git ls-remote --upload-pack='${G}' .`,
+    `${m}; git push --receive-pack='${G}' . HEAD:x`, `${m}; git clone -u '${G}' . /tmp/x`, `${m}; git -c user.name=x -c core.pager='${G}' log`, `${m}; git --exec-path=/tmp log`,
+    `${m}; git log --ext-diff -p`, `${m}; git log --textconv -p`, `${m}; git am --exec x`], 'deny'); // value-running git options
+  all([`${m}; test -v 'a[$(${G})]'`, `${m}; [[ -v 'a[$(${G})]' ]]`, `${m}; [[ 1 -eq 'a[$(${G})]' ]]`, `${m}; [ 1 -eq 'a[$(${G})]' ]`, `${m}; printf -v 'a[$(${G})]' x`,
+    `[ -f x ] && ${m}`], 'deny'); // test, [, [[, printf dropped
+  all([`${m}; gh api --input x /repos`, `${m}; gh extension exec x`, `${m}; gh alias set x '!${G}'`,
+    `git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit grep -O'${G}' -e x`, `gh pr create --title t --body "a; rm -rf ~"; git grep -O'gh pr view --json body -q .body|sh' -e x`], 'deny');
+  all([`${m}; git grep -n -e x`, `${m}; git log --oneline --graph`, `${m}; git diff --stat`, `${m}; gh pr view 1 --json title`, `${m}; git push -u origin HEAD`], 'allow'); // safe options stay data
 });
 test('a line that writes git output to a file and runs a file is always blocked', () => {
   all(['git log -1 --format=%B > x.sh; sh x.sh', 'git log -1 --format=%B > x.sh && bash ./x.sh', 'git show HEAD:run.sh >> r.sh; . r.sh', 'git rev-parse HEAD > x; source x',

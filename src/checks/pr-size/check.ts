@@ -11,6 +11,7 @@ import type { Decision } from '../../hooks/types.js';
 import { type PrTarget, prTargets } from './detect.js';
 import { count, type Git, hookBudgetMs, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
 import { limits, type Progress, progressWarning, readProgress } from './progress.js';
+import { handRun } from './hand-run.js';
 import { postRaise, preRaise } from './raise.js';
 
 export const RECORD = '.harness/state/pr-branches.json';
@@ -210,6 +211,8 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   if (event === 'Stop' || (event === 'PostToolUse' && !isShell(tool_name))) return progressWarning(ctx, git, now);
   if (!isShell(tool_name)) return { kind: 'allow' };
   const command = String(tool_input.command ?? '');
+  const hand = event === 'PreToolUse' ? handRun(command, { root: ctx.root, env: ctx.env }) : null;
+  if (hand) return { kind: 'deny', check: 'pr-size', reason: hand };
   const all = prTargets(command, { root: ctx.root, env: ctx.env });
   const targets = all.filter((t): t is PrJob => t.kind !== 'raise');
   if (!all.length) return { kind: 'allow' };

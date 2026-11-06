@@ -58,15 +58,16 @@ export function preRaise(ctx: Ctx, command: string, targets: PrTarget[], cur: ()
   if ('error' in r) return null;
   const c = cur();
   if (!c.late && (c.name === null || !plainBranch(c.name))) return { kind: 'deny', check: 'pr-size', reason: DENY_DETACHED };
-  if (c.name !== null) saveAsked(ctx, command, c.name);
+  if (c.name !== null) saveAsked(ctx, command, { branch: c.name, lines: r.lines, files: r.files, ts: Date.now() });
   const branch = c.name === null ? 'the current branch' : `\`${esc(c.name)}\``;
   return { kind: 'ask', check: 'pr-size', reason: `Confirm: raise the pull request size limit for ${branch} to ${count(r.lines, 'line')} and ${count(r.files, 'file')}. Harness then warns again only above that.` };
 }
 
 const askKey = (ctx: Ctx, command: string) => `${ctx.input.session_id ?? ''}:${createHash('sha256').update(command).digest('hex')}`;
 
-function readAsked(root: string): Record<string, { branch: string; ts: number }> {
-  const out: Record<string, { branch: string; ts: number }> = Object.create(null);
+type Asked = { branch: string; lines: number; files: number; ts: number };
+function readAsked(root: string): Record<string, Asked> {
+  const out: Record<string, Asked> = Object.create(null);
   let raw: unknown;
   try {
     if (statSync(join(root, ASKED)).size > MAX_BYTES) return out;
@@ -75,12 +76,14 @@ function readAsked(root: string): Record<string, { branch: string; ts: number }>
     return out;
   }
   if (!isObj(raw)) return out;
-  for (const [k, v] of Object.entries(raw)) if (isObj(v) && typeof v.branch === 'string' && typeof v.ts === 'number') out[k] = { branch: v.branch, ts: v.ts };
+  for (const [k, v] of Object.entries(raw)) {
+    if (isObj(v) && typeof v.branch === 'string' && typeof v.ts === 'number' && Number.isInteger(v.lines) && Number.isInteger(v.files)) out[k] = { branch: v.branch, lines: v.lines as number, files: v.files as number, ts: v.ts };
+  }
   return out;
 }
 
 /** Writes the asked entries, dropping expired ones; `set` adds one, null removes `key`. */
-function writeAsked(root: string, key: string, set: { branch: string; ts: number } | null): void {
+function writeAsked(root: string, key: string, set: Asked | null): void {
   const now = Date.now();
   const all = Object.fromEntries(Object.entries(readAsked(root)).filter(([k, v]) => k !== key && now - v.ts < ASK_TTL_MS));
   if (set) all[key] = set;
@@ -88,14 +91,15 @@ function writeAsked(root: string, key: string, set: { branch: string; ts: number
   writeAtomic(join(root, ASKED), JSON.stringify(all) + '\n');
 }
 
-function saveAsked(ctx: Ctx, command: string, branch: string): void {
-  writeAsked(ctx.root, askKey(ctx, command), { branch, ts: Date.now() });
+function saveAsked(ctx: Ctx, command: string, a: Asked): void {
+  writeAsked(ctx.root, askKey(ctx, command), a);
 }
 
-/** Why PostToolUse records nothing, or null to record. `asked`: the branch the dialog named for this exact command. */
-function skipReason(ctx: Ctx, r: Limits, c: Cur, asked: { branch: string; ts: number } | undefined): string | null {
+/** Why PostToolUse records nothing, or null to record. `asked`: the branch and values the dialog named for this exact command. */
+function skipReason(ctx: Ctx, r: Limits, c: Cur, asked: Asked | undefined): string | null {
   if (!asked || Date.now() - asked.ts >= ASK_TTL_MS) return 'no matching ask for this command';
   if (c.late || c.name !== asked.branch) return `HEAD is no longer \`${esc(asked.branch)}\``;
+  if (r.lines !== asked.lines || r.files !== asked.files) return `the values changed since the dialog (${asked.lines}/${asked.files})`;
   const line = JSON.stringify({ branch: asked.branch, lines: r.lines, files: r.files });
   if (!JSON.stringify(ctx.input.tool_response ?? '').includes(JSON.stringify(line).slice(1, -1))) return 'the raise command did not succeed';
   return null;

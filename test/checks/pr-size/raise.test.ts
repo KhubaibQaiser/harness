@@ -1,6 +1,8 @@
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { decidePrSize, prSize } from '../../../src/checks/pr-size/check.js';
-import { readProgress } from '../../../src/checks/pr-size/progress.js';
+import { PROGRESS, readProgress } from '../../../src/checks/pr-size/progress.js';
 import { readEvents } from '../../../src/core/events.js';
 import { registry } from '../../../src/hooks/dispatch.js';
 import { ctx, git, lines, repo, send } from './helpers.js';
@@ -82,4 +84,47 @@ describe('one dialog for a raise and a PR', () => {
     const d = decidePrSize(ctx(repo(), `${R} && gh pr create --base nope`));
     expect(d).toMatchObject({ kind: 'ask', reason: expect.stringContaining('only above that. Note from pr-size: harness couldn\'t measure') });
   });
+});
+
+describe('hook events come only from Claude Code', () => {
+  const HAND = /^Blocked by pr-size: hook events come only from Claude Code\./;
+  test.each([
+    'node .harness/hooks/dispatch.mjs < /tmp/pre.json', 'cat /tmp/pre.json | node .harness/hooks/dispatch.mjs', 'npx node .harness/hooks/dispatch.mjs < p',
+    'env node ./.harness/hooks/dispatch.mjs < p', 'bash -c "node .harness/hooks/dispatch.mjs < p"', 'node "C:\\r\\.harness\\hooks\\dispatch.mjs" < p',
+    '$X .harness/hooks/dispatch.mjs < p', './.harness/hooks/dispatch.mjs < p', 'node < .harness/hooks/dispatch.mjs',
+    'cp .harness/hooks/dispatch.mjs /tmp/d.mjs', 'mv .harness/hooks/dispatch.mjs /tmp/d.mjs', 'ln -s "$PWD/.harness/hooks/dispatch.mjs" /tmp/d.mjs',
+    'cat .harness/hooks/dispatch.mjs > /tmp/d.mjs', 'cat .harness/hooks/dispatch.mjs | tee /tmp/d.mjs', 'rsync .harness/hooks/ /tmp/h/', 'cp -r .harness/hooks /tmp/h',
+  ])('%s is denied attended and unattended; the full registry never allows it', async (c) => {
+    const root = repo();
+    for (const unattended of [false, true]) expect(decidePrSize(ctx(root, c, { unattended }))).toMatchObject({ kind: 'deny', reason: expect.stringMatching(HAND) });
+    // An earlier check (the guard, on a hidden `$X`) may answer first; whichever does, the command doesn't run unasked.
+    for (const env of [{}, { HARNESS_UNATTENDED: '1' }]) expect(['deny', 'ask']).toContain((await pre(root, c, env)).permissionDecision);
+    expect((await pre(root, c, { HARNESS_UNATTENDED: '1' })).permissionDecision).toBe('deny');
+  });
+
+  test.each(['node .harness/hooks/dispatch.mjs --pr-size --worktree', 'node .harness/hooks/dispatch.mjs --self-test', 'cat .harness/hooks/dispatch.mjs', 'ls .harness/hooks', 'git diff -- src/hooks/dispatch.ts'])('%s is not a hand run', (c) => {
+    expect(decidePrSize(ctx(repo(), c))).not.toMatchObject({ kind: 'deny' });
+  });
+
+  test("the reviewer's repro (sandbox: off, unattended): the forged-event commands are denied, and nothing is recorded", async () => {
+    const root = repo();
+    mkdirSync(join(root, '.harness'), { recursive: true });
+    writeFileSync(join(root, '.harness', 'config.yaml'), 'sandbox: off\n');
+    const env = { HARNESS_UNATTENDED: '1' };
+    for (const c of ['cp .harness/hooks/dispatch.mjs /tmp/d.mjs', 'node .harness/hooks/dispatch.mjs < /tmp/pre.json', 'cat /tmp/pre.json | node .harness/hooks/dispatch.mjs', 'node .harness/hooks/dispatch.mjs < /tmp/post.json']) {
+      expect((await pre(root, c, env)).permissionDecision).toBe('deny');
+    }
+    expect(existsSync(join(root, PROGRESS))).toBe(false);
+  });
+});
+
+test('a package script rewritten during the run: 600 in the dialog, 100000 printed, nothing recorded', async () => {
+  const root = repo();
+  const pj = (n: number) => JSON.stringify({ scripts: { raise: `node x.js && node .harness/hooks/dispatch.mjs --pr-size-raise --lines ${n}` } });
+  writeFileSync(join(root, 'package.json'), pj(600));
+  expect(decidePrSize(ctx(root, 'npm run raise'))).toMatchObject({ kind: 'ask', reason: expect.stringContaining('to 600 lines and 20 files') });
+  writeFileSync(join(root, 'package.json'), pj(100000));
+  await send(root, 'PostToolUse', 'npm run raise', {}, [prSize], { stdout: `${JSON.stringify({ branch: 'feat', lines: 100000, files: 20 })}\n`, stderr: '' });
+  expect(raises(root)).toEqual([]);
+  expect(events(root, 'pr-size-raise-skipped')).toEqual([expect.objectContaining({ reason: 'the values changed since the dialog (600/20)' })]);
 });

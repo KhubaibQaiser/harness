@@ -313,7 +313,36 @@ Catalog items can be Claude Code plugins or MCP servers.
 - **MCP servers.** Harness writes them to `.mcp.json`. Claude Code asks each user to approve a project server before it runs. Harness can't approve it for them. A server with the same name that you wrote is kept and reported.
 - **Removal.** `uninstall` removes the pins and servers it added and leaves yours.
 
+## Using it well
+
+- **Run `harness doctor` after any change.** It checks the install and prints the fix for each problem.
+- **Turn on branch protection.** Hooks run with your permissions, so branch protection is the real stop for force-pushes.
+- **When the Stop gate blocks, let it work.** Its output shows what failed. The agent fixes it and tries again, up to `stop.max_attempts` (default 3).
+- **Let TDD work for you.** When the agent says "run a test first", that's the gate asking for a failing test. For a spike, run `harness tdd off` in your own terminal, then `harness tdd on` when you're done.
+- **Vet anything new first.** Run `harness vet` before you install a plugin or skill you found online.
+- **Watch the budget.** `harness explain` lists what each item loads into every session. Remove what you don't use with `harness remove <id>`.
+
+## Named presets
+
+`/harness:init` asks "Use a named preset?" after the scope question. The default is no preset: the neutral catalog. `khubaib-frontend` is the shipped one. It adds working rules and git conventions to `AGENTS.md`, up to four frontend skills that match your stack, and preselected third-party picks. Its always-loaded text costs about 241 to 415 tokens (estimate, by stack), counted in the budget line before you confirm.
+
+- It turns off the picks' usage reporting through `DO_NOT_TRACK=1` (Impeccable) and Superpowers' own opt-out variable in `.claude/settings.json`. Those variables apply to every command in the session, not only to that tool, and only after you trust the folder.
+- It sets `"attribution": false`, so commits and PRs get no AI trailer.
+- `harness git pr` warns when a PR is large, even if `checks.prSize` is off.
+- To turn it off, answer "No preset" in `/harness:update`. The plugins it preselected stay until `harness remove` takes them out.
+
+## Usage and adherence report
+
+`harness report` writes a usage and adherence report for this repo: which skills were invoked when they were relevant, which rules were enforced, token use, and where a gate probably blocked something it should not have. It reads your Claude Code session transcripts on your machine and sends nothing anywhere. Its "X of Y rules enforced" line counts how many of the rules harness knows about are held by a gate and not only written in a file, with a matrix of which are enforced and how each can be bypassed.
+
+- Start Claude Code inside the repo for the report to see it. Sessions started in a parent folder are not counted.
+- The page is `.harness/reports/<date>.html`, gitignored. It quotes your sessions, so don't share it. `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose.
+- `harness eval` tests whether skills, rules and gates work in real sessions. It costs money, so it asks you to type `yes` every run, stops at a cost ceiling (default $2, set with `--max-cost-usd`), defaults to a Haiku model, and runs only in your own terminal.
+
 ## Vetting a plugin or skill
+
+`harness vet <github-url>` pins a plugin or skill to a commit and scans it without running it: hooks (also those declared in skill and agent frontmatter), secrets, network calls, prompt-injection text, licence and context cost. The report lists each finding by `file:line`, and names any file it could not read (binary, or over 1 MB). It needs the GitHub CLI (`gh`).
+
 
 `/harness:vet <target>` runs `harness vet` and puts the staff-reviewer between the scan and the summary:
 
@@ -336,7 +365,17 @@ harness doesn't install or track vetted items: it only prints the install comman
 
 ## Configuration keys
 
-The table below is generated from `src/core/config.ts` by `node scripts/gen-config-docs.mjs --write`. A Stop step and its format are shown in the README's Configuration section.
+Settings live in `.harness/config.yaml`. `init` writes values that fit your repo. A Stop step can be a script name or any command, so non-JS repos work too:
+
+```yaml
+stop:
+  package_manager: none
+  steps:
+    - { name: lint, run: [ruff, check, .] }
+    - { name: test, run: [pytest] }
+```
+
+Run `harness doctor` after editing. The table below is generated from `src/core/config.ts` by `node scripts/gen-config-docs.mjs --write`.
 
 <!-- config:start -->
 | Key | Default | What it does |
@@ -477,3 +516,30 @@ More detail: [TDD setup details](#tdd-setup-details).
 - PR size warnings: each counted edit runs 7 or 8 git calls. That measured 91 ms median overhead on macOS in a 20-file repo. In a large repo the cost is mostly the two `git diff` calls over the working tree, which can take up to the 6 s budget; a timeout gives no warning, only a stderr line.
 - PR size warnings: a Stop that harness blocks before its checks run (an invalid config, changed harness files) drops that Stop's warning; the next Stop announces it.
 - Not in this release: the PR reviewer (M2) and TDD for other languages.
+
+## Development
+
+Build from source (pnpm comes with `corepack enable`) and load it with `--plugin-dir`:
+
+```bash
+git clone https://github.com/KhubaibQaiser/harness.git
+cd harness && pnpm install && pnpm build
+claude --plugin-dir /path/to/harness
+```
+
+From a source build there's no `harness` binary, so run `node /path/to/harness/dist/cli.mjs` wherever the docs say `harness`.
+
+```bash
+pnpm install
+pnpm build && pnpm test && pnpm test:perf
+pnpm typecheck
+node scripts/gen-config-docs.mjs --write   # after changing a config key
+```
+
+CI runs the tests on macOS and Windows with Node 22, plus Linux jobs for gitleaks, a pack check, real Vitest and Jest installs, and `claude plugin validate`. A `v*` tag publishes to npm after an approval step, then mirrors the package to GitHub Packages and creates a GitHub release. See [release.md](release.md).
+
+## Roadmap
+
+Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Coming next:
+- an opt-in personal preset of working rules and stack skills;
+- memory, the PR reviewer, and TDD for other languages.

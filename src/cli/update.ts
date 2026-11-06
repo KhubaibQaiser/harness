@@ -24,7 +24,8 @@ import type { Facts } from '../install/detect.js';
 import { approvedIds } from '../install/approved.js';
 import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
 import { updatePreset } from './preset-inputs.js';
-import { AI_USAGE, budgetGate, installSelected, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
+import { AI_USAGE, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
+import { budgetGate, installSelected } from './install-selection.js';
 import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall } from './preamble.js';
@@ -46,6 +47,7 @@ const JSON_INDENT = 2;
 
 type AiFlags = NonNullable<ReturnType<typeof takeAiFlags>>['ai'];
 type Flags = { ai: AiFlags; plan: boolean; yes: boolean; dryRun: boolean };
+/** `config`: the selection's config, before updatePreset; reconcile plans from updatePreset's config, the budget gate reads this one (as before the split). */
 type Selection = { aiPath: boolean; catalog?: Catalog; config: HarnessConfig; sel: AiInputs | null };
 type Planned = ReturnType<typeof reconcile>;
 /** One update run: who asked, where, what the manifest holds, and the selection it plans from. */
@@ -77,19 +79,29 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
 function parseFlags(args: string[], cli: UpdateEnv): Flags | number {
   const { out } = cli;
   const taken = takeAiFlags(args);
-  if (!taken || taken.rest.some((a) => a !== '--yes' && a !== '--check' && a !== '--dry-run' && a !== '--plan')) return out(USAGE), USAGE_EXIT;
+  if (!taken || taken.rest.some((a) => a !== '--yes' && a !== '--check' && a !== '--dry-run' && a !== '--plan') || misused(args, taken.ai)) return out(USAGE), USAGE_EXIT;
   const ai = taken.ai;
   const plan = args.includes('--plan'); // a preview: prints JSON and writes nothing
-  if (plan && (args.length > 1 || hasAiFlags(args))) return out(USAGE), USAGE_EXIT;
-  if (!hasAiFlags(args) && (ai.installPlugins || ai.overBudget)) return out(USAGE), USAGE_EXIT;
-  const refused = args.includes('--check') || plan ? null : refuseOutsideClaude('update', cli.env, hasAiFlags(args));
+  const refused = refusal(args, cli, ai);
   if (refused) return out(refused), USAGE_EXIT;
-  const lacking = !args.includes('--check') && hasAiFlags(args) ? missingAi('update', ai) : null;
-  if (lacking) return out(lacking), USAGE_EXIT;
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
   if (!yes && !dryRun && !plan && !args.includes('--check') && cli.tty === false) return out(NO_TTY), USAGE_EXIT;
   return { ai, plan, yes, dryRun };
+}
+
+/** `--plan` takes no other flag, and the AI-only flags need the AI inputs. */
+function misused(args: string[], ai: AiFlags): boolean {
+  const plan = args.includes('--plan');
+  return (plan && (args.length > 1 || hasAiFlags(args))) || (!hasAiFlags(args) && (ai.installPlugins || ai.overBudget));
+}
+
+/** Outside Claude Code (unless --check or --plan), then a missing AI input: the message to print, else null. */
+function refusal(args: string[], cli: UpdateEnv, ai: AiFlags): string | null {
+  const check = args.includes('--check');
+  const refused = check || args.includes('--plan') ? null : refuseOutsideClaude('update', cli.env, hasAiFlags(args));
+  if (refused) return refused;
+  return !check && hasAiFlags(args) ? missingAi('update', ai) : null;
 }
 
 async function checkLatest(cli: UpdateEnv): Promise<number> {

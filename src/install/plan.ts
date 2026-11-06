@@ -87,19 +87,22 @@ export function planChanges(
 }
 
 /** The selection gates the own items. Without a catalog or items nothing is gated: the beta behaviour. */
-function gateItems(config: HarnessConfig, ctx: PlanCtx, notes: string[]) {
+function gateItems(config: HarnessConfig, ctx: PlanCtx, notes: string[]): Gate {
   const catalog = config.items.length ? ctx.catalog : undefined;
   const ids = new Set(selectedIds(config));
   const on = (id: string) => !catalog || ids.has(id);
   const chosen = catalog ? catalog.items.filter((i) => ids.has(i.id)) : [];
   const kept = catalog ? keptItems(catalog, ids, ctx, notes) : { keepPlugins: [], keepServers: [] };
-  // checks come from the selected own items (any kind); sandbox is not derived
-  if (catalog) {
-    const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false, prSize: false };
-    for (const i of chosen) if (i.source.type === 'own') for (const k of i.source.checks ?? []) checks[k] = true;
-    config = { ...config, checks };
-  }
-  return { catalog, on, chosen, config, ...kept };
+  return { catalog, on, chosen, config: catalog ? { ...config, checks: checksOf(chosen) } : config, ...kept };
+}
+
+type Gate = { catalog?: Catalog; on: (id: string) => boolean; chosen: Catalog['items']; config: HarnessConfig; keepPlugins: PinnedPlugin[]; keepServers: McpServer[] };
+
+/** checks come from the selected own items (any kind); sandbox is not derived */
+function checksOf(chosen: Catalog['items']): HarnessConfig['checks'] {
+  const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false, prSize: false };
+  for (const i of chosen) if (i.source.type === 'own') for (const k of i.source.checks ?? []) checks[k] = true;
+  return checks;
 }
 
 /** An id the catalog no longer has keeps its plugin or server: it is rebuilt from what the manifest recorded. */
@@ -151,29 +154,41 @@ function formatEdits(root: string, changes: Change[], notes: string[]): void {
   for (const c of changes) {
     // Settings blocks are structural (uninstall removes them by deep equality), so formatting keeps them as they are.
     if (STRUCTURAL.has(c.rel) && (c.kind === 'create' || c.kind === 'update')) {
-      const bin = repoPrettier(root, c.rel);
-      try {
-        if (bin && c.kind === 'create') c.content = prettierFormat(bin, root, c.rel, c.content);
-        else if (bin && c.kind === 'update' && prettierFormat(bin, root, c.rel, c.before) === c.before) c.after = prettierFormat(bin, root, c.rel, c.after);
-      } catch (e) {
-        notes.push(`Prettier could not format \`${c.rel}\` (${String((e as Error).message).split('\n')[0]}); it is left unformatted, so a format check may flag it.`);
-      }
+      formatStructural(root, c, notes);
       continue;
     }
     if (c.kind !== 'update' || c.rename || !JS.test(c.rel)) continue; // a rename is a plain substitution (ruling 6)
     if (c.rel.startsWith('.harness/')) continue; // harness's own files are written as built: update replacing the dispatcher must not format it
-    const bin = repoPrettier(root, c.rel);
-    if (!bin) continue;
-    try {
-      if (prettierFormat(bin, root, c.rel, c.before) !== c.before) continue;
-      const after = prettierFormat(bin, root, c.rel, c.after);
-      if (after === c.after) continue;
-      const replace = lineHunks(c.before, after);
-      if (revertHunks(after, replace) !== c.before) throw new Error('the formatted edit does not undo cleanly');
-      Object.assign(c, { after, blocks: [], replace, formatted: true });
-    } catch (e) {
-      c.unformatted = true;
-      notes.push(`Prettier could not format \`${c.rel}\` (${String((e as Error).message).split('\n')[0]}); the edit is left unformatted, so a format check may flag it.`);
-    }
+    formatJsEdit(root, c, notes);
+  }
+}
+
+const firstLine = (e: unknown): string => String((e as Error).message).split('\n')[0];
+
+/** A settings file: formatted whole when created, or when it was Prettier-clean before. */
+function formatStructural(root: string, c: Change, notes: string[]): void {
+  const bin = repoPrettier(root, c.rel);
+  try {
+    if (bin && c.kind === 'create') c.content = prettierFormat(bin, root, c.rel, c.content);
+    else if (bin && c.kind === 'update' && prettierFormat(bin, root, c.rel, c.before) === c.before) c.after = prettierFormat(bin, root, c.rel, c.after);
+  } catch (e) {
+    notes.push(`Prettier could not format \`${c.rel}\` (${firstLine(e)}); it is left unformatted, so a format check may flag it.`);
+  }
+}
+
+/** A JS/TS config edit: formatted only when it was Prettier-clean before and the formatted edit undoes cleanly. */
+function formatJsEdit(root: string, c: Extract<Change, { kind: 'update' }>, notes: string[]): void {
+  const bin = repoPrettier(root, c.rel);
+  if (!bin) return;
+  try {
+    if (prettierFormat(bin, root, c.rel, c.before) !== c.before) return;
+    const after = prettierFormat(bin, root, c.rel, c.after);
+    if (after === c.after) return;
+    const replace = lineHunks(c.before, after);
+    if (revertHunks(after, replace) !== c.before) throw new Error('the formatted edit does not undo cleanly');
+    Object.assign(c, { after, blocks: [], replace, formatted: true });
+  } catch (e) {
+    c.unformatted = true;
+    notes.push(`Prettier could not format \`${c.rel}\` (${firstLine(e)}); the edit is left unformatted, so a format check may flag it.`);
   }
 }

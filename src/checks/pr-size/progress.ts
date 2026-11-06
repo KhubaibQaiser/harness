@@ -68,7 +68,7 @@ export function clearAllPending(root: string): Decision {
 }
 
 /** The current branch's pause is answered: an unmeasured edit ran (excluded, out of repo), or the person answered the "PR size" question. */
-function clearPending(ctx: Ctx, git: Git, now: () => number): void {
+export function clearPending(ctx: Ctx, git: Git, now: () => number): void {
   const all = readProgress(ctx.root);
   if (!anyPending(all)) return; // no git spawn
   const b = headBranch(git, hookBudgetMs(ctx.startedAt, now)).name;
@@ -77,25 +77,6 @@ function clearPending(ctx: Ctx, git: Git, now: () => number): void {
 
 // The header the warning gives the agent's AskUserQuestion; its answer is the person's (§14.9).
 export const ASK_HEADER = 'PR size';
-// What Claude Code records when the person typed a message instead of answering.
-const UNANSWERED = '[User did not answer';
-const answered = (a: unknown): boolean => (typeof a === 'string' ? a.trim() !== '' && !a.startsWith(UNANSWERED) : Array.isArray(a) && a.length > 0);
-
-/** PostToolUse of AskUserQuestion: any answer to the "PR size" question clears the current branch's pause. Never throws.
- *  `tool_response.answers` maps each question's text to the chosen label (an array for multi-select). */
-export function clearOnAnswer(ctx: Ctx, git: Git = realGit(ctx.root), now: () => number = Date.now): Decision {
-  try {
-    const qs = ctx.input.tool_input?.questions;
-    const res = ctx.input.tool_response;
-    const answers = isObj(res) && isObj(res.answers) ? res.answers : null;
-    const hit = answers && Array.isArray(qs) && qs.some((q) => isObj(q) && q.header === ASK_HEADER && typeof q.question === 'string' && Object.hasOwn(answers, q.question) && answered(answers[q.question]));
-    if (hit) clearPending(ctx, git, now);
-  } catch (e) {
-    process.stderr.write(`harness: pr-size pause clear failed: ${String((e as Error)?.message ?? e)}\n`);
-  }
-  return ALLOW;
-}
-
 const AFTER = 'Approve to keep going with this edit, or say no and tell Claude to split it with the pr-ship skill or raise the limit for this branch.';
 const UNKNOWN_BRANCH = `Confirm: harness couldn't look up the current branch, and a branch here has an unanswered size warning. ${AFTER}`;
 

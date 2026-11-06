@@ -7,8 +7,9 @@ import { isEdit, isShell } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { type PrTarget, prTargets } from './detect.js';
 import { asBaseName, count, type Git, GIT_CALL_MS, headBranch, hookBudgetMs, isOver, limitText as limit, measure, plainBranch, realGit, type Size } from './measure.js';
-import { clearAllPending, clearOnAnswer, pauseAsk, type Progress, progressWarning, raisedLimit, readProgress } from './progress.js';
+import { clearAllPending, pauseAsk, type Progress, progressWarning, raisedLimit, readProgress } from './progress.js';
 import { type PrRecord, readRecords, writeRecord } from './records.js';
+import { clearOnAnswer, preAnswer } from './answer.js';
 import { handRun } from './hand-run.js';
 import { postRaise, preRaise } from './raise.js';
 
@@ -170,7 +171,7 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   const { tool_name, tool_input = {} } = ctx.input;
   if (!ctx.config?.checks.prSize) return { kind: 'allow' };
   const event = ctx.input.hook_event_name;
-  if (event === 'PostToolUse' && tool_name === 'AskUserQuestion') return clearOnAnswer(ctx, git, now);
+  if (tool_name === 'AskUserQuestion') return event === 'PreToolUse' ? preAnswer(ctx) : event === 'PostToolUse' ? clearOnAnswer(ctx, git, now) : { kind: 'allow' };
   if (event === 'Stop' || (event === 'PostToolUse' && !isShell(tool_name))) return progressWarning(ctx, git, now);
   if (event === 'UserPromptSubmit') return clearAllPending(ctx.root);
   if (!isShell(tool_name)) return event === 'PreToolUse' && isEdit(tool_name) ? pauseAsk(ctx, git, now) : { kind: 'allow' };

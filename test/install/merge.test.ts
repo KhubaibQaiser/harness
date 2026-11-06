@@ -7,7 +7,7 @@ import { guardedView } from '../../src/core/harness-files.js';
 
 const fx = (p: string) => readFileSync(`test/fixtures/install-repo/${p}`, 'utf8');
 const ARGS = ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'];
-const PRE = 'Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit';
+const PRE = 'Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit|AskUserQuestion';
 const merge = (before: string | null, recorded?: string[]) => mergeSettings(before, { sandbox: 'unattended', recorded });
 const frag = JSON.parse(readFileSync('templates/settings.fragment.json', 'utf8'));
 const S = '<!-- harness:start -->';

@@ -3,13 +3,14 @@ import { loadConfig } from '../../core/config.js';
 import { repoRoot } from '../../core/repo-root.js';
 import { type Git, isOver, measure } from './measure.js';
 
-const USAGE = 'usage: dispatch.mjs --pr-size [--base <name>] [--head <name>]';
+const USAGE = 'usage: dispatch.mjs --pr-size [--base <name>] [--head <name>] [--worktree]';
 
 export function prSizeEntry(argv: string[], cwd: string, out: (line: string) => void, git?: Git): 0 | 1 | 2 {
   const fail = (error: string): 2 => (out(JSON.stringify({ error })), 2);
-  const want: { base?: string; head?: string } = {};
+  const want: { base?: string; head?: string; worktree?: boolean } = {};
   const args = argv.filter((a) => a !== '--pr-size');
   for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--worktree') { want.worktree = true; continue; }
     const m = /^--(base|head)(?:=([\s\S]*))?$/.exec(args[i]!);
     if (!m) return fail(USAGE);
     const v = m[2] ?? args[++i];

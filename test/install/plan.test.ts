@@ -8,6 +8,7 @@ import { applyChanges, type Change } from '../../src/install/apply.js';
 import { detect } from '../../src/install/detect.js';
 import { LEGACY_OWN, planChanges, selectedIds } from '../../src/install/plan.js';
 import { preset } from '../../src/install/preset.js';
+import { loadPreset } from '../../src/catalog/presets.js';
 import { LIMITS_SENTENCE } from '../../src/ai/report.js';
 import { makeRepo } from './helpers.js';
 
@@ -224,4 +225,106 @@ test('a deselected file whose backup is missing gets its own note', () => {
   const files = install(root, plan(root, OWN).changes).files.map((f) => (f.rel === SR ? { ...f, backup: '.harness/backup/gone/x' } : f));
   const p = plan(root, OFF, { off: ['staff-reviewer'], files });
   expect(p.notes.join('\n')).toContain('backup is missing');
+});
+
+// The personal preset (Task 6a): the `stacks` fixture on a Next.js repo.
+const loadedStacks = (() => {
+  const r = loadPreset(join(pkgDir, 'test/fixtures/presets/stacks.yaml'));
+  if (!r.ok) throw new Error(r.errors.join('\n'));
+  return r.loaded;
+})();
+const PRESET_ITEMS = ['core-rules', 'engineering-principles', 'frontend-react', 'frontend-nextjs'];
+const SKILLS = ['engineering-principles', 'frontend-react', 'frontend-nextjs'].map((n) => `.claude/skills/${n}/SKILL.md`);
+function planPreset(root: string, ids: string[], over: { off?: string[]; files?: ReturnType<typeof install>['files']; recorded?: string[]; on?: boolean; loaded?: boolean } = {}) {
+  const facts = detect(root);
+  const config = preset(facts).config;
+  config.items = [...ids.map((i) => sel(i)), ...(over.off ?? []).map((i) => sel(i, false))];
+  if (over.on !== false) config.preset = { id: 'stacks', version: '1', items: PRESET_ITEMS, git: loadedStacks.preset.git };
+  return planChanges(root, config, facts, { version: '1.0.0', distDir, templatesDir, catalog, recordedFiles: over.files, recorded: over.recorded, ...(over.loaded === false ? {} : { preset: loadedStacks }) });
+}
+const PIDS = [...OWN, 'superpowers', 'impeccable'];
+
+test('the preset plan holds the core block, the skills and the settings keys', () => {
+  const root = makeRepo({ ...REPO, 'AGENTS.md': '# Mine\n' });
+  const p = planPreset(root, PIDS);
+  const agents = text(get(p.changes, 'AGENTS.md'));
+  expect(agents).toContain('<!-- harness:start -->');
+  expect(agents).toContain('<!-- harness:preset:start -->');
+  for (const rel of SKILLS) expect(get(p.changes, rel)).toMatchObject({ kind: 'create', item: 'preset:stacks' });
+  expect(get(p.changes, '.claude/skills/frontend-react-native/SKILL.md')).toBeUndefined();
+  const s = JSON.parse(text(get(p.changes, '.claude/settings.json')));
+  expect(s.attribution).toBe(false);
+  expect(s.env).toEqual({ DO_NOT_TRACK: '1', SUPERPOWERS_DISABLE_TELEMETRY: 'true' });
+  expect(p.changes.filter((c) => c.rel === '.claude/settings.json' || c.rel === 'AGENTS.md')).toHaveLength(2);
+});
+
+test('without a preset the plan has no preset files or keys', () => {
+  const root = makeRepo(REPO);
+  const p = planPreset(root, PIDS, { on: false, loaded: false });
+  expect(p.changes.some((c) => 'item' in c && String(c.item).startsWith('preset:'))).toBe(false);
+  expect(text(get(p.changes, 'AGENTS.md'))).not.toContain('harness:preset');
+  expect(JSON.parse(text(get(p.changes, '.claude/settings.json')))).not.toHaveProperty('attribution');
+});
+
+test('agents-md off with the preset on gives one AGENTS.md change with only the preset block', () => {
+  const root = makeRepo({ ...REPO, 'AGENTS.md': '# Mine\n', 'CLAUDE.md': '# C\n' });
+  const files = install(root, planPreset(root, PIDS).changes).files;
+  const p = planPreset(root, PIDS.filter((i) => i !== 'agents-md'), { off: ['agents-md'], files });
+  expect(p.changes.filter((c) => c.rel === 'AGENTS.md')).toHaveLength(1);
+  const after = text(get(p.changes, 'AGENTS.md'));
+  expect(after).not.toContain('<!-- harness:start -->');
+  expect(after).toContain('<!-- harness:preset:start -->');
+  expect(after.startsWith('# Mine\n')).toBe(true);
+  const claude = get(p.changes, 'CLAUDE.md');
+  expect(claude === undefined || text(claude).includes('@AGENTS.md')).toBe(true);
+  expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toContain('@AGENTS.md');
+});
+
+test('agents-md off and no AGENTS.md still writes the preset block and the CLAUDE.md import', () => {
+  const root = makeRepo(REPO);
+  const p = planPreset(root, PIDS.filter((i) => i !== 'agents-md'), { off: ['agents-md'] });
+  expect(text(get(p.changes, 'AGENTS.md'))).toContain('<!-- harness:preset:start -->');
+  expect(text(get(p.changes, 'AGENTS.md'))).not.toContain('<!-- harness:start -->');
+  expect(text(get(p.changes, 'CLAUDE.md'))).toContain('@AGENTS.md');
+});
+
+test('turning the preset off removes its skills, settings keys and AGENTS.md block', () => {
+  const root = makeRepo({ ...REPO, 'AGENTS.md': '# Mine\n' });
+  const m = install(root, planPreset(root, PIDS).changes);
+  const recorded = blocksOf(m, '.claude/settings.json');
+  const p = planPreset(root, PIDS, { on: false, loaded: false, files: m.files, recorded });
+  for (const rel of SKILLS) expect(get(p.changes, rel)?.kind).toBe('delete');
+  const s = JSON.parse(text(get(p.changes, '.claude/settings.json')));
+  expect(s).not.toHaveProperty('attribution');
+  expect(s).not.toHaveProperty('env');
+  expect(text(get(p.changes, 'AGENTS.md'))).not.toContain('harness:preset');
+  expect(p.changes.find((c) => c.rel === '.claude/settings.json')).toMatchObject({ dropped: expect.arrayContaining([expect.stringContaining('attribution')]) });
+});
+
+test('an edited preset skill is kept with a note when the preset goes', () => {
+  const root = makeRepo(REPO);
+  const files = install(root, planPreset(root, PIDS).changes).files;
+  writeFileSync(join(root, SKILLS[1]), 'mine\n');
+  const p = planPreset(root, PIDS, { on: false, loaded: false, files });
+  expect(get(p.changes, SKILLS[1])).toBeUndefined();
+  expect(p.notes.join('\n')).toContain(`\`${SKILLS[1]}\` was edited since harness wrote it`);
+});
+
+test('a recorded preset without its loaded folder is left alone', () => {
+  const root = makeRepo(REPO);
+  const files = install(root, planPreset(root, PIDS).changes).files;
+  const p = planPreset(root, PIDS, { loaded: false, files });
+  for (const rel of SKILLS) expect(get(p.changes, rel)).toBeUndefined();
+});
+
+test('a preset that is configured but not loaded leaves AGENTS.md, settings and skills alone', () => {
+  for (const agentsMd of [true, false]) {
+    // AGENTS.md absent at install: harness creates it, the case the old branch deletes.
+    const root = makeRepo(REPO);
+    const m = install(root, planPreset(root, PIDS).changes);
+    const ids = agentsMd ? PIDS : PIDS.filter((i) => i !== 'agents-md');
+    const p = planPreset(root, ids, { off: agentsMd ? [] : ['agents-md'], files: m.files, recorded: blocksOf(m, '.claude/settings.json'), loaded: false });
+    expect(p.changes.filter((c) => c.kind === 'delete')).toEqual([]);
+    for (const rel of ['AGENTS.md', '.claude/settings.json', ...SKILLS]) expect(get(p.changes, rel), `${rel} agents-md=${agentsMd}`).toBeUndefined();
+  }
 });

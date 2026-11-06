@@ -106,10 +106,26 @@ function countDiff(numstat: string, nameStatus: string, skip: string[]): Pick<Si
 
 const byLinesThenPath = (x: Size['top'][number], y: Size['top'][number]) => y.lines - x.lines || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0);
 
+/** A worktree measurement ignores `head`, so a head name is not validated there. */
+function badName(want: WantRef): string | null {
+  for (const k of want.worktree ? (['base'] as const) : (['base', 'head'] as const)) if (want[k] !== undefined && !plainBranch(want[k])) return `\`--${k}\` is not a plain branch name`;
+  return null;
+}
+
+/** The raw -z outputs (`others` is null outside a worktree measurement); a string is an error. */
+function fetchDiff(run: Run, range: string, worktree: boolean): { num: string; del: string; others: string | null } | string {
+  const q = ['-c', 'core.quotePath=false', 'diff'];
+  const num = run([...q, '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', range]);
+  const del = run([...q, '--name-status', '-z', '--diff-filter=D', '--no-ext-diff', range]);
+  if (num.status !== 0 || del.status !== 0) return 'git diff failed';
+  const others = worktree ? run(['ls-files', '--others', '--exclude-standard', '-z']) : null;
+  if (others && others.status !== 0) return 'git ls-files failed';
+  return { num: num.stdout, del: del.stdout, others: others ? others.stdout : null };
+}
+
 export function measure(root: string, want: WantRef, config: SizeConfig, opts: { git?: Git; now?: () => number; budgetMs?: number } = {}): Size | Unmeasured {
-  // A worktree measurement ignores `head`, so a head name is not validated there.
-  const names = want.worktree ? (['base'] as const) : (['base', 'head'] as const);
-  for (const k of names) if (want[k] !== undefined && !plainBranch(want[k])) return { error: `\`--${k}\` is not a plain branch name` };
+  const bad = badName(want);
+  if (bad) return { error: bad };
   const now = opts.now ?? Date.now;
   const deadline = now() + (opts.budgetMs ?? TOTAL_MS);
   const run = makeRun(opts.git ?? realGit(root), now, deadline);
@@ -121,15 +137,11 @@ export function measure(root: string, want: WantRef, config: SizeConfig, opts: {
     const fail = (error: string): Unmeasured => ({ error, base: b.shown });
     const target = resolveRange(run, want, b);
     if (typeof target === 'string') return fail(target);
-    const q = ['-c', 'core.quotePath=false', 'diff'];
-    const num = run([...q, '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', target.range]);
-    const del = run([...q, '--name-status', '-z', '--diff-filter=D', '--no-ext-diff', target.range]);
-    if (num.status !== 0 || del.status !== 0) return fail('git diff failed');
-    const others = want.worktree ? run(['ls-files', '--others', '--exclude-standard', '-z']) : null;
-    if (others && others.status !== 0) return fail('git ls-files failed');
+    const raw = fetchDiff(run, target.range, want.worktree === true);
+    if (typeof raw === 'string') return fail(raw);
     const skip = [...config.pr_size.exclude, ...config.multi_file_gate.generated];
-    const { top, excluded } = countDiff(num.stdout, del.stdout, skip);
-    if (others && !addUntracked(root, others.stdout, { skip, top, excluded }, () => now() >= deadline)) throw new Stop('git timed out');
+    const { top, excluded } = countDiff(raw.num, raw.del, skip);
+    if (raw.others !== null && !addUntracked(root, raw.others, { skip, top, excluded }, () => now() >= deadline)) throw new Stop('git timed out');
     top.sort(byLinesThenPath);
     return { base: b.shown, head: target.headName, lines: top.reduce((n, f) => n + f.lines, 0), files: top.length, top, excluded: excluded.sort() };
   } catch (e) {

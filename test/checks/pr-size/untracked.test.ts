@@ -12,6 +12,26 @@ vi.mock('node:fs', async (orig) => {
 
 const dir = () => mkdtempSync(join(tmpdir(), 'harness-untracked-'));
 
+describe('chunk boundaries (64 KB reads)', () => {
+  const CHUNK = 64 * 1024;
+  const count = (body: string) => {
+    const root = dir();
+    writeFileSync(join(root, 'f.txt'), body);
+    return untrackedLines(root, 'f.txt');
+  };
+  test('a newline on the last byte of a chunk, and one on the first byte of the next, count once each', () => {
+    expect(count('x'.repeat(CHUNK - 1) + '\n' + 'y')).toBe(2);
+    expect(count('x'.repeat(CHUNK) + '\n' + 'y\n')).toBe(2);
+  });
+  test('a \\r\\n pair split across the chunk edge counts as one line', () => {
+    expect(count('x'.repeat(CHUNK - 1) + '\r\nz\n')).toBe(2);
+  });
+  test('exactly one chunk with no final newline is 1 line; with a final newline it is 1 line too', () => {
+    expect(count('x'.repeat(CHUNK))).toBe(1);
+    expect(count('x'.repeat(CHUNK - 1) + '\n')).toBe(1);
+  });
+});
+
 describe('untrackedLines', () => {
   test('a file of exactly maxBytes is read; one byte more is 0 lines', () => {
     const root = dir();

@@ -67,7 +67,8 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   const changed = lastHarnessFilesChange(root);
   if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
   if (config.items.length) lines.push(...itemLines(config, deps.pluginList ?? pluginList));
-  if (config.preset) lines.push(`Preset: ${config.preset.id}`, ...m.files.filter((f) => f.item === `${PRESET_ITEM}${config.preset!.id}`).map((f) => `  ${f.rel}`));
+  const pr = config.preset;
+  if (pr) lines.push(`Preset: ${pr.id}`, ...m.files.filter((f) => f.item === `${PRESET_ITEM}${pr.id}`).map((f) => `  ${f.rel}`));
   lines.push('Last day');
   lines.forEach((l) => out(l));
   return stats(['--days', '1'], cli);

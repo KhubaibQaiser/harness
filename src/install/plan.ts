@@ -175,7 +175,7 @@ export function planChanges(
     put('AGENTS.md', agents.after, agents.blocks);
     const claude = mergeClaudeMd(read('CLAUDE.md'), true); // init always creates or merges AGENTS.md
     if (claude) put('CLAUDE.md', claude.after, claude.blocks);
-  } else {
+  } else if (!config.preset) { // a preset whose folder was not loaded leaves AGENTS.md as it is
     // Deselected: undo the merge as uninstall does (delete what harness created, restore the backup, else cut the blocks).
     for (const rel of ['AGENTS.md', 'CLAUDE.md']) {
       const e = entryOf(rel);

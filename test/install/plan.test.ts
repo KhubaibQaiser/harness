@@ -316,3 +316,15 @@ test('a recorded preset without its loaded folder is left alone', () => {
   const p = planPreset(root, PIDS, { loaded: false, files });
   for (const rel of SKILLS) expect(get(p.changes, rel)).toBeUndefined();
 });
+
+test('a preset that is configured but not loaded leaves AGENTS.md, settings and skills alone', () => {
+  for (const agentsMd of [true, false]) {
+    // AGENTS.md absent at install: harness creates it, the case the old branch deletes.
+    const root = makeRepo(REPO);
+    const m = install(root, planPreset(root, PIDS).changes);
+    const ids = agentsMd ? PIDS : PIDS.filter((i) => i !== 'agents-md');
+    const p = planPreset(root, ids, { off: agentsMd ? [] : ['agents-md'], files: m.files, recorded: blocksOf(m, '.claude/settings.json'), loaded: false });
+    expect(p.changes.filter((c) => c.kind === 'delete')).toEqual([]);
+    for (const rel of ['AGENTS.md', '.claude/settings.json', ...SKILLS]) expect(get(p.changes, rel), `${rel} agents-md=${agentsMd}`).toBeUndefined();
+  }
+});

@@ -32,6 +32,7 @@ export function mergeAgentsFile(before: string | null, o: { harness: boolean; re
   return { after: p.after, blocks: [...blocks, ...p.blocks] };
 }
 
+// Every recorded `set` block outside `sandbox` is the preset's today; a new writer of set blocks needs its own marker here.
 const isPresetSet = (b: string): boolean => { try { const s = JSON.parse(b)?.set; return Array.isArray(s) && s[0] !== 'sandbox'; } catch { return false; } };
 
 /** The preset's settings keys chained after `before`; undefined when there is nothing to add or drop. */

@@ -6,11 +6,11 @@ import { esc, type HarnessConfig, isObj } from '../../core/config.js';
 import { appendEvent } from '../../core/events.js';
 import { unquote, words } from '../../core/shell-words.js';
 import type { Check, Ctx } from '../../hooks/dispatch.js';
-import { isShell } from '../../hooks/edit-target.js';
+import { isEdit, isShell } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { type PrTarget, prTargets } from './detect.js';
 import { count, type Git, hookBudgetMs, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
-import { limits, type Progress, progressWarning, readProgress } from './progress.js';
+import { clearAllPending, limits, pauseAsk, type Progress, progressWarning, readProgress } from './progress.js';
 import { handRun } from './hand-run.js';
 import { postRaise, preRaise } from './raise.js';
 
@@ -209,7 +209,8 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   if (!ctx.config?.checks.prSize) return { kind: 'allow' };
   const event = ctx.input.hook_event_name;
   if (event === 'Stop' || (event === 'PostToolUse' && !isShell(tool_name))) return progressWarning(ctx, git, now);
-  if (!isShell(tool_name)) return { kind: 'allow' };
+  if (event === 'UserPromptSubmit') return clearAllPending(ctx.root);
+  if (!isShell(tool_name)) return event === 'PreToolUse' && isEdit(tool_name) ? pauseAsk(ctx, git, now) : { kind: 'allow' };
   const command = String(tool_input.command ?? '');
   const hand = event === 'PreToolUse' ? handRun(command, { root: ctx.root, env: ctx.env }) : null;
   if (hand) return { kind: 'deny', check: 'pr-size', reason: hand };
@@ -229,4 +230,4 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   return { kind: 'allow' };
 }
 
-export const prSize: Check = { name: 'pr-size', events: ['PreToolUse', 'PostToolUse', 'Stop'], failClosed: true, pure: false, run: (ctx) => decidePrSize(ctx) };
+export const prSize: Check = { name: 'pr-size', events: ['PreToolUse', 'PostToolUse', 'Stop', 'UserPromptSubmit'], failClosed: true, pure: false, run: (ctx) => decidePrSize(ctx) };

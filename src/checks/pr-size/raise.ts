@@ -121,9 +121,9 @@ export function postRaise(ctx: Ctx, command: string, targets: PrTarget[], cur: (
 }
 
 function recordRaise(ctx: Ctx, r: Limits, branch: string, ts: string): void {
-  // The pause task (Task 12) clears this branch's `pending` here too (spec §14.5: a raise clears it).
+  // A raise also answers this branch's pause, so `pending` is dropped (spec §14.5).
   const all = readProgress(ctx.root);
-  const prev = Object.hasOwn(all, branch) ? all[branch]! : { base: ctx.config.stop.base_ref, fired: [], lines: 0, files: 0, ts };
+  const { pending: _, ...prev } = Object.hasOwn(all, branch) ? all[branch]! : { base: ctx.config.stop.base_ref, fired: [], lines: 0, files: 0, ts };
   writeProgress(ctx.root, branch, { ...prev, raise: { lines: r.lines, files: r.files, ts } });
   appendEvent(ctx.root, { ts, session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-raised', reason: `${esc(branch)} ${count(r.lines, 'line')} ${count(r.files, 'file')}` });
 }

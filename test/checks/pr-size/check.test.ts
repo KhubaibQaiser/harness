@@ -196,7 +196,7 @@ describe('wiring', () => {
   test('registered second, on by default, fail-closed and not pure (PostToolUse writes pr-branches.json)', () => {
     expect(registry[1]!.name).toBe('pr-size');
     expect(defaults().checks.prSize).toBe(true);
-    expect(prSize).toMatchObject({ name: 'pr-size', events: ['PreToolUse', 'PostToolUse', 'Stop'], failClosed: true, pure: false });
+    expect(prSize).toMatchObject({ name: 'pr-size', events: ['PreToolUse', 'PostToolUse', 'Stop', 'UserPromptSubmit'], failClosed: true, pure: false });
   });
 });
 

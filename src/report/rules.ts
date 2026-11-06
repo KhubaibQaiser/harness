@@ -18,7 +18,8 @@ export const RULES: RuleDef[] = [
   def('fix-everything', 'judgement', [], never),
   def('small-prs', 'mechanical', ['pr-size'], (c) => c.checks.prSize, ['PRs from the web UI or GitHub MCP (PR-size §2 "Out")']),
   def('readme-per-pr', 'heuristic', [], never),
-  def('paid-ok', 'partial', ['guard'], (c) => c.checks.guard, ['any paid command not in the list']),
+  // events carry only check and decision, no rule id, so paid guard events can't be told from other guard events
+  def('paid-ok', 'partial', [], (c) => c.checks.guard, ['any paid command not in the list']),
   def('tdd', 'mechanical', TDD_CHECKS, (c) => c.checks.tdd && c.tdd.paths.length > 0, ['`harness tdd off` (a person only)', '`tdd.exempt` paths']),
   def('lean-context', 'measured', [], never, ['not enforced at run time']),
   def('plain-communication', 'judgement', [], never),

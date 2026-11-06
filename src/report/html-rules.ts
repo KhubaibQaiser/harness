@@ -18,7 +18,7 @@ const MATRIX_HEAD = ['Rule', 'Kind', 'Enforced', 'Fires', 'Denies', 'Asks', 'Blo
 function matrix(rows: RuleRow[]): string {
   const cells = rows.map((r) => [NAMES[r.def.id] ?? r.def.id, r.def.kind, r.enforced, ...(r.def.checks.length === 0 ? ['-', '-', '-', '-', '-'] : [r.fires, r.denies, r.asks, r.blocks, r.probableFalse]), r.windows, r.def.bypasses.join('; ') || '-']);
   return `<div id="rules-matrix"><h3>Coverage matrix</h3><p>${h(enforcedLine(rows))}</p>${table(MATRIX_HEAD, cells)}`
-    + '<p class="mute">Computed from config and the event log. "no" means no check is on; it never means followed.</p></div>';
+    + '<p class="mute">Computed from config and the event log. "no" means no check is on; it never means followed. "-" means no logged check isolates the rule (the guard also logs events that are not paid actions).</p></div>';
 }
 
 const windowBlock = (w: Window): string =>

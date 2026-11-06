@@ -45,10 +45,15 @@ describe('rule coverage matrix', () => {
     expect(rowFor({ guard: false, stop: true })).toBe('partial');
     expect(rowFor({ guard: true, stop: false })).toBe('partial');
   });
-  it('counts guard events for paid-ok and stop events for no-invented-data', () => {
+  it('paid-ok shows "-" counts: the event log cannot tell paid guard events apart; stop events still count for no-invented-data', () => {
     const rows = ruleRows(defaults(), gates({ 'guard deny': 2, 'stop block': 3 }), win());
-    expect(rows.find((r) => r.def.id === 'paid-ok')!.denies).toBe(2);
+    expect(rows.find((r) => r.def.id === 'paid-ok')!.def.checks).toEqual([]);
+    expect(rows.find((r) => r.def.id === 'paid-ok')!.fires).toBe(0);
     expect(rows.find((r) => r.def.id === 'no-invented-data')!.blocks).toBe(3);
+    const html = renderReport(data({ rules: rows }));
+    const row = html.slice(html.indexOf('<td>No paid actions without an OK</td>')).split('</tr>')[0]!;
+    expect(row).toContain('<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>');
+    expect(html).toContain('the guard also logs events that are not paid actions');
   });
   it('the page shows "-" counts where no check is logged, and 0 where one is', () => {
     const html = renderReport(data({ rules: ruleRows(defaults(), gates(), win()) }));

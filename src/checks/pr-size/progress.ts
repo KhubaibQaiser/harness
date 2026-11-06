@@ -19,8 +19,8 @@ type Lim = { target: number; maxLines: number; maxFiles: number };
 const JSON_INDENT = 2;
 const GIT_CALL_MS = 2000;
 // §14.4's raise ranges (the section 7 maximums).
-const RAISE_MAX_LINES = 100000;
-const RAISE_MAX_FILES = 10000;
+export const RAISE_MAX_LINES = 100000;
+export const RAISE_MAX_FILES = 10000;
 // One entry per branch, never pruned; a file past this reads as empty rather than slowing every counted edit.
 const MAX_BYTES = 1_000_000;
 const ALLOW: Decision = { kind: 'allow' };
@@ -119,7 +119,7 @@ function measureBranch(ctx: Ctx, git: Git, now: () => number): { branch: string;
 }
 
 /** A raise outside the §14.4 ranges (a hand-edited file, say) is ignored, so it can't make every size "over the max". */
-function limits(c: Ctx['config']['pr_size'], raise: Progress['raise']): Lim {
+export function limits(c: Ctx['config']['pr_size'], raise: Progress['raise']): Lim {
   const ok = raise && raise.lines > c.max_lines && raise.lines <= RAISE_MAX_LINES && raise.files >= c.max_files && raise.files <= RAISE_MAX_FILES;
   return { target: c.target_lines, maxLines: ok ? raise.lines : c.max_lines, maxFiles: ok ? raise.files : c.max_files };
 }

@@ -17,6 +17,16 @@ description: Splits a large change into stacked PRs. Use before opening a PR, or
 6. Open each PR with `gh pr create --base <previous branch>`. The body says `Stacked on #N` and lists any multi-file `allow-log` files from `.harness/logs/events.jsonl`.
 7. A piece that can't go under the limit (a generated migration, a large rename): say why and let the person answer the ask. Unattended, stop and report; don't open it.
 
+## When a pr-size warning sent you here
+
+1. Measure the working tree: `node .harness/hooks/dispatch.mjs --pr-size --worktree`.
+2. Group every changed file, uncommitted ones included, into a plan with the split rules in step 3.
+3. Ask the person with AskUserQuestion, offering `Split now`, `Keep going` and `Raise the limit for this branch`:
+   - `Split now`: follow the steps above from "Show the plan" (step 4).
+   - `Keep going`: change nothing.
+   - `Raise the limit for this branch`: run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>`. Its approval dialog is the person's real yes.
+4. Unattended: don't ask. Keep going, and split before opening any PR.
+
 ## Rules
 
 - Never force push.

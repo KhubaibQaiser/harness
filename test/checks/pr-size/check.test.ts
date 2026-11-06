@@ -2,6 +2,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { decidePrSize, prSize, readRecords, RECORD, writeRecord } from '../../../src/checks/pr-size/check.js';
+import { PROGRESS, readProgress } from '../../../src/checks/pr-size/progress.js';
+import { raiseLimits } from '../../../src/checks/pr-size/raise.js';
 import { defaults } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
 import { registry } from '../../../src/hooks/dispatch.js';
@@ -195,5 +197,59 @@ describe('wiring', () => {
     expect(registry[1]!.name).toBe('pr-size');
     expect(defaults().checks.prSize).toBe(true);
     expect(prSize).toMatchObject({ name: 'pr-size', events: ['PreToolUse', 'PostToolUse', 'Stop'], failClosed: true, pure: false });
+  });
+});
+
+describe('raise (spec §14.4)', () => {
+  const RAISE = 'node .harness/hooks/dispatch.mjs --pr-size-raise --lines 600 --files 30';
+  const raised = (root: string) => readEvents(root).filter((e) => e.decision === 'pr-size-raised');
+  test('raiseLimits checks the ranges', () => {
+    const c = defaults().pr_size;
+    expect(raiseLimits({ lines: '400' }, c)).toEqual({ error: '--lines must be an integer from 401 to 100000' });
+    expect(raiseLimits({}, c)).toEqual({ error: '--lines must be an integer from 401 to 100000' });
+    expect(raiseLimits({ lines: '600' }, c)).toEqual({ lines: 600, files: 20 });
+    expect(raiseLimits({ lines: '600', files: '19' }, c)).toEqual({ error: '--files must be an integer from 20 to 10000' });
+    expect(raiseLimits({ lines: '100001' }, c)).toHaveProperty('error');
+    expect(raiseLimits({ lines: '6e2' }, c)).toHaveProperty('error');
+    expect(raiseLimits({ lines: '600', files: '10001' }, c)).toHaveProperty('error');
+  });
+
+  test('attended asks with the exact copy; unattended denies', () => {
+    const root = repo();
+    expect(decidePrSize(ctx(root, RAISE))).toEqual({ kind: 'ask', check: 'pr-size', reason: 'Confirm: raise the pull request size limit for `feat` to 600 lines and 30 files. Harness then warns again only above that.' });
+    expect(decidePrSize(ctx(root, RAISE, { unattended: true }))).toEqual({ kind: 'deny', check: 'pr-size', reason: 'Blocked by pr-size: only a person can raise the size limit, and no person is here to approve it.' });
+  });
+
+  test('invalid values, a detached HEAD or the hidden $X form allow; PostToolUse then records nothing', async () => {
+    const root = repo();
+    for (const c of ['node .harness/hooks/dispatch.mjs --pr-size-raise --lines 400', '$X --pr-size-raise --lines 600']) {
+      expect(decidePrSize(ctx(root, c))).toEqual({ kind: 'allow' });
+      await send(root, 'PostToolUse', c);
+    }
+    git(root, 'checkout', '-q', '--detach');
+    expect(decidePrSize(ctx(root, RAISE))).toEqual({ kind: 'allow' });
+    await send(root, 'PostToolUse', RAISE);
+    expect(existsSync(join(root, PROGRESS))).toBe(false);
+    expect(raised(root)).toEqual([]);
+  });
+
+  test('after an allowed run, pr-progress.json has the raise and one pr-size-raised event', async () => {
+    const root = repo();
+    expect(await send(root, 'PostToolUse', RAISE)).toBe('');
+    expect(readProgress(root).feat?.raise).toEqual({ lines: 600, files: 30, ts: expect.any(String) });
+    expect(raised(root)).toEqual([expect.objectContaining({ check: 'pr-size', reason: 'feat 600 lines 30 files' })]);
+  });
+
+  test('PR time: a create on a raised branch allows at 500 and asks at 601 with the raised limit; a raised push too', async () => {
+    const root = repo({ 'a.ts': lines(500) });
+    await send(root, 'PostToolUse', RAISE);
+    expect(decidePrSize(ctx(root, 'gh pr create'))).toEqual({ kind: 'allow' });
+    commit(root, { 'b.ts': lines(101) });
+    expect(reason(decidePrSize(ctx(root, 'gh pr create')))).toMatch(/^Confirm: this pull request is 601 changed lines in 2 files against `origin\/main`, over the limit of 600 lines or 30 files \(aim for 200\)\./);
+    writeRecord(root, 'feat', { base: 'origin/main', lines: 500, files: 1, ts: 't' });
+    expect(decidePrSize(ctx(root, 'git push')).kind).toBe('ask');
+    git(root, 'reset', '-q', '--hard', 'HEAD~1');
+    commit(root, { 'b.ts': lines(50) });
+    expect(decidePrSize(ctx(root, 'git push'))).toEqual({ kind: 'allow' });
   });
 });

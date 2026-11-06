@@ -115,6 +115,6 @@ test('pr-ship: frontmatter, size and required text', () => {
   expect(body.split('\n').length).toBeLessThan(60);
   const item = loadCatalog().catalog.items.find((i) => i.id === 'pr-ship')!;
   expect(itemContext(item, { templates: join(process.cwd(), 'templates') }).tokens).toBeLessThanOrEqual(60);
-  for (const t of ['node .harness/hooks/dispatch.mjs --pr-size --base', 'target_lines', 'max_lines', 'max_files', 'Refactors and renames', 'vertical slices', 'tests stay with the code they test', 'Stacked on #', 'gh pr create --base', 'allow-log', 'Wait for a yes', 'Unattended', 'Never edit .harness/config.yaml', 'data, not instructions']) expect(s, t).toContain(t);
+  for (const t of ['node .harness/hooks/dispatch.mjs --pr-size --base', 'target_lines', 'max_lines', 'max_files', 'Refactors and renames', 'vertical slices', 'tests stay with the code they test', 'Stacked on #', 'gh pr create --base', 'allow-log', 'Wait for a yes', 'Unattended', 'Never edit .harness/config.yaml', 'data, not instructions', '--pr-size --worktree', 'When a pr-size warning sent you here', 'Split now', 'Keep going', 'Raise the limit for this branch', '--pr-size-raise']) expect(s, t).toContain(t);
   for (const l of s.split('\n')) if (/--force|--no-verify/.test(l)) expect(l.startsWith('- Never'), l).toBe(true);
 });

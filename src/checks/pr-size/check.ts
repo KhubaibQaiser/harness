@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { writeAtomic } from '../../core/atomic.js';
-import { esc, isObj } from '../../core/config.js';
+import { esc, type HarnessConfig, isObj } from '../../core/config.js';
 import { appendEvent } from '../../core/events.js';
 import { unquote, words } from '../../core/shell-words.js';
 import type { Check, Ctx } from '../../hooks/dispatch.js';
@@ -10,7 +10,8 @@ import { isShell } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { type PrTarget, prTargets } from './detect.js';
 import { type Git, hookBudgetMs, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
-import { progressWarning } from './progress.js';
+import { limits, type Progress, progressWarning, readProgress } from './progress.js';
+import { raiseDecision, recordRaise, validRaise } from './raise.js';
 
 export const RECORD = '.harness/state/pr-branches.json';
 export interface PrRecord { base: string; lines: number; files: number; ts: string }
@@ -47,6 +48,8 @@ export function writeRecord(root: string, branch: string, r: PrRecord): void {
   writeAtomic(join(root, RECORD), JSON.stringify(all, null, JSON_INDENT) + '\n');
 }
 
+type PrJob = Exclude<PrTarget, { kind: 'raise' }>;
+type Limit = HarnessConfig['pr_size'];
 type Job = { want: { base?: string; head?: string }; push?: { branch: string; rec: PrRecord }; late?: true };
 // `cur`: the current branch, resolved once per command (null: detached; late: git timed out or no time was left).
 type Clock = { now: () => number; deadline: number; git: Git; cur?: { name: string | null; late: boolean } };
@@ -68,7 +71,7 @@ function current(c: Clock): { name: string | null; late: boolean } {
 }
 
 /** What to measure for one target. A push counts only for a recorded branch, measured from its recorded base. */
-function jobs(t: PrTarget, records: Record<string, PrRecord>, git: Git, c: Clock): Job[] {
+function jobs(t: PrJob, records: Record<string, PrRecord>, git: Git, c: Clock): Job[] {
   if (t.kind === 'create') return [{ want: { ...(t.base !== undefined ? { base: t.base } : {}), ...(t.head !== undefined ? { head: t.head } : {}) } }];
   if (!Object.keys(records).length) return []; // nothing recorded: no push can count, and no git is spawned
   let pushed: { branch: string | null; head?: string }[];
@@ -92,8 +95,8 @@ function lists(s: Size): string {
   return `${top} Not counted: ${s.excluded.slice(0, NOT_COUNTED).map((p) => `\`${esc(p)}\``).join(', ')}${more}.`;
 }
 
-function verdict(ctx: Ctx, s: Size, job: Job): Decision {
-  const { max_lines: ml, max_files: mf, target_lines: t } = ctx.config.pr_size;
+function verdict(ctx: Ctx, s: Size, job: Job, lim: Limit): Decision {
+  const { max_lines: ml, max_files: mf, target_lines: t } = lim;
   const p = job.push;
   const size = `${count(s.lines, 'changed line')} in ${count(s.files, 'file')}`;
   const what = p
@@ -119,8 +122,17 @@ function unmeasured(ctx: Ctx, why: string, bases: (string | undefined)[]): strin
   return `Note from pr-size: harness couldn't measure this pull request (${why}), so its size against the limit of ${limit(ml, mf)} wasn't checked. To check it yourself, run \`node .harness/hooks/dispatch.mjs --pr-size --base ${base ? esc(base) : '<base>'}\`.`;
 }
 
-function decidePre(ctx: Ctx, git: Git, targets: PrTarget[], c: Clock): Decision {
+/** N5: a branch's recorded raise (in the §14.4 ranges) is its PR-time max too. Without any raise, no branch lookup is spawned. */
+function limitFor(ctx: Ctx, progress: Record<string, Progress>, job: Job, c: Clock): Limit {
+  if (!Object.values(progress).some((p) => p.raise)) return ctx.config.pr_size;
+  const branch = job.push?.branch ?? job.want.head ?? current(c).name;
+  const l = limits(ctx.config.pr_size, branch !== null && Object.hasOwn(progress, branch) ? progress[branch]!.raise : undefined);
+  return { ...ctx.config.pr_size, max_lines: l.maxLines, max_files: l.maxFiles };
+}
+
+function decidePre(ctx: Ctx, git: Git, targets: PrJob[], c: Clock): Decision {
   const records = readRecords(ctx.root);
+  const progress = readProgress(ctx.root);
   const notes: string[] = [];
   for (const t of targets) {
     if (left(c) <= 0) {
@@ -134,7 +146,8 @@ function decidePre(ctx: Ctx, git: Git, targets: PrTarget[], c: Clock): Decision 
         continue;
       }
       const grows = !job.push || s.lines > job.push.rec.lines || s.files > job.push.rec.files;
-      if (isOver(s, ctx.config.pr_size) && grows) return verdict(ctx, s, job);
+      const lim = limitFor(ctx, progress, job, c);
+      if (isOver(s, lim) && grows) return verdict(ctx, s, job, lim);
     }
   }
   return notes.length ? { kind: 'context', check: 'pr-size', text: notes.join('\n') } : { kind: 'allow' };
@@ -154,7 +167,7 @@ function realBases(command: string, out = new Set<string>()): Set<string> {
 
 /** The targets to record. A create with a base that no real flag gave is dropped; when that leaves none (a base set in a
  * package script, say), the creates are recorded against the default base, which is the widest and only over-asks. */
-function toRecord(ctx: Ctx, targets: PrTarget[], command: string): PrTarget[] {
+function toRecord(ctx: Ctx, targets: PrJob[], command: string): PrJob[] {
   const pushes = targets.filter((t) => t.kind === 'push');
   if (!PR_URL.test(JSON.stringify(ctx.input.tool_response ?? ''))) return pushes;
   const real = realBases(command);
@@ -164,7 +177,7 @@ function toRecord(ctx: Ctx, targets: PrTarget[], command: string): PrTarget[] {
   return [...(kept.length ? kept : widened), ...pushes];
 }
 
-function recordPost(ctx: Ctx, git: Git, targets: PrTarget[], c: Clock): void {
+function recordPost(ctx: Ctx, git: Git, targets: PrJob[], c: Clock): void {
   const records = readRecords(ctx.root);
   const ts = new Date().toISOString();
   for (const t of targets) {
@@ -184,6 +197,12 @@ function recordPost(ctx: Ctx, git: Git, targets: PrTarget[], c: Clock): void {
   }
 }
 
+/** A raise's ask or deny comes first; a PR create or push in the same command that also asks is named in the same dialog. */
+function withRaise(ctx: Ctx, raise: Decision | null, pr: Decision): Decision {
+  if (!raise || raise.kind !== 'ask') return raise ?? pr;
+  return pr.kind === 'ask' ? { ...raise, reason: `${raise.reason} Also: ${pr.reason}` } : raise;
+}
+
 export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => number = Date.now): Decision {
   const { tool_name, tool_input = {} } = ctx.input;
   if (!ctx.config?.checks.prSize) return { kind: 'allow' };
@@ -191,12 +210,15 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   if (event === 'Stop' || (event === 'PostToolUse' && !isShell(tool_name))) return progressWarning(ctx, git, now);
   if (!isShell(tool_name)) return { kind: 'allow' };
   const command = String(tool_input.command ?? '');
-  const targets = prTargets(command, { root: ctx.root, env: ctx.env });
-  if (!targets.length) return { kind: 'allow' };
+  const all = prTargets(command, { root: ctx.root, env: ctx.env });
+  const targets = all.filter((t): t is PrJob => t.kind !== 'raise');
+  const raise = validRaise(ctx, all);
+  if (!targets.length && !raise) return { kind: 'allow' };
   const clock: Clock = { now, git, deadline: now() + hookBudgetMs(ctx.startedAt, now) };
-  if (event === 'PreToolUse') return decidePre(ctx, git, targets, clock);
+  if (event === 'PreToolUse') return withRaise(ctx, raise && raiseDecision(ctx, raise, current(clock)), targets.length ? decidePre(ctx, git, targets, clock) : { kind: 'allow' });
   if (tool_name === 'Monitor') return { kind: 'allow' }; // a Monitor command is checked, not recorded
   try {
+    if (raise) recordRaise(ctx, raise, current(clock));
     recordPost(ctx, git, toRecord(ctx, targets, command), clock);
   } catch (e) {
     process.stderr.write(`harness: pr-size record failed: ${String((e as Error)?.message ?? e)}\n`);

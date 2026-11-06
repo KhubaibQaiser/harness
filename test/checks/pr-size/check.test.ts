@@ -190,9 +190,9 @@ describe('latency and review focus', () => {
 });
 
 describe('wiring', () => {
-  test('registered second, on by default, fail-closed and pure', () => {
+  test('registered second, on by default, fail-closed and not pure (PostToolUse writes pr-branches.json)', () => {
     expect(registry[1]!.name).toBe('pr-size');
     expect(defaults().checks.prSize).toBe(true);
-    expect(prSize).toMatchObject({ name: 'pr-size', events: ['PreToolUse', 'PostToolUse'], failClosed: true, pure: true });
+    expect(prSize).toMatchObject({ name: 'pr-size', events: ['PreToolUse', 'PostToolUse'], failClosed: true, pure: false });
   });
 });

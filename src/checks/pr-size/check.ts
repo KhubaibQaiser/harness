@@ -9,7 +9,7 @@ import type { Check, Ctx } from '../../hooks/dispatch.js';
 import { isShell } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { type PrTarget, prTargets } from './detect.js';
-import { currentBranch, type Git, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
+import { type Git, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
 
 export const RECORD = '.harness/state/pr-branches.json';
 export interface PrRecord { base: string; lines: number; files: number; ts: string }
@@ -18,8 +18,10 @@ const LARGEST = 3;
 const NOT_COUNTED = 5;
 const REF_TIMEOUT_MS = 2000;
 const JSON_INDENT = 2;
-// One budget for every target in a command, inside the 10 s hook timeout (measure's own default is the same 6 s).
+// One budget for every target in a command (measure's own default is the same 6 s), and never past HOOK_BUDGET_MS from the
+// hook's start, so the whole hook (the guard's npm lookup runs first) stays inside the 10 s hook timeout with a margin.
 const BUDGET_MS = 6000;
+const HOOK_BUDGET_MS = 9000;
 const OUT_OF_TIME = 'the time budget for this command ran out';
 // gh pr create prints the new PR's URL; without one, the create failed (a failure hidden by `|| true` still reaches PostToolUse).
 const PR_URL = /\/pull\/\d+/;
@@ -48,8 +50,9 @@ export function writeRecord(root: string, branch: string, r: PrRecord): void {
   writeAtomic(join(root, RECORD), JSON.stringify(all, null, JSON_INDENT) + '\n');
 }
 
-type Job = { want: { base?: string; head?: string }; push?: { branch: string; rec: PrRecord } };
-type Clock = { now: () => number; deadline: number };
+type Job = { want: { base?: string; head?: string }; push?: { branch: string; rec: PrRecord }; late?: true };
+// `cur`: the current branch, resolved once per command (null: detached; late: git timed out or no time was left).
+type Clock = { now: () => number; deadline: number; git: Git; cur?: { name: string | null; late: boolean } };
 const left = (c: Clock) => c.deadline - c.now();
 const count = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const limit = (ml: number, mf: number) => `${count(ml, 'line')} or ${count(mf, 'file')}`;
@@ -58,15 +61,27 @@ const limit = (ml: number, mf: number) => `${count(ml, 'line')} or ${count(mf, '
 const refExists = (git: Git, name: string, c: Clock) => git(['show-ref', '--verify', '--quiet', `refs/heads/${name}`], Math.min(REF_TIMEOUT_MS, Math.max(1, left(c)))).status !== 1;
 const isHead = (r: string) => r === 'HEAD' || r === '@';
 
+function current(c: Clock): { name: string | null; late: boolean } {
+  if (!c.cur) {
+    const ms = Math.min(REF_TIMEOUT_MS, left(c));
+    const r = ms > 0 ? c.git(['symbolic-ref', '--quiet', '--short', 'HEAD'], ms) : null;
+    c.cur = !r || r.error ? { name: null, late: true } : { name: r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null, late: false };
+  }
+  return c.cur;
+}
+
 /** What to measure for one target. A push counts only for a recorded branch, measured from its recorded base. */
 function jobs(t: PrTarget, records: Record<string, PrRecord>, git: Git, c: Clock): Job[] {
   if (t.kind === 'create') return [{ want: { ...(t.base !== undefined ? { base: t.base } : {}), ...(t.head !== undefined ? { head: t.head } : {}) } }];
+  if (!Object.keys(records).length) return []; // nothing recorded: no push can count, and no git is spawned
   let pushed: { branch: string | null; head?: string }[];
+  const needsCurrent = !t.all && (!t.refs.length || t.refs.some((r) => isHead(r.dst)));
+  if (needsCurrent && current(c).late) return [{ want: {}, late: true }]; // noted at PreToolUse, never skipped in silence
   if (t.all) pushed = Object.keys(records).filter((b) => refExists(git, b, c)).map((b) => ({ branch: b, head: b }));
   else if (!t.refs.length) {
-    const b = currentBranch(git);
+    const b = current(c).name;
     pushed = [{ branch: b, ...(b ? { head: b } : {}) }];
-  } else pushed = t.refs.map((r) => ({ branch: isHead(r.dst) ? currentBranch(git) : r.dst, ...(isHead(r.src) ? {} : { head: r.src }) }));
+  } else pushed = t.refs.map((r) => ({ branch: isHead(r.dst) ? current(c).name : r.dst, ...(isHead(r.src) ? {} : { head: r.src }) }));
   return pushed.flatMap((p) => {
     const rec = p.branch !== null && Object.hasOwn(records, p.branch) ? records[p.branch]! : null;
     return rec ? [{ want: { base: rec.base, ...(p.head !== undefined ? { head: p.head } : {}) }, push: { branch: p.branch!, rec } }] : [];
@@ -116,7 +131,7 @@ function decidePre(ctx: Ctx, git: Git, targets: PrTarget[], c: Clock): Decision 
       continue;
     }
     for (const job of jobs(t, records, git, c)) {
-      const s = left(c) > 0 ? measure(ctx.root, job.want, ctx.config, { git, now: c.now, budgetMs: left(c) }) : { error: OUT_OF_TIME };
+      const s = job.late ? { error: 'git timed out' } : left(c) > 0 ? measure(ctx.root, job.want, ctx.config, { git, now: c.now, budgetMs: left(c) }) : { error: OUT_OF_TIME };
       if ('error' in s) {
         notes.push(unmeasured(ctx, s.error, [s.base, job.want.base]));
         continue;
@@ -157,9 +172,10 @@ function recordPost(ctx: Ctx, git: Git, targets: PrTarget[], c: Clock): void {
   const ts = new Date().toISOString();
   for (const t of targets) {
     for (const job of jobs(t, records, git, c)) {
-      const branch = job.push?.branch ?? job.want.head ?? currentBranch(git);
+      if (job.late || left(c) <= 0) continue;
+      const branch = job.push?.branch ?? job.want.head ?? current(c).name;
       // A detached HEAD records nothing; nor does a create against its own branch, which would reset the record.
-      if (!branch || !plainBranch(branch) || (!job.push && job.want.base === branch) || left(c) <= 0) continue;
+      if (!branch || !plainBranch(branch) || (!job.push && job.want.base === branch)) continue;
       const s = measure(ctx.root, job.want, ctx.config, { git, now: c.now, budgetMs: left(c) });
       if ('error' in s) {
         if (job.push || Object.hasOwn(records, branch)) continue;
@@ -177,7 +193,7 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   const command = String(tool_input.command ?? '');
   const targets = prTargets(command, { root: ctx.root, env: ctx.env });
   if (!targets.length) return { kind: 'allow' };
-  const clock = { now, deadline: now() + BUDGET_MS };
+  const clock: Clock = { now, git, deadline: Math.min(now() + BUDGET_MS, (ctx.startedAt ?? now()) + HOOK_BUDGET_MS) };
   if (ctx.input.hook_event_name === 'PreToolUse') return decidePre(ctx, git, targets, clock);
   if (tool_name === 'Monitor') return { kind: 'allow' }; // a Monitor command is checked, not recorded
   try {
@@ -188,4 +204,4 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   return { kind: 'allow' };
 }
 
-export const prSize: Check = { name: 'pr-size', events: ['PreToolUse', 'PostToolUse'], failClosed: true, pure: true, run: (ctx) => decidePrSize(ctx) };
+export const prSize: Check = { name: 'pr-size', events: ['PreToolUse', 'PostToolUse'], failClosed: true, pure: false, run: (ctx) => decidePrSize(ctx) };

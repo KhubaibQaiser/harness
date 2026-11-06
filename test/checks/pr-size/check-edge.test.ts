@@ -2,10 +2,11 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { decidePrSize, readRecords, RECORD, writeRecord } from '../../../src/checks/pr-size/check.js';
+import { guard } from '../../../src/checks/guard.js';
+import { decidePrSize, prSize, readRecords, RECORD, writeRecord } from '../../../src/checks/pr-size/check.js';
 import type { Git } from '../../../src/checks/pr-size/measure.js';
 import { readEvents } from '../../../src/core/events.js';
-import { commit, ctx, git, lines, repo } from './helpers.js';
+import { commit, ctx, fakeGit, git, lines, repo, send } from './helpers.js';
 
 const over = () => {
   const root = repo({ 'a.ts': lines(500) });
@@ -37,6 +38,40 @@ describe('one time budget for the whole command', () => {
     expect(text).toContain('--base b`');
     expect(text).toContain('--base c`');
     expect(readEvents(root).filter((e) => e.decision === 'pr-size-unmeasured')).toHaveLength(2);
+  });
+});
+
+describe('the hook budget', () => {
+  test('a push with nothing recorded spawns no git', () => {
+    const f = fakeGit();
+    expect(decidePrSize(ctx(repo(), 'git push origin HEAD'), f.g)).toEqual({ kind: 'allow' });
+    expect(f.calls).toEqual([]);
+  });
+
+  test('HEAD @ HEAD @ HEAD resolves the current branch once, inside the budget, and notes it', () => {
+    let t = 0;
+    const g: Git = (_, timeout) => ((t += timeout), { status: null, stdout: '', error: Object.assign(new Error('t'), { code: 'ETIMEDOUT' }) });
+    const d = decidePrSize(ctx(over(), 'git push origin HEAD @ HEAD @ HEAD'), g, () => t);
+    expect(t).toBeLessThanOrEqual(6000);
+    expect(d).toMatchObject({ kind: 'context', text: expect.stringContaining('(git timed out)') });
+  });
+
+  test('a hook already 8 s old leaves pr-size about 1 s, and the target is noted', () => {
+    let t = 100_000;
+    const spent: number[] = [];
+    const g: Git = (args, timeout) => (spent.push(timeout), (t += timeout), { status: 0, stdout: args.includes('diff') ? '' : 'abc\n' });
+    const c = { ...ctx(repo(), 'gh pr create --base a'), startedAt: 92_000 };
+    const d = decidePrSize(c, g, () => t);
+    expect(spent.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1000);
+    expect(d.kind).toBe('context');
+  });
+
+  test('after a guard deny, pr-size measures nothing (not pure)', async () => {
+    const root = over();
+    const f = fakeGit();
+    const out = await send(root, 'PreToolUse', 'git push origin feat && git push origin main', {}, [guard, { ...prSize, run: (c) => decidePrSize(c, f.g) }]);
+    expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(f.calls).toEqual([]);
   });
 });
 

@@ -78,6 +78,8 @@ describe('fix round 1', () => {
       expect(pushes(c), c).toEqual([]);
     expect(pushes('git push origin feat --tags')[0]).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
     expect(pushes('git push origin feat :old')[0]).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
+    expect(pushes('git push origin x/refs/tags/y')[0]).toMatchObject({ refs: [{ src: 'x/refs/tags/y', dst: 'x/refs/tags/y' }] });
+    expect(pushes('git push origin HEAD:x/refs/tags/y')[0]).toMatchObject({ refs: [{ src: 'HEAD', dst: 'x/refs/tags/y' }] });
   });
   test('Monitor and PowerShell are shell tools whose text is read with the given Where', () => {
     expect(isShell('Monitor')).toBe(true);

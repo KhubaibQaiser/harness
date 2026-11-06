@@ -55,7 +55,7 @@ function pushTarget(args: string[]): PrTarget | null {
       const [raw, ...rest] = a.replace(/^\+/, '').split(':');
       const src = raw.replace(/^refs\/heads\//, '');
       const dst = rest.join(':').replace(/^refs\/heads\//, '') || src;
-      if (src && !`${raw}:${dst}`.includes('refs/tags/')) refs.push({ src, dst }); // an empty source deletes
+      if (src && !raw.startsWith('refs/tags/') && !dst.startsWith('refs/tags/')) refs.push({ src, dst }); // an empty source deletes
     }
   }
   if (del || (!all && !refs.length && (refspecs > 0 || tags))) return null;

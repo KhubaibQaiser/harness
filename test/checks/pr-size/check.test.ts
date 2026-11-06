@@ -1,7 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { decidePrSize, prSize, readRecords, RECORD, writeRecord } from '../../../src/checks/pr-size/check.js';
+import { decidePrSize, prSize } from '../../../src/checks/pr-size/check.js';
+import { readRecords, RECORD, writeRecord } from '../../../src/checks/pr-size/records.js';
 import { PROGRESS, readProgress } from '../../../src/checks/pr-size/progress.js';
 import { raiseLimits } from '../../../src/checks/pr-size/raise.js';
 import { defaults } from '../../../src/core/config.js';

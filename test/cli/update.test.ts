@@ -606,7 +606,7 @@ test('a foreign node exec hook survives init, update and uninstall', async () =>
   betaInstall(root, JSON.parse(pre));
   expect((await up(root, ['--yes'])).code).toBe(0);
   const s = JSON.parse(readFileSync(join(root, SETTINGS), 'utf8'));
-  expect(s.hooks.PreToolUse).toHaveLength(2);
+  expect(s.hooks.PreToolUse).toHaveLength(3); // the person's, harness's, and harness's AskUserQuestion group
   expect(s.hooks.PreToolUse[0]).toEqual(foreign);
   expect(s.hooks.PreToolUse[1].hooks[0].args).toEqual(['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs']);
   // An edit after update makes uninstall remove the recorded blocks one by one instead of restoring the backup.

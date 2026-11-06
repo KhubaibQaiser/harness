@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
 import { gitStep } from '../../src/cli/git.js';
 import { type Git } from '../../src/checks/pr-size/measure.js';
+import { writeProgress } from '../../src/checks/pr-size/progress.js';
 import { defaultExec, type Exec } from '../../src/core/exec.js';
 import { makeRepo } from '../install/helpers.js';
 
@@ -317,6 +318,13 @@ test('pr warns about an oversized PR, still creates it, and measures base agains
   expect(calls.at(-1)?.slice(0, 3)).toEqual(['gh', 'pr', 'create']);
   expect(f.calls.some((a) => a.includes('refs/remotes/origin/main^{commit}'))).toBe(true);
   expect(f.calls.some((a) => a.includes('refs/heads/feature/x^{commit}'))).toBe(true);
+});
+
+test("pr applies the branch's recorded raise (N5): no warning under it", () => {
+  const root = prRoot();
+  writeProgress(root, 'feature/x', { base: 'origin/main', fired: [], lines: 0, files: 0, ts: 't', raise: { lines: 600, files: 20, ts: 't' } });
+  expect(run(root, ['pr'], ghOk([]), fakeGit(512, 14).git).out).toBe('url');
+  expect(run(root, ['pr'], ghOk([]), fakeGit(612, 14).git).out.split('\n')[0]).toBe('This PR has 612 changed lines in 14 files; the limit is 600 lines or 20 files.');
 });
 
 test('pr prints nothing extra under the limit', () => {

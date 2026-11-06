@@ -3,7 +3,8 @@
 import { loadConfig } from '../../core/config.js';
 import { repoRoot } from '../../core/repo-root.js';
 import { RAISE_FLAG, raiseArgs } from './detect.js';
-import { currentBranch, type Git, isOver, measure, plainBranch, realGit } from './measure.js';
+import { type Git, GIT_CALL_MS, headBranch, isOver, measure, plainBranch, realGit } from './measure.js';
+import { raisedLimit, readProgress } from './progress.js';
 import { raiseLimits } from './raise.js';
 
 const USAGE = 'usage: dispatch.mjs --pr-size [--base <name>] [--head <name>] [--worktree]';
@@ -19,7 +20,7 @@ function raiseEntry(argv: string[], cwd: string, fail: (error: string) => 2, out
     if (loaded.errors.length) return fail(`\`.harness/config.yaml\` is invalid: ${loaded.errors.join('; ')}`);
     const r = raiseLimits(args, loaded.config.pr_size);
     if ('error' in r) return fail(r.error);
-    const branch = currentBranch(realGit(root));
+    const branch = headBranch(realGit(root), GIT_CALL_MS).name;
     if (branch === null || !plainBranch(branch)) return fail('HEAD is detached or not a plain branch name; check out the branch to raise');
     out(JSON.stringify({ branch, lines: r.lines, files: r.files }));
     return 0;
@@ -52,8 +53,10 @@ export function prSizeEntry(argv: string[], cwd: string, out: (line: string) => 
     return fail(`could not measure: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`); // e.g. not a git repo
   }
   if ('error' in s) return fail(s.error);
-  const over = isOver(s, config.pr_size);
-  const { target_lines, max_lines, max_files } = config.pr_size;
-  out(JSON.stringify({ base: s.base, head: s.head, lines: s.lines, files: s.files, target_lines, max_lines, max_files, over, top: s.top.slice(0, 10), excluded: s.excluded }));
+  // N5: the measured branch's raise is its max, as in the check.
+  const lim = raisedLimit(config.pr_size, readProgress(root), () => (want.head !== undefined && !want.worktree ? want.head : headBranch(git ?? realGit(root), GIT_CALL_MS).name));
+  const over = isOver(s, lim);
+  const { target_lines, max_lines, max_files, raised } = lim;
+  out(JSON.stringify({ base: s.base, head: s.head, lines: s.lines, files: s.files, target_lines, max_lines, max_files, ...(raised ? { raised } : {}), over, top: s.top.slice(0, 10), excluded: s.excluded }));
   return over ? 1 : 0;
 }

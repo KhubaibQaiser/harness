@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { isOver, measure, type Git } from '../checks/pr-size/measure.js';
+import { isOver, limitText, measure, type Git } from '../checks/pr-size/measure.js';
+import { raisedLimit, readProgress } from '../checks/pr-size/progress.js';
 import { suggestBranches } from '../core/branch-prefix.js';
-import { esc, loadConfig } from '../core/config.js';
+import { esc, type HarnessConfig, loadConfig } from '../core/config.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { readManifest } from '../install/apply.js';
 import { dirtyPaths } from '../install/git-status.js';
@@ -12,6 +13,14 @@ import type { CliEnv } from './index.js';
 
 const USAGE = 'Usage: harness git branch [--suggest <topic>]|commit|push|pr [--title <t>]';
 const NETWORK = /could not resolve host|unable to access|network is unreachable|connection (refused|timed out|reset)|timed out|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|error connecting to/i;
+
+/** The preset's PR size warning, or null within the limit. The branch's recorded raise is its max (N5), as in the check. */
+function sizeWarning(root: string, config: HarnessConfig, want: { base: string; head: string }, git?: Git): string | null {
+  const size = measure(root, want, config, git ? { git } : {});
+  if ('error' in size) return `PR size not measured: ${size.error}.`;
+  const lim = raisedLimit(config.pr_size, readProgress(root), () => want.head);
+  return isOver(size, lim) ? `This PR has ${size.lines} changed lines in ${size.files} files; the limit is ${limitText(lim.max_lines, lim.max_files)}.` : null;
+}
 
 /** Steps run by the skill only after the person says yes: one step per call, never on the default branch. */
 export function gitStep(args: string[], { root, out, exec = defaultExec, git: sizeGit }: CliEnv & { exec?: Exec; git?: Git }): number {
@@ -81,9 +90,8 @@ export function gitStep(args: string[], { root, out, exec = defaultExec, git: si
   }
 
   if (preset?.git.pr_size_warning) {
-    const size = measure(root, { base: def, head: branch }, config, { git: sizeGit });
-    if ('error' in size) out(`PR size not measured: ${size.error}.`);
-    else if (isOver(size, config.pr_size)) out(`This PR has ${size.lines} changed lines in ${size.files} files; the limit is ${config.pr_size.max_lines} lines or ${config.pr_size.max_files} files.`);
+    const warning = sizeWarning(root, config, { base: def, head: branch }, sizeGit);
+    if (warning) out(warning);
   }
   const REPORT = '.harness/report.md';
   const create = ['pr', 'create', '--base', def, '--head', branch, '--title', title ?? 'chore: add AI workflow', '--body-file'];

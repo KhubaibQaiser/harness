@@ -1,53 +1,23 @@
 // pr-size (spec §6, §10): asks before `gh pr create`, or a push to a PR branch harness recorded, goes over the limit.
-import { mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { writeAtomic } from '../../core/atomic.js';
-import { esc, type HarnessConfig, isObj } from '../../core/config.js';
+import { esc, type HarnessConfig } from '../../core/config.js';
 import { appendEvent } from '../../core/events.js';
 import { unquote, words } from '../../core/shell-words.js';
 import type { Check, Ctx } from '../../hooks/dispatch.js';
 import { isEdit, isShell } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { type PrTarget, prTargets } from './detect.js';
-import { count, type Git, hookBudgetMs, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
-import { clearAllPending, limits, pauseAsk, type Progress, progressWarning, readProgress } from './progress.js';
+import { asBaseName, count, type Git, GIT_CALL_MS, headBranch, hookBudgetMs, isOver, limitText as limit, measure, plainBranch, realGit, type Size } from './measure.js';
+import { clearAllPending, pauseAsk, type Progress, progressWarning, raisedLimit, readProgress } from './progress.js';
+import { type PrRecord, readRecords, writeRecord } from './records.js';
+import { clearOnAnswer, preAnswer } from './answer.js';
 import { handRun } from './hand-run.js';
 import { postRaise, preRaise } from './raise.js';
 
-export const RECORD = '.harness/state/pr-branches.json';
-export interface PrRecord { base: string; lines: number; files: number; ts: string }
-
 const LARGEST = 3;
 const NOT_COUNTED = 5;
-const REF_TIMEOUT_MS = 2000;
-const JSON_INDENT = 2;
 const OUT_OF_TIME = 'the time budget for this command ran out';
 // gh pr create prints the new PR's URL; without one, the create failed (a failure hidden by `|| true` still reaches PostToolUse).
 const PR_URL = /\/pull\/\d+/;
-
-/** The recorded PR branches; anything unreadable or malformed is dropped. Null prototype, so `constructor` is never a branch. */
-export function readRecords(root: string): Record<string, PrRecord> {
-  const out: Record<string, PrRecord> = Object.create(null);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(join(root, RECORD), 'utf8'));
-  } catch {
-    return out;
-  }
-  if (!isObj(raw)) return out;
-  for (const [k, v] of Object.entries(raw)) {
-    if (!plainBranch(k) || !isObj(v) || typeof v.base !== 'string' || typeof v.ts !== 'string') continue;
-    if (Number.isInteger(v.lines) && Number.isInteger(v.files)) out[k] = { base: v.base, lines: v.lines as number, files: v.files as number, ts: v.ts };
-  }
-  return out;
-}
-
-export function writeRecord(root: string, branch: string, r: PrRecord): void {
-  const all = readRecords(root);
-  all[branch] = r;
-  mkdirSync(dirname(join(root, RECORD)), { recursive: true });
-  writeAtomic(join(root, RECORD), JSON.stringify(all, null, JSON_INDENT) + '\n');
-}
 
 type PrJob = Exclude<PrTarget, { kind: 'raise' }>;
 type Limit = HarnessConfig['pr_size'];
@@ -55,22 +25,20 @@ type Job = { want: { base?: string; head?: string }; push?: { branch: string; re
 // `cur`: the current branch, resolved once per command (null: detached; late: git timed out or no time was left).
 type Clock = { now: () => number; deadline: number; git: Git; cur?: { name: string | null; late: boolean } };
 const left = (c: Clock) => c.deadline - c.now();
-const limit = (ml: number, mf: number) => `${count(ml, 'line')} or ${count(mf, 'file')}`;
 
 // A failed lookup counts as present, so the branch is measured (or noted), never skipped in silence.
-const refExists = (git: Git, name: string, c: Clock) => git(['show-ref', '--verify', '--quiet', `refs/heads/${name}`], Math.min(REF_TIMEOUT_MS, Math.max(1, left(c)))).status !== 1;
+const refExists = (git: Git, name: string, c: Clock) => git(['show-ref', '--verify', '--quiet', `refs/heads/${name}`], Math.min(GIT_CALL_MS, Math.max(1, left(c)))).status !== 1;
 const isHead = (r: string) => r === 'HEAD' || r === '@';
 
 function current(c: Clock): { name: string | null; late: boolean } {
   if (!c.cur) {
-    const ms = Math.min(REF_TIMEOUT_MS, left(c));
-    const r = ms > 0 ? c.git(['symbolic-ref', '--quiet', '--short', 'HEAD'], ms) : null;
-    c.cur = !r || r.error ? { name: null, late: true } : { name: r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null, late: false };
+    const b = headBranch(c.git, left(c));
+    c.cur = { name: b.name, late: b.error !== undefined };
   }
   return c.cur;
 }
 
-/** What to measure for one target. A push counts only for a recorded branch, measured from its recorded base. */
+/** What to measure for one target. A push counts only for a recorded branch, measured from its recorded base (as findBase names it). */
 function jobs(t: PrJob, records: Record<string, PrRecord>, git: Git, c: Clock): Job[] {
   if (t.kind === 'create') return [{ want: { ...(t.base !== undefined ? { base: t.base } : {}), ...(t.head !== undefined ? { head: t.head } : {}) } }];
   if (!Object.keys(records).length) return []; // nothing recorded: no push can count, and no git is spawned
@@ -84,7 +52,7 @@ function jobs(t: PrJob, records: Record<string, PrRecord>, git: Git, c: Clock): 
   } else pushed = t.refs.map((r) => ({ branch: isHead(r.dst) ? current(c).name : r.dst, ...(isHead(r.src) ? {} : { head: r.src }) }));
   return pushed.flatMap((p) => {
     const rec = p.branch !== null && Object.hasOwn(records, p.branch) ? records[p.branch]! : null;
-    return rec ? [{ want: { base: rec.base, ...(p.head !== undefined ? { head: p.head } : {}) }, push: { branch: p.branch!, rec } }] : [];
+    return rec ? [{ want: { base: asBaseName(rec.base), ...(p.head !== undefined ? { head: p.head } : {}) }, push: { branch: p.branch!, rec } }] : [];
   });
 }
 
@@ -123,12 +91,7 @@ function unmeasured(ctx: Ctx, why: string, bases: (string | undefined)[]): strin
 }
 
 /** N5: a branch's recorded raise (in the §14.4 ranges) is its PR-time max too. Without any raise, no branch lookup is spawned. */
-function limitFor(ctx: Ctx, progress: Record<string, Progress>, job: Job, c: Clock): Limit {
-  if (!Object.values(progress).some((p) => p.raise)) return ctx.config.pr_size;
-  const branch = job.push?.branch ?? job.want.head ?? current(c).name;
-  const l = limits(ctx.config.pr_size, branch !== null && Object.hasOwn(progress, branch) ? progress[branch]!.raise : undefined);
-  return { ...ctx.config.pr_size, max_lines: l.maxLines, max_files: l.maxFiles };
-}
+const limitFor = (ctx: Ctx, progress: Record<string, Progress>, job: Job, c: Clock): Limit => raisedLimit(ctx.config.pr_size, progress, () => job.push?.branch ?? job.want.head ?? current(c).name);
 
 function decidePre(ctx: Ctx, git: Git, targets: PrJob[], c: Clock): Decision {
   const records = readRecords(ctx.root);
@@ -208,6 +171,7 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   const { tool_name, tool_input = {} } = ctx.input;
   if (!ctx.config?.checks.prSize) return { kind: 'allow' };
   const event = ctx.input.hook_event_name;
+  if (tool_name === 'AskUserQuestion') return event === 'PreToolUse' ? preAnswer(ctx) : event === 'PostToolUse' ? clearOnAnswer(ctx, git, now) : { kind: 'allow' };
   if (event === 'Stop' || (event === 'PostToolUse' && !isShell(tool_name))) return progressWarning(ctx, git, now);
   if (event === 'UserPromptSubmit') return clearAllPending(ctx.root);
   if (!isShell(tool_name)) return event === 'PreToolUse' && isEdit(tool_name) ? pauseAsk(ctx, git, now) : { kind: 'allow' };

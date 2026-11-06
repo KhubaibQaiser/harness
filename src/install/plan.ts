@@ -14,7 +14,9 @@ import { factsJson } from './facts.js';
 import { finalizeReport } from '../ai/report.js';
 import { eolOf, matchesHash, withEol } from './text.js';
 import { backupText, type Manifest } from './manifest.js';
-import { STRUCTURAL, removeBlocks, mergeAgents, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeMcp, mergeSettings, pinnedPlugins, type PinnedPlugin } from './merge.js';
+import { STRUCTURAL, removeBlocks, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeMcp, mergeSettings, pinnedPlugins, type PinnedPlugin } from './merge.js';
+import { PRESET_ITEM, mergeAgentsFile, mergeSettingsPreset, presetFiles } from './plan-preset.js';
+import type { LoadedPreset } from '../catalog/presets.js';
 import { JEST_REPORTER, resultsRename, testConfigChange } from './test-config.js';
 
 /** The own items a config without `items` (every install before the recommend flow) always has. */
@@ -56,7 +58,7 @@ export function planChanges(
   facts: Facts,
   /** `legacyDir`: update's old results folder; a package whose results file still names it is migrated, TDD on or off.
    * `recorded`: the settings blocks the manifest holds, so update replaces harness's own old hook groups in place. */
-  ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[]; catalog?: Catalog; mcpRecorded?: string[]; recordedFiles?: Manifest['files']; ai?: { picks: string; report: string; product: string } },
+  ctx: { version: string; distDir: string; templatesDir?: string; legacyDir?: string; recorded?: string[]; catalog?: Catalog; mcpRecorded?: string[]; recordedFiles?: Manifest['files']; /** The loaded `config.preset`; without it a recorded preset is left alone. */ preset?: LoadedPreset; ai?: { picks: string; report: string; product: string } },
 ): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[]; /** The config as written: checks follow the selection on the AI path. */ config: HarnessConfig } {
   const templatesDir = ctx.templatesDir ?? packageDir('templates');
   const changes: Change[] = [];
@@ -123,28 +125,37 @@ export function planChanges(
     : LEGACY_FILES;
   const entryOf = (rel: string) => ctx.recordedFiles?.find((f) => f.rel === rel);
   const backupOf = (e: Manifest['files'][number] | undefined) => backupText(root, e?.backup);
-  for (const f of ownFiles) {
-    if (on(f.id)) { put(f.to, tpl(...f.from.split('/')), [], undefined, catalog ? f.id : undefined); continue; }
-    // Deselected: the manifest decides. Only a file harness wrote and the person left alone is removed or restored.
-    const cur = read(f.to);
-    if (cur === null) continue;
-    const e = entryOf(f.to);
+  // Deselected: the manifest decides. Only a file harness wrote and the person left alone is removed or restored.
+  const dropOwn = (rel: string, who: string) => {
+    const cur = read(rel);
+    if (cur === null) return;
+    const e = entryOf(rel);
     const backup = backupOf(e);
-    if (e?.kind === 'create' && matchesHash(cur, e.hash)) changes.push({ kind: 'delete', rel: f.to, before: cur });
-    else if (e?.kind === 'update' && matchesHash(cur, e.hash) && backup !== null) changes.push({ kind: 'update', rel: f.to, before: cur, after: backup, blocks: [], restored: e.backup });
-    else if (e?.kind === 'update' && matchesHash(cur, e.hash)) notes.push(`\`${f.to}\`: its backup is missing, so the file you had before init cannot be restored; kept although ${f.id} is no longer selected.`);
-    else notes.push(e ? `\`${f.to}\` was edited since harness wrote it; it is kept although ${f.id} is no longer selected.` : `\`${f.to}\` is not recorded as written by harness; it is kept although ${f.id} is no longer selected.`);
+    if (e?.kind === 'create' && matchesHash(cur, e.hash)) changes.push({ kind: 'delete', rel, before: cur });
+    else if (e?.kind === 'update' && matchesHash(cur, e.hash) && backup !== null) changes.push({ kind: 'update', rel, before: cur, after: backup, blocks: [], restored: e.backup });
+    else if (e?.kind === 'update' && matchesHash(cur, e.hash)) notes.push(`\`${rel}\`: its backup is missing, so the file you had before init cannot be restored; kept although ${who} is no longer selected.`);
+    else notes.push(e ? `\`${rel}\` was edited since harness wrote it; it is kept although ${who} is no longer selected.` : `\`${rel}\` is not recorded as written by harness; it is kept although ${who} is no longer selected.`);
+  };
+  for (const f of ownFiles) {
+    if (on(f.id)) put(f.to, tpl(...f.from.split('/')), [], undefined, catalog ? f.id : undefined);
+    else dropOwn(f.to, f.id);
   }
+  // The preset's skills; a config.preset whose folder was not loaded is left alone, a removed preset (or a gone stack) drops its files.
+  const lp = config.preset ? ctx.preset : undefined;
+  const wanted = lp ? presetFiles(lp, config.preset!.items) : [];
+  for (const f of wanted) put(f.to, f.content, [], undefined, `${PRESET_ITEM}${lp!.preset.id}`);
+  if (!config.preset || lp) for (const e of ctx.recordedFiles ?? []) if (e.item?.startsWith(PRESET_ITEM) && !wanted.some((f) => f.to === e.rel)) dropOwn(e.rel, `the ${e.item.slice(PRESET_ITEM.length)} preset`);
 
   const settings = mergeSettings(read('.claude/settings.json'), { sandbox: config.sandbox, recorded: ctx.recorded, plugins: [...pinnedPlugins(chosen), ...keepPlugins] });
-  notes.push(...settings.notes);
-  if (settings.blocks.length || settings.dropped.length) { // leaving `always` drops set blocks with no replacement
-    put('.claude/settings.json', settings.after, settings.blocks);
+  const ps = mergeSettingsPreset(settings.after, { preset: lp, selected: selectedIds(config), recorded: ctx.recorded ?? [], keep: !!config.preset && !lp });
+  const dropped = [...settings.dropped, ...(ps?.dropped ?? [])];
+  notes.push(...settings.notes, ...(ps?.notes ?? []));
+  if (settings.blocks.length || ps?.blocks.length || dropped.length) { // leaving `always` drops set blocks with no replacement
+    put('.claude/settings.json', ps?.after ?? settings.after, [...settings.blocks, ...(ps?.blocks ?? [])]);
     const c = changes.at(-1);
-    if (c?.kind === 'update' && c.rel === '.claude/settings.json' && settings.dropped.length) c.dropped = settings.dropped;
+    if (c?.kind === 'update' && c.rel === '.claude/settings.json' && dropped.length) c.dropped = [...dropped];
   }
 
-  const dropped = [...settings.dropped];
   const servers = [...chosen.flatMap((i) => (i.kind === 'mcp' && i.mcp ? [{ name: i.mcp.name, item: i.id, config: i.mcp.config }] : [])), ...keepServers];
   if (catalog && (servers.length || ctx.mcpRecorded?.length)) {
     const mcp = mergeMcp(read('.mcp.json'), servers, ctx.mcpRecorded);
@@ -159,12 +170,12 @@ export function planChanges(
     }
   }
 
-  if (on('agents-md')) {
-    const agents = mergeAgents(read('AGENTS.md'));
+  if (on('agents-md') || lp) {
+    const agents = mergeAgentsFile(read('AGENTS.md'), { harness: on('agents-md'), recorded: entryOf('AGENTS.md')?.blocks ?? [], preset: lp, keep: !!config.preset && !lp });
     put('AGENTS.md', agents.after, agents.blocks);
     const claude = mergeClaudeMd(read('CLAUDE.md'), true); // init always creates or merges AGENTS.md
     if (claude) put('CLAUDE.md', claude.after, claude.blocks);
-  } else {
+  } else if (!config.preset) { // a preset whose folder was not loaded leaves AGENTS.md as it is
     // Deselected: undo the merge as uninstall does (delete what harness created, restore the backup, else cut the blocks).
     for (const rel of ['AGENTS.md', 'CLAUDE.md']) {
       const e = entryOf(rel);

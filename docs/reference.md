@@ -71,6 +71,9 @@ Run `init` anywhere in a git repo: it installs at the repo root and prints that 
 | `.gitignore` | Adds `.harness/state/`, `.harness/logs/`, `.harness/backup/` and `.harness/results/`. |
 | `.claude/agents/staff-reviewer.md`, `.claude/skills/review-rubric/SKILL.md` | Created. The review agent and its rubric. |
 | `.claude/skills/pr-ship/SKILL.md` | Created. The skill that splits a large change into stacked PRs. |
+| `AGENTS.md` (preset on) | A second block between `<!-- harness:preset:start -->` and `<!-- harness:preset:end -->`, after the harness block. It stays if you turn `agents-md` off. |
+| `.claude/skills/<name>/SKILL.md` (preset on) | Created for the preset's skills that match your stack (`engineering-principles`, `frontend-react`, `frontend-nextjs`, `frontend-react-native`). Turning the preset off in `/harness:update` removes the ones you have not edited. |
+| `.claude/settings.json` (preset on) | Adds `attribution: false` and the opt-out `env` keys of the items you chose (`DO_NOT_TRACK=1` for Impeccable, and the matching variable for Superpowers). Keys you already set are kept. |
 | `.prettierignore`, `.eslintignore`, ESLint flat config | Adds `.harness/` so your format and lint steps skip the harness files. |
 | `.harness/hooks/jest-results.cjs` | Created in a repo with Jest. A small reporter that writes JSON results. |
 | Vitest config or Jest `test` script | Edited when TDD is on, to write JSON results and coverage. Shown in the plan first. |

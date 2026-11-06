@@ -296,3 +296,13 @@ test('add of an external-skill item prints the install step too', async () => {
   expect(r.code, r.out).toBe(0);
   expect(r.out).toContain('Run /harness:sync --install-plugins');
 });
+
+test('remove and why on a preset: id print the preset lines', async () => {
+  const root = installed();
+  const rm = await run(root, 'remove', ['preset:khubaib-frontend', '--yes']);
+  expect(rm.code).toBe(2);
+  expect(rm.out).toContain('Preset files are removed by turning the preset off in /harness:update.');
+  const why = await run(root, 'why', ['preset:khubaib-frontend']);
+  expect(why.code).toBe(0);
+  expect(why.out).toContain('Installed by the khubaib-frontend preset.');
+});

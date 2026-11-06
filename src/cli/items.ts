@@ -12,6 +12,7 @@ import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL, itemFiles, mergeManifestFiles, rawOf } from '../install/manifest.js';
 import { selectedIds } from '../install/plan.js';
+import { PRESET_ITEM } from '../install/plan-preset.js';
 import { reconcile } from '../install/reconcile.js';
 import { pinOf, resolveSelection } from '../install/select.js';
 import type { Picks } from '../ai/picks.js';
@@ -60,6 +61,11 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   const bad = args.some((a) => a.startsWith('--') && !flags.has(a)) || ids.length !== (cmd === 'explain' ? 0 : 1) || new Set(args).size !== args.length;
   if (bad) return out(USAGE[cmd]), 2;
   const [id] = ids;
+  // A preset's files belong to the preset, not to one item (see PRESET_ITEM in install/plan-preset.ts).
+  if (id?.startsWith(PRESET_ITEM) && (cmd === 'remove' || cmd === 'why')) {
+    if (cmd === 'why') return out(`Installed by the ${esc(id.slice(PRESET_ITEM.length))} preset.`), 0;
+    return out('Preset files are removed by turning the preset off in /harness:update.'), 2;
+  }
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
   const refused = cmd === 'add' ? refuseOutsideClaude('add', cli.env, false) : null;

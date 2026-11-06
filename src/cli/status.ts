@@ -6,6 +6,7 @@ import { packageDir } from '../core/package-dir.js';
 import { pinnedPlugins } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
+import { PRESET_ITEM } from '../install/plan-preset.js';
 import { loadConfig } from '../core/config.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
 import { readHookEnv } from '../core/hook-env.js';
@@ -66,6 +67,8 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   const changed = lastHarnessFilesChange(root);
   if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
   if (config.items.length) lines.push(...itemLines(config, deps.pluginList ?? pluginList));
+  const pr = config.preset;
+  if (pr) lines.push(`Preset: ${pr.id}`, ...m.files.filter((f) => f.item === `${PRESET_ITEM}${pr.id}`).map((f) => `  ${f.rel}`));
   lines.push('Last day');
   lines.forEach((l) => out(l));
   return stats(['--days', '1'], cli);

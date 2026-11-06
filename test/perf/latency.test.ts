@@ -10,6 +10,8 @@ import { expect, test } from 'vitest';
 const DISPATCH = join(process.cwd(), 'dist/hooks/dispatch.mjs');
 const RUNS = 21;
 const OVERHEAD_MS = { win32: 450, darwin: 150 }[process.platform as string] ?? 100; // harness cost on top of a bare node spawn; hosted runners vary (Windows 402–407 ms at 250, macOS 105–108 ms at 100)
+// A counted edit runs about 7 git calls on purpose (spec §14.2), so it gets its own ceiling. Hosted runners measured macOS 154–166 ms and Windows 490 ms (Nov 2026); about 2x headroom.
+const COUNTED_EDIT_OVERHEAD_MS = { win32: 1000, darwin: 300 }[process.platform as string] ?? 200;
 const CEILING_MS = 1000; // gross-regression guard on the whole spawn
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
@@ -121,6 +123,6 @@ test('counted PostToolUse Edit in a 20-file repo with checks.prSize on: harness 
   // Control: the edit was measured, so the progress file holds this branch's size.
   expect(JSON.parse(readFileSync(join(repo, '.harness/state/pr-progress.json'), 'utf8')).feat).toMatchObject({ lines: 50, files: 1 });
   console.log(`pr-size counted edit: overhead median ${m.overhead.toFixed(1)} ms, total median ${m.total.toFixed(1)} ms`);
-  expect(m.overhead, `counted edit overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.overhead, `counted edit overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(COUNTED_EDIT_OVERHEAD_MS);
   expect(m.total, `counted edit total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);

@@ -205,22 +205,26 @@ describe('mergeClaudeMd', () => {
 });
 
 describe('mergeGitignore / mergeIgnoreFile', () => {
-  it('appends the five lines, once', () => {
+  it('appends the six lines, once', () => {
     const { after, blocks } = mergeGitignore(fx('.gitignore'));
-    expect(after).toBe('node_modules/\ndist/\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n');
-    expect(blocks).toEqual(['.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n']);
+    expect(after).toBe('node_modules/\ndist/\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n');
+    expect(blocks).toEqual(['.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n']);
     expect(mergeGitignore(after)).toEqual({ after, blocks: [] });
   });
   it('null creates; missing newline and CRLF handled; partial adds only missing', () => {
-    expect(mergeGitignore(null).after).toBe('.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n');
+    expect(mergeGitignore(null).after).toBe('.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n');
     expect(mergeGitignore('a').blocks[0].startsWith('\n')).toBe(true);
-    expect(mergeGitignore('a').after).toBe('a\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n');
+    expect(mergeGitignore('a').after).toBe('a\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n');
     expect(mergeGitignore('a\r\n').after).toBe('a\r\n.harness/state/\r\n.harness/logs/\r\n.harness/backup/\r\n.harness/results/\r\n.harness/debug/\r\n');
-    expect(mergeGitignore('.harness/logs/\n').blocks).toEqual(['.harness/state/\n.harness/backup/\n.harness/results/\n.harness/debug/\n']);
+    expect(mergeGitignore('.harness/logs/\n').blocks).toEqual(['.harness/state/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n']);
   });
   it('mergeGitignore adds .harness/results/', () => {
     const r = mergeGitignore('.harness/state/\n.harness/logs/\n.harness/backup/\n');
-    expect(r.blocks).toEqual(['.harness/results/\n.harness/debug/\n']);
+    expect(r.blocks).toEqual(['.harness/results/\n.harness/debug/\n.harness/reports/\n']);
+  });
+  it('an existing install gets only the reports line on update', () => {
+    const old = '.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n';
+    expect(mergeGitignore(old)).toEqual({ after: old + '.harness/reports/\n', blocks: ['.harness/reports/\n'] });
   });
   it('ignore file gets .harness/', () => {
     expect(mergeIgnoreFile('dist\n', '.harness/')).toEqual({ after: 'dist\n.harness/\n', blocks: ['.harness/\n'] });

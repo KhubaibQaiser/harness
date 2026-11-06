@@ -47,6 +47,13 @@ describe('harness report', () => {
     expect(r.text).toMatch(/sideRecords/); // the windows notes counts
     expect(readFileSync(htmlPath(w), 'utf8')).toContain('<!doctype html>');
   });
+  it('writes no folder .gitignore when the root one already ignores the folder', async () => {
+    const w = world(0);
+    writeFileSync(join(w.root, '.gitignore'), 'dist/\n.harness/reports/\n');
+    expect((await go(w, [])).code).toBe(0);
+    expect(existsSync(htmlPath(w))).toBe(true);
+    expect(existsSync(join(w.root, '.harness/reports/.gitignore'))).toBe(false);
+  });
   it('rejects bad arguments with exit 2', async () => {
     const w = world(0);
     for (const a of [['--days', '0'], ['--days', 'x'], ['--days'], ['--bogus']]) {

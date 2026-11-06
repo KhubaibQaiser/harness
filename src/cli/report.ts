@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { loadCatalog } from '../catalog/load.js';
@@ -118,6 +118,10 @@ function summary(d: ReportData, rel: string, expRel?: string): string[] {
   ];
 }
 
+const rootIgnores = (root: string): boolean => {
+  try { return readFileSync(join(root, '.gitignore'), 'utf8').split(/\r?\n/).includes(`${REPORTS}/`); } catch { return false; }
+};
+
 export async function report(args: string[], cli: ReportEnv): Promise<number> {
   const a = parseArgs(args);
   if (!a) return cli.out(USAGE), BAD_ARGS;
@@ -141,7 +145,7 @@ export async function report(args: string[], cli: ReportEnv): Promise<number> {
   const dir = join(cli.root, REPORTS), html = join(dir, `${day}.html`);
   try {
     mkdirSync(dir, { recursive: true });
-    if (!existsSync(join(dir, '.gitignore'))) writeAtomic(join(dir, '.gitignore'), '*'); // ponytail: Task 21 moves this into mergeGitignore
+    if (!rootIgnores(cli.root) && !existsSync(join(dir, '.gitignore'))) writeAtomic(join(dir, '.gitignore'), '*'); // fallback until `harness update` adds the root line
     writeAtomic(html, renderReport(data));
     if (exported) writeAtomic(join(dir, `${day}-export.json`), JSON.stringify(exported, null, INDENT) + '\n');
   } catch {

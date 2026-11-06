@@ -215,7 +215,7 @@ describe('mergeGitignore / mergeIgnoreFile', () => {
     expect(mergeGitignore(null).after).toBe('.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n');
     expect(mergeGitignore('a').blocks[0].startsWith('\n')).toBe(true);
     expect(mergeGitignore('a').after).toBe('a\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n');
-    expect(mergeGitignore('a\r\n').after).toBe('a\r\n.harness/state/\r\n.harness/logs/\r\n.harness/backup/\r\n.harness/results/\r\n.harness/debug/\r\n');
+    expect(mergeGitignore('a\r\n').after).toBe('a\r\n.harness/state/\r\n.harness/logs/\r\n.harness/backup/\r\n.harness/results/\r\n.harness/debug/\r\n.harness/reports/\r\n');
     expect(mergeGitignore('.harness/logs/\n').blocks).toEqual(['.harness/state/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n']);
   });
   it('mergeGitignore adds .harness/results/', () => {

@@ -1,15 +1,12 @@
 // In-progress size warnings (spec §14): after a counted edit, and once at Stop, measure the working tree and announce each threshold crossing once.
-import { mkdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { writeAtomic } from '../../core/atomic.js';
-import { esc, isObj } from '../../core/config.js';
+import { esc, type HarnessConfig, isObj } from '../../core/config.js';
 import { appendEvent } from '../../core/events.js';
 import { matches, toRepoPath } from '../../core/paths.js';
 import type { Ctx } from '../../hooks/dispatch.js';
 import { editTarget, isEdit } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
-import { readRecords } from './check.js';
-import { count, currentBranch, type Git, hookBudgetMs, measure, realGit, type Size } from './measure.js';
+import { asBaseName, count, type Git, headBranch, hookBudgetMs, limitText, measure, realGit, type Size } from './measure.js';
+import { readJson, readRecords, writeJson } from './records.js';
 
 export const PROGRESS = '.harness/state/pr-progress.json';
 type Mark = 'target' | 'max';
@@ -18,13 +15,9 @@ type Sz = { lines: number; files: number };
 export interface Progress { base: string; fired: Mark[]; lines: number; files: number; ts: string; raise?: Sz & { ts: string }; pending?: Sz }
 type Lim = { target: number; maxLines: number; maxFiles: number };
 
-const JSON_INDENT = 2;
-const GIT_CALL_MS = 2000;
 // §14.4's raise ranges (the section 7 maximums).
 export const RAISE_MAX_LINES = 100000;
 export const RAISE_MAX_FILES = 10000;
-// One entry per branch, never pruned; a file past this reads as empty rather than slowing every counted edit.
-const MAX_BYTES = 1_000_000;
 const ALLOW: Decision = { kind: 'allow' };
 const isInt = Number.isInteger;
 const isMark = (m: unknown): m is Mark => m === 'target' || m === 'max';
@@ -43,13 +36,7 @@ function parse(v: unknown): Progress | null {
 /** Never throws; a bad file or entry reads as empty. Null prototype, so `constructor` is just a branch. */
 export function readProgress(root: string): Record<string, Progress> {
   const out: Record<string, Progress> = Object.create(null);
-  let raw: unknown;
-  try {
-    if (statSync(join(root, PROGRESS)).size > MAX_BYTES) return out;
-    raw = JSON.parse(readFileSync(join(root, PROGRESS), 'utf8'));
-  } catch {
-    return out;
-  }
+  const raw = readJson(root, PROGRESS);
   if (!isObj(raw)) return out;
   for (const [k, v] of Object.entries(raw)) {
     const p = parse(v);
@@ -58,10 +45,7 @@ export function readProgress(root: string): Record<string, Progress> {
   return out;
 }
 
-function saveAll(root: string, all: Record<string, Progress>): void {
-  mkdirSync(dirname(join(root, PROGRESS)), { recursive: true });
-  writeAtomic(join(root, PROGRESS), JSON.stringify(all, null, JSON_INDENT) + '\n');
-}
+const saveAll = (root: string, all: Record<string, Progress>): void => writeJson(root, PROGRESS, all);
 
 export function writeProgress(root: string, branch: string, p: Progress): void {
   const all = readProgress(root);
@@ -83,14 +67,16 @@ export function clearAllPending(root: string): Decision {
   return ALLOW;
 }
 
-/** PostToolUse of an edit that wasn't measured (excluded, out of repo, unmeasured): it ran, so this branch's pause is answered. */
-function clearPending(ctx: Ctx, git: Git): void {
+/** The current branch's pause is answered: an unmeasured edit ran (excluded, out of repo), or the person answered the "PR size" question. */
+export function clearPending(ctx: Ctx, git: Git, now: () => number): void {
   const all = readProgress(ctx.root);
   if (!anyPending(all)) return; // no git spawn
-  const b = currentBranch(git);
+  const b = headBranch(git, hookBudgetMs(ctx.startedAt, now)).name;
   if (b !== null && Object.hasOwn(all, b) && all[b]!.pending) writeProgress(ctx.root, b, withoutPending(all[b]!));
 }
 
+// The header the warning gives the agent's AskUserQuestion; its answer is the person's (§14.9).
+export const ASK_HEADER = 'PR size';
 const AFTER = 'Approve to keep going with this edit, or say no and tell Claude to split it with the pr-ship skill or raise the limit for this branch.';
 const UNKNOWN_BRANCH = `Confirm: harness couldn't look up the current branch, and a branch here has an unanswered size warning. ${AFTER}`;
 
@@ -100,15 +86,13 @@ export function pauseAsk(ctx: Ctx, git: Git = realGit(ctx.root), now: () => numb
   if (ctx.unattended) return ALLOW; // pending is never set unattended; this is a guard
   const all = readProgress(ctx.root);
   if (!anyPending(all)) return ALLOW; // only the file read, no git spawn
-  const ms = Math.min(GIT_CALL_MS, hookBudgetMs(ctx.startedAt, now));
-  const r = ms > 0 ? git(['symbolic-ref', '--quiet', '--short', 'HEAD'], ms) : null;
-  if (!r || r.error) return { kind: 'ask', check: 'pr-size', reason: UNKNOWN_BRANCH };
-  const b = r.status === 0 ? r.stdout.trim() : '';
-  const p = b && Object.hasOwn(all, b) ? all[b]! : undefined;
+  const { name: b, error } = headBranch(git, hookBudgetMs(ctx.startedAt, now));
+  if (error) return { kind: 'ask', check: 'pr-size', reason: UNKNOWN_BRANCH };
+  const p = b !== null && Object.hasOwn(all, b) ? all[b]! : undefined;
   if (!p?.pending) return ALLOW;
   const lim = limits(ctx.config.pr_size, p.raise);
   const size = `${count(p.pending.lines, 'changed line')} in ${count(p.pending.files, 'file')}`;
-  const reason = `Confirm: \`${esc(b)}\` is now ${size} (target ${lim.target}, limit ${count(lim.maxLines, 'line')} or ${count(lim.maxFiles, 'file')}). ${AFTER}`;
+  const reason = `Confirm: \`${esc(b!)}\` is now ${size} (target ${lim.target}, limit ${limitText(lim.maxLines, lim.maxFiles)}). ${AFTER}`;
   return { kind: 'ask', check: 'pr-size', reason };
 }
 
@@ -121,13 +105,13 @@ export function step(prev: Progress | undefined, size: { lines: number; files: n
   return { fired, announce };
 }
 
-const ASK = 'Before your next edit, stop and ask the person how to go on, with AskUserQuestion if you have it: split now (run the pr-ship skill and show its suggested breakdown), keep going, or raise the limit for this branch (run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>`, which asks them to approve).';
+const ASK = `Before your next edit, stop and ask the person how to go on, with AskUserQuestion if you have it, with the header "${ASK_HEADER}": split now (run the pr-ship skill and show its suggested breakdown), keep going, or raise the limit for this branch (run \`node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>\`, which asks them to approve). Their answer to that question lets your next edit run; without one, harness asks them before it.`;
 
 const PERSON = 'harness pr-size:'; // a quoted string, so usage.test.ts doesn't read it as a `harness` command
 type Copy = { branch: string; base: string; lines: number; files: number; lim: Lim };
 function copy(c: Copy, mark: Mark): { agent: string; person: string; unattended: string } {
   const size = `${count(c.lines, 'changed line')} in ${count(c.files, 'file')}`;
-  const limit = `${count(c.lim.maxLines, 'line')} or ${count(c.lim.maxFiles, 'file')}`;
+  const limit = limitText(c.lim.maxLines, c.lim.maxFiles);
   const T = c.lim.target;
   const now = `this branch's change is now ${size} against \`${esc(c.base)}\``;
   const agent = mark === 'target'
@@ -148,18 +132,14 @@ function countedEdit(ctx: Ctx): boolean {
 }
 
 const unmeasured = (why: string): null => (process.stderr.write(`harness: pr-size progress not measured: ${why}\n`), null); // §14.6: no note, no event
-// `origin/main` as recorded (the shown name) is looked up as `main`, so findBase hits refs/remotes/origin/main first: 7 git spawns per edit on a recorded branch, not 9.
-const asBaseName = (b: string) => b.replace(/^origin\//, '');
 
 /** The branch and its working-tree size, or null to stay silent: no counted edit, a detached HEAD, or unmeasured (logged). */
 function measureBranch(ctx: Ctx, git: Git, now: () => number): { branch: string; s: Size } | null {
   const event = ctx.input.hook_event_name;
   if (event !== 'Stop' && !(event === 'PostToolUse' && countedEdit(ctx))) return null;
   const deadline = now() + hookBudgetMs(ctx.startedAt, now);
-  if (deadline <= now()) return unmeasured('git timed out');
-  const r = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], Math.max(1, Math.min(GIT_CALL_MS, deadline - now())));
-  if (r.error) return unmeasured(r.error.code === 'ETIMEDOUT' ? 'git timed out' : `git failed (${esc(r.error.code ?? 'error')})`);
-  const branch = r.status === 0 ? r.stdout.trim() : '';
+  const { name: branch, error } = headBranch(git, deadline - now());
+  if (error) return unmeasured(error);
   if (!branch) return null; // a detached HEAD is never recorded or warned about
   const records = readRecords(ctx.root);
   const base = Object.hasOwn(records, branch) ? { base: asBaseName(records[branch]!.base) } : {};
@@ -169,9 +149,19 @@ function measureBranch(ctx: Ctx, git: Git, now: () => number): { branch: string;
 }
 
 /** A raise outside the §14.4 ranges (a hand-edited file, say) is ignored, so it can't make every size "over the max". */
-export function limits(c: Ctx['config']['pr_size'], raise: Progress['raise']): Lim {
+export function limits(c: PrSize, raise: Progress['raise']): Lim {
   const ok = raise && raise.lines > c.max_lines && raise.lines <= RAISE_MAX_LINES && raise.files >= c.max_files && raise.files <= RAISE_MAX_FILES;
   return { target: c.target_lines, maxLines: ok ? raise.lines : c.max_lines, maxFiles: ok ? raise.files : c.max_files };
+}
+
+type PrSize = HarnessConfig['pr_size'];
+/** N5: `c` with the branch's recorded raise as its max, for the check, the `--pr-size` entry and `harness git pr`.
+ *  `branch` is called only when some branch has a raise, so most runs spawn no lookup. */
+export function raisedLimit(c: PrSize, progress: Record<string, Progress>, branch: () => string | null): PrSize & { raised?: true } {
+  if (!Object.values(progress).some((p) => p.raise)) return c;
+  const b = branch();
+  const l = limits(c, b !== null && Object.hasOwn(progress, b) ? progress[b]!.raise : undefined);
+  return l.maxLines === c.max_lines ? c : { ...c, max_lines: l.maxLines, max_files: l.maxFiles, raised: true };
 }
 
 // Set on an attended announcement; an edit's PostToolUse otherwise clears it (the edit ran), and Stop keeps it.
@@ -202,7 +192,7 @@ export function progressWarning(ctx: Ctx, git: Git = realGit(ctx.root), now: () 
   try {
     const m = measureBranch(ctx, git, now);
     if (m) return announce(ctx, m.branch, m.s);
-    if (ctx.input.hook_event_name === 'PostToolUse' && isEdit(ctx.input.tool_name)) clearPending(ctx, git);
+    if (ctx.input.hook_event_name === 'PostToolUse' && isEdit(ctx.input.tool_name)) clearPending(ctx, git, now);
     return ALLOW;
   } catch (e) {
     process.stderr.write(`harness: pr-size progress failed: ${String((e as Error)?.message ?? e)}\n`);

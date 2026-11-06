@@ -21,7 +21,7 @@ import type { Check, Ctx } from './check.js';
 import { configInvalidGate } from './config-gate.js';
 import { eventLog } from './event-log.js';
 import { capMessage, emit, MAX_CONTEXT, parseInput } from './io.js';
-import { mergeContext } from './notice.js';
+import { mergeContext, winner } from './notice.js';
 import { runAfterAllow, runChecks } from './run-checks.js';
 import { setupSession } from './session-setup.js';
 import type { HookEvent } from './types.js';
@@ -83,9 +83,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   const decisions = await runChecks(ctx, checks, degraded, log);
   if (event === 'PreToolUse' && !decisions.some((d) => d.kind === 'deny' || d.kind === 'ask')) runAfterAllow(ctx, checks, degraded);
 
-  const win =
-    decisions.find((d) => d.kind === 'deny' || d.kind === 'block') ?? decisions.find((d) => d.kind === 'ask');
-  const out = mergeContext(event, decisions, win);
+  const out = mergeContext(event, decisions, winner(decisions));
   const all = [pending, notice].filter(Boolean).join('\n');
   return all ? withNotice(event, out, all) : out;
 }

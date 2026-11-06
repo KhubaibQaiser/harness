@@ -5,7 +5,7 @@ description: Splits a large change into stacked PRs. Use before opening a PR, or
 
 # PR ship
 
-1. Measure against the intended base: `node .harness/hooks/dispatch.mjs --pr-size --base <base>`. It prints JSON with `lines`, `files`, `target_lines`, `max_lines`, `max_files`, `top` and `excluded`; `top` shows where the lines are. Exit 0 is within the limit, 1 is over, 2 is unmeasured (read `error`).
+1. Measure against the intended base: `node .harness/hooks/dispatch.mjs --pr-size --base <base>`. It prints JSON with `lines`, `files`, `target_lines`, `max_lines`, `max_files`, `top` and `excluded`; `top` shows where the lines are. `raised: true` means `max_lines` and `max_files` are this branch's approved raise. Exit 0 is within the limit, 1 is over, 2 is unmeasured (read `error`).
 2. Within `target_lines`: open the PR with an explicit `--base`.
 3. Above it, plan before touching branches:
    - Refactors and renames go in their own PR first.
@@ -19,9 +19,9 @@ description: Splits a large change into stacked PRs. Use before opening a PR, or
 
 ## When a pr-size warning sent you here
 
-1. Measure the working tree: `node .harness/hooks/dispatch.mjs --pr-size --worktree`.
+1. Measure the working tree against the base the warning named: `node .harness/hooks/dispatch.mjs --pr-size --worktree --base <that base>`.
 2. Group every changed file, uncommitted ones included, into a plan with the split rules in step 3 above.
-3. Show that plan, then ask the person with AskUserQuestion, offering `Split now`, `Keep going` and `Raise the limit for this branch`:
+3. Show that plan, then ask the person with AskUserQuestion, with the header `PR size`, offering `Split now`, `Keep going` and `Raise the limit for this branch`. Their answer lets your next edit run without a second ask:
    - `Split now`: follow the steps above from "Show the plan" (step 4).
    - `Keep going`: change nothing.
    - `Raise the limit for this branch`: ask the person for the new limit (suggest the measured size plus room for the remaining work, labelled as an estimate), then run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>` on its own. Its approval dialog is the person's real yes.

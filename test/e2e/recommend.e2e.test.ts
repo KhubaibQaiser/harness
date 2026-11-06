@@ -6,6 +6,7 @@ import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, expect, test } from 'vitest';
 import { MIN_CLAUDE_CODE } from '../../src/core/min-claude.js';
+import { settingsFragment } from '../../src/install/merge.js';
 import { build, cleanup, hookRunner, pnpmMonorepo } from './fixtures.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -98,7 +99,8 @@ test('fake AI step through select, apply, update, remove, uninstall leaves the r
   expect(done.code, done.out).toBe(0);
   const settings = JSON.parse(read('.claude/settings.json'));
   const groups = Object.values(settings.hooks as Record<string, any[]>).flat();
-  expect(groups).toHaveLength(6);
+  // One group per harness hook in the fragment, nothing else.
+  expect(groups).toHaveLength(Object.values(settingsFragment().hooks as Record<string, unknown[]>).flat().length);
   for (const g of groups) expect(g.hooks[0]).toMatchObject({ type: 'command', command: 'node', args: [expect.stringContaining('dispatch.mjs')] });
   expect(settings.permissions.deny).toHaveLength(30);
   expect(settings.enabledPlugins).toHaveProperty(['e2e-plugin@harness-pins']);

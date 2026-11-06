@@ -1,9 +1,6 @@
 // Raising the limit for a branch (spec §14.4): the person approves `--pr-size-raise` in a dialog; PostToolUse then records it,
 // only on the branch that dialog named.
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { writeAtomic } from '../../core/atomic.js';
 import { esc, type HarnessConfig, isObj } from '../../core/config.js';
 import { appendEvent } from '../../core/events.js';
 import type { Ctx } from '../../hooks/dispatch.js';
@@ -11,10 +8,11 @@ import type { Decision } from '../../hooks/types.js';
 import type { PrTarget, RaiseArgs } from './detect.js';
 import { count, plainBranch } from './measure.js';
 import { RAISE_MAX_FILES, RAISE_MAX_LINES, readProgress, writeProgress } from './progress.js';
+import { readJson, writeJson } from './records.js';
 
 export type Cur = { name: string | null; late: boolean };
 type Limits = { lines: number; files: number };
-export const ASKED = '.harness/state/pr-raise-asked.json';
+const ASKED = '.harness/state/pr-raise-asked.json';
 // An ask answered later than this records nothing (the agent runs the raise again).
 const ASK_TTL_MS = 3_600_000;
 const MAX_BYTES = 100_000;
@@ -68,13 +66,7 @@ const askKey = (ctx: Ctx, command: string) => `${ctx.input.session_id ?? ''}:${c
 type Asked = { branch: string; lines: number; files: number; ts: number };
 function readAsked(root: string): Record<string, Asked> {
   const out: Record<string, Asked> = Object.create(null);
-  let raw: unknown;
-  try {
-    if (statSync(join(root, ASKED)).size > MAX_BYTES) return out;
-    raw = JSON.parse(readFileSync(join(root, ASKED), 'utf8'));
-  } catch {
-    return out;
-  }
+  const raw = readJson(root, ASKED, MAX_BYTES);
   if (!isObj(raw)) return out;
   for (const [k, v] of Object.entries(raw)) {
     if (isObj(v) && typeof v.branch === 'string' && typeof v.ts === 'number' && Number.isInteger(v.lines) && Number.isInteger(v.files)) out[k] = { branch: v.branch, lines: v.lines as number, files: v.files as number, ts: v.ts };
@@ -87,8 +79,7 @@ function writeAsked(root: string, key: string, set: Asked | null): void {
   const now = Date.now();
   const all = Object.fromEntries(Object.entries(readAsked(root)).filter(([k, v]) => k !== key && now - v.ts < ASK_TTL_MS));
   if (set) all[key] = set;
-  mkdirSync(dirname(join(root, ASKED)), { recursive: true });
-  writeAtomic(join(root, ASKED), JSON.stringify(all) + '\n');
+  writeJson(root, ASKED, all);
 }
 
 function saveAsked(ctx: Ctx, command: string, a: Asked): void {

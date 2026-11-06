@@ -94,7 +94,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const frag = settingsFragment().hooks;
   const recorded = (manifest.files.find((f) => f.rel === '.claude/settings.json')?.blocks ?? []).map((b) => { try { return JSON.parse(b); } catch { return null; } });
   const kind = (ev: string, g: unknown) =>
-    isDeepStrictEqual(g, frag[ev][0]) ? 'ok' : recorded.some((b) => isDeepStrictEqual(b, { event: ev, group: g })) ? 'old' : 'edited';
+    frag[ev].some((w: unknown) => isDeepStrictEqual(g, w)) ? 'ok' : recorded.some((b) => isDeepStrictEqual(b, { event: ev, group: g })) ? 'old' : 'edited';
 
   // Run the PreToolUse hook as Claude Code would: exec form with no shell, or an old shell-form entry through the shell.
   const preGroup = groups('PreToolUse')[0];
@@ -119,6 +119,10 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
       fix(`\`.claude/settings.json\`: \`hooks.${ev}\` harness hook differs from the one harness installs`, 'undo the edit or delete that group, then run /harness:update');
     else if (BLOCKING.includes(ev) && !(ev === 'PreToolUse' && shellOld) && gs.some((g) => kind(ev, g) === 'old' && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure !== 'block')))
       fix(`${ev} hook has no onFailure "block"`, 'run /harness:update');
+    else {
+      const missing = frag[ev].find((w: any) => !gs.some((g) => isDeepStrictEqual(g, w)));
+      if (missing) fix(`\`.claude/settings.json\`: \`hooks.${ev}\` is missing the harness group for \`${missing.matcher ?? 'all tools'}\``, 'run /harness:update');
+    }
   }
 
   const entry = manifest.files.find((f) => f.rel === DISPATCH);

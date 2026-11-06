@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
@@ -111,11 +111,29 @@ describe('harness report', () => {
     const r = await go(w, []);
     expect(r.text).toContain('Start Claude Code inside the repo');
   });
-  it('stays within 8 lines with every optional line present, and says rules are not computed', async () => {
+  it('stays within 8 lines with every optional line present, and prints the rules line', async () => {
     const r = await go(world(0), ['--export']);
     expect(r.lines.length).toBeLessThanOrEqual(8);
     expect(r.text).toContain('Rules enforced');
     expect(r.lines.at(-1)).toContain('.harness/reports/2026-11-05.html');
+  });
+  it('prints the real rules-enforced line', async () => {
+    const r = await go(world(0), []);
+    expect(r.text).toContain('Rules enforced: 1 of 11 rules enforced deterministically, 2 partly');
+    expect(r.text).not.toContain('not computed');
+  });
+  it('renders the evals section only when eval results exist', async () => {
+    const none = world(0);
+    await go(none, []);
+    expect(readFileSync(htmlPath(none), 'utf8')).not.toContain('id="evals"');
+    const w = world(0);
+    const dir = join(w.root, '.harness/reports/evals/2026-11-04-claude-x-skills');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'result.json'), JSON.stringify({ threshold: 1, cases: [{ name: 'case-one', arms: { with: [{ score: 1 }] } }] }));
+    await go(w, []);
+    const html = readFileSync(htmlPath(w), 'utf8');
+    expect(html).toContain('id="evals"');
+    expect(html).toContain('case-one');
   });
   it('rejects a huge --days', async () => {
     expect((await go(world(0), ['--days', '99999999'])).code).toBe(2);

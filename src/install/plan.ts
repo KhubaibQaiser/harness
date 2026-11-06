@@ -41,8 +41,10 @@ function setChanged(doc: Document, path: (string | number)[], cur: any, want: an
     for (const row of want) if (!ids(cur).includes(row.id)) doc.addIn(['items'], row);
     if (isDeepStrictEqual(ids(doc.toJS().items), ids(want))) return;
   }
-  if (map(want) && map(cur)) for (const k of Object.keys(want)) setChanged(doc, [...path, k], cur[k], want[k]);
-  else if (!isDeepStrictEqual(cur, want)) doc.setIn(path, want);
+  if (map(want) && map(cur)) {
+    for (const k of Object.keys(want)) setChanged(doc, [...path, k], cur[k], want[k]);
+    if (path.length === 0 && 'preset' in cur && !('preset' in want)) doc.deleteIn(['preset']); // preset turned off
+  } else if (!isDeepStrictEqual(cur, want)) doc.setIn(path, want);
 }
 
 export const ESLINT = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'];

@@ -5,6 +5,7 @@ import type { Answers } from '../ai/answers.js';
 import type { Picks } from '../ai/picks.js';
 import type { Catalog } from '../catalog/schema.js';
 import type { HarnessConfig } from '../core/config.js';
+import { detect } from '../install/detect.js';
 import { notPicked, resolveSelection } from '../install/select.js';
 
 export interface PresetChoice { loaded: LoadedPreset; items: string[]; rest: string[]; reasons: Record<string, string> }
@@ -44,3 +45,30 @@ export function resolveChosen(a: Answers, facts: Facts, chosen: string[], picks:
 
 /** `config.preset` for the chosen preset. */
 export const presetConfig = (l: LoadedPreset, version: string, items: string[]): NonNullable<HarnessConfig['preset']> => ({ id: l.preset.id, version, items, git: l.preset.git });
+
+/** The id of an own item that applies to the repo's stack (the core always does). */
+const applies = (l: LoadedPreset, id: string, facts: Facts, projectType: string): boolean => id === l.preset.core || appliesTo(l.items.find((i) => i.id === id)!.applies_when, facts, projectType);
+
+/**
+ * What `update` plans the preset from. With AI answers the chosen preset (or none: turning it off drops `config.preset`) wins.
+ * Without them the recorded preset is reloaded from its folder: items whose stack is gone are dropped, newly matching skills
+ * are only noted. A folder that is gone or invalid leaves the preset's files as they are.
+ */
+export function updatePreset(config: HarnessConfig, sel: { preset?: LoadedPreset; presetItems: string[] } | null, root: string, version: string): { config: HarnessConfig; preset?: LoadedPreset; notices: string[]; changed: boolean } {
+  if (sel) {
+    const next = { ...config };
+    delete next.preset;
+    if (sel.preset) next.preset = presetConfig(sel.preset, version, sel.presetItems);
+    return { config: next, preset: sel.preset, notices: [], changed: true };
+  }
+  const rec = config.preset;
+  if (!rec) return { config, notices: [], changed: false };
+  const file = findPreset(rec.id, root);
+  const lp = file ? loadPreset(file) : null;
+  if (!lp?.ok) return { config, notices: [lp ? `Preset "${esc(rec.id)}" is invalid (${lp.errors.join('; ')}); its files are kept as they are.` : `Preset "${esc(rec.id)}" was not found; its files are kept as they are.`], changed: false };
+  const l = lp.loaded;
+  const facts = detect(root);
+  const items = rec.items.filter((id) => l.items.some((i) => i.id === id) && applies(l, id, facts, config.project.type));
+  const fresh = l.preset.skills.filter((id) => !rec.items.includes(id) && applies(l, id, facts, config.project.type));
+  return { config: { ...config, preset: { ...rec, items } }, preset: l, notices: fresh.map((id) => `Note: ${esc(id)} now applies here; run /harness:update and tick it to add it.`), changed: items.length !== rec.items.length };
+}

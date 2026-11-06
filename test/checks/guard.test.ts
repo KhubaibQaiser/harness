@@ -859,6 +859,15 @@ test('a plain message string is data only when nothing on the line can run it ag
     'git commit --edit -m "x; git push -f"', 'GH_EDITOR=sh gh pr create --editor --body "x; git push -f"', `GIT_EDITOR=sh ${p}`, `unset GIT_EDITOR; git -c core.ed''itor=sh commit -e -m "x; git push -f"`,
     `env --spl="sh -c x" ${p}`, `env -S "x" ${p}`, `exec > o.sh; ${p}; sh o.sh`, `ssh h ${p}`, `source x; ${p}`, `. ./x; ${p}`, `git() { eval "$3"; }\n${p}`], 'deny');
 });
+test('a re-runner counts only where the shell runs it as a command, and a shell only when it parses the text', () => {
+  // A word that is not in command position runs nothing: `docker exec`, `kubectl exec`, a `-C` path ending in a shell name.
+  all(['docker exec -m "git push -f"', 'kubectl exec pod -m "git push -f"', 'git -C /tmp/sh commit -m "x; git push -f"', 'cd /opt/case && git commit -m "x; git push -f"',
+    'git -C ~/src/bash-tools commit -m "x; git push -f"', 'zsh -m "git push -f"', 'bash -xm "git push -f"', "bash -c 'echo ok' -m 'git push -f'"], 'allow');
+  // A shell that reads stdin or a payload with $ in it, ssh, watch, parallel and script hand the text to a shell.
+  all(['ssh host -m "git push -f"', 'sh -c "$X" -m "git push -f"', 'watch -m "git push -f"', 'parallel -m "git push -f" ::: a', 'script -m "git push -f"',
+    'git commit -m "x; git push -f" | sh -o pipefail', 'git commit -m "x; git push -f" | bash -s', "git commit -m \"x; git push -f\" | sh -c 'cat | sh'",
+    'git commit -m "x; git push -f" | xargs sh -c', 'sudo -u x bash -c "$1" -m "git push -f"', 'git commit -m "x; git push -f" | /bin/sh', 'nohup sh -c "$0" -m "git push -f"'], 'deny');
+});
 test('a case pattern ) does not close the case, and a redefined command or -e makes a heredoc sink code', () => {
   all(["case x in\nx) cat > f <<'EOF'\ngit push -f\nEOF\n;;\nesac | sh", "case x in *) cat > f <<'EOF'\ngit push -f\nEOF\n;; esac", "cat() { sh; }; cat > f <<'EOF'\ngit push -f\nEOF",
     "hash -p /bin/sh cat; cat > f <<'EOF'\ngit push -f\nEOF", "alias cat=sh; cat > f <<'EOF'\ngit push -f\nEOF", "git() { sh; }; git commit -F - <<'EOF'\ngit push -f\nEOF",

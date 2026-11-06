@@ -3,6 +3,7 @@
 // The writer rule is strict on purpose (re-review 5): every redirect spelling not listed here is code, a few false
 // blocks traded for no misses.
 import { posix } from 'node:path';
+import { redefines } from './guard-reruns.js';
 import { type Scan } from './guard-scan.js';
 
 /** Commands that write what they read to their output: data when that output goes to a plain file. */
@@ -28,8 +29,8 @@ const EXEC_REDIRECT = /(?:^|[\s;&|(){}`])exec\b[^;&|\n]*[<>]/;
 export const EDITOR_SET = /\b(?:GIT_EDITOR|GH_EDITOR|EDITOR|VISUAL|GIT_SEQUENCE_EDITOR|GIT_PAGER|GH_PAGER|PAGER|LESS|LESSOPEN|LESSCLOSE)=|\b(?:core\.(?:editor|pager)|sequence\.editor|pager\.[\w-]+)\b/i;
 /** An editor flag: git and gh open the message in an editor (`git commit -e -m …`, `-em`, `--edit`, `gh … --editor`). */
 export const EDIT_FLAG = /^(?:-[a-zA-Z]*e[a-zA-Z]*|--edit|--editor)(?:=|$)/;
-/** A command that can redefine what a later word runs: a function, `alias`, `hash` or `enable` (`tail() { sh; }`). */
-export const REDEFINES = /\w\s*\(\s*\)|(?:^|[\s;&|(){}`])(?:function|alias|hash|enable)(?=[\s;&|()`]|$)/;
+/** A command line for the whole-line checks: `bodiless` without heredoc bodies, `skel` also without spaced quoted text. */
+export interface Skel { skel: string; bodiless: string }
 
 /** The logical line at `from`, up to its first newline outside quotes, with each quoted span and escape masked as NUL
  *  characters (same length, so offsets carry over). */
@@ -98,10 +99,11 @@ export function wordCounter(whole: string): (w: string) => number {
 const reused = (files: string[], count: (w: string) => number) =>
   files.some((f) => { const b = f.split('/').pop()!; return f !== '/dev/null' && (!/^[\w.-]+$/.test(b) || count(b) > 1); });
 
-/** The whole-command flags, read once: `skel` is the command without heredoc bodies and spaced quoted text, with
- *  one-word quotes unquoted (`'hash'` is still hash), as guard-readings' skeleton builds it. */
-export function wholeFlags(c: string, skel = c) {
-  return { count: wordCounter(c), noFiles: EXEC_REDIRECT.test(skel) || REDEFINES.test(skel), noMessages: EDITOR_SET.test(skel) || REDEFINES.test(skel) };
+/** The whole-command flags, read once from the skeleton guard-readings builds. A function, `alias`, `hash` or `enable`
+ *  (`cat() { sh; }`) means no writer and no message flag is a sink. */
+export function wholeFlags(c: string, sk: Skel = { skel: c, bodiless: c }) {
+  const redef = redefines(sk.skel, sk.bodiless);
+  return { count: wordCounter(c), noFiles: EXEC_REDIRECT.test(sk.skel) || redef, noMessages: EDITOR_SET.test(sk.skel) || redef };
 }
 /**
  * The tests for one command, each simple command judged once, so many `<<` or `-m` stay linear. `sink(lineStart, at)`:

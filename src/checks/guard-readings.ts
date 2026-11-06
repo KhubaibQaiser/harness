@@ -3,7 +3,8 @@
 import picomatch from 'picomatch';
 import { commandStart, quoteFree, SEGMENTS } from './guard.js';
 import { Groups, quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
-import { commandTests, EDITOR_SET, REDEFINES, wholeFlags } from './guard-sinks.js';
+import { commandTests, EDITOR_SET, type Skel, wholeFlags } from './guard-sinks.js';
+import { redefines, reruns } from './guard-reruns.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
@@ -97,29 +98,28 @@ function layout(s: Scan, tests: { sink: (l: number, at: number) => boolean }): L
   return { quotes, heredocs };
 }
 
-/** The command as its own shell runs it, for the whole-line checks: heredoc bodies and quoted text with a space in it
- *  blanked, and a one-word quote unquoted (`'sh'`, `"eval"`, `h\ash` stay those words). */
-function skeleton(s: Scan): string {
+/** The command as its own shell runs it, for the whole-line checks. `bodiless`: heredoc bodies blanked. `skel` also
+ *  blanks quoted text with a space in it and unquotes a one-word quote (`'sh'`, `"eval"`, `h\ash` stay those words). */
+function skeleton(s: Scan): Skel {
   const c = s.c, { quotes, heredocs } = layout(s, { sink: () => false });
-  const cuts = [...quotes.map((q) => ({ from: q.start, to: q.end, put: /\s/.test(c.slice(q.start, q.end)) ? ' ' : c.slice(q.start, q.end).replace(/^\$?['"]|['"]$/g, '') })),
-    ...heredocs.map((h) => ({ from: h.from, to: h.to, put: '\n' }))].sort((a, b) => a.from - b.from);
-  let out = '', at = 0;
-  for (const x of cuts) { out += c.slice(at, x.from) + x.put; at = x.to; }
-  return (out + c.slice(at)).replace(/\\/g, '');
+  const bodies = heredocs.map((h) => ({ from: h.from, to: h.to, put: '\n' }));
+  const cuts = [...quotes.map((q) => ({ from: q.start, to: q.end, put: /\s/.test(c.slice(q.start, q.end)) ? ' ' : c.slice(q.start, q.end).replace(/^\$?['"]|['"]$/g, '') })), ...bodies];
+  const apply = (xs: typeof bodies) => { let out = '', at = 0; for (const x of xs.sort((a, b) => a.from - b.from)) { out += c.slice(at, x.from) + x.put; at = x.to; } return out + c.slice(at); };
+  return { skel: apply(cuts).replace(/\\/g, ''), bodiless: apply(bodies) };
 }
-export const commandSkeleton = (c: string): string => skeleton(new Scan(c));
+export const commandSkeleton = (c: string): Skel => skeleton(new Scan(c));
 /** Picks the quoted spans that are data, given the command's tests and skeleton. `rerun` (optional) picks the spans
  *  whose text something on the line may run again: their text is read as a command line of its own, at the end. */
-type Blank = ((c: string, tests: ReturnType<typeof commandTests>, skel: string) => (q: Quoted) => boolean) & { rerun?: (c: string, tests: ReturnType<typeof commandTests>, skel: string) => (q: Quoted) => boolean };
+type Blank = ((c: string, tests: ReturnType<typeof commandTests>, sk: Skel) => (q: Quoted) => boolean) & { rerun?: (c: string, tests: ReturnType<typeof commandTests>, sk: Skel) => (q: Quoted) => boolean };
 /** The command with data taken out: a heredoc body nobody runs (its end line too), keeping the $(…) and `…` of an
  *  unquoted-delimiter body as lines, and each quoted span `blank` picks, as '' plus the substitutions a "…" span runs. */
 function withoutData(c: string, blank: Blank): string {
   if (!/['"<]/.test(c)) return c;
-  const s = new Scan(c), skel = skeleton(s), tests = commandTests(s, wholeFlags(c, skel)), { quotes, heredocs } = layout(s, tests), picks = blank(c, tests, skel);
+  const s = new Scan(c), sk = skeleton(s), tests = commandTests(s, wholeFlags(c, sk)), { quotes, heredocs } = layout(s, tests), picks = blank(c, tests, sk);
   const cuts = [...quotes.filter(picks).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map((x) => ` $(${x})`).join('') })),
     ...heredocs.filter((h) => !h.program).map((h) => ({ from: h.from, to: h.to, put: h.literal ? '' : s.substitutions(h.from, h.to).map((x) => x + '\n').join('') }))]
     .sort((a, b) => a.from - b.from);
-  const again = blank.rerun ? quotes.filter(blank.rerun(c, tests, skel)).map((q) => '\n' + c.slice(q.start + 1, q.end - 1).replace(/\\(["\\$`])/g, '$1')).join('') : '';
+  const again = blank.rerun ? quotes.filter(blank.rerun(c, tests, sk)).map((q) => '\n' + c.slice(q.start + 1, q.end - 1).replace(/\\(["\\$`])/g, '$1')).join('') : '';
   if (!cuts.length) return c + again;
   let out = '', at = 0;
   for (const x of cuts) { out += c.slice(at, x.from) + x.put; at = x.to; }
@@ -134,26 +134,23 @@ const words = (c: string): string => withoutData(c, spaced);
 /** A message value: `-m`, `-am`, `--message`, `--body`, `--title` or `--notes` right before the quoted span. */
 const MESSAGE_FLAG = /(?:^|\s)(?:-[a-zA-Z]*m|--message|--body|--title|--notes)(?:=|[ \t]+)$/;
 const before = (c: string, q: Quoted) => c.slice(Math.max(0, q.start - 16), q.start);
-/** Words that can run a message again, anywhere in the command line: eval, exec, source, `.` as a command, a shell,
- *  ssh, su, watch, parallel, script, `case`, and env -S or any `--s…` prefix of --split-string. Read on the skeleton. */
-const RERUNS = /(?:^|[;&|(){}`\n])\s*\.(?=\s)|(?:^|[\s;&|(){}`/])(?:eval|exec|source|case|(?:ba|z|da|k|c|tc|mk|a)?sh|fish|busybox|ssh|su|watch|parallel|script)(?=[\s;&|()`]|$)|\benv\b[^;&|\n]*\s(?:-[a-zA-Z]*S|--s)/;
 /** `$_` or `${_}`: the last argument of the previous command, which can be the message (`…; eval "$_"`). */
 const LAST_ARG = /\$(?:_(?!\w)|\{_\})/;
 /** The text rules' reading: data heredoc bodies out, and a plain quoted message value with whitespace in it is data
  *  (`git commit -m 'why (git push -f) is bad'`). Plain means no $(…) or backtick in it, no editor flag on its command,
- *  and nothing in the command line that can run it again (RERUNS, `$_`, REDEFINES, an editor or pager setting). */
-const safeLine = (c: string, skel: string) => !RERUNS.test(skel) && !LAST_ARG.test(c) && !REDEFINES.test(skel) && !EDITOR_SET.test(skel);
+ *  and nothing in the command line that can run it again (reruns, `$_`, redefines, an editor or pager setting). */
+const safeLine = (c: string, sk: Skel) => !reruns(sk.bodiless) && !LAST_ARG.test(c) && !redefines(sk.skel, sk.bodiless) && !EDITOR_SET.test(sk.skel);
 const messageSpan = (c: string) => { const sp = spaced(c); return (q: Quoted) => !q.subs.length && sp(q) && MESSAGE_FLAG.test(before(c, q)); };
 type Tests = ReturnType<typeof commandTests>;
 const edited = (tests: Tests, q: Quoted) => tests.editedAt(q.line ?? 0, q.start);
-const messages: Blank = Object.assign((c: string, tests: Tests, skel: string) => {
-  const safe = safeLine(c, skel), msg = messageSpan(c);
+const messages: Blank = Object.assign((c: string, tests: Tests, sk: Skel) => {
+  const safe = safeLine(c, sk), msg = messageSpan(c);
   return (q: Quoted) => safe && msg(q) && !edited(tests, q);
 }, {
   // A plain message that something on the line may run (eval, a shell, `$_`, an editor) is read as commands too, even
   // where its quote would hide a rule: `eval git commit -m "x; git push -f"`.
-  rerun: (c: string, tests: Tests, skel: string) => {
-    const safe = safeLine(c, skel), msg = messageSpan(c);
+  rerun: (c: string, tests: Tests, sk: Skel) => {
+    const safe = safeLine(c, sk), msg = messageSpan(c);
     return (q: Quoted) => msg(q) && (!safe || edited(tests, q));
   },
 });

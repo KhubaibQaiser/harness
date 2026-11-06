@@ -135,7 +135,8 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   // Edited files are kept like any other user edit, but harness is fully uninstalled either way: the manifest always
   // goes, so init, status and doctor see a repo without harness.
   if (deleteHarness) {
-    pruneExcept(join(root, '.harness'), kept.map((k) => join(root, k)));
+    // .harness/presets/ is the person's own committed source, not something harness wrote: it stays.
+    pruneExcept(join(root, '.harness'), [...kept.map((k) => join(root, k)), join(root, '.harness', 'presets')]);
     out(kept.some((k) => k.startsWith('.harness/')) ? 'Removed `.harness/` except the edited files.' : 'Removed `.harness/`.');
   } else {
     // Keep the logs but mark harness as uninstalled so init can run again.

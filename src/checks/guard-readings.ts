@@ -42,8 +42,20 @@ class Budget {
 interface Heredoc { from: number; to: number; literal: boolean; program: boolean } // the body and its end line
 interface Layout { quotes: Quoted[]; heredocs: Heredoc[] }
 
-/** How a `(`, `)`, `{` or `}` changes the group depth (braces only as words). */
-const GROUP: Record<string, number> = { '(': 1, ')': -1, '{': 1, '}': -1 };
+/** Compound commands, counted as groups: a writer or message inside one is code, since `fi | sh` reads what it prints. */
+const OPENS = new Set(['if', 'for', 'while', 'until', 'select', 'case']), CLOSES = new Set(['fi', 'done', 'esac']);
+/** A keyword's place: a command start, after a separator or another keyword (`then if`, `do while`). */
+const KEYWORD_PLACE = /(?:^|[\n;&|(){}]|\b(?:then|do|else|elif|time)|!)[ \t]*$/;
+/** How the character at `i` changes the group depth: `(`/`)`, a `{`/`}` word, and the compound keywords. */
+function groupStep(c: string, i: number): number {
+  const ch = c[i];
+  if (ch === '(' || ch === ')') return ch === '(' ? 1 : -1;
+  if (i > 0 && !/[\s;&|(){}]/.test(c[i - 1])) return 0; // not a word start
+  if (ch === '{' || ch === '}') return /\s/.test(c[i + 1] ?? ' ') ? (ch === '{' ? 1 : -1) : 0;
+  const w = /^[a-z]+/.exec(c.slice(i, i + 7))?.[0];
+  if (!w || (!OPENS.has(w) && !CLOSES.has(w)) || /[\w-]/.test(c[i + w.length] ?? ' ')) return 0;
+  return KEYWORD_PLACE.test(c.slice(Math.max(0, i - 12), i)) ? (OPENS.has(w) ? 1 : -1) : 0;
+}
 /** Where the shell sees quotes and heredoc bodies: `\` escapes outside quotes, `'…'` is literal, `$'…'` is literal with
  *  `\` escapes, `"…"` keeps its substitutions, `$((…))` and `((…))` are arithmetic (`1<<E` is a shift), and `<<WORD`
  *  takes the lines up to WORD. A body is a program unless `tests.sink` says it goes to a data sink, outside any
@@ -55,7 +67,7 @@ function layout(s: Scan, tests: ReturnType<typeof commandTests>): Layout {
     const ch = c[i];
     const q = ch === '\\' ? null : quotedAt(s, i);
     if (ch === '\\') i++;
-    else if (q) { quotes.push({ ...q, line: lineStart }); i = q.end - 1; }
+    else if (q) { quotes.push({ ...q, line: lineStart, depth: depth + (ticks % 2) }); i = q.end - 1; }
     else if ((ch === '$' && c[i + 1] === '(' && c[i + 2] === '(') || (ch === '(' && c[i + 1] === '(')) i = s.closeParen(i + (ch === '$' ? 3 : 2), 2) - 1;
     else if (ch === '<' && c[i + 1] === '<') {
       if (c[i + 2] === '<') { i += 2; continue; } // a here-string
@@ -94,7 +106,7 @@ function layout(s: Scan, tests: ReturnType<typeof commandTests>): Layout {
       lineStart = p;
     } else if (ch === '\n') lineStart = i + 1;
     else if (ch === '`') ticks++;
-    else depth += GROUP[ch] && (ch === '(' || ch === ')' || (/[\s;&|]/.test(c[i - 1] ?? ' ') && /\s/.test(c[i + 1] ?? ' '))) ? GROUP[ch] : 0;
+    else depth += groupStep(c, i);
   }
   return { quotes, heredocs };
 }
@@ -107,7 +119,7 @@ type Blank = (c: string, known: (q: Quoted) => boolean) => (q: Quoted) => boolea
 function withoutData(c: string, blank: Blank, argValue = false): string {
   if (!/['"<]/.test(c)) return c;
   const s = new Scan(c), tests = commandTests(s, argValue);
-  const known = (q: Quoted) => tests.message(q.line ?? 0, q.start);
+  const known = (q: Quoted) => tests.message(q.line ?? 0, q.start, q.depth ?? 0);
   const picks = blank(c, known), { quotes, heredocs } = layout(s, tests);
   const sub = (q: Quoted) => (argFlag(c, q, known) ? (x: string) => withoutData(x, blank, true) : (x: string) => x);
   const cuts = [...quotes.filter(picks).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map(sub(q)).map((x) => ` $(${x})`).join('') })),

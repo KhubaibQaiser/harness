@@ -40,3 +40,10 @@ it('a git commit with 10000 message flags', () => {
   expect(decideCommand(c, ctx).kind).toBe('allow');
   expect(median(c)).toBeLessThan(200);
 });
+
+// The whole-command flags are read once, not once per line: 10000 heredoc lines took 18.8 s before (re-review 6, N4).
+it('10000 lines of cat > f <<E', () => {
+  const c = "cat > f <<'E'\nhi\nE\n".repeat(10000);
+  expect(decideCommand(c, ctx).kind).toBe('allow');
+  expect(median(c)).toBeLessThan(1000);
+});

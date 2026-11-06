@@ -842,6 +842,31 @@ test('an editor or pager setting makes a git message built at run time code, and
     "EDITOR=sh git commit -e -F - <<'EOF'\ngit push -f\nEOF"], 'deny');
   all(["GIT_EDITOR=sh git commit -e -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "git -c core.pager=sh commit -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "VISUAL=vi git commit -e -m \"$(date)\""], 'ask');
 });
+test('a message value is data only when git or gh runs directly or through command, env, time, nice or nohup', () => {
+  const m = (pre: string) => `${pre} "$(cat <<'EOF'\nx; git push -f\nEOF\n)"`;
+  all([m('eval git commit -m'), m('eval gh pr create --title x --body'), m('sh git commit -m'), m('bash git commit -m'), m('npx git commit -m'), m('npm exec -- git commit -m'),
+    m('xargs git commit -m'), m('script -q /dev/null git commit -m'), m('env -S x git commit -m')], 'deny');
+  all([m('command git commit -m'), m('env FOO=1 git commit -m'), m('time git commit -m'), m('nice -n 5 git commit -m'), m('nohup git commit -m')], 'allow');
+});
+test('a writer path is normalized before the device test, and compound commands are groups', () => {
+  const w = (path: string) => `cat > ${path} <<'EOF'\ngit push -f\nEOF`;
+  all([`if :; then\n${w('//dev/stdout')}\nfi | sh`, `for x in 1; do\n${w('/./dev/stdout')}\ndone | sh`, `if :; then\n${w('../../../../../../../../dev/stdout')}\nfi | sh`,
+    `while :; do\n${w('/dev/stdout')}\nbreak; done | sh`, `if :; then\n${w('f')}\nfi | sh`, `case x in x) ${w('f')} ;; esac | sh`, `f() {\n${w('f')}\n}; f | sh`,
+    w('//proc/self/fd/1'), w('/./dev/stderr'), w('//dev/null/../stdout'), w('dev/stdout'), `cd / && ${w('dev/stdout')}`,
+    "tee //dev/stdout >/dev/null <<'EOF'\ngit push -f\nEOF", "dd of=//dev/stdout <<'EOF'\ngit push -f\nEOF", w('x/../f')], 'deny');
+  all([w('docs/x.md'), w('/dev/null'), w('./f'), w('~/x.md')], 'allow');
+});
+test("a message's output may reach only the caller: no group, no process substitution, only tail, head or wc after it", () => {
+  const m = (pre: string, post: string) => `${pre}git commit -m "$(cat <<'EOF'\nx; git push -f\nEOF\n)"${post}`;
+  all([m('{ ', '; } | sh'), m('( ', ' ) | sh'), m('', ' > >(sh)'), m('', ' | tail -5 > >(sh)'), m("export LESSOPEN='|-sh %s'; ", ' | less'), m('', ' | less'),
+    m('', ' | more'), m('', ' | cat > o.sh; sh o.sh'), m('', ' | grep x'), m('', ' &'), m('', ' > out.txt'), m('if ', '; then :; fi'), m('', ' | tail -5 | sh')], 'deny');
+  all([m('', ''), m('', ' 2>&1 | tail -5'), m('', ' | head -n 1'), m('', ' | wc -l'), m('git add -A && ', ' && git push'), m('', '; git log -1'), m('', ' || true')], 'allow');
+});
+test('pager and less settings make a git message built at run time code, and ask at least', () => {
+  all(["PAGER=sh git -p commit -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "git -c pager.commit=sh commit -m \"$(cat <<'EOF'\nhello\nEOF\n)\"",
+    "LESSOPEN='|sh %s' git commit -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "LESS=x git commit -m \"$(date)\""], 'ask');
+  all(["PAGER=sh git -p commit -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"", "git -c pager.commit=sh commit -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\""], 'deny');
+});
 test('a shell -c payload is found after other options', () => {
   const forms = ['sh -c -m', 'bash -c -x', 'bash -c -o pipefail', 'sh -c -e -u', 'bash -c -x --', 'zsh -c -x', 'bash --rcfile x -c', 'bash -xc', 'bash -ce', 'sh -euc',
     'bash -o pipefail -c', 'bash --norc -c', 'zsh -fc', 'dash -c', 'ksh -c'];

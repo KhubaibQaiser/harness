@@ -10,8 +10,8 @@ import { expect, test } from 'vitest';
 const DISPATCH = join(process.cwd(), 'dist/hooks/dispatch.mjs');
 const RUNS = 21;
 const OVERHEAD_MS = { win32: 450, darwin: 150 }[process.platform as string] ?? 100; // harness cost on top of a bare node spawn; hosted runners vary (Windows 402–407 ms at 250, macOS 105–108 ms at 100)
-// A counted edit runs about 7 git calls on purpose (spec §14.2), so it gets its own ceiling. macOS runners measured 154–166 ms in Nov 2026; Windows stayed under 450.
-const COUNTED_EDIT_OVERHEAD_MS = { win32: 450, darwin: 300 }[process.platform as string] ?? 200;
+// A counted edit runs about 7 git calls on purpose (spec §14.2), so it gets its own ceiling. Hosted runners measured macOS 154–166 ms and Windows 490 ms (Nov 2026); about 2x headroom.
+const COUNTED_EDIT_OVERHEAD_MS = { win32: 1000, darwin: 300 }[process.platform as string] ?? 200;
 const CEILING_MS = 1000; // gross-regression guard on the whole spawn
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;

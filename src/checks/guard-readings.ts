@@ -3,7 +3,7 @@
 import picomatch from 'picomatch';
 import { commandStart, quoteFree, SEGMENTS } from './guard.js';
 import { quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
-import { maskedLine, sinkTest, wordCounter } from './guard-sinks.js';
+import { maskedLine, messageCommand, sinkTest, wordCounter } from './guard-sinks.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
@@ -53,7 +53,7 @@ function layout(s: Scan, argValue: boolean): Layout {
     const ch = c[i];
     const q = ch === '\\' ? null : quotedAt(s, i);
     if (ch === '\\') i++;
-    else if (q) { quotes.push(q); i = q.end - 1; }
+    else if (q) { quotes.push({ ...q, line: lineStart }); i = q.end - 1; }
     else if ((ch === '$' && c[i + 1] === '(' && c[i + 2] === '(') || (ch === '(' && c[i + 1] === '(')) i = s.closeParen(i + (ch === '$' ? 3 : 2), 2) - 1;
     else if (ch === '<' && c[i + 1] === '<') {
       if (c[i + 2] === '<') { i += 2; continue; } // a here-string
@@ -96,15 +96,17 @@ function layout(s: Scan, argValue: boolean): Layout {
   return { quotes, heredocs };
 }
 
-type Blank = (c: string) => (q: Quoted) => boolean;
+/** Picks the quoted spans that are data. `known` says a span is an argument of a known message-taking command. */
+type Blank = (c: string, known: (q: Quoted) => boolean) => (q: Quoted) => boolean;
 /** The command with data taken out: a heredoc body nobody runs (its end line too), keeping the $(…) and `…` of an
  *  unquoted-delimiter body as lines, and each quoted span `blank` picks, as '' plus the substitutions a "…" span runs.
  *  A message flag's substitutions have their own data taken out, so `-m "$(cat <<'EOF' … )"` keeps no body. */
 function withoutData(c: string, blank: Blank, argValue = false): string {
   if (!/['"<]/.test(c)) return c;
-  const s = new Scan(c), picks = blank(c);
-  const { quotes, heredocs } = layout(s, argValue);
-  const sub = (q: Quoted) => (ARG_FLAG.test(c.slice(Math.max(0, q.start - 16), q.start)) ? (x: string) => withoutData(x, blank, true) : (x: string) => x);
+  const s = new Scan(c), lines = new Map<number, string>();
+  const known = (q: Quoted) => { const l = q.line ?? 0; if (!lines.has(l)) lines.set(l, maskedLine(s, l)); return messageCommand(lines.get(l)!, q.start - l); };
+  const picks = blank(c, known), { quotes, heredocs } = layout(s, argValue);
+  const sub = (q: Quoted) => (argFlag(c, q, known) ? (x: string) => withoutData(x, blank, true) : (x: string) => x);
   const cuts = [...quotes.filter(picks).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map(sub(q)).map((x) => ` $(${x})`).join('') })),
     ...heredocs.filter((h) => !h.program).map((h) => ({ from: h.from, to: h.to, put: h.literal ? '' : s.substitutions(h.from, h.to).map((x) => x + '\n').join('') }))]
     .sort((a, b) => a.from - b.from);
@@ -120,14 +122,18 @@ const spaced = (c: string) => (q: Quoted) => /\s/.test(c.slice(q.start, q.end));
  *  A quoted single word stays: `'g?t' push` is read as a glob. */
 const words = (c: string): string => withoutData(c, spaced);
 /** A message value: `-m`, `-am`, `--message`, `--body`, `--title` or `--notes` right before the quoted span. */
-/** A message flag whose $(…) value is only text: never one with c or e in it (`bash -cm "$(cat <<E …)"` runs it). */
-const ARG_FLAG = /(?:^|\s)(?:-(?![a-zA-Z]*[ceCE])[a-zA-Z]*m|--message|--body|--title|--notes)(?:=|[ \t]+)$/;
 const MESSAGE_FLAG = /(?:^|\s)(?:-[a-zA-Z]*m|--message|--body|--title|--notes)(?:=|[ \t]+)$/;
+/** A short message flag glued to its value (`-m"…"`): data only for a known message-taking command. */
+const GLUED_FLAG = /(?:^|\s)-[a-zA-Z]*m$/;
+const before = (c: string, q: Quoted) => c.slice(Math.max(0, q.start - 16), q.start);
+/** A message flag whose $(…) value is only text: one of a known message-taking command (`git commit`, `gh pr`), with no
+ *  pipe after it. Not printf, parallel or an unknown command, which may print or run the value. */
+const argFlag = (c: string, q: Quoted, known: (q: Quoted) => boolean) => (MESSAGE_FLAG.test(before(c, q)) || GLUED_FLAG.test(before(c, q))) && known(q);
 /** The text rules' reading: data heredoc bodies out, and a quoted message value with whitespace in it is data too
  *  (`git commit -m 'why (git push -f) is bad'`). A body that goes anywhere but a data sink stays: it is a program. */
-const messages: Blank = (c) => {
+const messages: Blank = (c, known) => {
   const sp = spaced(c);
-  return (q) => sp(q) && MESSAGE_FLAG.test(c.slice(Math.max(0, q.start - 16), q.start));
+  return (q) => sp(q) && (MESSAGE_FLAG.test(before(c, q)) || (GLUED_FLAG.test(before(c, q)) && known(q)));
 };
 export const textRulesView = (c: string): string => withoutData(c, messages);
 /** A test for one line: true when `<<` at `at` sits in arithmetic (`$((1<<E))`), which the heredoc reader skips. One scan

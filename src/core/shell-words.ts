@@ -128,9 +128,9 @@ export function cPayloads(cmd: string): string[] {
       // takes the next word, whatever it is.
       let c = false, ended = false;
       for (let j = i + 1; j < ws.length; j++) {
-        const w = ws[j];
+        const w = unquote(ws[j]); // a quoted or escaped option is still an option: bash "-c" -m CMD, sh -c \\-x CMD
         if (c && !ended && (w === '--' || w === '-')) { ended = true; continue; } // bash -c -- CMD
-        if (c && (ended || name === 'script' || !/^[-+]/.test(w))) { out.push(unquote(w)); break; }
+        if (c && (ended || name === 'script' || !/^[-+]/.test(w))) { out.push(w); break; }
         if (SHELL_VALUE.test(w)) { j++; continue; }
         if (!/^[-+]/.test(w)) break;
         if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(w)) c = true;

@@ -800,8 +800,28 @@ test('the commit and PR idioms and file writes keep their bodies as data', () =>
   all(["git commit -m \"$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)\"", "gh pr create --title \"fix: x\" --body \"$(cat <<'EOF'\n## Summary\n- blocks git push -f\nEOF\n)\"",
     "cat > src/x.test.ts <<'EOF'\nexpect(kind('git push -f')).toBe('deny');\nexpect(kind('rm -rf /')).toBe('deny');\nEOF", "git commit -F - <<'EOF'\nfix: never git push -f\nEOF",
     "gh pr create --title x --body-file - <<'EOF'\nBlocks git push -f and rm -rf ~\nEOF", "cat <<'EOF' > docs/x.md\ngit push -f\nEOF", "cat >> docs/x.md <<'EOF'\ngit push -f\nEOF",
-    "tee docs/x.md <<'EOF'\ngit push -f\nEOF", "git tag -a v1 -F - <<'EOF'\nno git push -f\nEOF", "gh release create v1 --notes-file - <<'EOF'\nno git push -f\nEOF"], 'allow');
+    "tee docs/x.md >/dev/null <<'EOF'\ngit push -f\nEOF", "git tag -a v1 -F - <<'EOF'\nno git push -f\nEOF", "gh release create v1 --notes-file - <<'EOF'\nno git push -f\nEOF"], 'allow');
   expect(kind("git commit -m \"$(cat <<EOF\n$(git push -f)\nEOF\n)\"")).toBe('deny'); // an unquoted delimiter still runs $(…)
+});
+test('tee copies its input to stdout, so it is a sink only when its stdout goes to a file too', () => {
+  all(["( tee f <<'EOF'\ngit push -f\nEOF\n) | sh", "( tee /dev/null <<'EOF'\nrm -rf ~\nEOF\n) | bash", "$(tee /dev/null <<'EOF'\ngit push -f\nEOF\n)",
+    "x=$(tee f <<'EOF'\ngit push -f\nEOF\n); $x", "tee docs/x.md <<'EOF'\ngit push -f\nEOF"], 'deny');
+  all(["tee docs/x.md >/dev/null <<'EOF'\ngit push -f\nEOF", "tee a.md > b.md <<'EOF'\ngit push -f\nEOF"], 'allow');
+});
+test("a writer's stdout counts as a file only when it still goes there after every redirect", () => {
+  all(["( cat <<'EOF' >f 1>&2\ngit push -f\nEOF\n) 2>&1 | sh", "( cat <<'EOF' >f 1>&2\ngit push -f\nEOF\n) |& sh", "( exec 3>&1; cat <<'EOF' > f >&3\ngit push -f\nEOF\n) | sh",
+    "x=$(cat <<'EOF' >f 1>&2\ngit push -f\nEOF\n2>&1); $x", "( cat > f >&2 <<'EOF'\nrm -rf ~\nEOF\n) 2>&1 | sh"], 'deny');
+  all(["cat > f 2>&1 <<'EOF'\ngit push -f\nEOF", "cat >| f <<'EOF'\ngit push -f\nEOF", "cat 2>/dev/null > f <<'EOF'\ngit push -f\nEOF"], 'allow');
+});
+test('a quoted or escaped shell option is still an option, and env -S is split and read', () => {
+  all(['sh -c "-x" -m "git push -f"', 'sh -c \\-x -m "git push -f"', 'bash "-c" -m "git push -f"', "bash '-c' -m 'git push -f'", 'sh -c "-o" pipefail -m "git push -f"',
+    "env -S \"sh -c 'git push -f'\"", "env -S \"bash -c 'rm -rf ~'\""], 'deny');
+});
+test("a message flag's $(…) value is data only for a known message-taking command with no pipe after it", () => {
+  all(["printf '%s\\n' --title \"$(cat <<'EOF'\ngit push -f\nEOF\n)\" | sh", "x=$(printf %s -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"); $x",
+    "parallel -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\" ::: x", "git commit -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\" | sh"], 'deny');
+  all(["git commit -m\"$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)\"", "git tag -a v1 -m \"$(cat <<'EOF'\nno git push -f\nEOF\n)\"",
+    "gh issue create --title x --body \"$(cat <<'EOF'\nno rm -rf ~\nEOF\n)\""], 'allow');
 });
 test('a shell -c payload is found after other options', () => {
   const forms = ['sh -c -m', 'bash -c -x', 'bash -c -o pipefail', 'sh -c -e -u', 'bash -c -x --', 'zsh -c -x', 'bash --rcfile x -c', 'bash -xc', 'bash -ce', 'sh -euc',

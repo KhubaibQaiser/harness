@@ -202,6 +202,7 @@ describe('wiring', () => {
 
 describe('raise (spec §14.4)', () => {
   const RAISE = 'node .harness/hooks/dispatch.mjs --pr-size-raise --lines 600 --files 30';
+  const ENTRY = (b: string) => ({ stdout: `${JSON.stringify({ branch: b, lines: 600, files: 30 })}\n`, stderr: '' });
   const raised = (root: string) => readEvents(root).filter((e) => e.decision === 'pr-size-raised');
   test('raiseLimits checks the ranges', () => {
     const c = defaults().pr_size;
@@ -220,29 +221,31 @@ describe('raise (spec §14.4)', () => {
     expect(decidePrSize(ctx(root, RAISE, { unattended: true }))).toEqual({ kind: 'deny', check: 'pr-size', reason: 'Blocked by pr-size: only a person can raise the size limit, and no person is here to approve it.' });
   });
 
-  test('invalid values, a detached HEAD or the hidden $X form allow; PostToolUse then records nothing', async () => {
+  test('invalid values or the hidden $X form allow; a detached HEAD denies; PostToolUse then records nothing', async () => {
     const root = repo();
     for (const c of ['node .harness/hooks/dispatch.mjs --pr-size-raise --lines 400', '$X --pr-size-raise --lines 600']) {
       expect(decidePrSize(ctx(root, c))).toEqual({ kind: 'allow' });
       await send(root, 'PostToolUse', c);
     }
     git(root, 'checkout', '-q', '--detach');
-    expect(decidePrSize(ctx(root, RAISE))).toEqual({ kind: 'allow' });
-    await send(root, 'PostToolUse', RAISE);
+    expect(decidePrSize(ctx(root, RAISE))).toMatchObject({ kind: 'deny', reason: expect.stringMatching(/needs a checked-out branch/) });
+    await send(root, 'PostToolUse', RAISE, {}, [prSize], ENTRY('feat'));
     expect(existsSync(join(root, PROGRESS))).toBe(false);
     expect(raised(root)).toEqual([]);
   });
 
   test('after an allowed run, pr-progress.json has the raise and one pr-size-raised event', async () => {
     const root = repo();
-    expect(await send(root, 'PostToolUse', RAISE)).toBe('');
+    expect(decidePrSize(ctx(root, RAISE)).kind).toBe('ask');
+    expect(await send(root, 'PostToolUse', RAISE, {}, [prSize], ENTRY('feat'))).toBe('');
     expect(readProgress(root).feat?.raise).toEqual({ lines: 600, files: 30, ts: expect.any(String) });
     expect(raised(root)).toEqual([expect.objectContaining({ check: 'pr-size', reason: 'feat 600 lines 30 files' })]);
   });
 
   test('PR time: a create on a raised branch allows at 500 and asks at 601 with the raised limit; a raised push too', async () => {
     const root = repo({ 'a.ts': lines(500) });
-    await send(root, 'PostToolUse', RAISE);
+    decidePrSize(ctx(root, RAISE));
+    await send(root, 'PostToolUse', RAISE, {}, [prSize], ENTRY('feat'));
     expect(decidePrSize(ctx(root, 'gh pr create'))).toEqual({ kind: 'allow' });
     commit(root, { 'b.ts': lines(101) });
     expect(reason(decidePrSize(ctx(root, 'gh pr create')))).toMatch(/^Confirm: this pull request is 601 changed lines in 2 files against `origin\/main`, over the limit of 600 lines or 30 files \(aim for 200\)\./);
@@ -260,9 +263,10 @@ describe('a raise runs on its own', () => {
   test.each([
     `git checkout main && ${R}`, `git switch main; ${R}`, `git -C ../other status && ${R}`, `cd ../other && ${R}`, `pushd ../other && ${R}`,
     `git worktree add ../w main && ${R}`, `git --git-dir=../o/.git status && ${R}`, `GIT_DIR=../o/.git ${R}`, `${R} && ${R.replace('600', '900')}`,
-  ])('%s is denied, attended and unattended, and PostToolUse records nothing', async (c) => {
+  ])('%s is denied (unattended: the person-only deny comes first), and PostToolUse records nothing', async (c) => {
     const root = repo();
-    for (const unattended of [false, true]) expect(decidePrSize(ctx(root, c, { unattended }))).toEqual({ kind: 'deny', check: 'pr-size', reason: ALONE });
+    expect(decidePrSize(ctx(root, c))).toEqual({ kind: 'deny', check: 'pr-size', reason: ALONE });
+    expect(decidePrSize(ctx(root, c, { unattended: true }))).toMatchObject({ kind: 'deny', reason: expect.stringMatching(/^Blocked by pr-size: only a person can raise/) });
     await send(root, 'PostToolUse', c);
     expect(existsSync(join(root, PROGRESS))).toBe(false);
   });

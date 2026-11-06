@@ -20,11 +20,11 @@ description: Splits a large change into stacked PRs. Use before opening a PR, or
 ## When a pr-size warning sent you here
 
 1. Measure the working tree: `node .harness/hooks/dispatch.mjs --pr-size --worktree`.
-2. Group every changed file, uncommitted ones included, into a plan with the split rules in step 3.
-3. Ask the person with AskUserQuestion, offering `Split now`, `Keep going` and `Raise the limit for this branch`:
+2. Group every changed file, uncommitted ones included, into a plan with the split rules in step 3 above.
+3. Show that plan, then ask the person with AskUserQuestion, offering `Split now`, `Keep going` and `Raise the limit for this branch`:
    - `Split now`: follow the steps above from "Show the plan" (step 4).
    - `Keep going`: change nothing.
-   - `Raise the limit for this branch`: run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>`. Its approval dialog is the person's real yes.
+   - `Raise the limit for this branch`: ask the person for the new limit (suggest the measured size plus room for the remaining work, labelled as an estimate), then run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>` on its own. Its approval dialog is the person's real yes.
 4. Unattended: don't ask. Keep going, and split before opening any PR.
 
 ## Rules

@@ -9,9 +9,9 @@ import type { Check, Ctx } from '../../hooks/dispatch.js';
 import { isShell } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { type PrTarget, prTargets } from './detect.js';
-import { type Git, hookBudgetMs, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
+import { count, type Git, hookBudgetMs, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
 import { limits, type Progress, progressWarning, readProgress } from './progress.js';
-import { ALONE, raiseCombined, raiseDecision, recordRaise, validRaise } from './raise.js';
+import { postRaise, preRaise } from './raise.js';
 
 export const RECORD = '.harness/state/pr-branches.json';
 export interface PrRecord { base: string; lines: number; files: number; ts: string }
@@ -54,7 +54,6 @@ type Job = { want: { base?: string; head?: string }; push?: { branch: string; re
 // `cur`: the current branch, resolved once per command (null: detached; late: git timed out or no time was left).
 type Clock = { now: () => number; deadline: number; git: Git; cur?: { name: string | null; late: boolean } };
 const left = (c: Clock) => c.deadline - c.now();
-const count = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const limit = (ml: number, mf: number) => `${count(ml, 'line')} or ${count(mf, 'file')}`;
 
 // A failed lookup counts as present, so the branch is measured (or noted), never skipped in silence.
@@ -197,10 +196,11 @@ function recordPost(ctx: Ctx, git: Git, targets: PrJob[], c: Clock): void {
   }
 }
 
-/** A raise's ask or deny comes first; a PR create or push in the same command that also asks is named in the same dialog. */
-function withRaise(ctx: Ctx, raise: Decision | null, pr: Decision): Decision {
+/** A raise's ask or deny comes first; a PR create or push in the same command that also asks, or its note, joins the dialog. */
+function withRaise(raise: Decision | null, pr: Decision): Decision {
   if (!raise || raise.kind !== 'ask') return raise ?? pr;
-  return pr.kind === 'ask' ? { ...raise, reason: `${raise.reason} Also: ${pr.reason}` } : raise;
+  if (pr.kind === 'ask') return { ...raise, reason: `${raise.reason} Also, ${pr.reason.replace(/^Confirm: /, '')}` };
+  return pr.kind === 'context' ? { ...raise, reason: `${raise.reason} ${pr.text}` } : raise;
 }
 
 export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => number = Date.now): Decision {
@@ -212,15 +212,13 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   const command = String(tool_input.command ?? '');
   const all = prTargets(command, { root: ctx.root, env: ctx.env });
   const targets = all.filter((t): t is PrJob => t.kind !== 'raise');
-  const combined = raiseCombined(command, all);
-  if (combined && event === 'PreToolUse') return { kind: 'deny', check: 'pr-size', reason: ALONE };
-  const raise = combined ? null : validRaise(ctx, all);
-  if (!targets.length && !raise) return { kind: 'allow' };
+  if (!all.length) return { kind: 'allow' };
   const clock: Clock = { now, git, deadline: now() + hookBudgetMs(ctx.startedAt, now) };
-  if (event === 'PreToolUse') return withRaise(ctx, raise && raiseDecision(ctx, raise, current(clock)), targets.length ? decidePre(ctx, git, targets, clock) : { kind: 'allow' });
+  const cur = () => current(clock);
+  if (event === 'PreToolUse') return withRaise(preRaise(ctx, command, all, cur), targets.length ? decidePre(ctx, git, targets, clock) : { kind: 'allow' });
   if (tool_name === 'Monitor') return { kind: 'allow' }; // a Monitor command is checked, not recorded
   try {
-    if (raise) recordRaise(ctx, raise, current(clock));
+    postRaise(ctx, command, all, cur);
     recordPost(ctx, git, toRecord(ctx, targets, command), clock);
   } catch (e) {
     process.stderr.write(`harness: pr-size record failed: ${String((e as Error)?.message ?? e)}\n`);

@@ -9,7 +9,7 @@ import type { Ctx } from '../../hooks/dispatch.js';
 import { editTarget } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { readRecords } from './check.js';
-import { type Git, hookBudgetMs, measure, realGit, type Size } from './measure.js';
+import { count, type Git, hookBudgetMs, measure, realGit, type Size } from './measure.js';
 
 export const PROGRESS = '.harness/state/pr-progress.json';
 type Mark = 'target' | 'max';
@@ -70,7 +70,6 @@ export function step(prev: Progress | undefined, size: { lines: number; files: n
   return { fired, announce };
 }
 
-const count = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const ASK = 'Before your next edit, stop and ask the person how to go on, with AskUserQuestion if you have it: split now (run the pr-ship skill and show its suggested breakdown), keep going, or raise the limit for this branch (run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>`, which asks them to approve).';
 
 const PERSON = 'harness pr-size:'; // a quoted string, so usage.test.ts doesn't read it as a `harness` command

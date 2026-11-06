@@ -1,7 +1,7 @@
 // Measures a PR as GitHub shows it: the three-dot diff from the merge base to the head, with spec §5's counting rules.
 import { spawnSync } from 'node:child_process';
 import { esc, type HarnessConfig } from '../../core/config.js';
-import { matches } from '../../core/paths.js';
+import { HARNESS_LOCAL, matches } from '../../core/paths.js';
 import { addUntracked, UNTRACKED } from './untracked.js';
 
 export { UNTRACKED };
@@ -21,6 +21,12 @@ export interface Size { base: string; head: string; lines: number; files: number
 export interface Unmeasured { error: string; base?: string }
 
 export const isOver = (s: Pick<Size, 'lines' | 'files'>, c: HarnessConfig['pr_size']): boolean => s.lines > c.max_lines || s.files > c.max_files;
+
+// One budget per hook (measure's own default is the same 6 s), and never past 9 s from the hook's start, so the whole hook
+// (the guard's npm lookup runs first) stays inside the 10 s hook timeout with a margin.
+const BUDGET_MS = 6000;
+const HOOK_BUDGET_MS = 9000;
+export const hookBudgetMs = (startedAt: number | undefined, now: () => number): number => Math.min(BUDGET_MS, (startedAt ?? now()) + HOOK_BUDGET_MS - now());
 
 export function currentBranch(git: Git): string | null {
   const r = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], 2000);
@@ -139,7 +145,9 @@ export function measure(root: string, want: WantRef, config: SizeConfig, opts: {
     if (typeof target === 'string') return fail(target);
     const raw = fetchDiff(run, target.range, want.worktree === true);
     if (typeof raw === 'string') return fail(raw);
-    const skip = [...config.pr_size.exclude, ...config.multi_file_gate.generated];
+    // A worktree measurement never counts harness's own state and logs, gitignored or not; a PR's committed files all count.
+    const own = want.worktree ? HARNESS_LOCAL.map((d) => `${d}**`) : [];
+    const skip = [...config.pr_size.exclude, ...config.multi_file_gate.generated, ...own];
     const { top, excluded } = countDiff(raw.num, raw.del, skip);
     if (raw.others !== null && !addUntracked(root, raw.others, { skip, top, excluded }, () => now() >= deadline)) throw new Stop('git timed out');
     top.sort(byLinesThenPath);

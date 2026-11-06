@@ -39,12 +39,18 @@ const go = async (root: string, args: string[], prompt: Prompt = fake(), extra: 
   const code = await init(args, { root, env: { HARNESS_PLAIN_INIT: '1' }, out: (s) => (out += s + '\n'), prompt, version: '1.2.3', templatesDir, distDir, ...extra });
   return { code, out };
 };
+/** go, and on a wrong exit code the failure shows init's output. */
+const ok = async (...a: Parameters<typeof go>) => {
+  const r = await go(...a);
+  expect(r.code, r.out).toBe(0);
+  return r;
+};
 const git = (root: string, ...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8' });
 
 test('init --yes on an npm+vitest repo writes every file and a manifest', async () => {
   const root = makeRepo(NPM_VITEST);
   const r = await go(root, ['--yes']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   for (const f of ['.harness/hooks/dispatch.mjs', '.harness/config.yaml', '.claude/agents/staff-reviewer.md', '.claude/skills/review-rubric/SKILL.md', '.claude/skills/pr-ship/SKILL.md', '.claude/settings.json', 'AGENTS.md', 'CLAUDE.md', '.harness/manifest.json'])
     expect(existsSync(join(root, f)), f).toBe(true);
   expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).toContain('written by harness init 1.2.3');
@@ -58,7 +64,7 @@ test('init --yes on an npm+vitest repo writes every file and a manifest', async 
 test('init from a subdirectory writes at the repo root', async () => {
   const root = makeRepo({ ...NPM_VITEST, 'sub/x.txt': 'x' });
   const r = await go(join(root, 'sub'), ['--yes']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
   expect(existsSync(join(root, 'sub/.harness'))).toBe(false);
   expect(r.out).toContain(`Installing at the repo root: ${realpathSync.native(root)}\n`);
@@ -79,7 +85,7 @@ test('declining the plan writes nothing', async () => {
   const p = fake([false, false]); // no edit, no apply
   const r = await go(root, [], p);
   expect(p.asked).toEqual(['Edit any value? (y/N)', 'Apply these changes? (y/N)']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(existsSync(join(root, '.harness'))).toBe(false);
   expect(git(root, 'status', '--porcelain')).toBe('');
 });
@@ -87,7 +93,7 @@ test('declining the plan writes nothing', async () => {
 test('--dry-run writes nothing and prints the plan with diffs', async () => {
   const root = makeRepo(NPM_VITEST);
   const r = await go(root, ['--yes', '--dry-run']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(r.out).toContain('create .harness/config.yaml');
   expect(r.out).toContain('update .gitignore');
   expect(r.out).toContain('+.harness/state/');
@@ -122,7 +128,7 @@ test('--config with a valid YAML file is applied without prompts', async () => {
   writeFileSync(f, 'stop:\n  max_attempts: 5\n');
   const p = fake([true]);
   const r = await go(root, ['--config', f, '--yes'], p);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(p.asked).toEqual([]);
   expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).toContain('max_attempts: 5');
 });
@@ -130,7 +136,7 @@ test('--config with a valid YAML file is applied without prompts', async () => {
 test('report lists off-gates for a python repo', async () => {
   const root = makeRepo(PYTHON);
   const r = await go(root, ['--yes']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(r.out).toMatch(/Gates that are off[\s\S]*TDD[\s\S]*Vitest or Jest/);
   expect(r.out).toMatch(/Gates that are on[\s\S]*guard/);
   expect(r.out).toMatch(/^Gates that are on: .*PR size/m);
@@ -192,7 +198,7 @@ test('partial --config keeps detected values', async () => {
   const root = makeRepo(NPM_VITEST);
   const f = join(root, '..', `part-${Date.now()}.yaml`);
   writeFileSync(f, 'stop:\n  max_attempts: 5\n');
-  expect((await go(root, ['--config', f, '--yes'])).code).toBe(0);
+  await ok(root, ['--config', f, '--yes']);
   const y = readFileSync(join(root, '.harness/config.yaml'), 'utf8');
   expect(y).toContain('max_attempts: 5');
   expect(y).toContain('package_manager: npm');
@@ -213,7 +219,7 @@ test('--dry-run on dirty files warns and exits 0', async () => {
   const root = makeRepo(NPM_VITEST);
   writeFileSync(join(root, '.gitignore'), 'node_modules\nlocal\n');
   const r = await go(root, ['--yes', '--dry-run']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(r.out).toContain('These files have uncommitted changes; commit or stash them before applying: .gitignore.');
   expect(existsSync(join(root, '.harness'))).toBe(false);
 });
@@ -227,7 +233,7 @@ const NPM_JEST = {
 
 test('jest repo: init installs the harness reporter, wires it in the test script, and the manifest hashes it', async () => {
   const root = makeRepo(NPM_JEST);
-  expect((await go(root, ['--yes'])).code).toBe(0);
+  await ok(root, ['--yes']);
   const rep = readFileSync(join(root, '.harness/hooks/jest-results.cjs'), 'utf8');
   expect(rep).toBe(readFileSync(join(templatesDir, 'hooks/jest-results.cjs'), 'utf8').replace(/\r\n/g, '\n'));
   expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts.test).toContain('--reporters=./.harness/hooks/jest-results.cjs');
@@ -237,7 +243,7 @@ test('jest repo: init installs the harness reporter, wires it in the test script
 
 test('vitest repo: no jest reporter is installed', async () => {
   const root = makeRepo(NPM_VITEST);
-  expect((await go(root, ['--yes'])).code).toBe(0);
+  await ok(root, ['--yes']);
   expect(existsSync(join(root, '.harness/hooks/jest-results.cjs'))).toBe(false);
 });
 
@@ -267,7 +273,7 @@ test('init leaves out Stop steps whose tool is not on PATH and lists them', asyn
   for (const n of ['pytest', 'pytest.cmd']) writeFileSync(join(bin, n), '#!/bin/sh\n', { mode: 0o755 });
   const root = makeRepo(PYTHON);
   const r = await go(root, ['--yes'], fake(), { env: { PATH: bin, HARNESS_PLAIN_INIT: '1' } });
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(r.out).toContain('Stop steps left out:\n  ruff: `ruff` is not on PATH. Install it, then add the step to stop.steps.');
   const y = readFileSync(join(root, '.harness/config.yaml'), 'utf8');
   expect(y).toContain('pytest');
@@ -281,7 +287,7 @@ test('jest coverageReporters without json: TDD on, coverage gate off for that pa
     '.gitignore': 'node_modules\n',
   });
   const r = await go(root, ['--yes']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(r.out).toMatch(/^Gates that are on: .*TDD/m);
   expect(r.out).not.toMatch(/^Gates that are on: .*coverage/m); // N7: the only package is skipped
   expect(r.out).toMatch(/^Gates that are off:\n  coverage: Coverage gate off for the root package/m);
@@ -370,7 +376,7 @@ test('invalid picks stop before planning', async () => {
 test('AI init dry run shows the plan and the budget', async () => {
   const root = makeRepo(NPM_VITEST);
   const r = await ai(root, [...aiArgs([...OWN, 'impeccable', 'mobile-mcp']), '--dry-run']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   for (const f of ['.mcp.json', '.claude/settings.json', '.harness/facts.json', '.harness/picks.json', '.harness/report.md', '.harness/context/product.md', '.harness/config.yaml']) expect(r.out, f).toContain(f);
   expect(r.out).toContain('Always-loaded context from harness');
   expect(r.out).toContain('Dry run: nothing was written.');
@@ -401,7 +407,7 @@ test('a new plugin pick asks under budget', async () => {
 test('init --dry-run with every AI flag writes nothing', async () => {
   const root = makeRepo(NPM_VITEST);
   const r = await ai(root, [...aiArgs(OWN, { budget: 10 }), '--install-plugins', '--over-budget', '--dry-run']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(tree(root)).toBe('');
 });
 
@@ -432,7 +438,7 @@ test('--install-plugins installs the pinned ids after apply, and rehashes settin
     return { status: 0, stdout: 'Installing...\n{"command":"install","outcome":"ok","message":"done"}' };
   };
   const r = await ai(root, [...aiArgs([...OWN, 'impeccable']), '--yes', '--over-budget', '--install-plugins'], { exec });
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(seen).toEqual([['plugin', 'install', 'impeccable@harness-pins', '--scope', 'project', '--json']]);
   expect(r.out).toContain('impeccable@harness-pins');
   const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
@@ -483,7 +489,7 @@ test('plugin or budget flags without the AI flags are a usage error', async () =
 test('the gate report follows the written config, not the preset', async () => {
   const root = makeRepo(NPM_VITEST);
   const r = await ai(root, [...aiArgs(['agent-guard', 'agents-md']), '--yes', '--over-budget']);
-  expect(r.code).toBe(0);
+  expect(r.code, r.out).toBe(0);
   expect(r.out).toMatch(/Gates that are off:[\s\S]*TDD/);
   expect(r.out).toMatch(/Gates that are on: .*guard/);
   expect(r.out.match(/Gates that are on: (.*)/)![1]).not.toContain('TDD');

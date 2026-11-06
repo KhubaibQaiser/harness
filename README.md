@@ -44,7 +44,7 @@ The exact rules for each gate are in [docs/reference.md](docs/reference.md).
 
 ## Usage and adherence report
 
-`harness report` writes a usage and adherence report for this repo: which skills were invoked when they were relevant, which rules were enforced, token use, and where a gate probably blocked something it should not have. It reads your Claude Code session transcripts on your machine and sends nothing anywhere.
+`harness report` writes a usage and adherence report for this repo: which skills were invoked when they were relevant, which rules were enforced, token use, and where a gate probably blocked something it should not have. It reads your Claude Code session transcripts on your machine and sends nothing anywhere. Its "X of Y rules enforced" line counts how many of the rules harness knows about are held by a gate and not only written in a file, with a matrix of which are enforced and how each can be bypassed.
 
 - **Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted.
 - The page is `.harness/reports/<date>.html`. The folder is gitignored. The page quotes your sessions, so don't share it.

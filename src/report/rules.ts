@@ -15,8 +15,7 @@ export const RULES: RuleDef[] = [
   def('ask-first', 'judgement', [], never),
   def('no-invented-data', 'partial', ['dep-verify'], (c) => c.checks.depVerify || c.checks.stop, ['a made-up number labelled "estimate" passes the heuristic']),
   def('fix-everything', 'judgement', [], never),
-  // ponytail: needs a preset with pr_size_warning, so default config reads 0 of 11 as the spec says; the pr-size guard alone still asks without one.
-  def('small-prs', 'mechanical', ['pr-size'], (c) => c.checks.prSize && c.preset?.git.pr_size_warning === true, ['PRs from the web UI or GitHub MCP (PR-size §2 "Out")']),
+  def('small-prs', 'mechanical', ['pr-size'], (c) => c.checks.prSize, ['PRs from the web UI or GitHub MCP (PR-size §2 "Out")']),
   def('readme-per-pr', 'heuristic', [], never),
   def('paid-ok', 'partial', [], (c) => c.checks.guard, ['any paid command not in the list']),
   def('tdd', 'mechanical', TDD_CHECKS, (c) => c.checks.tdd, ['`harness tdd off` (a person only)', '`tdd.exempt` paths']),

@@ -18,16 +18,16 @@ const line = (c: HarnessConfig) => enforcedLine(ruleRows(c, gates(), win()));
 
 describe('rule coverage matrix', () => {
   it('has the 11 rows', () => expect(ruleRows(defaults(), gates(), win())).toHaveLength(11));
-  it('default config enforces 0 of 11, 2 partly', () => {
-    expect(line(defaults())).toBe('0 of 11 rules enforced deterministically, 2 partly');
+  it('default config enforces 1 of 11 (small PRs, prSize is on), 2 partly', () => {
+    expect(line(defaults())).toBe('1 of 11 rules enforced deterministically, 2 partly');
   });
   it('tdd plus a preset with trailer and prefixes gives 3, adding prSize gives 4', () => {
     const base = { ...defaults(), checks: { ...defaults().checks, tdd: true, prSize: false } };
-    expect(line(withPreset(base, { pr_size_warning: true }))).toBe('3 of 11 rules enforced deterministically, 2 partly');
+    expect(line(withPreset(base))).toBe('3 of 11 rules enforced deterministically, 2 partly');
     expect(line(withPreset({ ...base, checks: { ...base.checks, prSize: true } }))).toBe('4 of 11 rules enforced deterministically, 2 partly');
   });
   it('an off check makes its rule no, never followed', () => {
-    const c = { ...defaults(), checks: { ...defaults().checks, tdd: false, depVerify: false, stop: false, guard: false } };
+    const c = { ...defaults(), checks: { ...defaults().checks, tdd: false, depVerify: false, stop: false, guard: false, prSize: false } };
     const rows = ruleRows(c, gates(), win());
     expect(rows.find((r) => r.def.id === 'tdd')!.enforced).toBe('no');
     expect(rows.find((r) => r.def.id === 'no-invented-data')!.enforced).toBe('no');
@@ -57,7 +57,7 @@ describe('rule coverage matrix', () => {
     const rows = ruleRows(defaults(), gates(), win());
     const html = renderReport(data({ rules: rows }));
     expect(html).toContain('id="rules-matrix"');
-    expect(html).toContain('0 of 11 rules enforced deterministically, 2 partly');
+    expect(html).toContain('1 of 11 rules enforced deterministically, 2 partly');
     expect(html).toContain('Ask before deciding');
   });
   it('a hostile key in the rows never reaches the export', () => {

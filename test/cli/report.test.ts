@@ -119,7 +119,7 @@ describe('harness report', () => {
   });
   it('prints the real rules-enforced line', async () => {
     const r = await go(world(0), []);
-    expect(r.text).toContain('Rules enforced: 0 of 11 rules enforced deterministically, 2 partly');
+    expect(r.text).toContain('Rules enforced: 1 of 11 rules enforced deterministically, 2 partly');
     expect(r.text).not.toContain('not computed');
   });
   it('renders the evals section only when eval results exist', async () => {

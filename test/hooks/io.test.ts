@@ -57,3 +57,42 @@ test('parseInput returns null when session_id or cwd is not a string', () => {
   expect(parseInput('{"hook_event_name":"Stop","session_id":1,"cwd":"/r"}')).toBeNull();
   expect(parseInput('{"hook_event_name":"Stop","session_id":"s","cwd":null}')).toBeNull();
 });
+test('emit context with a notice adds systemMessage beside additionalContext', () => {
+  const out = JSON.parse(emit('PostToolUse', { kind: 'context', text: 'a', notice: 'b', check: 'x' }));
+  expect(out).toEqual({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'a' }, systemMessage: 'b' });
+});
+test('emit context without a notice is unchanged', () => {
+  const out = JSON.parse(emit('PostToolUse', { kind: 'context', text: 'a', check: 'x' }));
+  expect(out).toEqual({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'a' } });
+});
+test('emit context at Stop keeps the text as systemMessage and ignores the notice', () => {
+  expect(JSON.parse(emit('Stop', { kind: 'context', text: 'a', notice: 'b', check: 'x' }))).toEqual({ systemMessage: 'a' });
+});
+test('emit escapes control and hidden characters but keeps newlines, tabs and quotes', () => {
+  const out = JSON.parse(emit('Stop', { kind: 'context', text: 'a\nb\t"c"‮\u001b\u{e0041}', check: 'x' }));
+  expect(out.systemMessage).toBe('a\nb\t"c"\\u202e\\u001b\\u{e0041}');
+});
+test('emit caps a systemMessage under 10,000 characters with a marker', () => {
+  const m = JSON.parse(emit('Stop', { kind: 'context', text: 'x'.repeat(10_001), check: 'x' })).systemMessage;
+  expect(m.length).toBe(10_000);
+  expect(m.endsWith('... [truncated]')).toBe(true);
+  expect(JSON.parse(emit('Stop', { kind: 'context', text: 'x'.repeat(10_000), check: 'x' })).systemMessage.length).toBe(10_000);
+});
+test('SessionEnd context still emits a systemMessage (Claude Code discards it; the event log keeps the warning)', () => {
+  expect(JSON.parse(emit('SessionEnd', { kind: 'context', text: 'a', check: 'x' }))).toEqual({ systemMessage: 'a' });
+});
+test('the cap does not split a surrogate pair', () => {
+  const cut = 10_000 - '... [truncated]'.length;
+  const m = JSON.parse(emit('Stop', { kind: 'context', text: 'x'.repeat(cut - 1) + '😀' + 'y'.repeat(50), check: 'x' })).systemMessage;
+  expect(m).toBe('x'.repeat(cut - 1) + '... [truncated]');
+});
+test('the cap does not cut inside a \\uXXXX escape', () => {
+  const cut = 10_000 - '... [truncated]'.length;
+  const m = JSON.parse(emit('Stop', { kind: 'context', text: 'x'.repeat(cut - 3) + '‮' + 'y'.repeat(50), check: 'x' })).systemMessage;
+  expect(m).toBe('x'.repeat(cut - 3) + '... [truncated]');
+});
+test('additionalContext is capped too', () => {
+  const m = JSON.parse(emit('PostToolUse', { kind: 'context', text: 'x'.repeat(10_001), check: 'x' })).hookSpecificOutput.additionalContext;
+  expect(m.length).toBe(10_000);
+  expect(m.endsWith('... [truncated]')).toBe(true);
+});

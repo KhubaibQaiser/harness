@@ -9,7 +9,7 @@ import { isShell } from '../hooks/edit-target.js';
 import { arithmeticTest, commandSkeleton, gitPlain, globReadings, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
 import { Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
-import { writesGitOutputAndRunsFile } from './guard-allow.js';
+import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -635,7 +635,9 @@ const BUILDS_WHY = 'the command builds words at run time (a variable in command 
 
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
   try {
-    if (writesGitOutputAndRunsFile(commandSkeleton(command.replace(/\\\r?\n/g, '')).bodiless)) return toDecision(['deny', GIT_OUTPUT_RUN_WHY]);
+    const bodiless = commandSkeleton(command.replace(/\\\r?\n/g, '')).bodiless;
+    if (writesGitOutputAndRunsFile(bodiless)) return toDecision(['deny', GIT_OUTPUT_RUN_WHY]);
+    if (writesGitOutputToSensitivePath(bodiless)) return toDecision(['deny', GIT_OUTPUT_CONFIG_WHY]);
     return decideAll(command.replace(/\\\r?\n/g, ''), ctx, 0); // a backslash-newline joins the lines for the shell
   } catch (e) {
     if (e instanceof ScanBudget) return toDecision(['ask', SCAN_BUDGET_WHY]);
@@ -664,6 +666,7 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
   return rs.find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
 }
 const GIT_OUTPUT_RUN_WHY = 'the command writes git output (log, show, rev-parse or cat-file) to a file and runs a file, so an earlier commit message could become the script';
+const GIT_OUTPUT_CONFIG_WHY = 'the command writes git output (log, show, rev-parse or cat-file) into .git/, a gitconfig or a hook, so an earlier commit message could become git config or a hook';
 const EDITOR_WHY = 'the command sets an editor or pager for git (GIT_EDITOR, EDITOR, core.editor, …) and builds its message at run time, and git may run that program on the message';
 const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
 const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';

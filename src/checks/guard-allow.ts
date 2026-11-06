@@ -73,8 +73,24 @@ const GIT_SUB: Record<string, ReturnType<typeof optionSet>> = {
 };
 
 const GH_SAFE = new Set(['pr', 'issue', 'release', 'repo', 'run', 'workflow', 'api', 'status', 'label', 'search', 'browse']);
-/** gh options that read or run a file, never data on a message line. */
-const GH_DANGER = /^(?:--input|-i)$|^--input=/;
+/** gh options that read or run a file, or pass flags through to git, never data on a message line. `--` hands the rest
+ *  to a wrapped git command (`gh repo clone … -- -c core.fsmonitor=…`), so it is rejected on a message line. */
+const GH_DANGER = /^(?:--input|-i|--)$|^--input=/;
+/** gh repo subcommands that wrap `git clone` and so take git's pass-through options. */
+const GH_REPO_DANGER = new Set(['clone', 'fork']);
+
+/** A write target that can turn a message into git config or a hook: anything under `.git/`, a gitconfig, `.husky/`,
+ *  `.githooks/` or a `hooks/` dir. git reads these on its next run, so a message written there runs (re-review 11). */
+const SENSITIVE_WRITE = /(?:^|\/)\.git(?:\/|$)|(?:^|\/)\.?gitconfig$|(?:^|\/)git\/config$|(?:^|\/)\.?(?:husky|githooks)(?:\/|$)|(?:^|\/)hooks(?:\/|$)/;
+/** The files an output redirect (`>`, `>>`, `>|`, glued or spaced) of a command sends stdout to. */
+function writeTargets(ws: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < ws.length; i++) {
+    const m = /^(?:\d*|&)(?:>>?|>\|)(.*)$/.exec(ws[i]);
+    if (m) out.push(m[1] || ws[++i] || '');
+  }
+  return out;
+}
 
 const named = (set: { long: Set<string> }, o: string) => set.long.has(o.replace(/^--/, '').replace(/=.*/, ''));
 
@@ -127,19 +143,24 @@ function safeCommand(ws: string[], k: number, pipedIn: boolean, pipedOut: boolea
     const w = ws[k++];
     while (ws[k]?.startsWith('-')) k += w === 'nice' && ws[k] === '-n' ? 2 : 1;
   }
+  if (writeTargets(ws).some((t) => SENSITIVE_WRITE.test(t))) return false; // a write into .git/, gitconfig or a hook
   const name = ws[k], rest = ws.slice(k + 1);
   if (PIPE_READERS.has(name)) return pipedIn && rest.every((o) => /^-?[A-Za-z0-9]+$/.test(o));
   if (!SAFE.has(name) || (NOT_PIPED.has(name) && pipedOut)) return false;
   if (name === 'git') { const s = gitSubcommand(rest); return s >= 0 && gitOptionsOk(rest[s] ?? '', rest.slice(s + 1)); }
-  if (name === 'gh') { const s = ghSubcommand(rest); return GH_SAFE.has(rest[s] ?? '') && !rest.slice(s + 1).some((o) => GH_DANGER.test(o)); }
+  if (name === 'gh') {
+    const s = ghSubcommand(rest), sub = rest[s] ?? '';
+    return GH_SAFE.has(sub) && !(sub === 'repo' && GH_REPO_DANGER.has(rest[s + 1] ?? '')) && !rest.slice(s + 1).some((o) => GH_DANGER.test(o));
+  }
   return true;
 }
 
 /** True when every simple command of `cmd` (heredoc bodies taken out) is on the safe list, and nothing substitutes a
  *  command. Single quotes are stripped first, so a literal `$(…)` in a quoted message stays data; the one way a
- *  single-quoted `$(…)` runs is inside `test`/`[`/`[[`/`((`/`printf -v`, none of which are safe commands anyway. */
+ *  single-quoted `$(…)` runs is inside `test`/`[`/`[[`/`((`/`printf -v`, none of which are safe commands anyway. A
+ *  `${…}` or `$[…]` does not quote its single quotes (`${x:'$(…)'}`, `$[ 'a[$(…)]' ]`), so either makes the line code. */
 export function onlySafeCommands(cmd: string): boolean {
-  if (/\$\(|`|[<>]\(/.test(cmd.replace(/'[^']*'/g, "''"))) return false;
+  if (/\$\(|`|[<>]\(|\$\{|\$\[/.test(cmd.replace(/'[^']*'/g, "''"))) return false;
   const ps = pieces(cmd);
   return ps.every((p, i) => safeCommand(words(p.text).map(unquote), 0, i > 0 && ps[i - 1].sep === '|', p.sep === '|'));
 }
@@ -166,6 +187,22 @@ export function writesGitOutputAndRunsFile(cmd: string): boolean {
     if (SHELLS.has(base) || base === 'source' || name === '.' || /^\.{0,2}\//.test(name) || chmodX) runs = true;
   });
   return writes && runs;
+}
+/**
+ * True when the line writes git's output (`git log`, `show`, `rev-parse` or `cat-file`) into a sensitive path (see
+ * SENSITIVE_WRITE), with `>`, `>>` or `| tee`: git then reads an earlier message back as config or a hook on its next
+ * run. Always blocked, like writesGitOutputAndRunsFile.
+ */
+export function writesGitOutputToSensitivePath(cmd: string): boolean {
+  return pieces(cmd).some((p, i, ps) => {
+    const ws = words(p.text).map(unquote), k = commandWord(ws);
+    if (ws[k] !== 'git') return false;
+    const s = gitSubcommand(ws.slice(k + 1));
+    if (s < 0 || !GIT_OUTPUT.has(ws.slice(k + 1)[s] ?? '')) return false;
+    const next = ps[i + 1] ? words(ps[i + 1].text).map(unquote) : [];
+    const teed = p.sep === '|' && next[commandWord(next)] === 'tee' ? writeTargets(next).concat(next.slice(1).filter((w) => !w.startsWith('-'))) : [];
+    return writeTargets(ws).concat(teed).some((t) => SENSITIVE_WRITE.test(t));
+  });
 }
 /** The command word past keywords, assignments and redirections (writesGitOutputAndRunsFile tolerates assignments). */
 function commandWord(ws: string[]): number {

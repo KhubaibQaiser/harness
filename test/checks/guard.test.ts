@@ -917,6 +917,27 @@ test('the allowlist rejects assignments, env VAR=, unsafe git/gh options, and te
     `git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit grep -O'${G}' -e x`, `gh pr create --title t --body "a; rm -rf ~"; git grep -O'gh pr view --json body -q .body|sh' -e x`], 'deny');
   all([`${m}; git grep -n -e x`, `${m}; git log --oneline --graph`, `${m}; git diff --stat`, `${m}; gh pr view 1 --json title`, `${m}; git push -u origin HEAD`], 'allow'); // safe options stay data
 });
+test('a message that writes into .git, a gitconfig or a hook is code, and git output into those is always blocked (round 13)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  all([`${m}; git log -1 --format=%B >> .git/config; git status`, `${m}; git log -1 --format=%B > .git/config; git status`,
+    `${m}; git show -s --format=%B >> .git/config`, `${m}; git log -1 --format=%B >> ~/.gitconfig`, `${m}; git log -1 --format=%B | tee .git/hooks/post-commit`,
+    `${m}; git log -1 --format=%B > .husky/pre-commit; git commit -m 'x y'`,
+    `${m}; cat >> .git/config <<'EOF'\nfsmonitor = x\nEOF\ngit status`, `${m}; echo '[core] fsmonitor = x' >> .git/config; git status`,
+    `${m}; echo x >> .githooks/pre-push`, "git commit -F - <<'EOF'\n[core]\n\tfsmonitor = rm -rf ~\nEOF\ngit log -1 --format=%B >> .git/config"], 'deny');
+  all(['git log -1 --format=%B >> .git/config', 'git show -s --format=%B | tee .git/hooks/pre-commit'], 'deny'); // always blocked, no message needed
+  all(['git log --oneline > /tmp/log.txt', 'echo done > README.md', 'git commit -m "docs: fix" && git log -1 | head -1'], 'allow');
+});
+test('${…} and $[…] on a message line make it code, even with single quotes inside (round 13)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  all([`${m}; echo \${x:'$(git log -1 --format=%B|sh)'}`, `${m}; echo $[ 'a[$(git log -1 --format=%B|sh)]' ]`, `${m}; echo \${a['$(git log -1 --format=%B|sh)']}`, `${m}; echo \${#a['x']}`, `${m}; cd \${x:'y'}`], 'deny');
+  all(["git commit -m 'see ${HOME} for the path'", "git commit -m 'why $(x) matters'"], 'allow'); // a single-quoted literal message stays data
+});
+test('gh lines reject -- pass-through and gh repo clone/fork on a message line (round 13)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  all([`gh pr create --body "a; rm -rf ~"; gh repo clone o/r d -- -c core.fsmonitor='x'; git -C d status`, `${m}; gh repo clone o/r d -- -u 'git log -1 --format=%B|sh'`,
+    `${m}; gh repo fork o/r -- -c x=y`, `${m}; gh pr create --body x -- -c y`], 'deny');
+  all([`${m}; gh pr view 1 --json title`, `${m}; gh pr create --title t --body b`], 'allow');
+});
 test('a line that writes git output to a file and runs a file is always blocked', () => {
   all(['git log -1 --format=%B > x.sh; sh x.sh', 'git log -1 --format=%B > x.sh && bash ./x.sh', 'git show HEAD:run.sh >> r.sh; . r.sh', 'git rev-parse HEAD > x; source x',
     'git cat-file -p HEAD:x > x && chmod +x x && ./x', 'git log -1 --format=%B | tee x.sh; sh x.sh', 'git -C sub log -1 --format=%B > /tmp/x\nbash /tmp/x'], 'deny');

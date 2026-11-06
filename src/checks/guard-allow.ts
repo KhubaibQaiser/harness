@@ -73,11 +73,17 @@ const GIT_SUB: Record<string, ReturnType<typeof optionSet>> = {
 };
 
 const GH_SAFE = new Set(['pr', 'issue', 'release', 'repo', 'run', 'workflow', 'api', 'status', 'label', 'search', 'browse']);
-/** gh options that read or run a file, or pass flags through to git, never data on a message line. `--` hands the rest
- *  to a wrapped git command (`gh repo clone … -- -c core.fsmonitor=…`), so it is rejected on a message line. */
-const GH_DANGER = /^(?:--input|-i|--)$|^--input=/;
 /** gh repo subcommands that wrap `git clone` and so take git's pass-through options. */
 const GH_REPO_DANGER = new Set(['clone', 'fork']);
+/** The options a gh line may take on a message line, rejecting unknown by default the way git's table does, so a gh
+ *  option that takes a command or a file it runs can never slip through. `--input`/`-i` (reads a request body file) and
+ *  a `--` pass-through to a wrapped git command are absent, so rejected. */
+const GH_OPT = optionSet(
+  'R t b F d w a l L B H j q s f c X p',
+  'repo title body body-file notes notes-file notes-start-tag draft prerelease latest web fill fill-first base head assignee label milestone project reviewer ' +
+    'json jq template slurp paginate squash merge rebase delete-branch auto admin disable-auto subject state author app comments limit search sort order ' +
+    'json-fields method field raw-field header hostname cache include verbose yes confirm force-with-lease recurse-submodules',
+);
 
 /** A write target that can turn a message into git config or a hook: anything under `.git/`, a gitconfig, `.husky/`,
  *  `.githooks/` or a `hooks/` dir. git reads these on its next run, so a message written there runs (re-review 11). */
@@ -131,6 +137,17 @@ function ghSubcommand(a: string[]): number {
   for (; a[i]?.startsWith('-'); i++) if (a[i] === '-R' || a[i] === '--repo') i++;
   return i;
 }
+/** True when every option token on a gh line is in GH_OPT (reject unknown by default); `--` and unknown make it code. */
+function ghOptionsOk(rest: string[]): boolean {
+  for (const o of rest) {
+    if (!o.startsWith('-')) continue;
+    if (o === '--') return false;
+    if (o.startsWith('--')) {
+      if (!named(GH_OPT, o)) return false;
+    } else if (![...o.slice(1).replace(/=.*/, '')].every((ch) => GH_OPT.short.has(ch))) return false;
+  }
+  return true;
+}
 
 /** True when the command whose words are `ws`, from `k`, is safe: past keywords, redirects and plain wrappers to a
  *  command on SAFE with safe options, with no assignment prefix anywhere (an assignment can run the message). */
@@ -150,7 +167,7 @@ function safeCommand(ws: string[], k: number, pipedIn: boolean, pipedOut: boolea
   if (name === 'git') { const s = gitSubcommand(rest); return s >= 0 && gitOptionsOk(rest[s] ?? '', rest.slice(s + 1)); }
   if (name === 'gh') {
     const s = ghSubcommand(rest), sub = rest[s] ?? '';
-    return GH_SAFE.has(sub) && !(sub === 'repo' && GH_REPO_DANGER.has(rest[s + 1] ?? '')) && !rest.slice(s + 1).some((o) => GH_DANGER.test(o));
+    return GH_SAFE.has(sub) && !(sub === 'repo' && GH_REPO_DANGER.has(rest[s + 1] ?? '')) && ghOptionsOk(rest.slice(s + 1));
   }
   return true;
 }

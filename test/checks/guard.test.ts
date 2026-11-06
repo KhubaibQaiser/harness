@@ -932,6 +932,13 @@ test('${…} and $[…] on a message line make it code, even with single quotes 
   all([`${m}; echo \${x:'$(git log -1 --format=%B|sh)'}`, `${m}; echo $[ 'a[$(git log -1 --format=%B|sh)]' ]`, `${m}; echo \${a['$(git log -1 --format=%B|sh)']}`, `${m}; echo \${#a['x']}`, `${m}; cd \${x:'y'}`], 'deny');
   all(["git commit -m 'see ${HOME} for the path'", "git commit -m 'why $(x) matters'"], 'allow'); // a single-quoted literal message stays data
 });
+test('gh lines get a per-subcommand option allowlist, rejecting unknown options (round 14)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  all([`${m}; gh api --input x /repos`, `${m}; gh pr create --body b --frobnicate 'git log -1 --format=%B|sh'`, `${m}; gh issue create --title t --body b -i x`,
+    `${m}; gh pr create --body b --exec 'git log -1 --format=%B|sh'`, `${m}; gh pr create --body x -- -c y`], 'deny'); // unknown or passthrough option
+  all([`${m}; gh pr create --title t --body b`, `${m}; gh pr view 1 --json title`, `${m}; gh pr merge --squash`, `${m}; gh run rerun 1`,
+    `${m}; gh pr view --json body -q .body`, `${m}; gh release create v1 --notes n`, `${m}; gh api -X GET /repos`], 'allow');
+});
 test('gh lines reject -- pass-through and gh repo clone/fork on a message line (round 13)', () => {
   const m = 'git commit -m "a; rm -rf ~"';
   all([`gh pr create --body "a; rm -rf ~"; gh repo clone o/r d -- -c core.fsmonitor='x'; git -C d status`, `${m}; gh repo clone o/r d -- -u 'git log -1 --format=%B|sh'`,

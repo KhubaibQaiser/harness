@@ -54,6 +54,19 @@ describe('harness report', () => {
     expect(existsSync(htmlPath(w))).toBe(true);
     expect(existsSync(join(w.root, '.harness/reports/.gitignore'))).toBe(false);
   });
+  it.each([
+    ['a negated line', 'dist/\n.harness/reports/\n!.harness/reports/\n'],
+    ['a different spelling', '/.harness/reports\n'],
+    ['a trailing space', '.harness/reports/ \n'],
+    ['only a nested .gitignore', 'dist/\n'],
+  ])('still writes the folder .gitignore for %s', async (_n, root_gi) => {
+    const w = world(0);
+    writeFileSync(join(w.root, '.gitignore'), root_gi);
+    mkdirSync(join(w.root, '.harness'), { recursive: true });
+    writeFileSync(join(w.root, '.harness/.gitignore'), 'reports/\n');
+    expect((await go(w, [])).code).toBe(0);
+    expect(readFileSync(join(w.root, '.harness/reports/.gitignore'), 'utf8')).toBe('*');
+  });
   it('rejects bad arguments with exit 2', async () => {
     const w = world(0);
     for (const a of [['--days', '0'], ['--days', 'x'], ['--days'], ['--bogus']]) {

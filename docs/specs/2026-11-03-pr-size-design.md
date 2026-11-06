@@ -100,7 +100,7 @@ With `-z`, a numstat entry is `added\tdeleted\tpath\0`. For a rename it is `adde
 - **Snapshots are not counted** (O1). The `exclude` default holds `**/__snapshots__/**` and `**/*.snap`.
 - **Generated paths are not counted** (O2). A path that matches `multi_file_gate.generated` is skipped. This is read from that same key, so the repo has one list of generated paths.
 - **A whole-file deletion counts as 1 file and 0 lines** (O3). The deleted files come from the `--diff-filter=D` call in section 4.
-- **Harness's own local files are not counted in a working-tree measurement** (amended 2026-11-06, review of Task 10): `.harness/state/`, `.harness/logs/`, `.harness/backup/`, `.harness/results/` and `.harness/debug/`, gitignored or not (`HARNESS_LOCAL` in `src/core/paths.ts`, the list install gitignores). A PR's committed files all count.
+- **Harness's own local files are not counted in a working-tree measurement** (amended 2026-11-06, review of Task 10): `.harness/state/`, `.harness/logs/`, `.harness/backup/`, `.harness/results/`, `.harness/debug/` and `.harness/reports/`, gitignored or not (`HARNESS_LOCAL` in `src/core/paths.ts`, the list install gitignores). A PR's committed files all count.
 
 ## 6. Decision
 

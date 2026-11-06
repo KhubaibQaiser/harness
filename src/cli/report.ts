@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { HARNESS_LOCAL } from '../core/paths.js';
 import { loadCatalog } from '../catalog/load.js';
 import { loadConfig } from '../core/config.js';
 import { writeAtomic } from '../core/atomic.js';
@@ -29,7 +30,7 @@ declare const __HARNESS_VERSION__: string;
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
 export const USAGE = 'Usage: harness report [--days N] [--open] [--export]';
 const DEFAULT_DAYS = 14, DAY = 86_400_000, DATE_LEN = 10;
-const REPORTS = '.harness/reports';
+const REPORTS_LINE = HARNESS_LOCAL.find((l) => l.endsWith('/reports/'))!, REPORTS = REPORTS_LINE.slice(0, -1);
 const BAD_ARGS = 2, INDENT = 2, SEP_LEN = 2, MAX_DAYS = 3650;
 
 export type ReportEnv = CliEnv & {
@@ -119,7 +120,11 @@ function summary(d: ReportData, rel: string, expRel?: string): string[] {
 }
 
 const rootIgnores = (root: string): boolean => {
-  try { return readFileSync(join(root, '.gitignore'), 'utf8').split(/\r?\n/).includes(`${REPORTS}/`); } catch { return false; }
+  // Exact line only, and a later negation cancels it. Other spellings and nested .gitignore files fall back to the folder one.
+  try {
+    const ls = readFileSync(join(root, '.gitignore'), 'utf8').split(/\r?\n/);
+    return ls.includes(REPORTS_LINE) && !ls.some((l) => l.startsWith('!') && l.slice(1).replace(/^\//, '').replace(/\/?$/, '/') === REPORTS_LINE);
+  } catch { return false; }
 };
 
 export async function report(args: string[], cli: ReportEnv): Promise<number> {

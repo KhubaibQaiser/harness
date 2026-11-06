@@ -1,4 +1,4 @@
-import { emit, shown } from './io.js';
+import { capMessage, emit, shown } from './io.js';
 import type { Decision } from './types.js';
 
 const unique = (xs: string[]): string[] => [...new Set(xs)];
@@ -9,7 +9,7 @@ export function winner(decisions: Decision[]): Decision | undefined {
   if (hard) return hard;
   const asks = decisions.flatMap((d) => (d.kind === 'ask' ? [d] : []));
   if (asks.length < 2) return asks[0];
-  return { kind: 'ask', reason: unique(asks.map((d) => d.reason)).join('\nAlso: '), check: unique(asks.map((d) => d.check)).join('+') };
+  return { kind: 'ask', reason: capMessage(unique(asks.map((d) => d.reason)).join('\nAlso: ')), check: unique(asks.map((d) => d.check)).join('+') };
 }
 
 /** Output for the context decisions (and the winning deny/block/ask, if any) of one hook run. */

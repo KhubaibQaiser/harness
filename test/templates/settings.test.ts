@@ -7,14 +7,19 @@ const BLOCK = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange'];
 
 test('hooks: events, matchers, exec form, timeouts and onFailure (spec section 2)', () => {
   expect(Object.keys(s.hooks)).toEqual(['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd']);
-  expect(s.hooks.PreToolUse[0].matcher).toBe('Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit|AskUserQuestion');
-  expect(s.hooks.PostToolUse[0].matcher).toBe('Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|AskUserQuestion');
+  expect(s.hooks.PreToolUse[0].matcher).toBe('Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit');
+  expect(s.hooks.PostToolUse[0].matcher).toBe('Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit');
   for (const e of ['UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd']) expect(s.hooks[e][0]).not.toHaveProperty('matcher');
   for (const [event, groups] of Object.entries<any[]>(s.hooks)) {
-    expect(groups).toHaveLength(1);
+    expect(groups).toHaveLength(event === 'PreToolUse' || event === 'PostToolUse' ? 2 : 1);
     expect(groups[0].hooks).toEqual([
       { type: 'command', command: 'node', args: ARGS, timeout: event === 'Stop' ? 600 : 10, ...(BLOCK.includes(event) ? { onFailure: 'block' } : {}) },
     ]);
+  }
+  // AskUserQuestion has its own group with no onFailure, so a broken dispatcher never blocks the agent's questions (fail-open:
+  // a crashed PreToolUse saves no token, so nothing can clear at PostToolUse).
+  for (const event of ['PreToolUse', 'PostToolUse']) {
+    expect(s.hooks[event][1]).toEqual({ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: 'node', args: ARGS, timeout: 10 }] });
   }
 });
 

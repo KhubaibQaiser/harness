@@ -8,6 +8,7 @@ import { isSafeSessionId, readState, statePath } from '../../src/core/state.js';
 import { readHookEnv } from '../../src/core/hook-env.js';
 import { type Check, dispatch, runHook } from '../../src/hooks/dispatch.js';
 import type { Decision, HookEvent } from '../../src/hooks/types.js';
+import { MAX_MESSAGE } from '../../src/hooks/io.js';
 
 const root = mkdtempSync(join(tmpdir(), 'h-dp-'));
 mkdirSync(join(root, '.harness'));
@@ -65,6 +66,12 @@ test('unattended turns ask into deny with prefix', async () => {
 test('several asks make one dialog with every reason, in registry order; a repeated reason shows once', async () => {
   const askB = mk('ask-b', { kind: 'ask', reason: 'really?', check: 'ask-b' });
   expect(out(await dispatch(pre(), [askAll, askB, askAll], {})).hookSpecificOutput).toMatchObject({ permissionDecision: 'ask', permissionDecisionReason: 'sure?\nAlso: really?' });
+});
+test('the joined ask reason is capped at the message limit', async () => {
+  const long = (c: string) => mk(`ask-${c}`, { kind: 'ask', reason: c.repeat(MAX_MESSAGE), check: `ask-${c}` });
+  const r = out(await dispatch(pre(), [long('a'), long('b')], {})).hookSpecificOutput!.permissionDecisionReason!;
+  expect(r).toHaveLength(MAX_MESSAGE);
+  expect(r.endsWith('... [truncated]')).toBe(true);
 });
 test('ask alone stays ask when attended', async () => {
   expect(decisionOf(await dispatch(pre(), [askAll], {}))).toBe('ask');

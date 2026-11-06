@@ -94,7 +94,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const frag = settingsFragment().hooks;
   const recorded = (manifest.files.find((f) => f.rel === '.claude/settings.json')?.blocks ?? []).map((b) => { try { return JSON.parse(b); } catch { return null; } });
   const kind = (ev: string, g: unknown) =>
-    isDeepStrictEqual(g, frag[ev][0]) ? 'ok' : recorded.some((b) => isDeepStrictEqual(b, { event: ev, group: g })) ? 'old' : 'edited';
+    frag[ev].some((w: unknown) => isDeepStrictEqual(g, w)) ? 'ok' : recorded.some((b) => isDeepStrictEqual(b, { event: ev, group: g })) ? 'old' : 'edited';
 
   // Run the PreToolUse hook as Claude Code would: exec form with no shell, or an old shell-form entry through the shell.
   const preGroup = groups('PreToolUse')[0];

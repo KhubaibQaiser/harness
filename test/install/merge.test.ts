@@ -7,7 +7,7 @@ import { guardedView } from '../../src/core/harness-files.js';
 
 const fx = (p: string) => readFileSync(`test/fixtures/install-repo/${p}`, 'utf8');
 const ARGS = ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'];
-const PRE = 'Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit|AskUserQuestion';
+const PRE = 'Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit';
 const merge = (before: string | null, recorded?: string[]) => mergeSettings(before, { sandbox: 'unattended', recorded });
 const frag = JSON.parse(readFileSync('templates/settings.fragment.json', 'utf8'));
 const S = '<!-- harness:start -->';
@@ -27,14 +27,14 @@ describe('mergeSettings', () => {
     expect(s.permissions.deny).toContain('Edit(./.claude/settings.json)');
     expect(s.permissions.deny.filter((x: string) => x === 'Read(./.env)')).toHaveLength(1);
     expect(after).toContain('scripts/agent-hooks/guard.mjs');
-    expect(s.hooks.PreToolUse.map((g: any) => g.matcher)).toEqual(['Bash', 'Write', PRE]);
-    expect(s.hooks.PostToolUse).toHaveLength(2);
+    expect(s.hooks.PreToolUse.map((g: any) => g.matcher)).toEqual(['Bash', 'Write', PRE, 'AskUserQuestion']);
+    expect(s.hooks.PostToolUse).toHaveLength(3);
     expect(s.hooks.Stop).toHaveLength(2);
     expect(s.hooks.Stop[1].hooks[0].args).toEqual(ARGS);
     expect(s.hooks.SessionEnd).toHaveLength(1);
-    // blocks: 6 hook groups + deny rules not already present (29 of 30)
+    // blocks: 8 hook groups (AskUserQuestion has its own Pre and Post group) + deny rules not already present (29 of 30)
     const parsed = blocks.map((b) => JSON.parse(b));
-    expect(parsed.filter((b) => b.event)).toHaveLength(6);
+    expect(parsed.filter((b) => b.event)).toHaveLength(8);
     expect(parsed.filter((b) => b.deny)).toHaveLength(29);
     expect(parsed.find((b) => b.event === 'Stop').group.hooks[0].args).toEqual(ARGS);
   });
@@ -52,10 +52,10 @@ describe('mergeSettings', () => {
     expect(again.blocks).toEqual([]);
   });
 
-  it('a fresh file gets 6 group blocks and 30 deny blocks, nothing dropped', () => {
+  it('a fresh file gets 8 group blocks and 30 deny blocks, nothing dropped', () => {
     const { after, blocks, dropped } = merge(null);
     const parsed = blocks.map((b) => JSON.parse(b));
-    expect(parsed.filter((b) => b.event)).toHaveLength(6);
+    expect(parsed.filter((b) => b.event)).toHaveLength(8);
     expect(parsed.filter((b) => b.deny)).toHaveLength(30);
     expect(dropped).toEqual([]);
     expect(JSON.parse(after).hooks.Stop[0].hooks[0]).toEqual({ type: 'command', command: 'node', args: ARGS, timeout: 600 });
@@ -65,7 +65,7 @@ describe('mergeSettings', () => {
     const foreign = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node', args: ['tools/lint-hook.mjs'] }] };
     const { after, blocks } = merge(JSON.stringify({ hooks: { PreToolUse: [foreign] } }));
     const s = JSON.parse(after);
-    expect(s.hooks.PreToolUse).toEqual([foreign, frag.hooks.PreToolUse[0]]);
+    expect(s.hooks.PreToolUse).toEqual([foreign, ...frag.hooks.PreToolUse]);
     expect(blocks).toContain(JSON.stringify({ event: 'PreToolUse', group: frag.hooks.PreToolUse[0] }));
   });
 
@@ -75,12 +75,13 @@ describe('mergeSettings', () => {
     const { after, blocks, dropped, notes } = merge(JSON.stringify(beta.s, null, 2) + '\n', beta.blocks);
     const s = JSON.parse(after);
     expect(notes).toEqual([]);
-    expect(s.hooks.PreToolUse).toEqual([user, frag.hooks.PreToolUse[0]]);
-    for (const ev of Object.keys(frag.hooks)) expect(s.hooks[ev].at(-1)).toEqual(frag.hooks[ev][0]);
-    for (const ev of ['PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd']) expect(s.hooks[ev]).toHaveLength(1);
+    expect(s.hooks.PreToolUse).toEqual([user, ...frag.hooks.PreToolUse]);
+    for (const ev of Object.keys(frag.hooks)) expect(s.hooks[ev].slice(-frag.hooks[ev].length)).toEqual(frag.hooks[ev]);
+    for (const ev of ['UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd']) expect(s.hooks[ev]).toHaveLength(1);
+    expect(s.hooks.PostToolUse).toHaveLength(2); // the beta group replaced in place, then the new AskUserQuestion group added
     expect(dropped).toEqual(Object.entries(BETA_GROUPS).map(([event, group]) => JSON.stringify({ event, group })));
     const parsed = blocks.map((b) => JSON.parse(b));
-    expect(parsed.filter((b) => b.event).map((b) => b.event)).toEqual(Object.keys(frag.hooks));
+    expect(parsed.filter((b) => b.event).map((b) => b.event)).toEqual(Object.entries<any[]>(frag.hooks).flatMap(([ev, gs]) => gs.map(() => ev)));
     expect(parsed.filter((b) => b.deny)).toHaveLength(22);
     expect(merge(after, [...beta.blocks.filter((b) => !dropped.includes(b)), ...blocks])).toMatchObject({ after, blocks: [], dropped: [] });
   });
@@ -130,7 +131,7 @@ describe('mergeSettings', () => {
     const s = JSON.parse(after);
     expect(s.hooks.Stop).toEqual({ a: 1 });
     expect(notes.join('\n')).toMatch(/hooks\.Stop is not an array/);
-    expect(s.hooks.PreToolUse).toHaveLength(1);
+    expect(s.hooks.PreToolUse).toHaveLength(2);
   });
 
   it('invalid JSON: MergeError naming the file', () => {

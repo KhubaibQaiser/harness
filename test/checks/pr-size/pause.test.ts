@@ -196,34 +196,43 @@ describe('the agent cannot clear it', () => {
 
 describe("the agent's own AskUserQuestion is the one ask (I3)", () => {
   const Q = 'This branch is past the PR size target. How should we go on?';
-  const ask = (header: string, answers: Record<string, unknown>, question = Q) => ({
-    tool_name: 'AskUserQuestion',
-    tool_input: { questions: [{ question, header, options: [{ label: 'Split now' }, { label: 'Keep going' }], multiSelect: false }] },
-    tool_response: { questions: [{ question, header, options: [{ label: 'Split now' }, { label: 'Keep going' }], multiSelect: false }], answers },
+  const question = (header: string, text = Q, extra: Record<string, unknown> = {}) => ({ question: text, header, options: [{ label: 'Split now' }, { label: 'Keep going' }], multiSelect: false, ...extra });
+  // Claude Code 2.1.285 (static read): the answer comes back through updatedInput, so PostToolUse gets it in tool_input.
+  const post = (header: string, answers: Record<string, unknown>, extra: Record<string, unknown> = {}, q = question(header)) => ({
+    tool_name: 'AskUserQuestion', tool_input: { questions: [q], answers, annotations: {}, ...extra }, tool_response: {},
   });
+  const preOf = (header: string) => ({ tool_name: 'AskUserQuestion', tool_input: { questions: [question(header)] }, tool_response: {} });
   /** The question as the person sees it: a clean PreToolUse (allowed, token saved), then its PostToolUse. */
-  const asked = async (root: string, t: Record<string, unknown>) => (allows(await pre(root, { ...t, tool_response: {} })), hook(root, 'PostToolUse', t));
+  const asked = async (root: string, t: ReturnType<typeof post>, header = 'PR size') => (allows(await pre(root, preOf(header))), hook(root, 'PostToolUse', t));
+
   test('any answer to the "PR size" question clears pending, so the next edit allows', async () => {
-    for (const answer of ['Keep going', 'Split now', ['Raise the limit for this branch'], 'my own words']) {
+    for (const answer of ['Keep going', 'Split now', 'Raise the limit for this branch', 'my own typed reply']) {
       const root = repo();
       await posted(root, 201);
-      await asked(root, ask('PR size', { [Q]: answer }));
-      expect(pending(root), JSON.stringify(answer)).toBeUndefined();
+      await asked(root, post('PR size', { [Q]: answer }));
+      expect(pending(root), answer).toBeUndefined();
       allows(await pre(root));
     }
   });
-  test('another question, or no answer, leaves pending, and the pause still asks', async () => {
+  test('extended question mode adds `kind` to the question: still the same token', async () => {
     const root = repo();
     await posted(root, 201);
-    for (const t of [
-      ask('Framework', { [Q]: 'Keep going' }),
-      ask('PR size', {}),
-      ask('PR size', { [Q]: '' }),
-      ask('PR size', { [Q]: [] }),
-      ask('PR size', { 'Some other question?': 'Keep going' }),
-      ask('PR size', { [Q]: '[User did not answer this question — they sent a message instead. Treat that message as their response; do not re-ask.]' }),
-      { ...ask('PR size', { [Q]: 'Keep going' }), tool_response: 'Keep going' },
-    ]) await asked(root, t);
+    await asked(root, post('PR size', { [Q]: 'Keep going' }, {}, question('PR size', Q, { kind: 'choice' })));
+    expect(pending(root)).toBeUndefined();
+  });
+  test('another question, no answer, notes only, or the auto-continue timeout leaves pending, and the pause still asks', async () => {
+    const root = repo();
+    await posted(root, 201);
+    const cases: [ReturnType<typeof post>, string?][] = [
+      [post('Framework', { [Q]: 'Keep going' }), 'Framework'],
+      [post('PR size', {})],
+      [post('PR size', { [Q]: '' })],
+      [post('PR size', { [Q]: '(notes only)' })],
+      [post('PR size', { 'Some other question?': 'Keep going' })],
+      [post('PR size', { [Q]: '[User did not answer this question — they sent a message instead.]' })],
+      [post('PR size', { [Q]: 'Keep going' }, { afkTimeoutMs: 60000 })],
+    ];
+    for (const [t, header] of cases) await asked(root, t, header);
     expect(pending(root)).toEqual({ lines: 201, files: 1 });
     asks(await pre(root), PAUSE('feat', 201));
   });
@@ -231,28 +240,27 @@ describe("the agent's own AskUserQuestion is the one ask (I3)", () => {
     const root = repo();
     seed(root, 'other');
     await posted(root, 201);
-    await asked(root, ask('PR size', { [Q]: 'Keep going' }));
+    await asked(root, post('PR size', { [Q]: 'Keep going' }));
     expect([pending(root, 'feat'), pending(root, 'other')]).toEqual([undefined, { lines: 201, files: 1 }]);
   });
-  test('an answer the agent put in the call is denied at PreToolUse and clears nothing', async () => {
+  test('an answer the agent pre-filled is denied at PreToolUse and clears nothing', async () => {
     const root = repo();
     await posted(root, 201);
-    const forged = ask('PR size', { [Q]: 'Keep going' });
-    forged.tool_input = { ...forged.tool_input, answers: { [Q]: 'Keep going' } } as typeof forged.tool_input;
-    expect(await pre(root, { ...forged, tool_response: {} })).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: FORGED });
+    const forged = post('PR size', { [Q]: 'Keep going' });
+    expect(await pre(root, forged)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: FORGED });
     await hook(root, 'PostToolUse', forged);
     expect(pending(root)).toEqual({ lines: 201, files: 1 });
-    allows(await pre(root, { ...ask('Framework', {}), tool_input: { ...ask('Framework', {}).tool_input, answers: { [Q]: 'x' } }, tool_response: {} })); // another question's answers are not ours to judge
+    allows(await pre(root, post('Framework', { [Q]: 'x' }))); // another question's answers are not ours to judge
   });
   test('a PostToolUse with no clean PreToolUse before it, or a second one, clears nothing', async () => {
     const root = repo();
     await posted(root, 201);
-    await hook(root, 'PostToolUse', ask('PR size', { [Q]: 'Keep going' }));
+    await hook(root, 'PostToolUse', post('PR size', { [Q]: 'Keep going' }));
     expect(pending(root)).toEqual({ lines: 201, files: 1 });
-    await asked(root, ask('PR size', { [Q]: 'Keep going' }));
+    await asked(root, post('PR size', { [Q]: 'Keep going' }));
     expect(pending(root)).toBeUndefined();
     await posted(root, 401);
-    await hook(root, 'PostToolUse', ask('PR size', { [Q]: 'Keep going' })); // the token was used once
+    await hook(root, 'PostToolUse', post('PR size', { [Q]: 'Keep going' })); // the token was used once
     expect(pending(root)).toEqual({ lines: 401, files: 1 });
   });
 });

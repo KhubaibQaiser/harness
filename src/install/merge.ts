@@ -84,6 +84,43 @@ export function removeSets(s: unknown, blocks: string[]): { sets: string[]; chan
  * and one per inserted deny rule, `{"deny":"Read(./secrets/**)"}`. Uninstall removes them by deep equality.
  * A harness group equal to a `recorded` block but not to the fragment is replaced at its index; its old block is `dropped`.
  */
+type EventOut = { recorded?: string[]; blocks: string[]; dropped: string[]; notes: string[] };
+
+/** One event's harness groups: a group equal to one of the fragment's stays; a recorded older one is replaced in place by the
+ *  next group not yet present; an edited one is kept (and takes that place); any fragment group still missing is added. */
+function mergeEvent(ev: string, list: any[], wants: any[], o: EventOut): void {
+  const present = new Set<number>();
+  const ours: number[] = [];
+  list.forEach((g, i) => {
+    if (!isObj(g) || !Array.isArray(g.hooks)) return void o.notes.push(`${SETTINGS}: hooks.${ev}[${i}] is not a group with a "hooks" array; left untouched.`);
+    g.hooks.forEach((h: unknown, j: number) => {
+      if (!isObj(h) || typeof h.command !== 'string') o.notes.push(`${SETTINGS}: hooks.${ev}[${i}].hooks[${j}] is not a command hook; left untouched.`);
+    });
+    if (!g.hooks.some(isHarnessHook)) return;
+    const hit = wants.findIndex((w, k) => !present.has(k) && isDeepStrictEqual(g, w));
+    if (hit >= 0) present.add(hit);
+    else ours.push(i);
+  });
+  for (const i of ours) {
+    const next = wants.findIndex((_, k) => !present.has(k));
+    if (next < 0) continue;
+    present.add(next);
+    const rec = o.recorded?.find((b) => isDeepStrictEqual(parse(b), { event: ev, group: list[i] }));
+    if (rec === undefined) {
+      o.notes.push(`${SETTINGS}: hooks.${ev}[${i}] is a harness hook you edited; left as is. harness doctor checks it.`);
+      continue;
+    }
+    list[i] = wants[next];
+    o.dropped.push(rec);
+    o.blocks.push(JSON.stringify({ event: ev, group: wants[next] }));
+  }
+  wants.forEach((w, k) => {
+    if (present.has(k)) return;
+    list.push(w);
+    o.blocks.push(JSON.stringify({ event: ev, group: w }));
+  });
+}
+
 export function mergeSettings(before: string | null, opts: { sandbox: SandboxMode; recorded?: string[]; plugins?: PinnedPlugin[] }): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
   let s: any;
   try { s = before === null ? {} : JSON.parse(before); } catch (e) { return bad(`is not valid JSON: ${(e as Error).message}`); }
@@ -99,31 +136,12 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
   const dropped: string[] = [];
   const notes: string[] = [];
   s.hooks ??= {};
-  // The fragment has one group per event.
-  for (const [ev, [want]] of Object.entries<any[]>(frag.hooks)) {
+  for (const [ev, wants] of Object.entries<any[]>(frag.hooks)) {
     if (s.hooks[ev] !== undefined && !Array.isArray(s.hooks[ev])) {
       notes.push(`${SETTINGS}: hooks.${ev} is not an array; left untouched and the harness ${ev} hook was not added.`);
       continue;
     }
-    const list: any[] = (s.hooks[ev] ??= []);
-    let ours = false;
-    list.forEach((g, i) => {
-      if (!isObj(g) || !Array.isArray(g.hooks)) return void notes.push(`${SETTINGS}: hooks.${ev}[${i}] is not a group with a "hooks" array; left untouched.`);
-      g.hooks.forEach((h: unknown, j: number) => {
-        if (!isObj(h) || typeof h.command !== 'string') notes.push(`${SETTINGS}: hooks.${ev}[${i}].hooks[${j}] is not a command hook; left untouched.`);
-      });
-      if (!g.hooks.some(isHarnessHook)) return;
-      ours = true;
-      if (isDeepStrictEqual(g, want)) return;
-      const rec = opts.recorded?.find((b) => isDeepStrictEqual(parse(b), { event: ev, group: g }));
-      if (rec === undefined) return void notes.push(`${SETTINGS}: hooks.${ev}[${i}] is a harness hook you edited; left as is. harness doctor checks it.`);
-      list[i] = want;
-      dropped.push(rec);
-      blocks.push(JSON.stringify({ event: ev, group: want }));
-    });
-    if (ours) continue;
-    list.push(want);
-    blocks.push(JSON.stringify({ event: ev, group: want }));
+    mergeEvent(ev, (s.hooks[ev] ??= []), wants, { recorded: opts.recorded, blocks, dropped, notes });
   }
   s.permissions ??= {};
   s.permissions.deny ??= [];

@@ -51,6 +51,13 @@ test('the second kind does not start when the spend cannot be read', async () =>
   expect(h.lines.join('\n')).toMatch(/could not read/i);
 });
 
+test('a negative spend can never raise the budget left', async () => {
+  const h = harness(spend(-100));
+  expect(await h.run(['--model', 'claude-x'])).toBe(1);
+  expect(h.calls).toHaveLength(1);
+  expect(h.lines.join('\n')).toMatch(/could not read/i);
+});
+
 test('the plan says the ceiling covers all kinds', async () => {
   const h = harness(spend(0.5), {}, ['no']);
   await h.run(['--model', 'claude-x']);

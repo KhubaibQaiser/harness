@@ -82,7 +82,10 @@ function runOne(b: Build, o: RunOpts, exec: Exec, out: (s: string) => void): { c
 
 /** Takes this run's spend off what is left; returns why the next kind must not start, or null. */
 function budgetStop(left: { usd: number }, ceiling: number, summary: EvalSummary | null): string | null {
-  if (!summary || summary.costUsd === null || summary.runs === 0) return 'could not read the spend of the last run';
+  // A negative or non-finite spend is unreadable, so it can never raise the budget left.
+  if (!summary || summary.costUsd === null || !Number.isFinite(summary.costUsd) || summary.costUsd < 0 || summary.runs === 0) {
+    return 'could not read the spend of the last run';
+  }
   left.usd -= summary.costUsd;
   const oneRun = summary.costUsd / summary.runs;
   return left.usd < oneRun ? `less than one agent run (~$${oneRun.toFixed(USD_DECIMALS)}) is left in the $${ceiling} ceiling` : null;

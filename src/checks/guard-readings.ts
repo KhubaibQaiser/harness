@@ -2,7 +2,8 @@
 // Imported by guard.ts, which this module imports back: use guard.ts names only inside functions, never at load time.
 import picomatch from 'picomatch';
 import { commandStart, quoteFree, SEGMENTS } from './guard.js';
-import { Scan, ScanBudget } from './guard-scan.js';
+import { quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
+import { maskedLine, sinkTest, wordCounter } from './guard-sinks.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
@@ -37,33 +38,17 @@ class Budget {
   fits(n: number, len: number): boolean { return this.seen.size + n <= MAX_READINGS && this.chars + n * len <= MAX_READING_CHARS; }
 }
 
-/** Where the quoted spans and heredoc bodies of a command are. Offsets into the command, `end` and `to` exclusive. */
-interface Quoted { start: number; end: number; subs: string[] } // subs: the $(…) and `…` the shell runs inside "…"
+/** Where the quoted spans and heredoc bodies of a command are. Offsets into the command, `to` exclusive. */
 interface Heredoc { from: number; to: number; literal: boolean; program: boolean } // the body and its end line
 interface Layout { quotes: Quoted[]; heredocs: Heredoc[] }
 
-/** A line that feeds its heredoc to something that runs it: a shell (`| sh`, `bash -s -- x`), eval, source or `.`, or an
- *  interpreter reading its program from stdin (`node -`, `python3 -`; with -e or -c the body is its data). */
-const SHELL_FED = /(?:^|[;&|(]\s*|\s)(?:(?:ba|z|da|k)?sh|eval|source|\.)(?=[\s;&|)]|$)/;
-const INTERPRETER_FED = /(?:^|[;&|(]\s*|\s)(?:node|python3?|ruby|perl|php|deno|bun)(?=\s|$)(?![^;&|\n]*\s-(?:[ec]|-eval)(?=\s|$))/;
-
-/** The quoted span that opens at `i` ($'…', '…' or "…" with its substitutions), or null. */
-function quotedAt(s: Scan, i: number): Quoted | null {
-  const c = s.c;
-  if (c[i] === '$' && c[i + 1] === "'") return { start: i, end: s.closeAnsiC(i + 2), subs: [] };
-  if (c[i] === "'") { const e = c.indexOf("'", i + 1); return { start: i, end: e < 0 ? c.length : e + 1, subs: [] }; }
-  if (c[i] !== '"') return null;
-  const end = s.closeDouble(i);
-  return { start: i, end, subs: s.substitutions(i + 1, end - 1) };
-}
-
 /** Where the shell sees quotes and heredoc bodies: `\` escapes outside quotes, `'…'` is literal, `$'…'` is literal with
- *  `\` escapes, `"…"` keeps its
- *  substitutions, `$((…))` and `((…))` are arithmetic (`1<<E` is a shift), and `<<WORD` takes the lines up to WORD.
- *  A heredoc this cannot read (a delimiter with an expansion, no end line) leaves every body in place. */
-function layout(s: Scan): Layout {
-  const c = s.c, quotes: Quoted[] = [], heredocs: Heredoc[] = [];
-  let pending: { word: string; dash: boolean; literal: boolean }[] = [], lineStart = 0;
+ *  `\` escapes, `"…"` keeps its substitutions, `$((…))` and `((…))` are arithmetic (`1<<E` is a shift), and `<<WORD`
+ *  takes the lines up to WORD. A body is a program unless sinkTest says it goes to a data sink; `argValue` says `c`
+ *  is a flag's $(…) value. A heredoc this cannot read (a delimiter with an expansion, no end line) leaves every body in place. */
+function layout(s: Scan, argValue: boolean): Layout {
+  const c = s.c, quotes: Quoted[] = [], heredocs: Heredoc[] = [], count = wordCounter(c);
+  let pending: { word: string; dash: boolean; literal: boolean; data: boolean }[] = [], lineStart = 0, sink: ((at: number) => boolean) | undefined;
   for (let i = 0; i < c.length; i++) {
     const ch = c[i];
     const q = ch === '\\' ? null : quotedAt(s, i);
@@ -86,11 +71,10 @@ function layout(s: Scan): Layout {
         else word += x;
       }
       if (q || !/^\w+$/.test(word)) return { quotes, heredocs: [] };
-      pending.push({ word, dash, literal });
+      sink ??= sinkTest(maskedLine(s, lineStart), argValue && lineStart === 0, count);
+      pending.push({ word, dash, literal, data: sink(i - lineStart) });
       i = d - 1;
     } else if (ch === '\n' && pending.length) {
-      const line = c.slice(lineStart, i);
-      const program = SHELL_FED.test(line) || INTERPRETER_FED.test(line);
       let p = i + 1;
       for (const h of pending) {
         const from = p;
@@ -101,23 +85,27 @@ function layout(s: Scan): Layout {
           p = nl < 0 ? c.length : nl + 1;
           if ((h.dash ? l.replace(/^\t+/, '') : l) === h.word) break;
         }
-        heredocs.push({ from, to: p, literal: h.literal, program });
+        heredocs.push({ from, to: p, literal: h.literal, program: !h.data });
       }
       pending = [];
       i = p - 1;
       lineStart = p;
-    } else if (ch === '\n') lineStart = i + 1;
+      sink = undefined;
+    } else if (ch === '\n') { lineStart = i + 1; sink = undefined; }
   }
   return { quotes, heredocs };
 }
 
+type Blank = (c: string) => (q: Quoted) => boolean;
 /** The command with data taken out: a heredoc body nobody runs (its end line too), keeping the $(…) and `…` of an
- *  unquoted-delimiter body as lines, and each quoted span `blank` picks, as '' plus the substitutions a "…" span runs. */
-function withoutData(c: string, blank: (q: Quoted) => boolean): string {
+ *  unquoted-delimiter body as lines, and each quoted span `blank` picks, as '' plus the substitutions a "…" span runs.
+ *  A message flag's substitutions have their own data taken out, so `-m "$(cat <<'EOF' … )"` keeps no body. */
+function withoutData(c: string, blank: Blank, argValue = false): string {
   if (!/['"<]/.test(c)) return c;
-  const s = new Scan(c);
-  const { quotes, heredocs } = layout(s);
-  const cuts = [...quotes.filter(blank).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map((s) => ` $(${s})`).join('') })),
+  const s = new Scan(c), picks = blank(c);
+  const { quotes, heredocs } = layout(s, argValue);
+  const sub = (q: Quoted) => (ARG_FLAG.test(c.slice(Math.max(0, q.start - 16), q.start)) ? (x: string) => withoutData(x, blank, true) : (x: string) => x);
+  const cuts = [...quotes.filter(picks).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map(sub(q)).map((x) => ` $(${x})`).join('') })),
     ...heredocs.filter((h) => !h.program).map((h) => ({ from: h.from, to: h.to, put: h.literal ? '' : s.substitutions(h.from, h.to).map((x) => x + '\n').join('') }))]
     .sort((a, b) => a.from - b.from);
   if (!cuts.length) return c;
@@ -130,29 +118,36 @@ const spaced = (c: string) => (q: Quoted) => /\s/.test(c.slice(q.start, q.end));
 /** The glob readings' start: data out, and every quoted span with whitespace in it is data (a commit message's `* one`
  *  bullet, a JSDoc ` * ` line, a regex's `(a|b)`). -c payloads and eval's words are read on their own by the guard.
  *  A quoted single word stays: `'g?t' push` is read as a glob. */
-const words = (c: string): string => withoutData(c, spaced(c));
+const words = (c: string): string => withoutData(c, spaced);
 /** A message value: `-m`, `-am`, `--message`, `--body`, `--title` or `--notes` right before the quoted span. */
+/** A message flag whose $(…) value is only text: never one with c or e in it (`bash -cm "$(cat <<E …)"` runs it). */
+const ARG_FLAG = /(?:^|\s)(?:-(?![a-zA-Z]*[ceCE])[a-zA-Z]*m|--message|--body|--title|--notes)(?:=|[ \t]+)$/;
 const MESSAGE_FLAG = /(?:^|\s)(?:-[a-zA-Z]*m|--message|--body|--title|--notes)(?:=|[ \t]+)$/;
 /** The text rules' reading: data heredoc bodies out, and a quoted message value with whitespace in it is data too
- *  (`git commit -m 'why (git push -f) is bad'`). A body fed to a shell or an interpreter stays: it is a program. */
-export const textRulesView = (c: string): string => {
+ *  (`git commit -m 'why (git push -f) is bad'`). A body that goes anywhere but a data sink stays: it is a program. */
+const messages: Blank = (c) => {
   const sp = spaced(c);
-  return withoutData(c, (q) => sp(q) && MESSAGE_FLAG.test(c.slice(Math.max(0, q.start - 16), q.start)));
+  return (q) => sp(q) && MESSAGE_FLAG.test(c.slice(Math.max(0, q.start - 16), q.start));
 };
-/** True when `<<` at `at` sits in arithmetic (`$((1<<E))`), which the heredoc reader skips. A line too deep to scan
- *  counts as arithmetic: its bodies stay in place, which is only stricter. */
-export const inArithmetic = (line: string, at: number): boolean => {
-  const s = new Scan(line);
-  for (let i = 0; i < at; i++) {
-    if ((line[i] === '$' && line[i + 1] === '(' && line[i + 2] === '(') || (line[i] === '(' && line[i + 1] === '(')) {
-      let e: number;
-      try { e = s.closeParen(i + (line[i] === '$' ? 3 : 2), 2); } catch (err) { if (err instanceof ScanBudget) return true; throw err; }
-      if (at < e) return true;
-      i = e - 1;
+export const textRulesView = (c: string): string => withoutData(c, messages);
+/** A test for one line: true when `<<` at `at` sits in arithmetic (`$((1<<E))`), which the heredoc reader skips. One scan
+ *  per line, and `at` must grow from call to call, so a line of many `<<` is linear. A line too deep to scan counts as
+ *  arithmetic everywhere: its bodies stay in place, which is only stricter. */
+export function arithmeticTest(line: string): (at: number) => boolean {
+  const s = new Scan(line), opens: number[] = [], ends: number[] = [];
+  let scanned = 0, k = 0, deep = false;
+  return (at) => {
+    for (; !deep && scanned < at; scanned++) {
+      const i = scanned;
+      if (!((line[i] === '$' && line[i + 1] === '(' && line[i + 2] === '(') || (line[i] === '(' && line[i + 1] === '('))) continue;
+      try { ends.push(s.closeParen(i + (line[i] === '$' ? 3 : 2), 2)); } catch (err) { if (!(err instanceof ScanBudget)) throw err; deep = true; break; }
+      opens.push(i);
+      scanned = ends[ends.length - 1] - 1;
     }
-  }
-  return false;
-};
+    while (k < ends.length && ends[k] <= at) k++;
+    return deep || (k < ends.length && opens[k] < at);
+  };
+}
 
 /** The offsets of each segment's command word, as commandStart reads it. Alternation groups are masked first, so their
  *  `(`, `|` and `)` split nothing. */

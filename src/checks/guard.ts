@@ -6,8 +6,9 @@ import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
-import { gitPlain, globReadings, inArithmetic, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
-import { SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
+import { arithmeticTest, gitPlain, globReadings, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
+import { maskedLine, sinkTest, wordCounter } from './guard-sinks.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -151,25 +152,27 @@ function scriptsOf(root: string): Record<string, string> {
 }
 
 /**
- * The command with each here-document body removed. `<<` counts only outside quotes; the delimiter has its quotes taken
+ * The command with each data here-document body removed (sinkTest: a body is code unless it goes to a data sink,
+ * and a code body stays as command lines). `<<` counts only outside quotes; the delimiter has its quotes taken
  * out (`<<E"O"F` is EOF); `<<-` ignores leading tabs on the end line, `<<` wants the line exactly. If anything is odd (a
  * delimiter with an expansion, a body with no end line) the command is returned whole, so nothing is hidden from the parser.
  */
 export function withoutHeredocBodies(cmd: string): string {
   if (!cmd.includes('<<')) return cmd;
-  const lines = cmd.split('\n');
+  const lines = cmd.split('\n'), count = wordCounter(cmd);
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i], inArithmetic = arithmeticTest(line);
     out.push(line);
-    const ends: { word: string; dash: boolean }[] = [];
+    const ends: { word: string; dash: boolean; data: boolean }[] = [];
+    let sink: ((at: number) => boolean) | undefined;
     let quote = '';
     for (let c = 0; c < line.length; c++) {
       const ch = line[c];
       if (quote) { if (ch === quote) quote = ''; continue; }
       if (ch === '"' || ch === "'") quote = ch;
       else if (ch === '\\') c++;
-      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<' && !inArithmetic(line, c)) {
+      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<' && !inArithmetic(c)) {
         let d = c + 2;
         const dash = line[d] === '-';
         if (dash) d++;
@@ -183,13 +186,16 @@ export function withoutHeredocBodies(cmd: string): string {
           else word += x;
         }
         if (q || !/^\w+$/.test(word)) return cmd;
-        ends.push({ word, dash });
+        ends.push({ word, dash, data: (sink ??= sinkTest(maskedLine(new Scan(line), 0), false, count))(c) });
         c = d - 1;
       }
     }
     for (const e of ends) {
       let found = false;
-      while (++i < lines.length) if ((e.dash ? lines[i].replace(/^\t+/, '') : lines[i]) === e.word) { found = true; break; }
+      while (++i < lines.length) {
+        if (!e.data) out.push(lines[i]); // a body something runs is command lines
+        if ((e.dash ? lines[i].replace(/^\t+/, '') : lines[i]) === e.word) { found = true; break; }
+      }
       if (!found) return cmd;
     }
   }

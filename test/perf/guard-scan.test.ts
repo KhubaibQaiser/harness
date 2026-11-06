@@ -25,3 +25,11 @@ it.each([
   expect(decideCommand(c, ctx).kind).not.toBe('allow');
   expect(median(c)).toBeLessThan(CEILING_MS);
 });
+
+// One arithmetic scan per line, not one per `<<`: 8000 `$((1)) <<a` on one line (110 KB) took 4.4 s before, quadratic
+// in the line. It is linear now, about 0.2-0.3 s here; the ceiling leaves 3x for slow CI machines.
+it('a 110 KB line of 8000 heredoc operators after arithmetic', () => {
+  const c = ': $((1)) <<a; '.repeat(8000) + '\na\n';
+  expect(decideCommand(c, ctx).kind).toBe('allow');
+  expect(median(c)).toBeLessThan(1000);
+});

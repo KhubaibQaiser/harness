@@ -100,3 +100,16 @@ export class Scan {
     return subs;
   }
 }
+
+/** A quoted span: offsets into the command, `end` exclusive. `subs`: the $(…) and `…` the shell runs inside "…". */
+export interface Quoted { start: number; end: number; subs: string[] }
+
+/** The quoted span that opens at `i` ($'…', '…' or "…" with its substitutions), or null. */
+export function quotedAt(s: Scan, i: number): Quoted | null {
+  const c = s.c;
+  if (c[i] === '$' && c[i + 1] === "'") return { start: i, end: s.closeAnsiC(i + 2), subs: [] };
+  if (c[i] === "'") { const e = c.indexOf("'", i + 1); return { start: i, end: e < 0 ? c.length : e + 1, subs: [] }; }
+  if (c[i] !== '"') return null;
+  const end = s.closeDouble(i);
+  return { start: i, end, subs: s.substitutions(i + 1, end - 1) };
+}

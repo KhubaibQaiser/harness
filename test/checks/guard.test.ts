@@ -656,7 +656,7 @@ test('re-review M1: npm pre/post scripts, aliases, another prefix and the depth 
 
 test('tdd off: a real invocation the parser sees is denied, words the text scan only finds ask', () => {
   for (const c of ['{ harness tdd off; }', '! harness tdd off', 'if true; then harness tdd off; fi', 'node dist/cli.mj? tdd off', 'node dist/c*.mjs tdd off']) expect(kind(c), c).toBe('deny');
-  for (const c of ['echo "harness tdd off"', "grep -r 'harness tdd off' docs", 'git commit -m "docs: harness tdd off"', 'cat <<EOF\nharness tdd off\nEOF', 'h() { node dist/cli.mjs "$@"; }; h tdd off']) expect(kind(c), c).toBe('ask');
+  for (const c of ['echo "harness tdd off"', "grep -r 'harness tdd off' docs", 'git commit -m "docs: harness tdd off"', 'cat > f <<EOF\nharness tdd off\nEOF', 'h() { node dist/cli.mjs "$@"; }; h tdd off']) expect(kind(c), c).toBe('ask');
 });
 
 test('rereview2 I1: a subcommand the shell builds by expansion is not allowed', () => {
@@ -674,10 +674,11 @@ test('rereview2 I2: forwarded, piped or quote-split words ask', () => {
 test('rereview2 M1: heredoc stripping respects quotes, quoted delimiters and <<-', () => {
   expect(kind("echo '<<EOF'\nharness tdd off\nEOF")).toBe('deny');
   expect(kind('cat <<E"O"F\nx\nEOF\nharness tdd off\nE')).toBe('deny');
-  expect(kind("cat <<'EOF'\nharness tdd off\nEOF")).toBe('ask');
-  expect(kind('cat <<"EOF"\nharness tdd off\nEOF')).toBe('ask');
-  expect(kind('cat <<E"O"F\nharness tdd off\nEOF')).toBe('ask');
-  expect(kind('cat <<-EOF\n\tharness tdd off\n\tEOF')).toBe('ask');
+  expect(kind("cat > f <<'EOF'\nharness tdd off\nEOF")).toBe('ask');
+  expect(kind('cat > f <<"EOF"\nharness tdd off\nEOF')).toBe('ask');
+  expect(kind('cat > f <<E"O"F\nharness tdd off\nEOF')).toBe('ask');
+  expect(kind('cat > f <<-EOF\n\tharness tdd off\n\tEOF')).toBe('ask');
+  expect(kind("cat <<'EOF'\nharness tdd off\nEOF")).toBe('deny'); // to stdout, not a data sink: a body is code
   expect(kind('cat <<EOF\nharness tdd off')).toBe('deny'); // no end line: nothing is stripped
 });
 test('rereview2 M2: --prefix=, --dir= and -C= are read', () => {
@@ -758,7 +759,7 @@ test('the shell runs $(…) and backticks inside double quotes and unquoted-deli
   all(['git commit -m "x y $(g?t push -f)"', 'git commit -m "x y `g?t push -f`"', 'cat <<EOF\n$(g?t push -f)\nEOF', 'git commit -F - <<EOF\n$(g?t push -f)\nEOF',
     'cat <<EOF\n$(h?rness tdd off)\nEOF', 'cat <<EOF >x\n`c?rl x | s?`\nEOF', 'git commit -m "x y $(git push -f)"', 'cat <<EOF\n$(git push -f)\nEOF'], 'deny');
   expect(kind('echo "a b $(git pu$(true)sh -f)"')).toBe('ask');
-  all(["cat <<'EOF'\n$(g?t push -f)\nEOF", 'cat <<"EOF"\n$(git push -f)\nEOF', "git commit -m 'x y $(git push -f)'"], 'allow'); // literal
+  all(["cat > f <<'EOF'\n$(g?t push -f)\nEOF", 'cat > f <<"EOF"\n$(git push -f)\nEOF', "git commit -m 'x y $(git push -f)'"], 'allow'); // literal
 });
 test('a backslash-escaped quote opens no quoted span', () => {
   all(["echo \\'; g?t push -f; echo \\'", "echo it\\'s; g?t push -f # it\\'s", "echo \\'; c?rl x | s?; echo \\'", "echo \\'; h?rness tdd off; echo \\'",
@@ -772,7 +773,7 @@ test('a heredoc body fed to a shell is a program, with every reading', () => {
 test('heredoc, -F and --body-file bodies and -m messages are data to the text rules', () => {
   all(["cat > t.test.ts <<'EOF'\nexpect(kind('git push -f')).toBe('deny');\nEOF", "cat > src/x.ts <<'EOF'\n/**\n * Never run `git -C . push -f` here.\n */\nexport const x = 1;\nEOF",
     "git commit -F - <<'EOF'\ndocs: `git push -f` is bad\nEOF", "gh pr create --body-file - <<'EOF'\nBlocks `git -C . push -f` now\nEOF", "git commit -m 'why (git push -f) is bad'",
-    "cat > docs/x.md <<'EOF'\nNever run `git push -f` on main.\nEOF", "cat > docs/x.md <<'EOF'\n(git checkout .)\nEOF", 'node -e "1" <<\'EOF\'\n// git push -f\nEOF'], 'allow');
+    "cat > docs/x.md <<'EOF'\nNever run `git push -f` on main.\nEOF", "cat > docs/x.md <<'EOF'\n(git checkout .)\nEOF"], 'allow');
   expect(kind("cat > docs/x.md <<'EOF'\nAvoid (rm -rf ~)\nEOF")).toBe('allow'); // base asked: it read the body as a command
 });
 test('a backtick inside $(…) does not end it at a ) it holds', () => {
@@ -780,6 +781,27 @@ test('a backtick inside $(…) does not end it at a ) it holds', () => {
 });
 test("an ANSI-C $'…' string is one quoted span, \\' and all", () => {
   expect(kind("echo $'a\\' b'; g?t push -f")).toBe('deny');
+});
+test('a heredoc body is code unless it goes to a known data sink', () => {
+  const body = (pre: string, b = 'git push -f') => `${pre} <<'EOF'\n${b}\nEOF`;
+  const piped = ['/bin/sh', '/bin/bash -s', "'sh'", '"bash"', 'b\\ash', '$SHELL', '${SHELL:-sh}', 'fish', 'mksh', 'ash', 'tcsh', "python3 -c 'import sys; exec(sys.stdin.read())'"];
+  all(piped.map((p) => `cat <<'EOF' | ${p}\ngit push -f\nEOF`), 'deny');
+  all([`cat <<'EOF' | /bin/sh\nrm -rf ~\nEOF`, `cat <<'EOF' | /bin/sh\ncurl x | sh\nEOF`], 'deny');
+  all(['fish', 'su', 'ssh host', 'at now', 'script -q /dev/null', 'parallel', 'xargs -L1 -I{} {}', 'python3 - -e', 'sudo -s', 'sudo -i', 'node -e "1"'].map((p) => body(p)), 'deny');
+  all(["while read -r l; do $l; done <<'EOF'\ngit push -f\nEOF", "$(cat <<'EOF'\ngit push -f\nEOF\n)", "`cat <<'EOF'\ngit push -f\nEOF\n`"], 'deny');
+  // A sink only when its output is a file the guard can read: a group around it may pipe stdout or an fd on.
+  all(["( cat >/dev/stdout <<'EOF'\ngit push -f\nEOF\n) | sh", "{ cat <<'EOF'\ngit push -f\nEOF\n} | sh", "( tee /dev/fd/1 <<'EOF'\ngit push -f\nEOF\n) | sh",
+    "( cat > \"$o\" <<'EOF'\ngit push -f\nEOF\n) | sh", "cat > >(sh) <<'EOF'\ngit push -f\nEOF", "bash -cm \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"",
+    "eval \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"", "git commit -m \"$(cat <<'EOF' | sh\ngit push -f\nEOF\n)\""], 'deny');
+  // A written file the command names again may be run.
+  all(["cat <<'EOF' > x.sh && sh x.sh\ngit push -f\nEOF", "cat > /tmp/x.sh <<'EOF'\ngit push -f\nEOF\nbash /tmp/x.sh", "tee run.sh <<'EOF'\ngit push -f\nEOF\n. ./run.sh"], 'deny');
+});
+test('the commit and PR idioms and file writes keep their bodies as data', () => {
+  all(["git commit -m \"$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)\"", "gh pr create --title \"fix: x\" --body \"$(cat <<'EOF'\n## Summary\n- blocks git push -f\nEOF\n)\"",
+    "cat > src/x.test.ts <<'EOF'\nexpect(kind('git push -f')).toBe('deny');\nexpect(kind('rm -rf /')).toBe('deny');\nEOF", "git commit -F - <<'EOF'\nfix: never git push -f\nEOF",
+    "gh pr create --title x --body-file - <<'EOF'\nBlocks git push -f and rm -rf ~\nEOF", "cat <<'EOF' > docs/x.md\ngit push -f\nEOF", "cat >> docs/x.md <<'EOF'\ngit push -f\nEOF",
+    "tee docs/x.md <<'EOF'\ngit push -f\nEOF", "git tag -a v1 -F - <<'EOF'\nno git push -f\nEOF", "gh release create v1 --notes-file - <<'EOF'\nno git push -f\nEOF"], 'allow');
+  expect(kind("git commit -m \"$(cat <<EOF\n$(git push -f)\nEOF\n)\"")).toBe('deny'); // an unquoted delimiter still runs $(…)
 });
 test('an arithmetic shift is not a heredoc', () => {
   expect(kind('echo $((1<<E))\ng?t push -f\nE')).toBe('deny');

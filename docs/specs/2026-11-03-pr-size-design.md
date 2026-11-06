@@ -59,7 +59,7 @@ Not PR creates: `gh pr view`, `gh pr list`, `echo gh pr create`, `grep "gh pr cr
 
 A push counts, so a PR can't be opened small and grown later. Detection uses no network.
 
-- **The record.** After a PR create or a counted push, PostToolUse writes `.harness/state/pr-branches.json`: `{ "<head branch>": { "base": "<base name>", "lines": n, "files": n, "ts": "…" } }`, with the existing atomic write. It is repo-level, not per session, because a PR outlives a session. It sits under `.harness/state/**`, so the agent's file tools and the sandbox can't write it (PE section 2). It records after the tool ran. Amended 2026-11-05: PostToolUse "fire[s] after a tool has already executed successfully" (Claude Code hooks docs, PostToolUse input). Harness registers no PostToolUseFailure hook, so a failed create leaves no record. The PR doesn't exist then, so nothing is lost.
+- **The record.** After a PR create or a counted push, PostToolUse writes `.harness/state/pr-branches.json`: `{ "<head branch>": { "base": "<base name>", "lines": n, "files": n, "ts": "…" } }`, with the existing atomic write. It is repo-level, not per session, because a PR outlives a session. It sits under `.harness/state/**`, so the agent's file tools and the sandbox can't write it (PE section 2). It records after the tool ran. Amended 2026-11-05: PostToolUse "fire[s] after a tool has already executed successfully" (Claude Code hooks docs, PostToolUse input). Harness registers no PostToolUseFailure hook, so a failed create leaves no record. The PR doesn't exist then, so nothing is lost. Amended 2026-11-06 (review ruling): a create is recorded only when the tool's output shows a PR URL (`/pull/<n>`), since a failure hidden by `|| true` still reaches PostToolUse. A push is recorded as before.
 - **A push.** A segment is a push when the command is `git` and `gitArgs(toks)` starts with `push`. The pushed branches are each refspec's destination (after `:`, without a leading `+` or `refs/heads/`). With no refspec, the pushed branch is the current branch (`git symbolic-ref --quiet --short HEAD`). `--all` means every recorded branch that exists locally.
 - **When it counts.** Only for a recorded branch. It measures from the recorded base to the local branch (or to the refspec's source, such as `HEAD`).
 
@@ -263,7 +263,7 @@ The owner's core idea: harness warns *while* a change grows, suggests a breakdow
 So:
 - **Edit tools carry the warning.** Shell-made changes are caught once per turn at Stop, which keeps the per-command cost off Bash.
 - **The budget.** Each measurement stays inside the section 4 budget: 2 s per git call and 6 s in total, inside the 10 s hook timeout.
-- **The matchers don't change.** The PostToolUse matcher already includes these tools (`templates/settings.fragment.json`), and so does the Stop hook.
+- **The matchers don't change.** The PostToolUse matcher already includes these tools (`templates/settings.fragment.json`), and so does the Stop hook. Amended 2026-11-06: AskUserQuestion is added to the PostToolUse matcher for the one-ask rule (14.3).
 
 ### 14.3 How the "ask" is delivered
 
@@ -286,6 +286,7 @@ The delivery follows from that:
   - The dispatcher currently emits a Stop `context` decision as `systemMessage` (`src/hooks/io.ts`). That stays.
   - If another Stop check blocks in the same Stop, the dispatcher keeps the warning as a `systemMessage` beside the block (a small dispatcher change), so it isn't lost.
 - **The pause is enforced once (N6).** No PostToolUse output stops the next edit. So after an attended warning, the next edit on that branch gets one PreToolUse `ask`: the permission dialog (14.7). The ask isn't repeated once it is answered: after the edit ran, after the person's next prompt, or after a raise. Unattended runs keep the note only, with no deny.
+- **One ask (owner ruling, 2026-11-06).** The agent's AskUserQuestion is the one ask. The warning tells it to use the header `PR size`. AskUserQuestion is in the PostToolUse matcher; at its PostToolUse, if a question with that header has an answer in `tool_response.answers` (keyed by the question text; an array for multi-select), the current branch's `pending` is cleared. Any answer clears it (split, keep going or raise); a raise still needs its own command and dialog. So the pause dialog shows only if the agent skipped asking. An empty answer, or Claude Code's "[User did not answer…" placeholder, clears nothing. The agent can't forge it: the answer comes from the person, and the hand-run deny (14.4) blocks forged hook events.
 
 ### 14.4 Raising the limit for a branch
 
@@ -297,7 +298,12 @@ Raising needs the person, through a real permission dialog:
   - Attended, it asks: `` Confirm: raise the pull request size limit for `<branch>` to <n> lines and <f> files. Harness then warns again only above that. ``
   - Unattended, it denies: `Blocked by pr-size: only a person can raise the size limit, and no person is here to approve it.`
 - **PostToolUse.** The same detection, after the approved command ran, records the raise in the state file (14.5). PostToolUse runs in the hook process, not in the agent's sandbox. Its detection is the same function on the same text as at PreToolUse, so only an approved command is ever recorded.
-- **What a raise changes (N5).** It replaces the max for this branch's warnings and for the PR-time ask. The PR-time ask still fires above the raised limit.
+- **What a raise changes (N5).** It replaces the max for this branch's warnings and for the PR-time ask. The PR-time ask still fires above the raised limit. Amended 2026-11-06: the `--pr-size` entry (it prints the raised `max_lines`/`max_files` and `raised: true`) and `harness git pr`'s warning apply it too, through the same helper.
+- **Amended 2026-11-06 (ledger rulings, recorded here):**
+  - **Asked file.** PreToolUse saves the dialog's branch and values for that exact command (session id plus a hash of the command) in `.harness/state/pr-raise-asked.json`. PostToolUse records the raise only if that entry exists and is under one hour old, HEAD is still on that branch, the values match, and the command printed the raise line. Otherwise it records nothing and logs a `pr-size-raise-skipped` event with the reason.
+  - **Raise alone.** A command with a second raise, or a raise beside a branch, directory or repo change (`git checkout`/`switch`/`-C`, `cd`, `pushd`, `popd`, `git worktree add`, `--git-dir`, `GIT_DIR=`/`GIT_WORK_TREE=`), is denied: `` Blocked by pr-size: run one `--pr-size-raise` on its own, with no second raise and no branch, directory or repo change in the same command. ``
+  - **Detached HEAD.** A raise on a detached HEAD, or a branch name that isn't plain, is denied: `Blocked by pr-size: a raise needs a checked-out branch with a plain name. Check out the branch to raise, then run the raise on its own.`
+  - **Hand-run deny.** A command that runs a hook dispatcher (any path ending in `hooks/dispatch.mjs`) without `--pr-size`, `--pr-size-raise` or `--self-test`, or that copies, moves, links, pipes or redirects a hook file, is denied, attended or not, so forged hook events can't reach the dispatcher. It is a text check under `checks.prSize`.
 
 ### 14.5 State file
 
@@ -337,7 +343,7 @@ git ls-files --others --exclude-standard -z                                     
 
 Placeholders follow section 10. `fired` decides the wording.
 
-- **To the agent (attended, at the target):** `` PR size: this branch's change is now L changed lines in F files against `B` (committed and uncommitted), past the target of T lines. Before your next edit, stop and ask the person how to go on, with AskUserQuestion if you have it: split now (run the pr-ship skill and show its suggested breakdown), keep going, or raise the limit for this branch (run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>`, which asks them to approve). Harness says this once, and warns again above ML lines or MF files. ``
+- **To the agent (attended, at the target):** `` PR size: this branch's change is now L changed lines in F files against `B` (committed and uncommitted), past the target of T lines. Before your next edit, stop and ask the person how to go on, with AskUserQuestion if you have it, with the header "PR size": split now (run the pr-ship skill and show its suggested breakdown), keep going, or raise the limit for this branch (run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>`, which asks them to approve). Their answer to that question lets your next edit run; without one, harness asks them before it. Harness says this once, and warns again above ML lines or MF files. ``
 - **To the agent (attended, at the max):**
   - The first sentence says `past the limit of ML lines or MF files (aim for T). Opening it as one PR will ask for approval.`
   - The ask sentence is the same.
@@ -380,6 +386,8 @@ Placeholders follow section 10. `fired` decides the wording.
 
 The PreToolUse ask (N6): `` Confirm: `<branch>` is now L changed lines in F files (target T, limit ML lines or MF files). Approve to keep going with this edit, or say no and tell Claude to split it with the pr-ship skill or raise the limit for this branch. ``
 
+Amended 2026-11-06: this dialog is the fallback. The person's answer to the agent's `PR size` question (14.3, "One ask") clears the pause first, so on the main path the person is asked once. When several checks ask on one tool call (this pause and the multi-file gate, say), the dispatcher joins every reason into one dialog, each later one after `Also: `, so one yes is informed.
+
 ### 14.10 Known limits
 
 - The pause dialog is yes/no. The three choices (split, keep going, raise) are spoken by the person after a no, or offered by the agent's own question. After a no, every edit asks again until the person types something.
@@ -389,7 +397,9 @@ The PreToolUse ask (N6): `` Confirm: `<branch>` is now L changed lines in F file
 - A size that crosses a threshold and drops back between two measurements isn't announced.
 - Two sessions on the same branch can race on `pr-progress.json` and lose one update. At worst a warning repeats or is skipped once.
 - A subagent's edit gives the warning to that subagent, not to the main agent (unverified). The person's `systemMessage` still shows.
-- Where AskUserQuestion isn't available (some subagents, `claude -p`), the agent can only ask in text.
+- Where AskUserQuestion isn't available (some subagents, `claude -p`), the agent can only ask in text, and the pause dialog asks again at the next edit.
+- The agent's question counts only with the exact header `PR size`, and only through the `tool_response.answers` shape Claude Code records today; its hooks docs don't spell that shape out. A question closed by the auto-continue timeout with nothing picked, or answered by typing a message instead, leaves the pause in place.
+- Unattended, a crossing caused by a shell command is caught only at Stop, where it is logged, so the agent is never told about it. The PR-time deny still holds.
 - A raise is kept by branch name. A renamed branch starts again from the repo limits.
 - The latency per counted edit was measured at 91 ms median overhead on macOS in a 20-file repo, with 8 spawns (2026-11-06). In a large repo the two working-tree `git diff` calls dominate, up to the 6 s budget.
 

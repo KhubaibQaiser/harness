@@ -42,3 +42,6 @@ export const isTestFile = (rel: string): boolean => /\.(test|spec)\.[^/]+$/.test
 export const isAnyTestFile = (rel: string): boolean => isTestFile(rel) || /(^|\/)(test_[^/]*|[^/]*_test|conftest)\.py$/.test(rel) || /(^|\/)tests\/(.*\/)?[^/]*\.py$/.test(rel);
 
 export const pairKey = (rel: string): string => rel.replace(/(^|\/)__tests__\//, '$1').replace(/\.(test|spec)(\.[^./]+)$/, '$2');
+
+/** Harness's own local files: install gitignores them, and the in-progress size never counts them (pr-size spec §5). */
+export const HARNESS_LOCAL = ['.harness/state/', '.harness/logs/', '.harness/backup/', '.harness/results/', '.harness/debug/'];

@@ -9,7 +9,8 @@ import type { Check, Ctx } from '../../hooks/dispatch.js';
 import { isShell } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { type PrTarget, prTargets } from './detect.js';
-import { type Git, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
+import { type Git, hookBudgetMs, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
+import { progressWarning } from './progress.js';
 
 export const RECORD = '.harness/state/pr-branches.json';
 export interface PrRecord { base: string; lines: number; files: number; ts: string }
@@ -18,10 +19,6 @@ const LARGEST = 3;
 const NOT_COUNTED = 5;
 const REF_TIMEOUT_MS = 2000;
 const JSON_INDENT = 2;
-// One budget for every target in a command (measure's own default is the same 6 s), and never past HOOK_BUDGET_MS from the
-// hook's start, so the whole hook (the guard's npm lookup runs first) stays inside the 10 s hook timeout with a margin.
-const BUDGET_MS = 6000;
-const HOOK_BUDGET_MS = 9000;
 const OUT_OF_TIME = 'the time budget for this command ran out';
 // gh pr create prints the new PR's URL; without one, the create failed (a failure hidden by `|| true` still reaches PostToolUse).
 const PR_URL = /\/pull\/\d+/;
@@ -189,12 +186,15 @@ function recordPost(ctx: Ctx, git: Git, targets: PrTarget[], c: Clock): void {
 
 export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => number = Date.now): Decision {
   const { tool_name, tool_input = {} } = ctx.input;
-  if (!ctx.config?.checks.prSize || !isShell(tool_name)) return { kind: 'allow' };
+  if (!ctx.config?.checks.prSize) return { kind: 'allow' };
+  const event = ctx.input.hook_event_name;
+  if (event === 'Stop' || (event === 'PostToolUse' && !isShell(tool_name))) return progressWarning(ctx, git, now);
+  if (!isShell(tool_name)) return { kind: 'allow' };
   const command = String(tool_input.command ?? '');
   const targets = prTargets(command, { root: ctx.root, env: ctx.env });
   if (!targets.length) return { kind: 'allow' };
-  const clock: Clock = { now, git, deadline: Math.min(now() + BUDGET_MS, (ctx.startedAt ?? now()) + HOOK_BUDGET_MS) };
-  if (ctx.input.hook_event_name === 'PreToolUse') return decidePre(ctx, git, targets, clock);
+  const clock: Clock = { now, git, deadline: now() + hookBudgetMs(ctx.startedAt, now) };
+  if (event === 'PreToolUse') return decidePre(ctx, git, targets, clock);
   if (tool_name === 'Monitor') return { kind: 'allow' }; // a Monitor command is checked, not recorded
   try {
     recordPost(ctx, git, toRecord(ctx, targets, command), clock);
@@ -204,4 +204,4 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   return { kind: 'allow' };
 }
 
-export const prSize: Check = { name: 'pr-size', events: ['PreToolUse', 'PostToolUse'], failClosed: true, pure: false, run: (ctx) => decidePrSize(ctx) };
+export const prSize: Check = { name: 'pr-size', events: ['PreToolUse', 'PostToolUse', 'Stop'], failClosed: true, pure: false, run: (ctx) => decidePrSize(ctx) };

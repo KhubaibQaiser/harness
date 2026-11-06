@@ -40,21 +40,26 @@ function createTarget(args: string[]): PrTarget {
   return t;
 }
 
-function pushTarget(args: string[]): PrTarget {
+/** A push of branches, or null for a push that only deletes or only sends tags: no PR grows from it. */
+function pushTarget(args: string[]): PrTarget | null {
   const refs: { src: string; dst: string }[] = [];
-  let all = false, positional = 0, del = false;
+  let all = false, positional = 0, del = false, tags = false, refspecs = 0;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (PUSH_VALUE_FLAGS.has(a)) i++;
     else if (PUSH_ALL_FLAGS.has(a)) all = true;
     else if (PUSH_DELETE_FLAGS.has(a) || BUNDLED_DELETE.test(a)) del = true;
+    else if (a === '--tags') tags = true;
     else if (!a.startsWith('-') && positional++ > 0) {
-      const [src, ...rest] = a.replace(/^\+/, '').split(':');
-      const dst = rest.join(':').replace(/^refs\/heads\//, '') || src.replace(/^refs\/heads\//, '');
-      if (src) refs.push({ src, dst });
+      refspecs++;
+      const [raw, ...rest] = a.replace(/^\+/, '').split(':');
+      const src = raw.replace(/^refs\/heads\//, '');
+      const dst = rest.join(':').replace(/^refs\/heads\//, '') || src;
+      if (src && !`${raw}:${dst}`.includes('refs/tags/')) refs.push({ src, dst }); // an empty source deletes
     }
   }
-  return { kind: 'push', all, refs: del ? [] : refs };
+  if (del || (!all && !refs.length && (refspecs > 0 || tags))) return null;
+  return { kind: 'push', all, refs };
 }
 
 function visitSeg(out: PrTarget[]) {
@@ -68,7 +73,8 @@ function visitSeg(out: PrTarget[]) {
       if (args) out.push(createTarget(args));
     } else if (name === 'git') {
       const args = gitArgs(['git', ...toks.slice(k + 1)]);
-      if (args[0] === 'push') out.push(pushTarget(args.slice(1)));
+      const t = args[0] === 'push' ? pushTarget(args.slice(1)) : null;
+      if (t) out.push(t);
     }
     return null;
   };

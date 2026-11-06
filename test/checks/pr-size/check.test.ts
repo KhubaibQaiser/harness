@@ -1,42 +1,12 @@
-import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { join } from 'node:path';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { decidePrSize, prSize, readRecords, RECORD, writeRecord } from '../../../src/checks/pr-size/check.js';
-import type { Git } from '../../../src/checks/pr-size/measure.js';
-import { defaults, type HarnessConfig } from '../../../src/core/config.js';
+import { defaults } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
-import { type Ctx, dispatch, registry } from '../../../src/hooks/dispatch.js';
-import { makeRepo } from '../../install/helpers.js';
+import { registry } from '../../../src/hooks/dispatch.js';
+import { commit, ctx, fakeGit, git, lines, repo, send } from './helpers.js';
 
-const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
-const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i}\n`).join('');
-function commit(root: string, files: Record<string, string>) {
-  for (const [rel, body] of Object.entries(files)) (mkdirSync(dirname(join(root, rel)), { recursive: true }), writeFileSync(join(root, rel), body));
-  git(root, 'add', '--', ...Object.keys(files));
-  git(root, 'commit', '-q', '-m', 'c');
-}
-/** main with origin/main and origin/HEAD, then `feat` checked out with `files` committed. */
-function repo(files: Record<string, string> = {}) {
-  const root = makeRepo({ 'README.md': 'hi\n' }, { branch: 'main', remoteHead: 'main' });
-  git(root, 'checkout', '-q', '-b', 'feat');
-  if (Object.keys(files).length) commit(root, files);
-  return root;
-}
-type Over = { event?: 'PreToolUse' | 'PostToolUse'; unattended?: boolean; config?: (c: HarnessConfig) => void; tool?: string };
-function ctx(root: string, command: string, o: Over = {}): Ctx {
-  const config = defaults();
-  o.config?.(config);
-  const input = { hook_event_name: o.event ?? 'PreToolUse', session_id: 's', cwd: root, tool_name: o.tool ?? 'Bash', tool_input: { command } };
-  return { input, root, config, unattended: o.unattended ?? false, env: {} } as unknown as Ctx;
-}
-const fakeGit = (reply: ReturnType<Git> = { status: 0, stdout: '' }) => {
-  const calls: string[][] = [];
-  const g: Git = (args) => (calls.push(args), reply);
-  return { calls, g, diffs: () => calls.filter((a) => a.includes('diff')) };
-};
-const send = (root: string, event: string, command: string, env: NodeJS.ProcessEnv = {}, checks = [prSize]) =>
-  dispatch(JSON.stringify({ hook_event_name: event, session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command } }), checks, env);
 const out = async (p: Promise<string>) => (await p ? JSON.parse(await p).hookSpecificOutput : {}) as { permissionDecision?: string; permissionDecisionReason?: string; additionalContext?: string };
 const reason = (d: ReturnType<typeof decidePrSize>) => ('reason' in d ? d.reason : '');
 const ASK_END = 'Approve to open it as it is, or say no and run the pr-ship skill to split it into stacked PRs.';
@@ -87,7 +57,7 @@ describe('off switches and unattended', () => {
     const d = await out(send(root, 'PreToolUse', 'gh pr create', { HARNESS_UNATTENDED: '1' }, registry));
     expect(d.permissionDecision).toBe('deny');
     expect(d.permissionDecisionReason).toBe(
-      'Blocked by pr-size: this pull request is 512 changed lines in 1 files against `origin/main`, over the limit of 400 lines or 20 files, and no person is here to approve it. Split it with the pr-ship skill into stacked PRs of about 200 lines each, opening each with `--base` set to the branch before it. If a piece can\'t go under the limit, stop and report it.',
+      'Blocked by pr-size: this pull request is 512 changed lines in 1 file against `origin/main`, over the limit of 400 lines or 20 files, and no person is here to approve it. Split it with the pr-ship skill into stacked PRs of about 200 lines each, opening each with `--base` set to the branch before it. If a piece can\'t go under the limit, stop and report it.',
     );
   });
 });
@@ -155,7 +125,7 @@ describe('push', () => {
     expect(decidePrSize(ctx(root, 'git push'))).toEqual({ kind: 'allow' });
   });
 
-  test.each(['git push origin HEAD:feat', 'git push origin +feat', 'git push -u origin feat', 'git push --all'])('%s finds feat', (c) => {
+  test.each(['git push origin HEAD:feat', 'git push origin +feat', 'git push -u origin feat', 'git push --all', 'git push origin HEAD', 'git push -u origin HEAD', 'git push origin @', 'git push origin refs/heads/feat'])('%s finds feat', (c) => {
     const root = repo({ 'a.ts': lines(401) });
     writeRecord(root, 'feat', { base: 'origin/main', lines: 0, files: 0, ts: 't' });
     expect(reason(decidePrSize(ctx(root, c)))).toContain('pull request for `feat`');
@@ -201,7 +171,10 @@ describe('latency and review focus', () => {
     mkdirSync(join(root, '.harness/state'), { recursive: true });
     chmodSync(join(root, '.harness/state'), 0o555);
     chmodded.push(join(root, '.harness/state'));
+    const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     expect(decidePrSize(ctx(root, 'gh pr create', { event: 'PostToolUse' }))).toEqual({ kind: 'allow' });
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/^harness: pr-size record failed: EACCES/));
+    err.mockRestore();
   });
 
   test.each(['constructor', 'toString'])('git push origin %s with no record allows and measures nothing', (b) => {

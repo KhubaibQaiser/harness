@@ -447,6 +447,8 @@ More detail: [TDD setup details](#tdd-setup-details).
 - PR size: a PR that can't be measured is allowed with only a note and a `pr-size-unmeasured` event, unattended runs included. A repo that never fetches its base is never size-checked.
 - PR size: `gh`'s own choice of default base beyond the remote's default branch isn't mirrored (unverified).
 - PR size: Monitor commands are checked but not recorded.
+- PR size: a create is recorded only when its output shows the new PR's URL, so a `gh pr create` run in the background isn't recorded and its later pushes aren't checked. A create whose `--base` is set inside a script (a `package.json` script, say) is recorded against the default base, so its pushes can ask too often.
+- PR size: deletes and tag-only pushes are not checked.
 - PR size: two sessions writing `pr-branches.json` at once can lose one entry.
 - PR size: a base whose last segment is a guard backstop word (`feat/sync`) makes the skill's measuring command ask.
 - Not in this release: the PR reviewer (M2) and TDD for other languages.

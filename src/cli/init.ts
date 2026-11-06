@@ -11,6 +11,7 @@ import { validateReport } from '../ai/report.js';
 import { budgetLines, budgetVerdict, measureSelection } from '../budget/measure.js';
 import { CATALOG_BROKEN, loadCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
+import type { LoadedPreset } from '../catalog/presets.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { packageDir } from '../core/package-dir.js';
@@ -20,7 +21,7 @@ import { type Facts } from '../install/detect.js';
 import { pinnedPlugins } from '../install/merge.js';
 import { dirtyPaths } from '../install/git-status.js';
 import { installPlugins } from '../install/plugin-install.js';
-import { notPicked, resolveSelection, toSelected } from '../install/select.js';
+import { toSelected } from '../install/select.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
@@ -30,6 +31,7 @@ import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/pres
 import { findOnPath } from '../checks/stop/runner.js';
 import { hasAiFlags, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
+import { presetConfig, resolveChosen } from './preset-inputs.js';
 import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
 
@@ -78,7 +80,7 @@ export function overlayAnswers(base: Record<string, unknown>, part: Record<strin
   return m;
 }
 
-export interface AiInputs { answers: Answers; picks: Picks; ids: string[]; notices: string[]; files: { picks: string; report: string; product: string }; catalog: Catalog }
+export interface AiInputs { answers: Answers; picks: Picks; ids: string[]; notices: string[]; files: { picks: string; report: string; product: string }; catalog: Catalog; presetItems: string[]; preset?: LoadedPreset; reasons: Record<string, string> }
 
 /** Reads and validates the AI step's files against the facts and the real catalog, then resolves --choose. */
 export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null, base?: Record<string, unknown>): { ok: true; in: AiInputs } | { ok: false; errors: string[]; code: number } {
@@ -112,13 +114,10 @@ export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null,
   if (!p.ok) return { ok: false, errors: p.errors, code: 2 };
   const errors = [...validateProduct(text.product), ...validateReport(text.report, p.picks)];
   if (errors.length) return { ok: false, errors, code: 2 };
-  const chosen = ai.choose!.split(',').filter(Boolean);
-  const np = notPicked(chosen, p.picks, cat.catalog);
-  if (np.length) return { ok: false, errors: np, code: 2 };
-  const r = resolveSelection(chosen, cat.catalog, claudeVer);
-  if (r.errors.length) return { ok: false, errors: r.errors, code: 2 };
+  const c = resolveChosen(a.answers, facts, ai.choose!.split(',').filter(Boolean), p.picks, cat.catalog, claudeVer);
+  if (!c.ok) return { ok: false, errors: c.errors, code: 2 };
   // The report is passed as written: planChanges adds the enforcement sentence when it writes .harness/report.md.
-  return { ok: true, in: { answers: a.answers, picks: p.picks, ids: r.ids, notices: r.notices, files: { picks: text.picks, report: text.report, product: text.product }, catalog: cat.catalog } };
+  return { ok: true, in: { answers: a.answers, picks: p.picks, ids: c.r.ids, notices: c.r.notices, files: { picks: text.picks, report: text.report, product: text.product }, catalog: cat.catalog, presetItems: c.pc?.items ?? [], preset: c.pc?.loaded, reasons: c.pc?.reasons ?? {} } };
 }
 
 /**
@@ -261,13 +260,14 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     if (!r.ok) return r.errors.forEach((m) => out(m)), r.code;
     sel = r.in;
     for (const n of sel.notices) out(n);
-    config = { ...answersToConfig(config, sel.answers), items: toSelected(sel.picks, sel.ids, sel.catalog), catalog_version: sel.catalog.version };
+    config = { ...answersToConfig(config, sel.answers), items: toSelected(sel.picks, sel.ids, sel.catalog, sel.reasons), catalog_version: sel.catalog.version };
+    if (sel.preset) config.preset = presetConfig(sel.preset, cli.version, sel.presetItems);
   }
 
   // 3. Build the changes
   let plan: ReturnType<typeof planChanges>;
   try {
-    plan = planChanges(root, config, facts, { version: cli.version, distDir: cli.distDir, templatesDir: cli.templatesDir, ...(sel ? { catalog: sel.catalog, ai: sel.files } : {}) });
+    plan = planChanges(root, config, facts, { version: cli.version, distDir: cli.distDir, templatesDir: cli.templatesDir, ...(sel ? { catalog: sel.catalog, ai: sel.files, preset: sel.preset } : {}) });
   } catch (e) {
     return out(`Cannot build the install plan: ${(e as Error).message}`), 1;
   }

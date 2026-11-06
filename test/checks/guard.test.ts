@@ -775,6 +775,12 @@ test('heredoc, -F and --body-file bodies and -m messages are data to the text ru
     "cat > docs/x.md <<'EOF'\nNever run `git push -f` on main.\nEOF", "cat > docs/x.md <<'EOF'\n(git checkout .)\nEOF", 'node -e "1" <<\'EOF\'\n// git push -f\nEOF'], 'allow');
   expect(kind("cat > docs/x.md <<'EOF'\nAvoid (rm -rf ~)\nEOF")).toBe('allow'); // base asked: it read the body as a command
 });
+test('a backtick inside $(…) does not end it at a ) it holds', () => {
+  expect(kind('git commit -m "a b $(echo `echo )`)" ; git push -f')).toBe('deny');
+});
+test("an ANSI-C $'…' string is one quoted span, \\' and all", () => {
+  expect(kind("echo $'a\\' b'; g?t push -f")).toBe('deny');
+});
 test('an arithmetic shift is not a heredoc', () => {
   expect(kind('echo $((1<<E))\ng?t push -f\nE')).toBe('deny');
 });

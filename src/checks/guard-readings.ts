@@ -2,6 +2,7 @@
 // Imported by guard.ts, which this module imports back: use guard.ts names only inside functions, never at load time.
 import picomatch from 'picomatch';
 import { commandStart, quoteFree, SEGMENTS } from './guard.js';
+import { Scan, ScanBudget } from './guard-scan.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
@@ -41,65 +42,34 @@ interface Quoted { start: number; end: number; subs: string[] } // subs: the $(�
 interface Heredoc { from: number; to: number; literal: boolean; program: boolean } // the body and its end line
 interface Layout { quotes: Quoted[]; heredocs: Heredoc[] }
 
-/** Index just past the `)` that closes a `$(` or `(` whose body starts at `k`, skipping quotes and escapes inside. */
-function closeParen(c: string, k: number, depth = 1): number {
-  for (; k < c.length; k++) {
-    const ch = c[k];
-    if (ch === '\\') k++;
-    else if (ch === "'") { const e = c.indexOf("'", k + 1); k = e < 0 ? c.length : e; }
-    else if (ch === '"') k = doubleQuoted(c, k).end - 1;
-    else if (ch === '(') depth++;
-    else if (ch === ')' && --depth === 0) return k + 1;
-  }
-  return c.length;
-}
-/** Index just past the backtick that closes one opened at `k - 1`. */
-function closeTick(c: string, k: number): number {
-  for (; k < c.length; k++) {
-    if (c[k] === '\\') k++;
-    else if (c[k] === '`') return k + 1;
-  }
-  return c.length;
-}
-/** The $(…) and `…` the shell runs in `c[from, to)`, as command lines (a "…" span or an unquoted-delimiter heredoc body). */
-function substitutions(c: string, from: number, to: number): string[] {
-  const subs: string[] = [];
-  for (let k = from; k < to; k++) {
-    if (c[k] === '\\') k++;
-    else if (c[k] === '$' && c[k + 1] === '(' && c[k + 2] !== '(') { const e = Math.min(closeParen(c, k + 2), to); subs.push(c.slice(k + 2, e - 1)); k = e - 1; }
-    else if (c[k] === '`') { const e = Math.min(closeTick(c, k + 1), to); subs.push(c.slice(k + 1, e - 1)); k = e - 1; }
-  }
-  return subs;
-}
-/** A "…" span opened at `i`: `\"`, `\\`, `\$` and `` \` `` are escapes, and $(…) and `…` run. */
-function doubleQuoted(c: string, i: number): Quoted {
-  let k = i + 1;
-  for (; k < c.length && c[k] !== '"'; k++) {
-    if (c[k] === '\\') k++;
-    else if (c[k] === '$' && c[k + 1] === '(') k = closeParen(c, k + 2) - 1;
-    else if (c[k] === '`') k = closeTick(c, k + 1) - 1;
-  }
-  const end = Math.min(k + 1, c.length);
-  return { start: i, end, subs: substitutions(c, i + 1, end - 1) };
-}
-
 /** A line that feeds its heredoc to something that runs it: a shell (`| sh`, `bash -s -- x`), eval, source or `.`, or an
  *  interpreter reading its program from stdin (`node -`, `python3 -`; with -e or -c the body is its data). */
 const SHELL_FED = /(?:^|[;&|(]\s*|\s)(?:(?:ba|z|da|k)?sh|eval|source|\.)(?=[\s;&|)]|$)/;
 const INTERPRETER_FED = /(?:^|[;&|(]\s*|\s)(?:node|python3?|ruby|perl|php|deno|bun)(?=\s|$)(?![^;&|\n]*\s-(?:[ec]|-eval)(?=\s|$))/;
 
-/** Where the shell sees quotes and heredoc bodies: `\` escapes outside quotes, `'…'` is literal, `"…"` keeps its
+/** The quoted span that opens at `i` ($'…', '…' or "…" with its substitutions), or null. */
+function quotedAt(s: Scan, i: number): Quoted | null {
+  const c = s.c;
+  if (c[i] === '$' && c[i + 1] === "'") return { start: i, end: s.closeAnsiC(i + 2), subs: [] };
+  if (c[i] === "'") { const e = c.indexOf("'", i + 1); return { start: i, end: e < 0 ? c.length : e + 1, subs: [] }; }
+  if (c[i] !== '"') return null;
+  const end = s.closeDouble(i);
+  return { start: i, end, subs: s.substitutions(i + 1, end - 1) };
+}
+
+/** Where the shell sees quotes and heredoc bodies: `\` escapes outside quotes, `'…'` is literal, `$'…'` is literal with
+ *  `\` escapes, `"…"` keeps its
  *  substitutions, `$((…))` and `((…))` are arithmetic (`1<<E` is a shift), and `<<WORD` takes the lines up to WORD.
  *  A heredoc this cannot read (a delimiter with an expansion, no end line) leaves every body in place. */
-function layout(c: string): Layout {
-  const quotes: Quoted[] = [], heredocs: Heredoc[] = [];
+function layout(s: Scan): Layout {
+  const c = s.c, quotes: Quoted[] = [], heredocs: Heredoc[] = [];
   let pending: { word: string; dash: boolean; literal: boolean }[] = [], lineStart = 0;
   for (let i = 0; i < c.length; i++) {
     const ch = c[i];
+    const q = ch === '\\' ? null : quotedAt(s, i);
     if (ch === '\\') i++;
-    else if (ch === "'") { const e = c.indexOf("'", i + 1); const end = e < 0 ? c.length : e + 1; quotes.push({ start: i, end, subs: [] }); i = end - 1; }
-    else if (ch === '"') { const q = doubleQuoted(c, i); quotes.push(q); i = q.end - 1; }
-    else if ((ch === '$' && c[i + 1] === '(' && c[i + 2] === '(') || (ch === '(' && c[i + 1] === '(')) i = closeParen(c, i + (ch === '$' ? 3 : 2), 2) - 1;
+    else if (q) { quotes.push(q); i = q.end - 1; }
+    else if ((ch === '$' && c[i + 1] === '(' && c[i + 2] === '(') || (ch === '(' && c[i + 1] === '(')) i = s.closeParen(i + (ch === '$' ? 3 : 2), 2) - 1;
     else if (ch === '<' && c[i + 1] === '<') {
       if (c[i + 2] === '<') { i += 2; continue; } // a here-string
       let d = i + 2;
@@ -145,9 +115,10 @@ function layout(c: string): Layout {
  *  unquoted-delimiter body as lines, and each quoted span `blank` picks, as '' plus the substitutions a "…" span runs. */
 function withoutData(c: string, blank: (q: Quoted) => boolean): string {
   if (!/['"<]/.test(c)) return c;
-  const { quotes, heredocs } = layout(c);
+  const s = new Scan(c);
+  const { quotes, heredocs } = layout(s);
   const cuts = [...quotes.filter(blank).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map((s) => ` $(${s})`).join('') })),
-    ...heredocs.filter((h) => !h.program).map((h) => ({ from: h.from, to: h.to, put: h.literal ? '' : substitutions(c, h.from, h.to).map((s) => s + '\n').join('') }))]
+    ...heredocs.filter((h) => !h.program).map((h) => ({ from: h.from, to: h.to, put: h.literal ? '' : s.substitutions(h.from, h.to).map((x) => x + '\n').join('') }))]
     .sort((a, b) => a.from - b.from);
   if (!cuts.length) return c;
   let out = '', at = 0;
@@ -168,11 +139,14 @@ export const textRulesView = (c: string): string => {
   const sp = spaced(c);
   return withoutData(c, (q) => sp(q) && MESSAGE_FLAG.test(c.slice(Math.max(0, q.start - 16), q.start)));
 };
-/** True when `<<` at `at` sits in arithmetic (`$((1<<E))`), which the heredoc reader skips. */
+/** True when `<<` at `at` sits in arithmetic (`$((1<<E))`), which the heredoc reader skips. A line too deep to scan
+ *  counts as arithmetic: its bodies stay in place, which is only stricter. */
 export const inArithmetic = (line: string, at: number): boolean => {
+  const s = new Scan(line);
   for (let i = 0; i < at; i++) {
     if ((line[i] === '$' && line[i + 1] === '(' && line[i + 2] === '(') || (line[i] === '(' && line[i + 1] === '(')) {
-      const e = closeParen(line, i + (line[i] === '$' ? 3 : 2), 2);
+      let e: number;
+      try { e = s.closeParen(i + (line[i] === '$' ? 3 : 2), 2); } catch (err) { if (err instanceof ScanBudget) return true; throw err; }
       if (at < e) return true;
       i = e - 1;
     }

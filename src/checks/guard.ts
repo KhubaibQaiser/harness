@@ -7,6 +7,7 @@ import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
 import { gitPlain, globReadings, inArithmetic, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -626,7 +627,12 @@ export function buildsGuardedWords(command: string, w: Where): boolean {
 const BUILDS_WHY = 'the command builds words at run time (a variable in command position, ${!…}, ${…/…}, $\'…\', IFS=, or eval) and names harness or a protected path, so the guard cannot read what it runs';
 
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
-  return decideAll(command.replace(/\\\r?\n/g, ''), ctx, 0); // a backslash-newline joins the lines for the shell
+  try {
+    return decideAll(command.replace(/\\\r?\n/g, ''), ctx, 0); // a backslash-newline joins the lines for the shell
+  } catch (e) {
+    if (e instanceof ScanBudget) return toDecision(['ask', SCAN_BUDGET_WHY]);
+    throw e;
+  }
 }
 /** Every reading of a command line, the stricter verdict winning: as written, the $IFS one, and command-position globs as ruled names. */
 function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {

@@ -24,10 +24,12 @@ function plainPath(t: string | undefined): t is string {
 }
 /** `exec` with a redirect anywhere: it moves fds for every later command, so no writer is a plain file write. */
 const EXEC_REDIRECT = /(?:^|[\s;&|(){}`])exec\b[^;&|\n]*[<>]/;
-/** An editor or pager setting: git or less runs that program on the message (`GIT_EDITOR=sh git commit -e -m …`). */
-export const EDITOR_SET = /\b(?:GIT_EDITOR|EDITOR|VISUAL|GIT_SEQUENCE_EDITOR|GIT_PAGER|PAGER|LESS|LESSOPEN|LESSCLOSE)=|\b(?:core\.(?:editor|pager)|sequence\.editor|pager\.[\w-]+)\b/i;
-/** A process substitution: `> >(sh)` reads what a command prints. */
-const PROCSUB = /[<>]\(/;
+/** An editor or pager setting: git, gh or less runs that program on the message (`GIT_EDITOR=sh git commit -e -m …`). */
+export const EDITOR_SET = /\b(?:GIT_EDITOR|GH_EDITOR|EDITOR|VISUAL|GIT_SEQUENCE_EDITOR|GIT_PAGER|GH_PAGER|PAGER|LESS|LESSOPEN|LESSCLOSE)=|\b(?:core\.(?:editor|pager)|sequence\.editor|pager\.[\w-]+)\b/i;
+/** An editor flag: git and gh open the message in an editor (`git commit -e -m …`, `-em`, `--edit`, `gh … --editor`). */
+export const EDIT_FLAG = /^(?:-[a-zA-Z]*e[a-zA-Z]*|--edit|--editor)(?:=|$)/;
+/** A command that can redefine what a later word runs: a function, `alias`, `hash` or `enable` (`tail() { sh; }`). */
+export const REDEFINES = /\w\s*\(\s*\)|(?:^|[\s;&|(){}`])(?:function|alias|hash|enable)(?=[\s;&|()`]|$)/;
 
 /** The logical line at `from`, up to its first newline outside quotes, with each quoted span and escape masked as NUL
  *  characters (same length, so offsets carry over). */
@@ -57,22 +59,7 @@ class Line {
   }
   words(start: number, end: number): string[] { return this.m.slice(start, end).replace(HEREDOC_OP, ' ').split(/\s+/).filter(Boolean); }
   piped(end: number): boolean { return this.m[end] === '|' && this.m[end + 1] !== '|'; }
-  /** True when what the command ending at `end` prints reaches only the caller: later pipeline stages are all `tail`,
-   *  `head` or `wc` with plain options and no redirect, and the line then ends or goes on with `;`, `&&` or `||`. */
-  printsOnly(end: number): boolean {
-    while (this.piped(end)) {
-      const [s, e] = this.at(end + (this.m[end + 1] === '&' ? 2 : 1)), [cmd, ...opts] = this.words(s, e);
-      if (!READERS.has(cmd) || !opts.every((o) => /^-?[A-Za-z0-9]+$/.test(o))) return false;
-      end = e;
-    }
-    const rest = this.m.slice(end);
-    return /^\s*$/.test(rest) || rest.startsWith(';') || rest.startsWith('&&') || rest.startsWith('||');
-  }
 }
-/** The only commands a message command's output may be piped into (`git commit … 2>&1 | tail -5`). Not less or more,
- *  which run LESSOPEN, nor cat or grep, which pass the text on. */
-const READERS = new Set(['tail', 'head', 'wc']);
-
 /** A writer's words and the files its stdout goes to, or null when a redirect is anything but a plain `>`, `>>` or `>|`
  *  to a plain path: an fd number, any `&` or `<`, a dup. */
 function writerWords(ws: string[]): { words: string[]; files: string[] } | null {
@@ -90,41 +77,12 @@ function writerWords(ws: string[]): { words: string[]; files: string[] } | null 
 
 /** `-F -`, `-F-` or `--file=-` among `a`, for each of `flags`: the body is the message. */
 const fileDash = (a: string[], flags: string[]) => a.some((x, i) => flags.some((f) => x === `${f}=-` || x === `${f}-` || (x === f && a[i + 1] === '-')));
-/** `git commit|tag -F -` and `gh … --body-file|--notes-file|-F -`: the body is the message. */
+/** `git commit|tag -F -` and `gh … --body-file|--notes-file|-F -`: the body is the message. Not with `-e`, which opens
+ *  the message in an editor that may run it. */
 function fileFlagSink(cmd: string | undefined, args: string[]): boolean {
+  if (args.some((a) => EDIT_FLAG.test(a))) return false;
   if (cmd === 'git') return (args.includes('commit') || args.includes('tag')) && fileDash(args, ['-F', '--file']);
   if (cmd === 'gh') return fileDash(args, ['--body-file', '--notes-file', '-F']);
-  return false;
-}
-
-/** git's global options that take the next word: `-C dir`, `-c k=v`, `--git-dir x`. */
-const GIT_VALUE = /^(?:-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix|--config-env|--attr-source)$/;
-/** Wrappers that exec their argv as is, so a message stays one argument. Not eval, a shell, npx, xargs, sudo or su. */
-const DIRECT = new Set(['command', 'env', 'time', 'nice', 'nohup']);
-/** Where the command runs past leading assignments and DIRECT wrappers with their options, or -1 at `env -S`. */
-function directStart(a: string[]): number {
-  let k = 0;
-  for (;;) {
-    while (/^\w+=/.test(a[k] ?? '')) k++;
-    const w = a[k];
-    if (!DIRECT.has(w)) return k;
-    for (k++; a[k]?.startsWith('-'); k++) {
-      if (w === 'env' && /^(?:-[a-zA-Z]*S|--split-string)/.test(a[k])) return -1; // env -S splits its string again
-      if ((w === 'env' && /^(?:-u|--unset|-C|--chdir)$/.test(a[k])) || (w === 'nice' && a[k] === '-n')) k++;
-    }
-  }
-}
-/** Commands whose message flag's value is only text: `git commit|tag|merge|notes -m`, `gh pr|issue|release … --body`,
- *  run directly or through a DIRECT wrapper, read past global options (`git -C x`, `gh -R o/r`). Only `2>&1` and
- *  `2>/dev/null` redirects. */
-function messageTaker(ws: string[]): boolean {
-  if (!ws.filter((w) => /[<>]/.test(w)).every((w) => /^2>(?:&1|\/dev\/null)$/.test(w))) return false;
-  const all = ws.filter((w) => !/[<>]/.test(w)), k = directStart(all);
-  if (k < 0) return false;
-  const [cmd, ...a] = all.slice(k);
-  let i = 0;
-  if (cmd === 'git') { while (a[i]?.startsWith('-')) i += GIT_VALUE.test(a[i]) ? 2 : 1; return ['commit', 'tag', 'merge', 'notes'].includes(a[i]); }
-  if (cmd === 'gh') { while (a[i]?.startsWith('-')) i += a[i] === '-R' || a[i] === '--repo' ? 2 : 1; return ['pr', 'issue', 'release'].includes(a[i]); }
   return false;
 }
 
@@ -140,46 +98,49 @@ export function wordCounter(whole: string): (w: string) => number {
 const reused = (files: string[], count: (w: string) => number) =>
   files.some((f) => { const b = f.split('/').pop()!; return f !== '/dev/null' && (!/^[\w.-]+$/.test(b) || count(b) > 1); });
 
-/**
- * The sink and message tests for one command `c`, each simple command judged once, so many `<<` or `-m` stay linear.
- * `sink(lineStart, at)`: the heredoc at `at` feeds a data sink: cat, dd or printf whose every redirect is a plain `>`,
- * `>>` or `>|` to a plain path, tee whose arguments and stdout are all plain paths, dd with a plain `of=`,
- * `git commit|tag -F -` or `gh … --body-file|--notes-file|-F -`, or, when `argValue` (`c` is a message flag's $(…)
- * value), a bare `cat`. Never with `exec` and a redirect in `c`, a pipe after it, or a file `c` names again.
- * `message(lineStart, at, depth)`: the span at `at` is an argument of a known message-taking command (see messageTaker)
- * outside any group, whose output only reaches the caller (see printsOnly), with no editor or pager setting and no
- * process substitution in the command. `flags` are read from the whole command once (wholeFlags).
- */
-export function wholeFlags(c: string) {
-  return { count: wordCounter(c), noFiles: EXEC_REDIRECT.test(c), editor: EDITOR_SET.test(c), procsub: PROCSUB.test(c) };
+/** The whole-command flags, read once: `skel` is the command without heredoc bodies and spaced quoted text, with
+ *  one-word quotes unquoted (`'hash'` is still hash), as guard-readings' skeleton builds it. */
+export function wholeFlags(c: string, skel = c) {
+  return { count: wordCounter(c), noFiles: EXEC_REDIRECT.test(skel) || REDEFINES.test(skel), noMessages: EDITOR_SET.test(skel) || REDEFINES.test(skel) };
 }
-export function commandTests(s: Scan, argValue: boolean, flags = wholeFlags(s.c)) {
-  const { count, noFiles, editor, procsub } = flags, lines = new Map<number, Line>(), sinks = new Map<number, boolean>(), messages = new Map<number, boolean>();
+/**
+ * The tests for one command, each simple command judged once, so many `<<` or `-m` stay linear. `sink(lineStart, at)`:
+ * the heredoc at `at` feeds a data sink: cat, dd or printf whose every redirect is a plain `>`, `>>` or `>|` to a
+ * plain path, tee whose arguments and stdout are all plain paths, dd with a plain `of=`, or `git commit|tag -F -` or
+ * `gh … --body-file|--notes-file|-F -`. Never with `exec` and a redirect, a function, `alias`, `hash` or `enable` (they
+ * can make `cat` or `git` run something else), an editor or pager setting, a pipe after it, or a file the command
+ * names again. `editedAt(lineStart, at)`: the simple command holding offset `at` has an editor flag (EDIT_FLAG).
+ * `flags` are read from the whole command once (wholeFlags).
+ */
+export function commandTests(s: Scan, flags = wholeFlags(s.c)) {
+  const { count, noFiles, noMessages } = flags, lines = new Map<number, Line>(), sinks = new Map<number, boolean>(), edited = new Map<number, boolean>();
   const line = (l: number) => { let x = lines.get(l); if (!x) lines.set(l, (x = new Line(maskedLine(s, l)))); return x; };
-  const sinkAt = (x: Line, start: number, end: number, l: number): boolean => {
+  const sinkAt = (x: Line, start: number, end: number): boolean => {
     if (x.piped(end)) return false; // the next stage reads it
     const ws = x.words(start, end), [cmd, ...args] = ws.filter((w) => !/^\w+=/.test(w));
-    if (!WRITERS.has(cmd)) return !editor && fileFlagSink(cmd, args.filter((w) => !/[<>]/.test(w)));
+    if (!WRITERS.has(cmd)) return !noMessages && fileFlagSink(cmd, args.filter((w) => !/[<>]/.test(w)));
     const w = noFiles ? null : writerWords(ws);
     if (!w) return false;
     const rest = w.words.slice(1), named = rest.filter((a) => !a.startsWith('-'));
     if (cmd === 'tee' && !named.every(plainPath)) return false; // tee /dev/stderr, tee "$o": not a plain file
     const of = cmd === 'dd' ? rest.filter((a) => a.startsWith('of=')).map((a) => a.slice(3)) : [];
     if (!of.every(plainPath)) return false;
-    if ((cmd === 'tee' || cmd === 'printf' || cmd === 'cat') && !w.files.length) return argValue && l === 0 && start === 0 && cmd === 'cat' && !rest.length;
+    if ((cmd === 'tee' || cmd === 'printf' || cmd === 'cat') && !w.files.length) return false;
     if (cmd === 'dd' && !w.files.length && !of.length) return false;
     return !reused([...w.files, ...(cmd === 'tee' ? named : []), ...of], count);
   };
-  const memo = (cache: Map<number, boolean>, f: (x: Line, s: number, e: number, l: number) => boolean) => (l: number, at: number) => {
-    const x = line(l), [start, end] = x.at(at - l);
-    let v = cache.get(l + start);
-    if (v === undefined) cache.set(l + start, (v = f(x, start, end, l)));
-    return v;
-  };
-  const messageAt = memo(messages, (x, start, end) => x.printsOnly(end) && messageTaker(x.words(start, end)));
   return {
-    sink: memo(sinks, sinkAt),
-    /** `depth`: how many groups or compound commands hold the span; a group may pipe or capture what it prints. */
-    message: (l: number, at: number, depth: number) => depth === 0 && !editor && !procsub && messageAt(l, at),
+    sink: (l: number, at: number) => {
+      const x = line(l), [start, end] = x.at(at - l);
+      let v = sinks.get(l + start);
+      if (v === undefined) sinks.set(l + start, (v = sinkAt(x, start, end)));
+      return v;
+    },
+    editedAt: (l: number, at: number) => {
+      const x = line(l), [start, end] = x.at(at - l);
+      let v = edited.get(l + start);
+      if (v === undefined) edited.set(l + start, (v = x.words(start, end).some((w) => EDIT_FLAG.test(w))));
+      return v;
+    },
   };
 }

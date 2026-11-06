@@ -102,8 +102,8 @@ export class Scan {
 }
 
 /** A quoted span: offsets into the command, `end` exclusive. `subs`: the $(…) and `…` the shell runs inside "…". */
-/** `line`: where its logical line starts; `depth`: how many groups or compound commands hold it. */
-export interface Quoted { start: number; end: number; subs: string[]; line?: number; depth?: number }
+/** `line`: where its logical line starts. */
+export interface Quoted { start: number; end: number; subs: string[]; line?: number }
 
 /** The quoted span that opens at `i` ($'…', '…' or "…" with its substitutions), or null. */
 export function quotedAt(s: Scan, i: number): Quoted | null {
@@ -113,4 +113,30 @@ export function quotedAt(s: Scan, i: number): Quoted | null {
   if (c[i] !== '"') return null;
   const end = s.closeDouble(i);
   return { start: i, end, subs: s.substitutions(i + 1, end - 1) };
+}
+
+/** Compound commands, counted as groups: a writer inside one is code, since `fi | sh` reads what it prints. */
+const OPENS = new Set(['if', 'for', 'while', 'until', 'select', 'case']), CLOSES = new Set(['fi', 'done', 'esac']);
+/** A keyword's place: a command start, after a separator or another keyword (`then if`, `do while`). */
+const KEYWORD_PLACE = /(?:^|[\n;&|(){}]|\b(?:then|do|else|elif|time)|!)[ \t]*$/;
+/** The groups open at a point: `(`, a `{` word and the compound keywords, as a stack, so a `case` pattern's `)` closes
+ *  nothing. A closer with nothing open to match breaks the count for good: past it every writer is code. */
+export class Groups {
+  private readonly open: string[] = [];
+  private broken = false;
+  get depth(): number { return this.open.length + (this.broken ? 1 : 0); }
+  step(c: string, i: number): void {
+    const ch = c[i];
+    if (ch === '(') this.open.push('(');
+    else if (ch === ')') { if (this.open.at(-1) !== 'case') this.close('('); } // `x)` in a case is a pattern
+    else if (i > 0 && !/[\s;&|(){}]/.test(c[i - 1])) return; // not a word start
+    else if ((ch === '{' || ch === '}') && /\s/.test(c[i + 1] ?? ' ')) { if (ch === '{') this.open.push('{'); else this.close('{'); }
+    else {
+      const w = /^[a-z]+/.exec(c.slice(i, i + 7))?.[0];
+      if (!w || (!OPENS.has(w) && !CLOSES.has(w)) || /[\w-]/.test(c[i + w.length] ?? ' ') || !KEYWORD_PLACE.test(c.slice(Math.max(0, i - 12), i))) return;
+      if (OPENS.has(w)) this.open.push(w === 'case' ? 'case' : 'kw');
+      else this.close(w === 'esac' ? 'case' : 'kw');
+    }
+  }
+  private close(kind: string): void { if (this.open.at(-1) === kind) this.open.pop(); else this.broken = true; }
 }

@@ -6,7 +6,7 @@ import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
-import { arithmeticTest, gitPlain, globReadings, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { arithmeticTest, commandSkeleton, gitPlain, globReadings, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
 import { Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
@@ -159,7 +159,7 @@ function scriptsOf(root: string): Record<string, string> {
  */
 export function withoutHeredocBodies(cmd: string): string {
   if (!cmd.includes('<<')) return cmd;
-  const lines = cmd.split('\n'), flags = wholeFlags(cmd); // once, not once per line
+  const lines = cmd.split('\n'), flags = wholeFlags(cmd, commandSkeleton(cmd)); // once, not once per line
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i], inArithmetic = arithmeticTest(line);
@@ -186,7 +186,7 @@ export function withoutHeredocBodies(cmd: string): string {
           else word += x;
         }
         if (q || !/^\w+$/.test(word)) return cmd;
-        ends.push({ word, dash, data: (tests ??= commandTests(new Scan(line), false, flags)).sink(0, c) });
+        ends.push({ word, dash, data: (tests ??= commandTests(new Scan(line), flags)).sink(0, c) });
         c = d - 1;
       }
     }

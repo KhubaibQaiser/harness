@@ -2,8 +2,8 @@
 // Imported by guard.ts, which this module imports back: use guard.ts names only inside functions, never at load time.
 import picomatch from 'picomatch';
 import { commandStart, quoteFree, SEGMENTS } from './guard.js';
-import { quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
-import { commandTests } from './guard-sinks.js';
+import { Groups, quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
+import { commandTests, EDITOR_SET, REDEFINES, wholeFlags } from './guard-sinks.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
@@ -42,32 +42,18 @@ class Budget {
 interface Heredoc { from: number; to: number; literal: boolean; program: boolean } // the body and its end line
 interface Layout { quotes: Quoted[]; heredocs: Heredoc[] }
 
-/** Compound commands, counted as groups: a writer or message inside one is code, since `fi | sh` reads what it prints. */
-const OPENS = new Set(['if', 'for', 'while', 'until', 'select', 'case']), CLOSES = new Set(['fi', 'done', 'esac']);
-/** A keyword's place: a command start, after a separator or another keyword (`then if`, `do while`). */
-const KEYWORD_PLACE = /(?:^|[\n;&|(){}]|\b(?:then|do|else|elif|time)|!)[ \t]*$/;
-/** How the character at `i` changes the group depth: `(`/`)`, a `{`/`}` word, and the compound keywords. */
-function groupStep(c: string, i: number): number {
-  const ch = c[i];
-  if (ch === '(' || ch === ')') return ch === '(' ? 1 : -1;
-  if (i > 0 && !/[\s;&|(){}]/.test(c[i - 1])) return 0; // not a word start
-  if (ch === '{' || ch === '}') return /\s/.test(c[i + 1] ?? ' ') ? (ch === '{' ? 1 : -1) : 0;
-  const w = /^[a-z]+/.exec(c.slice(i, i + 7))?.[0];
-  if (!w || (!OPENS.has(w) && !CLOSES.has(w)) || /[\w-]/.test(c[i + w.length] ?? ' ')) return 0;
-  return KEYWORD_PLACE.test(c.slice(Math.max(0, i - 12), i)) ? (OPENS.has(w) ? 1 : -1) : 0;
-}
 /** Where the shell sees quotes and heredoc bodies: `\` escapes outside quotes, `'…'` is literal, `$'…'` is literal with
  *  `\` escapes, `"…"` keeps its substitutions, `$((…))` and `((…))` are arithmetic (`1<<E` is a shift), and `<<WORD`
  *  takes the lines up to WORD. A body is a program unless `tests.sink` says it goes to a data sink, outside any
  *  group. A heredoc this cannot read (a delimiter with an expansion, no end line) leaves every body in place. */
-function layout(s: Scan, tests: ReturnType<typeof commandTests>): Layout {
-  const c = s.c, quotes: Quoted[] = [], heredocs: Heredoc[] = [];
-  let pending: { word: string; dash: boolean; literal: boolean; data: boolean }[] = [], lineStart = 0, depth = 0, ticks = 0;
+function layout(s: Scan, tests: { sink: (l: number, at: number) => boolean }): Layout {
+  const c = s.c, quotes: Quoted[] = [], heredocs: Heredoc[] = [], groups = new Groups();
+  let pending: { word: string; dash: boolean; literal: boolean; data: boolean }[] = [], lineStart = 0, ticks = 0;
   for (let i = 0; i < c.length; i++) {
     const ch = c[i];
     const q = ch === '\\' ? null : quotedAt(s, i);
     if (ch === '\\') i++;
-    else if (q) { quotes.push({ ...q, line: lineStart, depth: depth + (ticks % 2) }); i = q.end - 1; }
+    else if (q) { quotes.push({ ...q, line: lineStart }); i = q.end - 1; }
     else if ((ch === '$' && c[i + 1] === '(' && c[i + 2] === '(') || (ch === '(' && c[i + 1] === '(')) i = s.closeParen(i + (ch === '$' ? 3 : 2), 2) - 1;
     else if (ch === '<' && c[i + 1] === '<') {
       if (c[i + 2] === '<') { i += 2; continue; } // a here-string
@@ -86,7 +72,7 @@ function layout(s: Scan, tests: ReturnType<typeof commandTests>): Layout {
       }
       if (q || !/^\w+$/.test(word)) return { quotes, heredocs: [] };
       // A writer inside ( ), { }, $( ) or backticks is code: the group may pipe, redirect or capture what it prints.
-      pending.push({ word, dash, literal, data: depth === 0 && ticks % 2 === 0 && tests.sink(lineStart, i) });
+      pending.push({ word, dash, literal, data: groups.depth === 0 && ticks % 2 === 0 && tests.sink(lineStart, i) });
       i = d - 1;
     } else if (ch === '\n' && pending.length) {
       let p = i + 1;
@@ -106,29 +92,38 @@ function layout(s: Scan, tests: ReturnType<typeof commandTests>): Layout {
       lineStart = p;
     } else if (ch === '\n') lineStart = i + 1;
     else if (ch === '`') ticks++;
-    else depth += groupStep(c, i);
+    else groups.step(c, i);
   }
   return { quotes, heredocs };
 }
 
-/** Picks the quoted spans that are data. `known` says a span is an argument of a known message-taking command. */
-type Blank = (c: string, known: (q: Quoted) => boolean) => (q: Quoted) => boolean;
-/** The command with data taken out: a heredoc body nobody runs (its end line too), keeping the $(…) and `…` of an
- *  unquoted-delimiter body as lines, and each quoted span `blank` picks, as '' plus the substitutions a "…" span runs.
- *  A message flag's substitutions have their own data taken out, so `-m "$(cat <<'EOF' … )"` keeps no body. */
-function withoutData(c: string, blank: Blank, argValue = false): string {
-  if (!/['"<]/.test(c)) return c;
-  const s = new Scan(c), tests = commandTests(s, argValue);
-  const known = (q: Quoted) => tests.message(q.line ?? 0, q.start, q.depth ?? 0);
-  const picks = blank(c, known), { quotes, heredocs } = layout(s, tests);
-  const sub = (q: Quoted) => (argFlag(c, q, known) ? (x: string) => withoutData(x, blank, true) : (x: string) => x);
-  const cuts = [...quotes.filter(picks).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map(sub(q)).map((x) => ` $(${x})`).join('') })),
-    ...heredocs.filter((h) => !h.program).map((h) => ({ from: h.from, to: h.to, put: h.literal ? '' : s.substitutions(h.from, h.to).map((x) => x + '\n').join('') }))]
-    .sort((a, b) => a.from - b.from);
-  if (!cuts.length) return c;
+/** The command as its own shell runs it, for the whole-line checks: heredoc bodies and quoted text with a space in it
+ *  blanked, and a one-word quote unquoted (`'sh'`, `"eval"`, `h\ash` stay those words). */
+function skeleton(s: Scan): string {
+  const c = s.c, { quotes, heredocs } = layout(s, { sink: () => false });
+  const cuts = [...quotes.map((q) => ({ from: q.start, to: q.end, put: /\s/.test(c.slice(q.start, q.end)) ? ' ' : c.slice(q.start, q.end).replace(/^\$?['"]|['"]$/g, '') })),
+    ...heredocs.map((h) => ({ from: h.from, to: h.to, put: '\n' }))].sort((a, b) => a.from - b.from);
   let out = '', at = 0;
   for (const x of cuts) { out += c.slice(at, x.from) + x.put; at = x.to; }
-  return out + c.slice(at);
+  return (out + c.slice(at)).replace(/\\/g, '');
+}
+export const commandSkeleton = (c: string): string => skeleton(new Scan(c));
+/** Picks the quoted spans that are data, given the command's tests and skeleton. `rerun` (optional) picks the spans
+ *  whose text something on the line may run again: their text is read as a command line of its own, at the end. */
+type Blank = ((c: string, tests: ReturnType<typeof commandTests>, skel: string) => (q: Quoted) => boolean) & { rerun?: (c: string, tests: ReturnType<typeof commandTests>, skel: string) => (q: Quoted) => boolean };
+/** The command with data taken out: a heredoc body nobody runs (its end line too), keeping the $(…) and `…` of an
+ *  unquoted-delimiter body as lines, and each quoted span `blank` picks, as '' plus the substitutions a "…" span runs. */
+function withoutData(c: string, blank: Blank): string {
+  if (!/['"<]/.test(c)) return c;
+  const s = new Scan(c), skel = skeleton(s), tests = commandTests(s, wholeFlags(c, skel)), { quotes, heredocs } = layout(s, tests), picks = blank(c, tests, skel);
+  const cuts = [...quotes.filter(picks).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map((x) => ` $(${x})`).join('') })),
+    ...heredocs.filter((h) => !h.program).map((h) => ({ from: h.from, to: h.to, put: h.literal ? '' : s.substitutions(h.from, h.to).map((x) => x + '\n').join('') }))]
+    .sort((a, b) => a.from - b.from);
+  const again = blank.rerun ? quotes.filter(blank.rerun(c, tests, skel)).map((q) => '\n' + c.slice(q.start + 1, q.end - 1).replace(/\\(["\\$`])/g, '$1')).join('') : '';
+  if (!cuts.length) return c + again;
+  let out = '', at = 0;
+  for (const x of cuts) { out += c.slice(at, x.from) + x.put; at = x.to; }
+  return out + c.slice(at) + again;
 }
 
 const spaced = (c: string) => (q: Quoted) => /\s/.test(c.slice(q.start, q.end));
@@ -138,18 +133,30 @@ const spaced = (c: string) => (q: Quoted) => /\s/.test(c.slice(q.start, q.end));
 const words = (c: string): string => withoutData(c, spaced);
 /** A message value: `-m`, `-am`, `--message`, `--body`, `--title` or `--notes` right before the quoted span. */
 const MESSAGE_FLAG = /(?:^|\s)(?:-[a-zA-Z]*m|--message|--body|--title|--notes)(?:=|[ \t]+)$/;
-/** A short message flag glued to its value (`-m"…"`): data only for a known message-taking command. */
-const GLUED_FLAG = /(?:^|\s)-[a-zA-Z]*m$/;
 const before = (c: string, q: Quoted) => c.slice(Math.max(0, q.start - 16), q.start);
-/** A message flag whose $(…) value is only text: one of a known message-taking command (`git commit`, `gh pr`), with no
- *  pipe after it. Not printf, parallel or an unknown command, which may print or run the value. */
-const argFlag = (c: string, q: Quoted, known: (q: Quoted) => boolean) => (MESSAGE_FLAG.test(before(c, q)) || GLUED_FLAG.test(before(c, q))) && known(q);
-/** The text rules' reading: data heredoc bodies out, and a quoted message value with whitespace in it is data too
- *  (`git commit -m 'why (git push -f) is bad'`). A body that goes anywhere but a data sink stays: it is a program. */
-const messages: Blank = (c, known) => {
-  const sp = spaced(c);
-  return (q) => sp(q) && (MESSAGE_FLAG.test(before(c, q)) || (GLUED_FLAG.test(before(c, q)) && known(q)));
-};
+/** Words that can run a message again, anywhere in the command line: eval, exec, source, `.` as a command, a shell,
+ *  ssh, su, watch, parallel, script, `case`, and env -S or any `--s…` prefix of --split-string. Read on the skeleton. */
+const RERUNS = /(?:^|[;&|(){}`\n])\s*\.(?=\s)|(?:^|[\s;&|(){}`/])(?:eval|exec|source|case|(?:ba|z|da|k|c|tc|mk|a)?sh|fish|busybox|ssh|su|watch|parallel|script)(?=[\s;&|()`]|$)|\benv\b[^;&|\n]*\s(?:-[a-zA-Z]*S|--s)/;
+/** `$_` or `${_}`: the last argument of the previous command, which can be the message (`…; eval "$_"`). */
+const LAST_ARG = /\$(?:_(?!\w)|\{_\})/;
+/** The text rules' reading: data heredoc bodies out, and a plain quoted message value with whitespace in it is data
+ *  (`git commit -m 'why (git push -f) is bad'`). Plain means no $(…) or backtick in it, no editor flag on its command,
+ *  and nothing in the command line that can run it again (RERUNS, `$_`, REDEFINES, an editor or pager setting). */
+const safeLine = (c: string, skel: string) => !RERUNS.test(skel) && !LAST_ARG.test(c) && !REDEFINES.test(skel) && !EDITOR_SET.test(skel);
+const messageSpan = (c: string) => { const sp = spaced(c); return (q: Quoted) => !q.subs.length && sp(q) && MESSAGE_FLAG.test(before(c, q)); };
+type Tests = ReturnType<typeof commandTests>;
+const edited = (tests: Tests, q: Quoted) => tests.editedAt(q.line ?? 0, q.start);
+const messages: Blank = Object.assign((c: string, tests: Tests, skel: string) => {
+  const safe = safeLine(c, skel), msg = messageSpan(c);
+  return (q: Quoted) => safe && msg(q) && !edited(tests, q);
+}, {
+  // A plain message that something on the line may run (eval, a shell, `$_`, an editor) is read as commands too, even
+  // where its quote would hide a rule: `eval git commit -m "x; git push -f"`.
+  rerun: (c: string, tests: Tests, skel: string) => {
+    const safe = safeLine(c, skel), msg = messageSpan(c);
+    return (q: Quoted) => msg(q) && (!safe || edited(tests, q));
+  },
+});
 export const textRulesView = (c: string): string => withoutData(c, messages);
 /** A test for one line: true when `<<` at `at` sits in arithmetic (`$((1<<E))`), which the heredoc reader skips. One scan
  *  per line, and `at` must grow from call to call, so a line of many `<<` is linear. A line too deep to scan counts as

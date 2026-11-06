@@ -796,9 +796,9 @@ test('a heredoc body is code unless it goes to a known data sink', () => {
   // A written file the command names again may be run.
   all(["cat <<'EOF' > x.sh && sh x.sh\ngit push -f\nEOF", "cat > /tmp/x.sh <<'EOF'\ngit push -f\nEOF\nbash /tmp/x.sh", "tee run.sh <<'EOF'\ngit push -f\nEOF\n. ./run.sh"], 'deny');
 });
-test('the commit and PR idioms and file writes keep their bodies as data', () => {
-  all(["git commit -m \"$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)\"", "gh pr create --title \"fix: x\" --body \"$(cat <<'EOF'\n## Summary\n- blocks git push -f\nEOF\n)\"",
-    "cat > src/x.test.ts <<'EOF'\nexpect(kind('git push -f')).toBe('deny');\nexpect(kind('rm -rf /')).toBe('deny');\nEOF", "git commit -F - <<'EOF'\nfix: never git push -f\nEOF",
+test('file writes and -F - bodies are data; the $(cat <<EOF) message idiom is code (owner ruling, round 8)', () => {
+  all(["git commit -m \"$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)\"", "gh pr create --title \"fix: x\" --body \"$(cat <<'EOF'\n## Summary\n- blocks git push -f\nEOF\n)\""], 'deny');
+  all(["cat > src/x.test.ts <<'EOF'\nexpect(kind('git push -f')).toBe('deny');\nexpect(kind('rm -rf /')).toBe('deny');\nEOF", "git commit -F - <<'EOF'\nfix: never git push -f\nEOF",
     "gh pr create --title x --body-file - <<'EOF'\nBlocks git push -f and rm -rf ~\nEOF", "cat <<'EOF' > docs/x.md\ngit push -f\nEOF", "cat >> docs/x.md <<'EOF'\ngit push -f\nEOF",
     "tee docs/x.md >/dev/null <<'EOF'\ngit push -f\nEOF", "git tag -a v1 -F - <<'EOF'\nno git push -f\nEOF", "gh release create v1 --notes-file - <<'EOF'\nno git push -f\nEOF"], 'allow');
   expect(kind("git commit -m \"$(cat <<EOF\n$(git push -f)\nEOF\n)\"")).toBe('deny'); // an unquoted delimiter still runs $(…)
@@ -825,47 +825,45 @@ test('a quoted or escaped shell option is still an option, and env -S is split a
     "env -S \"sh -c 'git push -f'\"", "env -S \"bash -c 'rm -rf ~'\"", "env \"-S\" \"sh -c 'git push -f'\"", "env '-S' \"sh -c 'git push -f'\"",
     "env \"--split-string\" \"sh -c 'git push -f'\"", "env -S 'sh -c \"git\\_push\\_-f\"'", "env -S 'sh\\_-c\\_\"rm -rf ~\"'"], 'deny');
 });
-test("a message flag's $(…) value is data only for a known message-taking command with no pipe after it", () => {
-  all(["printf '%s\\n' --title \"$(cat <<'EOF'\ngit push -f\nEOF\n)\" | sh", "x=$(printf %s -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"); $x",
-    "parallel -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\" ::: x", "git commit -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\" | sh"], 'deny');
-  all(["git commit -m\"$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)\"", "git tag -a v1 -m \"$(cat <<'EOF'\nno git push -f\nEOF\n)\"",
-    "gh issue create --title x --body \"$(cat <<'EOF'\nno rm -rf ~\nEOF\n)\""], 'allow');
-});
-test('a message value follows the real command past wrappers and global options, and a pipe into a reader', () => {
-  const idiom = (pre: string, post = '') => `${pre} "$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)"${post}`;
-  all([idiom('git commit -m', ' 2>&1 | tail -5'), idiom('command git commit -m'), idiom('env FOO=1 git commit -m'), idiom('git -C x -c k=v commit -m'),
-    idiom('gh -R o/r pr create --title x --body'), idiom('gh --repo o/r pr create --title x --body'), idiom('git commit -m', ' | head -1')], 'allow');
-  all([idiom('git commit -m', ' | sh'), idiom('git commit -m', ' | tail -5 | sh'), idiom("git -c alias.x='!f(){ eval \"$2\"; }; f' x -m", ' commit')], 'deny');
-});
 test('an editor or pager setting makes a git message built at run time code, and asks at least', () => {
   all(["GIT_EDITOR=sh git commit -e -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"", "git -c core.editor=sh commit -e -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"",
     "EDITOR=sh git commit -e -F - <<'EOF'\ngit push -f\nEOF"], 'deny');
   all(["GIT_EDITOR=sh git commit -e -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "git -c core.pager=sh commit -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "VISUAL=vi git commit -e -m \"$(date)\""], 'ask');
 });
-test('a message value is data only when git or gh runs directly or through command, env, time, nice or nohup', () => {
-  const m = (pre: string) => `${pre} "$(cat <<'EOF'\nx; git push -f\nEOF\n)"`;
-  all([m('eval git commit -m'), m('eval gh pr create --title x --body'), m('sh git commit -m'), m('bash git commit -m'), m('npx git commit -m'), m('npm exec -- git commit -m'),
-    m('xargs git commit -m'), m('script -q /dev/null git commit -m'), m('env -S x git commit -m')], 'deny');
-  all([m('command git commit -m'), m('env FOO=1 git commit -m'), m('time git commit -m'), m('nice -n 5 git commit -m'), m('nohup git commit -m')], 'allow');
-});
 test('a writer path is normalized before the device test, and compound commands are groups', () => {
   const w = (path: string) => `cat > ${path} <<'EOF'\ngit push -f\nEOF`;
   all([`if :; then\n${w('//dev/stdout')}\nfi | sh`, `for x in 1; do\n${w('/./dev/stdout')}\ndone | sh`, `if :; then\n${w('../../../../../../../../dev/stdout')}\nfi | sh`,
-    `while :; do\n${w('/dev/stdout')}\nbreak; done | sh`, `if :; then\n${w('f')}\nfi | sh`, `case x in x) ${w('f')} ;; esac | sh`, `f() {\n${w('f')}\n}; f | sh`,
+    `while :; do\n${w('/dev/stdout')}\nbreak; done | sh`, `if :; then\n${w('f')}\nfi | sh`, `case x in x) ${w('f')}\n;; esac | sh`, `f() {\n${w('f')}\n}; f | sh`,
     w('//proc/self/fd/1'), w('/./dev/stderr'), w('//dev/null/../stdout'), w('dev/stdout'), `cd / && ${w('dev/stdout')}`,
     "tee //dev/stdout >/dev/null <<'EOF'\ngit push -f\nEOF", "dd of=//dev/stdout <<'EOF'\ngit push -f\nEOF", w('x/../f')], 'deny');
   all([w('docs/x.md'), w('/dev/null'), w('./f'), w('~/x.md')], 'allow');
-});
-test("a message's output may reach only the caller: no group, no process substitution, only tail, head or wc after it", () => {
-  const m = (pre: string, post: string) => `${pre}git commit -m "$(cat <<'EOF'\nx; git push -f\nEOF\n)"${post}`;
-  all([m('{ ', '; } | sh'), m('( ', ' ) | sh'), m('', ' > >(sh)'), m('', ' | tail -5 > >(sh)'), m("export LESSOPEN='|-sh %s'; ", ' | less'), m('', ' | less'),
-    m('', ' | more'), m('', ' | cat > o.sh; sh o.sh'), m('', ' | grep x'), m('', ' &'), m('', ' > out.txt'), m('if ', '; then :; fi'), m('', ' | tail -5 | sh')], 'deny');
-  all([m('', ''), m('', ' 2>&1 | tail -5'), m('', ' | head -n 1'), m('', ' | wc -l'), m('git add -A && ', ' && git push'), m('', '; git log -1'), m('', ' || true')], 'allow');
 });
 test('pager and less settings make a git message built at run time code, and ask at least', () => {
   all(["PAGER=sh git -p commit -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "git -c pager.commit=sh commit -m \"$(cat <<'EOF'\nhello\nEOF\n)\"",
     "LESSOPEN='|sh %s' git commit -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "LESS=x git commit -m \"$(date)\""], 'ask');
   all(["PAGER=sh git -p commit -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"", "git -c pager.commit=sh commit -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\""], 'deny');
+});
+test("a message flag's $(…) value is code wherever it sits, with every wrapper, reader and pipe (owner ruling, round 8)", () => {
+  const m = (pre: string, post = '') => `${pre} "$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)"${post}`;
+  all([m('git commit -m'), m('git commit -m', ' 2>&1 | tail -5'), m('command git commit -m'), m('env FOO=1 git commit -m'), m('git -C x -c k=v commit -m'), m('time git commit -m'),
+    m('nice -n 5 git commit -m'), m('nohup git commit -m'), m('gh -R o/r pr create --title x --body'), m('git tag -a v1 -m'), m('gh issue create --title x --body'),
+    m('git commit -m', ' | head -1'), m('git commit -m', ' | wc -l'), m('git add -A && git commit -m', ' && git push'), m('eval git commit -m'), m('case x in x) git commit -m', ' ;; esac | sh'),
+    m('case x in\nx|y)\ngit commit -m', '\n;;\nesac | sh'), m('gh pr create --body'), "git commit -m\"$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)\""], 'deny');
+});
+test('a plain message string is data only when nothing on the line can run it again', () => {
+  all(['git commit -m "docs: never git push -f"', 'gh pr create --title "a b" --body "Blocks git push -f and rm -rf ~"', 'git commit -am "fix: x (rm -rf ~)" && git push',
+    "git commit -m 'why (git push -f) is bad'", 'git commit -m "x; git push -f" 2>&1 | tail -5'], 'allow');
+  const p = 'git commit -m "x; git push -f"';
+  all([`${p}; eval "$_"`, `${p}; x=\${_}; echo $x`, `eval ${p}`, `${p} | sh`, `{ ${p}; } | 'sh'`, `${p} | b\\ash`, `tail() { sh; }; ${p} | tail`, `function tail { sh; }; ${p} | tail`,
+    `hash -p /bin/sh head; ${p} | head`, `alias x=y; ${p}`, `enable -n echo; ${p}`, `case x in x) ${p};; esac`, 'git commit -e -m "x; git push -f"', 'git commit -em "x; git push -f"',
+    'git commit --edit -m "x; git push -f"', 'GH_EDITOR=sh gh pr create --editor --body "x; git push -f"', `GIT_EDITOR=sh ${p}`, `unset GIT_EDITOR; git -c core.ed''itor=sh commit -e -m "x; git push -f"`,
+    `env --spl="sh -c x" ${p}`, `env -S "x" ${p}`, `exec > o.sh; ${p}; sh o.sh`, `ssh h ${p}`, `source x; ${p}`, `. ./x; ${p}`, `git() { eval "$3"; }\n${p}`], 'deny');
+});
+test('a case pattern ) does not close the case, and a redefined command or -e makes a heredoc sink code', () => {
+  all(["case x in\nx) cat > f <<'EOF'\ngit push -f\nEOF\n;;\nesac | sh", "case x in *) cat > f <<'EOF'\ngit push -f\nEOF\n;; esac", "cat() { sh; }; cat > f <<'EOF'\ngit push -f\nEOF",
+    "hash -p /bin/sh cat; cat > f <<'EOF'\ngit push -f\nEOF", "alias cat=sh; cat > f <<'EOF'\ngit push -f\nEOF", "git() { sh; }; git commit -F - <<'EOF'\ngit push -f\nEOF",
+    "git commit -e -F - <<'EOF'\ngit push -f\nEOF", "GH_EDITOR=sh gh pr create --editor --body-file - <<'EOF'\ngit push -f\nEOF"], 'deny');
+  all(["case x in (x) echo a;; esac; cat > f <<'EOF'\ngit push -f\nEOF", "cat > f <<'EOF'\nfunction x() { eval it; }\ngit push -f\nEOF"], 'allow');
 });
 test('a shell -c payload is found after other options', () => {
   const forms = ['sh -c -m', 'bash -c -x', 'bash -c -o pipefail', 'sh -c -e -u', 'bash -c -x --', 'zsh -c -x', 'bash --rcfile x -c', 'bash -xc', 'bash -ce', 'sh -euc',

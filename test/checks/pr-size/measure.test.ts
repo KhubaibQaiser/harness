@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { currentBranch, type Git, isOver, measure, realGit, type SizeConfig } from '../../../src/checks/pr-size/measure.js';
+import { type Git, headBranch, isOver, measure, realGit, type SizeConfig } from '../../../src/checks/pr-size/measure.js';
 import { defaults } from '../../../src/core/config.js';
 import { makeRepo } from '../../install/helpers.js';
 
@@ -151,13 +151,14 @@ describe('base and head', () => {
     expect(measure(root, { head: 'nope' }, cfg())).toEqual({ error: 'head `nope` not found', base: 'origin/main' });
   });
 
-  test('a detached HEAD measures HEAD, and currentBranch is null', () => {
+  test('a detached HEAD measures HEAD, and headBranch is null', () => {
     const root = repo();
     commit(root, { 'a.ts': lines(2) });
-    expect(currentBranch(realGit(root))).toBe('feat');
+    expect(headBranch(realGit(root), 2000)).toEqual({ name: 'feat' });
     git(root, 'checkout', '-q', '--detach');
     expect(measure(root, {}, cfg())).toMatchObject({ head: 'HEAD', lines: 2 });
-    expect(currentBranch(realGit(root))).toBeNull();
+    expect(headBranch(realGit(root), 2000)).toEqual({ name: null });
+    expect(headBranch(realGit(root), 0)).toEqual({ name: null, error: 'git timed out' });
   });
 });
 

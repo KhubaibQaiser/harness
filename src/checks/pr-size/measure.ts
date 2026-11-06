@@ -17,6 +17,9 @@ export const realGit = (root: string): Git => (args, timeout) => {
 export const plainBranch = (n: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/.test(n) && !n.includes('..');
 
 export const count = (n: number, one: string): string => `${n} ${one}${n === 1 ? '' : 's'}`;
+export const limitText = (maxLines: number, maxFiles: number): string => `${count(maxLines, 'line')} or ${count(maxFiles, 'file')}`;
+// `origin/main` as recorded (the shown name) is looked up as `main`, so findBase hits refs/remotes/origin/main first.
+export const asBaseName = (b: string): string => b.replace(/^origin\//, '');
 
 export type SizeConfig = Pick<HarnessConfig, 'pr_size' | 'multi_file_gate' | 'stop'>;
 export interface Size { base: string; head: string; lines: number; files: number; top: { path: string; lines: number }[]; excluded: string[] }
@@ -28,11 +31,15 @@ export const isOver = (s: Pick<Size, 'lines' | 'files'>, c: HarnessConfig['pr_si
 // (the guard's npm lookup runs first) stays inside the 10 s hook timeout with a margin.
 const BUDGET_MS = 6000;
 const HOOK_BUDGET_MS = 9000;
+export const GIT_CALL_MS = 2000;
 export const hookBudgetMs = (startedAt: number | undefined, now: () => number): number => Math.min(BUDGET_MS, (startedAt ?? now()) + HOOK_BUDGET_MS - now());
 
-export function currentBranch(git: Git): string | null {
-  const r = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], 2000);
-  return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
+/** The checked-out branch (null: detached), within `ms` and one call's cap; `error` when git failed, timed out or no time was left. */
+export function headBranch(git: Git, ms: number): { name: string | null; error?: string } {
+  if (ms <= 0) return { name: null, error: 'git timed out' };
+  const r = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], Math.min(GIT_CALL_MS, ms));
+  if (r.error) return { name: null, error: r.error.code === 'ETIMEDOUT' ? 'git timed out' : `git failed (${esc(r.error.code ?? 'error')})` };
+  return { name: r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null };
 }
 
 class Stop {
@@ -42,8 +49,6 @@ class Stop {
 type Run = (args: string[]) => ReturnType<Git>;
 type Base = { sha: string; shown: string };
 type WantRef = { base?: string; head?: string; worktree?: boolean };
-const GIT_CALL_MS = 2000;
-const TOTAL_MS = 6000;
 
 function makeRun(git: Git, now: () => number, deadline: number): Run {
   return (args) => {
@@ -135,7 +140,7 @@ export function measure(root: string, want: WantRef, config: SizeConfig, opts: {
   const bad = badName(want);
   if (bad) return { error: bad };
   const now = opts.now ?? Date.now;
-  const deadline = now() + (opts.budgetMs ?? TOTAL_MS);
+  const deadline = now() + (opts.budgetMs ?? BUDGET_MS);
   const run = makeRun(opts.git ?? realGit(root), now, deadline);
   let shown: string | undefined;
   try {

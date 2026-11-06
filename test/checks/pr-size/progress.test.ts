@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { decidePrSize, prSize, writeRecord } from '../../../src/checks/pr-size/check.js';
+import { decidePrSize, prSize } from '../../../src/checks/pr-size/check.js';
+import { writeRecord } from '../../../src/checks/pr-size/records.js';
 import { realGit, type Git } from '../../../src/checks/pr-size/measure.js';
 import { PROGRESS, progressWarning, readProgress, step, writeProgress } from '../../../src/checks/pr-size/progress.js';
 import type { HarnessConfig } from '../../../src/core/config.js';
@@ -22,7 +23,7 @@ const LIM = { target: 200, maxLines: 400, maxFiles: 20 };
 const sz = (l: number, f = 1) => ({ lines: l, files: f });
 const prev = (fired: ('target' | 'max')[]) => ({ base: 'origin/main', fired, lines: 0, files: 0, ts: 't' });
 
-const ASK = 'Before your next edit, stop and ask the person how to go on, with AskUserQuestion if you have it: split now (run the pr-ship skill and show its suggested breakdown), keep going, or raise the limit for this branch (run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>`, which asks them to approve).';
+const ASK = 'Before your next edit, stop and ask the person how to go on, with AskUserQuestion if you have it, with the header "PR size": split now (run the pr-ship skill and show its suggested breakdown), keep going, or raise the limit for this branch (run `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> --files <n>`, which asks them to approve). Their answer to that question lets your next edit run; without one, harness asks them before it.';
 const TARGET = (l: number, f: string) => `PR size: this branch's change is now ${l} changed lines in ${f} against \`origin/main\` (committed and uncommitted), past the target of 200 lines. ${ASK} Harness says this once, and warns again above 400 lines or 20 files.`;
 const MAX = (l: number) => `PR size: this branch's change is now ${l} changed lines in 1 file against \`origin/main\` (committed and uncommitted), past the limit of 400 lines or 20 files (aim for 200). Opening it as one PR will ask for approval. ${ASK} Harness won't warn again on this branch unless it drops below the limit.`;
 const PERSON = (b: string, l: number, f = '1 file') => `harness pr-size: \`${b}\` is now ${l} changed lines in ${f} (target 200, limit 400 lines or 20 files). Claude should stop and ask you: split, keep going, or raise the limit.`;

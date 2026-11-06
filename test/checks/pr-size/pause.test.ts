@@ -192,3 +192,43 @@ describe('the agent cannot clear it', () => {
     asks(await pre(root), PAUSE('feat', 201));
   });
 });
+
+describe("the agent's own AskUserQuestion is the one ask (I3)", () => {
+  const Q = 'This branch is past the PR size target. How should we go on?';
+  const ask = (header: string, answers: Record<string, unknown>, question = Q) => ({
+    tool_name: 'AskUserQuestion',
+    tool_input: { questions: [{ question, header, options: [{ label: 'Split now' }, { label: 'Keep going' }], multiSelect: false }] },
+    tool_response: { questions: [{ question, header, options: [{ label: 'Split now' }, { label: 'Keep going' }], multiSelect: false }], answers },
+  });
+  test('any answer to the "PR size" question clears pending, so the next edit allows', async () => {
+    for (const answer of ['Keep going', 'Split now', ['Raise the limit for this branch'], 'my own words']) {
+      const root = repo();
+      await posted(root, 201);
+      await hook(root, 'PostToolUse', ask('PR size', { [Q]: answer }));
+      expect(pending(root), JSON.stringify(answer)).toBeUndefined();
+      allows(await pre(root));
+    }
+  });
+  test('another question, or no answer, leaves pending, and the pause still asks', async () => {
+    const root = repo();
+    await posted(root, 201);
+    for (const t of [
+      ask('Framework', { [Q]: 'Keep going' }),
+      ask('PR size', {}),
+      ask('PR size', { [Q]: '' }),
+      ask('PR size', { [Q]: [] }),
+      ask('PR size', { 'Some other question?': 'Keep going' }),
+      ask('PR size', { [Q]: '[User did not answer this question — they sent a message instead. Treat that message as their response; do not re-ask.]' }),
+      { ...ask('PR size', { [Q]: 'Keep going' }), tool_response: 'Keep going' },
+    ]) await hook(root, 'PostToolUse', t);
+    expect(pending(root)).toEqual({ lines: 201, files: 1 });
+    asks(await pre(root), PAUSE('feat', 201));
+  });
+  test('it clears only the current branch', async () => {
+    const root = repo();
+    seed(root, 'other');
+    await posted(root, 201);
+    await hook(root, 'PostToolUse', ask('PR size', { [Q]: 'Keep going' }));
+    expect([pending(root, 'feat'), pending(root, 'other')]).toEqual([undefined, { lines: 201, files: 1 }]);
+  });
+});

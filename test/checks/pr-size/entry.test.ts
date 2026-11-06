@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { prSizeEntry } from '../../../src/checks/pr-size/entry.js';
 import type { Git } from '../../../src/checks/pr-size/measure.js';
+import { writeProgress } from '../../../src/checks/pr-size/progress.js';
 import { makeRepo } from '../../install/helpers.js';
 
 const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
@@ -47,6 +48,21 @@ describe('prSizeEntry', () => {
     const r = run([], repo('pr_size:\n  target_lines: 5\n  max_lines: 10\n'));
     expect(r.code).toBe(1);
     expect(r.json).toMatchObject({ over: true, max_lines: 10, lines: 15 });
+  });
+
+  test('N5: the branch\'s recorded raise is the max (the pr-ship check); one outside the §14.4 ranges is ignored', () => {
+    const root = repo('pr_size:\n  target_lines: 5\n  max_lines: 10\n');
+    const seed = (lines: number) => writeProgress(root, 'feat', { base: 'origin/main', fired: [], lines: 0, files: 0, ts: 't', raise: { lines, files: 20, ts: 't' } });
+    seed(20);
+    for (const argv of [[], ['--worktree'], ['--head', 'feat']]) {
+      const r = run(argv, root);
+      expect(r.code, argv.join(' ')).toBe(0);
+      expect(r.json).toMatchObject({ over: false, max_lines: 20, max_files: 20, raised: true, lines: 15 });
+    }
+    expect(run(['--head', 'main'], root).json.raised).toBeUndefined(); // another branch's raise doesn't count
+    seed(10); // not above max_lines: ignored
+    expect(run([], root)).toMatchObject({ code: 1, json: { over: true, max_lines: 10 } });
+    expect(run([], root).json.raised).toBeUndefined();
   });
 
   test('top holds at most 10 entries', () => {

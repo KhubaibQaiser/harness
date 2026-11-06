@@ -1,5 +1,5 @@
 // In-progress size warnings (spec §14): after a counted edit, and once at Stop, measure the working tree and announce each threshold crossing once.
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { writeAtomic } from '../../core/atomic.js';
 import { esc, isObj } from '../../core/config.js';
@@ -9,7 +9,7 @@ import type { Ctx } from '../../hooks/dispatch.js';
 import { editTarget } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { readRecords } from './check.js';
-import { currentBranch, type Git, hookBudgetMs, measure, realGit } from './measure.js';
+import { type Git, hookBudgetMs, measure, realGit, type Size } from './measure.js';
 
 export const PROGRESS = '.harness/state/pr-progress.json';
 type Mark = 'target' | 'max';
@@ -17,6 +17,12 @@ export interface Progress { base: string; fired: Mark[]; lines: number; files: n
 type Lim = { target: number; maxLines: number; maxFiles: number };
 
 const JSON_INDENT = 2;
+const GIT_CALL_MS = 2000;
+// §14.4's raise ranges (the section 7 maximums).
+const RAISE_MAX_LINES = 100000;
+const RAISE_MAX_FILES = 10000;
+// One entry per branch, never pruned; a file past this reads as empty rather than slowing every counted edit.
+const MAX_BYTES = 1_000_000;
 const ALLOW: Decision = { kind: 'allow' };
 const isInt = Number.isInteger;
 const isMark = (m: unknown): m is Mark => m === 'target' || m === 'max';
@@ -35,6 +41,7 @@ export function readProgress(root: string): Record<string, Progress> {
   const out: Record<string, Progress> = Object.create(null);
   let raw: unknown;
   try {
+    if (statSync(join(root, PROGRESS)).size > MAX_BYTES) return out;
     raw = JSON.parse(readFileSync(join(root, PROGRESS), 'utf8'));
   } catch {
     return out;
@@ -90,40 +97,54 @@ function countedEdit(ctx: Ctx): boolean {
   return rel !== null && !matches(rel, [...ctx.config.pr_size.exclude, ...ctx.config.multi_file_gate.generated]);
 }
 
-function warnOnce(ctx: Ctx, git: Git, now: () => number): Decision {
+const unmeasured = (why: string): null => (process.stderr.write(`harness: pr-size progress not measured: ${why}\n`), null); // §14.6: no note, no event
+// `origin/main` as recorded (the shown name) is looked up as `main`, so findBase hits refs/remotes/origin/main first: 7 git spawns per edit on a recorded branch, not 9.
+const asBaseName = (b: string) => b.replace(/^origin\//, '');
+
+/** The branch and its working-tree size, or null to stay silent: no counted edit, a detached HEAD, or unmeasured (logged). */
+function measureBranch(ctx: Ctx, git: Git, now: () => number): { branch: string; s: Size } | null {
   const event = ctx.input.hook_event_name;
-  if (event !== 'Stop' && !(event === 'PostToolUse' && countedEdit(ctx))) return ALLOW;
+  if (event !== 'Stop' && !(event === 'PostToolUse' && countedEdit(ctx))) return null;
   const deadline = now() + hookBudgetMs(ctx.startedAt, now);
-  if (deadline <= now()) return ALLOW;
-  const branch = currentBranch((args, ms) => git(args, Math.max(1, Math.min(ms, deadline - now()))));
-  if (!branch) return ALLOW; // a detached HEAD is never recorded or warned about
+  if (deadline <= now()) return unmeasured('git timed out');
+  const r = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], Math.max(1, Math.min(GIT_CALL_MS, deadline - now())));
+  if (r.error) return unmeasured(r.error.code === 'ETIMEDOUT' ? 'git timed out' : `git failed (${esc(r.error.code ?? 'error')})`);
+  const branch = r.status === 0 ? r.stdout.trim() : '';
+  if (!branch) return null; // a detached HEAD is never recorded or warned about
   const records = readRecords(ctx.root);
-  const base = Object.hasOwn(records, branch) ? records[branch]!.base : undefined;
+  const base = Object.hasOwn(records, branch) ? { base: asBaseName(records[branch]!.base) } : {};
   const budgetMs = deadline - now();
-  const s = budgetMs > 0 ? measure(ctx.root, { worktree: true, ...(base !== undefined ? { base } : {}) }, ctx.config, { git, now, budgetMs }) : { error: 'git timed out' };
-  if ('error' in s) {
-    process.stderr.write(`harness: pr-size progress not measured: ${s.error}\n`); // §14.6: no note, no event
-    return ALLOW;
-  }
+  const s = budgetMs > 0 ? measure(ctx.root, { worktree: true, ...base }, ctx.config, { git, now, budgetMs }) : { error: 'git timed out' };
+  return 'error' in s ? unmeasured(s.error) : { branch, s };
+}
+
+/** A raise outside the §14.4 ranges (a hand-edited file, say) is ignored, so it can't make every size "over the max". */
+function limits(c: Ctx['config']['pr_size'], raise: Progress['raise']): Lim {
+  const ok = raise && raise.lines > c.max_lines && raise.lines <= RAISE_MAX_LINES && raise.files >= c.max_files && raise.files <= RAISE_MAX_FILES;
+  return { target: c.target_lines, maxLines: ok ? raise.lines : c.max_lines, maxFiles: ok ? raise.files : c.max_files };
+}
+
+function announce(ctx: Ctx, branch: string, s: Size): Decision {
   const all = readProgress(ctx.root);
   const prev = Object.hasOwn(all, branch) ? all[branch] : undefined;
-  const { max_lines, max_files, target_lines } = ctx.config.pr_size;
-  const lim = { target: target_lines, maxLines: prev?.raise?.lines ?? max_lines, maxFiles: prev?.raise?.files ?? max_files };
-  const { fired, announce } = step(prev, s, lim);
+  const lim = limits(ctx.config.pr_size, prev?.raise);
+  const { fired, announce: mark } = step(prev, s, lim);
   if (!prev || prev.lines !== s.lines || prev.files !== s.files || prev.fired.join() !== fired.join()) {
     writeProgress(ctx.root, branch, { base: s.base, fired, lines: s.lines, files: s.files, ts: new Date().toISOString(), ...(prev?.raise ? { raise: prev.raise } : {}) });
   }
-  if (!announce) return ALLOW;
-  appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-warned', reason: `${esc(branch)} ${announce} ${s.lines}/${s.files}` });
-  const c = copy({ branch, base: s.base, lines: s.lines, files: s.files, lim }, announce);
-  if (ctx.unattended) return event === 'Stop' ? ALLOW : { kind: 'context', check: 'pr-size', text: c.unattended };
-  return event === 'Stop' ? { kind: 'context', check: 'pr-size', text: c.person } : { kind: 'context', check: 'pr-size', text: c.agent, notice: c.person };
+  if (!mark) return ALLOW;
+  appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-warned', reason: `${esc(branch)} ${mark} ${s.lines}/${s.files}` });
+  const c = copy({ branch, base: s.base, lines: s.lines, files: s.files, lim }, mark);
+  const stop = ctx.input.hook_event_name === 'Stop';
+  if (ctx.unattended) return stop ? ALLOW : { kind: 'context', check: 'pr-size', text: c.unattended };
+  return stop ? { kind: 'context', check: 'pr-size', text: c.person } : { kind: 'context', check: 'pr-size', text: c.agent, notice: c.person };
 }
 
 /** Never throws: a failure warns on stderr and allows. */
 export function progressWarning(ctx: Ctx, git: Git = realGit(ctx.root), now: () => number = Date.now): Decision {
   try {
-    return warnOnce(ctx, git, now);
+    const m = measureBranch(ctx, git, now);
+    return m ? announce(ctx, m.branch, m.s) : ALLOW;
   } catch (e) {
     process.stderr.write(`harness: pr-size progress failed: ${String((e as Error)?.message ?? e)}\n`);
     return ALLOW;

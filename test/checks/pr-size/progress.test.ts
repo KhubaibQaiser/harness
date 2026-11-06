@@ -1,13 +1,22 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, test, vi } from 'vitest';
-import { decidePrSize, prSize } from '../../../src/checks/pr-size/check.js';
-import { PROGRESS, progressWarning, readProgress, step } from '../../../src/checks/pr-size/progress.js';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { decidePrSize, prSize, writeRecord } from '../../../src/checks/pr-size/check.js';
+import { realGit, type Git } from '../../../src/checks/pr-size/measure.js';
+import { PROGRESS, progressWarning, readProgress, step, writeProgress } from '../../../src/checks/pr-size/progress.js';
 import type { HarnessConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
 import type { Check, Ctx } from '../../../src/hooks/dispatch.js';
 import { makeRepo } from '../../install/helpers.js';
 import { ctx, fakeGit, git, lines, repo } from './helpers.js';
+
+// Captures harness's stderr lines, so the fail-safe log is asserted and kept out of the test output.
+function stderr() {
+  const lines: string[] = [];
+  vi.spyOn(process.stderr, 'write').mockImplementation((c) => (lines.push(String(c)), true));
+  return lines;
+}
+afterEach(() => void vi.restoreAllMocks());
 
 const LIM = { target: 200, maxLines: 400, maxFiles: 20 };
 const sz = (l: number, f = 1) => ({ lines: l, files: f });
@@ -21,7 +30,6 @@ const NOTE = 'Note from pr-size: this branch\'s change is now 201 changed lines 
 
 const blockStop: Check = { name: 'stop', events: ['Stop'], run: () => ({ kind: 'block', reason: 'tests fail', check: 'stop' }) };
 async function hook(root: string, event: 'PostToolUse' | 'Stop', o: { tool?: string; file?: string; env?: NodeJS.ProcessEnv; checks?: Check[] } = {}) {
-  writeFileSync(join(root, '.git/info/exclude'), '.harness/\n'); // as an install's .gitignore does, so harness state isn't counted
   vi.resetModules();
   const { dispatch } = await import('../../../src/hooks/dispatch.js');
   const tool = event === 'Stop' ? {} : { tool_name: o.tool ?? 'Edit', tool_input: o.tool === 'Bash' ? { command: 'ls' } : { file_path: join(root, o.file ?? 'src/a.ts') }, tool_response: {} };
@@ -124,11 +132,57 @@ describe('off, unmeasured, bad state, odd names', () => {
     expect(existsSync(join(root, PROGRESS))).toBe(false);
   });
 
-  test('a missing base: no output and no event', async () => {
+  test('a missing base: no output and no event, one stderr line', async () => {
     const root = makeRepo({ 'README.md': 'hi\n' }, { branch: 'feat' });
     edit(root, 'src/a.ts', lines(300));
+    const err = stderr();
     expect(await hook(root, 'PostToolUse')).toEqual({});
     expect(readEvents(root).filter((e) => e.check === 'pr-size')).toEqual([]);
+    expect(err.filter((l) => l.startsWith('harness: pr-size progress'))).toEqual([expect.stringMatching(/^harness: pr-size progress not measured: no base/)]);
+  });
+
+  test('a throwing git allows with the failed line; a timed-out branch lookup allows with a not-measured line', () => {
+    const root = repo();
+    const err = stderr();
+    const boom: Git = () => { throw new Error('boom'); };
+    expect(progressWarning(editCtx(root, join(root, 'src/a.ts')), boom)).toEqual({ kind: 'allow' });
+    const late: Git = () => ({ status: null, stdout: '', error: Object.assign(new Error('t'), { code: 'ETIMEDOUT' }) });
+    expect(progressWarning(editCtx(root, join(root, 'src/a.ts')), late)).toEqual({ kind: 'allow' });
+    expect(err).toEqual(['harness: pr-size progress failed: boom\n', 'harness: pr-size progress not measured: git timed out\n']);
+  });
+
+  test('harness state and logs count for nothing, with no harness gitignore lines', async () => {
+    const root = repo();
+    edit(root, '.harness/logs/events.jsonl', lines(300));
+    edit(root, '.harness/state/x.json', lines(300));
+    edit(root, 'src/a.ts', lines(150));
+    expect(await hook(root, 'PostToolUse')).toEqual({});
+    expect(readProgress(root).feat).toMatchObject({ lines: 150, files: 1 });
+  });
+
+  test('a counted edit on a recorded branch spawns 7 git calls (no origin/HEAD lookup, no missed base refs)', () => {
+    const root = repo();
+    writeRecord(root, 'feat', { base: 'origin/main', lines: 0, files: 0, ts: 't' });
+    edit(root, 'src/a.ts', lines(10));
+    const calls: string[][] = [];
+    const g: Git = (a, ms) => (calls.push(a), realGit(root)(a, ms));
+    expect(progressWarning(editCtx(root, join(root, 'src/a.ts')), g)).toEqual({ kind: 'allow' });
+    expect(readProgress(root).feat).toMatchObject({ base: 'origin/main', lines: 10 });
+    expect(calls).toHaveLength(7);
+  });
+
+  test('a raise outside the 14.4 ranges is ignored', async () => {
+    const root = repo();
+    writeProgress(root, 'feat', { base: 'origin/main', fired: [], lines: 0, files: 0, ts: 't', raise: { lines: 0, files: 0, ts: 't' } });
+    edit(root, 'src/a.ts', lines(201));
+    expect((await hook(root, 'PostToolUse')).hookSpecificOutput?.additionalContext).toBe(TARGET(201, '1 file'));
+  });
+
+  test('a pr-progress.json over 1 MB reads as {}', () => {
+    const root = repo();
+    mkdirSync(join(root, '.harness/state'), { recursive: true });
+    writeFileSync(join(root, PROGRESS), JSON.stringify({ feat: prev(['target']), pad: 'x'.repeat(1_100_000) }));
+    expect(readProgress(root)).toEqual({});
   });
 
   test.each(['not json', '[]', '{"feat":{"fired":"x"}}'])('pr-progress.json %s reads as {} and the edit allows', async (body) => {

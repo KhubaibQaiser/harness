@@ -111,3 +111,9 @@ test('a git seam that throws gives a JSON error and exit 2, never an uncaught th
   expect(code).toBe(2);
   expect(JSON.parse(lines[0]!).error).toBe('could not measure: spawn exploded');
 });
+
+test('--worktree ignores --head, even a bad one', () => {
+  const r = run(['--worktree', '--head', '--bad'], repo());
+  expect(r.code).toBe(0);
+  expect(r.json.head).toBe('working tree');
+});

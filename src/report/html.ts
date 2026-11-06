@@ -2,6 +2,7 @@ import { RX } from './windows.js';
 import { h } from './h.js';
 import { CSS, MIN_N, NO_RELEVANT, USAGE_HEAD, chart, n, rate, section, sum, table, usageCells } from './html-parts.js';
 import { evalsSection, type EvalSummary } from './evals.js';
+import { enforcedLine, type RuleRow } from './rules.js';
 import { rulesSection } from './html-rules.js';
 import { gatesSection, tokensSection } from './html-tokens-gates.js';
 import { SKILL_NOTES, type SkillRow } from './metrics/skills.js';
@@ -17,7 +18,7 @@ export interface ReportMeta {
 }
 export interface ReportData {
   meta: ReportMeta; usage: UsageResult; always: { id: string; tokens: number | null }[]; skills: SkillRow[];
-  windows: WindowsResult; gates: GatesResult; rules?: unknown /* Task 19 */; evals?: EvalSummary[];
+  windows: WindowsResult; gates: GatesResult; rules?: RuleRow[]; evals?: EvalSummary[];
 }
 export const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
 export const NO_SESSIONS = 'No sessions found for this repo. Start Claude Code inside the repo for the report to see it.';
@@ -46,7 +47,7 @@ function summary(d: ReportData): string {
   const p95 = Math.max(0, ...d.gates.latency.map((x) => x.p95));
   return section('summary', 'Summary', `<div class="tiles">${[
     tile('Skills invoked when relevant', rate(hit, rel, NO_RELEVANT)),
-    tile('Rules enforced', d.rules === undefined ? 'not computed' : 'see Rules'),
+    tile('Rules enforced', d.rules === undefined ? 'not computed' : enforcedLine(d.rules)),
     tile('Rules loaded', `AGENTS.md in ${l.agentsMd} of ${l.sessions}, CLAUDE.md in ${l.claudeMd} of ${l.sessions} sessions`),
     tile('Tokens', USAGE_HEAD.map((c, i) => `${c.toLowerCase()} ${usageCells(t)[i]}`).join(', ')),
     tile('Probable false blocks', n(d.gates.falseBlocks.length)),

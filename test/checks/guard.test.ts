@@ -852,7 +852,7 @@ test("a message flag's $(…) value is code wherever it sits, with every wrapper
 });
 test('a plain message string is data only when nothing on the line can run it again', () => {
   all(['git commit -m "docs: never git push -f"', 'gh pr create --title "a b" --body "Blocks git push -f and rm -rf ~"', 'git commit -am "fix: x (rm -rf ~)" && git push',
-    "git commit -m 'why (git push -f) is bad'", 'git commit -m "x; git push -f" 2>&1 | tail -5'], 'allow');
+    "git commit -m 'why (git push -f) is bad'"], 'allow');
   const p = 'git commit -m "x; git push -f"';
   all([`${p}; eval "$_"`, `${p}; x=\${_}; echo $x`, `eval ${p}`, `${p} | sh`, `{ ${p}; } | 'sh'`, `${p} | b\\ash`, `tail() { sh; }; ${p} | tail`, `function tail { sh; }; ${p} | tail`,
     `hash -p /bin/sh head; ${p} | head`, `alias x=y; ${p}`, `enable -n echo; ${p}`, `case x in x) ${p};; esac`, 'git commit -e -m "x; git push -f"', 'git commit -em "x; git push -f"',
@@ -867,6 +867,26 @@ test('a re-runner counts only where the shell runs it as a command, and a shell 
   all(['ssh host -m "git push -f"', 'sh -c "$X" -m "git push -f"', 'watch -m "git push -f"', 'parallel -m "git push -f" ::: a', 'script -m "git push -f"',
     'git commit -m "x; git push -f" | sh -o pipefail', 'git commit -m "x; git push -f" | bash -s', "git commit -m \"x; git push -f\" | sh -c 'cat | sh'",
     'git commit -m "x; git push -f" | xargs sh -c', 'sudo -u x bash -c "$1" -m "git push -f"', 'git commit -m "x; git push -f" | /bin/sh', 'nohup sh -c "$0" -m "git push -f"'], 'deny');
+});
+test('a -F - message body is data only on a line a plain message would be data on: no re-runner, no $_, no pipe', () => {
+  const f = (pre: string, post = '') => `${pre}git commit -F - <<'EOF'${post}\nx; git push -f\nEOF`;
+  all([f('', ' | sh'), f('', ' | bash -s'), f('', ' | tail -5'), `${f('')}\neval "$_"`, f('sh -c "$0" x; '), f('', '; sh'), "gh pr create --body-file - <<'EOF' | sh\nx; git push -f\nEOF",
+    'git commit -m "x; git push -f" 2>&1 | tail -5', 'git commit -m "x; git push -f" | head -1'], 'deny');
+  all([f(''), f('', ' && git push'), "gh pr create --title x --body-file - <<'EOF'\nx; git push -f\nEOF"], 'allow');
+});
+test('package-manager runners and other wrappers put the next words in command position', () => {
+  const p = (w: string) => `git commit -m "x; git push -f"; ${w} -c "$X"`;
+  all([p('npx sh'), p('pnpm exec sh'), p('pnpm dlx sh'), p('yarn exec sh'), p('yarn dlx sh'), p('bunx sh'), p('bun x sh'), p('uv run sh'), p('uvx sh'), p('npm exec -- sh'),
+    p('flock /tmp/l sh'), p('chronic sh'), p('unbuffer sh'), p('caffeinate sh'), p('systemd-run --user sh'), p('nsenter -t 1 sh'), p('chroot / sh'), p('firejail sh'),
+    p('time -p sh'), p('coproc sh'), p('[[ -n x ]] && sh'), 'select x in a; do git commit -m "x; git push -f"; sh -c "$X"; done',
+    '{ git commit -m "x; git push -f"; sh -c "$X"; }', 'git commit -m "x; git push -f";{ sh -c "$X"; }'], 'deny');
+  all(['pnpm exec prettier -m "x; git push -f"', 'npx tsc -m "x; git push -f"'], 'allow');
+});
+test('a shell whose "script file" is stdin parses what it reads', () => {
+  const p = 'git commit -m "x; git push -f"';
+  all([`${p} | bash -`, `${p} | sh /dev/stdin`, `${p} | bash /dev/fd/0`, `${p} | sh //dev/./stdin`, `${p} | bash /proc/self/fd/0`, `bash <(echo x) ${p.slice(4)}`,
+    `${p}; bash < /tmp/x`], 'deny');
+  all(['bash x.sh -m "x; git push -f"', 'sh ./run.sh -m "x; git push -f"'], 'allow');
 });
 test('a case pattern ) does not close the case, and a redefined command or -e makes a heredoc sink code', () => {
   all(["case x in\nx) cat > f <<'EOF'\ngit push -f\nEOF\n;;\nesac | sh", "case x in *) cat > f <<'EOF'\ngit push -f\nEOF\n;; esac", "cat() { sh; }; cat > f <<'EOF'\ngit push -f\nEOF",

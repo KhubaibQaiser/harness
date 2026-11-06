@@ -3,7 +3,7 @@
 // The writer rule is strict on purpose (re-review 5): every redirect spelling not listed here is code, a few false
 // blocks traded for no misses.
 import { posix } from 'node:path';
-import { redefines } from './guard-reruns.js';
+import { LAST_ARG, redefines, reruns } from './guard-reruns.js';
 import { type Scan } from './guard-scan.js';
 
 /** Commands that write what they read to their output: data when that output goes to a plain file. */
@@ -100,10 +100,12 @@ const reused = (files: string[], count: (w: string) => number) =>
   files.some((f) => { const b = f.split('/').pop()!; return f !== '/dev/null' && (!/^[\w.-]+$/.test(b) || count(b) > 1); });
 
 /** The whole-command flags, read once from the skeleton guard-readings builds. A function, `alias`, `hash` or `enable`
- *  (`cat() { sh; }`) means no writer and no message flag is a sink. */
+ *  (`cat() { sh; }`) means no writer and no message flag is a sink; a re-runner or `$_` means no message flag is one,
+ *  the same rule as for a plain message string. */
 export function wholeFlags(c: string, sk: Skel = { skel: c, bodiless: c }) {
   const redef = redefines(sk.skel, sk.bodiless);
-  return { count: wordCounter(c), noFiles: EXEC_REDIRECT.test(sk.skel) || redef, noMessages: EDITOR_SET.test(sk.skel) || redef };
+  const noMessages = EDITOR_SET.test(sk.skel) || redef || reruns(sk.bodiless) || LAST_ARG.test(c);
+  return { count: wordCounter(c), noFiles: EXEC_REDIRECT.test(sk.skel) || redef, noMessages };
 }
 /**
  * The tests for one command, each simple command judged once, so many `<<` or `-m` stay linear. `sink(lineStart, at)`:
@@ -111,7 +113,7 @@ export function wholeFlags(c: string, sk: Skel = { skel: c, bodiless: c }) {
  * plain path, tee whose arguments and stdout are all plain paths, dd with a plain `of=`, or `git commit|tag -F -` or
  * `gh … --body-file|--notes-file|-F -`. Never with `exec` and a redirect, a function, `alias`, `hash` or `enable` (they
  * can make `cat` or `git` run something else), an editor or pager setting, a pipe after it, or a file the command
- * names again. `editedAt(lineStart, at)`: the simple command holding offset `at` has an editor flag (EDIT_FLAG).
+ * names again. `rerunAt(lineStart, at)`: the simple command holding offset `at` has an editor flag (EDIT_FLAG) or a pipe after it.
  * `flags` are read from the whole command once (wholeFlags).
  */
 export function commandTests(s: Scan, flags = wholeFlags(s.c)) {
@@ -138,10 +140,11 @@ export function commandTests(s: Scan, flags = wholeFlags(s.c)) {
       if (v === undefined) sinks.set(l + start, (v = sinkAt(x, start, end)));
       return v;
     },
-    editedAt: (l: number, at: number) => {
+    // A pipe could feed what git prints (`[branch sha] subject`) to a later stage, so a piped message command is code.
+    rerunAt: (l: number, at: number) => {
       const x = line(l), [start, end] = x.at(at - l);
       let v = edited.get(l + start);
-      if (v === undefined) edited.set(l + start, (v = x.words(start, end).some((w) => EDIT_FLAG.test(w))));
+      if (v === undefined) edited.set(l + start, (v = x.piped(end) || x.words(start, end).some((w) => EDIT_FLAG.test(w))));
       return v;
     },
   };

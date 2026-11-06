@@ -25,7 +25,7 @@ const data = (over: Partial<ReportData> = {}): ReportData => ({
   gates: { tally: { 'secrets:deny': 2 }, overrides: {}, falseBlocks: [], latency: [{ source: 'timing', event: 'PreToolUse', n: 5, p50: 10, p95: 30, max: 40, timeouts: 0 }], stopSteps: [], hallucination: { typecheckBlocks: 0, testBlocks: 0, registryChecks: 0, registryDenies: 0 }, notes: { badEvents: 0, badTiming: 0, noTime: 0, falseBlocksCut: 0, denyUnlinked: 0, unknownTools: 0, truncatedTurns: 0, samplesCut: 0, keysCut: 0, noTimingLog: true } },
   ...over,
 });
-const EV = { date: '2026-11-05', model: 'claude-x', kind: 'rules' as const, cases: [], deltaByRule: {}, costUsd: null, runs: 0 };
+const EV = { date: '2026-11-05', model: 'claude-x', kind: 'rules' as const, cases: [], deltaByRule: {}, costUsd: null, runs: 0, partial: false };
 const method = (html: string) => html.slice(html.indexOf('id="method"'));
 
 describe('renderReport', () => {

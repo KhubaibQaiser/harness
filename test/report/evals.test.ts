@@ -43,3 +43,23 @@ test('html eval section names the model and escapes', () => {
   expect(html).toContain('claude-&lt;b&gt;x');
   expect(html).not.toContain('<b>x');
 });
+
+test('a case with no score at all is unavailable, never 0%', () => {
+  const root = put('2026-11-05-claude-x-skills', { cases: [{ name: 'a-pos1' }] });
+  const [r] = readEvalResults(root);
+  expect(r!.cases[0]!.mean).toBeNull();
+  const html = evalsSection([r!]);
+  expect(html).toContain('unavailable');
+  expect(html).not.toContain('0%');
+});
+
+test('partial results are flagged', () => {
+  const [r] = readEvalResults(put('2026-11-05-claude-x-skills', { partial: true, cases: [] }));
+  expect(r!.partial).toBe(true);
+  expect(evalsSection([r!])).toContain('Partial result');
+});
+
+test('a rule named __proto__ keeps its delta', () => {
+  const root = put('2026-11-05-claude-x-rules', { cases: [{ name: '__proto__-rules', ...run([1]) }, { name: '__proto__-bare', ...run([0]) }] });
+  expect(Object.entries(readEvalResults(root)[0]!.deltaByRule)).toEqual([['__proto__', 1]]);
+});

@@ -9,7 +9,17 @@ const NUMBER_BASE = 16;
 const UNICODE_PAD = 4;
 const BMP_MAX = 0xffff;
 
-export const capMessage = (s: string): string => (s.length > MAX_MESSAGE ? s.slice(0, MAX_MESSAGE - TRUNCATED.length) + TRUNCATED : s);
+/** The docs give additionalContext the same 10,000-character cap as systemMessage. */
+export const MAX_CONTEXT = MAX_MESSAGE;
+const PARTIAL_ESCAPE = /\\u(?:\{[0-9a-f]*|[0-9a-f]{0,3})$/;
+const HIGH_SURROGATE = /[\ud800-\udbff]$/;
+
+/** Cuts to `max` characters with a marker, never inside a surrogate pair or a \uXXXX escape. */
+export const capMessage = (s: string, max = MAX_MESSAGE): string => {
+  if (s.length <= max) return s;
+  const head = s.slice(0, max - TRUNCATED.length).replace(HIGH_SURROGATE, '').replace(PARTIAL_ESCAPE, '');
+  return head + TRUNCATED;
+};
 
 /** Text the person reads: control and hidden characters (bidi, zero-width, tags) become \uXXXX; newlines, tabs and quotes stay readable. */
 export const shown = (s: string): string =>
@@ -39,7 +49,7 @@ export function emit(event: string, d: Decision): string {
     return JSON.stringify(
       event === 'Stop' || event === 'SessionEnd'
         ? { systemMessage: shown(d.text) }
-        : { hookSpecificOutput: { hookEventName: event, additionalContext: d.text }, ...(d.notice ? { systemMessage: shown(d.notice) } : {}) },
+        : { hookSpecificOutput: { hookEventName: event, additionalContext: capMessage(d.text, MAX_CONTEXT) }, ...(d.notice ? { systemMessage: shown(d.notice) } : {}) },
     );
   }
   if (event === 'PreToolUse') {

@@ -81,3 +81,18 @@ test('emit caps a systemMessage under 10,000 characters with a marker', () => {
 test('SessionEnd context still emits a systemMessage (Claude Code discards it; the event log keeps the warning)', () => {
   expect(JSON.parse(emit('SessionEnd', { kind: 'context', text: 'a', check: 'x' }))).toEqual({ systemMessage: 'a' });
 });
+test('the cap does not split a surrogate pair', () => {
+  const cut = 10_000 - '... [truncated]'.length;
+  const m = JSON.parse(emit('Stop', { kind: 'context', text: 'x'.repeat(cut - 1) + '😀' + 'y'.repeat(50), check: 'x' })).systemMessage;
+  expect(m).toBe('x'.repeat(cut - 1) + '... [truncated]');
+});
+test('the cap does not cut inside a \\uXXXX escape', () => {
+  const cut = 10_000 - '... [truncated]'.length;
+  const m = JSON.parse(emit('Stop', { kind: 'context', text: 'x'.repeat(cut - 3) + '‮' + 'y'.repeat(50), check: 'x' })).systemMessage;
+  expect(m).toBe('x'.repeat(cut - 3) + '... [truncated]');
+});
+test('additionalContext is capped too', () => {
+  const m = JSON.parse(emit('PostToolUse', { kind: 'context', text: 'x'.repeat(10_001), check: 'x' })).hookSpecificOutput.additionalContext;
+  expect(m.length).toBe(10_000);
+  expect(m.endsWith('... [truncated]')).toBe(true);
+});

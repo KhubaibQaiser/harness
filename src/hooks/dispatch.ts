@@ -26,7 +26,7 @@ import { managedSettingsPath } from '../core/settings-layers.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
 import { editTarget, isShell } from './edit-target.js';
-import { capMessage, emit, parseInput } from './io.js';
+import { capMessage, emit, MAX_CONTEXT, parseInput } from './io.js';
 import { mergeContext } from './notice.js';
 import type { Decision, HookEvent, HookInput } from './types.js';
 
@@ -328,7 +328,7 @@ function withNotice(event: string, out: string, notice: string): string {
   const o = out ? JSON.parse(out) : {};
   o.systemMessage = capMessage([o.systemMessage, notice].filter(Boolean).join('\n'));
   const extra = o.hookSpecificOutput?.additionalContext;
-  o.hookSpecificOutput = { ...o.hookSpecificOutput, hookEventName: event, additionalContext: [extra, notice].filter(Boolean).join('\n') };
+  o.hookSpecificOutput = { ...o.hookSpecificOutput, hookEventName: event, additionalContext: capMessage([extra, notice].filter(Boolean).join('\n'), MAX_CONTEXT) };
   return JSON.stringify(o);
 }
 

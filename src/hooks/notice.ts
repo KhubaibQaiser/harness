@@ -3,6 +3,15 @@ import type { Decision } from './types.js';
 
 const unique = (xs: string[]): string[] => [...new Set(xs)];
 
+/** The decision that wins: the first deny or block, else every ask joined into one dialog, so one yes is informed of every reason. */
+export function winner(decisions: Decision[]): Decision | undefined {
+  const hard = decisions.find((d) => d.kind === 'deny' || d.kind === 'block');
+  if (hard) return hard;
+  const asks = decisions.flatMap((d) => (d.kind === 'ask' ? [d] : []));
+  if (asks.length < 2) return asks[0];
+  return { kind: 'ask', reason: unique(asks.map((d) => d.reason)).join('\nAlso: '), check: unique(asks.map((d) => d.check)).join('+') };
+}
+
 /** Output for the context decisions (and the winning deny/block/ask, if any) of one hook run. */
 export function mergeContext(event: string, decisions: Decision[], win: Decision | undefined): string {
   const ctx = decisions.flatMap((d) => (d.kind === 'context' ? [d] : []));

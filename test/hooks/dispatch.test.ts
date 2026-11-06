@@ -62,6 +62,10 @@ test('unattended turns ask into deny with prefix', async () => {
   expect(decisionOf(r)).toBe('deny');
   expect(out(r).hookSpecificOutput?.permissionDecisionReason).toBe('Unattended run: sure?');
 });
+test('several asks make one dialog with every reason, in registry order; a repeated reason shows once', async () => {
+  const askB = mk('ask-b', { kind: 'ask', reason: 'really?', check: 'ask-b' });
+  expect(out(await dispatch(pre(), [askAll, askB, askAll], {})).hookSpecificOutput).toMatchObject({ permissionDecision: 'ask', permissionDecisionReason: 'sure?\nAlso: really?' });
+});
 test('ask alone stays ask when attended', async () => {
   expect(decisionOf(await dispatch(pre(), [askAll], {}))).toBe('ask');
 });

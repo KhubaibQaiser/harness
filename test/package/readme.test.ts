@@ -90,3 +90,11 @@ test('release notes list every excluded id and every unpinned git-subdir item', 
 test('the README status line shows the package version', () => {
   expect(readme).toContain(`version \`${pkgVersion}\``);
 });
+
+test('README documents the usage and adherence report and the eval cost', () => {
+  expect(readme).toContain('usage and adherence report');
+  expect(readme).toContain('| `report ');
+  expect(readme).toContain('start Claude Code inside the repo for the report to see it');
+  expect(readme).toContain('| `eval ');
+  expect(readme).toMatch(/costs money/);
+});

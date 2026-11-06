@@ -56,7 +56,8 @@ describe('vet scan time grows linearly', () => {
     const small = time(name, build(QUARTER));
     const large = time(name, big);
     expect(large, `4 MB took ${large.toFixed(0)} ms`).toBeLessThan(4000);
-    expect(large / Math.max(small, 2), `${small.toFixed(1)} ms -> ${large.toFixed(1)} ms`).toBeLessThan(50);
+    // 16x the input: linear is ~16x and quadratic ~256x. Hosted macOS measured 50.3x and 56x on a ~30 ms small run, so 100 keeps headroom and still fails a quadratic path.
+    expect(large / Math.max(small, 2), `${small.toFixed(1)} ms -> ${large.toFixed(1)} ms`).toBeLessThan(100);
     // Four 4 MB scans (warm-up plus median of 3) can pass vitest's 5 s default on a slow CI runner; the 4000 ms assert above is the real ceiling.
   }, 60_000);
 });

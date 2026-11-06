@@ -21,10 +21,40 @@ describe('rule coverage matrix', () => {
   it('default config enforces 1 of 11 (small PRs, prSize is on), 2 partly', () => {
     expect(line(defaults())).toBe('1 of 11 rules enforced deterministically, 2 partly');
   });
-  it('tdd plus a preset with trailer and prefixes gives 3, adding prSize gives 4', () => {
-    const base = { ...defaults(), checks: { ...defaults().checks, tdd: true, prSize: false } };
-    expect(line(withPreset(base))).toBe('3 of 11 rules enforced deterministically, 2 partly');
-    expect(line(withPreset({ ...base, checks: { ...base.checks, prSize: true } }))).toBe('4 of 11 rules enforced deterministically, 2 partly');
+  it('tdd with paths, plus a preset trailer rule: tdd yes, trailer only partly; prefixes never', () => {
+    const base = { ...defaults(), checks: { ...defaults().checks, tdd: true, prSize: false }, tdd: { ...defaults().tdd, paths: ['src/'] } };
+    expect(line(withPreset(base))).toBe('1 of 11 rules enforced deterministically, 3 partly');
+    expect(line(withPreset({ ...base, checks: { ...base.checks, prSize: true } }))).toBe('2 of 11 rules enforced deterministically, 3 partly');
+  });
+  it('tdd on with no tdd.paths enforces nothing', () => {
+    const c = { ...defaults(), checks: { ...defaults().checks, tdd: true } };
+    expect(ruleRows(c, gates(), win()).find((r) => r.def.id === 'tdd')!.enforced).toBe('no');
+  });
+  it('the trailer rule is partly with the preset flag and no otherwise; branch prefixes are never enforced', () => {
+    const by = (c: HarnessConfig, id: string) => ruleRows(c, gates(), win()).find((r) => r.def.id === id)!;
+    expect(by(withPreset(defaults()), 'no-ai-trailer').enforced).toBe('partial');
+    expect(by(withPreset(defaults(), { no_ai_trailer: false }), 'no-ai-trailer').enforced).toBe('no');
+    expect(by(defaults(), 'no-ai-trailer').enforced).toBe('no');
+    expect(by(withPreset(defaults()), 'branch-prefix').enforced).toBe('no');
+    expect(by(defaults(), 'no-ai-trailer').def.bypasses).toContain("a plain git commit isn't checked");
+  });
+  it('no-invented-data needs the guard for dep-verify; stop alone is enough', () => {
+    const rowFor = (checks: Partial<HarnessConfig['checks']>) =>
+      ruleRows({ ...defaults(), checks: { ...defaults().checks, ...checks } }, gates(), win()).find((r) => r.def.id === 'no-invented-data')!.enforced;
+    expect(rowFor({ guard: false, stop: false })).toBe('no');
+    expect(rowFor({ guard: false, stop: true })).toBe('partial');
+    expect(rowFor({ guard: true, stop: false })).toBe('partial');
+  });
+  it('counts guard events for paid-ok and stop events for no-invented-data', () => {
+    const rows = ruleRows(defaults(), gates({ 'guard deny': 2, 'stop block': 3 }), win());
+    expect(rows.find((r) => r.def.id === 'paid-ok')!.denies).toBe(2);
+    expect(rows.find((r) => r.def.id === 'no-invented-data')!.blocks).toBe(3);
+  });
+  it('the page shows "-" counts where no check is logged, and 0 where one is', () => {
+    const html = renderReport(data({ rules: ruleRows(defaults(), gates(), win()) }));
+    const row = (name: string) => html.slice(html.indexOf(`<td>${name}</td>`)).split('</tr>')[0]!;
+    expect(row('Lean context')).toContain('<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>');
+    expect(row('Small PRs')).toContain('<td>0</td><td>0</td>');
   });
   it('an off check makes its rule no, never followed', () => {
     const c = { ...defaults(), checks: { ...defaults().checks, tdd: false, depVerify: false, stop: false, guard: false, prSize: false } };

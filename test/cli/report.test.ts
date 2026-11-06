@@ -111,7 +111,7 @@ describe('harness report', () => {
     const r = await go(w, []);
     expect(r.text).toContain('Start Claude Code inside the repo');
   });
-  it('stays within 8 lines with every optional line present, and says rules are not computed', async () => {
+  it('stays within 8 lines with every optional line present, and prints the rules line', async () => {
     const r = await go(world(0), ['--export']);
     expect(r.lines.length).toBeLessThanOrEqual(8);
     expect(r.text).toContain('Rules enforced');

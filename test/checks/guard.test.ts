@@ -747,6 +747,17 @@ test('glob readings: per segment under a cap, never allow past it', () => {
   all(['sudo -u g?t g?t push -f'], 'deny');
   all(['rm -f dist/*.js', 'case $1 in *) echo hi;; esac', 'for f in *.ts; do wc -l $f; done', 'echo *', 'grep -E "foo(a|b)" src', 'f() { echo x; }'], 'allow');
 });
+test('heredoc bodies and quoted multi-line text are data to the glob readings, as on base', () => {
+  const ts = (n: number) => Array.from({ length: n }, (_, i) => `/**\n * Parses item ${i}.\n * Returns the value.\n */\nexport function f${i}(s: string) {\n  const re = /\\b(foo|bar)\\b/;\n  return re.test(s) ? s.length * 2 : 0;\n}\n`).join('\n');
+  all(["cat > a.md <<'EOF'\n# T\n\n* one\n* two\nEOF", 'git commit -m "fix: thing\n\n* one\n* two"', "git commit -m 'fix: thing\n\n* one change\n* two'",
+    'gh pr create --title x --body "## Summary\n* one\n* two"', `cat > src/x.ts <<'EOF'\n${ts(1)}\nEOF`, `cat > src/x.ts <<'EOF'\n${ts(8)}\nEOF`,
+    "cat > r.ts <<'EOF'\nconst re = /(foo|bar)/;\nconst x = a * b;\nEOF", 'git commit -m "' + 'fix: a * b; '.repeat(70) + '"', 'grep -E "\\b(foo|bar)\\b" src'], 'allow');
+  expect(kind("bash <<'EOF'\ng?t push -f\nEOF")).toBe('deny'); // a body fed to a shell is still a program
+});
+test('a closer is stripped from an rm target only when it closes a group opened before rm', () => {
+  all(['rm -rf -$(cat tmp)', 'rm -rf -`cat tmp`', 'rm -rf -$(cat build)'], 'ask');
+  expect(kind('(rm -rf /)')).toBe('deny');
+});
 test('the substitution check never lowers a deny', () => {
   all(['git push -f && echo a$(date)b', 'git push origin main && echo x`date`y'], 'deny');
   expect(kind('git push -f$(true)')).toBe('ask');

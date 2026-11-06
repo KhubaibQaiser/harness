@@ -210,7 +210,7 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   const event = ctx.input.hook_event_name;
   if (event === 'Stop' || (event === 'PostToolUse' && !isShell(tool_name))) return progressWarning(ctx, git, now);
   if (event === 'UserPromptSubmit') return clearAllPending(ctx.root);
-  if (!isShell(tool_name)) return event === 'PreToolUse' && isEdit(tool_name) ? pauseAsk(ctx, git) : { kind: 'allow' };
+  if (!isShell(tool_name)) return event === 'PreToolUse' && isEdit(tool_name) ? pauseAsk(ctx, git, now) : { kind: 'allow' };
   const command = String(tool_input.command ?? '');
   const hand = event === 'PreToolUse' ? handRun(command, { root: ctx.root, env: ctx.env }) : null;
   if (hand) return { kind: 'deny', check: 'pr-size', reason: hand };

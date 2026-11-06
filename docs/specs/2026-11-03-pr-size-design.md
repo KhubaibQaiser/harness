@@ -212,6 +212,7 @@ For a push, the first sentence becomes: "this push grows the pull request for `f
 1. On a local dummy repo with a 500-line branch, the agent's `gh pr create` shows the ask; the person declines and nothing runs.
 2. The same with `claude -p` (unattended): denied with the 10.2 copy.
 3. `/pr-ship` plans a split of that branch; the owner judges the plan. Nothing is pushed.
+4. Edit tool calls run one at a time (Pre A, Post A, Pre B), so a second edit can't pass PreToolUse before the first edit's PostToolUse sets `pending` and then clear it unasked (the pause ask, 14.3, N6).
 
 ## 12. Decisions (owner, 2026-11-03)
 

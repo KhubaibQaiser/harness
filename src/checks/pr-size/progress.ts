@@ -91,18 +91,24 @@ function clearPending(ctx: Ctx, git: Git): void {
   if (b !== null && Object.hasOwn(all, b) && all[b]!.pending) writeProgress(ctx.root, b, withoutPending(all[b]!));
 }
 
-/** PreToolUse of an edit tool (N6): one ask per unanswered announcement on the current branch. Writes nothing. */
-export function pauseAsk(ctx: Ctx, git: Git = realGit(ctx.root)): Decision {
+const AFTER = 'Approve to keep going with this edit, or say no and tell Claude to split it with the pr-ship skill or raise the limit for this branch.';
+const UNKNOWN_BRANCH = `Confirm: harness couldn't look up the current branch, and a branch here has an unanswered size warning. ${AFTER}`;
+
+/** PreToolUse of an edit tool (N6): one ask per unanswered announcement on the current branch. Writes nothing. A failed or
+ *  timed-out branch lookup (or no time left) asks about "the current branch"; only a real detached HEAD allows. */
+export function pauseAsk(ctx: Ctx, git: Git = realGit(ctx.root), now: () => number = Date.now): Decision {
   if (ctx.unattended) return ALLOW; // pending is never set unattended; this is a guard
   const all = readProgress(ctx.root);
   if (!anyPending(all)) return ALLOW; // only the file read, no git spawn
-  // ponytail: a failed or timed-out branch lookup reads as a detached HEAD and allows; it can't name the branch to ask about.
-  const b = currentBranch(git, Math.max(1, Math.min(GIT_CALL_MS, hookBudgetMs(ctx.startedAt, Date.now))));
-  const p = b !== null && Object.hasOwn(all, b) ? all[b]! : undefined;
+  const ms = Math.min(GIT_CALL_MS, hookBudgetMs(ctx.startedAt, now));
+  const r = ms > 0 ? git(['symbolic-ref', '--quiet', '--short', 'HEAD'], ms) : null;
+  if (!r || r.error) return { kind: 'ask', check: 'pr-size', reason: UNKNOWN_BRANCH };
+  const b = r.status === 0 ? r.stdout.trim() : '';
+  const p = b && Object.hasOwn(all, b) ? all[b]! : undefined;
   if (!p?.pending) return ALLOW;
   const lim = limits(ctx.config.pr_size, p.raise);
   const size = `${count(p.pending.lines, 'changed line')} in ${count(p.pending.files, 'file')}`;
-  const reason = `Confirm: \`${esc(b!)}\` is now ${size} (target ${lim.target}, limit ${count(lim.maxLines, 'line')} or ${count(lim.maxFiles, 'file')}). Approve to keep going with this edit, or say no and tell Claude to split it with the pr-ship skill or raise the limit for this branch.`;
+  const reason = `Confirm: \`${esc(b)}\` is now ${size} (target ${lim.target}, limit ${count(lim.maxLines, 'line')} or ${count(lim.maxFiles, 'file')}). ${AFTER}`;
   return { kind: 'ask', check: 'pr-size', reason };
 }
 

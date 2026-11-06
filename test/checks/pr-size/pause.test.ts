@@ -3,6 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { decidePrSize } from '../../../src/checks/pr-size/check.js';
+import { HAND_RUN } from '../../../src/checks/pr-size/hand-run.js';
+import type { Git } from '../../../src/checks/pr-size/measure.js';
 import { pauseAsk, readProgress, writeProgress } from '../../../src/checks/pr-size/progress.js';
 import type { HarnessConfig } from '../../../src/core/config.js';
 import type { Ctx } from '../../../src/hooks/dispatch.js';
@@ -30,6 +32,8 @@ function preCtx(root: string, o: { unattended?: boolean; config?: (c: HarnessCon
   c.input.tool_input = { file_path: join(root, 'src/a.ts') };
   return c;
 }
+const PROTECT = 'Harness files and Claude settings are changed by a person, not the agent.';
+const UNKNOWN = "Confirm: harness couldn't look up the current branch, and a branch here has an unanswered size warning. Approve to keep going with this edit, or say no and tell Claude to split it with the pr-ship skill or raise the limit for this branch.";
 const seed = (root: string, branch: string) => writeProgress(root, branch, { base: 'origin/main', fired: ['target'], lines: 201, files: 1, ts: 't', pending: { lines: 201, files: 1 } });
 
 describe('the ask', () => {
@@ -50,6 +54,7 @@ describe('the ask', () => {
     asks(await pre(root, { tool_name: 'NotebookEdit', tool_input: { notebook_path: join(root, 'n.ipynb') }, tool_response: {} }), PAUSE('feat', 201));
     await hook(root, 'PostToolUse', { tool_name: 'Read', tool_input: { file_path: join(root, 'src/a.ts') }, tool_response: {} });
     expect(pending(root)).toEqual({ lines: 201, files: 1 });
+    asks(await pre(root, editTool(root, 'pnpm-lock.yaml')), PAUSE('feat', 201)); // an excluded edit gets the ask itself
     await hook(root, 'PostToolUse', editTool(root, 'pnpm-lock.yaml'));
     expect(pending(root)).toBeUndefined();
   });
@@ -138,6 +143,24 @@ describe('no warning, no ask', () => {
     asks(await pre(root), PAUSE('constructor', 201));
   });
 
+  test('a failed or timed-out branch lookup asks about the current branch; a detached HEAD allows', () => {
+    const root = repo();
+    seed(root, 'feat');
+    const fail = (code: string): Git => () => ({ status: null, stdout: '', error: Object.assign(new Error(code), { code }) });
+    for (const code of ['ETIMEDOUT', 'ENOENT']) expect(pauseAsk(preCtx(root), fail(code))).toEqual({ kind: 'ask', check: 'pr-size', reason: UNKNOWN });
+    expect(pauseAsk(preCtx(root), () => ({ status: 1, stdout: '' }))).toEqual({ kind: 'allow' });
+  });
+
+  test('pauseAsk uses the injected clock: with the hook budget spent it asks with no git spawn', () => {
+    const root = repo();
+    seed(root, 'feat');
+    const c = preCtx(root);
+    c.startedAt = Date.now();
+    const f = fakeGit({ status: 0, stdout: 'other\n' });
+    expect(decidePrSize(c, f.g, () => c.startedAt + 10_000)).toEqual({ kind: 'ask', check: 'pr-size', reason: UNKNOWN });
+    expect(f.calls).toEqual([]);
+  });
+
   test('checks.prSize false: no ask with pending set', () => {
     const root = repo();
     seed(root, 'feat');
@@ -149,9 +172,10 @@ describe('the agent cannot clear it', () => {
   test('editing or overwriting pr-progress.json is denied (protect), and the pause stays', async () => {
     const root = repo();
     await posted(root, 201);
-    expect((await pre(root, editTool(root, '.harness/state/pr-progress.json', 'Write'))).permissionDecision).toBe('deny');
+    const byProtect = { permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining(PROTECT) };
+    expect(await pre(root, editTool(root, '.harness/state/pr-progress.json', 'Write'))).toMatchObject(byProtect);
     for (const command of ['echo {} > .harness/state/pr-progress.json', 'rm .harness/state/pr-progress.json']) {
-      expect((await pre(root, { tool_name: 'Bash', tool_input: { command }, tool_response: {} })).permissionDecision).toBe('deny');
+      expect(await pre(root, { tool_name: 'Bash', tool_input: { command }, tool_response: {} })).toMatchObject(byProtect);
     }
     asks(await pre(root), PAUSE('feat', 201));
   });
@@ -163,7 +187,7 @@ describe('the agent cannot clear it', () => {
       `echo '{"hook_event_name":"UserPromptSubmit","session_id":"s","cwd":"${root}"}' | node .harness/hooks/dispatch.mjs`,
       'node .harness/hooks/dispatch.mjs < /tmp/post-edit.json',
     ]) {
-      expect((await pre(root, { tool_name: 'Bash', tool_input: { command }, tool_response: {} })).permissionDecision).toBe('deny');
+      expect(await pre(root, { tool_name: 'Bash', tool_input: { command }, tool_response: {} })).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: HAND_RUN });
     }
     asks(await pre(root), PAUSE('feat', 201));
   });

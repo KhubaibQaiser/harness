@@ -57,3 +57,14 @@ test('parseInput returns null when session_id or cwd is not a string', () => {
   expect(parseInput('{"hook_event_name":"Stop","session_id":1,"cwd":"/r"}')).toBeNull();
   expect(parseInput('{"hook_event_name":"Stop","session_id":"s","cwd":null}')).toBeNull();
 });
+test('emit context with a notice adds systemMessage beside additionalContext', () => {
+  const out = JSON.parse(emit('PostToolUse', { kind: 'context', text: 'a', notice: 'b', check: 'x' }));
+  expect(out).toEqual({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'a' }, systemMessage: 'b' });
+});
+test('emit context without a notice is unchanged', () => {
+  const out = JSON.parse(emit('PostToolUse', { kind: 'context', text: 'a', check: 'x' }));
+  expect(out).toEqual({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'a' } });
+});
+test('emit context at Stop keeps the text as systemMessage and ignores the notice', () => {
+  expect(JSON.parse(emit('Stop', { kind: 'context', text: 'a', notice: 'b', check: 'x' }))).toEqual({ systemMessage: 'a' });
+});

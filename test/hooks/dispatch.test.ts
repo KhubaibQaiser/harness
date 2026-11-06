@@ -283,3 +283,29 @@ test('invalid config: a PowerShell shell write in the repo is denied by config',
   expect(o.hookSpecificOutput?.permissionDecision).toBe('deny');
   expect(o.hookSpecificOutput?.permissionDecisionReason).toContain('ask the user to correct .harness/config.yaml');
 });
+test('context notices are joined and shown as systemMessage', async () => {
+  const c1 = mk('c1', { kind: 'context', text: 't1', notice: 'n1', check: 'c1' });
+  const c2 = mk('c2', { kind: 'context', text: 't2', notice: 'n2', check: 'c2' });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'PostToolUse' }), [c1, c2], {}));
+  expect(o.systemMessage).toBe('n1\nn2');
+  expect(o.hookSpecificOutput.additionalContext).toBe('t1\nt2');
+});
+test('a notice with control or hidden characters is escaped', async () => {
+  const c = mk('c', { kind: 'context', text: 't', notice: 'a‮b\u001b[31m', check: 'c' });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'PostToolUse' }), [c], {}));
+  expect(o.systemMessage).toBe('a\\u202eb\\u001b[31m');
+});
+test('at Stop a block keeps the context text as systemMessage', async () => {
+  const b = mk('b', { kind: 'block', reason: 'r', check: 'b' });
+  const c = mk('c', { kind: 'context', text: 'warn', check: 'c' });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'Stop' }), [b, c], {}));
+  expect(o.decision).toBe('block');
+  expect(o.reason).toBe('r');
+  expect(o.systemMessage).toBe('warn');
+});
+test('at PreToolUse a deny plus a context check has no systemMessage', async () => {
+  const c = mk('c', { kind: 'context', text: 'warn', notice: 'n', check: 'c' });
+  const o = JSON.parse(await dispatch(pre(), [denyAll, c], {}));
+  expect(o.systemMessage).toBeUndefined();
+  expect(decisionOf(JSON.stringify(o))).toBe('deny');
+});

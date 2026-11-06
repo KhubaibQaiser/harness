@@ -28,4 +28,4 @@ export type Decision =
   | { kind: 'allow' }
   | { kind: 'deny' | 'ask'; reason: string; check: string }
   | { kind: 'block'; reason: string; check: string }
-  | { kind: 'context'; text: string; check: string };
+  | { kind: 'context'; text: string; check: string; notice?: string };

@@ -15,7 +15,7 @@ import { tamper } from '../checks/tdd/tamper.js';
 import { specGate } from '../checks/tdd/spec-gate.js';
 import { stopGate } from '../checks/stop/gate.js';
 import { testLock } from '../checks/tdd/test-lock.js';
-import { type HarnessConfig, loadConfig } from '../core/config.js';
+import { CONTROL, esc, type HarnessConfig, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
 import { writeHookEnv } from '../core/hook-env.js';
 import { bindPause, clearPause } from '../core/pause.js';
@@ -309,7 +309,11 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   const win =
     decisions.find((d) => d.kind === 'deny' || d.kind === 'block') ?? decisions.find((d) => d.kind === 'ask');
   const ctxs = decisions.flatMap((d) => (d.kind === 'context' ? [d.text] : []));
-  const out = win ? emit(event, win) : ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), check: 'context' }) : '';
+  // a notice may carry repo text: escape control and hidden characters before the person sees it
+  const notices = decisions.flatMap((d) => (d.kind === 'context' && d.notice ? [CONTROL.test(d.notice) ? esc(d.notice) : d.notice] : []));
+  const context = ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), notice: notices.join('\n') || undefined, check: 'context' }) : '';
+  let out = win ? emit(event, win) : context;
+  if (win && event === 'Stop' && win.kind === 'block' && ctxs.length) out = withNotice(event, out, ctxs.join('\n')); // a Stop warning survives a Stop-gate block
   const all = [pending, notice].filter(Boolean).join('\n');
   return all ? withNotice(event, out, all) : out;
 }

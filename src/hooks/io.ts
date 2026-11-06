@@ -17,7 +17,7 @@ export function emit(event: string, d: Decision): string {
     return JSON.stringify(
       event === 'Stop' || event === 'SessionEnd'
         ? { systemMessage: d.text }
-        : { hookSpecificOutput: { hookEventName: event, additionalContext: d.text } },
+        : { hookSpecificOutput: { hookEventName: event, additionalContext: d.text }, ...(d.notice ? { systemMessage: d.notice } : {}) },
     );
   }
   if (event === 'PreToolUse') {

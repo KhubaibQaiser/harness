@@ -178,6 +178,14 @@ describe('off, unmeasured, bad state, odd names', () => {
     expect((await hook(root, 'PostToolUse')).hookSpecificOutput?.additionalContext).toBe(TARGET(201, '1 file'));
   });
 
+  test('with a raise of 600, an edit at 500 lines gives no max warning, and the target copy names the raised limit', async () => {
+    const root = repo();
+    writeProgress(root, 'feat', { base: 'origin/main', fired: ['target'], lines: 300, files: 1, ts: 't', raise: { lines: 600, files: 30, ts: 't' } });
+    edit(root, 'src/a.ts', lines(500));
+    expect(await hook(root, 'PostToolUse')).toEqual({});
+    expect(warned(root)).toEqual([]);
+  });
+
   test('a pr-progress.json over 1 MB reads as {}', () => {
     const root = repo();
     mkdirSync(join(root, '.harness/state'), { recursive: true });

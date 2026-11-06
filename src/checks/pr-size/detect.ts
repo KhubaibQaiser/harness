@@ -2,7 +2,31 @@ import { gitArgs, runnerName, type Seg, walkCommands, type Where } from '../guar
 
 export type PrTarget =
   | { kind: 'create'; base?: string; head?: string }
-  | { kind: 'push'; all: boolean; refs: { src: string; dst: string }[] };
+  | { kind: 'push'; all: boolean; refs: { src: string; dst: string }[] }
+  | { kind: 'raise'; lines?: string; files?: string };
+export type RaiseArgs = { lines?: string; files?: string };
+
+const HOOK_SCRIPT = '.harness/hooks/dispatch.mjs';
+export const RAISE_FLAG = '--pr-size-raise';
+
+/** `--pr-size-raise --lines n [--files n]`'s raw values, or null for any other word, so the hook and the entry read one way. */
+export function raiseArgs(args: string[]): RaiseArgs | null {
+  const out: RaiseArgs = {};
+  for (let i = 0; i < args.length; i++) {
+    const key = args[i] === '--lines' ? 'lines' : args[i] === '--files' ? 'files' : null;
+    if (key && args[i + 1] !== undefined) out[key] = args[++i];
+    else if (args[i] !== RAISE_FLAG) return null;
+  }
+  return out;
+}
+
+/** `node <…>/.harness/hooks/dispatch.mjs … --pr-size-raise …` (the walker steps past `node`, a runner, to the script); a
+ *  hidden runner (`$X`) is never one, and the entry writes nothing. */
+function raiseTarget(toks: string[], k: number): PrTarget | null {
+  const script = toks[k]?.replace(/\\/g, '/');
+  if (runnerName(toks[k - 1] ?? '') !== 'node' || !script?.endsWith(HOOK_SCRIPT) || !toks.slice(k + 1).includes(RAISE_FLAG)) return null;
+  return { kind: 'raise', ...(raiseArgs(toks.slice(k + 1)) ?? {}) };
+}
 
 // gh pr create flags that take a value, so a value like `--title "--base x"` is not read as a flag.
 const GH_VALUE_FLAGS = new Set([
@@ -67,7 +91,9 @@ function visitSeg(out: PrTarget[]) {
     const name = runnerName(toks[k] ?? '');
     // A command name the shell expands ($GH, $(which gh), `which gh`) is hidden: any `pr create` after it counts.
     const hidden = toks[k]?.startsWith('$') ? toks.slice(k + 1) : k === 0 && (prev === ')' || prev === '`') ? toks : null;
-    if (hidden && afterPrCreate(hidden)) out.push({ kind: 'create' });
+    const raise = raiseTarget(toks, k);
+    if (raise) out.push(raise);
+    else if (hidden && afterPrCreate(hidden)) out.push({ kind: 'create' });
     else if (name === 'gh') {
       const args = afterPrCreate(toks.slice(k + 1));
       if (args) out.push(createTarget(args));
@@ -80,7 +106,7 @@ function visitSeg(out: PrTarget[]) {
   };
 }
 
-/** Every `gh pr create` and `git push` the command could run, under every reading, without duplicates. */
+/** Every `gh pr create`, `git push` and `--pr-size-raise` the command could run, under every reading, without duplicates. */
 export function prTargets(command: string, w: Where): PrTarget[] {
   const out: PrTarget[] = [];
   walkCommands<never>(command, w, visitSeg(out), {

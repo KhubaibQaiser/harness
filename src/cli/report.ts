@@ -13,6 +13,8 @@ import { selectedIds } from '../install/plan.js';
 import { packageDir } from '../core/package-dir.js';
 import { buildExport, exportProblems, type Known } from '../report/export.js';
 import { NO_SESSIONS, renderReport, type ReportData } from '../report/html.js';
+import { readEvalResults } from '../report/evals.js';
+import { enforcedLine, ruleRows } from '../report/rules.js';
 import { locateSessions, type GitRun } from '../report/locate.js';
 import { gatesAcc } from '../report/metrics/gates.js';
 import { installedSkills, skillSpecs, skillsAcc } from '../report/metrics/skills.js';
@@ -89,12 +91,13 @@ async function collect(root: string, cli: ReportEnv, days: number, now: number):
   }
   const vs = [...versions].sort();
   const dirs = { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) };
+  const evals = readEvalResults(root), gr = gates.result(), wr = windows.result();
   return {
     meta: {
       generated: new Date(now).toISOString(), days, harness: VERSION, claudeVersions: vs, untested: untested(vs),
       sessions: { scanned: located.sessions.length - unknown, skipped: located.skipped as Record<string, number>, unknown },
     },
-    usage: usage.result(), always: alwaysLoaded(root, dirs), skills: skills.result(), windows: windows.result(), gates: gates.result(),
+    usage: usage.result(), always: alwaysLoaded(root, dirs), skills: skills.result(), windows: wr, gates: gr, rules: ruleRows(cfg, gr, wr), ...(evals.length > 0 && { evals }),
   };
 }
 
@@ -107,7 +110,7 @@ function summary(d: ReportData, rel: string, expRel?: string): string[] {
     `Sessions: ${m.sessions.scanned} scanned, ${skipped} skipped, ${m.sessions.unknown} unknown (last ${m.days} days)`,
     ...(m.sessions.scanned === 0 ? [NO_SESSIONS] : []),
     `Skills invoked when relevant: ${hit} of ${rel2}; probable false blocks: ${d.gates.falseBlocks.length}`,
-    'Rules enforced: not computed yet',
+    `Rules enforced: ${d.rules ? enforcedLine(d.rules) : 'not computed'}`,
     `Tokens: input ${t.input}, cache write ${t.cacheWrite}, cache read ${t.cacheRead}, output ${t.output}`,
     `Windows notes: ${notes}`,
     ...(expRel ? [`Export: ${expRel}`] : []),

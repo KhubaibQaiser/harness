@@ -1,30 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { CSP, NO_SESSIONS, h, renderReport, type ReportData } from '../../src/report/html.js';
-import type { WindowRule, WindowsResult } from '../../src/report/windows.js';
-import type { SkillRow } from '../../src/report/metrics/skills.js';
 import { hbars, stackedBars } from '../../src/report/svg.js';
 
-const U = (n: number) => ({ input: n, output: n + 1, cacheWrite: n + 2, cacheRead: n + 3 });
-const RULES: WindowRule[] = ['ask-first', 'no-invented-data', 'fix-everything', 'readme-per-pr', 'paid-ok', 'plain-communication', 'tdd'];
-const split = { turns: 0, windows: 0 };
-const buckets = { '1-10': split, '11-30': split, '31-100': split, '100+': split };
-const windows = (over: Partial<WindowsResult['byRule']['tdd']> = {}): WindowsResult => ({
-  byRule: Object.fromEntries(RULES.map((r) => [r, { windows: [], total: 0, counters: {}, byBucket: buckets, byCompact: { pre: split, post: split }, ...(r === 'tdd' ? over : {}) }])) as WindowsResult['byRule'],
-  unknown: 0, notes: { sideRecords: 3, sideBad: 2, beforeFirstPrompt: 1 },
-});
-const bk = { r: 0, i: 0 };
-const skill = (over: Partial<SkillRow> = {}): SkillRow => ({
-  name: 'tdd-skill', label: 'paths', listedIn: 5, sessionsWithListing: 5, relevantIn: 8, invokedRelevant: 4, invokedOther: 0, typedOrCarried: 0, sessions: 10, dropped: false, unknown: 0, undercounted: false, splitUnplaced: 0, duplicates: 0,
-  byBucket: { '1-10': bk, '11-30': bk, '31-100': bk, '100+': bk }, byCompact: { pre: bk, post: bk }, ...over,
-});
-const data = (over: Partial<ReportData> = {}): ReportData => ({
-  meta: { generated: '2026-11-05T10:00:00Z', days: 14, harness: '0.2.0', claudeVersions: ['2.1.0'], untested: [], sessions: { scanned: 3, skipped: { 'unsafe id': 1 }, unknown: 0 } },
-  usage: { total: U(10), main: U(8), sub: U(2), byDay: { '2026-11-04': U(5), '2026-11-05': U(7) }, byModel: { 'claude-x': U(10) }, sessions: [{ id: 's1', usage: U(10), responses: 4, compactions: 1, peak: 99 }], responses: 4, unknown: 0, loads: { sessions: 3, agentsMd: 2, claudeMd: 1, unknown: 0, compactions: 1, reloaded: 1 }, toolChars: { Bash: 400 } },
-  always: [{ id: 'agents-block', tokens: 120 }, { id: 'other', tokens: null }],
-  skills: [skill()], windows: windows(),
-  gates: { tally: { 'secrets:deny': 2 }, overrides: {}, falseBlocks: [], latency: [{ source: 'timing', event: 'PreToolUse', n: 5, p50: 10, p95: 30, max: 40, timeouts: 0 }], stopSteps: [], hallucination: { typecheckBlocks: 0, testBlocks: 0, registryChecks: 0, registryDenies: 0 }, notes: { badEvents: 0, badTiming: 0, noTime: 0, falseBlocksCut: 0, denyUnlinked: 0, unknownTools: 0, truncatedTurns: 0, samplesCut: 0, keysCut: 0, noTimingLog: true } },
-  ...over,
-});
+import { U, data, skill, windows } from './html-data.js';
 const EV = { date: '2026-11-05', model: 'claude-x', kind: 'rules' as const, cases: [], deltaByRule: {}, costUsd: null, runs: 0, partial: false };
 const method = (html: string) => html.slice(html.indexOf('id="method"'));
 
@@ -70,7 +48,7 @@ describe('renderReport', () => {
     const html = renderReport(data());
     expect(html).not.toContain('id="rules-matrix"');
     expect(html).not.toContain('id="evals"');
-    const both = renderReport(data({ rules: { a: '<u>' }, evals: [EV] }));
+    const both = renderReport(data({ rules: [{ def: { id: 'tdd', kind: 'mechanical', checks: [], on: () => true, bypasses: ['<u>'] }, enforced: 'yes', fires: 0, denies: 0, asks: 0, blocks: 0, probableFalse: 0, windows: 0 }], evals: [EV] }));
     expect(both).toContain('id="rules-matrix"');
     expect(both).toContain('id="evals"');
     expect(both).not.toContain('<u>');
@@ -101,7 +79,7 @@ const hostileData = (): ReportData => {
   const H = HOSTILE, d = data();
   const w = windows({ total: 1, windows: [{ rule: 'tdd', session: H, date: H, turn: 1, prompt: H, texts: H, tools: [H] }], counters: { [H]: 1 } });
   return {
-    ...d, windows: w, always: [{ id: H, tokens: 1 }], skills: [skill({ name: H })], rules: { [H]: H }, evals: [{ ...EV, model: H, date: H, cases: [{ name: H, mean: 1, passK: true, variant: H }] }],
+    ...d, windows: w, always: [{ id: H, tokens: 1 }], skills: [skill({ name: H })], rules: [{ def: { id: 'tdd', kind: 'mechanical', checks: [H], on: () => true, bypasses: [H] }, enforced: 'yes', fires: 0, denies: 0, asks: 0, blocks: 0, probableFalse: 0, windows: 0 }], evals: [{ ...EV, model: H, date: H, cases: [{ name: H, mean: 1, passK: true, variant: H }] }],
     meta: { ...d.meta, harness: H, generated: H, claudeVersions: [H], untested: [H], sessions: { scanned: 2, skipped: { [H]: 1 }, unknown: 0 } },
     usage: { ...d.usage, byDay: { [H]: U(1) }, byModel: { [H]: U(2) }, toolChars: { [H]: 40 }, sessions: [{ id: H, usage: U(3), responses: 1, compactions: 0, peak: 5 }] },
     gates: {

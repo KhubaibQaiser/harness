@@ -253,3 +253,21 @@ describe('raise (spec §14.4)', () => {
     expect(decidePrSize(ctx(root, 'git push'))).toEqual({ kind: 'allow' });
   });
 });
+
+describe('a raise runs on its own', () => {
+  const R = 'node .harness/hooks/dispatch.mjs --pr-size-raise --lines 600';
+  const ALONE = 'Blocked by pr-size: run one `--pr-size-raise` on its own, with no second raise and no branch, directory or repo change in the same command.';
+  test.each([
+    `git checkout main && ${R}`, `git switch main; ${R}`, `git -C ../other status && ${R}`, `cd ../other && ${R}`, `pushd ../other && ${R}`,
+    `git worktree add ../w main && ${R}`, `git --git-dir=../o/.git status && ${R}`, `GIT_DIR=../o/.git ${R}`, `${R} && ${R.replace('600', '900')}`,
+  ])('%s is denied, attended and unattended, and PostToolUse records nothing', async (c) => {
+    const root = repo();
+    for (const unattended of [false, true]) expect(decidePrSize(ctx(root, c, { unattended }))).toEqual({ kind: 'deny', check: 'pr-size', reason: ALONE });
+    await send(root, 'PostToolUse', c);
+    expect(existsSync(join(root, PROGRESS))).toBe(false);
+  });
+
+  test('a plain raise still asks', () => {
+    expect(decidePrSize(ctx(repo(), R)).kind).toBe('ask');
+  });
+});

@@ -24,6 +24,17 @@ export function raiseLimits(t: RaiseArgs, c: HarnessConfig['pr_size']): { lines:
   return { lines, files };
 }
 
+// A branch, directory or repo change in the same command could make PostToolUse record a branch the person wasn't asked
+// about. Matched on the whole text, so a false match only denies, and the agent runs the raise on its own.
+const MOVES = /(^|[\s;&|(`])(cd|pushd|popd)(\s|$)|\bgit\b.*\s(checkout|switch|-C)(\s|$)|\bworktree\s+add\b|--git-dir\b|\bGIT_(DIR|WORK_TREE)=/;
+export const ALONE = 'Blocked by pr-size: run one `--pr-size-raise` on its own, with no second raise and no branch, directory or repo change in the same command.';
+
+/** True when a raise isn't alone: more than one raise, or a raise beside a branch, directory or repo change. */
+export function raiseCombined(command: string, targets: PrTarget[]): boolean {
+  const raises = targets.filter((t) => t.kind === 'raise').length;
+  return raises > 1 || (raises === 1 && MOVES.test(command));
+}
+
 /** The first raise with valid values: the one shown at PreToolUse is the one recorded at PostToolUse. */
 export function validRaise(ctx: Ctx, targets: PrTarget[]): { lines: number; files: number } | null {
   for (const t of targets) {
@@ -46,6 +57,7 @@ export function raiseDecision(ctx: Ctx, r: { lines: number; files: number }, cur
 export function recordRaise(ctx: Ctx, r: { lines: number; files: number }, cur: Cur): void {
   const branch = cur.name;
   if (cur.late || branch === null || !plainBranch(branch)) return;
+  // The pause task (Task 12) clears this branch's `pending` here too (spec §14.5: a raise clears it).
   const all = readProgress(ctx.root);
   const ts = new Date().toISOString();
   const prev = Object.hasOwn(all, branch) ? all[branch]! : { base: ctx.config.stop.base_ref, fired: [], lines: 0, files: 0, ts };

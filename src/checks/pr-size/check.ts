@@ -11,7 +11,7 @@ import type { Decision } from '../../hooks/types.js';
 import { type PrTarget, prTargets } from './detect.js';
 import { type Git, hookBudgetMs, isOver, measure, plainBranch, realGit, type Size } from './measure.js';
 import { limits, type Progress, progressWarning, readProgress } from './progress.js';
-import { raiseDecision, recordRaise, validRaise } from './raise.js';
+import { ALONE, raiseCombined, raiseDecision, recordRaise, validRaise } from './raise.js';
 
 export const RECORD = '.harness/state/pr-branches.json';
 export interface PrRecord { base: string; lines: number; files: number; ts: string }
@@ -212,7 +212,9 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   const command = String(tool_input.command ?? '');
   const all = prTargets(command, { root: ctx.root, env: ctx.env });
   const targets = all.filter((t): t is PrJob => t.kind !== 'raise');
-  const raise = validRaise(ctx, all);
+  const combined = raiseCombined(command, all);
+  if (combined && event === 'PreToolUse') return { kind: 'deny', check: 'pr-size', reason: ALONE };
+  const raise = combined ? null : validRaise(ctx, all);
   if (!targets.length && !raise) return { kind: 'allow' };
   const clock: Clock = { now, git, deadline: now() + hookBudgetMs(ctx.startedAt, now) };
   if (event === 'PreToolUse') return withRaise(ctx, raise && raiseDecision(ctx, raise, current(clock)), targets.length ? decidePre(ctx, git, targets, clock) : { kind: 'allow' });

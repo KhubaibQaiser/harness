@@ -6,7 +6,7 @@ import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
-import { gitPlain, globReadings, MAX_READINGS, splicedReading } from './guard-readings.js';
+import { gitPlain, globReadings, inArithmetic, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -168,7 +168,7 @@ export function withoutHeredocBodies(cmd: string): string {
       if (quote) { if (ch === quote) quote = ''; continue; }
       if (ch === '"' || ch === "'") quote = ch;
       else if (ch === '\\') c++;
-      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<') {
+      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<' && !inArithmetic(line, c)) {
         let d = c + 2;
         const dash = line[d] === '-';
         if (dash) d++;
@@ -684,8 +684,11 @@ function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
 function decideCore(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const unq = quoteFree(command); // `"git" push`, `g\it push`, `git $'push'`: quotes and escapes hide no text rule
-  const git = gitPlain(command);
-  const texts = [command, unq, git];
+  // The text rules read the command without its data: heredoc bodies nobody runs and quoted -m/--body messages.
+  const view = textRulesView(command);
+  const vUnq = view === command ? unq : quoteFree(view);
+  const git = gitPlain(view);
+  const texts = [view, vUnq, git];
   const tokens = `${command} ${unq}`.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');
   const personOnly = personOnlyInvocation(command, ctx);
@@ -698,7 +701,7 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   for (const { targets } of rmTargets(command)) {
     if (targets.some((t) => { const rel = inTdd(t); return rel !== null && isTestFile(rel); })) return deny('deleting a test file in a TDD path');
   }
-  const early = checkRm(command) ?? checkPushToMain(command) ?? checkPushToMain(unq) ?? checkPushToMain(git);
+  const early = checkRm(view) ?? checkPushToMain(view) ?? checkPushToMain(vUnq) ?? checkPushToMain(git);
   if (early) return toDecision(early);
   for (const [re, why] of DENY) if (texts.some((t) => re.test(t))) return deny(why);
   if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {

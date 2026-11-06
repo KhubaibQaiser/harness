@@ -1,7 +1,7 @@
 // Extra readings of a Bash command for the guard's text rules: what the shell can turn a word into before it runs.
 // Imported by guard.ts, which this module imports back: use guard.ts names only inside functions, never at load time.
 import picomatch from 'picomatch';
-import { commandStart, quoteFree, SEGMENTS, withoutHeredocBodies } from './guard.js';
+import { commandStart, quoteFree, SEGMENTS } from './guard.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
@@ -14,12 +14,9 @@ const MAX_COMBINED = 64;
 export const MAX_READINGS = 2048;
 /** Characters of reading text in all, so a big command gets few full-length readings and answers fast. */
 const MAX_READING_CHARS = 16 * 1024;
-/** zsh alternation groups looked at before the guard gives up and asks. */
-const MAX_GROUPS = 256;
 const GLOB = /[*?[]/;
 /** zsh's default glob alternation inside a word: g(i|x)t. Bash rejects it, so reading it is only stricter. */
 const ZSH_ALT = /(?<=[\w./*?\]-])\(([^()\s]*\|[^()\s]*)\)/g;
-const SEPARATOR_CHAR = /[;&|\n()`]/; // the characters SEGMENTS splits on
 let segmentSplit: RegExp | undefined; // built on first use, see the import note
 
 export interface GlobReadings { texts: string[]; capped: boolean }
@@ -39,27 +36,180 @@ class Budget {
   fits(n: number, len: number): boolean { return this.seen.size + n <= MAX_READINGS && this.chars + n * len <= MAX_READING_CHARS; }
 }
 
-/** Heredoc bodies and quoted spans with whitespace in them are data (a commit message's `* one` bullet, a JSDoc ` * `
- *  line, a regex's `(a|b)`), so the readings start from the text without them. A program fed to a shell, a -c payload
- *  or eval's words are read on their own by the guard. A quoted single word stays: `'g?t' push` is read as a glob. */
-const words = (c: string): string => withoutHeredocBodies(c).replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (q) => (/\s/.test(q) ? "''" : q));
+/** Where the quoted spans and heredoc bodies of a command are. Offsets into the command, `end` and `to` exclusive. */
+interface Quoted { start: number; end: number; subs: string[] } // subs: the $(…) and `…` the shell runs inside "…"
+interface Heredoc { from: number; to: number; literal: boolean; program: boolean } // the body and its end line
+interface Layout { quotes: Quoted[]; heredocs: Heredoc[] }
 
-/** True when the word holding `at` is where its segment's command runs (past wrappers, as commandStart reads it). */
-function atCommand(text: string, at: number): boolean {
-  let w = at;
-  while (w > 0 && !/[\s;&|()`]/.test(text[w - 1])) w--;
-  let p = w;
-  while (p > 0 && !SEPARATOR_CHAR.test(text[p - 1])) p--;
-  const toks = text.slice(p, w).split(/[ \t]+/).filter(Boolean);
-  return commandStart([...toks, text.slice(w).split(/\s/)[0]]) === toks.length;
+/** Index just past the `)` that closes a `$(` or `(` whose body starts at `k`, skipping quotes and escapes inside. */
+function closeParen(c: string, k: number, depth = 1): number {
+  for (; k < c.length; k++) {
+    const ch = c[k];
+    if (ch === '\\') k++;
+    else if (ch === "'") { const e = c.indexOf("'", k + 1); k = e < 0 ? c.length : e; }
+    else if (ch === '"') k = doubleQuoted(c, k).end - 1;
+    else if (ch === '(') depth++;
+    else if (ch === ')' && --depth === 0) return k + 1;
+  }
+  return c.length;
+}
+/** Index just past the backtick that closes one opened at `k - 1`. */
+function closeTick(c: string, k: number): number {
+  for (; k < c.length; k++) {
+    if (c[k] === '\\') k++;
+    else if (c[k] === '`') return k + 1;
+  }
+  return c.length;
+}
+/** The $(…) and `…` the shell runs in `c[from, to)`, as command lines (a "…" span or an unquoted-delimiter heredoc body). */
+function substitutions(c: string, from: number, to: number): string[] {
+  const subs: string[] = [];
+  for (let k = from; k < to; k++) {
+    if (c[k] === '\\') k++;
+    else if (c[k] === '$' && c[k + 1] === '(' && c[k + 2] !== '(') { const e = Math.min(closeParen(c, k + 2), to); subs.push(c.slice(k + 2, e - 1)); k = e - 1; }
+    else if (c[k] === '`') { const e = Math.min(closeTick(c, k + 1), to); subs.push(c.slice(k + 1, e - 1)); k = e - 1; }
+  }
+  return subs;
+}
+/** A "…" span opened at `i`: `\"`, `\\`, `\$` and `` \` `` are escapes, and $(…) and `…` run. */
+function doubleQuoted(c: string, i: number): Quoted {
+  let k = i + 1;
+  for (; k < c.length && c[k] !== '"'; k++) {
+    if (c[k] === '\\') k++;
+    else if (c[k] === '$' && c[k + 1] === '(') k = closeParen(c, k + 2) - 1;
+    else if (c[k] === '`') k = closeTick(c, k + 1) - 1;
+  }
+  const end = Math.min(k + 1, c.length);
+  return { start: i, end, subs: substitutions(c, i + 1, end - 1) };
 }
 
-/** The first command-word alternation group, null for none, false when too many groups were looked at. */
-function commandGroup(c: string): RegExpExecArray | null | false {
-  ZSH_ALT.lastIndex = 0;
-  for (let n = 0, m: RegExpExecArray | null; (m = ZSH_ALT.exec(c)); n++) {
-    if (n >= MAX_GROUPS) return false;
-    if (atCommand(c, m.index)) return m;
+/** A line that feeds its heredoc to something that runs it: a shell (`| sh`, `bash -s -- x`), eval, source or `.`, or an
+ *  interpreter reading its program from stdin (`node -`, `python3 -`; with -e or -c the body is its data). */
+const SHELL_FED = /(?:^|[;&|(]\s*|\s)(?:(?:ba|z|da|k)?sh|eval|source|\.)(?=[\s;&|)]|$)/;
+const INTERPRETER_FED = /(?:^|[;&|(]\s*|\s)(?:node|python3?|ruby|perl|php|deno|bun)(?=\s|$)(?![^;&|\n]*\s-(?:[ec]|-eval)(?=\s|$))/;
+
+/** Where the shell sees quotes and heredoc bodies: `\` escapes outside quotes, `'…'` is literal, `"…"` keeps its
+ *  substitutions, `$((…))` and `((…))` are arithmetic (`1<<E` is a shift), and `<<WORD` takes the lines up to WORD.
+ *  A heredoc this cannot read (a delimiter with an expansion, no end line) leaves every body in place. */
+function layout(c: string): Layout {
+  const quotes: Quoted[] = [], heredocs: Heredoc[] = [];
+  let pending: { word: string; dash: boolean; literal: boolean }[] = [], lineStart = 0;
+  for (let i = 0; i < c.length; i++) {
+    const ch = c[i];
+    if (ch === '\\') i++;
+    else if (ch === "'") { const e = c.indexOf("'", i + 1); const end = e < 0 ? c.length : e + 1; quotes.push({ start: i, end, subs: [] }); i = end - 1; }
+    else if (ch === '"') { const q = doubleQuoted(c, i); quotes.push(q); i = q.end - 1; }
+    else if ((ch === '$' && c[i + 1] === '(' && c[i + 2] === '(') || (ch === '(' && c[i + 1] === '(')) i = closeParen(c, i + (ch === '$' ? 3 : 2), 2) - 1;
+    else if (ch === '<' && c[i + 1] === '<') {
+      if (c[i + 2] === '<') { i += 2; continue; } // a here-string
+      let d = i + 2;
+      const dash = c[d] === '-';
+      if (dash) d++;
+      while (c[d] === ' ' || c[d] === '\t') d++;
+      let word = '', q = '', literal = false;
+      for (; d < c.length; d++) {
+        const x = c[d];
+        if (q) { if (x === q) q = ''; else word += x; }
+        else if (x === '"' || x === "'") { q = x; literal = true; }
+        else if (x === '\\') { literal = true; word += c[++d] ?? ''; }
+        else if (/[\s;|&<>()]/.test(x)) break;
+        else word += x;
+      }
+      if (q || !/^\w+$/.test(word)) return { quotes, heredocs: [] };
+      pending.push({ word, dash, literal });
+      i = d - 1;
+    } else if (ch === '\n' && pending.length) {
+      const line = c.slice(lineStart, i);
+      const program = SHELL_FED.test(line) || INTERPRETER_FED.test(line);
+      let p = i + 1;
+      for (const h of pending) {
+        const from = p;
+        for (;;) {
+          if (p >= c.length) return { quotes, heredocs: [] }; // no end line: nothing is hidden
+          const nl = c.indexOf('\n', p), end = nl < 0 ? c.length : nl;
+          const l = c.slice(p, end);
+          p = nl < 0 ? c.length : nl + 1;
+          if ((h.dash ? l.replace(/^\t+/, '') : l) === h.word) break;
+        }
+        heredocs.push({ from, to: p, literal: h.literal, program });
+      }
+      pending = [];
+      i = p - 1;
+      lineStart = p;
+    } else if (ch === '\n') lineStart = i + 1;
+  }
+  return { quotes, heredocs };
+}
+
+/** The command with data taken out: a heredoc body nobody runs (its end line too), keeping the $(…) and `…` of an
+ *  unquoted-delimiter body as lines, and each quoted span `blank` picks, as '' plus the substitutions a "…" span runs. */
+function withoutData(c: string, blank: (q: Quoted) => boolean): string {
+  if (!/['"<]/.test(c)) return c;
+  const { quotes, heredocs } = layout(c);
+  const cuts = [...quotes.filter(blank).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map((s) => ` $(${s})`).join('') })),
+    ...heredocs.filter((h) => !h.program).map((h) => ({ from: h.from, to: h.to, put: h.literal ? '' : substitutions(c, h.from, h.to).map((s) => s + '\n').join('') }))]
+    .sort((a, b) => a.from - b.from);
+  if (!cuts.length) return c;
+  let out = '', at = 0;
+  for (const x of cuts) { out += c.slice(at, x.from) + x.put; at = x.to; }
+  return out + c.slice(at);
+}
+
+const spaced = (c: string) => (q: Quoted) => /\s/.test(c.slice(q.start, q.end));
+/** The glob readings' start: data out, and every quoted span with whitespace in it is data (a commit message's `* one`
+ *  bullet, a JSDoc ` * ` line, a regex's `(a|b)`). -c payloads and eval's words are read on their own by the guard.
+ *  A quoted single word stays: `'g?t' push` is read as a glob. */
+const words = (c: string): string => withoutData(c, spaced(c));
+/** A message value: `-m`, `-am`, `--message`, `--body`, `--title` or `--notes` right before the quoted span. */
+const MESSAGE_FLAG = /(?:^|\s)(?:-[a-zA-Z]*m|--message|--body|--title|--notes)(?:=|[ \t]+)$/;
+/** The text rules' reading: data heredoc bodies out, and a quoted message value with whitespace in it is data too
+ *  (`git commit -m 'why (git push -f) is bad'`). A body fed to a shell or an interpreter stays: it is a program. */
+export const textRulesView = (c: string): string => {
+  const sp = spaced(c);
+  return withoutData(c, (q) => sp(q) && MESSAGE_FLAG.test(c.slice(Math.max(0, q.start - 16), q.start)));
+};
+/** True when `<<` at `at` sits in arithmetic (`$((1<<E))`), which the heredoc reader skips. */
+export const inArithmetic = (line: string, at: number): boolean => {
+  for (let i = 0; i < at; i++) {
+    if ((line[i] === '$' && line[i + 1] === '(' && line[i + 2] === '(') || (line[i] === '(' && line[i + 1] === '(')) {
+      const e = closeParen(line, i + (line[i] === '$' ? 3 : 2), 2);
+      if (at < e) return true;
+      i = e - 1;
+    }
+  }
+  return false;
+};
+
+/** The offsets of each segment's command word, as commandStart reads it. Alternation groups are masked first, so their
+ *  `(`, `|` and `)` split nothing. */
+function commandWordStarts(masked: string): Set<number> {
+  const starts = new Set<number>();
+  const seg = (a: string, from: number) => {
+    const toks = [...a.matchAll(/[^ \t]+/g)];
+    const k = commandStart(toks.map((t) => t[0]));
+    if (toks[k]) starts.add(from + toks[k].index!);
+  };
+  let at = 0;
+  for (const m of masked.matchAll(new RegExp(SEGMENTS.source, 'g'))) { seg(masked.slice(at, m.index), at); at = m.index! + m[0].length; }
+  seg(masked.slice(at), at);
+  return starts;
+}
+
+/** The first alternation group in a command word (only there can it pick the command), or null. */
+function commandGroup(c: string): RegExpMatchArray | null {
+  const groups = [...c.matchAll(ZSH_ALT)];
+  if (!groups.length) return null;
+  const masked = c.replace(ZSH_ALT, (g) => '_'.repeat(g.length));
+  const starts = commandWordStarts(masked);
+  let ws = -1, we = -1;
+  for (const g of groups) {
+    if (g.index! >= we) { // a new word: find its bounds once
+      ws = g.index!;
+      while (ws > 0 && !/[\s;&|()`]/.test(masked[ws - 1])) ws--;
+      we = g.index!;
+      while (we < masked.length && !/[\s;&|()`]/.test(masked[we])) we++;
+    }
+    if (starts.has(ws)) return g;
   }
   return null;
 }
@@ -67,10 +217,9 @@ function commandGroup(c: string): RegExpExecArray | null | false {
 /** Each alternative of the first command-word (a|b) group, recursively. True when a bound is hit. */
 function alternations(c: string, out: string[], b: Budget): boolean {
   const m = commandGroup(c);
-  if (m === false) return true;
   if (!m) return false;
   for (const alt of m[1].split('|')) {
-    const t = c.slice(0, m.index) + alt + c.slice(m.index + m[0].length);
+    const t = c.slice(0, m.index) + alt + c.slice(m.index! + m[0].length);
     if (out.length >= MAX_SEGMENT_READINGS || !b.add(t)) return true;
     out.push(t);
     if (alternations(t, out, b)) return true;

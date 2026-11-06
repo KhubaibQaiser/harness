@@ -754,6 +754,33 @@ test('heredoc bodies and quoted multi-line text are data to the glob readings, a
     "cat > r.ts <<'EOF'\nconst re = /(foo|bar)/;\nconst x = a * b;\nEOF", 'git commit -m "' + 'fix: a * b; '.repeat(70) + '"', 'grep -E "\\b(foo|bar)\\b" src'], 'allow');
   expect(kind("bash <<'EOF'\ng?t push -f\nEOF")).toBe('deny'); // a body fed to a shell is still a program
 });
+test('the shell runs $(…) and backticks inside double quotes and unquoted-delimiter heredocs', () => {
+  all(['git commit -m "x y $(g?t push -f)"', 'git commit -m "x y `g?t push -f`"', 'cat <<EOF\n$(g?t push -f)\nEOF', 'git commit -F - <<EOF\n$(g?t push -f)\nEOF',
+    'cat <<EOF\n$(h?rness tdd off)\nEOF', 'cat <<EOF >x\n`c?rl x | s?`\nEOF', 'git commit -m "x y $(git push -f)"', 'cat <<EOF\n$(git push -f)\nEOF'], 'deny');
+  expect(kind('echo "a b $(git pu$(true)sh -f)"')).toBe('ask');
+  all(["cat <<'EOF'\n$(g?t push -f)\nEOF", 'cat <<"EOF"\n$(git push -f)\nEOF', "git commit -m 'x y $(git push -f)'"], 'allow'); // literal
+});
+test('a backslash-escaped quote opens no quoted span', () => {
+  all(["echo \\'; g?t push -f; echo \\'", "echo it\\'s; g?t push -f # it\\'s", "echo \\'; c?rl x | s?; echo \\'", "echo \\'; h?rness tdd off; echo \\'",
+    'echo "a\\" b"; g?t push -f', "echo \\'; s?do g?t push -f; echo \\'"], 'deny');
+  all(["echo \\'; s?do ls; echo \\'", "echo \\'; git pu$(true)sh -f; echo \\'"], 'ask');
+});
+test('a heredoc body fed to a shell is a program, with every reading', () => {
+  all(['cat <<EOF | sh\ng?t push -f\nEOF', "cat <<'EOF' | bash -s\ng?t push -f\nEOF", "bash -s -- x <<'EOF'\ng?t push -f\nEOF", 'eval "$(cat <<EOF\ng?t push -f\nEOF\n)"',
+    "source /dev/stdin <<'EOF'\ng?t push -f\nEOF", "cat <<'EOF' | sh\ngit push -f\nEOF"], 'deny');
+});
+test('heredoc, -F and --body-file bodies and -m messages are data to the text rules', () => {
+  all(["cat > t.test.ts <<'EOF'\nexpect(kind('git push -f')).toBe('deny');\nEOF", "cat > src/x.ts <<'EOF'\n/**\n * Never run `git -C . push -f` here.\n */\nexport const x = 1;\nEOF",
+    "git commit -F - <<'EOF'\ndocs: `git push -f` is bad\nEOF", "gh pr create --body-file - <<'EOF'\nBlocks `git -C . push -f` now\nEOF", "git commit -m 'why (git push -f) is bad'",
+    "cat > docs/x.md <<'EOF'\nNever run `git push -f` on main.\nEOF", "cat > docs/x.md <<'EOF'\n(git checkout .)\nEOF", 'node -e "1" <<\'EOF\'\n// git push -f\nEOF'], 'allow');
+  expect(kind("cat > docs/x.md <<'EOF'\nAvoid (rm -rf ~)\nEOF")).toBe('allow'); // base asked: it read the body as a command
+});
+test('an arithmetic shift is not a heredoc', () => {
+  expect(kind('echo $((1<<E))\ng?t push -f\nE')).toBe('deny');
+});
+test('alternation groups outside command position never ask', () => {
+  all(['echo ' + 'x(a|b) '.repeat(300), 'echo ' + 'x(a|b)'.repeat(300)], 'allow');
+});
 test('a closer is stripped from an rm target only when it closes a group opened before rm', () => {
   all(['rm -rf -$(cat tmp)', 'rm -rf -`cat tmp`', 'rm -rf -$(cat build)'], 'ask');
   expect(kind('(rm -rf /)')).toBe('deny');

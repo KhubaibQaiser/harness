@@ -58,16 +58,17 @@ const aiArgs = (ids: string[], answers: object | null = ANSWERS): string[] => {
 };
 const fake: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
 const git = (root: string, ...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8' });
-const hashes = (root: string) => (readdirSync(root, { recursive: true, encoding: 'utf8' }) as string[]).map((f) => f.replace(/\\/g, '/')).filter((f) => !f.startsWith('.git/') && f !== '.git' && statSync(join(root, f)).isFile()).sort().map((f) => f + createHash('sha256').update(readFileSync(join(root, f))).digest('hex'));
+// Files by content hash and directories by name, so an empty leftover directory fails a comparison.
+const hashes = (root: string) => (readdirSync(root, { recursive: true, encoding: 'utf8' }) as string[]).map((f) => f.replace(/\\/g, '/')).filter((f) => !f.startsWith('.git/') && f !== '.git').sort().map((f) => statSync(join(root, f)).isFile() ? f + createHash('sha256').update(readFileSync(join(root, f))).digest('hex') : `${f}/`);
 const env = { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' };
 const run = async (root: string, args: string[]) => {
   let out = '';
   const code = await init(args, { ...base, version: '1.2.3', root, env, claudeVersion: () => null, out: (s) => (out += s + '\n'), prompt: fake });
   return { code, out };
 };
-const up = async (root: string, args: string[]) => {
+const up = async (root: string, args: string[], version = '1.2.3') => {
   let out = '';
-  const code = await update(args, { ...base, version: '1.2.3', root, env, claudeVersion: () => null, out: (s) => (out += s + '\n'), prompt: fake });
+  const code = await update(args, { ...base, version, root, env, claudeVersion: () => null, out: (s) => (out += s + '\n'), prompt: fake });
   return { code, out };
 };
 const commit = (root: string, msg: string) => { git(root, 'add', '-A'); git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', msg); };
@@ -143,7 +144,9 @@ test('preset null removes it, keeps preselected plugins, and uninstall is byte-i
   const agents = readFileSync(join(root, 'AGENTS.md'), 'utf8');
   expect(agents).not.toContain('harness:preset');
   expect(existsSync(join(root, RN))).toBe(false);
-  expect(readFileSync(join(root, '.claude/settings.json'), 'utf8')).not.toContain('DO_NOT_TRACK');
+  const settings = readFileSync(join(root, '.claude/settings.json'), 'utf8');
+  expect(settings).not.toContain('DO_NOT_TRACK');
+  expect(settings).not.toContain('attribution');
   commit(root, 'off');
   await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake });
   expect(hashes(root)).toEqual(before);
@@ -157,4 +160,41 @@ test('a deleted preset folder is reported and nothing about the preset changes',
   expect(r.code, r.out).toBe(0);
   expect(r.out).toContain('Preset "stacks" was not found; its files are kept as they are.');
   expect(r.out).not.toMatch(/delete .*SKILL\.md/);
+});
+
+test('init without a preset, update with it, update without it: uninstall is byte-identical to before init', async () => {
+  const root = repo();
+  const before = hashes(root);
+  expect((await run(root, aiArgs(OWN, { ...ANSWERS, preset: null }))).code).toBe(0);
+  commit(root, 'harness');
+  const on = await up(root, aiArgs(CHOSEN, { preset: 'stacks' }));
+  expect(on.code, on.out).toBe(0);
+  expect(cfg(root).preset.id).toBe('stacks');
+  commit(root, 'preset on');
+  const off = await up(root, aiArgs(OWN, { preset: null }));
+  expect(off.code, off.out).toBe(0);
+  expect(cfg(root).preset).toBeUndefined();
+  commit(root, 'preset off');
+  await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: fake });
+  expect(hashes(root)).toEqual(before);
+});
+
+test('update refreshes preset.version to the installed version', async () => {
+  const root = await installed();
+  const r = await up(root, ['--yes'], '1.3.0');
+  expect(r.code, r.out).toBe(0);
+  expect(cfg(root).preset.version).toBe('1.3.0');
+});
+
+test('a legacy results_dir is migrated in the same update that drops a gone stack', async () => {
+  const root = await installed();
+  const text = readFileSync(join(root, '.harness/config.yaml'), 'utf8');
+  expect(text).toMatch(/^\s*results_dir:/m);
+  writeFileSync(join(root, '.harness/config.yaml'), text.replace(/^(\s*results_dir:).*$/m, '$1 .harness/state/test-results'));
+  writeFileSync(join(root, 'package.json'), pkg({ react: '^18.0.0', next: '^14.0.0' }));
+  commit(root, 'legacy + drop expo');
+  const r = await up(root, ['--yes']);
+  expect(r.code, r.out).toBe(0);
+  expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).not.toContain('state/test-results');
+  expect(cfg(root).preset.items).not.toContain('frontend-react-native');
 });

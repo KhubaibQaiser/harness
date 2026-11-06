@@ -120,20 +120,17 @@ export async function update(args: string[], cli: UpdateEnv): Promise<number> {
     for (const id of d.retired) out(`${id}: no longer in the catalog; its files are kept.`);
     if (!sel) config = { ...config, items: config.items.filter((i) => !d.retired.includes(i.id)) };
   }
-  const pr = updatePreset(config, sel, root, version);
-  config = pr.config;
-  for (const n of pr.notices) out(n);
+  const pr = updatePreset(config, sel, { root, version, out });
   let planned: ReturnType<typeof reconcile>;
   try {
-    planned = reconcile(root, config, m, {
+    planned = reconcile(root, pr.config, m, {
       version, distDir: cli.distDir, templatesDir: cli.templatesDir, legacyDir: LEGACY_RESULTS_DIR,
       ...(aiPath ? { catalog: (sel?.catalog ?? cat!.catalog) } : {}), ...(sel ? { ai: sel.files } : {}), preset: pr.preset,
     });
   } catch (e) {
     return out(`Cannot build the update plan: ${(e as Error).message} Run harness doctor to see what is wrong.`), 1;
   }
-  // The user owns the config after init, except on the AI path, where the checks follow the selection.
-  const changes = aiPath || pr.changed ? planned.changes : [...(migrated ? [migrated] : []), ...planned.changes.filter((c) => c.rel !== CONFIG)];
+  const changes = aiPath || pr.changed ? planned.changes : [...(migrated ? [migrated] : []), ...planned.changes.filter((c) => c.rel !== CONFIG)]; // the user owns the config after init, except on the AI path (and a preset change)
 
   const at = new Date();
   const commit = (cs: typeof changes, manifest: Manifest) => {

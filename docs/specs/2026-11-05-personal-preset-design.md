@@ -264,7 +264,7 @@ Own skills at `.claude/skills/<name>/SKILL.md`, from `catalog/presets/khubaib-fr
 | Repo | `.harness/presets/<id>/` (committed) | AGENTS.md, preset markers | `.claude/skills/<name>/` | `.claude/settings.json` | the repo manifest |
 | Global | `~/.claude/harness/presets/<id>/` | `~/.claude/CLAUDE.md`, preset markers | `~/.claude/skills/<name>/` | `~/.claude/settings.json` | `~/.claude/harness/manifest.json` |
 
-- A repo-level preset installs through `/harness:init` or `/harness:update` with that preset chosen (section 4).
+- A repo-level preset installs through `/harness:init` or `/harness:update` with that preset chosen (section 4). `harness uninstall --yes` removes `.harness/` except the committed `.harness/presets/`, which is the person's own source, not a harness write.
 - A global preset installs with `harness preset install <dir> --global`, which first prints a preview with every global path and its diff. The skill asks a separate yes for each global write. `--dry-run` writes nothing.
 - The global manifest uses the repo manifest's file and block records, so `harness uninstall --global` removes exactly what was written and leaves `~/.claude/` byte-identical. The existing guard ask on `uninstall` already covers `--global`. `preset install` is added to `PERSON_ONLY` as an ask.
 - A global install carries the core rules, the skills and the attribution setting at user scope (C2). Git enforcement (the guard asks and the `harness git` checks) stays per repo, because it needs harness's hooks, which are installed per repo.

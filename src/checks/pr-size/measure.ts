@@ -22,6 +22,12 @@ export interface Unmeasured { error: string; base?: string }
 
 export const isOver = (s: Pick<Size, 'lines' | 'files'>, c: HarnessConfig['pr_size']): boolean => s.lines > c.max_lines || s.files > c.max_files;
 
+// One budget per hook (measure's own default is the same 6 s), and never past 9 s from the hook's start, so the whole hook
+// (the guard's npm lookup runs first) stays inside the 10 s hook timeout with a margin.
+const BUDGET_MS = 6000;
+const HOOK_BUDGET_MS = 9000;
+export const hookBudgetMs = (startedAt: number | undefined, now: () => number): number => Math.min(BUDGET_MS, (startedAt ?? now()) + HOOK_BUDGET_MS - now());
+
 export function currentBranch(git: Git): string | null {
   const r = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], 2000);
   return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;

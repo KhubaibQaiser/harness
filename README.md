@@ -39,7 +39,7 @@ In plain terms: with the sandbox on, the operating system enforces the guard. Wi
 | npm registry check when the user allows an install | no | yes |
 | Red-first TDD, test-lock, tamper check | no | yes |
 | Changed-line coverage | no | yes |
-| PR size: asks above 400 changed lines or 20 files, with a skill that splits into stacked PRs | yes | yes |
+| PR size: warns as a branch passes 200 and 400 changed lines, suggests a split, and asks at PR time | yes | yes |
 
 In short: secrets and risky commands are blocked, harness's own files are off limits to the agent, and a change that spreads to a second file needs your OK. A source edit needs a test that failed first, and the agent can't stop until your format, lint, typecheck and test commands pass.
 

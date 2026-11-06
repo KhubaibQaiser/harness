@@ -302,6 +302,24 @@ test('at Stop a block keeps the context text as systemMessage', async () => {
   expect(o.decision).toBe('block');
   expect(o.reason).toBe('r');
   expect(o.systemMessage).toBe('warn');
+  expect(o.hookSpecificOutput).toBeUndefined();
+});
+test('at Stop the beside-block text is escaped for the person, newlines kept', async () => {
+  const b = mk('b', { kind: 'block', reason: 'r', check: 'b' });
+  const c = mk('c', { kind: 'context', text: 'l1\nl2 "q" \u202e', check: 'c' });
+  expect(JSON.parse(await dispatch(payload({ hook_event_name: 'Stop' }), [b, c], {})).systemMessage).toBe('l1\nl2 "q" \\u202e');
+});
+test('duplicate texts and notices are merged once', async () => {
+  const c = (n: string) => mk(n, { kind: 'context', text: 't', notice: 'n', check: n });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'PostToolUse' }), [c('a'), c('b')], {}));
+  expect(o.systemMessage).toBe('n');
+  expect(o.hookSpecificOutput.additionalContext).toBe('t');
+});
+test('a joined message over the cap is cut with a marker', async () => {
+  const c = mk('c', { kind: 'context', text: 't', notice: 'x'.repeat(20_000), check: 'c' });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'PostToolUse' }), [c], {}));
+  expect(o.systemMessage.length).toBe(10_000);
+  expect(o.systemMessage.endsWith('[truncated]')).toBe(true);
 });
 test('at PreToolUse a deny plus a context check has no systemMessage', async () => {
   const c = mk('c', { kind: 'context', text: 'warn', notice: 'n', check: 'c' });

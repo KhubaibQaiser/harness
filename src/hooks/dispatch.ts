@@ -15,7 +15,7 @@ import { tamper } from '../checks/tdd/tamper.js';
 import { specGate } from '../checks/tdd/spec-gate.js';
 import { stopGate } from '../checks/stop/gate.js';
 import { testLock } from '../checks/tdd/test-lock.js';
-import { CONTROL, esc, type HarnessConfig, loadConfig } from '../core/config.js';
+import { type HarnessConfig, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
 import { writeHookEnv } from '../core/hook-env.js';
 import { bindPause, clearPause } from '../core/pause.js';
@@ -26,7 +26,8 @@ import { managedSettingsPath } from '../core/settings-layers.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
 import { editTarget, isShell } from './edit-target.js';
-import { emit, parseInput } from './io.js';
+import { capMessage, emit, parseInput } from './io.js';
+import { mergeContext } from './notice.js';
 import type { Decision, HookEvent, HookInput } from './types.js';
 
 export interface Ctx {
@@ -308,12 +309,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
 
   const win =
     decisions.find((d) => d.kind === 'deny' || d.kind === 'block') ?? decisions.find((d) => d.kind === 'ask');
-  const ctxs = decisions.flatMap((d) => (d.kind === 'context' ? [d.text] : []));
-  // a notice may carry repo text: escape control and hidden characters before the person sees it
-  const notices = decisions.flatMap((d) => (d.kind === 'context' && d.notice ? [CONTROL.test(d.notice) ? esc(d.notice) : d.notice] : []));
-  const context = ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), notice: notices.join('\n') || undefined, check: 'context' }) : '';
-  let out = win ? emit(event, win) : context;
-  if (win && event === 'Stop' && win.kind === 'block' && ctxs.length) out = withNotice(event, out, ctxs.join('\n')); // a Stop warning survives a Stop-gate block
+  const out = mergeContext(event, decisions, win);
   const all = [pending, notice].filter(Boolean).join('\n');
   return all ? withNotice(event, out, all) : out;
 }
@@ -330,7 +326,7 @@ function filesChangedWhy(files: string[], startHead: string | undefined, head: s
 /** Adds a notice the person sees (systemMessage) and the model gets (additionalContext) to a hook's JSON output. */
 function withNotice(event: string, out: string, notice: string): string {
   const o = out ? JSON.parse(out) : {};
-  o.systemMessage = [o.systemMessage, notice].filter(Boolean).join('\n');
+  o.systemMessage = capMessage([o.systemMessage, notice].filter(Boolean).join('\n'));
   const extra = o.hookSpecificOutput?.additionalContext;
   o.hookSpecificOutput = { ...o.hookSpecificOutput, hookEventName: event, additionalContext: [extra, notice].filter(Boolean).join('\n') };
   return JSON.stringify(o);

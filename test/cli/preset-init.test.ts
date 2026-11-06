@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { parse } from 'yaml';
 import { init, type Prompt } from '../../src/cli/init.js';
+import { status } from '../../src/cli/status.js';
+import { previewLines, loadPreset } from '../../src/catalog/presets.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import { makeRepo } from '../install/helpers.js';
 
@@ -141,4 +143,57 @@ test('uninstall --dry-run says presets stay', async () => {
   const root = repo();
   expect((await run(root, aiArgs(CHOSEN))).code).toBe(0);
   expect(await un(root, ['--dry-run'])).toContain('`.harness/presets/` stays');
+});
+
+// ---- Task 8: preview and budget lines ----
+const WEB = ['core-rules', 'engineering-principles', 'frontend-react', 'impeccable', 'superpowers'];
+const dry = (ids: string[]) => aiArgs(ids).map((a) => (a === '--yes' ? '--dry-run' : a));
+const count = (s: string, line: string) => s.split('\n').filter((l) => l === line).length;
+const IMP = ['Impeccable installs hooks: SessionStart, PostToolUse on Edit and Write, and Stop.', 'Impeccable downloads its engine into ~/.impeccable/bin/ on first use.'];
+const ATTR = 'Attribution: .claude/settings.json sets "attribution": false, so commits and PRs get no AI trailer.';
+const TEL = (n: string, v: string, id: string) => `Telemetry: ${n}=${v} goes in .claude/settings.json env for ${id}; it applies to every command in the session.`;
+
+test('the dry run lists the preview lines once each when Impeccable is selected', async () => {
+  const r = await run(repo(), dry([...OWN, ...WEB]));
+  expect(r.code, r.out).toBe(0);
+  for (const l of [...IMP, TEL('DO_NOT_TRACK', '1', 'impeccable'), TEL('SUPERPOWERS_DISABLE_TELEMETRY', 'true', 'superpowers'), ATTR]) expect(count(r.out, l), l).toBe(1);
+});
+
+test('without Impeccable only the other telemetry line and the attribution line show', async () => {
+  const r = await run(repo(), dry([...OWN, 'core-rules', 'superpowers']));
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).not.toContain('Impeccable');
+  expect(r.out).not.toContain('DO_NOT_TRACK');
+  expect(count(r.out, TEL('SUPERPOWERS_DISABLE_TELEMETRY', 'true', 'superpowers'))).toBe(1);
+  expect(count(r.out, ATTR)).toBe(1);
+});
+
+test('without a preset there are no preview lines', async () => {
+  const d = join(dir, 'np');
+  mkdirSync(d);
+  const args = dry(OWN).map((a, i, all) => (all[i - 1] === '--answers' ? (writeFileSync(join(d, 'a.json'), JSON.stringify({ ...ANSWERS, preset: undefined })), join(d, 'a.json')) : a));
+  const r = await run(repo(), args);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).not.toMatch(/Telemetry:|Attribution:|Impeccable/);
+});
+
+test('previewLines drops telemetry_off ids that are not selected', () => {
+  const lp = loadPreset(join(fixture, 'stacks.yaml'));
+  if (!lp.ok) throw new Error(lp.errors.join());
+  expect(previewLines(lp.loaded, [])).toEqual([ATTR]);
+});
+
+test('the init budget total includes the preset core and skills, and status prints the same one', async () => {
+  const root = repo();
+  const d = await run(root, dry([...OWN, ...WEB]));
+  const line = /Always-loaded context from harness: ~(\d+) tokens/.exec(d.out)!;
+  expect(line, d.out).toBeTruthy();
+  expect(d.out).toContain('Not measured before install:');
+  expect(d.out).toMatch(/Not measured before install: .*impeccable/);
+  const bare = await run(repo(), dry([...OWN]));
+  expect(Number(line[1])).toBeGreaterThan(Number(/~(\d+) tokens/.exec(bare.out)![1]));
+  expect((await run(root, [...aiArgs([...OWN, ...WEB]), '--over-budget'])).code).toBe(0);
+  let out = '';
+  status([], { root, env: {}, out: (s) => (out += s + '\n') });
+  expect(/Always-loaded context from harness: ~(\d+) tokens/.exec(out)![1]).toBe(line[1]);
 });

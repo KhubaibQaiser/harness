@@ -212,10 +212,10 @@ The multi-file gate never counts test files: JS/TS `*.test.*`, `*.spec.*` and `_
 The full flow runs only inside Claude Code, where Claude does the interview and the recommendations. The CLI stays deterministic: Claude passes it files, and it checks them.
 
 1. **Scan.** It reads your repo and shows what it found.
-2. **Interview.** Claude asks one question at a time: scope first, then gaps the scan can't answer. It drafts `product.md` for you to edit. It reads only files you point to, never dotenv files or `.harnessignore` paths, and credentials are names only.
+2. **Interview.** Claude asks one question at a time: scope first, then "Use a named preset?" ("No preset" is the default; `harness preset list` shows the others), then gaps the scan can't answer. It drafts `product.md` for you to edit. It reads only files you point to, never dotenv files or `.harnessignore` paths, and credentials are names only.
 3. **Recommend.** A fresh-context reviewer audits the repo against the catalog and proposes items and a report.
-4. **Select.** You tick items, four per question, with the reason, context cost and side effects of each.
-5. **Apply.** It shows the plan and the always-loaded context from harness. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
+4. **Select.** You tick items, four per question, with the reason, context cost and side effects of each. With a preset, its rows are ticked and say they came from it.
+5. **Apply.** It shows the plan, the preset's extra lines (Impeccable's hooks and download, the opt-out variables, the attribution setting) and the always-loaded context from harness. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
 6. **Git.** Each of branch, commit, push and PR is its own question. Nothing runs without a yes.
 
 It writes the same files as `init`, plus `.harness/context/product.md` and `.harness/report.md`.

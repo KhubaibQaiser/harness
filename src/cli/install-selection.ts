@@ -1,5 +1,5 @@
 import { dirname } from 'node:path';
-import { budgetLines, budgetVerdict, measureSelection } from '../budget/measure.js';
+import { budgetLines, budgetVerdict, measureSelection, type ContextEntry } from '../budget/measure.js';
 import type { Catalog } from '../catalog/schema.js';
 import type { Exec } from '../core/exec.js';
 import { packageDir } from '../core/package-dir.js';
@@ -15,11 +15,11 @@ const EXIT_OVER_BUDGET = 2;
  * Prints the budget lines. Returns 2 when the install must stop (over budget, --yes, no --over-budget), else null.
  * `exempt` holds the ids the person already approved: they show but do not count.
  */
-export async function budgetGate({ cat, before, after, exempt, budget, templatesDir, out, f }: {
-  cat: Catalog; before: string[]; after: string[]; exempt: string[]; budget: number; templatesDir: string; out: (s: string) => void; f: { yes: boolean; dryRun: boolean; overBudget: boolean };
+export async function budgetGate({ cat, before, after, exempt, extra, budget, templatesDir, out, f }: {
+  cat: Catalog; before: string[]; after: string[]; exempt: string[]; extra?: ContextEntry[]; budget: number; templatesDir: string; out: (s: string) => void; f: { yes: boolean; dryRun: boolean; overBudget: boolean };
 }): Promise<number | null> {
   const dirs = { templates: templatesDir, plugin: dirname(packageDir('templates')) };
-  const v = budgetVerdict(await measureSelection(before, cat, dirs, { exempt }), await measureSelection(after, cat, dirs, { exempt }), budget);
+  const v = budgetVerdict(await measureSelection(before, cat, dirs, { exempt }), await measureSelection(after, cat, dirs, { exempt, extra }), budget);
   for (const l of budgetLines(v)) out(l);
   if (!v.ask || f.dryRun || f.overBudget || !f.yes) return null;
   out(`This goes over the context budget (~${v.after.tokens} of ${budget} tokens, estimate). Run again with --over-budget to accept, or pick fewer items.`);

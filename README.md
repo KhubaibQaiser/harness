@@ -78,6 +78,15 @@ You need Node 22.11 or newer, git, and Claude Code 2.1.314 or newer.
 - **Watch the budget.** `harness explain` lists what each item loads into every session. Remove what you don't use with `harness remove <id>`. If an install would go over the budget, `--yes` stops unless you also pass `--over-budget`.
 - **Unattended? Use the sandbox.** See [Unattended runs and CI](#unattended-runs-and-ci).
 
+## Named presets
+
+`/harness:init` asks "Use a named preset?" after the scope question. The default is no preset: the neutral catalog. `khubaib-frontend` is the shipped one. It adds working rules and git conventions to `AGENTS.md`, up to four frontend skills that match your stack, and preselected third-party picks. Its always-loaded text costs about 241 to 415 tokens (estimate, by stack), counted in the budget line before you confirm.
+
+- It turns off the picks' usage reporting through `DO_NOT_TRACK=1` (Impeccable) and Superpowers' own opt-out variable in `.claude/settings.json`. Those variables apply to every command in the session, not only to that tool, and only after you trust the folder.
+- It sets `"attribution": false`, so commits and PRs get no AI trailer.
+- `harness git pr` warns when a PR is large, even if `checks.prSize` is off.
+- To turn it off, answer "No preset" in `/harness:update`. The plugins it preselected stay until `harness remove` takes them out.
+
 ## Commands
 
 Run them as `harness <command>`. From a source build there's no `harness` binary, so read `harness` in this README as `node /path/to/harness/dist/cli.mjs`. `init`, `update`, `add` and `sync` work only inside Claude Code, as `/harness:<command>`; `doctor`, `status`, `uninstall` and `vet` also have `/harness:` skills. Every flag is in [docs/reference.md](docs/reference.md#commands-in-full).

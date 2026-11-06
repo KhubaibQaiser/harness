@@ -185,7 +185,7 @@ async function showPlan({ cli, f, p }: Run, { plan, touched }: Built, config: Ha
   if (manual.length) out('Do these by hand:\n' + manual.map((l) => `  ${l}`).join('\n'));
   for (const n of plan.notes) out(`Note: ${n}`);
   if (sel) {
-    const stop = await budgetGate(sel.catalog, [], sel.ids, approvedIds(config, null, sel.catalog), config.context.budget_tokens, cli.templatesDir, out, { ...f.opts, overBudget: f.ai.overBudget });
+    const stop = await budgetGate({ cat: sel.catalog, before: [], after: sel.ids, exempt: approvedIds(config, null, sel.catalog), budget: config.context.budget_tokens, templatesDir: cli.templatesDir, out, f: { ...f.opts, overBudget: f.ai.overBudget } });
     if (stop !== null) return stop;
   }
   if (f.opts.dryRun) {
@@ -251,7 +251,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     throw e;
   }
   stampHarnessFiles(root); // change detection: these writes are harness's own
-  const installed = sel && f.ai.installPlugins ? installSelected(root, sel.ids, sel.catalog, cli.exec ?? defaultExec, out) : 0;
+  const installed = sel && f.ai.installPlugins ? installSelected({ root, chosen: sel.ids, cat: sel.catalog, exec: cli.exec ?? defaultExec, out }) : 0;
 
   // 6. Report
   reportGates(run, built.plan);

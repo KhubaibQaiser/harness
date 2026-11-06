@@ -201,7 +201,7 @@ async function inst(r: Run, ask: boolean, applied: boolean): Promise<number> {
   const { out } = r.cli;
   if (!r.sel || !r.flags.ai.installPlugins) return 0;
   if (ask && !r.flags.yes && !(await r.cli.prompt.confirm('Install these plugins? (y/N)'))) return out('Cancelled. No plugins were installed.'), 0;
-  return installSelected(r.root, r.sel.ids, r.sel.catalog, r.cli.exec ?? defaultExec, out, applied);
+  return installSelected({ root: r.root, chosen: r.sel.ids, cat: r.sel.catalog, exec: r.cli.exec ?? defaultExec, out, applied });
 }
 
 /** Nothing to write: up to date, or only the manifest version moves. */
@@ -230,7 +230,7 @@ async function reviewPlan(r: Run, changes: Change[], planned: Planned): Promise<
   if (r.sel) {
     // Ask once, then exempt: what the person approved before shows but does not count.
     const had = approvedIds(r.base, r.m, r.sel.catalog);
-    const stop = await budgetGate(r.sel.catalog, had, r.sel.ids, had, r.config.context.budget_tokens, r.cli.templatesDir, out, { yes, dryRun, overBudget: r.flags.ai.overBudget });
+    const stop = await budgetGate({ cat: r.sel.catalog, before: had, after: r.sel.ids, exempt: had, budget: r.config.context.budget_tokens, templatesDir: r.cli.templatesDir, out, f: { yes, dryRun, overBudget: r.flags.ai.overBudget } });
     if (stop !== null) return stop;
   }
   const list = (rels: string[]) => rels.map((rel) => `\`${rel}\``).join(', ');

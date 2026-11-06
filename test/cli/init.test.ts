@@ -513,7 +513,7 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('an ok ins
   chmodSync(join(root, '.harness'), 0o555);
   let out = '';
   try {
-    expect(installSelected(root, ['impeccable'], loadCatalog().catalog, () => ({ status: 0, stdout: '{"command":"install","outcome":"ok","message":"x"}' }), (s) => (out += s + '\n'))).toBe(1);
+    expect(installSelected({ root, chosen: ['impeccable'], cat: loadCatalog().catalog, exec: () => ({ status: 0, stdout: '{"command":"install","outcome":"ok","message":"x"}' }), out: (s) => (out += s + '\n') })).toBe(1);
   } finally {
     chmodSync(join(root, '.harness'), 0o755);
   }

@@ -15,9 +15,9 @@ const EXIT_OVER_BUDGET = 2;
  * Prints the budget lines. Returns 2 when the install must stop (over budget, --yes, no --over-budget), else null.
  * `exempt` holds the ids the person already approved: they show but do not count.
  */
-export async function budgetGate(
-  cat: Catalog, before: string[], after: string[], exempt: string[], budget: number, templatesDir: string, out: (s: string) => void, f: { yes: boolean; dryRun: boolean; overBudget: boolean },
-): Promise<number | null> {
+export async function budgetGate({ cat, before, after, exempt, budget, templatesDir, out, f }: {
+  cat: Catalog; before: string[]; after: string[]; exempt: string[]; budget: number; templatesDir: string; out: (s: string) => void; f: { yes: boolean; dryRun: boolean; overBudget: boolean };
+}): Promise<number | null> {
   const dirs = { templates: templatesDir, plugin: dirname(packageDir('templates')) };
   const v = budgetVerdict(await measureSelection(before, cat, dirs, { exempt }), await measureSelection(after, cat, dirs, { exempt }), budget);
   for (const l of budgetLines(v)) out(l);
@@ -27,7 +27,7 @@ export async function budgetGate(
 }
 
 /** Installs the selected pinned plugins, prints one line each, and re-hashes settings. Returns 1 when any install or the re-hash failed. `applied`: the files were written in this run. */
-export function installSelected(root: string, chosen: string[], cat: Catalog, exec: Exec, out: (s: string) => void, applied = true, have: string[] = []): number {
+export function installSelected({ root, chosen, cat, exec, out, applied = true, have = [] }: { root: string; chosen: string[]; cat: Catalog; exec: Exec; out: (s: string) => void; applied?: boolean; have?: string[] }): number {
   const all = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@harness-pins`);
   const ids = all.filter((id) => !have.includes(id));
   if (!ids.length) return 0;

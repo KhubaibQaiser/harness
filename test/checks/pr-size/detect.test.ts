@@ -46,9 +46,8 @@ describe('git push', () => {
     expect(refs('git push -u origin feat')).toEqual({ kind: 'push', all: false, refs: [{ src: 'feat', dst: 'feat' }] });
     expect(refs('git push origin HEAD:feat')).toMatchObject({ refs: [{ src: 'HEAD', dst: 'feat' }] });
     expect(refs('git push origin +feat')).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
-    expect(refs('git push origin refs/heads/a:refs/heads/b')).toMatchObject({ refs: [{ src: 'refs/heads/a', dst: 'b' }] });
+    expect(refs('git push origin refs/heads/a:refs/heads/b')).toMatchObject({ refs: [{ src: 'a', dst: 'b' }] });
     expect(refs('git push --all origin')).toMatchObject({ all: true });
-    expect(refs('git push origin :old')).toMatchObject({ refs: [] });
     expect(refs('git -C sub push origin feat')).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
     expect(refs('git push -o ci.skip origin feat')).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
   });
@@ -73,11 +72,14 @@ describe('fix round 1', () => {
     expect(pushes('git push --mirror origin')[0]).toMatchObject({ all: true });
     expect(pushes('git push --branches origin')[0]).toMatchObject({ all: true });
   });
-  test('empty dst falls back to src; deletes give no refs', () => {
+  test('empty dst falls back to src; deletes and tag-only pushes are no push target', () => {
     expect(pushes('git push origin feat:')[0]).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
-    expect(pushes('git push --delete origin feat')[0]).toMatchObject({ refs: [] });
-    expect(pushes('git push -d origin feat')[0]).toMatchObject({ refs: [] });
-    expect(pushes('git push -fd origin feat')[0]).toMatchObject({ refs: [] });
+    for (const c of ['git push --delete origin feat', 'git push -d origin feat', 'git push -fd origin feat', 'git push origin :old', 'git push --tags', 'git push origin --tags', 'git push origin refs/tags/v1', 'git push origin v1:refs/tags/v1'])
+      expect(pushes(c), c).toEqual([]);
+    expect(pushes('git push origin feat --tags')[0]).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
+    expect(pushes('git push origin feat :old')[0]).toMatchObject({ refs: [{ src: 'feat', dst: 'feat' }] });
+    expect(pushes('git push origin x/refs/tags/y')[0]).toMatchObject({ refs: [{ src: 'x/refs/tags/y', dst: 'x/refs/tags/y' }] });
+    expect(pushes('git push origin HEAD:x/refs/tags/y')[0]).toMatchObject({ refs: [{ src: 'HEAD', dst: 'x/refs/tags/y' }] });
   });
   test('Monitor and PowerShell are shell tools whose text is read with the given Where', () => {
     expect(isShell('Monitor')).toBe(true);

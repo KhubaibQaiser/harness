@@ -19,7 +19,7 @@ const edit = (p: string, tool = 'Edit') => run(tool, { file_path: p });
 const bash = (command: string) => run('Bash', { command }).kind;
 
 test('protect is registered second, fail-closed, on PreToolUse', () => {
-  expect(registry.map((c) => c.name).slice(0, 2)).toEqual(['guard', 'protect']);
+  expect(registry.map((c) => c.name).slice(0, 3)).toEqual(['guard', 'pr-size', 'protect']);
   expect(protect.failClosed).toBe(true);
   expect(protect.events).toEqual(['PreToolUse']);
 });

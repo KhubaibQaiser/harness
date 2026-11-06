@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { configChange } from '../checks/config-change.js';
 import { guard } from '../checks/guard.js';
+import { prSize } from '../checks/pr-size/check.js';
 import { prSizeEntry } from '../checks/pr-size/entry.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect, shellWriteTargets } from '../checks/protect.js';
@@ -52,7 +53,7 @@ export interface Check {
 }
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
-export const registry: Check[] = [guard, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, configChange, stopGate];
+export const registry: Check[] = [guard, prSize, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, configChange, stopGate];
 
 const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];

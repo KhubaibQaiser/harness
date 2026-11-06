@@ -133,6 +133,7 @@ test('report lists off-gates for a python repo', async () => {
   expect(r.code).toBe(0);
   expect(r.out).toMatch(/Gates that are off[\s\S]*TDD[\s\S]*Vitest or Jest/);
   expect(r.out).toMatch(/Gates that are on[\s\S]*guard/);
+  expect(r.out).toMatch(/^Gates that are on: .*PR size/m);
 });
 
 test('refuses outside a git repo and on an old Node', async () => {

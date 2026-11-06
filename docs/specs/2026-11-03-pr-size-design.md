@@ -113,7 +113,7 @@ The PR is **over** when lines > `pr_size.max_lines` or files > `pr_size.max_file
 | Over the limit, push that doesn't grow it | allow (the person already approved this size) | allow |
 | Unmeasured (no base, git missing, timeout, a name that isn't a plain branch name) | allow with a note (10.3), and log `pr-size-unmeasured` (O5) | the same |
 
-- The check is `pr-size`. It is registered after `guard` in `registry` and runs on PreToolUse (decide) and PostToolUse (record). It has `failClosed: true`, like the guard, so a thrown error denies. It is `pure` at PreToolUse: it runs read-only git and writes only to the event log.
+- The check is `pr-size`. It is registered after `guard` in `registry` and runs on PreToolUse (decide) and PostToolUse (record). It has `failClosed: true`, like the guard, so a thrown error denies. It is not `pure` (amended 2026-11-06, review of Task 7): PostToolUse writes `pr-branches.json`, and after another check's PreToolUse deny it has nothing to decide, so it doesn't measure then.
 - **Unmeasured.** The check appends a `pr-size-unmeasured` event (`check: 'pr-size'`, with the reason) and returns a `context` decision carrying the 10.3 note. The command runs. A `context` decision is never an ask, so the dispatcher's ask-to-deny doesn't touch it, and unattended runs are allowed too.
 - `checks.prSize: false` turns it off. `checks.guard: false` leaves it on, because it is its own check.
 - When one command has several PR creates or pushes, each is measured, and the first one over the limit decides.

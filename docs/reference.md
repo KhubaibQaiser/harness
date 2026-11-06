@@ -29,6 +29,15 @@ The full detail behind the [README](../README.md). Start there; come here when y
 
 Asks you once per turn before the agent edits a second source file. Your yes covers the rest of the turn. Test files, snapshots, lockfiles and files in `multi_file_gate.generated` never count. In unattended runs you choose: block, allow and log, or off. See [Unattended runs and CI](#unattended-runs-and-ci).
 
+## PR size (any repo)
+
+- Detected: `gh pr create` (also through wrappers, scripts and `bash -c`), and `git push` to a branch whose PR harness saw being created.
+- Counted: the committed three-dot diff against the base, tests included. Not counted: `pr_size.exclude` (lockfiles, `.*ignore` files except `.npmignore` and `.harnessignore`, snapshots) and `multi_file_gate.generated` paths. A binary or deleted file is 1 file and 0 lines.
+- Over `pr_size.max_lines` or `pr_size.max_files`, it asks you first; a push asks only when it grows the PR past what was recorded. Unattended, it is denied with how to split it.
+- When it can't measure (no base ref, git missing, a timeout), the command runs with a note and a `pr-size-unmeasured` event.
+- Each PR branch's base, lines and files are recorded in `.harness/state/pr-branches.json` after the create or push runs.
+- `/pr-ship` measures the branch and splits it into stacked PRs of about `pr_size.target_lines` each.
+
 ## TDD gates (JS/TS with Vitest or Jest)
 
 - **Red-first.** An edit to a file in `tdd.paths` is denied until a related test has a fresh failing result from this session.
@@ -330,6 +339,7 @@ The table below is generated from `src/core/config.ts` by `node scripts/gen-conf
 | `checks.multiFile` | `false` | Multi-file gate. |
 | `checks.tdd` | `false` | Red-first TDD, test-lock and tamper check. |
 | `checks.stop` | `true` | Stop gate. |
+| `checks.prSize` | `true` | PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`. |
 | `sandbox` | `"unattended"` | `unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only. Value must be one of unattended, always, off. |
 | `catalog_version` | `0` | Version of the catalog the recommendations came from. `0` means no catalog. |
 | `project.type` | `""` | What kind of project this is. Empty until the interview sets it. Value must be one of web, landing, mobile, api, infra, library, other. |
@@ -355,8 +365,8 @@ The table below is generated from `src/core/config.ts` by `node scripts/gen-conf
 | `tdd.results_dir` | `".harness/results"` | Where the test reporters write JSON results. Keep it inside `.harness/results`, which protect covers. Value must not be inside .harness/state (the sandbox denies it there). |
 | `multi_file_gate.generated` | `[]` | Globs for generated files that the multi-file gate does not count. |
 | `pr_size.target_lines` | `200` | Changed lines the pr-ship skill aims for in each PR. Guidance only; no gate enforces it. Value must be an integer from 1 to 100000. |
-| `pr_size.max_lines` | `400` | Changed lines above which opening or growing a PR asks you first (denied when unattended); the check that asks is not active yet, while `--pr-size` measures today. Value must be an integer from 1 to 100000. |
-| `pr_size.max_files` | `20` | Changed files above which opening or growing a PR asks you first (denied when unattended); the check that asks is not active yet, while `--pr-size` measures today. Value must be an integer from 1 to 10000. |
+| `pr_size.max_lines` | `400` | Changed lines above which opening or growing a PR asks you first (denied when unattended). Value must be an integer from 1 to 100000. |
+| `pr_size.max_files` | `20` | Changed files above which opening or growing a PR asks you first (denied when unattended). Value must be an integer from 1 to 10000. |
 | `pr_size.exclude` | `["**/pnpm-lock.yaml","**/package-lock.json","**/npm-shrinkwrap.json","**/yarn.lock","**/bun.lock","**/bun.lockb","**/Cargo.lock","**/poetry.lock","**/uv.lock","**/Pipfile.lock","**/Gemfile.lock","**/composer.lock","**/go.sum","**/.!(npm\|harness)ignore","**/__snapshots__/**","**/*.snap"]` | Globs not counted toward a PR's size: lockfiles, `.*ignore` files except `.npmignore` and `.harnessignore`, and snapshots. A list you set replaces the whole default, so keep the defaults you want. |
 | `unattended.multi_file_gate` | `"block"` | What the multi-file gate does when no human is watching. Value must be one of block, allow-log, off. |
 | `unattended.require_reason` | `false` | With `allow-log`, extra files need a one-line reason. No effect while the gate is `block`. |
@@ -427,4 +437,18 @@ More detail: [TDD setup details](#tdd-setup-details).
 - `remove tdd-gate` (or deselecting it) leaves the test-config edits `init` made in place; undo them by hand.
 - `update` doesn't rename a package config and make another edit to it in one run. Run it twice.
 - `harness git` treats `origin/HEAD`, `init.defaultBranch`, `main` and `master` as the default branch. If your default is another name and `origin/HEAD` isn't set, run `git remote set-head origin -a` first.
+- PR size: text detection only. It misses `gh` aliases, `gh api` POSTs, `hub`, shell scripts that aren't `package.json` scripts, GitHub MCP tools, the web UI and your own terminal. Only a CI size check or branch protection stops a large PR for everyone.
+- PR size: the hook doesn't fetch. It measures against the last fetched remote refs, so a stale `origin/<base>` can over-count.
+- PR size: it assumes the `origin` remote. Fork flows, where the base lives on `upstream` or comes from `--repo`, are measured against `origin`.
+- PR size: the push check covers only branches whose PR harness saw being created. A PR opened by a person, or before this feature, isn't recorded.
+- PR size: a pushed branch is assumed to have the same name on the remote, unless the refspec names it.
+- PR size: `gh pr edit --base` can change a PR's size after it was opened; that isn't checked.
+- PR size: size is lines and files, not complexity.
+- PR size: a PR that can't be measured is allowed with only a note and a `pr-size-unmeasured` event, unattended runs included. A repo that never fetches its base is never size-checked.
+- PR size: `gh`'s own choice of default base beyond the remote's default branch isn't mirrored (unverified).
+- PR size: Monitor commands are checked but not recorded.
+- PR size: a create is recorded only when its output shows the new PR's URL, so a `gh pr create` run in the background isn't recorded and its later pushes aren't checked. A create whose `--base` is set inside a script (a `package.json` script, say) is recorded against the default base, so its pushes can ask too often.
+- PR size: deletes and tag-only pushes are not checked.
+- PR size: two sessions writing `pr-branches.json` at once can lose one entry.
+- PR size: a base whose last segment is a guard backstop word (`feat/sync`) makes the skill's measuring command ask.
 - Not in this release: the PR reviewer (M2) and TDD for other languages.

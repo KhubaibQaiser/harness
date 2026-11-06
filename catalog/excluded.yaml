@@ -37,7 +37,7 @@
 - id: harness-review
   reason: part of the PR reviewer (M2)
 - id: pr-create-trigger
-  reason: part of the PR reviewer (M2)
+  reason: replaced by the pr-size check (pr-ship item)
 - id: ui-verifier
   reason: part of the PR reviewer (M2)
 - id: mcp-for-blender

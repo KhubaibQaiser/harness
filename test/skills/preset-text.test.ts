@@ -10,9 +10,11 @@ test('the interview asks for a named preset after scope and before the gaps', ()
   const ask = interview.indexOf('Use a named preset?');
   expect(ask).toBeGreaterThan(interview.indexOf('Scope first'));
   expect(ask).toBeLessThan(interview.indexOf('Gaps:'));
-  expect(interview.indexOf('No preset (neutral catalog, the default)')).toBeGreaterThan(ask);
-  expect(interview).toContain('first');
-  expect(interview).toContain('harness preset list');
+  const line = interview.split('\n').find((l) => l.includes('Use a named preset?'))!;
+  const none = line.indexOf('"No preset (neutral catalog, the default)" first');
+  expect(none).toBeGreaterThan(line.indexOf('Use a named preset?'));
+  expect(none).toBeLessThan(line.indexOf('harness preset list'));
+  expect(line.indexOf('then each preset')).toBeGreaterThan(none);
 });
 
 test('init step 4 passes the preset and answers to select and names the preset rows', () => {
@@ -27,6 +29,8 @@ test('the update skill says answering "No preset" turns it off', () => {
 });
 
 test('the skills stay within their length budget', () => {
-  expect(init.split('\n').length).toBeLessThanOrEqual(37 + 4);
-  expect(interview.split('\n').length).toBeLessThanOrEqual(23 + 4);
+  // Lengths on main before Task 8, plus the brief's 4 lines each; raise these only with the owner's say.
+  const BASE = { init: 37, interview: 23 };
+  expect(init.split('\n').length).toBeLessThanOrEqual(BASE.init + 4);
+  expect(interview.split('\n').length).toBeLessThanOrEqual(BASE.interview + 4);
 });

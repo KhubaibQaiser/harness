@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -7,6 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { parse } from 'yaml';
 import { init, type Prompt } from '../../src/cli/init.js';
+import { update } from '../../src/cli/update.js';
+import { items } from '../../src/cli/items.js';
+import { sync } from '../../src/cli/sync.js';
+import { presetContext } from '../../src/catalog/presets.js';
 import { status } from '../../src/cli/status.js';
 import { previewLines, loadPreset } from '../../src/catalog/presets.js';
 import { uninstall } from '../../src/cli/uninstall.js';
@@ -191,9 +196,78 @@ test('the init budget total includes the preset core and skills, and status prin
   expect(d.out).toContain('Not measured before install:');
   expect(d.out).toMatch(/Not measured before install: .*impeccable/);
   const bare = await run(repo(), dry([...OWN]));
-  expect(Number(line[1])).toBeGreaterThan(Number(/~(\d+) tokens/.exec(bare.out)![1]));
+  expect(Number(line[1]) - Number(/~(\d+) tokens/.exec(bare.out)![1])).toBe(presetSum(['core-rules', 'engineering-principles', 'frontend-react']));
   expect((await run(root, [...aiArgs([...OWN, ...WEB]), '--over-budget'])).code).toBe(0);
   let out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') });
   expect(/Always-loaded context from harness: ~(\d+) tokens/.exec(out)![1]).toBe(line[1]);
+});
+
+// ---- update, add, explain and sync count the preset like init and status ----
+const loaded = () => { const l = loadPreset(join(fixture, 'stacks.yaml')); if (!l.ok) throw new Error('fixture'); return l.loaded; };
+const presetSum = (ids: string[]) => presetContext(loaded(), ids).reduce((n, e) => n + (e.tokens ?? 0), 0);
+const PRESET_IDS = ['core-rules', 'engineering-principles', 'frontend-react'];
+const total = (out: string) => Number(/Always-loaded context from harness: ~(\d+) tokens/.exec(out)![1]);
+const sh = (root: string, ...a: string[]) => git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a);
+/** An installed repo with the preset (ids include its items) or without (the same picks, no preset key). */
+async function twin(withPreset: boolean) {
+  const root = repo();
+  const ids = withPreset ? [...OWN, ...PRESET_IDS] : OWN;
+  let args = [...aiArgs(ids), '--over-budget'];
+  if (!withPreset) {
+    const i = args.indexOf('--answers') + 1;
+    writeFileSync(args[i], JSON.stringify({ ...ANSWERS, preset: undefined }));
+  }
+  expect((await run(root, args)).code).toBe(0);
+  sh(root, 'add', '-A');
+  sh(root, 'commit', '-qm', 'harness');
+  return { root, ids, args };
+}
+const env = { CLAUDECODE: '1', HARNESS_PLAIN_INIT: '1' };
+const TD = { ...base, env, claudeVersion: () => null as null, prompt: fake };
+const viaUpdate = async (t: Awaited<ReturnType<typeof twin>>) => {
+  let out = '';
+  const args = aiArgs(t.ids).map((a) => (a === '--yes' ? '--dry-run' : a));
+  const withAnswers = t.args[t.args.indexOf('--answers') + 1];
+  args[args.indexOf('--answers') + 1] = withAnswers;
+  await update(args, { ...TD, root: t.root, out: (s) => (out += s + '\n') });
+  return out;
+};
+const viaItems = async (root: string, cmd: 'explain' | 'add', a: string[]) => {
+  let out = '';
+  await items(cmd, a, { ...TD, root, out: (s) => (out += s + '\n') });
+  return out;
+};
+
+test('update prints the preview lines and counts the preset, so its total matches init and status by the preset sum', async () => {
+  const [a, b] = [await twin(true), await twin(false)];
+  const [ua, ub] = [await viaUpdate(a), await viaUpdate(b)];
+  expect(total(ua) - total(ub), ua).toBe(presetSum(PRESET_IDS));
+  expect(ua).toContain(ATTR);
+  let st = '';
+  status([], { root: a.root, env: {}, out: (s) => (st += s + '\n') });
+  let sb = '';
+  status([], { root: b.root, env: {}, out: (s) => (sb += s + '\n') });
+  expect(total(st) - total(sb)).toBe(presetSum(PRESET_IDS));
+});
+
+test('items explain and add count the preset', async () => {
+  const [a, b] = [await twin(true), await twin(false)];
+  const want = presetSum(PRESET_IDS);
+  expect(total(await viaItems(a.root, 'explain', [])) - total(await viaItems(b.root, 'explain', []))).toBe(want);
+  const [aa, ab] = [await viaItems(a.root, 'add', ['ponytail', '--dry-run']), await viaItems(b.root, 'add', ['ponytail', '--dry-run'])];
+  expect(total(aa) - total(ab), aa).toBe(want);
+});
+
+test('sync counts the preset', async () => {
+  const [a, b] = [await twin(true), await twin(false)];
+  const go = async (root: string) => {
+    rmSync(join(root, '.claude/skills/review-rubric/SKILL.md'));
+    sh(root, 'commit', '-qam', 'rm');
+    let out = '';
+    await sync(['--dry-run'], { ...TD, root, out: (s) => (out += s + '\n') });
+    return out;
+  };
+  const [sa, sbOut] = [await go(a.root), await go(b.root)];
+  expect(total(sa) - total(sbOut), sa).toBe(presetSum(PRESET_IDS));
 });

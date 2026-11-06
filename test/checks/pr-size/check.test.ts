@@ -166,7 +166,8 @@ describe('latency and review focus', () => {
     expect(decidePrSize(ctx(root, 'git push origin feat', { event: 'PostToolUse' }))).toEqual({ kind: 'allow' });
   });
 
-  test('a writeAtomic failure (read-only .harness/state) allows at PostToolUse', () => {
+  // chmod can't make a folder read-only on Windows, and root ignores it.
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('a writeAtomic failure (read-only .harness/state) allows at PostToolUse', () => {
     const root = repo({ 'a.ts': lines(3) });
     mkdirSync(join(root, '.harness/state'), { recursive: true });
     chmodSync(join(root, '.harness/state'), 0o555);

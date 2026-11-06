@@ -23,7 +23,17 @@ const run = (argv: string[], cwd: string, g?: Git) => {
   const code = prSizeEntry(['--pr-size', ...argv], cwd, (l) => lines.push(l), g);
   return { code, lines, json: lines.length ? JSON.parse(lines[0]!) : undefined };
 };
-const USAGE = 'usage: dispatch.mjs --pr-size [--base <name>] [--head <name>]';
+const USAGE = 'usage: dispatch.mjs --pr-size [--base <name>] [--head <name>] [--worktree]';
+
+describe('--worktree', () => {
+  test('exits 0 with head "working tree" and counts uncommitted work', () => {
+    const root = repo();
+    writeFileSync(join(root, 'new.ts'), 'a\nb\n');
+    const r = run(['--worktree'], root);
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ head: 'working tree', lines: 17, files: 2 });
+  });
+});
 
 describe('prSizeEntry', () => {
   test('within the limit: exit 0 and the spec §8 JSON line', () => {

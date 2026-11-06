@@ -2,6 +2,9 @@
 import { spawnSync } from 'node:child_process';
 import { esc, type HarnessConfig } from '../../core/config.js';
 import { matches } from '../../core/paths.js';
+import { UNTRACKED, untrackedLines } from './untracked.js';
+
+export { UNTRACKED };
 
 export type Git = (args: string[], timeoutMs: number) => { status: number | null; stdout: string; error?: NodeJS.ErrnoException };
 // 64 MB: the default 1 MB buffer would fail a huge PR's numstat as ENOBUFS, and an unmeasured PR is allowed.
@@ -28,8 +31,8 @@ class Stop {
   constructor(readonly error: string) {}
 }
 
-export function measure(root: string, want: { base?: string; head?: string }, config: SizeConfig, opts: { git?: Git; now?: () => number; budgetMs?: number } = {}): Size | Unmeasured {
-  for (const k of ['base', 'head'] as const) if (want[k] !== undefined && !plainBranch(want[k])) return { error: `\`--${k}\` is not a plain branch name` };
+export function measure(root: string, want: { base?: string; head?: string; worktree?: boolean }, config: SizeConfig, opts: { git?: Git; now?: () => number; budgetMs?: number } = {}): Size | Unmeasured {
+  for (const k of ['base', 'head'] as const) if (want[k] !== undefined && !(k === 'head' && want.worktree) && !plainBranch(want[k])) return { error: `\`--${k}\` is not a plain branch name` };
   const git = opts.git ?? realGit(root);
   const now = opts.now ?? Date.now;
   const deadline = now() + (opts.budgetMs ?? 6000);
@@ -70,14 +73,22 @@ export function measure(root: string, want: { base?: string; head?: string }, co
     }
     const b = base;
     const fail = (error: string): Unmeasured => ({ error, base: b.shown });
-    const headName = want.head ?? 'HEAD';
-    const headSha = want.head === undefined ? sha('HEAD') : (sha(`refs/heads/${want.head}`) ?? sha(`refs/remotes/origin/${want.head}`));
+    const wt = want.worktree === true;
+    const headName = wt ? 'working tree' : (want.head ?? 'HEAD');
+    const headSha = want.head === undefined || wt ? sha('HEAD') : (sha(`refs/heads/${want.head}`) ?? sha(`refs/remotes/origin/${want.head}`));
     if (!headSha) return fail(`head \`${esc(headName)}\` not found`);
 
-    const range = `${b.sha}...${headSha}`;
+    let range = `${b.sha}...${headSha}`;
+    if (wt) {
+      const mb = run(['merge-base', b.sha, 'HEAD']);
+      if (mb.status !== 0 || !mb.stdout.trim()) return fail('no merge base with HEAD');
+      range = mb.stdout.trim();
+    }
     const num = run(['-c', 'core.quotePath=false', 'diff', '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', range]);
     const del = run(['-c', 'core.quotePath=false', 'diff', '--name-status', '-z', '--diff-filter=D', '--no-ext-diff', range]);
     if (num.status !== 0 || del.status !== 0) return fail('git diff failed');
+    const others = wt ? run(['ls-files', '--others', '--exclude-standard', '-z']) : null;
+    if (others && others.status !== 0) return fail('git ls-files failed');
 
     const dp = del.stdout.split('\0');
     const deleted = new Set(dp.filter((_, i) => i % 2 === 1));
@@ -93,6 +104,15 @@ export function measure(root: string, want: { base?: string; head?: string }, co
       if (!path) continue;
       if (matches(path, skip)) excluded.push(path);
       else top.push({ path, lines: added === '-' || deleted.has(path) ? 0 : Number(added) + Number(removed) });
+    }
+    if (others) {
+      let read = 0;
+      for (const path of others.stdout.split('\0')) {
+        if (!path) continue;
+        if (matches(path, skip)) { excluded.push(path); continue; }
+        if (read < UNTRACKED.maxFiles && now() >= deadline) throw new Stop('git timed out');
+        top.push({ path, lines: read++ < UNTRACKED.maxFiles ? untrackedLines(root, path) : 0 });
+      }
     }
     top.sort((x, y) => y.lines - x.lines || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0));
     return { base: b.shown, head: headName, lines: top.reduce((n, f) => n + f.lines, 0), files: top.length, top, excluded: excluded.sort() };

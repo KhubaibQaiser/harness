@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { recordedPresetContext } from '../catalog/presets.js';
 import { loadCatalog } from '../catalog/load.js';
 import { budgetLines, budgetVerdict, measureSelectionSync } from '../budget/measure.js';
 import { packageDir } from '../core/package-dir.js';
@@ -66,7 +67,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   if (blocked) lines.push(`Last blocked settings change: ${blocked.ts} (${blocked.reason})`);
   const changed = lastHarnessFilesChange(root);
   if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
-  if (config.items.length) lines.push(...itemLines(config, deps.pluginList ?? pluginList));
+  if (config.items.length) lines.push(...itemLines(root, config, deps.pluginList ?? pluginList));
   const pr = config.preset;
   if (pr) lines.push(`Preset: ${pr.id}`, ...m.files.filter((f) => f.item === `${PRESET_ITEM}${pr.id}`).map((f) => `  ${f.rel}`));
   lines.push('Last day');
@@ -86,7 +87,7 @@ function blocksOnFailure(root: string): boolean {
 }
 
 /** Catalog version, selected items, plugins not installed and the budget's first line. A catalog that fails to load adds nothing. */
-function itemLines(config: ReturnType<typeof loadConfig>['config'], list: typeof pluginList): string[] {
+function itemLines(root: string, config: ReturnType<typeof loadConfig>['config'], list: typeof pluginList): string[] {
   const lc = loadCatalog();
   if (lc.errors.length) return [];
   const ids = selectedIds(config);
@@ -96,7 +97,7 @@ function itemLines(config: ReturnType<typeof loadConfig>['config'], list: typeof
     const have = list(); // one call
     lines.push(have ? `Plugins not installed: ${wanted.filter((id) => !have.some((p) => p.id === id)).length}` : 'Plugins not installed: unknown (claude not found)');
   }
-  const m = measureSelectionSync(ids, lc.catalog, { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) });
+  const m = measureSelectionSync(ids, lc.catalog, { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) }, { extra: config.preset ? recordedPresetContext(root, config.preset) : [] });
   lines.push(budgetLines(budgetVerdict(m, m, config.context.budget_tokens))[0]);
   return lines;
 }

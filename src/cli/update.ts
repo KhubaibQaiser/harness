@@ -23,9 +23,10 @@ import { factsJson } from '../install/facts.js';
 import type { Facts } from '../install/detect.js';
 import { approvedIds } from '../install/approved.js';
 import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
+import { presetContext, previewLines } from '../catalog/presets.js';
 import { updatePreset } from './preset-inputs.js';
 import { AI_USAGE, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
-import { budgetGate, installSelected } from './install-selection.js';
+import { budgetGate, installSelected, recordedExtra } from './install-selection.js';
 import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall } from './preamble.js';
@@ -242,7 +243,9 @@ async function reviewPlan(r: Run, changes: Change[], planned: Planned): Promise<
   if (r.sel) {
     // Ask once, then exempt: what the person approved before shows but does not count.
     const had = approvedIds(r.base, r.m, r.sel.catalog);
-    const stop = await budgetGate({ cat: r.sel.catalog, before: had, after: r.sel.ids, exempt: had, budget: r.config.context.budget_tokens, templatesDir: r.cli.templatesDir, out, f: { yes, dryRun, overBudget: r.flags.ai.overBudget } });
+    const { preset, presetItems } = r.sel;
+    if (preset) for (const l of previewLines(preset, r.sel.ids)) out(l);
+    const stop = await budgetGate({ cat: r.sel.catalog, before: had, after: r.sel.ids, exempt: had, extraBefore: recordedExtra(r.root, r.base), extra: preset ? presetContext(preset, presetItems) : [], budget: r.config.context.budget_tokens, templatesDir: r.cli.templatesDir, out, f: { yes, dryRun, overBudget: r.flags.ai.overBudget } });
     if (stop !== null) return stop;
   }
   const list = (rels: string[]) => rels.map((rel) => `\`${rel}\``).join(', ');

@@ -14,6 +14,7 @@ import { selectedIds } from '../install/plan.js';
 import { reconcile } from '../install/reconcile.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { budgetGate, installSelected, isDenied, sandboxLine } from './init.js';
+import { recordedExtra } from './install-selection.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall, readCatalog, readConfig } from './preamble.js';
 import type { CliEnv } from './index.js';
@@ -117,7 +118,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   if (merged.length) out(`You edited these files; sync changes only the harness parts: ${list(merged)}.`);
   // Installed items are approved: they show, but only a selected item that was never installed counts.
   const approved = approvedIds(config, man, cat);
-  const stop = await budgetGate({ cat, before: approved, after: have, exempt: approved, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, out, f: { yes, dryRun, overBudget } });
+  const stop = await budgetGate({ cat, before: approved, after: have, exempt: approved, extra: recordedExtra(root, config), extraBefore: recordedExtra(root, config), budget: config.context.budget_tokens, templatesDir: cli.templatesDir, out, f: { yes, dryRun, overBudget } });
   if (stop !== null) return stop;
   if (dryRun) {
     if (missing.length) out(`Plugins not installed: ${missing.join(', ')}. ${installFlag ? 'Would install them.' : 'Run with --install-plugins to install them.'}`);

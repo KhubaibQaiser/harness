@@ -216,6 +216,31 @@ export function presetContext(l: LoadedPreset, ids: string[]): ContextEntry[] {
   });
 }
 
+export const PREVIEW_LINES: Record<string, string[]> = {
+  impeccable: [
+    'Impeccable installs hooks: SessionStart, PostToolUse on Edit and Write, and Stop.',
+    'Impeccable downloads its engine into ~/.impeccable/bin/ on first use.',
+  ],
+};
+
+/** What the apply preview adds for the preset: the picks' side effects, the telemetry env and the attribution setting. */
+export function previewLines(l: LoadedPreset, selected: string[]): string[] {
+  const telemetry = l.preset.settings.telemetry_off.filter((id) => selected.includes(id) && Object.hasOwn(TELEMETRY_ENV, id))
+    .map((id) => `Telemetry: ${TELEMETRY_ENV[id].name}=${TELEMETRY_ENV[id].value} goes in .claude/settings.json env for ${id}; it applies to every command in the session.`);
+  return [
+    ...selected.filter((id) => Object.hasOwn(PREVIEW_LINES, id)).flatMap((id) => PREVIEW_LINES[id]),
+    ...telemetry,
+    ...(l.preset.settings.attribution === 'off' ? ['Attribution: .claude/settings.json sets "attribution": false, so commits and PRs get no AI trailer.'] : []),
+  ];
+}
+
+/** The recorded preset's entries for `status`; none when its folder is gone or invalid. */
+export function recordedPresetContext(root: string, rec: { id: string; items: string[] }): ContextEntry[] {
+  const file = findPreset(rec.id, root);
+  const lp = file ? loadPreset(file) : null;
+  return lp?.ok ? presetContext(lp.loaded, rec.items) : [];
+}
+
 export const presetReason = (id: string): string => `Preselected by the ${id} preset`;
 
 /** Stack-matched preselects the reviewer did not pick, then the core and the matched skills; all ticked. */

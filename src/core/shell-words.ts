@@ -78,6 +78,8 @@ export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'script']);
 export const commandName = (word: string): string =>
   word.replace(/["']/g, '').split(/[\\/]/).pop()!.toLowerCase().replace(/\.(exe|cmd|ps1|bat)$/, '').replace(/^([^@]+)@.*$/, '$1'); // backslashes are separators here
 
+/** GNU env -S escapes: `\_` is a space inside double quotes (a separator outside), and the C escapes. */
+const ENV_ESC: Record<string, string> = { _: ' ', n: '\n', t: '\t', r: '\r', f: '\f', v: '\v' };
 /**
  * An `env -S` string as env splits it: whitespace separates words; '…' and "…" group (backslash escapes inside "…"
  * and outside quotes); `(`, `;` and the like are ordinary characters. Returned as a command line whose words are
@@ -89,20 +91,25 @@ export function envSplit(str: string): string {
   let quote = '';
   for (let i = 0; i < str.length; i++) {
     const c = str[i];
-    if (quote === "'") { if (c === "'") quote = ''; else cur += c; continue; }
-    if (quote === '"') { if (c === '"') quote = ''; else if (c === '\\' && i + 1 < str.length) cur += str[++i]; else cur += c; continue; }
-    if (/\s/.test(c)) { if (cur !== null) out.push(cur); cur = null; continue; }
+    if (quote === "'") { if (c === "'") quote = ''; else if (c === '\\' && /['\\]/.test(str[i + 1] ?? '')) cur += str[++i]; else cur += c; continue; }
+    if (quote === '"') { if (c === '"') quote = ''; else if (c === '\\' && i + 1 < str.length) cur += ENV_ESC[str[++i]] ?? str[i]; else cur += c; continue; }
+    if (/\s/.test(c) || (c === '\\' && str[i + 1] === '_')) { // an unquoted \_ separates words, as a space does
+      if (c === '\\') i++;
+      if (cur !== null) out.push(cur);
+      cur = null;
+      continue;
+    }
     cur ??= '';
     if (c === "'" || c === '"') quote = c;
-    else if (c === '\\' && i + 1 < str.length) cur += str[++i];
+    else if (c === '\\' && i + 1 < str.length) cur += ENV_ESC[str[++i]] ?? str[i];
     else cur += c;
   }
   if (cur !== null) out.push(cur);
   return out.map((w) => `'${w.replace(/'/g, "'\\''")}'`).join(' ');
 }
 
-// Shell options whose value is the next word: bash -o pipefail, -O extglob, +o history.
-const SHELL_VALUE = /^[-+][oO]$/;
+// Shell options whose value is the next word: bash -o pipefail, -O extglob, +o history, --rcfile F, --init-file F.
+const SHELL_VALUE = /^(?:[-+][oO]|--rcfile|--init-file)$/;
 /** The commands that `sh -c`, `bash -c`, `script -c` (and the like) and `env -S` run, unquoted, wherever they appear. */
 export function cPayloads(cmd: string): string[] {
   const out: string[] = [];
@@ -111,7 +118,7 @@ export function cPayloads(cmd: string): string[] {
     for (let i = 0; i < ws.length; i++) {
       const name = commandName(ws[i]);
       if (name === 'env') {
-        for (let j = i + 1; j < ws.length && ws[j].startsWith('-'); j++) {
+        for (let j = i + 1; j < ws.length && unquote(ws[j]).startsWith('-'); j++) { // env "-S" is still -S
           const w = unquote(ws[j]);
           // GNU env's options whose value is the next word: -u/--unset NAME, -C/--chdir DIR, -a/--argv0 ARG (also at
           // the end of a cluster, -iu NAME). The signal options take their value attached (--block-signal=SIG).
@@ -124,11 +131,13 @@ export function cPayloads(cmd: string): string[] {
         }
       }
       if (!SHELLS.has(name)) continue;
-      let c = false;
+      // A shell's payload is its first non-option word after -c (sh -c -x CMD, bash -c -o pipefail CMD); script's -c
+      // takes the next word, whatever it is.
+      let c = false, ended = false;
       for (let j = i + 1; j < ws.length; j++) {
-        const w = ws[j];
-        if (c && w === '--') continue; // bash -c -- CMD
-        if (c) { out.push(unquote(w)); break; }
+        const w = unquote(ws[j]); // a quoted or escaped option is still an option: bash "-c" -m CMD, sh -c \\-x CMD
+        if (c && !ended && (w === '--' || w === '-')) { ended = true; continue; } // bash -c -- CMD
+        if (c && (ended || name === 'script' || !/^[-+]/.test(w))) { out.push(w); break; }
         if (SHELL_VALUE.test(w)) { j++; continue; }
         if (!/^[-+]/.test(w)) break;
         if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(w)) c = true;

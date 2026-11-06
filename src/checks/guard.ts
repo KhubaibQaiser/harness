@@ -6,6 +6,10 @@ import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
+import { arithmeticTest, commandSkeleton, gitPlain, globReadings, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
+import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
+import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -149,25 +153,27 @@ function scriptsOf(root: string): Record<string, string> {
 }
 
 /**
- * The command with each here-document body removed. `<<` counts only outside quotes; the delimiter has its quotes taken
+ * The command with each data here-document body removed (sinkTest: a body is code unless it goes to a data sink,
+ * and a code body stays as command lines). `<<` counts only outside quotes; the delimiter has its quotes taken
  * out (`<<E"O"F` is EOF); `<<-` ignores leading tabs on the end line, `<<` wants the line exactly. If anything is odd (a
  * delimiter with an expansion, a body with no end line) the command is returned whole, so nothing is hidden from the parser.
  */
 export function withoutHeredocBodies(cmd: string): string {
   if (!cmd.includes('<<')) return cmd;
-  const lines = cmd.split('\n');
+  const lines = cmd.split('\n'), flags = wholeFlags(cmd, commandSkeleton(cmd)); // once, not once per line
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i], inArithmetic = arithmeticTest(line);
     out.push(line);
-    const ends: { word: string; dash: boolean }[] = [];
+    const ends: { word: string; dash: boolean; data: boolean }[] = [];
+    let tests: ReturnType<typeof commandTests> | undefined;
     let quote = '';
     for (let c = 0; c < line.length; c++) {
       const ch = line[c];
       if (quote) { if (ch === quote) quote = ''; continue; }
       if (ch === '"' || ch === "'") quote = ch;
       else if (ch === '\\') c++;
-      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<') {
+      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<' && !inArithmetic(c)) {
         let d = c + 2;
         const dash = line[d] === '-';
         if (dash) d++;
@@ -181,13 +187,16 @@ export function withoutHeredocBodies(cmd: string): string {
           else word += x;
         }
         if (q || !/^\w+$/.test(word)) return cmd;
-        ends.push({ word, dash });
+        ends.push({ word, dash, data: (tests ??= commandTests(new Scan(line), flags)).sink(0, c) });
         c = d - 1;
       }
     }
     for (const e of ends) {
       let found = false;
-      while (++i < lines.length) if ((e.dash ? lines[i].replace(/^\t+/, '') : lines[i]) === e.word) { found = true; break; }
+      while (++i < lines.length) {
+        if (!e.data) out.push(lines[i]); // a body something runs is command lines
+        if ((e.dash ? lines[i].replace(/^\t+/, '') : lines[i]) === e.word) { found = true; break; }
+      }
       if (!found) return cmd;
     }
   }
@@ -345,7 +354,7 @@ function names(text: string): boolean {
   return false;
 }
 const UNCLEAN = /[{}*?[#<>]|[^\S \t]/;
-const SEGMENTS = /&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`]/;
+export const SEGMENTS = /&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`]/;
 function previewOnly(text: string, depth = 0): boolean {
   text = text.split('${CLAUDE_PLUGIN_ROOT}').join('PLUGIN_ROOT'); // the one expansion the skills use
   if (UNCLEAN.test(text)) return false;
@@ -419,7 +428,7 @@ function sensitiveForm(form: string): boolean {
 }
 
 const DENY: [RegExp, string][] = [
-  [/\bgit\s+push\b[^;&|\n]*(\s--force(?!-with-lease)(\s|=|$)|\s-f(\s|$))/, 'force push (use --force-with-lease, and only on your own branch)'],
+  [/\bgit\s+push\b[^;&|\n]*(\s--force(?!-with-lease)(?=[\s=;&|)}`]|$)|\s-f(?=[\s;&|)}`]|$))/, 'force push (use --force-with-lease, and only on your own branch)'],
   [/\b(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/, 'piping a download straight into a shell'],
   [/\bchmod\b[^;&|\n]*\b0?777\b/, 'chmod 777'],
   [/\bdd\b[^;&|\n]*\bof=\/dev\//, 'writing to a block device'],
@@ -428,7 +437,7 @@ const DENY: [RegExp, string][] = [
 const ASK: [RegExp, string][] = [
   [/\bgit\s+reset\s+--hard\b/, 'git reset --hard discards local changes'],
   [/\bgit\s+clean\s+-[a-zA-Z]*f/, 'git clean deletes untracked files'],
-  [/\bgit\s+(?:(?:-[Cc]\s+\S+|--\S+)\s+)*(checkout|restore)\s+(--\s+)?\.(\s|$)/, 'discarding all working-tree changes'],
+  [/\bgit\s+(?:(?:-[Cc]\s+\S+|--\S+)\s+)*(checkout|restore)\s+(--\s+)?\.(?=[\s;&|)}`]|$)/, 'discarding all working-tree changes'],
   [/\bgit\s+branch\s+-D\b/, 'force-deleting a branch'],
   [/(^|[;&|]\s*)sudo\b/, 'sudo'],
   [/\b(npm|pnpm|yarn)\s+(publish|unpublish)\b/, 'publishing a package'],
@@ -443,11 +452,15 @@ const ASK: [RegExp, string][] = [
   [/\bdrop\s+(table|database|schema)\b/i, 'SQL DROP'],
 ];
 
+/** A subshell or substitution closing right after a word: `(rm -rf /)`, `(git push origin main)`. Not `}`: it ends a brace word. */
+const CLOSERS = /[)`]+$/;
 export const rmTargets = (cmd: string): { recursive: boolean; targets: string[] }[] =>
   [...cmd.matchAll(/(?:^|[;&|(]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => {
     const toks = m[1].trim().split(/\s+/).filter(Boolean);
     const flags = toks.filter((t) => t.startsWith('-')).join('');
-    return { recursive: /-[a-zA-Z]*[rR]|--recursive/.test(flags), targets: toks.filter((t) => !t.startsWith('-')).map(unquote) };
+    // A closer ends a group opened before rm, as in `(rm -rf /)`; one in rm's own words (-$(cat tmp)) is part of a target.
+    const closesOuter = !/[(`]/.test(m[1]) && /[(`]/.test(cmd.slice(0, m.index + m[0].length - m[1].length));
+    return { recursive: /-[a-zA-Z]*[rR]|--recursive/.test(flags), targets: toks.filter((t) => !t.startsWith('-')).map((t) => unquote(closesOuter ? t.replace(CLOSERS, '') : t)) };
   });
 
 const checkRm = (cmd: string): Verdict | undefined => {
@@ -462,7 +475,7 @@ const checkRm = (cmd: string): Verdict | undefined => {
 
 const checkPushToMain = (cmd: string): Verdict | undefined => {
   for (const m of cmd.matchAll(/\bgit\s+push\b([^;&|\n]*)/g)) {
-    const refs = m[1].trim().split(/\s+/).filter((t) => t && !t.startsWith('-')).flatMap((t) => t.split(':'));
+    const refs = m[1].trim().split(/\s+/).filter((t) => t && !t.startsWith('-')).flatMap((t) => t.replace(CLOSERS, '').split(':'));
     if (refs.some((r) => /^(refs\/heads\/)?(main|master)$/.test(r))) return ['deny', 'pushing to main or master (open a pull request from a branch instead)'];
   }
   return undefined;
@@ -621,14 +634,42 @@ export function buildsGuardedWords(command: string, w: Where): boolean {
 const BUILDS_WHY = 'the command builds words at run time (a variable in command position, ${!…}, ${…/…}, $\'…\', IFS=, or eval) and names harness or a protected path, so the guard cannot read what it runs';
 
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
-  command = command.replace(/\\\r?\n/g, ''); // a backslash-newline joins the lines for the shell
-  const d = decideRead(command, ctx);
+  try {
+    const bodiless = commandSkeleton(command.replace(/\\\r?\n/g, '')).bodiless;
+    if (writesGitOutputAndRunsFile(bodiless)) return toDecision(['deny', GIT_OUTPUT_RUN_WHY]);
+    if (writesGitOutputToSensitivePath(bodiless)) return toDecision(['deny', GIT_OUTPUT_CONFIG_WHY]);
+    return decideAll(command.replace(/\\\r?\n/g, ''), ctx, 0); // a backslash-newline joins the lines for the shell
+  } catch (e) {
+    if (e instanceof ScanBudget) return toDecision(['ask', SCAN_BUDGET_WHY]);
+    throw e;
+  }
+}
+/** Every reading of a command line, the stricter verdict winning: as written, the $IFS one, and command-position globs as ruled names. */
+function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
+  const d = decideRead(command, ctx, depth);
   if (d.kind === 'deny') return d;
   const ifs = ifsReading(command);
-  const r = ifs === null ? d : decideRead(ifs, ctx);
-  if (r.kind === 'deny') return r;
-  return [d, r].find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
+  const own = ifs === null ? [command] : [command, ifs];
+  const globs = own.map(globReadings);
+  const rs = [d];
+  for (const t of [...own.slice(1), ...globs.flatMap((g) => g.texts)]) {
+    const r = decideRead(t, ctx, depth);
+    if (r.kind === 'deny') return r;
+    rs.push(r);
+  }
+  if (globs.some((g) => g.capped)) rs.push(toDecision(['ask', GLOB_CAP_WHY]));
+  // git runs its editor or pager on the message, so a message built by $(…) or a heredoc may run: ask at least.
+  if (EDITOR_SET.test(command) && /\bgit\b/.test(command) && /\$\(|`|<</.test(command)) rs.push(toDecision(['ask', EDITOR_WHY]));
+  // A substitution glued inside a word prints what the guard cannot know: read without it, a ruled reading asks.
+  const spliced = splicedReading(command);
+  if (spliced !== null && decideRead(spliced, ctx, depth).kind !== 'allow') rs.push(toDecision(['ask', SPLICE_WHY]));
+  return rs.find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
 }
+const GIT_OUTPUT_RUN_WHY = 'the command writes git output (log, show, rev-parse or cat-file) to a file and runs a file, so an earlier commit message could become the script';
+const GIT_OUTPUT_CONFIG_WHY = 'the command writes git output (log, show, rev-parse or cat-file) into .git/, a gitconfig or a hook, so an earlier commit message could become git config or a hook';
+const EDITOR_WHY = 'the command sets an editor or pager for git (GIT_EDITOR, EDITOR, core.editor, …) and builds its message at run time, and git may run that program on the message';
+const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
+const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 
 const ANSI_C: Record<string, string> = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v' };
 /** The body of a bash `$'…'` string, decoded: \xHH, \NNN, \uHHHH, \UHHHHHHHH, \n and the other letters. */
@@ -654,7 +695,7 @@ function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
     ...[...command.matchAll(/(?<![\w-])eval\s+([^;&|\n]*)/g)].map((m) => m[1].replace(/['"\\]/g, '')),
   ];
   for (const p of inner) {
-    const r = decideRead(p, ctx, depth + 1);
+    const r = decideAll(p, ctx, depth + 1);
     if (r.kind === 'deny') return r;
     if (r.kind === 'ask' && own.kind === 'allow') own = r;
   }
@@ -664,6 +705,11 @@ function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
 function decideCore(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const unq = quoteFree(command); // `"git" push`, `g\it push`, `git $'push'`: quotes and escapes hide no text rule
+  // The text rules read the command without its data: heredoc bodies nobody runs and quoted -m/--body messages.
+  const view = textRulesView(command);
+  const vUnq = view === command ? unq : quoteFree(view);
+  const git = gitPlain(view);
+  const texts = [view, vUnq, git];
   const tokens = `${command} ${unq}`.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');
   const personOnly = personOnlyInvocation(command, ctx);
@@ -676,15 +722,15 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   for (const { targets } of rmTargets(command)) {
     if (targets.some((t) => { const rel = inTdd(t); return rel !== null && isTestFile(rel); })) return deny('deleting a test file in a TDD path');
   }
-  const early = checkRm(command) ?? checkPushToMain(command) ?? checkPushToMain(unq);
+  const early = checkRm(view) ?? checkPushToMain(view) ?? checkPushToMain(vUnq) ?? checkPushToMain(git);
   if (early) return toDecision(early);
-  for (const [re, why] of DENY) if (re.test(command) || re.test(unq)) return deny(why);
+  for (const [re, why] of DENY) if (texts.some((t) => re.test(t))) return deny(why);
   if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {
     return { kind: 'ask', reason: msg('ask', 'shell write into a TDD path; use the Edit or Write tool so the TDD gates see it'), check: 'guard' };
   }
   const install = checkInstall(command, ctx);
   if (install) return install;
-  for (const [re, why] of ASK) if (re.test(command) || re.test(unq)) return toDecision(['ask', why]);
+  for (const [re, why] of ASK) if (texts.some((t) => re.test(t))) return toDecision(['ask', why]);
   return { kind: 'allow' };
 }
 

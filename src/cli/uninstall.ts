@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { ApplyError, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
 import { STRUCTURAL, removeBlocks, removeFromMcp, removeFromSettings } from '../install/merge.js';
@@ -110,7 +110,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     for (const c of changes) out(`Would ${c.kind === 'delete' ? 'remove' : 'restore'} \`${c.rel}\``);
     for (const n of notes) out(`Note: ${n}`);
     if (kept.length) out(`Would keep ${list(kept)} because you edited them (--force removes them too).`);
-    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length ? ', except the edited files above' : ''}.`);
+    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length ? ', except the edited files above' : ''}${existsSync(join(root, '.harness', 'presets')) ? ' (`.harness/presets/` stays: it holds your committed presets)' : ''}.`);
     return out('Dry run: nothing was written.'), 0;
   }
 
@@ -136,8 +136,11 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   // goes, so init, status and doctor see a repo without harness.
   if (deleteHarness) {
     // .harness/presets/ is the person's own committed source, not something harness wrote: it stays.
-    pruneExcept(join(root, '.harness'), [...kept.map((k) => join(root, k)), join(root, '.harness', 'presets')]);
-    out(kept.some((k) => k.startsWith('.harness/')) ? 'Removed `.harness/` except the edited files.' : 'Removed `.harness/`.');
+    const presets = join(root, '.harness', 'presets');
+    const keepPresets = existsSync(presets);
+    pruneExcept(join(root, '.harness'), [...kept.map((k) => join(root, k)), presets]);
+    const edited = kept.some((k) => k.startsWith('.harness/'));
+    out(`Removed \`.harness/\`${edited ? ' except the edited files' : ''}${keepPresets ? `${edited ? ' and' : ' except'} \`.harness/presets/\`, your committed presets` : ''}.`);
   } else {
     // Keep the logs but mark harness as uninstalled so init can run again.
     rmSync(join(root, MANIFEST_REL), { force: true });

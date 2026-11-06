@@ -21,7 +21,7 @@ import { type Facts } from '../install/detect.js';
 import { pinnedPlugins } from '../install/merge.js';
 import { dirtyPaths } from '../install/git-status.js';
 import { installPlugins } from '../install/plugin-install.js';
-import { notPicked, resolveSelection, toSelected } from '../install/select.js';
+import { toSelected } from '../install/select.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
@@ -31,7 +31,7 @@ import { coverageSkipped, coverageWhy, preset, unsafeWhy } from '../install/pres
 import { findOnPath } from '../checks/stop/runner.js';
 import { hasAiFlags, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
-import { splitPreset, type PresetChoice } from './preset-inputs.js';
+import { presetConfig, resolveChosen } from './preset-inputs.js';
 import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
 
@@ -114,20 +114,10 @@ export function loadAiInputs(ai: AiArgs, facts: Facts, claudeVer: string | null,
   if (!p.ok) return { ok: false, errors: p.errors, code: 2 };
   const errors = [...validateProduct(text.product), ...validateReport(text.report, p.picks)];
   if (errors.length) return { ok: false, errors, code: 2 };
-  let chosen = ai.choose!.split(',').filter(Boolean);
-  let pc: PresetChoice | undefined;
-  if (a.answers.preset) {
-    const s = splitPreset(a.answers.preset, facts, a.answers.project.type, chosen);
-    if (!s.ok) return { ok: false, errors: s.errors, code: 2 };
-    pc = s.choice;
-    chosen = pc.rest;
-  }
-  const np = notPicked(chosen, p.picks, cat.catalog, Object.keys(pc?.reasons ?? {}));
-  if (np.length) return { ok: false, errors: np, code: 2 };
-  const r = resolveSelection(chosen, cat.catalog, claudeVer);
-  if (r.errors.length) return { ok: false, errors: r.errors, code: 2 };
+  const c = resolveChosen(a.answers, facts, ai.choose!.split(',').filter(Boolean), p.picks, cat.catalog, claudeVer);
+  if (!c.ok) return { ok: false, errors: c.errors, code: 2 };
   // The report is passed as written: planChanges adds the enforcement sentence when it writes .harness/report.md.
-  return { ok: true, in: { answers: a.answers, picks: p.picks, ids: r.ids, notices: r.notices, files: { picks: text.picks, report: text.report, product: text.product }, catalog: cat.catalog, presetItems: pc?.items ?? [], preset: pc?.loaded, reasons: pc?.reasons ?? {} } };
+  return { ok: true, in: { answers: a.answers, picks: p.picks, ids: c.r.ids, notices: c.r.notices, files: { picks: text.picks, report: text.report, product: text.product }, catalog: cat.catalog, presetItems: c.pc?.items ?? [], preset: c.pc?.loaded, reasons: c.pc?.reasons ?? {} } };
 }
 
 /**
@@ -271,7 +261,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     sel = r.in;
     for (const n of sel.notices) out(n);
     config = { ...answersToConfig(config, sel.answers), items: toSelected(sel.picks, sel.ids, sel.catalog, sel.reasons), catalog_version: sel.catalog.version };
-    if (sel.preset) config.preset = { id: sel.preset.preset.id, version: cli.version, items: sel.presetItems, git: sel.preset.preset.git };
+    if (sel.preset) config.preset = presetConfig(sel.preset, cli.version, sel.presetItems);
   }
 
   // 3. Build the changes

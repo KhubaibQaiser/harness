@@ -103,3 +103,42 @@ test('a preset skill the stack does not match is refused', async () => {
   expect(r.code).toBe(2);
   expect(r.out).toContain(`"frontend-nextjs" does not apply to this repo's stack.`);
 });
+
+test('a repo preset that is missing is a clear error and nothing is written', async () => {
+  const bare = makeRepo({ 'package.json': JSON.stringify({ name: 'a', dependencies: { react: '1' } }) + '\n', 'AGENTS.md': '# Mine\n' });
+  const m = await run(bare, aiArgs(CHOSEN));
+  expect(m.code).toBe(2);
+  expect(m.out).toContain('"stacks" is not a shipped or repo preset');
+  expect(git(bare, 'status', '--porcelain')).toBe('');
+});
+
+test('an invalid repo preset is a clear error and nothing is written', async () => {
+  const root = repo();
+  writeFileSync(join(root, '.harness/presets/stacks.yaml'), 'id: stacks\ntitle: 3\n');
+  git(root, 'commit', '-qam', 'break');
+  const r = await run(root, aiArgs(CHOSEN));
+  expect(r.code).toBe(2);
+  expect(r.out).toContain('preset:');
+  expect(git(root, 'status', '--porcelain')).toBe('');
+});
+
+const un = async (root: string, args: string[]) => {
+  let out = '';
+  await uninstall(args, { env: {}, root, out: (s) => (out += s + '\n'), prompt: fake });
+  return out;
+};
+
+test('uninstall --yes keeps .harness/presets/ and says so', async () => {
+  const root = repo();
+  expect((await run(root, aiArgs(CHOSEN))).code).toBe(0);
+  const out = await un(root, ['--yes']);
+  expect(out).toContain('Removed `.harness/` except `.harness/presets/`, your committed presets.');
+  expect(existsSync(join(root, '.harness/presets/stacks.yaml'))).toBe(true);
+  expect(existsSync(join(root, '.harness/config.yaml'))).toBe(false);
+});
+
+test('uninstall --dry-run says presets stay', async () => {
+  const root = repo();
+  expect((await run(root, aiArgs(CHOSEN))).code).toBe(0);
+  expect(await un(root, ['--dry-run'])).toContain('`.harness/presets/` stays');
+});

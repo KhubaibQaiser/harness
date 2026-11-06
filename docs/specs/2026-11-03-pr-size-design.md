@@ -100,6 +100,7 @@ With `-z`, a numstat entry is `added\tdeleted\tpath\0`. For a rename it is `adde
 - **Snapshots are not counted** (O1). The `exclude` default holds `**/__snapshots__/**` and `**/*.snap`.
 - **Generated paths are not counted** (O2). A path that matches `multi_file_gate.generated` is skipped. This is read from that same key, so the repo has one list of generated paths.
 - **A whole-file deletion counts as 1 file and 0 lines** (O3). The deleted files come from the `--diff-filter=D` call in section 4.
+- **Harness's own local files are not counted in a working-tree measurement** (amended 2026-11-06, review of Task 10): `.harness/state/`, `.harness/logs/`, `.harness/backup/`, `.harness/results/`, `.harness/debug/` and `.harness/reports/`, gitignored or not (`HARNESS_LOCAL` in `src/core/paths.ts`, the list install gitignores). A PR's committed files all count.
 
 ## 6. Decision
 
@@ -113,7 +114,7 @@ The PR is **over** when lines > `pr_size.max_lines` or files > `pr_size.max_file
 | Over the limit, push that doesn't grow it | allow (the person already approved this size) | allow |
 | Unmeasured (no base, git missing, timeout, a name that isn't a plain branch name) | allow with a note (10.3), and log `pr-size-unmeasured` (O5) | the same |
 
-- The check is `pr-size`. It is registered after `guard` in `registry` and runs on PreToolUse (decide) and PostToolUse (record). It has `failClosed: true`, like the guard, so a thrown error denies. It is `pure` at PreToolUse: it runs read-only git and writes only to the event log.
+- The check is `pr-size`. It is registered after `guard` in `registry` and runs on PreToolUse (decide) and PostToolUse (record). It has `failClosed: true`, like the guard, so a thrown error denies. It is not `pure` (amended 2026-11-06, review of Task 7): PostToolUse writes `pr-branches.json`, and after another check's PreToolUse deny it has nothing to decide, so it doesn't measure then.
 - **Unmeasured.** The check appends a `pr-size-unmeasured` event (`check: 'pr-size'`, with the reason) and returns a `context` decision carrying the 10.3 note. The command runs. A `context` decision is never an ask, so the dispatcher's ask-to-deny doesn't touch it, and unattended runs are allowed too.
 - `checks.prSize: false` turns it off. `checks.guard: false` leaves it on, because it is its own check.
 - When one command has several PR creates or pushes, each is measured, and the first one over the limit decides.
@@ -211,6 +212,7 @@ For a push, the first sentence becomes: "this push grows the pull request for `f
 1. On a local dummy repo with a 500-line branch, the agent's `gh pr create` shows the ask; the person declines and nothing runs.
 2. The same with `claude -p` (unattended): denied with the 10.2 copy.
 3. `/pr-ship` plans a split of that branch; the owner judges the plan. Nothing is pushed.
+4. Edit tool calls run one at a time (Pre A, Post A, Pre B), so a second edit can't pass PreToolUse before the first edit's PostToolUse sets `pending` and then clear it unasked (the pause ask, 14.3, N6).
 
 ## 12. Decisions (owner, 2026-11-03)
 
@@ -254,7 +256,7 @@ The owner's core idea: harness warns *while* a change grows, suggests a breakdow
 
 | Option | Latency | Noise | Timeliness |
 |---|---|---|---|
-| PostToolUse on edit tools | One measurement per counted edit: about 6 git spawns (estimate, unverified; the build measures it, section 14.8). An edit to a path outside the repo, or to an excluded path, can't change the counted size, so it spawns nothing. | Low. The fired-threshold record allows one message per crossing. | The agent hears about it right after the edit that crossed, while it can still stop. |
+| PostToolUse on edit tools | One measurement per counted edit: 8 git spawns, 7 on a recorded branch (measured 2026-11-06: 91 ms median overhead on macOS, 20-file repo). An edit to a path outside the repo, or to an excluded path, can't change the counted size, so it spawns nothing. | Low. The fired-threshold record allows one message per crossing. | The agent hears about it right after the edit that crossed, while it can still stop. |
 | PostToolUse on Bash | A measurement after every shell command, including `ls` and test runs, the most frequent tool. | The same record keeps it quiet, but the cost is paid on every command. | It catches changes made by shell commands (codegen, `sed -i`, `git apply`). |
 | Stop only | One measurement per turn. | Lowest. | Late. A single turn can grow a change from 0 to 1,000 lines before the first warning. That misses N1's "while it grows". |
 
@@ -389,7 +391,7 @@ The PreToolUse ask (N6): `` Confirm: `<branch>` is now L changed lines in F file
 - A subagent's edit gives the warning to that subagent, not to the main agent (unverified). The person's `systemMessage` still shows.
 - Where AskUserQuestion isn't available (some subagents, `claude -p`), the agent can only ask in text.
 - A raise is kept by branch name. A renamed branch starts again from the repo limits.
-- The latency per counted edit is unverified until the perf case runs.
+- The latency per counted edit was measured at 91 ms median overhead on macOS in a 20-file repo, with 8 spawns (2026-11-06). In a large repo the two working-tree `git diff` calls dominate, up to the 6 s budget.
 
 ### 14.11 Owner decisions (2026-11-05, second round)
 

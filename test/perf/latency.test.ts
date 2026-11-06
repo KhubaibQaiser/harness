@@ -10,6 +10,8 @@ import { expect, test } from 'vitest';
 const DISPATCH = join(process.cwd(), 'dist/hooks/dispatch.mjs');
 const RUNS = 21;
 const OVERHEAD_MS = { win32: 450, darwin: 150 }[process.platform as string] ?? 100; // harness cost on top of a bare node spawn; hosted runners vary (Windows 402–407 ms at 250, macOS 105–108 ms at 100)
+// A counted edit runs about 7 git calls on purpose (spec §14.2), so it gets its own ceiling. Hosted runners measured macOS 154–166 ms and Windows 490 ms (Nov 2026); about 2x headroom.
+const COUNTED_EDIT_OVERHEAD_MS = { win32: 1000, darwin: 300 }[process.platform as string] ?? 200;
 const CEILING_MS = 1000; // gross-regression guard on the whole spawn
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
@@ -98,4 +100,29 @@ test('gated PreToolUse with 40 result files: harness overhead over a bare node s
   writeFileSync(failing, readFileSync(failing, 'utf8').replaceAll('"failed"', '"passed"'));
   const c = spawnSync(process.execPath, [DISPATCH], { input, encoding: 'utf8' });
   expect(JSON.parse(c.stdout).hookSpecificOutput.permissionDecision).toBe('deny');
+}, 60000);
+
+test('counted PostToolUse Edit in a 20-file repo with checks.prSize on: harness overhead over a bare node spawn', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'h-lat4-'));
+  const g = (...args: string[]) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+  g('init', '-q', '-b', 'main');
+  for (let i = 0; i < 20; i++) (mkdirSync(join(repo, 'src'), { recursive: true }), writeFileSync(join(repo, `src/f${i}.ts`), 'x\n'.repeat(20)));
+  mkdirSync(join(repo, '.harness'));
+  writeFileSync(join(repo, '.harness/config.yaml'), 'checks:\n  prSize: true\n'); // committed, as an install's is
+  g('add', '-A');
+  g('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  g('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  g('checkout', '-q', '-b', 'feat');
+  writeFileSync(join(repo, 'src/f0.ts'), 'y\n'.repeat(30));
+  const input = JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'lat', cwd: repo, tool_name: 'Edit', tool_input: { file_path: join(repo, 'src/f0.ts'), old_string: 'x', new_string: 'y' }, tool_response: {} });
+  const m = measure(input, (r) => {
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe(''); // under the target: measured, nothing to say
+  });
+  // Control: the edit was measured, so the progress file holds this branch's size.
+  expect(JSON.parse(readFileSync(join(repo, '.harness/state/pr-progress.json'), 'utf8')).feat).toMatchObject({ lines: 50, files: 1 });
+  console.log(`pr-size counted edit: overhead median ${m.overhead.toFixed(1)} ms, total median ${m.total.toFixed(1)} ms`);
+  expect(m.overhead, `counted edit overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(COUNTED_EDIT_OVERHEAD_MS);
+  expect(m.total, `counted edit total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);

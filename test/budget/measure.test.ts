@@ -4,7 +4,7 @@ import { expect, test } from 'vitest';
 import { defaults } from '../../src/core/config.js';
 import { loadCatalog } from '../../src/catalog/load.js';
 import type { Catalog, CatalogItem } from '../../src/catalog/schema.js';
-import { DEFAULT_CONTEXT_BUDGET, alwaysLoadedText, budgetLines, budgetVerdict, estimateTokens, itemContext, itemContextLine, measureSelection, type ContextMeasure } from '../../src/budget/measure.js';
+import { DEFAULT_CONTEXT_BUDGET, alwaysLoadedText, budgetLines, budgetVerdict, estimateTokens, itemContext, itemContextLine, measureSelection, measureSelectionSync, type ContextMeasure } from '../../src/budget/measure.js';
 
 const templates = join(__dirname, '../../templates');
 const plugin = join(__dirname, '../..');
@@ -140,4 +140,14 @@ test('duplicate ids count once', async () => {
 
 test('config default equals DEFAULT_CONTEXT_BUDGET', () => {
   expect(defaults().context.budget_tokens).toBe(DEFAULT_CONTEXT_BUDGET);
+});
+
+test('extra entries add like items, in both measure functions', async () => {
+  const extra = [{ id: 'core', tokens: 30 }, { id: 'plug', tokens: null }];
+  const base = await measureSelection([], cat(), dirs);
+  for (const r of [await measureSelection([], cat(), dirs, { extra }), measureSelectionSync([], cat(), dirs, { extra })]) {
+    expect(r.tokens).toBe(base.tokens + 30);
+    expect(r.entries.slice(-2)).toEqual(extra);
+    expect(r.unmeasured).toEqual(['plug']);
+  }
 });

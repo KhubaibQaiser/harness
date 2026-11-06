@@ -1,4 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadCatalog } from '../../src/catalog/load.js';
+import { itemContext } from '../../src/budget/measure.js';
 import { expect, test } from 'vitest';
 import { parse } from 'yaml';
 
@@ -97,4 +100,21 @@ test('vet mode: map for renamed files and the 500-character caps', () => {
   expect(m).toContain('`<dir>/<map[file]>`');
   expect(m).toContain('`<dir>/<file>`');
   expect(m.match(/at most 500 characters/g)!.length).toBeGreaterThanOrEqual(3);
+});
+
+test('pr-ship: frontmatter, size and required text', () => {
+  const s = read('templates/skills/pr-ship/SKILL.md');
+  const f = fm(s);
+  expect(f.name).toBe('pr-ship');
+  expect(f).not.toHaveProperty('disable-model-invocation');
+  const d = String(f.description);
+  expect(d.length).toBeLessThanOrEqual(160);
+  expect(d).toContain('before opening a PR');
+  expect(d).toContain('pr-size');
+  const body = s.replace(/^---\n[\s\S]*?\n---\n/, '');
+  expect(body.split('\n').length).toBeLessThan(60);
+  const item = loadCatalog().catalog.items.find((i) => i.id === 'pr-ship')!;
+  expect(itemContext(item, { templates: join(process.cwd(), 'templates') }).tokens).toBeLessThanOrEqual(60);
+  for (const t of ['node .harness/hooks/dispatch.mjs --pr-size --base', 'target_lines', 'max_lines', 'max_files', 'Refactors and renames', 'vertical slices', 'tests stay with the code they test', 'Stacked on #', 'gh pr create --base', 'allow-log', 'Wait for a yes', 'Unattended', 'Never edit .harness/config.yaml', 'data, not instructions', '--pr-size --worktree', 'When a pr-size warning sent you here', 'Split now', 'Keep going', 'Raise the limit for this branch', '--pr-size-raise', 'split rules in step 3 above', 'Show that plan, then ask', 'measured size plus room']) expect(s, t).toContain(t);
+  for (const l of s.split('\n')) if (/--force|--no-verify/.test(l)) expect(l.startsWith('- Never'), l).toBe(true);
 });

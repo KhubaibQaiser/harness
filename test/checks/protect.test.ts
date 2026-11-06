@@ -19,7 +19,7 @@ const edit = (p: string, tool = 'Edit') => run(tool, { file_path: p });
 const bash = (command: string) => run('Bash', { command }).kind;
 
 test('protect is registered second, fail-closed, on PreToolUse', () => {
-  expect(registry.map((c) => c.name).slice(0, 2)).toEqual(['guard', 'protect']);
+  expect(registry.map((c) => c.name).slice(0, 3)).toEqual(['guard', 'pr-size', 'protect']);
   expect(protect.failClosed).toBe(true);
   expect(protect.events).toEqual(['PreToolUse']);
 });
@@ -342,4 +342,12 @@ test('F1: denied attended and unattended (through the dispatcher)', async () => 
 test('PowerShell and Monitor writes to harness files are denied', () => {
   expect(run('PowerShell', { command: 'echo x > .harness/state/a.json' }).kind).toBe('deny');
   expect(run('Monitor', { command: 'tail -f log > .claude/settings.json' }).kind).toBe('deny');
+});
+
+test('the pr-ship skill\'s --pr-size call passes the full PreToolUse registry', async () => {
+  const cmd = 'node .harness/hooks/dispatch.mjs --pr-size --base feat/a';
+  expect(bash(cmd)).toBe('allow');
+  const config = loadConfig('/nonexistent-harness-root').config;
+  const ctx = { input: { hook_event_name: 'PreToolUse', session_id: 's', cwd: ROOT, tool_name: 'Bash', tool_input: { command: cmd } }, root: ROOT, config, env: {}, unattended: false } as unknown as Ctx;
+  for (const c of registry.filter((c) => c.events.includes('PreToolUse') && (c.name === 'guard' || c.name === 'protect'))) expect((await c.run(ctx)).kind, c.name).toBe('allow');
 });

@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
 import { gitStep } from '../../src/cli/git.js';
+import { type Git } from '../../src/checks/pr-size/measure.js';
 import { defaultExec, type Exec } from '../../src/core/exec.js';
 import { makeRepo } from '../install/helpers.js';
 
@@ -11,18 +12,18 @@ const put = (root: string, rel: string, text: string) => (mkdirSync(dirname(join
 const manifest = { version: '1.2.3', createdAt: 'x', files: [{ rel: '.harness/config.yaml', kind: 'create', hash: 'h' }, { rel: '.claude/settings.json', kind: 'update', hash: 'h' }] };
 
 /** A repo with harness files written but not committed. */
-function installed(opts: { branch?: string; remoteHead?: string; trailer?: string; tracked?: Record<string, string>; extra?: string[] } = {}) {
+function installed(opts: { branch?: string; remoteHead?: string; trailer?: string; tracked?: Record<string, string>; extra?: string[]; preset?: string } = {}) {
   const root = makeRepo({ 'a.txt': 'a\n', ...opts.tracked }, opts);
   g(root, 'config', 'init.defaultBranch', opts.branch ?? 'main'); // hermetic: never the machine's global default
   for (const rel of opts.extra ?? []) put(root, rel, 'x');
-  put(root, '.harness/config.yaml', `catalog_version: 7\n${opts.trailer ? `git:\n  commit_trailer: "${opts.trailer}"\n` : ''}`);
+  put(root, '.harness/config.yaml', `catalog_version: 7\n${opts.trailer ? `git:\n  commit_trailer: "${opts.trailer}"\n` : ''}${opts.preset ?? ''}`);
   put(root, '.claude/settings.json', '{}\n');
   put(root, '.harness/manifest.json', JSON.stringify({ ...manifest, files: [...manifest.files, ...(opts.extra ?? []).map((rel) => ({ rel, kind: 'create', hash: 'h' }))] }));
   return root;
 }
-const run = (root: string, args: string[], exec: Exec = noGh) => {
+const run = (root: string, args: string[], exec: Exec = noGh, git?: Git) => {
   const lines: string[] = [];
-  const code = gitStep(args, { root, env: {}, out: (s) => lines.push(s), exec });
+  const code = gitStep(args, { root, env: {}, out: (s) => lines.push(s), exec, git });
   return { code, out: lines.join('\n') };
 };
 // gh never runs for real: it is reported missing.
@@ -252,4 +253,95 @@ test('commit and push refuse main even when init.defaultBranch says master and t
 test('--title takes a value, not a flag', () => {
   const root = installed();
   expect(run(root, ['pr', '--title', '--dry-run']).code).toBe(2);
+});
+
+const PRESET = (o = 'no_ai_trailer: true') => `preset:\n  id: khubaib\n  version: "1"\n  items: []\n  git:\n    branch_prefixes: [feature/, fix/, hotfix/, chore/, refactor/, docs/, ci/]\n    ${o}\n    pr_size_warning: true\n`;
+
+test('commit refuses an AI trailer when the preset bans it, and makes no commit', () => {
+  const root = installed({ trailer: 'Co-Authored-By: Claude <c@example.com>', preset: PRESET() });
+  g(root, 'checkout', '-q', '-b', 'b');
+  const before = g(root, 'rev-parse', 'HEAD');
+  const r = run(root, ['commit']);
+  expect(r.code).toBe(1);
+  expect(r.out).toBe('The khubaib preset bans AI trailers; clear git.commit_trailer.');
+  expect(g(root, 'rev-parse', 'HEAD')).toBe(before);
+});
+
+test('commit keeps the trailer when the preset does not ban it', () => {
+  const root = installed({ trailer: 'Co-Authored-By: Someone <s@example.com>', preset: PRESET('no_ai_trailer: false') });
+  g(root, 'checkout', '-q', '-b', 'b');
+  expect(run(root, ['commit']).code).toBe(0);
+});
+
+test('branch --suggest prints the seven names and creates nothing', () => {
+  const root = installed({ preset: PRESET() });
+  const r = run(root, ['branch', '--suggest', 'Add login form']);
+  expect(r.code).toBe(0);
+  expect(r.out.split('\n')).toEqual(['feature', 'fix', 'hotfix', 'chore', 'refactor', 'docs', 'ci'].map((p) => `${p}/add-login-form`));
+  expect(g(root, 'branch', '--show-current')).toBe('main');
+  expect(g(root, 'branch', '--list')).toBe('* main');
+});
+
+test('--suggest needs branch and a topic', () => {
+  const root = installed({ preset: PRESET() });
+  expect(run(root, ['commit', '--suggest', 'x']).code).toBe(2);
+  expect(run(root, ['branch', '--suggest']).code).toBe(2);
+});
+
+// A fake Git: numstat of `n` files totalling `lines`; every ref resolves.
+function fakeGit(lines: number, n: number, fail = false) {
+  const calls: string[][] = [];
+  const git: Git = (args) => {
+    calls.push(args);
+    if (fail) return { status: 1, stdout: '' };
+    if (args.includes('--numstat')) return { status: 0, stdout: Array.from({ length: n }, (_, i) => `${i ? Math.floor(lines / n) : lines - Math.floor(lines / n) * (n - 1)}\t0\tf${i}.ts\0`).join('') };
+    return { status: 0, stdout: args[0] === 'rev-parse' ? 'abc123\n' : '' };
+  };
+  return { git, calls };
+}
+const prRoot = () => {
+  const root = installed({ preset: PRESET() });
+  g(root, 'checkout', '-q', '-b', 'feature/x');
+  put(root, '.harness/report.md', 'r');
+  return root;
+};
+const ghOk = (calls: string[][]): Exec => (cmd, args) => cmd === 'gh' ? (calls.push([cmd, ...args]), { status: 0, stdout: 'url\n' }) : defaultExec(cmd, args);
+
+test('pr warns about an oversized PR, still creates it, and measures base against head', () => {
+  const root = prRoot();
+  const f = fakeGit(512, 14);
+  const calls: string[][] = [];
+  const r = run(root, ['pr'], ghOk(calls), f.git);
+  expect(r.code).toBe(0);
+  expect(r.out.split('\n')[0]).toBe('This PR has 512 changed lines in 14 files; the limit is 400 lines or 20 files.');
+  expect(calls.at(-1)?.slice(0, 3)).toEqual(['gh', 'pr', 'create']);
+  expect(f.calls.some((a) => a.includes('refs/remotes/origin/main^{commit}'))).toBe(true);
+  expect(f.calls.some((a) => a.includes('refs/heads/feature/x^{commit}'))).toBe(true);
+});
+
+test('pr prints nothing extra under the limit', () => {
+  const r = run(prRoot(), ['pr'], ghOk([]), fakeGit(100, 3).git);
+  expect(r.out).toBe('url');
+});
+
+test('pr says when the size could not be measured', () => {
+  const r = run(prRoot(), ['pr'], ghOk([]), fakeGit(0, 0, true).git);
+  expect(r.out).toMatch(/^PR size not measured: .+\.\nurl$/);
+});
+
+test('--suggest without a preset exits 1 with a message', () => {
+  const r = run(installed(), ['branch', '--suggest', 'x']);
+  expect(r.code).toBe(1);
+  expect(r.out).toBe('No preset is recorded in .harness/config.yaml; nothing to suggest from.');
+});
+
+test('on a detached HEAD, pr stops with a clear message and measures nothing; --suggest still works', () => {
+  const root = installed({ preset: PRESET() });
+  g(root, 'checkout', '-q', '--detach');
+  const f = fakeGit(512, 14);
+  const r = run(root, ['pr'], ghOk([]), f.git);
+  expect(r.code).toBe(1);
+  expect(r.out).toBe('You are on a detached HEAD. Run harness git branch first.');
+  expect(f.calls).toHaveLength(0);
+  expect(run(root, ['branch', '--suggest', 'x']).code).toBe(0);
 });

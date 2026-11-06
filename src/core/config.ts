@@ -31,7 +31,7 @@ export interface Selected {
 
 export interface HarnessConfig {
   version: 1;
-  checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop', boolean>;
+  checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop' | 'prSize', boolean>;
   sandbox: SandboxMode;
   /** 0 means no catalog. */
   catalog_version: number;
@@ -73,7 +73,7 @@ export const PR_SIZE_EXCLUDE: string[] = [
 
 export const defaults = (): HarnessConfig => ({
   version: 1,
-  checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true },
+  checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true, prSize: true },
   sandbox: 'unattended',
   catalog_version: 0,
   project: { type: '', domain: '', compliance: [], data_handling: '', team_size: 0, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [], scope_paths: [] },

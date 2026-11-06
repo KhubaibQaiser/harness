@@ -10,7 +10,7 @@ The full detail behind the [README](../README.md). Start there; come here when y
 - **Fails closed where it matters.** If the dispatcher can't start or crashes, Claude Code blocks the tool call, the prompt or the settings change (`onFailure: "block"`). The Stop gate fails open if its process can't run. If `.harness/config.yaml` is invalid, agent edits are denied and Stop blocks until a person fixes it. The guard and protected-path checks deny the call if they crash.
 - **Repo-level.** `init` writes plain files into the repo (`.harness/`, `.claude/settings.json`, `AGENTS.md`). Commit them, and the hooks run for anyone who opens the repo in Claude Code, with or without the plugin.
 - **Local-first.** Events go to `.harness/logs/events.jsonl` in the repo. Nothing is sent anywhere, except an npm registry lookup for a package name when you allow an install, and `update --check`.
-- **Timing log.** `.harness/logs/timing.jsonl` holds one line per hook call or Stop step (event, tool, outcome, ms), with no paths or command text. At 5 MB it is renamed to `timing.1.jsonl`, replacing the old one.
+- **Timing log.** `.harness/logs/timing.jsonl` holds one line per Stop step (event, step, outcome, ms; hook calls are added in a later release), with no paths or command text. At 5 MB it is renamed to `timing.1.jsonl`, replacing the old one.
 - **Reversible.** `init` backs up every file it changes and records every edit in `.harness/manifest.json`. `uninstall` removes exactly what the manifest lists and restores your files.
 - **You confirm every write.** `init` and `update` show the full plan and diff first. Neither commits, pushes or opens a PR.
 
@@ -28,6 +28,17 @@ The full detail behind the [README](../README.md). Start there; come here when y
 ## Multi-file gate (any repo)
 
 Asks you once per turn before the agent edits a second source file. Your yes covers the rest of the turn. Test files, snapshots, lockfiles and files in `multi_file_gate.generated` never count. In unattended runs you choose: block, allow and log, or off. See [Unattended runs and CI](#unattended-runs-and-ci).
+
+## PR size (any repo)
+
+- Detected: `gh pr create` (also through wrappers, scripts and `bash -c`), and `git push` to a branch whose PR harness saw being created.
+- Counted: the committed three-dot diff against the base, tests included. Not counted: `pr_size.exclude` (lockfiles, `.*ignore` files except `.npmignore` and `.harnessignore`, snapshots) and `multi_file_gate.generated` paths. A binary or deleted file is 1 file and 0 lines.
+- Over `pr_size.max_lines` or `pr_size.max_files`, it asks you first; a push asks only when it grows the PR past what was recorded. Unattended, it is denied with how to split it.
+- When it can't measure (no base ref, git missing, a timeout), the command runs with a note and a `pr-size-unmeasured` event.
+- Each PR branch's base, lines and files are recorded in `.harness/state/pr-branches.json` after the create or push runs.
+- `/pr-ship` measures the branch and splits it into stacked PRs of about `pr_size.target_lines` each.
+- **Warnings while it grows.** After each edit (Edit, Write, MultiEdit, NotebookEdit) to a counted path in the repo, and once at Stop, harness measures the branch's committed and uncommitted change (untracked files included) against its base: the recorded PR base, else the default branch. It warns once when the change passes `pr_size.target_lines` and once more when it passes `pr_size.max_lines` or `pr_size.max_files`, not on every edit in between. A threshold resets when the size drops back to it or under (after a split, say), so the next crossing warns again. Attended, the agent is told to stop and ask you to split (with the `pr-ship` skill), keep going or raise the limit, and you see a one-line message; at Stop you get the message only. After a warning, your next edit on that branch asks once in a permission dialog: approve to keep going, or say no and tell Claude to split or raise the limit. A no asks again at the next edit until you type a prompt; the edit running, your next prompt or a raise answers it. It covers edit tools only, not shell commands that write files. Unattended, the agent gets a note to keep going and split before opening a PR, and a Stop warning is only logged. Each warning logs a `pr-size-warned` event. The thresholds already announced, per branch, are kept in `.harness/state/pr-progress.json`. Harness's own `.harness/state/`, `logs/`, `backup/`, `results/` and `debug/` files never count here, gitignored or not. A detached HEAD, or a change it can't measure, gets no warning.
+- **Split, keep going or raise.** After a warning, `/pr-ship` measures the working tree, groups the changed files into a plan, and asks you to split now, keep going, or raise the limit for this branch. A raise runs `--pr-size-raise` (below), which you approve in a dialog; unattended, a raise is denied, and on a detached HEAD it is denied too. The guarantee: a raise is recorded only on the branch the dialog named. Harness saves that branch for that exact command in `.harness/state/pr-raise-asked.json` when it asks, and after the command runs it records the raise only if HEAD is still on that branch and the command printed the raise. It also records only the lines and files the dialog showed. Otherwise it records nothing and logs a `pr-size-raise-skipped` event. A command that runs a hook dispatcher by hand without one of its entry flags (the repo's `.harness/hooks/dispatch.mjs`, the package's `dist/hooks/dispatch.mjs`, or any path ending in `hooks/dispatch.mjs`, however it is spelled), or that copies, moves or links a hook file, or pipes or redirects one, is denied, attended or not. It is a text check; see [Known limits](#known-limits). As an early refusal, some commands are denied outright: a second raise, or a branch, directory or repo change in the same command, such as `git checkout`, `git switch`, `git -C`, `cd`, `pushd`, `git worktree add`, `--git-dir` or `GIT_DIR=`. Those are examples; other branch changes (an alias, `gh pr checkout`, a script) aren't refused, but the raise isn't recorded on a branch you didn't approve. A raise is kept per branch in `.harness/state/pr-progress.json`, and logs a `pr-size-raised` event.
 
 ## TDD gates (JS/TS with Vitest or Jest)
 
@@ -47,7 +58,7 @@ Experimental: it has not had live review runs yet. `init` also adds a `staff-rev
 
 ## What `init` checks first
 
-Run `init` anywhere in a git repo: it installs at the repo root and prints that path. It refuses if the directory is not a git repo, if Node is older than 22.11, or if `.harness/manifest.json` already exists (use `update` then). It also stops if files it would change have uncommitted changes. `harness doctor` also fails when Claude Code is older than 2.1.314.
+Run `init` anywhere in a git repo: it installs at the repo root and prints that path. It refuses if the directory is not a git repo, if Node is older than 22.11, or if `.harness/manifest.json` already exists (use `update` then). It also stops if files it would change have uncommitted changes. `harness doctor` also fails when Claude Code is older than 2.1.314. It also notes (never fails) when the default branch is unprotected, or protected without a required check that matches a lint or test job in `.github/workflows`; it asks `gh`, and says "unknown" when `gh` is missing or signed out.
 
 ## What `init` changes in your repo
 
@@ -61,6 +72,11 @@ Run `init` anywhere in a git repo: it installs at the repo root and prints that 
 | `CLAUDE.md` | Created as `@AGENTS.md`, or that line is appended, unless it already imports `AGENTS.md`. |
 | `.gitignore` | Adds `.harness/state/`, `.harness/logs/`, `.harness/backup/` and `.harness/results/`. |
 | `.claude/agents/staff-reviewer.md`, `.claude/skills/review-rubric/SKILL.md` | Created. The review agent and its rubric. |
+| `.claude/skills/pr-ship/SKILL.md` | Created. The skill that splits a large change into stacked PRs. |
+| `AGENTS.md` (preset on) | A second block between `<!-- harness:preset:start -->` and `<!-- harness:preset:end -->`, after the harness block. It stays if you turn `agents-md` off. |
+| `.claude/skills/<name>/SKILL.md` (preset on) | Created for the preset's skills that match your stack (`engineering-principles`, `frontend-react`, `frontend-nextjs`, `frontend-react-native`). Turning the preset off in `/harness:update` removes the ones you have not edited. |
+| `.claude/settings.json` (preset on) | Adds `attribution: false` and the opt-out `env` keys of the items you chose (`DO_NOT_TRACK=1` for Impeccable, and the matching variable for Superpowers). Keys you already set are kept. |
+| `update` (preset on) | Reloads the preset from its folder: a changed `core.md` replaces the preset block in place, and a skill whose stack is gone from `package.json` is removed (and dropped from `preset.items`) if you have not edited it. A skill that newly matches is only noted: run `/harness:update` and tick it. Answers with `"preset": null` turn the preset off and remove its block, skills and settings keys; the plugins it preselected stay selected. If the preset folder is gone, `update` says so and leaves its files as they are. |
 | `.prettierignore`, `.eslintignore`, ESLint flat config | Adds `.harness/` so your format and lint steps skip the harness files. |
 | `.harness/hooks/jest-results.cjs` | Created in a repo with Jest. A small reporter that writes JSON results. |
 | Vitest config or Jest `test` script | Edited when TDD is on, to write JSON results and coverage. Shown in the plan first. |
@@ -76,7 +92,7 @@ harness uninstall --dry-run
 harness uninstall
 ```
 
-`uninstall` removes only what `.harness/manifest.json` lists. A merged file (`AGENTS.md`, `.gitignore`, the settings, a test config) that you have not edited comes back from the backup `init` made. That backup is gitignored, so on a teammate's clone, and for any merged file you edited (also when `update` changed it later), uninstall removes only the harness blocks and keeps the rest of the file. If `init` replaced the text between existing `AGENTS.md` harness markers, that old text cannot be restored. A harness file you edited, such as `.harness/config.yaml`, is listed and kept unless you pass `--force`; a merged file is never deleted whole. A yes also deletes the rest of `.harness/`, including its logs. Answering no at that prompt keeps `.harness/` and its `.gitignore` lines, so the logs and backups stay out of git. Harness is uninstalled either way: the manifest goes, so `status` and `doctor` report it as not installed and `init` can run again.
+`uninstall` removes only what `.harness/manifest.json` lists. A merged file (`AGENTS.md`, `.gitignore`, the settings, a test config) that you have not edited comes back from the backup `init` made. That backup is gitignored, so on a teammate's clone, and for any merged file you edited (also when `update` changed it later), uninstall removes only the harness blocks and keeps the rest of the file. If `init` replaced the text between existing `AGENTS.md` harness markers, that old text cannot be restored. A harness file you edited, such as `.harness/config.yaml`, is listed and kept unless you pass `--force`; a merged file is never deleted whole. A yes also deletes the rest of `.harness/`, including its logs, except `.harness/presets/`, which holds your own presets. Answering no at that prompt keeps `.harness/` and its `.gitignore` lines, so the logs and backups stay out of git. Harness is uninstalled either way: the manifest goes, so `status` and `doctor` report it as not installed and `init` can run again.
 
 `doctor`, `update` and `uninstall` compare files with `.harness/manifest.json` ignoring CRLF vs LF, so a teammate's checkout with `core.autocrlf=true` is not treated as edited, and the harness blocks are still found and removed.
 
@@ -197,10 +213,10 @@ The multi-file gate never counts test files: JS/TS `*.test.*`, `*.spec.*` and `_
 The full flow runs only inside Claude Code, where Claude does the interview and the recommendations. The CLI stays deterministic: Claude passes it files, and it checks them.
 
 1. **Scan.** It reads your repo and shows what it found.
-2. **Interview.** Claude asks one question at a time: scope first, then gaps the scan can't answer. It drafts `product.md` for you to edit. It reads only files you point to, never dotenv files or `.harnessignore` paths, and credentials are names only.
+2. **Interview.** Claude asks one question at a time: scope first, then "Use a named preset?" ("No preset" is the default; `harness preset list` shows the others), then gaps the scan can't answer. It drafts `product.md` for you to edit. It reads only files you point to, never dotenv files or `.harnessignore` paths, and credentials are names only.
 3. **Recommend.** A fresh-context reviewer audits the repo against the catalog and proposes items and a report.
-4. **Select.** You tick items, four per question, with the reason, context cost and side effects of each.
-5. **Apply.** It shows the plan and the always-loaded context from harness. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
+4. **Select.** You tick items, four per question, with the reason, context cost and side effects of each. With a preset, its rows are ticked and say they came from it.
+5. **Apply.** It shows the plan, the preset's extra lines (Impeccable's hooks and download, the opt-out variables, the attribution setting) and the always-loaded context from harness. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
 6. **Git.** Each of branch, commit, push and PR is its own question. Nothing runs without a yes.
 
 It writes the same files as `init`, plus `.harness/context/product.md` and `.harness/report.md`.
@@ -235,6 +251,8 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `why <id>` | For an installed item: why it is there, the findings it addresses, its cost and its context. For one that isn't installed: why it is in the catalog and its cost. |
 | `explain` | One line per installed item with its files, then the always-loaded context. |
 | `stats [--days N]` | Counts harness events (the default is the last 7 days). |
+| `report [--days N] [--open] [--export]` | Writes `.harness/reports/<YYYY-MM-DD>.html`, one file with no JavaScript and no external requests (a second run on the same day overwrites it). `--days N` is the window, a positive integer, default 14. `--open` opens the file with the system opener. `--export` also writes `<date>-export.json`: counts and rates only, with every string checked against an allowlist before it is written. Only sessions started inside the repo or one of its worktrees are read, and the terminal output is counts only. Install and `harness update` add `.harness/reports/` to the root `.gitignore`; until then the `reports/` folder gets its own `.gitignore` containing `*`. Exit 0 when a report is written (also with no sessions), 2 on bad arguments, 1 when the folder can't be written. It reads the timing log, `.harness/logs/timing.jsonl`, for the latency tables. |
+| `eval [--kind skills\|rules\|gates] [--runs N] [--max-cost-usd X] [--model <id>]` | Runs `claude plugin eval` on a plugin built in a temp folder outside the repo. **It costs money.** It prints the plan and an estimate, then asks you to type `yes` on every run; any other answer stops it. Defaults: all kinds, `--runs 3`, `--max-cost-usd 2` (the ceiling is not saved; spend can pass it by up to one agent run), model `claude-haiku-5-5`. It refuses without a terminal, inside Claude Code, or when `CI` is `true` or `1`. Results are saved under `.harness/reports/evals/<date>/`, and the next `report` shows them. `gates` is not available yet. |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. `off` works only in your own terminal. |
 | `scan` | Prints the facts harness detects about your repo, as JSON. Writes nothing. |
 | `catalog` | Prints the catalog of items harness can install, as JSON. |
@@ -248,10 +266,13 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `vet <target> [--json]` | Pins a GitHub plugin or skill to a commit, scans it without running it, and writes `.harness/vet/<id>-<sha>.md`. Installs nothing. |
 | `vet <target> --json [--keep]` | Prints the scan as JSON and writes no report. `--keep` adds `dir` and `map` and keeps the unpacked folder (under the OS temp dir) for a reviewer. `map` lists only the in-scope files unpacked under another name (such as `CLAUDE.md.vetted`), keyed by the file name the findings use. |
 | `vet --finish <scan.json> --review <file>` | Checks the reviewer's file like `validate vet-review`, writes the report with the review, then deletes the kept folder. |
+| `node .harness/hooks/dispatch.mjs --pr-size [--base <name>] [--head <name>] [--worktree]` | Measures the current branch's PR size (with `--worktree`, it also counts staged, unstaged and untracked changes, and `head` is `working tree`) and prints it as JSON (`base`, `head`, `lines`, `files`, `target_lines`, `max_lines`, `max_files`, `over`, `top`, `excluded`). Exits 0 within the limit, 1 over it, 2 when it can't measure (the JSON then holds `error`). Works in every clone, including cloud sessions, since it needs no `harness` install. |
+| `node .harness/hooks/dispatch.mjs --pr-size-raise --lines <n> [--files <n>]` | Raises this branch's PR size limit, for the warnings and at PR time. The agent runs it and you approve it in a dialog; unattended, it is denied. `--lines` is an integer from `pr_size.max_lines` + 1 to 100000; `--files` defaults to `pr_size.max_files` and goes up to 10000. Prints `branch`, `lines` and `files` as JSON and exits 0, or exits 2 with `error` for a bad value or a detached HEAD. The command itself writes nothing; harness records the raise after it runs, only on the branch the dialog named. Run it on its own. |
 | `vet --install <scan.json>` | Prints the install commands and the sha-pinned marketplace entry from that scan's report. |
 | `vet --clean` | Removes every `harness-vet-*` folder of this OS user, including other projects' folders and runs still in progress. Skips and counts any it can't remove. |
 | `select --picks <file> [--preset <id> --answers <file>] [--choose <id,...>]` | Without `--choose`, prints the checklist of picked items. With it, prints the chosen ids, notices and the `selected` entries. With `--preset` (which needs `--answers` for the project type), the checklist also has ticked rows for the preset's core and skills that match the stack, and for its stack-matched preselects you did not pick; ids of the preset's own items come back as `preset_items`. Each checklist row also has `unpinned` ("Runs unpinned code at launch.") and `unpinned_reason` for items whose catalog entry sets `unpinned_runtime`. |
 | `git branch\|commit\|push\|pr [--title <t>]` | Commits and pushes the harness changes one step at a time. `branch` creates `chore/ai-workflow-<catalog version>`; `commit` stages only the files harness wrote, with your own git name and email; `push` and `pr` never touch the default branch. `pr` needs `gh` signed in, else it prints the command. The agent asks you before `push` and `pr`. |
+| `git branch --suggest <topic>` | Prints one branch name per preset prefix (feature, fix, hotfix, chore, refactor, docs, ci) and creates nothing. With a preset that sets `no_ai_trailer`, `git commit` refuses a set `git.commit_trailer`; with `pr_size_warning`, `git pr` prints a size warning before it creates the PR. |
 
 `scan`, `catalog`, `validate` and `select` write nothing. They are the steps `/harness:init` calls; you can run them to see what it sees.
 
@@ -292,7 +313,36 @@ Catalog items can be Claude Code plugins or MCP servers.
 - **MCP servers.** Harness writes them to `.mcp.json`. Claude Code asks each user to approve a project server before it runs. Harness can't approve it for them. A server with the same name that you wrote is kept and reported.
 - **Removal.** `uninstall` removes the pins and servers it added and leaves yours.
 
+## Using it well
+
+- **Run `harness doctor` after any change.** It checks the install and prints the fix for each problem.
+- **Turn on branch protection.** Hooks run with your permissions, so branch protection is the real stop for force-pushes.
+- **When the Stop gate blocks, let it work.** Its output shows what failed. The agent fixes it and tries again, up to `stop.max_attempts` (default 3).
+- **Let TDD work for you.** When the agent says "run a test first", that's the gate asking for a failing test. For a spike, run `harness tdd off` in your own terminal, then `harness tdd on` when you're done.
+- **Vet anything new first.** Run `harness vet` before you install a plugin or skill you found online.
+- **Watch the budget.** `harness explain` lists what each item loads into every session. Remove what you don't use with `harness remove <id>`.
+
+## Named presets
+
+`/harness:init` asks "Use a named preset?" after the scope question. The default is no preset: the neutral catalog. `khubaib-frontend` is the shipped one. It adds working rules and git conventions to `AGENTS.md`, up to four frontend skills that match your stack, and preselected third-party picks. Its always-loaded text costs about 241 to 415 tokens (estimate, by stack), counted in the budget line before you confirm.
+
+- It turns off the picks' usage reporting through `DO_NOT_TRACK=1` (Impeccable) and Superpowers' own opt-out variable in `.claude/settings.json`. Those variables apply to every command in the session, not only to that tool, and only after you trust the folder.
+- It sets `"attribution": false`, so commits and PRs get no AI trailer.
+- `harness git pr` warns when a PR is large, even if `checks.prSize` is off.
+- To turn it off, answer "No preset" in `/harness:update`. The plugins it preselected stay until `harness remove` takes them out.
+
+## Usage and adherence report
+
+`harness report` writes a usage and adherence report for this repo: which skills were invoked when they were relevant, which rules were enforced, token use, and where a gate probably blocked something it should not have. It reads your Claude Code session transcripts on your machine and sends nothing anywhere. Its "X of Y rules enforced" line counts how many of the rules harness knows about are held by a gate and not only written in a file, with a matrix of which are enforced and how each can be bypassed.
+
+- Start Claude Code inside the repo for the report to see it. Sessions started in a parent folder are not counted.
+- The page is `.harness/reports/<date>.html`, gitignored. It quotes your sessions, so don't share it. `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose.
+- `harness eval` tests whether skills, rules and gates work in real sessions. It costs money, so it asks you to type `yes` every run, stops at a cost ceiling (default $2, set with `--max-cost-usd`), defaults to a Haiku model, and runs only in your own terminal.
+
 ## Vetting a plugin or skill
+
+`harness vet <github-url>` pins a plugin or skill to a commit and scans it without running it: hooks (also those declared in skill and agent frontmatter), secrets, network calls, prompt-injection text, licence and context cost. The report lists each finding by `file:line`, and names any file it could not read (binary, or over 1 MB). It needs the GitHub CLI (`gh`).
+
 
 `/harness:vet <target>` runs `harness vet` and puts the staff-reviewer between the scan and the summary:
 
@@ -315,7 +365,17 @@ harness doesn't install or track vetted items: it only prints the install comman
 
 ## Configuration keys
 
-The table below is generated from `src/core/config.ts` by `node scripts/gen-config-docs.mjs --write`. A Stop step and its format are shown in the README's Configuration section.
+Settings live in `.harness/config.yaml`. `init` writes values that fit your repo. A Stop step can be a script name or any command, so non-JS repos work too:
+
+```yaml
+stop:
+  package_manager: none
+  steps:
+    - { name: lint, run: [ruff, check, .] }
+    - { name: test, run: [pytest] }
+```
+
+Run `harness doctor` after editing. The table below is generated from `src/core/config.ts` by `node scripts/gen-config-docs.mjs --write`.
 
 <!-- config:start -->
 | Key | Default | What it does |
@@ -327,6 +387,7 @@ The table below is generated from `src/core/config.ts` by `node scripts/gen-conf
 | `checks.multiFile` | `false` | Multi-file gate. |
 | `checks.tdd` | `false` | Red-first TDD, test-lock and tamper check. |
 | `checks.stop` | `true` | Stop gate. |
+| `checks.prSize` | `true` | PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`. |
 | `sandbox` | `"unattended"` | `unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only. Value must be one of unattended, always, off. |
 | `catalog_version` | `0` | Version of the catalog the recommendations came from. `0` means no catalog. |
 | `project.type` | `""` | What kind of project this is. Empty until the interview sets it. Value must be one of web, landing, mobile, api, infra, library, other. |
@@ -427,4 +488,61 @@ More detail: [TDD setup details](#tdd-setup-details).
 - `remove tdd-gate` (or deselecting it) leaves the test-config edits `init` made in place; undo them by hand.
 - `update` doesn't rename a package config and make another edit to it in one run. Run it twice.
 - `harness git` treats `origin/HEAD`, `init.defaultBranch`, `main` and `master` as the default branch. If your default is another name and `origin/HEAD` isn't set, run `git remote set-head origin -a` first.
+- PR size: text detection only. It misses `gh` aliases, `gh api` POSTs, `hub`, shell scripts that aren't `package.json` scripts, GitHub MCP tools, the web UI and your own terminal. Only a CI size check or branch protection stops a large PR for everyone.
+- PR size: the hook doesn't fetch. It measures against the last fetched remote refs, so a stale `origin/<base>` can over-count.
+- PR size: it assumes the `origin` remote. Fork flows, where the base lives on `upstream` or comes from `--repo`, are measured against `origin`.
+- PR size: the push check covers only branches whose PR harness saw being created. A PR opened by a person, or before this feature, isn't recorded.
+- PR size: a pushed branch is assumed to have the same name on the remote, unless the refspec names it.
+- PR size: `gh pr edit --base` can change a PR's size after it was opened; that isn't checked.
+- PR size: size is lines and files, not complexity.
+- PR size: a PR that can't be measured is allowed with only a note and a `pr-size-unmeasured` event, unattended runs included. A repo that never fetches its base is never size-checked.
+- PR size: `gh`'s own choice of default base beyond the remote's default branch isn't mirrored (unverified).
+- PR size: Monitor commands are checked but not recorded.
+- PR size: the pause ask after a warning assumes Claude Code runs edit tool calls one at a time (unverified). If a second edit passed PreToolUse before the first edit's PostToolUse set the pause, its own PostToolUse would clear the pause before you were asked.
+- PR size: a create is recorded only when its output shows the new PR's URL, so a `gh pr create` run in the background isn't recorded and its later pushes aren't checked. A create whose `--base` is set inside a script (a `package.json` script, say) is recorded against the default base, so its pushes can ask too often.
+- PR size: deletes and tag-only pushes are not checked.
+- PR size: two sessions writing `pr-branches.json` at once can lose one entry.
+- PR size: a base whose last segment is a guard backstop word (`feat/sync`) makes the skill's measuring command ask.
+- PR size warnings: changes made by shell commands are measured only at Stop, so a large codegen step in mid-turn is announced at the end of the turn.
+- PR size warnings: a stacked branch with no PR yet is measured against the default branch, so it counts the branches below it. Once its PR is created and recorded, its own base is used.
+- PR size warnings: a size that crosses a threshold and drops back between two measurements isn't announced.
+- PR size warnings: two sessions on the same branch can race on `pr-progress.json` and lose one update. At worst a warning repeats or is skipped once.
+- PR size raise: a raise is kept by branch name and never cleared. A renamed branch starts again from the repo limits, and a branch deleted and created again under the same name keeps the old raise.
+- PR size raise: the early refusal of a raise beside a branch, directory or repo change matches the command text, so it lists examples, not every form, and a false match also denies. What holds for every form is that the raise is recorded only on the branch the dialog named.
+- PR size raise: if harness can't read the current branch in time, the raise still asks (naming "the current branch") or is denied unattended, and nothing is recorded; run it again.
+- PR size raise: an approval older than an hour records nothing; run the raise again.
+- PR size raise: the dialog is Claude Code's permission prompt for a hook `ask`. Claude Code's docs say a hook `ask` prompts the person, also in auto mode (the classifier doesn't answer it), and an allow rule doesn't skip it. Other things can answer it without you: an installed mod's `tool.check` approval when the machine has no managed settings and the session isn't a Team or Enterprise login; an Agent SDK `canUseTool` callback or `--permission-prompt-tool`; and, likely, a `PermissionRequest` hook from any settings file, plugin or skill (the docs say it runs when Claude Code is about to ask and its `allow` grants the permission, but not in so many words that it sees a hook's `ask`). Harness can't tell those apart from you.
+- PR size raise: a raise is a guardrail, not a security boundary. Harness denies commands whose text runs a hook dispatcher without `--pr-size`, `--pr-size-raise` or `--self-test` (so it would read hook events from stdin), or copies, moves, links, pipes or redirects a hook file. It judges command text only, so these still get past it: a path built at run time (`$(printf …)`), a copy made with a tool it doesn't list (`tar`, `zip`, `sed w`), a renamed copy or a script the agent wrote itself, and a `.harness` symlink whose path doesn't end in `hooks/dispatch.mjs`. Any of them can feed the dispatcher forged hook events or write harness state.
+- PR size raise: the hook-file check over-matches. A hook file in a pipe or redirect is denied even when it is only read (`grep x .harness/hooks/dispatch.mjs | head`), and a project's own `hooks/dispatch.mjs` run without those flags is denied too. Reading a hook file with no pipe or redirect (`cat`, `grep`, `git diff`) is allowed. The check is part of the pr-size check, so `checks.prSize: false` turns it off. The real boundary is Claude Code's sandbox: with it on, the `Edit(./.harness/…)` deny rules harness installs also limit shell commands' writes, per Claude Code's sandbox docs (not tested here). See [Start unattended runs in the sandbox](#start-unattended-runs-in-the-sandbox).
+- PR size warnings: a subagent's edit gives the warning to that subagent, not to the main agent (unverified). Your message still shows.
+- PR size warnings: where AskUserQuestion isn't available (some subagents, `claude -p`), the agent can only ask in text.
+- PR size warnings: each counted edit runs 7 or 8 git calls. That measured 91 ms median overhead on macOS in a 20-file repo. In a large repo the cost is mostly the two `git diff` calls over the working tree, which can take up to the 6 s budget; a timeout gives no warning, only a stderr line.
+- PR size warnings: a Stop that harness blocks before its checks run (an invalid config, changed harness files) drops that Stop's warning; the next Stop announces it.
 - Not in this release: the PR reviewer (M2) and TDD for other languages.
+
+## Development
+
+Build from source (pnpm comes with `corepack enable`) and load it with `--plugin-dir`:
+
+```bash
+git clone https://github.com/KhubaibQaiser/harness.git
+cd harness && pnpm install && pnpm build
+claude --plugin-dir /path/to/harness
+```
+
+From a source build there's no `harness` binary, so run `node /path/to/harness/dist/cli.mjs` wherever the docs say `harness`.
+
+```bash
+pnpm install
+pnpm build && pnpm test && pnpm test:perf
+pnpm typecheck
+node scripts/gen-config-docs.mjs --write   # after changing a config key
+```
+
+CI runs the tests on macOS and Windows with Node 22, plus Linux jobs for gitleaks, a pack check, real Vitest and Jest installs, and `claude plugin validate`. A `v*` tag publishes to npm after an approval step, then mirrors the package to GitHub Packages and creates a GitHub release. See [release.md](release.md).
+
+## Roadmap
+
+Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Coming next:
+- an opt-in personal preset of working rules and stack skills;
+- memory, the PR reviewer, and TDD for other languages.

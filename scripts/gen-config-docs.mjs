@@ -14,6 +14,7 @@ const WHAT = {
   'checks.multiFile': 'Multi-file gate.',
   'checks.tdd': 'Red-first TDD, test-lock and tamper check.',
   'checks.stop': 'Stop gate.',
+  'checks.prSize': 'PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`.',
   catalog_version: 'Version of the catalog the recommendations came from. `0` means no catalog.',
   'project.type': 'What kind of project this is. Empty until the interview sets it.',
   'project.domain': 'What the project is about, in a few words.',

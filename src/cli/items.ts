@@ -12,10 +12,12 @@ import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL, itemFiles, mergeManifestFiles, rawOf } from '../install/manifest.js';
 import { selectedIds } from '../install/plan.js';
+import { PRESET_ITEM } from '../install/plan-preset.js';
 import { reconcile } from '../install/reconcile.js';
 import { pinOf, resolveSelection } from '../install/select.js';
 import type { Picks } from '../ai/picks.js';
 import { budgetGate, isDenied, sandboxLine } from './init.js';
+import { recordedExtra } from './install-selection.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall, readCatalog, readConfig } from './preamble.js';
@@ -60,6 +62,11 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   const bad = args.some((a) => a.startsWith('--') && !flags.has(a)) || ids.length !== (cmd === 'explain' ? 0 : 1) || new Set(args).size !== args.length;
   if (bad) return out(USAGE[cmd]), 2;
   const [id] = ids;
+  // A preset's files belong to the preset, not to one item (see PRESET_ITEM in install/plan-preset.ts).
+  if (id?.startsWith(PRESET_ITEM) && (cmd === 'remove' || cmd === 'why')) {
+    if (cmd === 'why') return out(`Installed by the ${esc(id.slice(PRESET_ITEM.length))} preset.`), 0;
+    return out('Preset files are removed by turning the preset off in /harness:update.'), 2;
+  }
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
   const refused = cmd === 'add' ? refuseOutsideClaude('add', cli.env, false) : null;
@@ -101,7 +108,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
       out(`${s.id} (${byId.get(s.id)?.kind ?? 'unknown'}): ${esc(s.reason)}`);
       for (const f of itemFiles(m, s.id)) out(`  ${f.rel}`);
     }
-    const v = await measureSelection(have, cat, { ...dirs, plugin: dirname(packageDir('templates')) });
+    const v = await measureSelection(have, cat, { ...dirs, plugin: dirname(packageDir('templates')) }, { extra: recordedExtra(root, config) });
     out(budgetLines(budgetVerdict(v, v, config.context.budget_tokens))[0]);
     return 0;
   }
@@ -171,7 +178,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   if (cmd === 'add') {
     // Items harness installed are approved: they show, but only the new ones count (a hand-selected one never installed does too).
     const approved = approvedIds(config, m, cat);
-    const stop = await budgetGate(cat, approved, after, approved, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget: args.includes('--over-budget') });
+    const stop = await budgetGate({ cat, before: approved, after, exempt: approved, extra: recordedExtra(root, config), extraBefore: recordedExtra(root, config), budget: config.context.budget_tokens, templatesDir: cli.templatesDir, out, f: { yes, dryRun, overBudget: args.includes('--over-budget') } });
     if (stop !== null) return stop;
   }
   if (dryRun) return out('Dry run: nothing was written.'), 0;

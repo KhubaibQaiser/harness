@@ -1025,3 +1025,7 @@ test('a path fed to a writer by xargs or find -exec asks', () => {
     expect(prot(c), c).toMatchObject({ kind: 'ask', check: 'protect' });
   for (const c of ["find . -name '*.ts'", 'git ls-files | xargs grep -n todo', 'find src -name "*.ts" -exec wc -l {} +']) expect(prot(c).kind, c).toBe('allow');
 });
+
+test('the pr-ship skill\'s own --pr-size call is allowed', () => {
+  all(['node .harness/hooks/dispatch.mjs --pr-size', 'node .harness/hooks/dispatch.mjs --pr-size --base feat/a --head feat/b'], 'allow');
+});

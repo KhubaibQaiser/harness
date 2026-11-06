@@ -135,6 +135,14 @@ test('fail-closed deny survives unwritable .harness', async () => {
   expect(err).toHaveBeenCalledWith(expect.stringMatching(/^harness: .* failed: /));
   err.mockRestore();
 });
+test('a rejected promise fails open unless failClosed', async () => {
+  const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  const rejecting = (extra: Partial<Check> = {}): Check => ({ name: 'rej', events: ['PreToolUse'], run: () => Promise.reject(new Error('async bad')), ...extra });
+  expect(await dispatch(pre(), [rejecting()], {})).toBe('');
+  expect(err).toHaveBeenCalledWith(expect.stringContaining('harness: check rej failed: async bad'));
+  expect(out(await dispatch(pre(), [rejecting({ failClosed: true })], {})).hookSpecificOutput?.permissionDecisionReason).toBe('harness check rej failed: async bad');
+  err.mockRestore();
+});
 test('malformed check results and non-Error throws are treated as throws', async () => {
   const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   const bad = (extra: Partial<Check> = {}): Check => ({ name: 'bad', events: ['PreToolUse'], run: () => undefined as unknown as Decision, ...extra });
@@ -282,4 +290,48 @@ test('invalid config: a PowerShell shell write in the repo is denied by config',
   const o = out(await dispatch(pre({ cwd: r, tool_name: 'PowerShell', tool_input: { command: 'echo x > src/a.ts' } }), [mk('allow-all', { kind: 'allow' })], {}));
   expect(o.hookSpecificOutput?.permissionDecision).toBe('deny');
   expect(o.hookSpecificOutput?.permissionDecisionReason).toContain('ask the user to correct .harness/config.yaml');
+});
+test('context notices are joined and shown as systemMessage', async () => {
+  const c1 = mk('c1', { kind: 'context', text: 't1', notice: 'n1', check: 'c1' });
+  const c2 = mk('c2', { kind: 'context', text: 't2', notice: 'n2', check: 'c2' });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'PostToolUse' }), [c1, c2], {}));
+  expect(o.systemMessage).toBe('n1\nn2');
+  expect(o.hookSpecificOutput.additionalContext).toBe('t1\nt2');
+});
+test('a notice with control or hidden characters is escaped', async () => {
+  const c = mk('c', { kind: 'context', text: 't', notice: 'a‮b\u001b[31m', check: 'c' });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'PostToolUse' }), [c], {}));
+  expect(o.systemMessage).toBe('a\\u202eb\\u001b[31m');
+});
+test('at Stop a block keeps the context text as systemMessage', async () => {
+  const b = mk('b', { kind: 'block', reason: 'r', check: 'b' });
+  const c = mk('c', { kind: 'context', text: 'warn', check: 'c' });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'Stop' }), [b, c], {}));
+  expect(o.decision).toBe('block');
+  expect(o.reason).toBe('r');
+  expect(o.systemMessage).toBe('warn');
+  expect(o.hookSpecificOutput).toBeUndefined();
+});
+test('at Stop the beside-block text is escaped for the person, newlines kept', async () => {
+  const b = mk('b', { kind: 'block', reason: 'r', check: 'b' });
+  const c = mk('c', { kind: 'context', text: 'l1\nl2 "q" \u202e', check: 'c' });
+  expect(JSON.parse(await dispatch(payload({ hook_event_name: 'Stop' }), [b, c], {})).systemMessage).toBe('l1\nl2 "q" \\u202e');
+});
+test('duplicate texts and notices are merged once', async () => {
+  const c = (n: string) => mk(n, { kind: 'context', text: 't', notice: 'n', check: n });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'PostToolUse' }), [c('a'), c('b')], {}));
+  expect(o.systemMessage).toBe('n');
+  expect(o.hookSpecificOutput.additionalContext).toBe('t');
+});
+test('a joined message over the cap is cut with a marker', async () => {
+  const c = mk('c', { kind: 'context', text: 't', notice: 'x'.repeat(20_000), check: 'c' });
+  const o = JSON.parse(await dispatch(payload({ hook_event_name: 'PostToolUse' }), [c], {}));
+  expect(o.systemMessage.length).toBe(10_000);
+  expect(o.systemMessage.endsWith('[truncated]')).toBe(true);
+});
+test('at PreToolUse a deny plus a context check has no systemMessage', async () => {
+  const c = mk('c', { kind: 'context', text: 'warn', notice: 'n', check: 'c' });
+  const o = JSON.parse(await dispatch(pre(), [denyAll, c], {}));
+  expect(o.systemMessage).toBeUndefined();
+  expect(decisionOf(JSON.stringify(o))).toBe('deny');
 });

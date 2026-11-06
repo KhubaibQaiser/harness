@@ -200,6 +200,15 @@ test('latestVersion: URL-encoded scope, null on bad status or body', async () =>
   expect(await latestVersion('x', (async () => new Response('not json')) as unknown as typeof fetch)).toBeNull();
 });
 
+test('update gives an older install the .harness/reports/ gitignore line', async () => {
+  const root = await installed();
+  const gi = join(root, '.gitignore');
+  writeFileSync(gi, readFileSync(gi, 'utf8').replace('.harness/reports/\n', '')); // an install from before the line existed
+  commitAll(root);
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readFileSync(gi, 'utf8')).toContain('.harness/reports/\n');
+});
+
 test('update --dry-run prints the plan and writes nothing', async () => {
   const root = await installed();
   const before = snapshot(root);
@@ -666,7 +675,7 @@ test('leaving always with only a changed key left drops the set blocks from the 
 });
 
 // The recommend flow's install: the plan carries the selected items, and update and uninstall follow the manifest.
-const OWN_IDS = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'agents-md'];
+const OWN_IDS = ['agent-guard', 'permissions-baseline', 'stop-gate', 'multi-file-gate', 'tdd-gate', 'staff-reviewer', 'review-rubric', 'pr-ship', 'agents-md'];
 const aiInstalled = (files: Record<string, string>, ids: string[]) => {
   const root = makeRepo(files);
   const facts = detect(root);

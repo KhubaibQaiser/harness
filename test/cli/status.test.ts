@@ -14,6 +14,7 @@ import { applyChanges } from '../../src/install/apply.js';
 import { detect } from '../../src/install/detect.js';
 import { planChanges } from '../../src/install/plan.js';
 import { preset } from '../../src/install/preset.js';
+import { loadPreset } from '../../src/catalog/presets.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const prompt: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
@@ -41,6 +42,7 @@ test('status shows gates on and not-installed', async () => {
   });
   expect(r.out).toMatch(/tdd: on/);
   expect(r.out).toMatch(/guard: on/);
+  expect(r.out).toMatch(/^  pr-size: on$/m);
   let out = '';
   expect(status([], { root: makeRepo({ a: 'b' }), env: {}, out: (s) => (out += s) })).toBe(1);
   expect(out).toContain('not installed');
@@ -183,4 +185,19 @@ test('status says so when claude is not found, and skips item lines for a legacy
   expect(out).toContain('Plugins not installed: unknown (claude not found)\n');
   const legacy = (await go({ 'package.json': '{"name":"a"}\n', 'package-lock.json': '{}\n' })).out;
   expect(legacy).not.toMatch(/^(Catalog|Items:|Plugins not installed|Always-loaded)/m);
+});
+
+test('status lists the preset files under the preset id', () => {
+  const root = makeRepo({ 'package.json': '{"name":"a"}\n', 'package-lock.json': '{}\n' });
+  const facts = detect(root);
+  const config = preset(facts).config;
+  config.items = ['agents-md'].map((id) => ({ id, include: 'recommended' as const, selected: true, reason: 'r', addresses: [], pin: '' }));
+  config.preset = { id: 'stacks', version: '1', items: ['core-rules', 'frontend-react'], git: { branch_prefixes: ['feature/'], no_ai_trailer: true, pr_size_warning: true } };
+  const r = loadPreset(join(pkgDir, 'test/fixtures/presets/stacks.yaml'));
+  if (!r.ok) throw new Error(r.errors.join('\n'));
+  const ai = { picks: JSON.stringify({ catalog_version: 1, findings: [], items: [] }), report: '# R\n\n## Limits\n\nx\n', product: '# P\n' };
+  applyChanges(root, planChanges(root, config, facts, { version: '1.0.0', distDir: join(pkgDir, 'dist'), templatesDir: join(pkgDir, 'templates'), catalog: loadCatalog().catalog, preset: r.loaded, ai }).changes, '1.0.0');
+  let out = '';
+  status([], { root, env: {}, out: (s) => (out += s + '\n') }, { pluginList: () => [] });
+  expect(out).toContain('Preset: stacks\n  .claude/skills/frontend-react/SKILL.md\n');
 });

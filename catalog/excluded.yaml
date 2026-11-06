@@ -18,8 +18,6 @@
   reason: not built yet (this release ships existing own items only)
 - id: adr
   reason: not built yet (this release ships existing own items only)
-- id: pr-ship
-  reason: not built yet (this release ships existing own items only)
 - id: session-structure
   reason: not built yet (this release ships existing own items only)
 - id: ci-tdd
@@ -39,7 +37,7 @@
 - id: harness-review
   reason: part of the PR reviewer (M2)
 - id: pr-create-trigger
-  reason: part of the PR reviewer (M2)
+  reason: replaced by the pr-size check (pr-ship item)
 - id: ui-verifier
   reason: part of the PR reviewer (M2)
 - id: mcp-for-blender

@@ -78,42 +78,52 @@ export function removeSets(s: unknown, blocks: string[]): { sets: string[]; chan
   return { sets: sets.map(([b]) => b), changed };
 }
 
-/**
- * `blocks` for settings are structural, not text (JSON re-serialization changes the bytes):
- * one JSON.stringify string per inserted hook group, `{"event":"Stop","group":{...}}`,
- * and one per inserted deny rule, `{"deny":"Read(./secrets/**)"}`. Uninstall removes them by deep equality.
- * A harness group equal to a `recorded` block but not to the fragment is replaced at its index; its old block is `dropped`.
- */
 type EventOut = { recorded?: string[]; blocks: string[]; dropped: string[]; notes: string[] };
 
-/** One event's harness groups: a group equal to one of the fragment's stays; a recorded older one is replaced in place by the
- *  next group not yet present; an edited one is kept (and takes that place); any fragment group still missing is added. */
+/** One event's harness groups, matched to the fragment's by content, then by matcher:
+ *  - a group equal to any fragment group stays, duplicates too (uninstall removes every copy of a recorded block);
+ *  - a recorded older group is replaced in place by the free fragment group with its matcher, else the first free one, and is
+ *    removed when none is free (its block is dropped);
+ *  - then an edited group is kept with a note and takes the free slot with its matcher, else the first free one;
+ *  - any fragment group still free is added. */
 function mergeEvent(ev: string, list: any[], wants: any[], o: EventOut): void {
   const present = new Set<number>();
-  const ours: number[] = [];
+  const older: [number, string][] = [];
+  const edited: number[] = [];
   list.forEach((g, i) => {
     if (!isObj(g) || !Array.isArray(g.hooks)) return void o.notes.push(`${SETTINGS}: hooks.${ev}[${i}] is not a group with a "hooks" array; left untouched.`);
     g.hooks.forEach((h: unknown, j: number) => {
       if (!isObj(h) || typeof h.command !== 'string') o.notes.push(`${SETTINGS}: hooks.${ev}[${i}].hooks[${j}] is not a command hook; left untouched.`);
     });
     if (!g.hooks.some(isHarnessHook)) return;
-    const hit = wants.findIndex((w, k) => !present.has(k) && isDeepStrictEqual(g, w));
-    if (hit >= 0) present.add(hit);
-    else ours.push(i);
+    const hit = wants.findIndex((w) => isDeepStrictEqual(g, w));
+    if (hit >= 0) return void present.add(hit);
+    const rec = o.recorded?.find((b) => isDeepStrictEqual(parse(b), { event: ev, group: g }));
+    if (rec === undefined) edited.push(i);
+    else older.push([i, rec]);
   });
-  for (const i of ours) {
-    const next = wants.findIndex((_, k) => !present.has(k));
-    if (next < 0) continue;
-    present.add(next);
-    const rec = o.recorded?.find((b) => isDeepStrictEqual(parse(b), { event: ev, group: list[i] }));
-    if (rec === undefined) {
-      o.notes.push(`${SETTINGS}: hooks.${ev}[${i}] is a harness hook you edited; left as is. harness doctor checks it.`);
+  const slot = (g: any) => {
+    const free = wants.map((_, k) => k).filter((k) => !present.has(k));
+    const k = free.find((n) => wants[n].matcher === g.matcher) ?? free[0];
+    if (k !== undefined) present.add(k);
+    return k;
+  };
+  const gone: number[] = [];
+  for (const [i, rec] of older) {
+    const k = slot(list[i]);
+    o.dropped.push(rec);
+    if (k === undefined) {
+      gone.push(i);
       continue;
     }
-    list[i] = wants[next];
-    o.dropped.push(rec);
-    o.blocks.push(JSON.stringify({ event: ev, group: wants[next] }));
+    list[i] = wants[k];
+    o.blocks.push(JSON.stringify({ event: ev, group: wants[k] }));
   }
+  for (const i of edited) {
+    slot(list[i]);
+    o.notes.push(`${SETTINGS}: hooks.${ev}[${i}] is a harness hook you edited; left as is. harness doctor checks it.`);
+  }
+  for (const i of gone.reverse()) list.splice(i, 1);
   wants.forEach((w, k) => {
     if (present.has(k)) return;
     list.push(w);
@@ -121,6 +131,12 @@ function mergeEvent(ev: string, list: any[], wants: any[], o: EventOut): void {
   });
 }
 
+/**
+ * `blocks` for settings are structural, not text (JSON re-serialization changes the bytes):
+ * one JSON.stringify string per inserted hook group, `{"event":"Stop","group":{...}}`,
+ * and one per inserted deny rule, `{"deny":"Read(./secrets/**)"}`. Uninstall removes them by deep equality.
+ * A harness group equal to a `recorded` block but not to the fragment is replaced at its index; its old block is `dropped`.
+ */
 export function mergeSettings(before: string | null, opts: { sandbox: SandboxMode; recorded?: string[]; plugins?: PinnedPlugin[] }): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
   let s: any;
   try { s = before === null ? {} : JSON.parse(before); } catch (e) { return bad(`is not valid JSON: ${(e as Error).message}`); }

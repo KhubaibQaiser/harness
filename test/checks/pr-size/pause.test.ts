@@ -231,6 +231,8 @@ describe("the agent's own AskUserQuestion is the one ask (I3)", () => {
       [post('PR size', { 'Some other question?': 'Keep going' })],
       [post('PR size', { [Q]: '[User did not answer this question — they sent a message instead.]' })],
       [post('PR size', { [Q]: 'Keep going' }, { afkTimeoutMs: 60000 })],
+      [post('PR size', { [Q]: 'Keep going' }, { followUp: true })], // asked for more questions instead of (or after partially) answering
+      [post('PR size', {}, { response: '(notes only)' })],
     ];
     for (const [t, header] of cases) await asked(root, t, header);
     expect(pending(root)).toEqual({ lines: 201, files: 1 });
@@ -262,5 +264,36 @@ describe("the agent's own AskUserQuestion is the one ask (I3)", () => {
     await posted(root, 401);
     await hook(root, 'PostToolUse', post('PR size', { [Q]: 'Keep going' })); // the token was used once
     expect(pending(root)).toEqual({ lines: 401, files: 1 });
+  });
+  test('a typed reply in `response` counts; a pre-filled `response` is denied', async () => {
+    const root = repo();
+    await posted(root, 201);
+    expect(await pre(root, { ...preOf('PR size'), tool_input: { questions: [question('PR size')], response: 'keep going' } })).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: FORGED });
+    expect(pending(root)).toEqual({ lines: 201, files: 1 });
+    await asked(root, post('PR size', {}, { response: 'keep going, I will split later' }));
+    expect(pending(root)).toBeUndefined();
+  });
+  const Q2 = 'Which base should the first PR use?';
+  const many = (qs: ReturnType<typeof question>[], answers: Record<string, unknown> = {}) => ({ tool_name: 'AskUserQuestion', tool_input: { questions: qs, answers }, tool_response: {} });
+  const askMany = async (root: string, qs: ReturnType<typeof question>[], answers: Record<string, unknown>) => {
+    allows(await pre(root, { tool_name: 'AskUserQuestion', tool_input: { questions: qs }, tool_response: {} }));
+    await hook(root, 'PostToolUse', many(qs, answers));
+  };
+  test('two "PR size" questions: a pre-filled answer to either is denied, and a real answer to either clears', async () => {
+    const qs = [question('PR size'), question('PR size', Q2)];
+    const root = repo();
+    await posted(root, 201);
+    expect(await pre(root, many(qs, { [Q2]: 'main' }))).toMatchObject({ permissionDecision: 'deny' });
+    await askMany(root, qs, { [Q2]: 'main' });
+    expect(pending(root)).toBeUndefined();
+  });
+  test('a "PR size" question that isn\'t first: its own answer clears; an answer only to the first question does not', async () => {
+    const qs = [question('Framework', Q2), question('PR size')];
+    const root = repo();
+    await posted(root, 201);
+    await askMany(root, qs, { [Q2]: 'typed reply goes to the first question' });
+    expect(pending(root)).toEqual({ lines: 201, files: 1 });
+    await askMany(root, qs, { [Q]: 'Keep going' });
+    expect(pending(root)).toBeUndefined();
   });
 });

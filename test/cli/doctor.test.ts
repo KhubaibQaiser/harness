@@ -390,6 +390,14 @@ test('an old recorded group without onFailure is a run-harness-update fix', asyn
   expect(r.code).toBe(1);
 });
 
+test('a fragment group missing from its event is a run-harness-update fix', async () => {
+  const root = await installed();
+  editSettings(root, (s) => s.hooks.PreToolUse.splice(1, 1)); // the AskUserQuestion group
+  const r = run(root, { path: bin('npm') });
+  expect(r.out).toMatch(/^fix `\.claude\/settings\.json`: `hooks\.PreToolUse` is missing the harness group for `AskUserQuestion`: run \/harness:update$/m);
+  expect(r.code).toBe(1);
+});
+
 test('deleting onFailure on a fresh install is an edit: the differs line only', async () => {
   const root = await installed();
   editSettings(root, (s) => delete s.hooks.UserPromptSubmit[0].hooks[0].onFailure);

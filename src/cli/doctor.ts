@@ -119,6 +119,10 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
       fix(`\`.claude/settings.json\`: \`hooks.${ev}\` harness hook differs from the one harness installs`, 'undo the edit or delete that group, then run /harness:update');
     else if (BLOCKING.includes(ev) && !(ev === 'PreToolUse' && shellOld) && gs.some((g) => kind(ev, g) === 'old' && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure !== 'block')))
       fix(`${ev} hook has no onFailure "block"`, 'run /harness:update');
+    else {
+      const missing = frag[ev].find((w: any) => !gs.some((g) => isDeepStrictEqual(g, w)));
+      if (missing) fix(`\`.claude/settings.json\`: \`hooks.${ev}\` is missing the harness group for \`${missing.matcher ?? 'all tools'}\``, 'run /harness:update');
+    }
   }
 
   const entry = manifest.files.find((f) => f.rel === DISPATCH);

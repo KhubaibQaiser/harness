@@ -15,7 +15,7 @@ const ASKED = '.harness/state/pr-size-question.json';
 const TTL_MS = 86_400_000;
 const MAX_BYTES = 100_000;
 const ALLOW: Decision = { kind: 'allow' };
-export const FORGED = 'Blocked by pr-size: the person must answer the PR size question themselves. Ask it again without `answers`.';
+export const FORGED = 'Blocked by pr-size: the person must answer the PR size question themselves. Ask it again without `answers` or `response`.';
 // Claude Code's own "no answer" value (2.1.285), and the placeholder older transcripts record.
 const NOTES_ONLY = '(notes only)';
 const UNANSWERED = '[User did not answer';
@@ -40,15 +40,16 @@ function tokens(root: string): Record<string, number> {
 export function preAnswer(ctx: Ctx): Decision {
   const qs = ours(ctx.input.tool_input);
   if (!qs.length) return ALLOW;
-  const given = ctx.input.tool_input?.answers;
-  if (given !== undefined && (!isObj(given) || qs.some((q) => Object.hasOwn(given, q)))) return { kind: 'deny', check: 'pr-size', reason: FORGED };
+  const { answers: given, response } = ctx.input.tool_input ?? {};
+  const prefilled = response !== undefined || (given !== undefined && (!isObj(given) || qs.some((q) => Object.hasOwn(given, q))));
+  if (prefilled) return { kind: 'deny', check: 'pr-size', reason: FORGED };
   writeJson(ctx.root, ASKED, { ...tokens(ctx.root), [key(ctx, qs)]: Date.now() });
   return ALLOW;
 }
 
-/** PostToolUse: with its token (used once), any real answer to a "PR size" question clears the current branch's pause. The token
- *  proves the agent didn't pre-fill `answers` (that call was denied and never ran). An auto-continue timeout (`afkTimeoutMs`)
- *  counts as no answer. `answers` maps each question's text to the label or typed text. Never throws. */
+/** PostToolUse: with its token (used once), any real answer to a "PR size" question clears the current branch's pause, as does
+ *  freeform text in `response`. The token proves the agent didn't pre-fill either (that call was denied and never ran). An
+ *  auto-continue timeout (`afkTimeoutMs`) or a request for more questions (`followUp`) counts as no answer. Never throws. */
 export function clearOnAnswer(ctx: Ctx, git: Git = realGit(ctx.root), now: () => number = Date.now): Decision {
   try {
     const qs = ours(ctx.input.tool_input);
@@ -61,8 +62,9 @@ export function clearOnAnswer(ctx: Ctx, git: Git = realGit(ctx.root), now: () =>
     const input = ctx.input.tool_input ?? {};
     const res = ctx.input.tool_response;
     const answers = isObj(input.answers) ? input.answers : isObj(res) && isObj(res.answers) ? res.answers : null;
-    const timedOut = 'afkTimeoutMs' in input || (isObj(res) && 'afkTimeoutMs' in res);
-    if (!timedOut && answers && qs.some((q) => Object.hasOwn(answers, q) && answered(answers[q]))) clearPending(ctx, git, now);
+    const field = (name: string): unknown => input[name] ?? (isObj(res) ? res[name] : undefined);
+    const hit = answered(field('response')) || (answers !== null && qs.some((q) => Object.hasOwn(answers, q) && answered(answers[q])));
+    if (hit && field('afkTimeoutMs') === undefined && field('followUp') !== true) clearPending(ctx, git, now);
   } catch (e) {
     process.stderr.write(`harness: pr-size pause clear failed: ${String((e as Error)?.message ?? e)}\n`);
   }

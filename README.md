@@ -20,6 +20,12 @@ In plain terms: with the sandbox on, the operating system enforces the guard. Wi
 - **Lean context.** Always-loaded text has a budget of 2000 tokens by default (`context.budget_tokens`). Harness asks before going over it.
 - **Safe to try.** You see every change before it's written. `init` backs up what it touches. `uninstall` removes what harness added and restores the rest; files you edited are kept and listed.
 
+## Who it's for
+
+- Developers who run Claude Code on real code and want TDD, clean commits and passing checks every time, not only when they remember to ask.
+- Teams that want one set of agent rules in the repo, the same for everyone.
+- Anyone running agents unattended, in CI or overnight, where nobody is watching to say no.
+
 ## What you get
 
 | Gate | Any repo | JS/TS (npm, pnpm, yarn, bun; Vitest or Jest) |
@@ -47,9 +53,8 @@ The exact rules for each gate are in [docs/reference.md](docs/reference.md).
 `harness report` writes a usage and adherence report for this repo: which skills were invoked when they were relevant, which rules were enforced, token use, and where a gate probably blocked something it should not have. It reads your Claude Code session transcripts on your machine and sends nothing anywhere. Its "X of Y rules enforced" line counts how many of the rules harness knows about are held by a gate and not only written in a file, with a matrix of which are enforced and how each can be bypassed.
 
 - **Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted.
-- The page is `.harness/reports/<date>.html`. The folder is gitignored. The page quotes your sessions, so don't share it.
-- `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose.
-- `harness eval` tests whether skills, rules and gates work in real sessions. It costs money, so it asks you to type `yes` every run, stops at a cost ceiling you set, and runs only in your own terminal.
+- The page is `.harness/reports/<date>.html`, gitignored. It quotes your sessions, so don't share it. `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose.
+- `harness eval` tests whether skills, rules and gates work in real sessions. It costs money, so it asks you to type `yes` every run, stops at a cost ceiling (default $2, set with `--max-cost-usd`), defaults to a Haiku model, and runs only in your own terminal.
 
 ## Quick start
 

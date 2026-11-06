@@ -36,8 +36,9 @@ test('report and eval keep exit 2 on bad arguments through the router', () => {
   const dir = mkdtempSync(join(tmpdir(), 'route-'));
   spawnSync('git', ['init', '-q'], { cwd: dir });
   const go = (...a: string[]) => spawnSync('node', [join(process.cwd(), 'dist/cli.mjs'), ...a], { cwd: dir, encoding: 'utf8', env: { ...process.env, CLAUDECODE: '', CI: '' }, input: '' });
-  expect(go('report', '--days', 'x').status).toBe(2);
-  expect(go('report', '--days', 'x').stdout).toContain('Usage: harness report');
+  const bad = go('report', '--days', 'x');
+  expect(bad.status).toBe(2);
+  expect(bad.stdout).toContain('Usage: harness report');
   // eval refuses (no terminal) before it can spend; the router must reach it and not print the generic usage.
   const r = go('eval', '--runs', '0');
   expect(r.stdout).toContain('harness eval needs a terminal');

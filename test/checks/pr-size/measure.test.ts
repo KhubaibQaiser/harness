@@ -258,6 +258,13 @@ describe('working tree', () => {
     expect(measure(root, wt, cfg())).toMatchObject({ head: 'working tree', lines: 19, files: 4 });
   });
 
+  test('untracked files under .harness/reports/ do not count', () => {
+    const root = repo();
+    write(root, '.harness/reports/2026-11-05.html', lines(40));
+    write(root, 'new.ts', lines(2));
+    expect(measure(root, wt, cfg())).toMatchObject({ lines: 2, files: 1 });
+  });
+
   test('an untracked lockfile is excluded', () => {
     const root = repo();
     write(root, 'pnpm-lock.yaml', lines(9));

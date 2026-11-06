@@ -9,7 +9,7 @@ import { pinnedPlugins } from '../install/merge.js';
 import { installPlugins } from '../install/plugin-install.js';
 import { isDenied, shq } from './own-command.js';
 
-const EXIT_USAGE = 2;
+const EXIT_OVER_BUDGET = 2;
 
 /**
  * Prints the budget lines. Returns 2 when the install must stop (over budget, --yes, no --over-budget), else null.
@@ -23,7 +23,7 @@ export async function budgetGate(
   for (const l of budgetLines(v)) out(l);
   if (!v.ask || f.dryRun || f.overBudget || !f.yes) return null;
   out(`This goes over the context budget (~${v.after.tokens} of ${budget} tokens, estimate). Run again with --over-budget to accept, or pick fewer items.`);
-  return EXIT_USAGE;
+  return EXIT_OVER_BUDGET;
 }
 
 /** Installs the selected pinned plugins, prints one line each, and re-hashes settings. Returns 1 when any install or the re-hash failed. `applied`: the files were written in this run. */

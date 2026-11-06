@@ -19,7 +19,7 @@ import { stampHarnessFiles } from '../core/harness-files.js';
 import { planChanges } from '../install/plan.js';
 import { coverageSkipped, coverageWhy, preset, type Preset, unsafeWhy } from '../install/preset.js';
 import { findOnPath } from '../checks/stop/runner.js';
-import { type AiArgs, type AiInputs, loadAiInputs, missingAi, takeAiFlags } from './ai-inputs.js';
+import { type AiArgs, type AiInputs, EXIT_USAGE, loadAiInputs, missingAi, takeAiFlags } from './ai-inputs.js';
 import { hasAiFlags, refuseOutsideClaude } from './claude-only.js';
 import { budgetGate, installSelected } from './install-selection.js';
 import { isDenied, sandboxLine } from './own-command.js';
@@ -39,7 +39,6 @@ export type InitEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: 
 export const AI_USAGE = '[--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]';
 const USAGE = `Usage: /harness:init [--yes] [--dry-run] [--config <file>] ${AI_USAGE}`;
 const GATES: Record<string, string> = { guard: 'guard', protect: 'protect', depVerify: 'dep-verify', multiFile: 'multi-file', tdd: 'TDD', stop: 'stop', prSize: 'PR size' };
-const EXIT_USAGE = 2;
 const NODE_MIN_MAJOR = 22, NODE_MIN_MINOR = 11;
 
 const at = (o: any, path: string): unknown => path.split('.').reduce((v, k) => v?.[k], o);
@@ -47,7 +46,7 @@ const at = (o: any, path: string): unknown => path.split('.').reduce((v, k) => v
 type Opts = { yes: boolean; dryRun: boolean; config?: string };
 type Flags = { ai: AiArgs; opts: Opts; aiPath: boolean };
 /** One init run's inputs, shared by its steps. */
-type Run = { cli: InitEnv; args: string[]; f: Flags; root: string; facts: Facts; p: Preset };
+type Run = { cli: InitEnv; f: Flags; root: string; facts: Facts; p: Preset };
 type Built = { plan: ReturnType<typeof planChanges>; touched: string[] };
 
 function parseArgs(args: string[]): Opts | null {
@@ -86,7 +85,7 @@ function preflight(cli: InitEnv): string | number {
   out(`Installing at the repo root: ${resolve(root)}`);
   const node = cli.nodeVersion ?? process.versions.node;
   const [major, minor] = node.split('.').map(Number);
-  if (major < NODE_MIN_MAJOR || (major === NODE_MIN_MAJOR && minor < NODE_MIN_MINOR)) return out(`Node ${node} is too old. Harness needs Node 22.11 or newer.`), 1;
+  if (major < NODE_MIN_MAJOR || (major === NODE_MIN_MAJOR && minor < NODE_MIN_MINOR)) return out(`Node ${node} is too old. Harness needs Node ${NODE_MIN_MAJOR}.${NODE_MIN_MINOR} or newer.`), 1;
   try {
     if (readManifest(root)) return out('Harness is already installed (.harness/manifest.json). Run /harness:update instead.'), 1;
   } catch (e) {
@@ -226,7 +225,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   const facts = detect(root);
   const p = preset(facts, (cmd) => findOnPath(cmd, cli.env, process.platform));
   for (const w of facts.warnings) out(`Warning: ${w}`);
-  const run: Run = { cli, args, f, root, facts, p };
+  const run: Run = { cli, f, root, facts, p };
   let config = await chooseConfig(run);
   if (typeof config === 'number') return config;
   let sel: AiInputs | null = null;

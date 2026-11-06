@@ -10,7 +10,7 @@ import type { LoadedPreset } from '../catalog/presets.js';
 import type { Facts } from '../install/detect.js';
 import { resolveChosen } from './preset-inputs.js';
 
-const EXIT_USAGE = 2;
+export const EXIT_USAGE = 2; // a bad flag or input file, shared by the init steps
 
 export interface AiArgs { answers?: string; product?: string; picks?: string; report?: string; choose?: string; installPlugins: boolean; overBudget: boolean }
 const VALUE_FLAGS = ['answers', 'product', 'picks', 'report', 'choose'] as const;

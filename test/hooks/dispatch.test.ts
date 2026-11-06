@@ -135,6 +135,14 @@ test('fail-closed deny survives unwritable .harness', async () => {
   expect(err).toHaveBeenCalledWith(expect.stringMatching(/^harness: .* failed: /));
   err.mockRestore();
 });
+test('a rejected promise fails open unless failClosed', async () => {
+  const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  const rejecting = (extra: Partial<Check> = {}): Check => ({ name: 'rej', events: ['PreToolUse'], run: () => Promise.reject(new Error('async bad')), ...extra });
+  expect(await dispatch(pre(), [rejecting()], {})).toBe('');
+  expect(err).toHaveBeenCalledWith(expect.stringContaining('harness: check rej failed: async bad'));
+  expect(out(await dispatch(pre(), [rejecting({ failClosed: true })], {})).hookSpecificOutput?.permissionDecisionReason).toBe('harness check rej failed: async bad');
+  err.mockRestore();
+});
 test('malformed check results and non-Error throws are treated as throws', async () => {
   const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   const bad = (extra: Partial<Check> = {}): Check => ({ name: 'bad', events: ['PreToolUse'], run: () => undefined as unknown as Decision, ...extra });

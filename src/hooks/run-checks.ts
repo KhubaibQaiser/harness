@@ -2,7 +2,7 @@ import type { Check, Ctx } from './check.js';
 import { type Log, warn } from './event-log.js';
 import type { Decision, HookEvent } from './types.js';
 
-type Ask = Extract<Decision, { kind: 'deny' | 'ask' }>;
+type AskDecision = { kind: 'ask'; reason: string; check: string };
 
 /** One check's decision; a throw denies for a failClosed check and is skipped (null) for any other. */
 async function runOne(c: Check, ctx: Ctx): Promise<Decision | null> {
@@ -21,7 +21,7 @@ async function runOne(c: Check, ctx: Ctx): Promise<Decision | null> {
 }
 
 /** An ask blocks at Stop, is ignored (null) outside PreToolUse, and denies in an unattended run. */
-function resolveAsk(d: Ask, event: HookEvent, unattended: boolean, log: Log): Exclude<Decision, { kind: 'allow' }> | null {
+function resolveAsk(d: AskDecision, event: HookEvent, unattended: boolean, log: Log): Exclude<Decision, { kind: 'allow' }> | null {
   if (event === 'Stop') return { kind: 'block', reason: d.reason, check: d.check };
   if (event !== 'PreToolUse') {
     log(d.check, 'ask-ignored', d.reason);
@@ -39,7 +39,7 @@ export async function runChecks(ctx: Ctx, checks: Check[], degraded: boolean, lo
     if (denied && !c.pure) continue;
     let d = await runOne(c, ctx);
     if (!d || d.kind === 'allow') continue;
-    if (d.kind === 'ask') d = resolveAsk(d, event, ctx.unattended, log);
+    if (d.kind === 'ask') d = resolveAsk(d as AskDecision, event, ctx.unattended, log); // Decision types deny and ask as one member, so the kind check does not narrow it
     if (!d) continue;
     log(d.check, d.kind, d.kind === 'context' ? d.text : d.reason, denied ? true : undefined);
     if (!denied) decisions.push(d);

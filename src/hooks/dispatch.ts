@@ -26,7 +26,8 @@ import { managedSettingsPath } from '../core/settings-layers.js';
 import { isUnattended } from '../core/unattended.js';
 import { toRepoPath } from '../core/paths.js';
 import { editTarget, isShell } from './edit-target.js';
-import { emit, parseInput } from './io.js';
+import { capMessage, emit, MAX_CONTEXT, parseInput } from './io.js';
+import { mergeContext } from './notice.js';
 import type { Decision, HookEvent, HookInput } from './types.js';
 
 export interface Ctx {
@@ -308,8 +309,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
 
   const win =
     decisions.find((d) => d.kind === 'deny' || d.kind === 'block') ?? decisions.find((d) => d.kind === 'ask');
-  const ctxs = decisions.flatMap((d) => (d.kind === 'context' ? [d.text] : []));
-  const out = win ? emit(event, win) : ctxs.length ? emit(event, { kind: 'context', text: ctxs.join('\n'), check: 'context' }) : '';
+  const out = mergeContext(event, decisions, win);
   const all = [pending, notice].filter(Boolean).join('\n');
   return all ? withNotice(event, out, all) : out;
 }
@@ -326,9 +326,9 @@ function filesChangedWhy(files: string[], startHead: string | undefined, head: s
 /** Adds a notice the person sees (systemMessage) and the model gets (additionalContext) to a hook's JSON output. */
 function withNotice(event: string, out: string, notice: string): string {
   const o = out ? JSON.parse(out) : {};
-  o.systemMessage = [o.systemMessage, notice].filter(Boolean).join('\n');
+  o.systemMessage = capMessage([o.systemMessage, notice].filter(Boolean).join('\n'));
   const extra = o.hookSpecificOutput?.additionalContext;
-  o.hookSpecificOutput = { ...o.hookSpecificOutput, hookEventName: event, additionalContext: [extra, notice].filter(Boolean).join('\n') };
+  o.hookSpecificOutput = { ...o.hookSpecificOutput, hookEventName: event, additionalContext: capMessage([extra, notice].filter(Boolean).join('\n'), MAX_CONTEXT) };
   return JSON.stringify(o);
 }
 

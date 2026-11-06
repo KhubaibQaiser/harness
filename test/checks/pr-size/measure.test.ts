@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { currentBranch, type Git, isOver, measure, realGit, type SizeConfig } from '../../../src/checks/pr-size/measure.js';
@@ -241,4 +241,71 @@ test('review focus 1: a 2 MB blob arrives whole through realGit', () => {
   const r = realGit(root)(['show', 'HEAD:big.txt'], 2000);
   expect(r.error).toBeUndefined();
   expect(r.stdout.length).toBe(big.length);
+});
+
+describe('working tree', () => {
+  const wt = { worktree: true };
+  const write = (root: string, rel: string, body: string | Buffer) => (mkdirSync(dirname(join(root, rel)), { recursive: true }), writeFileSync(join(root, rel), body));
+
+  test('committed 10 + staged 3 + unstaged 2 + untracked 4 = 19 lines; ignored files do not count', () => {
+    const root = repo({ 'README.md': 'hi\n', '.gitignore': 'ign.txt\n', 'u.ts': lines(5) });
+    commit(root, { 'a.ts': lines(10) });
+    write(root, 'staged.ts', lines(3));
+    git(root, 'add', 'staged.ts');
+    write(root, 'u.ts', lines(5) + lines(2));
+    write(root, 'new.ts', lines(4));
+    write(root, 'ign.txt', lines(50));
+    expect(measure(root, wt, cfg())).toMatchObject({ head: 'working tree', lines: 19, files: 4 });
+  });
+
+  test('an untracked lockfile is excluded', () => {
+    const root = repo();
+    write(root, 'pnpm-lock.yaml', lines(9));
+    expect(measure(root, wt, cfg())).toMatchObject({ lines: 0, files: 0, excluded: ['pnpm-lock.yaml'] });
+  });
+
+  test('untracked binary, 2 MB file and uncommitted deletion are each 1 file and 0 lines', () => {
+    const root = repo({ 'old.ts': lines(30) });
+    write(root, 'bin.dat', Buffer.from([1, 0, 2]));
+    write(root, 'big.txt', 'x\n'.repeat(1024 * 1024));
+    rmSync(join(root, 'old.ts'));
+    expect(measure(root, wt, cfg())).toMatchObject({ lines: 0, files: 3 });
+  });
+
+  test('a last line without a newline counts; an empty file is 0 lines', () => {
+    const root = repo();
+    write(root, 'a.txt', 'a\nb');
+    write(root, 'e.txt', '');
+    expect(measure(root, wt, cfg())).toMatchObject({ lines: 2, files: 2 });
+  });
+
+  // Creating symlinks needs privileges on Windows.
+  test.skipIf(process.platform === 'win32')('a symlink to a file outside the repo is 1 file and 0 lines', () => {
+    const root = repo();
+    const outside = join(makeRepo({ 'x.txt': lines(40) }), 'x.txt');
+    symlinkSync(outside, join(root, 'link.txt'));
+    expect(measure(root, wt, cfg())).toMatchObject({ lines: 0, files: 1 });
+  });
+
+  test('3,000 untracked one-line files: files >= 3000, only 2000 read, under 2 s', () => {
+    const root = repo();
+    for (let i = 0; i < 3000; i++) writeFileSync(join(root, `f${i}.txt`), 'x\n');
+    const t = Date.now();
+    const s = measure(root, wt, cfg());
+    expect(s).toMatchObject({ lines: 2000 });
+    expect((s as { files: number }).files).toBeGreaterThanOrEqual(3000);
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
+  test('reading untracked files counts toward the total budget', () => {
+    const root = repo();
+    write(root, 'a.txt', 'x\n');
+    let clock = 0;
+    const g: Git = (args, ms) => {
+      const r = realGit(root)(args, ms);
+      if (args[0] === 'ls-files') clock = 10000; // the listing used up the whole budget
+      return r;
+    };
+    expect(measure(root, wt, cfg(), { git: g, now: () => clock, budgetMs: 6000 })).toMatchObject({ error: 'git timed out' });
+  });
 });

@@ -731,7 +731,28 @@ test('a glob in the harness name or its cli path is read as the harness CLI', ()
   all(['h?rness init', 'node dist/cl?.mjs init'], 'ask');
   all(['ls dist/cl?.mjs', 'echo h?rness'], 'allow');
 });
+test('a separator or closer right after a flag or target does not end the rule', () => {
+  all(['git push -f; echo done', 'git push --force; echo', 'git push -f&& echo done', '(git push --force)', '{ git push -f; }', 'if true; then git push -f; fi', 'g?t push -f;',
+    '(git push origin main)', 'echo `git push -f`', '(rm -rf /)'], 'deny');
+  all(['(git checkout .)', 'git checkout .;'], 'ask');
+  all(['git push --force-with-lease; echo', '(git push origin feat)'], 'allow');
+});
+test('glob readings: per segment under a cap, never allow past it', () => {
+  all([`${'?? a; '.repeat(33)}g?t push -f`, `${'*; '.repeat(34)}g?t push -f`], 'deny');
+  expect(kind(`${'* a; '.repeat(300)}echo hi`)).toBe('ask'); // past the cap: ask, the dispatcher denies it unattended
+  all(['g[!x]t push -f', 'node dist/cl[!x].mjs tdd off', 'G?T push -f', 'g?t${IFS}push${IFS}-f', 'sudo -u x g?t push -f', 'env -i g?t push -f', 'FOO=1 g?t push -f'], 'deny');
+  all(["sh -c 'g?t push -f'", 'bash -c "g?t push -f"', 'zsh -c "g?t push -f"', "bash <<< 'g?t push -f'", "sh -c 'g?t push origin main'"], 'deny');
+  all(['g(i|x)t push -f', 'h(a|b)rness tdd off'], 'deny'); // zsh's default alternation; bash rejects it
+  all(["'g?t' push -f", '"h?rness" tdd off'], 'deny'); // stricter on purpose: a quoted glob is literal to the shell, read as a glob anyway
+  all(['sudo -u g?t g?t push -f'], 'deny');
+  all(['rm -f dist/*.js', 'case $1 in *) echo hi;; esac', 'for f in *.ts; do wc -l $f; done', 'echo *', 'grep -E "foo(a|b)" src', 'f() { echo x; }'], 'allow');
+});
+test('the substitution check never lowers a deny', () => {
+  all(['git push -f && echo a$(date)b', 'git push origin main && echo x`date`y'], 'deny');
+  expect(kind('git push -f$(true)')).toBe('ask');
+});
 test('git global options before the subcommand do not hide a push rule', () => {
+  all(['git -C "my dir" push -f', "git -C 'a b' push origin main", "git -c 'a.b=c d' push -f", 'git -c "k=a b" push origin main', 'git --git-dir="a b" push -f'], 'deny');
   for (const [c, plain] of [['git -C . push origin main', 'git push origin main'], ['git -c x=y push -f', 'git push -f'], ['git --git-dir=.git push origin main', 'git push origin main'],
     ['git --work-tree=. push -f', 'git push -f'], ['git --git-dir .git --no-pager push -f', 'git push -f'], ['git -C . reset --hard', 'git reset --hard']])
     expect(kind(c), c).toBe(kind(plain));

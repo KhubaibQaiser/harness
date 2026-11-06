@@ -33,3 +33,10 @@ it('a 110 KB line of 8000 heredoc operators after arithmetic', () => {
   expect(decideCommand(c, ctx).kind).toBe('allow');
   expect(median(c)).toBeLessThan(1000);
 });
+
+// One message-command lookup per simple command, not per flag: 10000 ` -m "a b"` took 51 s before (re-review 5, R3).
+it('a git commit with 10000 message flags', () => {
+  const c = 'git commit' + ' -m "a b"'.repeat(10000);
+  expect(decideCommand(c, ctx).kind).toBe('allow');
+  expect(median(c)).toBeLessThan(200);
+});

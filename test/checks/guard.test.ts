@@ -807,21 +807,40 @@ test('tee copies its input to stdout, so it is a sink only when its stdout goes 
   all(["( tee f <<'EOF'\ngit push -f\nEOF\n) | sh", "( tee /dev/null <<'EOF'\nrm -rf ~\nEOF\n) | bash", "$(tee /dev/null <<'EOF'\ngit push -f\nEOF\n)",
     "x=$(tee f <<'EOF'\ngit push -f\nEOF\n); $x", "tee docs/x.md <<'EOF'\ngit push -f\nEOF"], 'deny');
   all(["tee docs/x.md >/dev/null <<'EOF'\ngit push -f\nEOF", "tee a.md > b.md <<'EOF'\ngit push -f\nEOF"], 'allow');
+  all(["( tee /dev/stderr >/dev/null <<'EOF'\ngit push -f\nEOF\n) 2>&1 | sh", "( exec 3>&1; tee /dev/fd/3 >/dev/null <<'EOF'\ngit push -f\nEOF\n) | sh",
+    "o=/dev/stderr; ( tee \"$o\" >/dev/null <<'EOF'\ngit push -f\nEOF\n) 2>&1 | sh", "tee \"$o\" >/dev/null <<'EOF'\ngit push -f\nEOF", "tee /dev/stderr >/dev/null <<'EOF'\nrm -rf ~\nEOF"], 'deny');
 });
-test("a writer's stdout counts as a file only when it still goes there after every redirect", () => {
+test('a writer is a file sink only with plain > >> >| redirects to plain paths, outside any group', () => {
   all(["( cat <<'EOF' >f 1>&2\ngit push -f\nEOF\n) 2>&1 | sh", "( cat <<'EOF' >f 1>&2\ngit push -f\nEOF\n) |& sh", "( exec 3>&1; cat <<'EOF' > f >&3\ngit push -f\nEOF\n) | sh",
     "x=$(cat <<'EOF' >f 1>&2\ngit push -f\nEOF\n2>&1); $x", "( cat > f >&2 <<'EOF'\nrm -rf ~\nEOF\n) 2>&1 | sh"], 'deny');
-  all(["cat > f 2>&1 <<'EOF'\ngit push -f\nEOF", "cat >| f <<'EOF'\ngit push -f\nEOF", "cat 2>/dev/null > f <<'EOF'\ngit push -f\nEOF"], 'allow');
+  all(["cat >| f <<'EOF'\ngit push -f\nEOF", "cat >> d/x.md <<'EOF'\ngit push -f\nEOF", "mkdir -p d && cat > d/x.md <<'EOF'\ngit push -f\nEOF", "dd of=f <<'EOF'\ngit push -f\nEOF"], 'allow');
+  // Strict on purpose: any fd number, `&`, `<`, a glued dup, exec with a redirect, or a group around the writer is code.
+  all(["( cat >f <<'EOF'>&2\ngit push -f\nEOF\n) 2>&1 | sh", "( exec 3>&1; cat <<'EOF' >f 1<&3\ngit push -f\nEOF\n) | sh", "( cat <<'EOF' >f 01>&2\ngit push -f\nEOF\n) 2>&1 | sh",
+    "( exec 3>&1; cat <<'EOF' >f 1<>/dev/fd/3\ngit push -f\nEOF\n) | sh", "cat <<'EOF' >f>&2\ngit push -f\nEOF", "cat > f 2>&1 <<'EOF'\ngit push -f\nEOF",
+    "cat 2>/dev/null > f <<'EOF'\ngit push -f\nEOF", "exec 3>&1\ncat > f <<'EOF'\ngit push -f\nEOF", "( cat > f <<'EOF'\ngit push -f\nEOF\n)", "{ cat > f <<'EOF'\ngit push -f\nEOF\n}",
+    "x=$(cat > f <<'EOF'\ngit push -f\nEOF\n)"], 'deny');
 });
 test('a quoted or escaped shell option is still an option, and env -S is split and read', () => {
   all(['sh -c "-x" -m "git push -f"', 'sh -c \\-x -m "git push -f"', 'bash "-c" -m "git push -f"', "bash '-c' -m 'git push -f'", 'sh -c "-o" pipefail -m "git push -f"',
-    "env -S \"sh -c 'git push -f'\"", "env -S \"bash -c 'rm -rf ~'\""], 'deny');
+    "env -S \"sh -c 'git push -f'\"", "env -S \"bash -c 'rm -rf ~'\"", "env \"-S\" \"sh -c 'git push -f'\"", "env '-S' \"sh -c 'git push -f'\"",
+    "env \"--split-string\" \"sh -c 'git push -f'\"", "env -S 'sh -c \"git\\_push\\_-f\"'", "env -S 'sh\\_-c\\_\"rm -rf ~\"'"], 'deny');
 });
 test("a message flag's $(…) value is data only for a known message-taking command with no pipe after it", () => {
   all(["printf '%s\\n' --title \"$(cat <<'EOF'\ngit push -f\nEOF\n)\" | sh", "x=$(printf %s -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"); $x",
     "parallel -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\" ::: x", "git commit -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\" | sh"], 'deny');
   all(["git commit -m\"$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)\"", "git tag -a v1 -m \"$(cat <<'EOF'\nno git push -f\nEOF\n)\"",
     "gh issue create --title x --body \"$(cat <<'EOF'\nno rm -rf ~\nEOF\n)\""], 'allow');
+});
+test('a message value follows the real command past wrappers and global options, and a pipe into a reader', () => {
+  const idiom = (pre: string, post = '') => `${pre} "$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)"${post}`;
+  all([idiom('git commit -m', ' 2>&1 | tail -5'), idiom('command git commit -m'), idiom('env FOO=1 git commit -m'), idiom('git -C x -c k=v commit -m'),
+    idiom('gh -R o/r pr create --title x --body'), idiom('gh --repo o/r pr create --title x --body'), idiom('git commit -m', ' | head -1')], 'allow');
+  all([idiom('git commit -m', ' | sh'), idiom('git commit -m', ' | tail -5 | sh'), idiom("git -c alias.x='!f(){ eval \"$2\"; }; f' x -m", ' commit')], 'deny');
+});
+test('an editor or pager setting makes a git message built at run time code, and asks at least', () => {
+  all(["GIT_EDITOR=sh git commit -e -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"", "git -c core.editor=sh commit -e -m \"$(cat <<'EOF'\ngit push -f\nEOF\n)\"",
+    "EDITOR=sh git commit -e -F - <<'EOF'\ngit push -f\nEOF"], 'deny');
+  all(["GIT_EDITOR=sh git commit -e -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "git -c core.pager=sh commit -m \"$(cat <<'EOF'\nhello\nEOF\n)\"", "VISUAL=vi git commit -e -m \"$(date)\""], 'ask');
 });
 test('a shell -c payload is found after other options', () => {
   const forms = ['sh -c -m', 'bash -c -x', 'bash -c -o pipefail', 'sh -c -e -u', 'bash -c -x --', 'zsh -c -x', 'bash --rcfile x -c', 'bash -xc', 'bash -ce', 'sh -euc',

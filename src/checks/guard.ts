@@ -8,7 +8,7 @@ import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
 import { arithmeticTest, gitPlain, globReadings, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
 import { Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
-import { maskedLine, sinkTest, wordCounter } from './guard-sinks.js';
+import { commandTests, EDITOR_SET } from './guard-sinks.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -159,13 +159,13 @@ function scriptsOf(root: string): Record<string, string> {
  */
 export function withoutHeredocBodies(cmd: string): string {
   if (!cmd.includes('<<')) return cmd;
-  const lines = cmd.split('\n'), count = wordCounter(cmd);
+  const lines = cmd.split('\n');
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i], inArithmetic = arithmeticTest(line);
     out.push(line);
     const ends: { word: string; dash: boolean; data: boolean }[] = [];
-    let sink: ((at: number) => boolean) | undefined;
+    let tests: ReturnType<typeof commandTests> | undefined;
     let quote = '';
     for (let c = 0; c < line.length; c++) {
       const ch = line[c];
@@ -186,7 +186,7 @@ export function withoutHeredocBodies(cmd: string): string {
           else word += x;
         }
         if (q || !/^\w+$/.test(word)) return cmd;
-        ends.push({ word, dash, data: (sink ??= sinkTest(maskedLine(new Scan(line), 0), false, count))(c) });
+        ends.push({ word, dash, data: (tests ??= commandTests(new Scan(line), false, cmd)).sink(0, c) });
         c = d - 1;
       }
     }
@@ -654,11 +654,14 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
     rs.push(r);
   }
   if (globs.some((g) => g.capped)) rs.push(toDecision(['ask', GLOB_CAP_WHY]));
+  // git runs its editor or pager on the message, so a message built by $(…) or a heredoc may run: ask at least.
+  if (EDITOR_SET.test(command) && /\bgit\b/.test(command) && /\$\(|`|<</.test(command)) rs.push(toDecision(['ask', EDITOR_WHY]));
   // A substitution glued inside a word prints what the guard cannot know: read without it, a ruled reading asks.
   const spliced = splicedReading(command);
   if (spliced !== null && decideRead(spliced, ctx, depth).kind !== 'allow') rs.push(toDecision(['ask', SPLICE_WHY]));
   return rs.find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
 }
+const EDITOR_WHY = 'the command sets an editor or pager for git (GIT_EDITOR, EDITOR, core.editor, …) and builds its message at run time, and git may run that program on the message';
 const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
 const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 

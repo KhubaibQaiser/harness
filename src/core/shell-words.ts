@@ -78,6 +78,8 @@ export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'script']);
 export const commandName = (word: string): string =>
   word.replace(/["']/g, '').split(/[\\/]/).pop()!.toLowerCase().replace(/\.(exe|cmd|ps1|bat)$/, '').replace(/^([^@]+)@.*$/, '$1'); // backslashes are separators here
 
+/** GNU env -S escapes: `\_` is a space inside double quotes (a separator outside), and the C escapes. */
+const ENV_ESC: Record<string, string> = { _: ' ', n: '\n', t: '\t', r: '\r', f: '\f', v: '\v' };
 /**
  * An `env -S` string as env splits it: whitespace separates words; '…' and "…" group (backslash escapes inside "…"
  * and outside quotes); `(`, `;` and the like are ordinary characters. Returned as a command line whose words are
@@ -89,12 +91,17 @@ export function envSplit(str: string): string {
   let quote = '';
   for (let i = 0; i < str.length; i++) {
     const c = str[i];
-    if (quote === "'") { if (c === "'") quote = ''; else cur += c; continue; }
-    if (quote === '"') { if (c === '"') quote = ''; else if (c === '\\' && i + 1 < str.length) cur += str[++i]; else cur += c; continue; }
-    if (/\s/.test(c)) { if (cur !== null) out.push(cur); cur = null; continue; }
+    if (quote === "'") { if (c === "'") quote = ''; else if (c === '\\' && /['\\]/.test(str[i + 1] ?? '')) cur += str[++i]; else cur += c; continue; }
+    if (quote === '"') { if (c === '"') quote = ''; else if (c === '\\' && i + 1 < str.length) cur += ENV_ESC[str[++i]] ?? str[i]; else cur += c; continue; }
+    if (/\s/.test(c) || (c === '\\' && str[i + 1] === '_')) { // an unquoted \_ separates words, as a space does
+      if (c === '\\') i++;
+      if (cur !== null) out.push(cur);
+      cur = null;
+      continue;
+    }
     cur ??= '';
     if (c === "'" || c === '"') quote = c;
-    else if (c === '\\' && i + 1 < str.length) cur += str[++i];
+    else if (c === '\\' && i + 1 < str.length) cur += ENV_ESC[str[++i]] ?? str[i];
     else cur += c;
   }
   if (cur !== null) out.push(cur);
@@ -111,7 +118,7 @@ export function cPayloads(cmd: string): string[] {
     for (let i = 0; i < ws.length; i++) {
       const name = commandName(ws[i]);
       if (name === 'env') {
-        for (let j = i + 1; j < ws.length && ws[j].startsWith('-'); j++) {
+        for (let j = i + 1; j < ws.length && unquote(ws[j]).startsWith('-'); j++) { // env "-S" is still -S
           const w = unquote(ws[j]);
           // GNU env's options whose value is the next word: -u/--unset NAME, -C/--chdir DIR, -a/--argv0 ARG (also at
           // the end of a cluster, -iu NAME). The signal options take their value attached (--block-signal=SIG).

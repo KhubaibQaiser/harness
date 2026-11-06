@@ -3,7 +3,7 @@
 import picomatch from 'picomatch';
 import { commandStart, quoteFree, SEGMENTS } from './guard.js';
 import { quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
-import { maskedLine, messageCommand, sinkTest, wordCounter } from './guard-sinks.js';
+import { commandTests } from './guard-sinks.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
@@ -42,13 +42,15 @@ class Budget {
 interface Heredoc { from: number; to: number; literal: boolean; program: boolean } // the body and its end line
 interface Layout { quotes: Quoted[]; heredocs: Heredoc[] }
 
+/** How a `(`, `)`, `{` or `}` changes the group depth (braces only as words). */
+const GROUP: Record<string, number> = { '(': 1, ')': -1, '{': 1, '}': -1 };
 /** Where the shell sees quotes and heredoc bodies: `\` escapes outside quotes, `'…'` is literal, `$'…'` is literal with
  *  `\` escapes, `"…"` keeps its substitutions, `$((…))` and `((…))` are arithmetic (`1<<E` is a shift), and `<<WORD`
- *  takes the lines up to WORD. A body is a program unless sinkTest says it goes to a data sink; `argValue` says `c`
- *  is a flag's $(…) value. A heredoc this cannot read (a delimiter with an expansion, no end line) leaves every body in place. */
-function layout(s: Scan, argValue: boolean): Layout {
-  const c = s.c, quotes: Quoted[] = [], heredocs: Heredoc[] = [], count = wordCounter(c);
-  let pending: { word: string; dash: boolean; literal: boolean; data: boolean }[] = [], lineStart = 0, sink: ((at: number) => boolean) | undefined;
+ *  takes the lines up to WORD. A body is a program unless `tests.sink` says it goes to a data sink, outside any
+ *  group. A heredoc this cannot read (a delimiter with an expansion, no end line) leaves every body in place. */
+function layout(s: Scan, tests: ReturnType<typeof commandTests>): Layout {
+  const c = s.c, quotes: Quoted[] = [], heredocs: Heredoc[] = [];
+  let pending: { word: string; dash: boolean; literal: boolean; data: boolean }[] = [], lineStart = 0, depth = 0, ticks = 0;
   for (let i = 0; i < c.length; i++) {
     const ch = c[i];
     const q = ch === '\\' ? null : quotedAt(s, i);
@@ -71,8 +73,8 @@ function layout(s: Scan, argValue: boolean): Layout {
         else word += x;
       }
       if (q || !/^\w+$/.test(word)) return { quotes, heredocs: [] };
-      sink ??= sinkTest(maskedLine(s, lineStart), argValue && lineStart === 0, count);
-      pending.push({ word, dash, literal, data: sink(i - lineStart) });
+      // A writer inside ( ), { }, $( ) or backticks is code: the group may pipe, redirect or capture what it prints.
+      pending.push({ word, dash, literal, data: depth === 0 && ticks % 2 === 0 && tests.sink(lineStart, i) });
       i = d - 1;
     } else if (ch === '\n' && pending.length) {
       let p = i + 1;
@@ -90,8 +92,9 @@ function layout(s: Scan, argValue: boolean): Layout {
       pending = [];
       i = p - 1;
       lineStart = p;
-      sink = undefined;
-    } else if (ch === '\n') { lineStart = i + 1; sink = undefined; }
+    } else if (ch === '\n') lineStart = i + 1;
+    else if (ch === '`') ticks++;
+    else depth += GROUP[ch] && (ch === '(' || ch === ')' || (/[\s;&|]/.test(c[i - 1] ?? ' ') && /\s/.test(c[i + 1] ?? ' '))) ? GROUP[ch] : 0;
   }
   return { quotes, heredocs };
 }
@@ -103,9 +106,9 @@ type Blank = (c: string, known: (q: Quoted) => boolean) => (q: Quoted) => boolea
  *  A message flag's substitutions have their own data taken out, so `-m "$(cat <<'EOF' … )"` keeps no body. */
 function withoutData(c: string, blank: Blank, argValue = false): string {
   if (!/['"<]/.test(c)) return c;
-  const s = new Scan(c), lines = new Map<number, string>();
-  const known = (q: Quoted) => { const l = q.line ?? 0; if (!lines.has(l)) lines.set(l, maskedLine(s, l)); return messageCommand(lines.get(l)!, q.start - l); };
-  const picks = blank(c, known), { quotes, heredocs } = layout(s, argValue);
+  const s = new Scan(c), tests = commandTests(s, argValue);
+  const known = (q: Quoted) => tests.message(q.line ?? 0, q.start);
+  const picks = blank(c, known), { quotes, heredocs } = layout(s, tests);
   const sub = (q: Quoted) => (argFlag(c, q, known) ? (x: string) => withoutData(x, blank, true) : (x: string) => x);
   const cuts = [...quotes.filter(picks).map((q) => ({ from: q.start, to: q.end, put: "''" + q.subs.map(sub(q)).map((x) => ` $(${x})`).join('') })),
     ...heredocs.filter((h) => !h.program).map((h) => ({ from: h.from, to: h.to, put: h.literal ? '' : s.substitutions(h.from, h.to).map((x) => x + '\n').join('') }))]

@@ -18,6 +18,7 @@ import { MANIFEST_REL } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { planChanges } from '../install/plan.js';
 import { coverageSkipped, coverageWhy, preset, type Preset, unsafeWhy } from '../install/preset.js';
+import { presetContext, previewLines } from '../catalog/presets.js';
 import { findOnPath } from '../checks/stop/runner.js';
 import { type AiArgs, type AiInputs, EXIT_USAGE, loadAiInputs, missingAi, takeAiFlags } from './ai-inputs.js';
 import { hasAiFlags, refuseOutsideClaude } from './claude-only.js';
@@ -184,8 +185,10 @@ async function showPlan({ cli, f, p }: Run, { plan, touched }: Built, config: Ha
   const manual = [...new Set([...plan.manual, ...p.tddOff.flatMap((o) => o.manual)])];
   if (manual.length) out('Do these by hand:\n' + manual.map((l) => `  ${l}`).join('\n'));
   for (const n of plan.notes) out(`Note: ${n}`);
+  if (sel?.preset) for (const l of previewLines(sel.preset, sel.ids)) out(l);
   if (sel) {
-    const stop = await budgetGate(sel.catalog, [], sel.ids, approvedIds(config, null, sel.catalog), config.context.budget_tokens, cli.templatesDir, out, { ...f.opts, overBudget: f.ai.overBudget });
+    const extra = sel.preset ? presetContext(sel.preset, sel.presetItems) : [];
+    const stop = await budgetGate({ cat: sel.catalog, before: [], after: sel.ids, exempt: approvedIds(config, null, sel.catalog), extra, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, out, f: { ...f.opts, overBudget: f.ai.overBudget } });
     if (stop !== null) return stop;
   }
   if (f.opts.dryRun) {
@@ -251,7 +254,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
     throw e;
   }
   stampHarnessFiles(root); // change detection: these writes are harness's own
-  const installed = sel && f.ai.installPlugins ? installSelected(root, sel.ids, sel.catalog, cli.exec ?? defaultExec, out) : 0;
+  const installed = sel && f.ai.installPlugins ? installSelected({ root, chosen: sel.ids, cat: sel.catalog, exec: cli.exec ?? defaultExec, out }) : 0;
 
   // 6. Report
   reportGates(run, built.plan);

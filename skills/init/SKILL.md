@@ -9,7 +9,7 @@ disable-model-invocation: true
 Run this in the main session: subagents cannot ask questions. Make a temp dir outside the repo (`mktemp -d`) for every file you write. Pass file paths to the CLI; nothing else crosses over. Every command is `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" <cmd>`, run through Bash.
 
 1. Facts: `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" scan`. Show the facts in five lines.
-2. Interview: read `${CLAUDE_PLUGIN_ROOT}/skills/init/interview.md` and follow it. Draft `product.md`, show it, apply the person's edits, then check it:
+2. Interview: read `${CLAUDE_PLUGIN_ROOT}/skills/init/interview.md` and follow it; its `harness preset list` is `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" preset list`. Draft `product.md`, show it, apply the person's edits, then check it:
    `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" validate product <product.md>`
    Write `answers.json`, then `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" validate answers <answers.json>`. On errors, fix and retry once, then stop.
 3. Recommend: read `${CLAUDE_PLUGIN_ROOT}/skills/init/recommend.md` and follow it. The rubric path to pass the subagent is `${CLAUDE_PLUGIN_ROOT}/templates/skills/review-rubric/SKILL.md`; expand it to an absolute path first.
@@ -19,6 +19,7 @@ Run this in the main session: subagents cannot ask questions. Make a temp dir ou
    On errors, start the staff-reviewer again once with the same inputs plus its previous reply and the errors, then re-run both with `--attempt 2`. Still failing: stop and show the errors.
 4. Select: `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" select --picks <picks.json>` prints the rows.
    - AskUserQuestion cannot pre-tick, so write "(recommended)" on the rows the CLI ticks and list them first. Ask 4 rows per call (multiSelect). Show each row's reason, cost, context, side effects, "local only" for plugins, the unpinned line with its reason, and for a discouraged row its stance reason and no_alternative.
+   - When `answers.json` has a `preset`, add `--preset <id> --answers <answers.json>` to both select commands, and say which rows came from the preset.
    - Then `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" select --picks <picks.json> --choose <id,...>`. Show its notices or errors.
 5. Apply: `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" init --answers <answers.json> --product <product.md> --picks <picks.json> --report <report.md> --choose <id,...> --dry-run`.
    Show the plan and budget lines.

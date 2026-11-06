@@ -51,16 +51,16 @@ function pluginEntry(plugin: string): ContextEntry {
   return { id: 'harness-plugin', tokens: skills + agents.reduce((n, a) => n + estimateTokens(alwaysLoadedText('agent', read(join(plugin, a)))), 0) };
 }
 
-/** `exempt` ids (items the person already approved) keep an entry but add nothing and are never unmeasured. harness-plugin is never exempt. */
+/** `extra` entries (measured elsewhere) are added as they are. `exempt` ids (items the person already approved) keep an entry but add nothing and are never unmeasured. harness-plugin is never exempt. */
 export async function measureSelection(
-  ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { count?: CountTokens; exempt?: string[] } = {},
+  ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { count?: CountTokens; exempt?: string[]; extra?: ContextEntry[] } = {},
 ): Promise<ContextMeasure> {
   return measureSelectionSync(ids, c, dirs, opts);
 }
 
 /** The same estimate without the async seam, for `status`. */
 export function measureSelectionSync(
-  ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { exempt?: string[] } = {},
+  ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { exempt?: string[]; extra?: ContextEntry[] } = {},
 ): ContextMeasure {
   const byId = new Map(c.items.map((i) => [i.id, i]));
   const exempt = new Set(opts.exempt ?? []);
@@ -71,6 +71,7 @@ export function measureSelectionSync(
     const e = itemContext(it, dirs);
     entries.push(exempt.has(id) ? { ...e, exempt: true } : e);
   }
+  entries.push(...(opts.extra ?? [])); // the preset's own rows, measured by presetContext
   // opts.count is the budget build's seam; with none (always, in M3) the estimate stands.
   return {
     entries,

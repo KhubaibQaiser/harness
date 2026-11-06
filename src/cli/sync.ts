@@ -14,6 +14,7 @@ import { selectedIds } from '../install/plan.js';
 import { reconcile } from '../install/reconcile.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { budgetGate, installSelected, isDenied, sandboxLine } from './init.js';
+import { recordedExtra } from './install-selection.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall, readCatalog, readConfig } from './preamble.js';
 import type { CliEnv } from './index.js';
@@ -117,7 +118,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   if (merged.length) out(`You edited these files; sync changes only the harness parts: ${list(merged)}.`);
   // Installed items are approved: they show, but only a selected item that was never installed counts.
   const approved = approvedIds(config, man, cat);
-  const stop = await budgetGate(cat, approved, have, approved, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget });
+  const stop = await budgetGate({ cat, before: approved, after: have, exempt: approved, extra: recordedExtra(root, config), extraBefore: recordedExtra(root, config), budget: config.context.budget_tokens, templatesDir: cli.templatesDir, out, f: { yes, dryRun, overBudget } });
   if (stop !== null) return stop;
   if (dryRun) {
     if (missing.length) out(`Plugins not installed: ${missing.join(', ')}. ${installFlag ? 'Would install them.' : 'Run with --install-plugins to install them.'}`);
@@ -140,7 +141,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   stampHarnessFiles(root); // change detection: these writes are harness's own
   for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
   let code = 0;
-  if (installFlag && missing.length) code = installSelected(root, have, cat, cli.exec ?? defaultExec, out, true, present);
+  if (installFlag && missing.length) code = installSelected({ root, chosen: have, cat, exec: cli.exec ?? defaultExec, out, applied: true, have: present });
   else if (record) code = recordInstall() ?? 0;
   out('Run harness git commit on a branch to commit this change.');
   return code;

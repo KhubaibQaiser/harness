@@ -17,6 +17,7 @@ import { reconcile } from '../install/reconcile.js';
 import { pinOf, resolveSelection } from '../install/select.js';
 import type { Picks } from '../ai/picks.js';
 import { budgetGate, isDenied, sandboxLine } from './init.js';
+import { recordedExtra } from './install-selection.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall, readCatalog, readConfig } from './preamble.js';
@@ -107,7 +108,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
       out(`${s.id} (${byId.get(s.id)?.kind ?? 'unknown'}): ${esc(s.reason)}`);
       for (const f of itemFiles(m, s.id)) out(`  ${f.rel}`);
     }
-    const v = await measureSelection(have, cat, { ...dirs, plugin: dirname(packageDir('templates')) });
+    const v = await measureSelection(have, cat, { ...dirs, plugin: dirname(packageDir('templates')) }, { extra: recordedExtra(root, config) });
     out(budgetLines(budgetVerdict(v, v, config.context.budget_tokens))[0]);
     return 0;
   }
@@ -177,7 +178,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   if (cmd === 'add') {
     // Items harness installed are approved: they show, but only the new ones count (a hand-selected one never installed does too).
     const approved = approvedIds(config, m, cat);
-    const stop = await budgetGate(cat, approved, after, approved, config.context.budget_tokens, cli.templatesDir, out, { yes, dryRun, overBudget: args.includes('--over-budget') });
+    const stop = await budgetGate({ cat, before: approved, after, exempt: approved, extra: recordedExtra(root, config), extraBefore: recordedExtra(root, config), budget: config.context.budget_tokens, templatesDir: cli.templatesDir, out, f: { yes, dryRun, overBudget: args.includes('--over-budget') } });
     if (stop !== null) return stop;
   }
   if (dryRun) return out('Dry run: nothing was written.'), 0;

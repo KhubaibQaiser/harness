@@ -861,8 +861,9 @@ test('a plain message string is data only when nothing on the line can run it ag
 });
 test('a re-runner counts only where the shell runs it as a command, and a shell only when it parses the text', () => {
   // A word that is not in command position runs nothing: `docker exec`, `kubectl exec`, a `-C` path ending in a shell name.
-  all(['docker exec -m "git push -f"', 'kubectl exec pod -m "git push -f"', 'git -C /tmp/sh commit -m "x; git push -f"', 'cd /opt/case && git commit -m "x; git push -f"',
-    'git -C ~/src/bash-tools commit -m "x; git push -f"', 'zsh -m "git push -f"', 'bash -xm "git push -f"', "bash -c 'echo ok' -m 'git push -f'"], 'allow');
+  all(['git -C /tmp/sh commit -m "x; git push -f"', 'cd /opt/case && git commit -m "x; git push -f"', 'git -C ~/src/bash-tools commit -m "x; git push -f"'], 'allow');
+  // Round 11 allowlist: a command off the safe list makes the message code, even one that does not run it.
+  all(['docker exec -m "git push -f"', 'kubectl exec pod -m "git push -f"', 'zsh -m "git push -f"', 'bash -xm "git push -f"', "bash -c 'echo ok' -m 'git push -f'"], 'deny');
   // A shell that reads stdin or a payload with $ in it, ssh, watch, parallel and script hand the text to a shell.
   all(['ssh host -m "git push -f"', 'sh -c "$X" -m "git push -f"', 'watch -m "git push -f"', 'parallel -m "git push -f" ::: a', 'script -m "git push -f"',
     'git commit -m "x; git push -f" | sh -o pipefail', 'git commit -m "x; git push -f" | bash -s', "git commit -m \"x; git push -f\" | sh -c 'cat | sh'",
@@ -880,13 +881,31 @@ test('package-manager runners and other wrappers put the next words in command p
     p('flock /tmp/l sh'), p('chronic sh'), p('unbuffer sh'), p('caffeinate sh'), p('systemd-run --user sh'), p('nsenter -t 1 sh'), p('chroot / sh'), p('firejail sh'),
     p('time -p sh'), p('coproc sh'), p('[[ -n x ]] && sh'), 'select x in a; do git commit -m "x; git push -f"; sh -c "$X"; done',
     '{ git commit -m "x; git push -f"; sh -c "$X"; }', 'git commit -m "x; git push -f";{ sh -c "$X"; }'], 'deny');
-  all(['pnpm exec prettier -m "x; git push -f"', 'npx tsc -m "x; git push -f"'], 'allow');
+  all(['pnpm exec prettier -m "x; git push -f"', 'npx tsc -m "x; git push -f"'], 'deny'); // round 11: not on the safe list
 });
 test('a shell whose "script file" is stdin parses what it reads', () => {
   const p = 'git commit -m "x; git push -f"';
   all([`${p} | bash -`, `${p} | sh /dev/stdin`, `${p} | bash /dev/fd/0`, `${p} | sh //dev/./stdin`, `${p} | bash /proc/self/fd/0`, `bash <(echo x) ${p.slice(4)}`,
     `${p}; bash < /tmp/x`], 'deny');
-  all(['bash x.sh -m "x; git push -f"', 'sh ./run.sh -m "x; git push -f"'], 'allow');
+  all(['bash x.sh -m "x; git push -f"', 'sh ./run.sh -m "x; git push -f"'], 'deny'); // round 11: not on the safe list
+});
+test('a plain message or -F - body is data only when every command on the line is on the safe list (owner ruling, round 11)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  all([`git add -A && ${m}`, `cd sub && ${m}`, `${m} && git push`, 'gh pr create --title "a b" --body "Blocks rm -rf ~ in prose"', `${m}; git status; echo done`,
+    `if git diff --quiet; then echo clean; else ${m}; fi`, `mkdir -p d && touch d/x && ${m} && git log -1 | head -1`, `nice -n 5 ${m}`, `env FOO=1 time -p ${m}`,
+    `${m} && pwd && ls`, `[ -f x ] && ${m}`, `git -c user.name=x ${m.slice(4)}`, "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit push"], 'allow');
+  // F1: a redirect before the command word; F2: trap; F3: a runner option before its subcommand; the open class.
+  all([`${m}; 2>/dev/null sh -c "$(git log -1 --format=%B)"`, `${m} && </dev/null eval "$(git log -1 --format=%B)"`, `${m}; > /dev/null eval x`, `${m}; &>x eval x`,
+    `${m}; A=1 >x eval x`, `${m}; ! >x eval x`, "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\n2>/dev/null sh -c \"$(git log -1 --format=%B)\"",
+    `${m}; trap 'sh -c "$(git log -1 --format=%B)"' EXIT`, `trap 'sh -c x' EXIT; ${m}`, `${m}; pnpm --silent exec sh -c x`, `${m}; npm -y exec -- sh`, `${m}; uv -q run sh`,
+    `${m}; strace sh -c x`, `${m}; unshare sh`, `${m}; direnv exec . sh`, `${m}; bundle exec sh`, `${m}; poetry run sh`, `${m}; at now`, `${m}; npm test`,
+    `${m}; git config alias.x '!sh'`, `${m}; git x`, `git -c alias.x='!sh' ${m.slice(4)}`, `${m}; echo "$(eval x)"`, `${m} && echo hi | sh`, `${m}; cat f | sh`,
+    "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\nnpm test"], 'deny');
+});
+test('a line that writes git output to a file and runs a file is always blocked', () => {
+  all(['git log -1 --format=%B > x.sh; sh x.sh', 'git log -1 --format=%B > x.sh && bash ./x.sh', 'git show HEAD:run.sh >> r.sh; . r.sh', 'git rev-parse HEAD > x; source x',
+    'git cat-file -p HEAD:x > x && chmod +x x && ./x', 'git log -1 --format=%B | tee x.sh; sh x.sh', 'git -C sub log -1 --format=%B > /tmp/x\nbash /tmp/x'], 'deny');
+  all(['git log -1 > /tmp/log.txt', 'git log --oneline | head -5', 'sh x.sh', 'git log -1 --format=%B'], 'allow');
 });
 test('a case pattern ) does not close the case, and a redefined command or -e makes a heredoc sink code', () => {
   all(["case x in\nx) cat > f <<'EOF'\ngit push -f\nEOF\n;;\nesac | sh", "case x in *) cat > f <<'EOF'\ngit push -f\nEOF\n;; esac", "cat() { sh; }; cat > f <<'EOF'\ngit push -f\nEOF",

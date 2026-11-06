@@ -12,10 +12,22 @@ const WRAPPERS = new Set(['command', 'builtin', 'env', 'nice', 'nohup', 'sudo', 
 /** Package managers whose subcommand runs a command: `pnpm exec|dlx`, `yarn exec|dlx`, `npm exec|x`, `bun x`, `uv run`. */
 const RUNNER_SUBCOMMANDS: Record<string, string[]> = { pnpm: ['exec', 'dlx'], yarn: ['exec', 'dlx'], npm: ['exec', 'x'], bun: ['x'], uv: ['run'] };
 /** Where a wrapper at `k` starts its command's words (past `pnpm exec`), or -1 when `ws[k]` is no wrapper. */
-const wrapped = (ws: string[], k: number) => (WRAPPERS.has(base(ws[k])) ? k + 1 : RUNNER_SUBCOMMANDS[base(ws[k])]?.includes(ws[k + 1]) ? k + 2 : -1);
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'csh', 'tcsh', 'mksh', 'ash', 'fish']);
+function wrapped(ws: string[], k: number): number {
+  if (WRAPPERS.has(base(ws[k]))) return k + 1;
+  const sub = ws.findIndex((w, i) => i > k && !w.startsWith('-')); // `pnpm --silent exec`: options come first
+  return sub > 0 && RUNNER_SUBCOMMANDS[base(ws[k])]?.includes(ws[sub]) ? sub + 1 : -1;
+}
+/** A redirection word, which can come before the command word (`2>/dev/null eval …`), and one with no target glued on. */
+export const REDIRECT_WORD = /^(?:\d*|&)(?:<<<|<<-?|<>|>>|[<>]&?|>\|)/;
+export const BARE_REDIRECT = /^(?:\d*|&)(?:<<<|<<-?|<>|>>|[<>]&?|>\|)$/;
+/** Past keywords, assignments and redirections (with their target word) to the command word at or after `k`. */
+export function commandWordAt(ws: string[], k = 0, leaders: Set<string> = LEADERS): number {
+  while (k < ws.length && (leaders.has(ws[k]) || /^\w+=/.test(ws[k]) || REDIRECT_WORD.test(ws[k]))) k += BARE_REDIRECT.test(ws[k]) ? 2 : 1;
+  return k;
+}
+export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'csh', 'tcsh', 'mksh', 'ash', 'fish']);
 /** Commands that parse text again: eval and friends, a shell (see shellReruns), and those that hand words to a shell. */
-const RERUNNERS = new Set(['eval', 'exec', 'source', '.', 'case', 'busybox', 'ssh', 'su', 'watch', 'parallel', 'script', ...SHELLS]);
+const RERUNNERS = new Set(['eval', 'exec', 'source', '.', 'case', 'trap', 'busybox', 'ssh', 'su', 'watch', 'parallel', 'script', ...SHELLS]);
 /** Commands that change what a later name runs. A `name()` definition is found on the skeleton (FUNCTION_DEF). */
 const REDEFINERS = new Set(['function', 'alias', 'hash', 'enable', 'unalias']);
 const FUNCTION_DEF = /[\w-]\s*\(\s*\)/;
@@ -28,8 +40,7 @@ function commandsRun(cmd: string): { name: string; args: string[] }[] {
   const out: { name: string; args: string[] }[] = [];
   for (const seg of segments(cmd)) {
     const ws = words(seg).map(unquote);
-    let k = 0;
-    while (k < ws.length && (LEADERS.has(ws[k]) || /^\w+=/.test(ws[k]))) k++;
+    const k = commandWordAt(ws);
     if (k >= ws.length) continue;
     out.push({ name: base(ws[k]), args: ws.slice(k + 1) });
     const w = wrapped(ws, k);

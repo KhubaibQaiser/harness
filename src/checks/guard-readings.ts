@@ -4,7 +4,8 @@ import picomatch from 'picomatch';
 import { commandStart, quoteFree, SEGMENTS } from './guard.js';
 import { Groups, quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, type Skel, wholeFlags } from './guard-sinks.js';
-import { LAST_ARG, redefines, reruns } from './guard-reruns.js';
+import { onlySafeCommands } from './guard-allow.js';
+import { LAST_ARG } from './guard-reruns.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
@@ -136,8 +137,9 @@ const MESSAGE_FLAG = /(?:^|\s)(?:-[a-zA-Z]*m|--message|--body|--title|--notes)(?
 const before = (c: string, q: Quoted) => c.slice(Math.max(0, q.start - 16), q.start);
 /** The text rules' reading: data heredoc bodies out, and a plain quoted message value with whitespace in it is data
  *  (`git commit -m 'why (git push -f) is bad'`). Plain means no $(…) or backtick in it, no editor flag or pipe on its command,
- *  and nothing in the command line that can run it again (reruns, `$_`, redefines, an editor or pager setting). */
-const safeLine = (c: string, sk: Skel) => !reruns(sk.bodiless) && !LAST_ARG.test(c) && !redefines(sk.skel, sk.bodiless) && !EDITOR_SET.test(sk.skel);
+ *  and nothing else on the line that could run it again: every command is on the safe list (onlySafeCommands), and
+ *  there is no `$_` and no editor or pager setting. */
+const safeLine = (c: string, sk: Skel) => onlySafeCommands(sk.bodiless) && !LAST_ARG.test(c) && !EDITOR_SET.test(sk.skel);
 const messageSpan = (c: string) => { const sp = spaced(c); return (q: Quoted) => !q.subs.length && sp(q) && MESSAGE_FLAG.test(before(c, q)); };
 type Tests = ReturnType<typeof commandTests>;
 const edited = (tests: Tests, q: Quoted) => tests.rerunAt(q.line ?? 0, q.start);

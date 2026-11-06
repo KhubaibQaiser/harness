@@ -3,7 +3,8 @@
 // The writer rule is strict on purpose (re-review 5): every redirect spelling not listed here is code, a few false
 // blocks traded for no misses.
 import { posix } from 'node:path';
-import { LAST_ARG, redefines, reruns } from './guard-reruns.js';
+import { onlySafeCommands } from './guard-allow.js';
+import { LAST_ARG, redefines } from './guard-reruns.js';
 import { type Scan } from './guard-scan.js';
 
 /** Commands that write what they read to their output: data when that output goes to a plain file. */
@@ -100,11 +101,11 @@ const reused = (files: string[], count: (w: string) => number) =>
   files.some((f) => { const b = f.split('/').pop()!; return f !== '/dev/null' && (!/^[\w.-]+$/.test(b) || count(b) > 1); });
 
 /** The whole-command flags, read once from the skeleton guard-readings builds. A function, `alias`, `hash` or `enable`
- *  (`cat() { sh; }`) means no writer and no message flag is a sink; a re-runner or `$_` means no message flag is one,
- *  the same rule as for a plain message string. */
+ *  (`cat() { sh; }`) means no writer and no message flag is a sink; a command off the safe list or `$_` means no
+ *  message flag is one, the same rule as for a plain message string. */
 export function wholeFlags(c: string, sk: Skel = { skel: c, bodiless: c }) {
   const redef = redefines(sk.skel, sk.bodiless);
-  const noMessages = EDITOR_SET.test(sk.skel) || redef || reruns(sk.bodiless) || LAST_ARG.test(c);
+  const noMessages = EDITOR_SET.test(sk.skel) || redef || !onlySafeCommands(sk.bodiless) || LAST_ARG.test(c);
   return { count: wordCounter(c), noFiles: EXEC_REDIRECT.test(sk.skel) || redef, noMessages };
 }
 /**

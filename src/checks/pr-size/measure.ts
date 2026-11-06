@@ -30,8 +30,8 @@ const BUDGET_MS = 6000;
 const HOOK_BUDGET_MS = 9000;
 export const hookBudgetMs = (startedAt: number | undefined, now: () => number): number => Math.min(BUDGET_MS, (startedAt ?? now()) + HOOK_BUDGET_MS - now());
 
-export function currentBranch(git: Git): string | null {
-  const r = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], 2000);
+export function currentBranch(git: Git, ms = GIT_CALL_MS): string | null {
+  const r = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], ms);
   return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
 }
 

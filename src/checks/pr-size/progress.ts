@@ -6,14 +6,16 @@ import { esc, isObj } from '../../core/config.js';
 import { appendEvent } from '../../core/events.js';
 import { matches, toRepoPath } from '../../core/paths.js';
 import type { Ctx } from '../../hooks/dispatch.js';
-import { editTarget } from '../../hooks/edit-target.js';
+import { editTarget, isEdit } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
 import { readRecords } from './check.js';
-import { count, type Git, hookBudgetMs, measure, realGit, type Size } from './measure.js';
+import { count, currentBranch, type Git, hookBudgetMs, measure, realGit, type Size } from './measure.js';
 
 export const PROGRESS = '.harness/state/pr-progress.json';
 type Mark = 'target' | 'max';
-export interface Progress { base: string; fired: Mark[]; lines: number; files: number; ts: string; raise?: { lines: number; files: number; ts: string } }
+type Sz = { lines: number; files: number };
+// `pending`: an attended announcement not yet answered; the next edit on the branch asks (§14.5, N6).
+export interface Progress { base: string; fired: Mark[]; lines: number; files: number; ts: string; raise?: Sz & { ts: string }; pending?: Sz }
 type Lim = { target: number; maxLines: number; maxFiles: number };
 
 const JSON_INDENT = 2;
@@ -33,7 +35,9 @@ function parse(v: unknown): Progress | null {
   const r = v.raise;
   if (r !== undefined && !(isObj(r) && isInt(r.lines) && isInt(r.files) && typeof r.ts === 'string')) return null;
   const raise = r === undefined ? {} : { raise: { lines: r.lines as number, files: r.files as number, ts: r.ts as string } };
-  return { base: v.base, fired: [...new Set(v.fired as Mark[])], lines: v.lines as number, files: v.files as number, ts: v.ts, ...raise };
+  const q = v.pending; // a malformed pending reads as none; only harness writes this file (protect)
+  const pending = isObj(q) && isInt(q.lines) && isInt(q.files) ? { pending: { lines: q.lines as number, files: q.files as number } } : {};
+  return { base: v.base, fired: [...new Set(v.fired as Mark[])], lines: v.lines as number, files: v.files as number, ts: v.ts, ...raise, ...pending };
 }
 
 /** Never throws; a bad file or entry reads as empty. Null prototype, so `constructor` is just a branch. */
@@ -54,11 +58,52 @@ export function readProgress(root: string): Record<string, Progress> {
   return out;
 }
 
+function saveAll(root: string, all: Record<string, Progress>): void {
+  mkdirSync(dirname(join(root, PROGRESS)), { recursive: true });
+  writeAtomic(join(root, PROGRESS), JSON.stringify(all, null, JSON_INDENT) + '\n');
+}
+
 export function writeProgress(root: string, branch: string, p: Progress): void {
   const all = readProgress(root);
   all[branch] = p;
-  mkdirSync(dirname(join(root, PROGRESS)), { recursive: true });
-  writeAtomic(join(root, PROGRESS), JSON.stringify(all, null, JSON_INDENT) + '\n');
+  saveAll(root, all);
+}
+
+const withoutPending = ({ pending: _, ...p }: Progress): Progress => p;
+const anyPending = (all: Record<string, Progress>) => Object.values(all).some((p) => p.pending);
+
+/** UserPromptSubmit: the person answered in words, so every branch's pause is cleared, with no git. Never throws. */
+export function clearAllPending(root: string): Decision {
+  try {
+    const all = readProgress(root);
+    if (anyPending(all)) saveAll(root, Object.fromEntries(Object.entries(all).map(([b, p]) => [b, withoutPending(p)])));
+  } catch (e) {
+    process.stderr.write(`harness: pr-size pause clear failed: ${String((e as Error)?.message ?? e)}\n`);
+  }
+  return ALLOW;
+}
+
+/** PostToolUse of an edit that wasn't measured (excluded, out of repo, unmeasured): it ran, so this branch's pause is answered. */
+function clearPending(ctx: Ctx, git: Git): void {
+  const all = readProgress(ctx.root);
+  if (!anyPending(all)) return; // no git spawn
+  const b = currentBranch(git);
+  if (b !== null && Object.hasOwn(all, b) && all[b]!.pending) writeProgress(ctx.root, b, withoutPending(all[b]!));
+}
+
+/** PreToolUse of an edit tool (N6): one ask per unanswered announcement on the current branch. Writes nothing. */
+export function pauseAsk(ctx: Ctx, git: Git = realGit(ctx.root)): Decision {
+  if (ctx.unattended) return ALLOW; // pending is never set unattended; this is a guard
+  const all = readProgress(ctx.root);
+  if (!anyPending(all)) return ALLOW; // only the file read, no git spawn
+  // ponytail: a failed or timed-out branch lookup reads as a detached HEAD and allows; it can't name the branch to ask about.
+  const b = currentBranch(git, Math.max(1, Math.min(GIT_CALL_MS, hookBudgetMs(ctx.startedAt, Date.now))));
+  const p = b !== null && Object.hasOwn(all, b) ? all[b]! : undefined;
+  if (!p?.pending) return ALLOW;
+  const lim = limits(ctx.config.pr_size, p.raise);
+  const size = `${count(p.pending.lines, 'changed line')} in ${count(p.pending.files, 'file')}`;
+  const reason = `Confirm: \`${esc(b!)}\` is now ${size} (target ${lim.target}, limit ${count(lim.maxLines, 'line')} or ${count(lim.maxFiles, 'file')}). Approve to keep going with this edit, or say no and tell Claude to split it with the pr-ship skill or raise the limit for this branch.`;
+  return { kind: 'ask', check: 'pr-size', reason };
 }
 
 /** §14.5: after the resets and the additions, `fired` is exactly the thresholds now passed; the announcement is the highest one new since `prev`. */
@@ -123,18 +168,25 @@ export function limits(c: Ctx['config']['pr_size'], raise: Progress['raise']): L
   return { target: c.target_lines, maxLines: ok ? raise.lines : c.max_lines, maxFiles: ok ? raise.files : c.max_files };
 }
 
+// Set on an attended announcement; an edit's PostToolUse otherwise clears it (the edit ran), and Stop keeps it.
+function nextPending(ctx: Ctx, mark: Mark | null, s: Sz, prev: Progress | undefined): Sz | undefined {
+  if (mark && !ctx.unattended) return { lines: s.lines, files: s.files };
+  return ctx.input.hook_event_name === 'Stop' ? prev?.pending : undefined;
+}
+
 function announce(ctx: Ctx, branch: string, s: Size): Decision {
   const all = readProgress(ctx.root);
   const prev = Object.hasOwn(all, branch) ? all[branch] : undefined;
   const lim = limits(ctx.config.pr_size, prev?.raise);
   const { fired, announce: mark } = step(prev, s, lim);
-  if (!prev || prev.lines !== s.lines || prev.files !== s.files || prev.fired.join() !== fired.join()) {
-    writeProgress(ctx.root, branch, { base: s.base, fired, lines: s.lines, files: s.files, ts: new Date().toISOString(), ...(prev?.raise ? { raise: prev.raise } : {}) });
+  const stop = ctx.input.hook_event_name === 'Stop';
+  const pending = nextPending(ctx, mark, s, prev);
+  if (!prev || JSON.stringify(prev.pending) !== JSON.stringify(pending) || prev.lines !== s.lines || prev.files !== s.files || prev.fired.join() !== fired.join()) {
+    writeProgress(ctx.root, branch, { base: s.base, fired, lines: s.lines, files: s.files, ts: new Date().toISOString(), ...(prev?.raise ? { raise: prev.raise } : {}), ...(pending ? { pending } : {}) });
   }
   if (!mark) return ALLOW;
   appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-warned', reason: `${esc(branch)} ${mark} ${s.lines}/${s.files}` });
   const c = copy({ branch, base: s.base, lines: s.lines, files: s.files, lim }, mark);
-  const stop = ctx.input.hook_event_name === 'Stop';
   if (ctx.unattended) return stop ? ALLOW : { kind: 'context', check: 'pr-size', text: c.unattended };
   return stop ? { kind: 'context', check: 'pr-size', text: c.person } : { kind: 'context', check: 'pr-size', text: c.agent, notice: c.person };
 }
@@ -143,7 +195,9 @@ function announce(ctx: Ctx, branch: string, s: Size): Decision {
 export function progressWarning(ctx: Ctx, git: Git = realGit(ctx.root), now: () => number = Date.now): Decision {
   try {
     const m = measureBranch(ctx, git, now);
-    return m ? announce(ctx, m.branch, m.s) : ALLOW;
+    if (m) return announce(ctx, m.branch, m.s);
+    if (ctx.input.hook_event_name === 'PostToolUse' && isEdit(ctx.input.tool_name)) clearPending(ctx, git);
+    return ALLOW;
   } catch (e) {
     process.stderr.write(`harness: pr-size progress failed: ${String((e as Error)?.message ?? e)}\n`);
     return ALLOW;

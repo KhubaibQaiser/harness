@@ -101,8 +101,8 @@ export function envSplit(str: string): string {
   return out.map((w) => `'${w.replace(/'/g, "'\\''")}'`).join(' ');
 }
 
-// Shell options whose value is the next word: bash -o pipefail, -O extglob, +o history.
-const SHELL_VALUE = /^[-+][oO]$/;
+// Shell options whose value is the next word: bash -o pipefail, -O extglob, +o history, --rcfile F, --init-file F.
+const SHELL_VALUE = /^(?:[-+][oO]|--rcfile|--init-file)$/;
 /** The commands that `sh -c`, `bash -c`, `script -c` (and the like) and `env -S` run, unquoted, wherever they appear. */
 export function cPayloads(cmd: string): string[] {
   const out: string[] = [];
@@ -124,11 +124,13 @@ export function cPayloads(cmd: string): string[] {
         }
       }
       if (!SHELLS.has(name)) continue;
-      let c = false;
+      // A shell's payload is its first non-option word after -c (sh -c -x CMD, bash -c -o pipefail CMD); script's -c
+      // takes the next word, whatever it is.
+      let c = false, ended = false;
       for (let j = i + 1; j < ws.length; j++) {
         const w = ws[j];
-        if (c && w === '--') continue; // bash -c -- CMD
-        if (c) { out.push(unquote(w)); break; }
+        if (c && !ended && (w === '--' || w === '-')) { ended = true; continue; } // bash -c -- CMD
+        if (c && (ended || name === 'script' || !/^[-+]/.test(w))) { out.push(unquote(w)); break; }
         if (SHELL_VALUE.test(w)) { j++; continue; }
         if (!/^[-+]/.test(w)) break;
         if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(w)) c = true;

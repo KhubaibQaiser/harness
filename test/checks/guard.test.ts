@@ -803,6 +803,13 @@ test('the commit and PR idioms and file writes keep their bodies as data', () =>
     "tee docs/x.md <<'EOF'\ngit push -f\nEOF", "git tag -a v1 -F - <<'EOF'\nno git push -f\nEOF", "gh release create v1 --notes-file - <<'EOF'\nno git push -f\nEOF"], 'allow');
   expect(kind("git commit -m \"$(cat <<EOF\n$(git push -f)\nEOF\n)\"")).toBe('deny'); // an unquoted delimiter still runs $(…)
 });
+test('a shell -c payload is found after other options', () => {
+  const forms = ['sh -c -m', 'bash -c -x', 'bash -c -o pipefail', 'sh -c -e -u', 'bash -c -x --', 'zsh -c -x', 'bash --rcfile x -c', 'bash -xc', 'bash -ce', 'sh -euc',
+    'bash -o pipefail -c', 'bash --norc -c', 'zsh -fc', 'dash -c', 'ksh -c'];
+  all(forms.flatMap((f) => [`${f} "git push -f"`, `${f} 'rm -rf ~'`]), 'deny');
+  all(['sh -c -m "g?t push -f"', 'bash -c -x "h?rness tdd off"'], 'deny');
+  all(["bash -c 'echo ok'", "sh -c -x 'echo ok' name arg", 'bash -c -- "echo ok"'], 'allow');
+});
 test('an arithmetic shift is not a heredoc', () => {
   expect(kind('echo $((1<<E))\ng?t push -f\nE')).toBe('deny');
 });

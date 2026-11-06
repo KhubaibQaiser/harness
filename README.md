@@ -48,6 +48,14 @@ In short: secrets and risky commands are blocked, harness's own files are off li
 
 The exact rules for each gate are in [docs/reference.md](docs/reference.md).
 
+## Usage and adherence report
+
+`harness report` writes a usage and adherence report for this repo: which skills were invoked when they were relevant, which rules were enforced, token use, and where a gate probably blocked something it should not have. It reads your Claude Code session transcripts on your machine and sends nothing anywhere. Its "X of Y rules enforced" line counts how many of the rules harness knows about are held by a gate and not only written in a file, with a matrix of which are enforced and how each can be bypassed.
+
+- **Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted.
+- The page is `.harness/reports/<date>.html`, gitignored. It quotes your sessions, so don't share it. `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose.
+- `harness eval` tests whether skills, rules and gates work in real sessions. It costs money, so it asks you to type `yes` every run, stops at a cost ceiling (default $2, set with `--max-cost-usd`), defaults to a Haiku model, and runs only in your own terminal.
+
 ## Quick start
 
 You need Node 22.11 or newer, git, and Claude Code 2.1.314 or newer.
@@ -102,6 +110,8 @@ Run them as `harness <command>`. From a source build there's no `harness` binary
 | `doctor` | Checks the install and prints a fix for each problem. |
 | `why <id>` / `explain` | Why an item is installed, and what every item loads into context. |
 | `stats [--days N]` | Counts harness events (default: the last 7 days). |
+| `report [--days N] [--open] [--export]` | Writes the usage and adherence report to `.harness/reports/`. Local only. |
+| `eval [--kind skills\|rules] [--runs N] [--max-cost-usd X]` | Paid checks that your skills and rules change what the agent does. Costs money and asks every run. |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. |
 | `vet <target>` | Scans a plugin or skill before you install it. Installs nothing. |
 | `uninstall [--dry-run]` | Removes what harness added and restores your files. |
@@ -147,7 +157,6 @@ The full list: [docs/reference.md](docs/reference.md#known-limits).
 
 Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Coming next:
 - an opt-in personal preset of working rules and stack skills;
-- local reports that show whether agents actually follow the installed rules and skills;
 - memory, the PR reviewer, and TDD for other languages.
 
 ## Development

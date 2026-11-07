@@ -244,8 +244,8 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 
 | Command | What it does |
 |---|---|
-| `status` | Shows each gate as on or off, and why. Also the catalog version, how many items are selected, how many selected plugins aren't installed, and the always-loaded context estimate. |
-| `doctor` | Checks the install and prints a fix for each problem. Exits 1 if there is one. For installs with items it also reports the catalog version, items whose files or settings entries are missing (`/harness:sync` restores them), selected plugins that are enabled but not installed, plugin versions that differ from the catalog's pin, a plugin enabled from two marketplaces, an edited `harness-pins` marketplace or MCP server, and `checks` in `config.yaml` that differ from the selected items. It runs `claude plugin list` once; without `claude` it skips the plugin checks. |
+| `status` | Shows each gate as on or off, and why. Also the catalog version, how many items are selected, how many selected plugins aren't installed, and the always-loaded context total (`Context:` line, counted offline). |
+| `doctor` | Checks the install and prints a fix for each problem. It also prints one always-loaded context line (ok, note when over budget, fix when harness alone is over). Exits 1 if there is one. For installs with items it also reports the catalog version, items whose files or settings entries are missing (`/harness:sync` restores them), selected plugins that are enabled but not installed, plugin versions that differ from the catalog's pin, a plugin enabled from two marketplaces, an edited `harness-pins` marketplace or MCP server, and `checks` in `config.yaml` that differ from the selected items. It runs `claude plugin list` once; without `claude` it skips the plugin checks. |
 | `uninstall [--yes\|--force\|--dry-run]` | Removes what harness added and restores your files. Close open Claude Code sessions first. |
 | `remove <id> [--dry-run\|--yes] [--take <file,...>]` | Removes one installed item and what it wrote, and restores your files. Refuses while another installed item requires it. A file you edited, of this or another item, is kept and listed unless you name it in `--take`. The agent has to ask before running it. |
 | `why <id>` | For an installed item: why it is there, the findings it addresses, its cost and its context. For one that isn't installed: why it is in the catalog and its cost. |
@@ -303,6 +303,7 @@ Skills, agents and the `AGENTS.md` block are loaded into every Claude Code sessi
 - **Not measured.** Plugins and external skills count the number the catalog records, measured at the pinned commit; with none recorded, they're listed as not measured. MCP servers can't be measured before install and are always listed as not measured. The install asks you once about anything not measured.
 - **An estimate.** The count is characters divided by 4, labelled `estimate`. It makes no API call and needs no API key.
 - **The limit.** `context.budget_tokens`, default 2000. If a selection goes over it, `init` and `update` ask before installing. With `--yes`, they stop unless you pass `--over-budget`.
+- **doctor and status.** `harness doctor` and `harness status` show the always-loaded total, counted offline. Doctor notes when the total is over the budget, and reports a problem when harness's own text alone is.
 - **Ask once, then exempt.** Items you approved earlier show in the report but don't count toward the budget again.
 
 ## Plugins and MCP servers

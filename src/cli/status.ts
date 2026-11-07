@@ -1,9 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { recordedPresetContext } from '../catalog/presets.js';
+import { join } from 'node:path';
 import { loadCatalog } from '../catalog/load.js';
-import { budgetLines, budgetVerdict, measureSelectionSync } from '../budget/measure.js';
-import { packageDir } from '../core/package-dir.js';
+import { contextSet } from '../budget/summary.js';
+import { contextDirs, contextLine } from './doctor-context.js';
 import { pinnedPlugins } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
@@ -54,6 +53,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   const where =
     platform === 'darwin' ? 'macOS: available' : platform === 'win32' ? 'native Windows: not available'
     : platform !== 'linux' ? `${platform}: not checked` : cli.env.WSL_DISTRO_NAME ? 'WSL2: available' : 'Linux: available';
+  lines.push(contextLine(contextSet(root, config, contextDirs())));
   lines.push(`Enforcement: sandbox ${config.sandbox} (${where})`);
   lines.push(blocksOnFailure(root)
     ? 'Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open'
@@ -83,7 +83,7 @@ function blocksOnFailure(root: string): boolean {
   return BLOCKING.every((ev) => Array.isArray(hooks?.[ev]) && hooks[ev].some((g: any) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure === 'block')));
 }
 
-/** Catalog version, selected items, plugins not installed and the budget's first line. A catalog that fails to load adds nothing. */
+/** Catalog version, selected items, and plugins not installed. A catalog that fails to load adds nothing. */
 function itemLines(root: string, config: ReturnType<typeof loadConfig>['config'], list: typeof pluginList): string[] {
   const lc = loadCatalog();
   if (lc.errors.length) return [];
@@ -94,7 +94,5 @@ function itemLines(root: string, config: ReturnType<typeof loadConfig>['config']
     const have = list(); // one call
     lines.push(have ? `Plugins not installed: ${wanted.filter((id) => !have.some((p) => p.id === id)).length}` : 'Plugins not installed: unknown (claude not found)');
   }
-  const m = measureSelectionSync(ids, lc.catalog, { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) }, { extra: config.preset ? recordedPresetContext(root, config.preset) : [] });
-  lines.push(budgetLines(budgetVerdict(m, m, config.context.budget_tokens))[0]);
   return lines;
 }

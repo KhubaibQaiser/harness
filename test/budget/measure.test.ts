@@ -5,6 +5,7 @@ import { expect, test } from 'vitest';
 import { defaults } from '../../src/core/config.js';
 import { loadCatalog } from '../../src/catalog/load.js';
 import type { Catalog, CatalogItem } from '../../src/catalog/schema.js';
+import { stripComments } from '../../src/budget/text.js';
 import { DEFAULT_CONTEXT_BUDGET, SKILL_DESCRIPTION_MAX, alwaysLoadedText, budgetLines, budgetVerdict, estimateTokens, itemContext, itemContextLine, measureSelection, measureSelectionSync, type ContextMeasure } from '../../src/budget/measure.js';
 
 const templates = join(__dirname, '../../templates');
@@ -35,7 +36,9 @@ test('skills count only name and description', () => {
 test('agents-md counts the block and the import', () => {
   const block = readFileSync(join(templates, 'agents-block.md'), 'utf8');
   const e = itemContext(item('agents-md', 'rule', { type: 'own', merge: ['agents-md'] }), dirs);
-  expect(e).toEqual({ id: 'agents-md', tokens: estimateTokens(block + '@AGENTS.md\n'), text: block + '@AGENTS.md\n' });
+  const text = stripComments(block) + '@AGENTS.md\n'; // spec 3.4: the markers count 0, as contextSet counts them
+  expect(block).toContain('<!--');
+  expect(e).toEqual({ id: 'agents-md', tokens: estimateTokens(text), text });
 });
 
 test('own skill counts its template frontmatter; hooks, settings and ci are 0', () => {

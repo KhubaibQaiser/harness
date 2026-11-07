@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import type { Catalog, CatalogItem } from '../catalog/schema.js';
+import { stripComments } from './text.js';
 
 export const DEFAULT_CONTEXT_BUDGET = 2000;
 /** Claude Code cuts a skill's description (plus when_to_use) at this many characters in the listing. */
@@ -44,7 +45,7 @@ export function itemContext(item: CatalogItem, dirs: { templates: string }): Con
   if (item.kind === 'mcp') return { id, tokens: null };
   if (item.source.type !== 'own') return { id, tokens: null };
   if (item.source.merge?.includes('agents-md')) {
-    const text = read(join(dirs.templates, 'agents-block.md')) + '@AGENTS.md\n';
+    const text = stripComments(read(join(dirs.templates, 'agents-block.md'))) + '@AGENTS.md\n'; // markers count 0 (spec 3.4)
     return { id, tokens: estimateTokens(text), text };
   }
   const kind = item.kind === 'own-skill' ? 'skill' : item.kind === 'own-agent' ? 'agent' : null;

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
+import { stripComments } from '../../src/budget/text.js';
 import { appliesTo, loadPreset, presetContext, presetReason, presetRows } from '../../src/catalog/presets.js';
 import { loadCatalog } from '../../src/catalog/load.js';
 import { alwaysLoadedText, estimateTokens } from '../../src/budget/measure.js';
@@ -53,6 +54,6 @@ test('presetContext: one entry per id, equal to the estimate of its text', () =>
   const text = (f: string) => readFileSync(join(base, f), 'utf8');
   const e = presetContext(l, ['core-rules', 'alpha', 'beta']);
   expect(e.map((x) => x.id)).toEqual(['core-rules', 'alpha', 'beta']);
-  expect(e[0].tokens).toBe(estimateTokens(mergeAgentsPreset(null, text('core.md')).after));
+  expect(e[0].tokens).toBe(estimateTokens(stripComments(mergeAgentsPreset(null, text('core.md')).after))); // markers count 0 (spec 3.4)
   expect(e[1].tokens).toBe(estimateTokens(alwaysLoadedText('skill', text('skills/alpha/SKILL.md'))));
 });

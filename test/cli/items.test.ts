@@ -159,6 +159,17 @@ test('add and remove leave no change for change detection', async () => {
   expect(changedFiles(readRepoSnapshot(root).lastSeen!.files, snapshotHarnessFiles(root))).toEqual([]);
 });
 
+test('why prints a recorded plugin context_tokens as an estimate', async () => {
+  const root = installed([...OWN, 'staff-reviewer']);
+  const cat = structuredClone(loadCatalog().catalog);
+  const it = cat.items.find((i) => i.id === 'staff-reviewer')!;
+  it.kind = 'plugin'; // plugin picks count the recorded number; no catalog data is changed
+  it.cost.context_tokens = 61;
+  const r = await run(root, 'why', ['staff-reviewer'], CLAUDE, cat);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('Context: ~61 tokens (estimate).\n');
+});
+
 test('why prints reason, findings and cost', async () => {
   const root = installed([...OWN, 'staff-reviewer']);
   const r = await run(root, 'why', ['staff-reviewer'], {});

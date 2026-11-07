@@ -300,7 +300,7 @@ Two more flags are optional:
 Skills, agents and the `AGENTS.md` block are loaded into every Claude Code session. Each one costs tokens before you ask anything. Harness keeps a budget for that.
 
 - **What counts.** Always-loaded text only. For an agent, that's its name and description. For a skill, that's its name and description, plus `when_to_use` (together cut at 1,536 characters); a skill with `disable-model-invocation: true` costs nothing. For the `AGENTS.md` block, the whole block. The harness plugin's own skills are always counted. Hooks, settings and CI files count as 0.
-- **Not measured.** Plugins, external skills and MCP servers can't be measured before install. They're listed as not measured, and the install asks you once.
+- **Not measured.** Plugins and external skills count the number the catalog records, measured at the pinned commit; with none recorded, they're listed as not measured. MCP servers can't be measured before install and are always listed as not measured. The install asks you once about anything not measured.
 - **An estimate.** The count is characters divided by 4, labelled `estimate`. It makes no API call and needs no API key.
 - **The limit.** `context.budget_tokens`, default 2000. If a selection goes over it, `init` and `update` ask before installing. With `--yes`, they stop unless you pass `--over-budget`.
 - **Ask once, then exempt.** Items you approved earlier show in the report but don't count toward the budget again.

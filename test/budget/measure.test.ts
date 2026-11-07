@@ -191,3 +191,28 @@ test('unparseable frontmatter is reported, not counted raw', () => {
   writeFileSync(join(t, 'skills', 'review-rubric', 'SKILL.md'), BAD);
   expect(itemContext(rubric, { templates: t })).toEqual({ id: 'review-rubric', tokens: null });
 });
+
+test('plugin and external-skill picks count the recorded context_tokens; MCP stays unmeasured', async () => {
+  const withTokens = (i: CatalogItem, n: number): CatalogItem => ({ ...i, cost: { ...i.cost, context_tokens: n } });
+  const p = withTokens(item('p', 'plugin', gh), 61);
+  const s = withTokens(item('s', 'external-skill', gh), 0);
+  const mcp = withTokens(item('m', 'mcp', { type: 'npm', package: 'x', version: '1.0.0' }), 9);
+  expect(itemContext(p, dirs)).toEqual({ id: 'p', tokens: 61 });
+  expect(itemContextLine(itemContext(p, dirs))).toBe('~61 tokens (estimate)');
+  expect(itemContext(mcp, dirs).tokens).toBeNull();
+  const none = item('q', 'plugin', gh);
+  expect(itemContext(none, dirs).tokens).toBeNull();
+  const base = (await measureSelection([], cat(), dirs)).tokens;
+  const r = await measureSelection(['p', 's', 'q'], cat(p, s, none), dirs);
+  expect(r.tokens - base).toBe(61);
+  expect(r.unmeasured).toEqual(['q']);
+});
+
+test('a recorded plugin number survives an API count and keeps the result an estimate', async () => {
+  const p = { ...item('p', 'plugin', gh), cost: { context: 'low', setup: 'none', context_tokens: 61 } } as CatalogItem;
+  const base = await measureSelection([], cat(), dirs, { count: async (t) => Object.fromEntries(t.map((x) => [x.id, 5])) });
+  const r = await measureSelection(['p'], cat(p), dirs, { count: async (t) => Object.fromEntries(t.map((x) => [x.id, 5])) });
+  expect(r.entries.find((e) => e.id === 'p')!.tokens).toBe(61);
+  expect(r.tokens - base.tokens).toBe(61);
+  expect(r.method).toBe('estimate');
+});

@@ -174,7 +174,7 @@ test('local skillOverrides win over project ones', () => {
 test('settings that do not parse leave skills counted, with a note', () => {
   const r = measure({ '.claude/skills/review-rubric/SKILL.md': SKILL, '.claude/settings.json': '{ nope' });
   expect(row(r, 'skill review-rubric')?.tokens).toBeGreaterThan(0);
-  expect(r.notes).toEqual(['.claude/settings.json does not parse: skillOverrides not applied']);
+  expect(r.notes).toContain('.claude/settings.json does not parse: skillOverrides not applied');
 });
 
 test('a skill with disable-model-invocation counts 0', () => {

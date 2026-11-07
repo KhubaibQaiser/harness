@@ -35,7 +35,7 @@ test('skills count only name and description', () => {
 test('agents-md counts the block and the import', () => {
   const block = readFileSync(join(templates, 'agents-block.md'), 'utf8');
   const e = itemContext(item('agents-md', 'rule', { type: 'own', merge: ['agents-md'] }), dirs);
-  expect(e).toEqual({ id: 'agents-md', tokens: estimateTokens(block + '@AGENTS.md\n') });
+  expect(e).toEqual({ id: 'agents-md', tokens: estimateTokens(block + '@AGENTS.md\n'), text: block + '@AGENTS.md\n' });
 });
 
 test('own skill counts its template frontmatter; hooks, settings and ci are 0', () => {

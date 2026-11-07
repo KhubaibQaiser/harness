@@ -363,8 +363,19 @@ test('state card: only source compact prints, through the real registry', async 
   for (const source of ['startup', 'resume', 'clear', 'fork']) expect(await dispatch(start(r, source), registry, {})).toBe('');
   const o = JSON.parse(await dispatch(start(r, 'compact'), registry, {}));
   expect(o.hookSpecificOutput.hookEventName).toBe('SessionStart');
-  expect(o.hookSpecificOutput.additionalContext.split('\n')).toHaveLength(5);
+  const card = o.hookSpecificOutput.additionalContext.split('\n');
+  expect(card).toHaveLength(5);
+  expect(card[2]).toBe('TDD: on; test files written this session: 0');
+  expect(card[3]).toMatch(/: none$/);
+  expect(card[4]).toBe('Pending: none');
   expect(o.systemMessage).toBeUndefined();
+});
+test('state card: an unreadable state file (fallback, not degraded) still prints it, with the config-invalid gates line', async () => {
+  const r = cardRoot();
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: banana\n');
+  mkdirSync(statePath(r, 'cs')); // a directory where the file should be: readState throws EISDIR
+  const o = JSON.parse(await dispatch(start(r, 'compact'), registry, {}));
+  expect(o.hookSpecificOutput.additionalContext.split('\n')[1]).toMatch(/^Gates: config invalid/);
 });
 test('state card: a changed harness file and pending notice still print it, and change nothing in the state file', async () => {
   const r = cardRoot();

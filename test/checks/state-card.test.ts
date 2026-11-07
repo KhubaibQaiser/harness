@@ -13,7 +13,11 @@ const mkRoot = () => mkdtempSync(join(tmpdir(), 'h-card-'));
 const mk = (o: { state?: Partial<SessionState>; tdd?: boolean; errors?: string[]; source?: string; root?: string } = {}): Ctx => {
   const config = defaults();
   config.checks.tdd = o.tdd ?? true;
-  return { input: { hook_event_name: 'SessionStart', session_id: 's', cwd: '/p', source: 'source' in o ? o.source : 'compact' }, root: o.root ?? mkRoot(), config, state: fresh(o.state), configErrors: o.errors } as unknown as Ctx;
+  const state = fresh(o.state);
+  return {
+    input: { hook_event_name: 'SessionStart', session_id: 's', cwd: '/p', source: 'source' in o ? o.source : 'compact' },
+    root: o.root ?? mkRoot(), config, state, unattended: false, env: {}, home: '/h', platform: 'linux', managed: '/m', startedAt: 0, configErrors: o.errors, save: () => undefined,
+  };
 };
 const lines = (c: Ctx) => stateCard(c).split('\n');
 const paths = (n: number) => Array.from({ length: n }, (_, i) => `test/t${i + 1}.test.ts`);

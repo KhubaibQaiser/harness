@@ -405,6 +405,8 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `items` | `[]` | Catalog items chosen for this project (`id`, `include`, `selected`, `reason`, `addresses`, `pin`). Value must be a list of item mappings. |
 | `git.commit_trailer` | `""` | Line added to the end of commit messages. Empty adds none. |
 | `context.budget_tokens` | `2000` | Estimated tokens of always-loaded context harness may add before it asks you to confirm an install. Items you approved earlier are not counted. Value must be an integer from 0 to 200000. |
+| `context.count` | `"auto"` | auto: use Anthropic's token-counting API in `harness context` when ANTHROPIC_API_KEY is set; offline: never. Value must be one of auto, offline. |
+| `context.count_model` | `"claude-opus-5-5"` | The model `harness context` asks the token-counting API to count for. Value must match ^claude-[a-z0-9-]{1,60}$. |
 | `tdd.paths` | `[]` | Globs for the files TDD covers. |
 | `tdd.exempt` | `[]` | Globs inside `tdd.paths` that TDD skips. |
 | `tdd.diff_coverage` | `80` | Minimum coverage, in percent, for changed lines. Value must be a number from 0 to 100. |

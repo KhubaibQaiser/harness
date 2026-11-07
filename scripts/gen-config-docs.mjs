@@ -31,6 +31,8 @@ const WHAT = {
   items: 'Catalog items chosen for this project (`id`, `include`, `selected`, `reason`, `addresses`, `pin`).',
   'git.commit_trailer': 'Line added to the end of commit messages. Empty adds none.',
   'context.budget_tokens': 'Estimated tokens of always-loaded context harness may add before it asks you to confirm an install. Items you approved earlier are not counted.',
+  'context.count': "auto: use Anthropic's token-counting API in `harness context` when ANTHROPIC_API_KEY is set; offline: never.",
+  'context.count_model': 'The model `harness context` asks the token-counting API to count for.',
   sandbox: '`unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only.',
   'tdd.paths': 'Globs for the files TDD covers.',
   'tdd.exempt': 'Globs inside `tdd.paths` that TDD skips.',

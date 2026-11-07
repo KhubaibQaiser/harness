@@ -52,7 +52,7 @@ export interface HarnessConfig {
   apps: App[];
   items: Selected[];
   git: { commit_trailer: string };
-  context: { budget_tokens: number };
+  context: { budget_tokens: number; count: 'auto' | 'offline'; count_model: string };
   tdd: { paths: string[]; exempt: string[]; diff_coverage: number; coverage_skip: string[]; test_lock: boolean; results_dir: string };
   multi_file_gate: { generated: string[] };
   pr_size: { target_lines: number; max_lines: number; max_files: number; exclude: string[] };
@@ -80,7 +80,7 @@ export const defaults = (): HarnessConfig => ({
   apps: [],
   items: [],
   git: { commit_trailer: '' },
-  context: { budget_tokens: 2000 }, // DEFAULT_CONTEXT_BUDGET in src/budget/measure.ts; not imported, to keep the hook bundle as is
+  context: { budget_tokens: 2000, count: 'auto', count_model: 'claude-opus-5-5' }, // DEFAULT_CONTEXT_BUDGET in src/budget/measure.ts; not imported, to keep the hook bundle as is
   tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: DEFAULT_RESULTS_DIR },
   multi_file_gate: { generated: [] },
   pr_size: { target_lines: 200, max_lines: 400, max_files: 20, exclude: [...PR_SIZE_EXCLUDE] },
@@ -186,6 +186,7 @@ const presetRule = objRule({
     pr_size_warning: bool,
   }),
 });
+const MODEL_RE = /^claude-[a-z0-9-]{1,60}$/;
 const RULES: Record<string, Rule> = {
   preset: presetRule,
   'tdd.results_dir': resultsDirRule,
@@ -201,6 +202,8 @@ const RULES: Record<string, Rule> = {
   'project.team_size': num(0, 10000, true),
   'project.run_budget_usd': num(0, 100000, false),
   'context.budget_tokens': num(0, 200000, true),
+  'context.count': oneOf('auto', 'offline'),
+  'context.count_model': (v) => (typeof v === 'string' && MODEL_RE.test(v) ? null : 'must match ^claude-[a-z0-9-]{1,60}$'),
   'pr_size.target_lines': num(1, 100000, true),
   'pr_size.max_lines': num(1, 100000, true),
   'pr_size.max_files': num(1, 10000, true),

@@ -43,9 +43,11 @@ items: []
 git:
   commit_trailer: ""
 
-# Budget for always-loaded context that harness adds; harness asks before an install passes it.
+# Always-loaded context budget. harness context measures it; init, update, add and sync ask before going over.
 context:
   budget_tokens: 2000
+  count: auto
+  count_model: claude-opus-5-5
 
 # Red-first TDD enforcement (needs checks.tdd).
 tdd:

@@ -1,7 +1,10 @@
 // `@path` import expansion for CLAUDE.md-style files. Repo text is untrusted: depth, count and size are capped, and
 // nothing outside the root (lexically or through a symlink) is ever read.
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
+import * as nodePath from 'node:path';
+
+type PlatformPath = typeof nodePath;
 import { defaultExec } from '../core/exec.js';
 import { MAX_FILE_BYTES, fenceAfter, lf, stripComments } from './text.js';
 
@@ -40,14 +43,17 @@ export const realIO: RepoIO = {
   },
 };
 
-export const inside = (root: string, abs: string): boolean => {
-  const rel = relative(root, abs);
-  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+/** Separator-safe containment: `relative()` must not climb out or jump to another drive (an absolute result). `p` is injectable so win32 rules are testable anywhere. */
+export const insideWith = (p: Pick<PlatformPath, 'relative' | 'isAbsolute' | 'sep'>, root: string, abs: string): boolean => {
+  const rel = p.relative(root, abs);
+  return rel !== '..' && !rel.startsWith(`..${p.sep}`) && !p.isAbsolute(rel);
 };
+export const inside = (root: string, abs: string): boolean => insideWith(nodePath, root, abs);
+
+/** Repo-relative paths are POSIX everywhere (manifest, `seen`, skip rules, output). */
+export const relPosix = (p: Pick<PlatformPath, 'relative' | 'sep'>, root: string, abs: string): string => p.relative(root, abs).split(p.sep).join('/');
 
 export interface Imported { path: string; text: string; by: string }
-
-const toPosix = (p: string): string => p.split(sep).join('/');
 
 function importsIn(text: string): string[] {
   const found: string[] = [];
@@ -99,7 +105,7 @@ export function expandImports(root: string, start: { path: string; text: string 
     if (cur.hop >= MAX_HOPS) continue;
     for (const raw of importsIn(cur.text)) {
       const abs = resolveInside(root, realRoot, dirname(cur.path), raw, io);
-      const rel = abs === null ? '' : toPosix(relative(root, abs));
+      const rel = abs === null ? '' : relPosix(nodePath, root, abs);
       if (abs !== null && seen.has(rel)) continue;
       if (++attempts > MAX_ATTEMPTS) { skipped.push({ path: rel || raw, by: cur.path, reason: 'cap' }); capped = true; break; }
       if (abs === null) { external.add(raw); continue; }

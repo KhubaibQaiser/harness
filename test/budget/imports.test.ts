@@ -1,15 +1,15 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve, sep, win32 } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
-import { MAX_ATTEMPTS, MAX_HOPS, MAX_IMPORTED, expandImports, inside, realIO, type RepoIO } from '../../src/budget/imports.js';
+import { MAX_ATTEMPTS, MAX_HOPS, MAX_IMPORTED, expandImports, inside, insideWith, realIO, relPosix, type RepoIO } from '../../src/budget/imports.js';
 import { MAX_FILE_BYTES } from '../../src/budget/text.js';
 
-const ROOT = '/repo';
+const ROOT = resolve('/repo'); // 'C:\\repo' on Windows
 const ENV_SKIP = (rel: string): boolean => /(^|\/)\.env/.test(rel);
 const fake = (files: Record<string, string>, sizes: Record<string, number> = {}, realOf?: (p: string) => string | null) => {
   const asked: string[] = [];
-  const rel = (p: string): string => p.slice(ROOT.length + 1);
+  const rel = (p: string): string => relative(ROOT, p).split(sep).join('/');
   const io: RepoIO = {
     read: (p) => { asked.push(`read ${rel(p)}`); return files[rel(p)] ?? null; },
     size: (p) => { asked.push(`size ${rel(p)}`); return sizes[rel(p)] ?? files[rel(p)]?.length ?? null; },
@@ -152,9 +152,26 @@ test('external, missing and duplicate tokens after the file cap do not trigger a
 });
 
 test('inside', () => {
-  expect(inside('/repo', '/repo/a/b')).toBe(true);
-  expect(inside('/repo', '/repo2/a')).toBe(false);
-  expect(inside('/repo', '/repo/../x')).toBe(false);
+  expect(inside(ROOT, join(ROOT, 'a', 'b'))).toBe(true);
+  expect(inside(ROOT, `${ROOT}2${sep}a`)).toBe(false);
+  expect(inside(ROOT, join(ROOT, '..', 'x'))).toBe(false);
+});
+
+// win32 rules, run on any OS by injecting path.win32.
+test('win32: containment is separator-, case- and drive-safe', () => {
+  const root = 'C:\\Users\\me\\repo';
+  expect(insideWith(win32, root, 'C:\\Users\\me\\repo\\sub\\a.md')).toBe(true);
+  expect(insideWith(win32, root, 'c:\\users\\ME\\repo\\a.md')).toBe(true);
+  expect(insideWith(win32, root, 'C:\\Users\\me\\repo2\\a.md')).toBe(false);
+  expect(insideWith(win32, root, 'C:\\Users\\me\\repo\\..\\x.md')).toBe(false);
+  expect(insideWith(win32, root, 'D:\\Users\\me\\repo\\a.md')).toBe(false);
+  expect(insideWith(win32, root, '\\\\server\\share\\a.md')).toBe(false);
+});
+
+test('win32: repo-relative paths come out with forward slashes', () => {
+  const root = 'C:\\repo';
+  expect(relPosix(win32, root, win32.resolve(root, 'sub', 'a.md'))).toBe('sub/a.md');
+  expect(relPosix(win32, root, win32.resolve(root, 'sub\\deep/b.md'))).toBe('sub/deep/b.md');
 });
 
 // Real filesystem: symlinks and the git listing.

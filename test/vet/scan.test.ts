@@ -385,6 +385,12 @@ describe('show', () => {
       const r2 = scan(fx({ 'skills/a/SKILL.md': skill + 'much longer body '.repeat(50), 'agents/b.md': agent, 'commands/c.md': cmd }), '');
       expect(r2.context.tokens).toBe(r.context.tokens);
     });
+    it('context: a disabled skill costs 0, when_to_use counts, unparseable frontmatter is unmeasured', () => {
+      const off = '---\nname: a\ndescription: d\ndisable-model-invocation: true\n---\n';
+      expect(scan(fx({ 'skills/a/SKILL.md': off }), '').context).toEqual({ tokens: 0, unmeasured: [] });
+      expect(scan(fx({ 'skills/a/SKILL.md': '---\nname: a\ndescription: d\nwhen_to_use: Use it.\n---\n' }), '').context.tokens).toBe(estimateTokens('name: a\ndescription: d Use it.'));
+      expect(scan(fx({ 'skills/a/SKILL.md': '---\nname: a\ndescription: Set up: now\n---\n' }), '').context).toEqual({ tokens: 0, unmeasured: ['skills/a/SKILL.md: frontmatter does not parse'] });
+    });
     it('context: only the plugin layout counts, also under .claude/', () => {
       const t = (files: Record<string, string>, path = '') => scan(fx(files), path).context.tokens;
       expect(t({ 'docs/commands/x.md': cmd, 'x/agents/y.md': agent, 'skills/a/ref/SKILL.md': skill, 'skills/a/notes.md': skill })).toBe(0);

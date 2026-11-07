@@ -1,6 +1,7 @@
 ---
 name: uninstall
 description: Remove the harness from this repo, undoing what init installed. Use when the user runs /harness:uninstall or asks to remove the harness.
+disable-model-invocation: true
 ---
 
 # harness uninstall

@@ -861,7 +861,8 @@ test('a plain message string is data only when nothing on the line can run it ag
 });
 test('a re-runner counts only where the shell runs it as a command, and a shell only when it parses the text', () => {
   // A word that is not in command position runs nothing: `docker exec`, `kubectl exec`, a `-C` path ending in a shell name.
-  all(['git -C /tmp/sh commit -m "x; git push -f"', 'cd /opt/case && git commit -m "x; git push -f"', 'git -C ~/src/bash-tools commit -m "x; git push -f"'], 'allow');
+  all(['git -C /tmp/sh commit -m "x; git push -f"', 'git -C ~/src/bash-tools commit -m "x; git push -f"'], 'allow');
+  all(['cd /opt/case && git commit -m "x; git push -f"'], 'deny'); // round 15: cd on a message line makes it code
   // Round 11 allowlist: a command off the safe list makes the message code, even one that does not run it.
   all(['docker exec -m "git push -f"', 'kubectl exec pod -m "git push -f"', 'zsh -m "git push -f"', 'bash -xm "git push -f"', "bash -c 'echo ok' -m 'git push -f'"], 'deny');
   // A shell that reads stdin or a payload with $ in it, ssh, watch, parallel and script hand the text to a shell.
@@ -891,8 +892,8 @@ test('a shell whose "script file" is stdin parses what it reads', () => {
 });
 test('a plain message or -F - body is data only when every command on the line is on the safe list (owner ruling, round 11)', () => {
   const m = 'git commit -m "a; rm -rf ~"';
-  all([`git add -A && ${m}`, `cd sub && ${m}`, `${m} && git push`, 'gh pr create --title "a b" --body "Blocks rm -rf ~ in prose"', `${m}; git status; echo done`,
-    `if git diff --quiet; then echo clean; else ${m}; fi`, `mkdir -p d && touch d/x && ${m} && git log -1 | head -1`, `nice -n 5 ${m}`, `time -p ${m}`,
+  all([`git add -A && ${m}`, `${m} && git push`, 'gh pr create --title "a b" --body "Blocks rm -rf ~ in prose"', `${m}; git status; echo done`,
+    `if git diff --quiet; then echo clean; else ${m}; fi`, `nice -n 5 ${m}`, `time -p ${m}`,
     `${m} && pwd && ls`, `git -c user.name=x ${m.slice(4)}`, "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit push"], 'allow');
   // F1: a redirect before the command word; F2: trap; F3: a runner option before its subcommand; the open class.
   all([`${m}; 2>/dev/null sh -c "$(git log -1 --format=%B)"`, `${m} && </dev/null eval "$(git log -1 --format=%B)"`, `${m}; > /dev/null eval x`, `${m}; &>x eval x`,
@@ -931,6 +932,20 @@ test('${…} and $[…] on a message line make it code, even with single quotes 
   const m = 'git commit -m "a; rm -rf ~"';
   all([`${m}; echo \${x:'$(git log -1 --format=%B|sh)'}`, `${m}; echo $[ 'a[$(git log -1 --format=%B|sh)]' ]`, `${m}; echo \${a['$(git log -1 --format=%B|sh)']}`, `${m}; echo \${#a['x']}`, `${m}; cd \${x:'y'}`], 'deny');
   all(["git commit -m 'see ${HOME} for the path'", "git commit -m 'why $(x) matters'"], 'allow'); // a single-quoted literal message stays data
+});
+test('a message is data only on a line with no file writes and no cd (owner ruling, round 15)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  // Finding 1: a relative write after cd lands in .git; cd on a message line is code.
+  all([`${m}; cd .git; echo x >> config; cd ..; git status`, `${m}; pushd .git; echo x >> config; popd`, `cd sub && ${m}`,
+    `git commit -m '[core] rm -rf ~'; cd .git; git log -1 --format=%B >> config; cd ..`], 'deny');
+  // Finding 2: redirect spellings that write a file.
+  all([`${m}; echo x >&.git/config`, `${m}; echo x 1<>.git/config`, `${m}; echo x >!cfg`, `${m}; echo x >> .gi?/config`, `${m}; echo x >> .[g]it/config`,
+    `${m}; echo x >> $'\\x2egit/config'`, `${m}; echo x >> any.file`, `${m}; cat foo | tee out`, `${m}; mkdir d`, `${m}; touch f`], 'deny');
+  // Finding 3: a git dir under another name, or git init.
+  all([`${m}; git init --bare b`, `${m}; git --git-dir=b --work-tree=. status`, `${m}; git --namespace=n log`, `${m}; git -C 'a b' status`, `${m}; git -C .gi?t status`], 'deny');
+  // Still data: no writes, no cd, plain commands only.
+  all([`git add -A && ${m}`, `git -C sub ${m.slice(4)}`, `${m} && git push`, `${m} >/dev/null`, `${m} && git push -u origin HEAD`,
+    'gh pr create --title t --body "a; rm -rf ~"', "git commit -F - <<'EOF'\na; rm -rf ~\nEOF", "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit push"], 'allow');
 });
 test('gh lines get a per-subcommand option allowlist, rejecting unknown options (round 14)', () => {
   const m = 'git commit -m "a; rm -rf ~"';

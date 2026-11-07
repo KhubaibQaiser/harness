@@ -5,9 +5,10 @@
 import { pieces, unquote, words } from '../core/shell-words.js';
 import { BARE_REDIRECT, REDIRECT_WORD, SHELLS } from './guard-reruns.js';
 
-/** Commands a message may share a line with: they run no text they are given. `test`, `[`, `[[` and `printf` are out:
- *  arithmetic, `-v` and a `-eq` subscript evaluate `$(…)` and array indices. */
-const SAFE = new Set(['git', 'gh', 'cd', 'pushd', 'popd', 'echo', 'true', 'false', 'pwd', 'ls', 'cat', 'mkdir', 'touch']);
+/** Commands a message may share a line with: they run no text they are given and write no files. `test`/`[`/`[[`/
+ *  `printf` are out (arithmetic, `-v`, `-eq` subscripts evaluate `$(…)`); `cd`/`pushd`/`popd` are out (a relative write
+ *  after them lands in `.git/`); `mkdir`/`touch` are out (they create files). */
+const SAFE = new Set(['git', 'gh', 'echo', 'true', 'false', 'pwd', 'ls', 'cat']);
 /** Keywords and closers that run nothing themselves. `for`, `case` and `select` are not here: their words are not commands. */
 const KEYWORDS = new Set(['{', '}', '!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', 'fi', 'done']);
 /** Readers allowed only as a later pipeline stage, with plain options. */
@@ -49,8 +50,7 @@ const GIT_SUB: Record<string, ReturnType<typeof optionSet>> = {
   reset: optionSet('q p N', 'soft mixed hard merge keep quiet patch pathspec-from-file'),
   rm: optionSet('f r n q', 'force cached ignore-unmatch dry-run recursive quiet pathspec-from-file'),
   mv: optionSet('f n k v', 'force dry-run verbose'),
-  init: optionSet('q b', 'bare quiet initial-branch separate-git-dir shared'),
-  clone: optionSet('n q v b l o', 'bare mirror depth branch single-branch no-single-branch recurse-submodules no-checkout origin shallow-since shallow-exclude filter sparse jobs progress'),
+  clone: optionSet('n q v b l o','bare mirror depth branch single-branch no-single-branch recurse-submodules no-checkout origin shallow-since shallow-exclude filter sparse jobs progress'),
   remote: optionSet('v', 'verbose'),
   'rev-parse': optionSet('q', 'abbrev-ref short verify quiet symbolic symbolic-full-name show-toplevel git-dir is-inside-work-tree show-prefix show-cdup default'),
   'cat-file': optionSet('p t s e', 'batch batch-check allow-unknown-type'),
@@ -85,15 +85,22 @@ const GH_OPT = optionSet(
     'json-fields method field raw-field header hostname cache include verbose yes confirm force-with-lease recurse-submodules',
 );
 
+/** A plain path: no glob, `$'`, quote or space. Only such a `-C dir` keeps a git command safe on a message line. */
+const PLAIN_PATH = /^[\w./~@:+,=%-]+$/;
 /** A write target that can turn a message into git config or a hook: anything under `.git/`, a gitconfig, `.husky/`,
- *  `.githooks/` or a `hooks/` dir. git reads these on its next run, so a message written there runs (re-review 11). */
-const SENSITIVE_WRITE = /(?:^|\/)\.git(?:\/|$)|(?:^|\/)\.?gitconfig$|(?:^|\/)git\/config$|(?:^|\/)\.?(?:husky|githooks)(?:\/|$)|(?:^|\/)hooks(?:\/|$)/;
-/** The files an output redirect (`>`, `>>`, `>|`, glued or spaced) of a command sends stdout to. */
+ *  `.githooks/` or a `hooks/` dir, or a target the guard cannot read literally (a glob, `$'`). git reads these on its
+ *  next run, so git output written there runs even with no message (re-review 11-12). */
+const SENSITIVE_WRITE = /(?:^|\/)\.git(?:\/|$)|(?:^|\/)\.?gitconfig$|(?:^|\/)git\/config$|(?:^|\/)\.?(?:husky|githooks)(?:\/|$)|(?:^|\/)hooks(?:\/|$)|[*?[]|\$'/;
+/** Every file an output or read-write redirect of a command sends stdout to, each stripped of a leading `&`. A bare fd
+ *  dup (`2>&1`, `>&2`) names a number, not a file, and is left out. Covers `>`, `>>`, `>|`, `>!`, `>>!`, `>&`, `&>`,
+ *  `&>>`, `<>`, glued or spaced, with any fd number. */
 function writeTargets(ws: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < ws.length; i++) {
-    const m = /^(?:\d*|&)(?:>>?|>\|)(.*)$/.exec(ws[i]);
-    if (m) out.push(m[1] || ws[++i] || '');
+    const m = /^(?:\d*|&)?(?:>>?[|!]?|>&|&>>?|<>)(.*)$/.exec(ws[i]);
+    if (!m) continue;
+    const t = (m[1] || ws[++i] || '').replace(/^&/, '');
+    if (!/^\d+$/.test(t)) out.push(t);
   }
   return out;
 }
@@ -126,8 +133,8 @@ function gitSubcommand(a: string[]): number {
       i++;
       continue;
     }
-    if (o === '-C' || o === '--git-dir' || o === '--work-tree' || o === '--namespace') { i++; continue; }
-    if (/^(?:-O|--open-files-in-pager|--exec-path|--config-env|--config|-c.)/.test(o)) return -1;
+    if (o === '-C') { if (!PLAIN_PATH.test(a[i + 1] ?? '')) return -1; i++; continue; } // a non-plain -C dir may hide a glob or $'
+    if (/^(?:-O|--open-files-in-pager|--exec-path|--config-env|--config|-c.|--git-dir|--work-tree|--namespace)/.test(o)) return -1;
   }
   return i;
 }
@@ -160,7 +167,7 @@ function safeCommand(ws: string[], k: number, pipedIn: boolean, pipedOut: boolea
     const w = ws[k++];
     while (ws[k]?.startsWith('-')) k += w === 'nice' && ws[k] === '-n' ? 2 : 1;
   }
-  if (writeTargets(ws).some((t) => SENSITIVE_WRITE.test(t))) return false; // a write into .git/, gitconfig or a hook
+  if (writeTargets(ws).some((t) => t !== '/dev/null')) return false; // any file write makes the message code
   const name = ws[k], rest = ws.slice(k + 1);
   if (PIPE_READERS.has(name)) return pipedIn && rest.every((o) => /^-?[A-Za-z0-9]+$/.test(o));
   if (!SAFE.has(name) || (NOT_PIPED.has(name) && pipedOut)) return false;

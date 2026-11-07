@@ -48,11 +48,7 @@ const GIT_SUB: Record<string, ReturnType<typeof optionSet>> = {
   describe: optionSet('', 'tags all contains abbrev long always dirty broken match exclude first-parent'),
   shortlog: optionSet('n s e w', 'numbered summary email committer group no-merges'),
   grep: optionSet('n l L i w v c e E F P', 'line-number files-with-matches files-without-match ignore-case word-regexp invert-match count extended-regexp fixed-strings perl-regexp cached no-index untracked recurse-submodules name-only context before-context after-context color no-color and or not all-match'),
-  gc: optionSet('', 'aggressive auto prune no-prune quiet force'),
-  reflog: optionSet('n', 'all stale-fix expire expire-unreachable verbose'),
   'rev-list': optionSet('n', 'all branches tags remotes count max-count reverse merges no-merges first-parent since until before after objects pretty format oneline'),
-  'symbolic-ref': optionSet('q m d', 'short quiet delete'),
-  'update-ref': optionSet('d m', 'create-reflog no-deref stdin'),
   'ls-remote': optionSet('t h q', 'heads tags refs get-url symref exit-code sort'),
 };
 
@@ -75,18 +71,46 @@ const PLAIN_PATH = /^[\w./~@:+,=%-]+$/;
  *  `.githooks/` or a `hooks/` dir, or a target the guard cannot read literally (a glob, `$'`). git reads these on its
  *  next run, so git output written there runs even with no message (re-review 11-12). */
 const SENSITIVE_WRITE = /(?:^|\/)\.git(?:\/|$)|(?:^|\/)\.?gitconfig$|(?:^|\/)git\/config$|(?:^|\/)\.?(?:husky|githooks)(?:\/|$)|(?:^|\/)hooks(?:\/|$)|[*?[]|\$'/;
-/** Every file an output or read-write redirect of a command sends stdout to, each stripped of a leading `&`. A bare fd
- *  dup (`2>&1`, `>&2`) names a number, not a file, and is left out. Covers `>`, `>>`, `>|`, `>!`, `>>!`, `>&`, `&>`,
- *  `&>>`, `<>`, glued or spaced, with any fd number. */
-function writeTargets(ws: string[]): string[] {
+/** The file each output or read-write redirect on the whole line sends output to, found by one quote-aware scan so a
+ *  redirect glued to a word (`…%B>>.git/config`, `"msg">x`), after a group (`} > f`), or with a named fd (`{fd}>f`) is
+ *  all seen (re-review 14, P1/P2). A bare fd dup (`2>&1`, `>&2`, `>&10`) names a number, not a file, and is left out;
+ *  a `<`, `<<` or `<<<` is input, not a write. Targets keep `/dev/null` so the caller can allow just that. */
+function writeTargets(cmd: string): string[] {
   const out: string[] = [];
-  for (let i = 0; i < ws.length; i++) {
-    const m = /^(?:\d*|&)?(?:>>?[|!]?|>&|&>>?|<>)(.*)$/.exec(ws[i]);
-    if (!m) continue;
-    const t = (m[1] || ws[++i] || '').replace(/^&/, '');
-    if (!/^\d+$/.test(t)) out.push(t);
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (ch === '\\') { i++; continue; }
+    if (ch === "'") { const e = cmd.indexOf("'", i + 1); i = e < 0 ? cmd.length : e; continue; }
+    if (ch === '"') { for (i++; i < cmd.length && cmd[i] !== '"'; i++) if (cmd[i] === '\\') i++; continue; }
+    if (ch === '$' && cmd[i + 1] === "'") { for (i += 2; i < cmd.length && cmd[i] !== "'"; i++) if (cmd[i] === '\\') i++; continue; }
+    let dup = false;
+    if (ch === '<') { if (cmd[i + 1] !== '>') continue; i++; } // `<>` is read-write; `<`, `<<`, `<<<` are input
+    else if (ch === '>' || (ch === '&' && cmd[i + 1] === '>')) {
+      if (ch === '&') i++;
+      while ('>|!'.includes(cmd[i + 1])) i++; // `>>`, `>|`, `>!`, `>>!`, `&>>`
+      if (cmd[i + 1] === '&') { i++; dup = true; } // `>&TARGET`: a dup when the target is a number
+    } else continue;
+    const [t, j] = readTarget(cmd, i + 1);
+    i = j - 1;
+    if (dup && /^\d+$/.test(t)) continue; // `>&1`, `>&10`: an fd dup, not a file
+    out.push(t);
   }
   return out;
+}
+/** The redirect target starting at `j`: leading blanks skipped, then one word with its quotes taken off, up to the
+ *  next unquoted blank or separator. Returns the unquoted text and the index just past it. */
+function readTarget(cmd: string, j: number): [string, number] {
+  while (cmd[j] === ' ' || cmd[j] === '\t') j++;
+  let t = '';
+  for (; j < cmd.length; j++) {
+    const ch = cmd[j];
+    if (ch === "'") { const e = cmd.indexOf("'", j + 1); t += cmd.slice(j + 1, e < 0 ? cmd.length : e); j = e < 0 ? cmd.length : e; continue; }
+    if (ch === '"') { for (j++; j < cmd.length && cmd[j] !== '"'; j++) t += cmd[j] === '\\' ? (cmd[++j] ?? '') : cmd[j]; continue; }
+    if (ch === '\\') { t += cmd[++j] ?? ''; continue; }
+    if (/[\s;&|()<>]/.test(ch)) break;
+    t += ch;
+  }
+  return [t, j];
 }
 
 const named = (set: { long: Set<string> }, o: string) => set.long.has(o.replace(/^--/, '').replace(/=.*/, ''));
@@ -151,7 +175,6 @@ function safeCommand(ws: string[], k: number, pipedIn: boolean, pipedOut: boolea
     const w = ws[k++];
     while (ws[k]?.startsWith('-')) k += w === 'nice' && ws[k] === '-n' ? 2 : 1;
   }
-  if (writeTargets(ws).some((t) => t !== '/dev/null')) return false; // any file write makes the message code
   const name = ws[k], rest = ws.slice(k + 1);
   if (PIPE_READERS.has(name)) return pipedIn && rest.every((o) => /^-?[A-Za-z0-9]+$/.test(o));
   if (!SAFE.has(name) || (NOT_PIPED.has(name) && pipedOut)) return false;
@@ -173,9 +196,8 @@ function safeCommand(ws: string[], k: number, pipedIn: boolean, pipedOut: boolea
  *  `${…}` or `$[…]` does not quote its single quotes (`${x:'$(…)'}`, `$[ 'a[$(…)]' ]`), so either makes the line code. */
 export function onlySafeCommands(cmd: string): boolean {
   if (/\$\(|`|[<>]\(|\$\{|\$\[/.test(cmd.replace(/'[^']*'/g, "''"))) return false;
+  if (writeTargets(cmd).some((t) => t !== '/dev/null')) return false; // any write on the line (any group depth) is code
   const ps = pieces(cmd);
-  // A redirect after `}`, `)`, `done`, `fi` or `esac` writes for every command in the group: count every write on the line.
-  if (ps.some((p) => writeTargets(words(p.text).map(unquote)).some((t) => t !== '/dev/null'))) return false;
   return ps.every((p, i) => safeCommand(words(p.text).map(unquote), 0, i > 0 && ps[i - 1].sep === '|', p.sep === '|'));
 }
 
@@ -187,20 +209,12 @@ const GIT_OUTPUT = new Set(['log', 'show', 'rev-parse', 'cat-file']);
  * commit can become the script (`git log -1 --format=%B > x.sh; sh x.sh`). Always blocked.
  */
 export function writesGitOutputAndRunsFile(cmd: string): boolean {
-  const ps = pieces(cmd);
-  let writes = false, runs = false;
-  ps.forEach((p, i) => {
-    const ws = words(p.text).map(unquote), k = commandWord(ws), name = ws[k] ?? '';
-    const next = ps[i + 1] ? words(ps[i + 1].text).map(unquote) : [];
-    const toFile = ws.some((w) => /^(?:\d*|&)>/.test(w)) || (p.sep === '|' && next[commandWord(next)] === 'tee');
-    if (name === 'git') {
-      const s = gitSubcommand(ws.slice(k + 1));
-      if (s >= 0 && GIT_OUTPUT.has(ws.slice(k + 1)[s] ?? '') && toFile) writes = true;
-    }
-    const base = name.split('/').pop()!, chmodX = base === 'chmod' && ws.some((w) => /^[ugoa]*\+[rwX]*x/.test(w));
-    if (SHELLS.has(base) || base === 'source' || name === '.' || /^\.{0,2}\//.test(name) || chmodX) runs = true;
+  if (!gitOutputTargets(cmd).length) return false;
+  return pieces(cmd).some((p) => {
+    const ws = words(p.text).map(unquote), name = ws[commandWord(ws)] ?? '', base = name.split('/').pop()!;
+    const chmodX = base === 'chmod' && ws.some((w) => /^[ugoa]*\+[rwX]*x/.test(w));
+    return SHELLS.has(base) || base === 'source' || name === '.' || /^\.{0,2}\//.test(name) || chmodX;
   });
-  return writes && runs;
 }
 /**
  * True when the line writes git's output (`git log`, `show`, `rev-parse` or `cat-file`) into a sensitive path (see
@@ -208,18 +222,25 @@ export function writesGitOutputAndRunsFile(cmd: string): boolean {
  * run. Always blocked, like writesGitOutputAndRunsFile.
  */
 export function writesGitOutputToSensitivePath(cmd: string): boolean {
-  return pieces(cmd).some((p, i, ps) => {
+  return gitOutputTargets(cmd).some((t) => SENSITIVE_WRITE.test(t));
+}
+/** The files git output could reach on this line: every redirect target plus every `tee` argument, but only when the
+ *  line runs a git-output command (`log`, `show`, `rev-parse`, `cat-file`). Over-approximate on purpose — a git-output
+ *  line that writes any file is the always-block shape, grouped or piped. */
+function gitOutputTargets(cmd: string): string[] {
+  const ps = pieces(cmd);
+  const hasGitOutput = ps.some((p) => {
     const ws = words(p.text).map(unquote), k = commandWord(ws);
     if (ws[k] !== 'git') return false;
     const s = gitSubcommand(ws.slice(k + 1));
-    if (s < 0 || !GIT_OUTPUT.has(ws.slice(k + 1)[s] ?? '')) return false;
-    const next = ps[i + 1] ? words(ps[i + 1].text).map(unquote) : [];
-    const teed = p.sep === '|' && next[commandWord(next)] === 'tee' ? writeTargets(next).concat(next.slice(1).filter((w) => !w.startsWith('-'))) : [];
-    // A group's own redirect (`{ git log …; } >> .git/config`) sits in a later piece that runs no command.
-    const grouped = ps.slice(i + 1).filter((q) => { const qs = words(q.text).map(unquote); return commandWord(qs) >= qs.length; });
-    const groupTargets = grouped.flatMap((q) => writeTargets(words(q.text).map(unquote)));
-    return writeTargets(ws).concat(teed, groupTargets).some((t) => SENSITIVE_WRITE.test(t));
+    return s >= 0 && GIT_OUTPUT.has(ws.slice(k + 1)[s] ?? '');
   });
+  if (!hasGitOutput) return [];
+  const tees = ps.flatMap((p) => {
+    const ws = words(p.text).map(unquote), k = commandWord(ws);
+    return ws[k] === 'tee' ? ws.slice(k + 1).filter((w) => !w.startsWith('-')) : [];
+  });
+  return writeTargets(cmd).concat(tees);
 }
 /** The command word past keywords, assignments and redirections (writesGitOutputAndRunsFile tolerates assignments). */
 function commandWord(ws: string[]): number {

@@ -947,6 +947,19 @@ test('a message is data only on a line with no file writes and no cd (owner ruli
   all([`git add -A && ${m}`, `git -C sub ${m.slice(4)}`, `${m} && git push`, `${m} >/dev/null`, `${m} && git push -u origin HEAD`,
     'gh pr create --title t --body "a; rm -rf ~"', "git commit -F - <<'EOF'\na; rm -rf ~\nEOF", "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit push"], 'allow');
 });
+test('a glued, named-fd or grouped-piped write is seen, and ref-writing git subcommands make a message code (round 17)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  // P1: a redirect glued to a word. P2: a named-fd redirect.
+  all([`git log -1 --format=%B>>.git/config && ${m}`, `git status x>y && ${m}`, `git status x>>y && ${m}`, `git status x<>y && ${m}`,
+    `${m} {fd}>x`, `git log -1 --format=%B {fd}>>.git/config >&10 && ${m}`], 'deny');
+  // Always-block: grouped or glued git output into a sensitive path or a run file.
+  all(['{ git log -1 --format=%B; } | tee .git/config', '( git log -1 --format=%B ) | tee .git/config', '{ git log -1 --format=%B; } > .git/config',
+    '{ git log -1 --format=%B; } > x.sh; sh x.sh', 'git log -1 --format=%B>>.git/config'], 'deny');
+  // Ref/object/config writers come off the message-line safe list.
+  all([`git gc && ${m}`, `git reflog expire --all && ${m}`, `git update-ref refs/heads/x HEAD && ${m}`, `git symbolic-ref HEAD refs/heads/x && ${m}`], 'deny');
+  // Still data: input redirects, a /dev/null group redirect, and the kept subcommands.
+  all([`${m} < input`, `${m} <<< x`, `{ ${m}; } > /dev/null`, `{ ${m}; } 2>&1`, `git log -1 && ${m}`, `git branch -m a b && ${m}`, `${m} > "/dev/null"`], 'allow');
+});
 test('a group redirect writes for the whole line, and file-changing git subcommands make a message code (round 16)', () => {
   const m = 'git commit -m "a; rm -rf ~"';
   all([`{ ${m}; } > .git/config`, `( ${m} ) > x`, `{ ${m}; } >> notes.txt`, `if true; then ${m}; fi > x`], 'deny'); // group redirect

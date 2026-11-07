@@ -318,7 +318,7 @@ The owner answered questions 1 to 4, and the coordinator ruled on 5 and 6. All s
 - Produces in `sources.ts`:
   - `export interface SourceEntry extends ContextEntry { path: string; label: string; owner: Owner; load: 'always' | 'on-demand'; chars: number; note?: string; paths?: string[] }`. `tokens` is never null here.
   - `export interface RepoMeasure { always: SourceEntry[]; onDemand: SourceEntry[]; unmeasured: string[]; notes: string[] }`. `onDemand` and `unmeasured` stay empty until Task 5.
-  - `export function measureRepo(root: string, o: { owners: Map<string, Owner>; skillsDisabled?: Set<string> }, io?: RepoIO): RepoMeasure`.
+  - `export function measureRepo(root: string, o: { owners: Map<string, Owner>; preset: string | null }, io?: RepoIO): RepoMeasure`. `preset` is the config preset id (`config.preset?.id ?? null`); `skillOverrides` applies to skills only.
 - The rules, which are spec §3.1 in this order:
   - **Root memory files.** `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` are read whole, after `stripComments`, and their imports are expanded. A size over `MAX_FILE_BYTES` gives `tokens: 0` and the note `over 4 MiB: Claude Code skips it`.
   - **The `@AGENTS.md` line** in `CLAUDE.md`, when the manifest records `CLAUDE.md` blocks, is its own `harness` entry, labelled `CLAUDE.md line @AGENTS.md`.

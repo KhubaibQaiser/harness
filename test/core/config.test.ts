@@ -176,13 +176,29 @@ test('apps[0].port out of range names the element path', () => {
 });
 
 test('budget_tokens default is 2000, and -1 and 1.5 are rejected', () => {
-  expect(loadConfig(emptyDir()).config.context).toEqual({ budget_tokens: 2000 });
+  expect(loadConfig(emptyDir()).config.context).toEqual({ budget_tokens: 2000, count: 'auto', count_model: 'claude-opus-5-5' });
   for (const v of ['-1', '1.5']) {
     const r = loadConfig(dirWith('.harness/config.yaml', `context:\n  budget_tokens: ${v}\n`));
     expect(r.errors).toEqual(['"context.budget_tokens" must be an integer from 0 to 200000']);
     expect(r.config.context.budget_tokens).toBe(2000);
   }
   expect(loadConfig(dirWith('.harness/config.yaml', 'context:\n  budget_tokens: 0\n')).config.context.budget_tokens).toBe(0);
+});
+
+test('context.count and context.count_model are validated', () => {
+  const load = (y: string) => loadConfig(dirWith('.harness/config.yaml', y));
+  expect(load('context:\n  count: exact\n').errors).toEqual(['"context.count" must be one of auto, offline']);
+  for (const m of ['gpt-4', 'claude-']) {
+    const r = load(`context:\n  count_model: ${m}\n`);
+    expect(r.errors).toEqual(['"context.count_model" must match ^claude-[a-z0-9-]{1,60}$']);
+    expect(r.config.context.count_model).toBe('claude-opus-5-5');
+  }
+  const ok = load('context:\n  count: offline\n  count_model: claude-sonnet-5-5\n');
+  expect(ok.errors).toEqual([]);
+  expect(ok.config.context).toMatchObject({ count: 'offline', count_model: 'claude-sonnet-5-5' });
+  const only = load('context:\n  budget_tokens: 100\n');
+  expect(only.errors).toEqual([]);
+  expect(only.config.context).toEqual({ budget_tokens: 100, count: 'auto', count_model: 'claude-opus-5-5' });
 });
 
 test('esc escapes zero-width and bidi characters', () => {

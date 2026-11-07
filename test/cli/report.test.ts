@@ -47,6 +47,15 @@ describe('harness report', () => {
     expect(r.text).toMatch(/sideRecords/); // the windows notes counts
     expect(readFileSync(htmlPath(w), 'utf8')).toContain('<!doctype html>');
   });
+  it('still builds the report with a corrupt manifest, with a note', async () => {
+    const w = world(1);
+    mkdirSync(join(w.root, '.harness'), { recursive: true });
+    writeFileSync(join(w.root, '.harness/manifest.json'), '{not json');
+    const r = await go(w, []);
+    expect(r.code).toBe(0);
+    expect(r.text).toContain('always-loaded sources not measured');
+    expect(readFileSync(htmlPath(w), 'utf8')).toContain('always-loaded sources not measured');
+  });
   it('writes no folder .gitignore when the root one already ignores the folder', async () => {
     const w = world(0);
     writeFileSync(join(w.root, '.gitignore'), 'dist/\n.harness/reports/\n');

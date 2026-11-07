@@ -1,5 +1,6 @@
 import { contextSet } from '../../budget/summary.js';
 import { loadConfig } from '../../core/config.js';
+import { ManifestError } from '../../install/manifest.js';
 import type { Acc, SessionCtx } from '../acc.js';
 import type { TRec, Usage } from '../transcript.js';
 
@@ -82,7 +83,14 @@ export function usageAcc(): Acc<UsageResult> {
   };
 }
 
-/** The always-loaded rows, one per source, from the offline context set (estimate). */
-export function alwaysLoaded(root: string, dirs: { templates: string; plugin: string }): { id: string; tokens: number | null }[] {
-  return contextSet(root, loadConfig(root).config, dirs).always.map(({ label, tokens }) => ({ id: label, tokens }));
+export interface AlwaysRow { id: string; tokens: number | null; owner?: string }
+
+/** The always-loaded rows, one per source, from the offline context set (estimate). A throw gives no rows and a note without paths: one bad file must not lose the report. */
+export function alwaysLoadedSafe(root: string, dirs: { templates: string; plugin: string }): { rows: AlwaysRow[]; note?: string } {
+  try {
+    return { rows: contextSet(root, loadConfig(root).config, dirs).always.map(({ label, tokens, owner }) => ({ id: label, tokens, owner })) };
+  } catch (e) {
+    return { rows: [], note: `always-loaded sources not measured: ${e instanceof ManifestError ? 'the install manifest could not be read' : 'unexpected error'}` };
+  }
 }
+export const alwaysLoaded = (root: string, dirs: { templates: string; plugin: string }): AlwaysRow[] => alwaysLoadedSafe(root, dirs).rows;

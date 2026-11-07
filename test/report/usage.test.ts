@@ -5,7 +5,7 @@ import { contextSet } from '../../src/budget/summary.js';
 import { loadConfig } from '../../src/core/config.js';
 import { describe, expect, it } from 'vitest';
 import type { SessionCtx } from '../../src/report/acc.js';
-import { alwaysLoaded, usageAcc } from '../../src/report/metrics/usage.js';
+import { alwaysLoaded, alwaysLoadedSafe, usageAcc } from '../../src/report/metrics/usage.js';
 import { parseRecords, type TRec } from '../../src/report/transcript.js';
 import { assistant, attachment, system, toolResult } from '../fixtures/transcripts/make.js';
 
@@ -98,6 +98,17 @@ describe('usageAcc bounds and main-thread rules', () => {
 });
 
 describe('alwaysLoaded', () => {
+  it('returns no rows and a path-free note when the manifest is corrupt', () => {
+    const root = mkdtempSync(join(tmpdir(), 'al-'));
+    mkdirSync(join(root, '.harness'));
+    writeFileSync(join(root, '.harness/manifest.json'), '{not json');
+    const r = alwaysLoadedSafe(root, { templates: '/nonexistent-t', plugin: '/nonexistent-p' });
+    rmSync(root, { recursive: true });
+    expect(r.rows).toEqual([]);
+    expect(r.note).toMatch(/^always-loaded sources not measured: /);
+    expect(r.note).not.toContain(root);
+    expect(r.note).not.toContain('manifest.json');
+  });
   const dirs = { templates: '/nonexistent-t', plugin: '/nonexistent-p' };
   const repo = (files: Record<string, string | null>) => {
     const root = mkdtempSync(join(tmpdir(), 'al-'));
@@ -111,7 +122,8 @@ describe('alwaysLoaded', () => {
     const root = repo({ 'AGENTS.md': null, 'CLAUDE.md': 'x'.repeat(40) });
     const rows = alwaysLoaded(root, dirs), total = contextSet(root, loadConfig(root).config, dirs).total;
     rmSync(root, { recursive: true });
-    expect(rows.every((x) => x.tokens !== null)).toBe(true);
+    expect(rows.find((x) => x.id === 'AGENTS.md')?.tokens ?? 0).toBe(0);
+    expect(rows.find((x) => x.id === 'CLAUDE.md')?.tokens).toBe(10);
     expect(rows.reduce((n, x) => n + (x.tokens ?? 0), 0)).toBe(total);
   });
   it('is one row per source: the harness block once, sum equals the context set total', () => {
@@ -119,7 +131,7 @@ describe('alwaysLoaded', () => {
     const rows = alwaysLoaded(root, dirs);
     const set = contextSet(root, loadConfig(root).config, dirs);
     rmSync(root, { recursive: true });
-    expect(rows).toEqual(set.always.map((e) => ({ id: e.label, tokens: e.tokens })));
+    expect(rows).toEqual(set.always.map((e) => ({ id: e.label, tokens: e.tokens, owner: e.owner })));
     expect(rows.reduce((n, x) => n + (x.tokens ?? 0), 0)).toBe(set.total);
     expect(rows.filter((x) => x.id === 'AGENTS.md')).toHaveLength(1);
     expect(rows.length).toBe(new Set(rows.map((x) => x.id)).size);

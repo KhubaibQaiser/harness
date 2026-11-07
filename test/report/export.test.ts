@@ -23,7 +23,7 @@ const hostile = (): ReportData => ({
     sessions: [{ id: `${L}session-id`, usage: U(1), responses: 1, compactions: 0, peak: 1 }], responses: 4, unknown: 0,
     loads: { sessions: 3, agentsMd: 2, claudeMd: 1, unknown: 0, compactions: 1, reloaded: 1 }, toolChars: { [`${L}tool`]: 4 },
   },
-  always: [{ id: 'agents-block', tokens: 120 }, { id: `${L}always`, tokens: 5 }, { id: '.claude/rules/private.md', tokens: 7 }],
+  always: [{ id: 'AGENTS.md harness block', tokens: 120, owner: 'harness' }, { id: `${L}always`, tokens: 5, owner: 'catalog:my-private-pick' }, { id: '.claude/rules/private.md', tokens: 7, owner: 'repo' }, { id: 'AGENTS.md', tokens: 3, owner: 'repo' }, { id: 'tdd-skill', tokens: 2, owner: 'catalog:tdd-skill' }, { id: 'p', tokens: 1, owner: 'preset:x' }],
   skills: [skill('tdd-skill'), skill('my-secret-skill'), skill(`${L}skill`)],
   windows: {
     byRule: Object.fromEntries(RULES.map((r) => [r, {
@@ -52,12 +52,15 @@ describe('buildExport', () => {
     expect(skills.map((x) => x.id).sort()).toEqual(['other', 'tdd-skill']);
     expect(skills.find((x) => x.id === 'other')!.listedIn).toBe(10);
   });
-  it('folds a repo path label in the always-loaded rows to other', () => {
+  it('exports always-loaded tokens by owner class, never by label', () => {
     const out = buildExport(hostile(), known);
     const rows = (out.tokens as { always: { id: string; tokens: number }[] }).always;
-    expect(rows).toEqual([{ id: 'agents-block', tokens: 120 }, { id: 'other', tokens: 12 }]);
+    expect(rows).toEqual([{ id: 'harness', tokens: 120 }, { id: 'catalog', tokens: 5 }, { id: 'repo', tokens: 10 }, { id: 'tdd-skill', tokens: 2 }, { id: 'preset', tokens: 1 }]);
+    expect(exportProblems(out, known)).toEqual([]);
     expect(JSON.stringify(out)).not.toContain('private.md');
     expect(JSON.stringify(out)).not.toContain('.claude/');
+    expect(JSON.stringify(out)).not.toContain('AGENTS.md');
+    expect(JSON.stringify(out)).not.toContain('my-private-pick');
   });
   it('counts a synthetic model under other and passes the check', () => {
     const out = buildExport(hostile(), known);

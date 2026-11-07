@@ -6,6 +6,7 @@ import { Groups, quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js
 import { commandTests, EDITOR_SET, type Skel, wholeFlags } from './guard-sinks.js';
 import { onlySafeCommands } from './guard-allow.js';
 import { LAST_ARG } from './guard-reruns.js';
+import { JOIN } from './guard-base.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
 const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
@@ -42,8 +43,9 @@ class Budget {
 
 /** Whether `\` CR LF is a line continuation. The base reading says yes; bash and zsh say no. Set only by eachJoin. */
 let crJoins = true;
-/** Every backslash-newline joined, `\` CR LF too unless eachJoin is reading it the shell's way. */
-export const joinAll = (t: string): string => t.replace(crJoins ? /\\\r?\n/g : /\\\n/g, '');
+/** Every backslash-newline joined, `\` CR LF too unless eachJoin is reading it the shell's way. Only after an odd run
+ *  of backslashes (JOIN): `\\<newline>` is an escaped backslash and a line end. */
+export const joinAll = (t: string): string => t.replace(crJoins ? JOIN : /(?<!\\)((?:\\\\)*)\\\n/g, '$1');
 /** `at`, past any backslash-newlines there. */
 function skip(c: string, at: number): number {
   for (;;) {

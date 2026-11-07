@@ -152,8 +152,9 @@ export function cPayloads(cmd: string): string[] {
  * or a here-document body. Only when the command reads its program from stdin (no script file, no -c/-e). `start`
  * finds where the command runs in a list of words (the caller's walk, stopping at shells and interpreters).
  */
-export function stdinPrograms(cmd: string, start: (ws: string[]) => number): { name: string; text: string }[] {
-  const out: { name: string; text: string }[] = [];
+/** `lines`, on a heredoc's program: the operator's line and the end line (lines.length when there is none). */
+export function stdinPrograms(cmd: string, start: (ws: string[]) => number): { name: string; text: string; lines?: [number, number] }[] {
+  const out: { name: string; text: string; lines?: [number, number] }[] = [];
   // Reads its program from stdin: only flags follow (bash -s, node -), none of them -c/-e/-p.
   const reads = (ws: string[], k: number) =>
     k < ws.length && ws.slice(k + 1).every((w) => w === '-' || /^\d*<<?-?/.test(w) || (/^-[a-zA-Z]*$/.test(w) && !/^-[a-zA-Z]*[cep]/.test(w)));
@@ -184,8 +185,9 @@ export function stdinPrograms(cmd: string, start: (ws: string[]) => number): { n
     const before = words(lines[i].slice(0, m.index));
     const k = start(before.map((w) => w.replace(/["']/g, '')));
     if (!reads(before, k)) continue;
-    const end = lines.findIndex((l, j) => j > i && l.trim() === m[2]);
-    out.push({ name: commandName(before[k] ?? ''), text: lines.slice(i + 1, end < 0 ? lines.length : end).join('\n') });
+    let end = i + 1; // from the next line, not from 0: many heredocs stay linear
+    while (end < lines.length && lines[end].trim() !== m[2]) end++;
+    out.push({ name: commandName(before[k] ?? ''), text: lines.slice(i + 1, end).join('\n'), lines: [i, end] });
   }
   return out;
 }

@@ -10,6 +10,7 @@ import { arithmeticTest, commandSkeleton, eachJoin, gitPlain, globReadings, join
 import { Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
 import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
+import { decideCommand as decideBase, JOIN } from './guard-base.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -213,8 +214,10 @@ export type Visit<T> = (seg: Seg) => T | null;
 export interface WalkHooks<T> { whole?: (words: string[]) => T | null; script?: (body: string) => T | null; tooDeep?: T }
 
 /** Walks every command segment of `command` the way the shell could read it, under every line-continuation reading
- *  (eachJoin); the first non-null result wins. */
+ *  (eachJoin); the first non-null result wins. A nested body is read once, joined as its shell joins it: readings at
+ *  every level multiply (re-review 19, N8). */
 export function walkCommands<T>(command: string, w: Where, visit: Visit<T>, hooks: WalkHooks<T> = {}, depth = 0): T | null {
+  if (depth > 0) return walkJoined(joinLines(command), w, visit, hooks, depth);
   return eachJoin(command, (t) => walkJoined(t, w, visit, hooks, depth), (r) => r !== null).find((r) => r !== null) ?? null;
 }
 function walkJoined<T>(command: string, w: Where, visit: Visit<T>, hooks: WalkHooks<T>, depth: number): T | null {
@@ -636,11 +639,70 @@ export function buildsGuardedWords(command: string, w: Where): boolean {
 }
 const BUILDS_WHY = 'the command builds words at run time (a variable in command position, ${!…}, ${…/…}, $\'…\', IFS=, or eval) and names harness or a protected path, so the guard cannot read what it runs';
 
+/** The text the data exemption trusts: no backslash before a newline, no whitespace but space, tab and newline, no
+ *  `$'`, and every `<<` a plain `<<WORD`, `<<'WORD'` or `<<"WORD"` (`-` and blanks allowed), not after a `#` on its
+ *  line, nested at most MAX_NESTING deep. Other text is decided as strictly as main decides it (round 22). */
+export const canonicalText = (c: string): boolean => !/\\\n|[^\S \t\n]|\$'/.test(c) && (!c.includes('<<') || canonicalLines(c.split('\n'), 0, Infinity, 0));
+const MAX_NESTING = 2;
+const HEREDOC_OPS = /<<+/g, HEREDOC_WORD = /-?[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|([A-Za-z_]\w*))(?=[ \t;|&<>()]|$)/y;
+/** Lines from..to (to past the end is fine) hold only plain heredocs, each body nested under MAX_NESTING. Linear: a line
+ *  is read once per level, and past MAX_NESTING levels the answer is no. */
+function canonicalLines(lines: string[], from: number, to: number, level: number): boolean {
+  for (let i = from; i < Math.min(to, lines.length); i++) {
+    const line = lines[i], hash = line.indexOf('#'), ends: { word: string; dash: boolean }[] = [];
+    for (const m of line.matchAll(HEREDOC_OPS)) {
+      if (m[0].length === 3) continue; // a here-string
+      if (m[0].length !== 2 || (hash >= 0 && hash < m.index)) return false;
+      HEREDOC_WORD.lastIndex = m.index + 2;
+      const w = HEREDOC_WORD.exec(line);
+      if (!w) return false;
+      ends.push({ word: w[1] ?? w[2] ?? w[3], dash: line[m.index + 2] === '-' });
+    }
+    if (ends.length && level >= MAX_NESTING) return false;
+    let start = i + 1;
+    for (const e of ends) { // each body runs to its end line, or to the end as the shell reads a body with none
+      let end = start;
+      while (end < Math.min(to, lines.length) && (e.dash ? lines[end].replace(/^\t+/, '') : lines[end]) !== e.word) end++;
+      if (!canonicalLines(lines, start, end, level + 1)) return false;
+      start = end + 1;
+    }
+    i = start - 1;
+  }
+  return true;
+}
+/** The stricter of two decisions: deny, then ask, then allow. */
+const strictest = (a: Decision, b: Decision): Decision => (a.kind === 'deny' ? a : b.kind === 'deny' ? b : a.kind === 'ask' ? a : b);
+
+/** How deep shells fed a heredoc nest (`bash <<'A'` holding `bash <<'B'` …), as the readers below find them, in the
+ *  text as written and joined. Each level is read again inside the one around it, so the cost climbs with depth. */
+export const MAX_SHELL_NESTING = 4;
+export function shellNesting(c: string): number {
+  let most = 0;
+  for (const t of new Set([c, c.replace(JOIN, '$1')])) {
+    const opens = new Array<number>(t.split('\n').length + 1).fill(0);
+    for (const p of stdinPrograms(t, (ws) => commandStart(ws, (n) => SHELLS.has(n)))) {
+      if (!SHELLS.has(p.name) || !p.lines) continue;
+      opens[p.lines[0]]++;
+      opens[p.lines[1]]--;
+    }
+    let depth = 0;
+    for (const n of opens) most = Math.max(most, (depth += n));
+  }
+  return most;
+}
+export const NESTING_WHY = `shells fed a heredoc nest more than ${MAX_SHELL_NESTING} deep, deeper than the guard reads`;
+
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
+  if (shellNesting(command) > MAX_SHELL_NESTING) return deny(NESTING_WHY); // fail closed, and fast (re-review 19, N8)
+  if (canonicalText(command)) return decideNew(command, ctx); // no backslash-newline, so one reading is all of them
+  // Odd text gets no data exemption: main's decision path reads it, and the stricter of that and this PR's rules, read
+  // with every continuation joined as main joins them, wins. So it is never looser than main, nor than this PR's rules.
+  const base = decideBase(command, ctx);
+  return base.kind === 'deny' ? base : strictest(base, decideNew(joinAll(command), ctx));
+}
+function decideNew(joined: string, ctx: GuardCtx): Decision {
   try {
-    // Every line-continuation reading (eachJoin) is decided; a deny in any wins, then an ask, and an allow needs all of them.
-    const ds = eachJoin(command, (joined) => decideJoined(joined, ctx), (d) => d.kind === 'deny');
-    return ds.find((d) => d.kind === 'deny') ?? ds.find((d) => d.kind === 'ask') ?? ds[0];
+    return decideJoined(joined, ctx);
   } catch (e) {
     if (e instanceof ScanBudget) return toDecision(['ask', SCAN_BUDGET_WHY]);
     throw e;

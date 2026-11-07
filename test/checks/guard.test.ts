@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { readCliPath, recordCliPath } from '../../src/core/cli-path.js';
-import { decideCommand, decidePaths, fileWriteTargets, guard } from '../../src/checks/guard.js';
+import { canonicalText, decideCommand, decidePaths, fileWriteTargets, guard } from '../../src/checks/guard.js';
 import { protect } from '../../src/checks/protect.js';
 import { loadConfig } from '../../src/core/config.js';
 import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
@@ -981,8 +981,29 @@ test('the guard decides under every line-continuation reading, and the strictest
   // P1 (round 20): a quoted-delimiter body keeps its trailing `\`.
   all([`git commit -F - <<'EOF'\nx \\\nEOF\n${R}\nEOF`, `cat > docs/x.md <<'EOF'\nx \\\nEOF\n${P}\nEOF`, `tee f >/dev/null <<'EOF'\nx \\\nEOF\n${P}\nEOF`,
     `git commit -F - <<"EOF"\na; ${R} \\\nEOF\ngit log -1 --format=%B | sh\nEOF`], 'deny');
-  // Still allow: an unquoted body that joins, a literal trailing `\`, and a plain continuation.
-  all([`cat > docs/x.md <<EOF\nx \\\nEOF\n${P}\nEOF`, `cat > docs/x.md <<'EOF'\nx \\\ny\nEOF`, 'git status \\\n  --short'], 'allow');
+  // Still allow: a literal trailing `\` and a plain continuation. An unquoted body that joins is right to allow, but it is
+  // not canonical text (round 22), so it gets main's strict reading.
+  all([`cat > docs/x.md <<'EOF'\nx \\\ny\nEOF`, 'git status \\\n  --short'], 'allow');
+  all([`cat > docs/x.md <<EOF\nx \\\nEOF\n${P}\nEOF`], 'deny');
+});
+test('the data exemption needs canonical text; other text is decided at least as strictly as main (round 22)', () => {
+  const R = 'rm -rf ~', P = 'git push -f', sinks = ['cat > docs/x.md', 'git commit -F -', 'tee f >/dev/null'];
+  // N4: `$\<nl>'` pairs quotes one way in the raw text and another once joined.
+  all([R, P].flatMap((p) => sinks.map((s) => `${s} $\\\n'\\'' <<'EOF'\nx \\\nEOF\n${p}\nEOF`)), 'deny');
+  // N5: bash keeps CR, VT, FF, NBSP and U+2028 in the delimiter word, so `EOF` + that char ends the body.
+  all(['\r', '\v', '\f', ' ', ' '].flatMap((ch) => [R, P].flatMap((p) => sinks.flatMap((s) => [`${s} <<'EOF'${ch}\nx\nEOF${ch}\n${p}\nEOF`, `${s} <<EOF${ch}\nx\nEOF${ch}\n${p}\nEOF`]))), 'deny');
+  // N6: `\\<nl>` is an escaped backslash and a real line end, in the plain form and before a quote.
+  all([`echo \\\\\n${R}`, `ls \\\\\n${R}`, `echo a\\\\\n${R}`, `echo \\\\\\\\\n${R}`, `x=1 \\\\\n${R}`, ...[R, P].flatMap((p) => sinks.map((s) => `${s} \\\\\n' <<'EOF'\n'\n${p}\nEOF`))], 'deny');
+  all(['echo \\\\\\\ny'], 'allow'); // an odd run still joins: `echo \\y`
+  // N7: a `# <<'EOF'` after a data sink is a comment; the lines after it run.
+  all([R, P].flatMap((p) => [`cat > docs/x.md # <<'EOF'\n${p}\nEOF`, `cat > docs/x.md #<<'EOF'\n${p}\nEOF`, `cat > docs/x.md \\\n# <<'EOF'\n${p}\nEOF`,
+    `cat > docs/x.md # <<'EOF'\nx \\\n${p}\nEOF`]), 'deny');
+  // The canonical form: what passes it keeps the exemption, anything odd falls to the strict reading.
+  for (const c of ["cat > docs/x.md <<'EOF'\ngit push -f\nEOF", 'cat > docs/x.md <<EOF\nx\nEOF', 'cat <<-"E_1" > x\n\ty\n\tE_1', 'x <<< y', 'git commit -m "fix #12"',
+    "bash <<'A'\ncat > f <<'B'\nz\nB\nA"]) expect(canonicalText(c), c).toBe(true);
+  for (const c of ['a \\\nb', 'a\r\nb', 'a b', "$'x'", 'cat <<\\EOF\nx\nEOF', 'cat <<E"O"F\nx\nEOF', 'cat <<$X\nx\n$X', 'cat <<1\nx\n1', 'cat <<<<x', '# <<EOF',
+    'cat <<EOFx; # c <<A', "bash <<'A'\nbash <<'B'\ncat <<'C'\nz\nC\nB\nA", "cat <<'EOF'x\ny\nEOFx"]) expect(canonicalText(c), c).toBe(false);
+  all(["cat > docs/x.md <<'EOF'\ngit push -f\nEOF"], 'allow');
 });
 test('a quoted-delimiter heredoc body keeps its backslash-newline; the always-block strips backslashes (round 20)', () => {
   const L = 'git log -1 --format=%B';
@@ -993,8 +1014,10 @@ test('a quoted-delimiter heredoc body keeps its backslash-newline; the always-bl
     `cat > docs/x.md <<-'EOF'\n\tx \\\n\tEOF\ngit push -f\nEOF`, `cat > docs/x.md <<'EOF'\nx \\\nEOF\ngit push -f`,
     // A shell fed a quoted-delimiter body joins its lines itself.
     `bash <<'EOF'\ngit push \\\n -f\nEOF`, `sh <<'EOF'\nrm -rf \\\n ~\nEOF`], 'deny');
-  // An unquoted delimiter's body does join (bash reads `x EOF`), so the command after it is body text there.
-  all([`cat > docs/x.md <<EOF\nx \\\nEOF\ngit push -f\nEOF`, `cat > docs/x.md <<'EOF'\nx \\\ny\nEOF`, `git commit -F - <<'EOF'\na \\\nEOF\ngit push`], 'allow');
+  // An unquoted delimiter's body does join (bash reads `x EOF`), so the command after it is body text there; but a
+  // backslash-newline is not canonical text (round 22), so that one gets main's strict reading.
+  all([`cat > docs/x.md <<'EOF'\nx \\\ny\nEOF`, `git commit -F - <<'EOF'\na \\\nEOF\ngit push`], 'allow');
+  all([`cat > docs/x.md <<EOF\nx \\\nEOF\ngit push -f\nEOF`], 'deny');
   // P2: '%B\' quote-stripped is %B\, which must not escape the real > after it.
   all([`# say "hi\n${L.replace('%B', "'%B\\'")}> .git/config # "`, `# say "hi\n${L.replace('%B', '"%B\\""')}> .git/config # "`,
     `true # it's\n${L.replace('%B', "'%B\\'")}> .git/config # '`, `# say "hi\n${L.replace('%B', "'%B\\'")}> x.sh\nsh x.sh # "`], 'deny');
@@ -1006,7 +1029,7 @@ test('$$ before a quote and a # comment do not hide a write from the scanner (ro
   // P1: $$ is the PID, so the quote after it is plain and the redirect is real.
   all([`${m} $$'\\' >> .git/config '\\'`, `${P} ; ${L} $$'\\' >>.git/config '\\'`, `${P} && ${L} $$'\\' >>.git/config '\\'`,
     `${m} $$$$'\\' > x '\\'`, `${L} $$$$'\\' >>.git/config '\\'`], 'deny');
-  all([`${m} $$$'\\' > x '\\'`], 'allow'); // $$ + $'…' genuinely quotes the redirect
+  all([`${m} $$$'\\' > x '\\'`], 'deny'); // $$ + $'…' does quote the redirect, but $' is not canonical text (round 22)
   // P2: a quote inside a # comment must not open a span across the real write on the next line.
   all([`${P} # it's\n${L} >>.git/config # '`, `${m} # don't\n${L} >> .git/config # '`, `${m} # it's\necho hi > x # '`,
     `${m} # \"\necho hi > x # \"`, `git status # don't\n${L} >> .git/config # '`], 'deny');

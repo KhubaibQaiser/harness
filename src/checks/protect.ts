@@ -6,7 +6,7 @@ import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
-import { commandStart, decodeAnsiC, fileWriteTargets, gitArgs, ifsReading, PROTECTED_TEXT, quoteFree, rmTargets, withoutHeredocBodies } from './guard.js';
+import { commandStart, decodeAnsiC, fileWriteTargets, gitArgs, ifsReading, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
@@ -310,6 +310,8 @@ export const protect: Check = {
     if (target !== null) paths = [target];
     else if (isShell(tool_name)) {
       const cmd = String(tool_input.command ?? '');
+      // Each nested program is read again for every level around it: past the cap, deny fast, before the hook times out.
+      if (shellNesting(cmd) > MAX_SHELL_NESTING) return { kind: 'deny', reason: NESTING_WHY, check: 'protect' };
       // A program fed to a shell on stdin is a command line of its own (echo 'rm -rf node_modules' | bash).
       // So is the command as the shell splits it on $IFS (tee$IFS.harness/x).
       const ifs = ifsReading(cmd);

@@ -1,9 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { contextSet } from '../../src/budget/summary.js';
+import { loadConfig } from '../../src/core/config.js';
 import { describe, expect, it } from 'vitest';
 import type { SessionCtx } from '../../src/report/acc.js';
-import { alwaysLoaded, usageAcc } from '../../src/report/metrics/usage.js';
+import { alwaysLoaded, alwaysLoadedSafe, usageAcc } from '../../src/report/metrics/usage.js';
 import { parseRecords, type TRec } from '../../src/report/transcript.js';
 import { assistant, attachment, system, toolResult } from '../fixtures/transcripts/make.js';
 
@@ -96,16 +98,42 @@ describe('usageAcc bounds and main-thread rules', () => {
 });
 
 describe('alwaysLoaded', () => {
-  it('counts an unreadable AGENTS.md (a directory) as 0 instead of throwing', () => {
+  it('returns no rows and a path-free note when the manifest is corrupt', () => {
     const root = mkdtempSync(join(tmpdir(), 'al-'));
-    mkdirSync(join(root, 'AGENTS.md'));
-    writeFileSync(join(root, 'CLAUDE.md'), 'x'.repeat(40));
-    const rows = alwaysLoaded(root, { templates: '/nonexistent-t', plugin: '/nonexistent-p' });
+    mkdirSync(join(root, '.harness'));
+    writeFileSync(join(root, '.harness/manifest.json'), '{not json');
+    const r = alwaysLoadedSafe(root, { templates: '/nonexistent-t', plugin: '/nonexistent-p' });
     rmSync(root, { recursive: true });
-    expect(rows.filter((x) => x.id.endsWith('.md')).map((x) => x.tokens)).toEqual([0, 10]);
+    expect(r.rows).toEqual([]);
+    expect(r.note).toMatch(/^always-loaded sources not measured: /);
+    expect(r.note).not.toContain(root);
+    expect(r.note).not.toContain('manifest.json');
   });
-  it('lists catalog items plus AGENTS.md and CLAUDE.md estimates', () => {
-    const rows = alwaysLoaded('/nonexistent-root', { templates: '/nonexistent-t', plugin: '/nonexistent-p' });
-    expect(rows.map((x) => x.id)).toEqual(expect.arrayContaining(['harness-plugin', 'AGENTS.md', 'CLAUDE.md']));
+  const dirs = { templates: '/nonexistent-t', plugin: '/nonexistent-p' };
+  const repo = (files: Record<string, string | null>) => {
+    const root = mkdtempSync(join(tmpdir(), 'al-'));
+    for (const [f, t] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, f)), { recursive: true });
+      if (t === null) mkdirSync(join(root, f)); else writeFileSync(join(root, f), t);
+    }
+    return root;
+  };
+  it('counts an unreadable AGENTS.md (a directory) as 0 instead of throwing', () => {
+    const root = repo({ 'AGENTS.md': null, 'CLAUDE.md': 'x'.repeat(40) });
+    const rows = alwaysLoaded(root, dirs), total = contextSet(root, loadConfig(root).config, dirs).total;
+    rmSync(root, { recursive: true });
+    expect(rows.find((x) => x.id === 'AGENTS.md')?.tokens ?? 0).toBe(0);
+    expect(rows.find((x) => x.id === 'CLAUDE.md')?.tokens).toBe(10);
+    expect(rows.reduce((n, x) => n + (x.tokens ?? 0), 0)).toBe(total);
+  });
+  it('is one row per source: the harness block once, sum equals the context set total', () => {
+    const root = repo({ 'AGENTS.md': 'plain notes '.repeat(20), '.claude/rules/private.md': 'rule text '.repeat(10) });
+    const rows = alwaysLoaded(root, dirs);
+    const set = contextSet(root, loadConfig(root).config, dirs);
+    rmSync(root, { recursive: true });
+    expect(rows).toEqual(set.always.map((e) => ({ id: e.label, tokens: e.tokens, owner: e.owner })));
+    expect(rows.reduce((n, x) => n + (x.tokens ?? 0), 0)).toBe(set.total);
+    expect(rows.filter((x) => x.id === 'AGENTS.md')).toHaveLength(1);
+    expect(rows.length).toBe(new Set(rows.map((x) => x.id)).size);
   });
 });

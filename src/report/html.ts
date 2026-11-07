@@ -17,7 +17,7 @@ export interface ReportMeta {
   sessions: { scanned: number; skipped: Record<string, number>; unknown: number };
 }
 export interface ReportData {
-  meta: ReportMeta; usage: UsageResult; always: { id: string; tokens: number | null }[]; skills: SkillRow[];
+  meta: ReportMeta; usage: UsageResult; always: { id: string; tokens: number | null; owner?: string }[]; alwaysNote?: string; skills: SkillRow[];
   windows: WindowsResult; gates: GatesResult; rules?: RuleRow[]; evals?: EvalSummary[];
 }
 export const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
@@ -77,7 +77,7 @@ function skillsSection(skills: SkillRow[]): string {
 function dataNotes(d: ReportData): string {
   const item = ([k, v]: [string, unknown]) => `<li>${h(k)}: ${h(String(v))}</li>`;
   const list = (title: string, o: object) => `<h4>${h(title)}</h4><ul>${Object.entries(o).map(item).join('')}</ul>`;
-  return `<h3>Data notes</h3>${list('Transcripts', d.windows.notes)}${list('Harness events and timing', d.gates.notes)}`;
+  return `<h3>Data notes</h3>${list('Transcripts', d.windows.notes)}${list('Harness events and timing', d.gates.notes)}${d.alwaysNote ? `<p class="mute">${h(d.alwaysNote)}</p>` : ''}`;
 }
 function method(d: ReportData): string {
   const heur = Object.entries(RX).map(([k, r]) => `<li><code>${h(k)}</code>: <code>${h(r.source)}</code> (case-insensitive)</li>`).join('');

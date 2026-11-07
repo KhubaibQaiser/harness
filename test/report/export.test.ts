@@ -23,7 +23,7 @@ const hostile = (): ReportData => ({
     sessions: [{ id: `${L}session-id`, usage: U(1), responses: 1, compactions: 0, peak: 1 }], responses: 4, unknown: 0,
     loads: { sessions: 3, agentsMd: 2, claudeMd: 1, unknown: 0, compactions: 1, reloaded: 1 }, toolChars: { [`${L}tool`]: 4 },
   },
-  always: [{ id: 'agents-block', tokens: 120 }, { id: `${L}always`, tokens: 5 }],
+  always: [{ id: 'AGENTS.md harness block', tokens: 120, owner: 'harness' }, { id: `${L}always`, tokens: 5, owner: 'catalog:my-private-pick' }, { id: '.claude/rules/private.md', tokens: 7, owner: 'repo' }, { id: 'AGENTS.md', tokens: 3, owner: 'repo' }, { id: 'tdd-skill', tokens: 2, owner: 'catalog:tdd-skill' }, { id: 'p', tokens: 1, owner: 'preset:x' }],
   skills: [skill('tdd-skill'), skill('my-secret-skill'), skill(`${L}skill`)],
   windows: {
     byRule: Object.fromEntries(RULES.map((r) => [r, {
@@ -51,6 +51,25 @@ describe('buildExport', () => {
     const skills = out.skills as { id: string; listedIn: number }[];
     expect(skills.map((x) => x.id).sort()).toEqual(['other', 'tdd-skill']);
     expect(skills.find((x) => x.id === 'other')!.listedIn).toBe(10);
+  });
+  it('exports always-loaded tokens by owner class, never by label', () => {
+    const out = buildExport(hostile(), known);
+    const rows = (out.tokens as { always: { id: string; tokens: number }[] }).always;
+    expect(rows).toEqual([{ id: 'harness', tokens: 120 }, { id: 'catalog', tokens: 5 }, { id: 'repo', tokens: 10 }, { id: 'tdd-skill', tokens: 2 }, { id: 'preset', tokens: 1 }]);
+    expect(exportProblems(out, known)).toEqual([]);
+    expect(JSON.stringify(out)).not.toContain('private.md');
+    expect(JSON.stringify(out)).not.toContain('.claude/');
+    expect(JSON.stringify(out)).not.toContain('AGENTS.md');
+    expect(JSON.stringify(out)).not.toContain('my-private-pick');
+  });
+  it('says whether always-loaded was measured, with a fixed flag and no error text', () => {
+    const tok = (d: ReportData) => buildExport(d, known).tokens as { always_measured: boolean };
+    expect(tok(hostile()).always_measured).toBe(true);
+    const bad = { ...hostile(), always: [], alwaysNote: `${L}note /Users/x` };
+    const out = buildExport(bad, known);
+    expect((out.tokens as { always_measured: boolean }).always_measured).toBe(false);
+    expect(JSON.stringify(out)).not.toContain('LEAK');
+    expect(exportProblems(out, known)).toEqual([]);
   });
   it('counts a synthetic model under other and passes the check', () => {
     const out = buildExport(hostile(), known);

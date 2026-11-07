@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { syncCommand } from '../../src/checks/stop/runner.js';
 import { loadCatalog } from '../../src/catalog/load.js';
-import { footprint, measureSelection } from '../../src/budget/measure.js';
+import { measureSelection } from '../../src/budget/measure.js';
+import { footprint } from '../../src/install/footprint.js';
+import { parse } from 'yaml';
 
 const json = (f: string) => JSON.parse(readFileSync(f, 'utf8'));
 const pkg = json('package.json');
@@ -127,7 +129,16 @@ test('slash-only skills carry disable-model-invocation; doctor and status stay v
 });
 
 // Always-loaded tokens of the default install (plugin + legacy own items). Raise only in a reviewed PR.
-const HARNESS_FOOTPRINT = 590;
+const HARNESS_FOOTPRINT = 553;
 test('the default install footprint stays within HARNESS_FOOTPRINT', () => {
   expect(footprint({ templates: 'templates', plugin: '.' }, loadCatalog().catalog)).toBeLessThanOrEqual(HARNESS_FOOTPRINT);
+});
+
+test('every skill and agent frontmatter parses as YAML', () => {
+  const files = [...readdirSync('skills').map((s) => `skills/${s}/SKILL.md`), ...readdirSync('templates/agents').map((a) => `templates/agents/${a}`)];
+  for (const f of files) {
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(f, 'utf8'))?.[1];
+    expect(fm, f).toBeDefined();
+    expect(() => parse(fm!), f).not.toThrow();
+  }
 });

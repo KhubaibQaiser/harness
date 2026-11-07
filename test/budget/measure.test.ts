@@ -127,11 +127,11 @@ test('measureSelection reads a real catalog', async () => {
   expect(r.tokens).toBeGreaterThan(0);
 });
 
-test('block descriptions with blank lines count in full; bad frontmatter over-counts', () => {
+test('block descriptions with blank lines count in full', () => {
   const desc = 'line one\n\nline three';
   const t = alwaysLoadedText('skill', `---\nname: x\ndescription: |\n  line one\n\n  line three\n---\nbody`);
   expect(t).toBe(`name: x\ndescription: ${desc}`);
-  expect(alwaysLoadedText('skill', '---\nname: [x\n---\nbody')).toBe('name: [x');
+  expect(() => alwaysLoadedText('skill', '---\nname: [x\n---\nbody')).toThrow();
 });
 
 test('duplicate ids count once', async () => {
@@ -174,5 +174,20 @@ test('pluginEntry counts only skills the model can invoke', () => {
   skill('off', 'disable-model-invocation: true\n');
   skill('on', '');
   const r = measureSelectionSync([], cat(), { templates, plugin: root });
-  expect(r.entries[0]!.tokens).toBe(estimateTokens('name: on\ndescription: d'));
+  expect(r.entries.find((e) => e.id === 'harness-plugin')!.tokens).toBe(estimateTokens('name: on\ndescription: d'));
+});
+
+const BAD = '---\nname: x\ndescription: Set up: now\n---\nbody';
+test('unparseable frontmatter is reported, not counted raw', () => {
+  expect(() => alwaysLoadedText('skill', BAD)).toThrow(/frontmatter/);
+  const root = mkdtempSync(join(tmpdir(), 'cb1-'));
+  mkdirSync(join(root, 'skills', 'bad'), { recursive: true });
+  writeFileSync(join(root, 'skills', 'bad', 'SKILL.md'), BAD);
+  const r = measureSelectionSync([], cat(), { templates, plugin: root });
+  expect(r.entries.find((e) => e.id === 'harness-plugin')!.tokens).toBeNull();
+  expect(r.unmeasured).toContain('harness-plugin');
+  const t = mkdtempSync(join(tmpdir(), 'cb1t-'));
+  mkdirSync(join(t, 'skills', 'review-rubric'), { recursive: true });
+  writeFileSync(join(t, 'skills', 'review-rubric', 'SKILL.md'), BAD);
+  expect(itemContext(rubric, { templates: t })).toEqual({ id: 'review-rubric', tokens: null });
 });

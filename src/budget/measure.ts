@@ -4,7 +4,6 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import type { Catalog, CatalogItem } from '../catalog/schema.js';
-import { LEGACY_OWN } from '../install/plan.js';
 
 export const DEFAULT_CONTEXT_BUDGET = 2000;
 /** Claude Code cuts a skill's description (plus when_to_use) at this many characters in the listing. */
@@ -16,18 +15,20 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 export function alwaysLoadedText(kind: 'agents-block' | 'claude-import' | 'skill' | 'agent', text: string): string {
   if (kind === 'agents-block' || kind === 'claude-import') return text;
   const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? '';
+  let y: Record<string, unknown> | null;
   try {
-    const y = parse(fm) as Record<string, unknown> | null;
-    const str = (k: string): string | null => (y?.[k] != null ? String(y[k]).trim() : null);
-    if (kind === 'skill') {
-      if (y?.['disable-model-invocation'] === true) return '';
-      const desc = [str('description'), str('when_to_use')].filter((v) => v !== null).join(' ').slice(0, SKILL_DESCRIPTION_MAX);
-      return [str('name') !== null ? `name: ${str('name')}` : null, desc ? `description: ${desc}` : null].filter((v) => v !== null).join('\n');
-    }
-    return (['name', 'description'] as const).filter((k) => y?.[k] != null).map((k) => `${k}: ${str(k)}`).join('\n');
+    y = parse(fm) as Record<string, unknown> | null;
   } catch {
-    return fm; // unparseable frontmatter: count all of it; over-counting is safe
+    throw new Error('frontmatter does not parse'); // callers report the file as not measured; counting it raw would overstate
   }
+  const str = (k: string): string | null => (y?.[k] != null ? String(y[k]).trim() : null);
+  if (kind === 'skill') {
+    if (y?.['disable-model-invocation'] === true) return '';
+    const name = str('name');
+    const desc = [str('description'), str('when_to_use')].filter((v) => v !== null).join(' ').slice(0, SKILL_DESCRIPTION_MAX);
+    return [name !== null ? `name: ${name}` : null, desc ? `description: ${desc}` : null].filter((v) => v !== null).join('\n');
+  }
+  return (['name', 'description'] as const).filter((k) => y?.[k] != null).map((k) => `${k}: ${str(k)}`).join('\n');
 }
 
 export interface ContextEntry { id: string; tokens: number | null; exempt?: true }
@@ -43,13 +44,16 @@ export function itemContext(item: CatalogItem, dirs: { templates: string }): Con
   if (item.source.merge?.includes('agents-md')) return { id, tokens: estimateTokens(read(join(dirs.templates, 'agents-block.md')) + '@AGENTS.md\n') };
   const kind = item.kind === 'own-skill' ? 'skill' : item.kind === 'own-agent' ? 'agent' : null;
   if (!kind) return { id, tokens: 0 }; // hooks, settings, ci: not loaded as text
-  return { id, tokens: (item.source.files ?? []).reduce((n, f) => n + estimateTokens(alwaysLoadedText(kind, read(join(dirs.templates, f.from)))), 0) };
+  try {
+    return { id, tokens: (item.source.files ?? []).reduce((n, f) => n + estimateTokens(alwaysLoadedText(kind, read(join(dirs.templates, f.from)))), 0) };
+  } catch {
+    return { id, tokens: null }; // unparseable frontmatter: not measured
+  }
 }
 
 function pluginEntry(plugin: string): ContextEntry {
   const root = join(plugin, 'skills');
   const names = existsSync(root) ? readdirSync(root) : [];
-  const skills = names.reduce((n, d) => n + estimateTokens(alwaysLoadedText('skill', read(join(root, d, 'SKILL.md')))), 0);
   // The agents plugin.json registers load their name and description too.
   let agents: string[] = [];
   try {
@@ -57,7 +61,12 @@ function pluginEntry(plugin: string): ContextEntry {
   } catch {
     // no readable manifest: count the skills only
   }
-  return { id: 'harness-plugin', tokens: skills + agents.reduce((n, a) => n + estimateTokens(alwaysLoadedText('agent', read(join(plugin, a)))), 0) };
+  const texts: ['skill' | 'agent', string][] = [...names.map((d): ['skill', string] => ['skill', read(join(root, d, 'SKILL.md'))]), ...agents.map((a): ['agent', string] => ['agent', read(join(plugin, a))])];
+  try {
+    return { id: 'harness-plugin', tokens: texts.reduce((n, [k, t]) => n + estimateTokens(alwaysLoadedText(k, t)), 0) };
+  } catch {
+    return { id: 'harness-plugin', tokens: null }; // a skill or agent whose frontmatter does not parse: not measured
+  }
 }
 
 /** `extra` entries (measured elsewhere) are added as they are. `exempt` ids (items the person already approved) keep an entry but add nothing and are never unmeasured. harness-plugin is never exempt. */
@@ -109,6 +118,3 @@ export function budgetLines(v: BudgetVerdict): string[] {
 }
 
 export const itemContextLine = (e: ContextEntry): string => (e.tokens === null ? 'not measured before install' : `~${e.tokens} tokens (estimate)`);
-
-/** Always-loaded tokens of the default install: the plugin plus the legacy own items. */
-export const footprint = (dirs: { templates: string; plugin: string }, c: Catalog): number => measureSelectionSync(LEGACY_OWN, c, dirs).tokens;

@@ -62,6 +62,15 @@ describe('buildExport', () => {
     expect(JSON.stringify(out)).not.toContain('AGENTS.md');
     expect(JSON.stringify(out)).not.toContain('my-private-pick');
   });
+  it('says whether always-loaded was measured, with a fixed flag and no error text', () => {
+    const tok = (d: ReportData) => buildExport(d, known).tokens as { always_measured: boolean };
+    expect(tok(hostile()).always_measured).toBe(true);
+    const bad = { ...hostile(), always: [], alwaysNote: `${L}note /Users/x` };
+    const out = buildExport(bad, known);
+    expect((out.tokens as { always_measured: boolean }).always_measured).toBe(false);
+    expect(JSON.stringify(out)).not.toContain('LEAK');
+    expect(exportProblems(out, known)).toEqual([]);
+  });
   it('counts a synthetic model under other and passes the check', () => {
     const out = buildExport(hostile(), known);
     const models = out.models as { id: string; input: number }[];

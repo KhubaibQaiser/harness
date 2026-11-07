@@ -4,15 +4,15 @@ import { afterEach, expect, test } from 'vitest';
 import { insideWith, realIO, type RepoIO } from '../../src/budget/imports.js';
 import { ownersFrom, type Owner } from '../../src/budget/owners.js';
 import { absIn, measureRepo, type RepoMeasure } from '../../src/budget/sources.js';
-import { CUT_CHARS, MAX_FILE_BYTES } from '../../src/budget/text.js';
+import { CUT_CHARS, MAX_FILE_BYTES, stripComments } from '../../src/budget/text.js';
 import type { Catalog } from '../../src/catalog/schema.js';
 import type { Manifest } from '../../src/install/manifest.js';
 import { makeRepo } from '../install/helpers.js';
 
-type Opts = { owners?: Map<string, Owner>; skillsDisabled?: Set<string>; preset?: string };
+type Opts = { owners?: Map<string, Owner>; preset?: string | null };
 const measure = (files: Record<string, string>, o: Opts = {}, io?: RepoIO): RepoMeasure & { root: string } => {
   const root = makeRepo(files, { git: false });
-  return { root, ...measureRepo(root, { owners: o.owners ?? new Map(), ...o }, io) };
+  return { root, ...measureRepo(root, { owners: o.owners ?? new Map(), preset: o.preset ?? null }, io) };
 };
 const row = (r: RepoMeasure, label: string) => r.always.find((e) => e.label === label);
 const labels = (r: RepoMeasure) => r.always.map((e) => e.label);
@@ -85,14 +85,34 @@ const CATALOG = { version: 1, items: [{ id: 'review-rubric', source: { type: 'ow
 const OWNERS = ownersFrom(MANIFEST, CATALOG);
 
 test('the preset block is a preset:<id> entry', () => {
-  const r = measure({ 'AGENTS.md': AGENTS + '\n' + PRESET, '.claude/skills/fe-style/SKILL.md': SKILL }, { owners: OWNERS });
+  const r = measure({ 'AGENTS.md': AGENTS + '\n' + PRESET, '.claude/skills/fe-style/SKILL.md': SKILL }, { owners: OWNERS, preset: 'khubaib-frontend' });
   expect(row(r, 'AGENTS.md preset block')).toMatchObject({ owner: 'preset:khubaib-frontend', chars: '\nPRE\n'.length });
   expect(row(r, 'AGENTS.md')?.chars).toBe('repo text\n\n\n\n\n'.length);
 });
 
-test('the preset option names the preset block owner when no preset file is recorded', () => {
-  const r = measure({ 'AGENTS.md': PRESET }, { preset: 'core-only' });
-  expect(row(r, 'AGENTS.md preset block')?.owner).toBe('preset:core-only');
+test('with no preset id, a recorded AGENTS.md preset block is harness\'s, with a note', () => {
+  const r = measure({ 'AGENTS.md': PRESET, '.claude/skills/fe-style/SKILL.md': SKILL }, { owners: OWNERS });
+  expect(row(r, 'AGENTS.md preset block')).toMatchObject({ owner: 'harness', note: 'preset id not recorded', chars: '\nPRE\n'.length });
+  expect(JSON.stringify(r)).not.toContain('preset:unknown');
+});
+
+test('with no AGENTS.md in the manifest, the preset block stays in the repo row', () => {
+  const r = measure({ 'AGENTS.md': PRESET }, { preset: 'khubaib-frontend' });
+  expect(labels(r)).toEqual(['AGENTS.md']);
+  expect(row(r, 'AGENTS.md')).toMatchObject({ owner: 'repo', chars: stripComments(PRESET).length });
+});
+
+test('a CLAUDE.md that links to AGENTS.md still has its harness block split out', () => {
+  const root = makeRepo({ 'AGENTS.md': AGENTS }, { git: false });
+  symlinkSync(join(root, 'AGENTS.md'), join(root, 'CLAUDE.md'));
+  const r = measureRepo(root, { owners: new Map(), preset: null });
+  expect(row(r, 'CLAUDE.md harness block')).toMatchObject({ owner: 'harness', chars: '\nBLOCK\n'.length });
+  expect(row(r, 'CLAUDE.md')).toMatchObject({ owner: 'repo', chars: 'repo text\n\n\n'.length });
+});
+
+test('a harness block in an imported file that is not AGENTS.md is split out too', () => {
+  const r = measure({ 'CLAUDE.md': '@docs/agents.md', 'docs/agents.md': AGENTS });
+  expect(row(r, 'docs/agents.md harness block')).toMatchObject({ owner: 'harness', chars: '\nBLOCK\n'.length });
 });
 
 test('the recorded @AGENTS.md line in CLAUDE.md is its own harness entry', () => {
@@ -150,13 +170,36 @@ test('settings that do not parse leave skills counted, with a note', () => {
   expect(r.notes).toEqual(['.claude/settings.json does not parse: skillOverrides not applied']);
 });
 
-test('a disabled skill counts 0', () => {
-  const r = measure({
-    '.claude/skills/a/SKILL.md': '---\nname: a\ndescription: d\ndisable-model-invocation: true\n---\n',
-    '.claude/skills/b/SKILL.md': '---\nname: b\ndescription: d\n---\n',
-  }, { skillsDisabled: new Set(['b']) });
+test('a skill with disable-model-invocation counts 0', () => {
+  const r = measure({ '.claude/skills/a/SKILL.md': '---\nname: a\ndescription: d\ndisable-model-invocation: true\n---\n' });
   expect(row(r, 'skill a')?.tokens).toBe(0);
-  expect(row(r, 'skill b')?.tokens).toBe(0);
+});
+
+test('skillOverrides does not touch commands (unverified for them, so they stay counted)', () => {
+  const r = measure({ '.claude/commands/ship.md': '---\ndescription: Ship it.\n---\n', '.claude/settings.json': JSON.stringify({ skillOverrides: { ship: 'off' } }) });
+  expect(row(r, 'command ship')?.chars).toBe('description: Ship it.'.length);
+});
+
+test('a file imported twice through a symlink is counted once, and its imports once', () => {
+  const root = makeRepo({ 'CLAUDE.md': '@docs/a.md @docs/b.md', 'docs/a.md': 'AAAA @c.md', 'docs/c.md': 'CCCC' }, { git: false });
+  symlinkSync(join(root, 'docs', 'a.md'), join(root, 'docs', 'b.md'));
+  const r = measureRepo(root, { owners: new Map(), preset: null });
+  expect(labels(r)).toEqual(['CLAUDE.md', 'docs/a.md (imported by CLAUDE.md)', 'docs/c.md (imported by docs/a.md)']);
+});
+
+test('a skill that CLAUDE.md imports keeps its listing row', () => {
+  const r = measure({ 'CLAUDE.md': '@.claude/skills/s/SKILL.md', '.claude/skills/s/SKILL.md': '---\nname: s\ndescription: d\n---\nbody' });
+  expect(labels(r)).toEqual(['CLAUDE.md', '.claude/skills/s/SKILL.md (imported by CLAUDE.md)', 'skill s']);
+});
+
+test('an oversized rule, skill, command or agent is not measured, not counted 0', () => {
+  const big = new Set(['.claude/rules/r.md', '.claude/skills/s/SKILL.md', '.claude/commands/c.md', '.claude/agents/a.md', 'AGENTS.md']);
+  const files = Object.fromEntries([...big].map((k) => [k, 'x']));
+  const root = makeRepo(files, { git: false });
+  const io: RepoIO = { ...realIO, size: (p) => ([...big].some((b) => p.endsWith(join(...b.split('/')))) ? MAX_FILE_BYTES + 1 : realIO.size(p)) };
+  const r = measureRepo(root, { owners: new Map(), preset: null }, io);
+  expect(r.always).toEqual([]);
+  expect(r.unmeasured.sort()).toEqual([...big].map((b) => `${b}: oversize`).sort());
 });
 
 test('a command file and an agent are counted by their name and description', () => {
@@ -203,17 +246,19 @@ test('Review focus 1: nothing outside the root is touched, and HOME changes noth
   const files = { 'CLAUDE.md': '@../../etc/passwd @~/.claude/CLAUDE.md @AGENTS.md', 'AGENTS.md': 'A', '.claude/rules/in.md': 'IN' };
   const seen: string[] = [];
   const rec = (f: (p: string) => unknown) => (p: string) => { seen.push(p); return f(p); };
-  const io: RepoIO = { read: rec(realIO.read) as RepoIO['read'], size: rec(realIO.size) as RepoIO['size'], real: rec(realIO.real) as RepoIO['real'], list: rec(realIO.list) as RepoIO['list'], lsFiles: rec(realIO.lsFiles) as RepoIO['lsFiles'] };
+  const sized: string[] = [];
+  const io: RepoIO = { read: rec(realIO.read) as RepoIO['read'], size: rec((p) => { sized.push(p); return realIO.size(p); }) as RepoIO['size'], real: rec(realIO.real) as RepoIO['real'], list: rec(realIO.list) as RepoIO['list'], lsFiles: rec(realIO.lsFiles) as RepoIO['lsFiles'] };
   const root = makeRepo(files, { git: false });
   mkdirSync(join(root, '.claude', 'rules'), { recursive: true });
   symlinkSync(join(outside, 'r'), join(root, '.claude', 'rules', 'ext'), 'dir');
   symlinkSync(join(outside, 'secret.md'), join(root, '.claude', 'rules', 'leak.md'));
-  const before = measureRepo(root, { owners: new Map() }, io);
-  expect(seen.filter((p) => relative(root, p).startsWith('..'))).toEqual([]);
+  const before = measureRepo(root, { owners: new Map(), preset: null }, io);
   expect(before.always.map((e) => e.label)).toEqual(['CLAUDE.md', 'AGENTS.md (imported by CLAUDE.md)', '.claude/rules/in.md']);
   expect(before.unmeasured).toContain('.claude/rules/leak.md: outside the repo');
   process.env.HOME = outside;
-  expect(measureRepo(root, { owners: new Map() }, io)).toEqual(before);
+  expect(measureRepo(root, { owners: new Map(), preset: null }, io)).toEqual(before);
+  expect(seen.filter((p) => relative(root, p).startsWith('..'))).toEqual([]); // both runs, the second with HOME at the fixture
+  expect(sized.filter((p) => p.endsWith('leak.md'))).toEqual([]); // a link out of the repo is not even stat'ed
 });
 
 test('Windows: repo-relative paths join under a win32 root and stay inside it', () => {

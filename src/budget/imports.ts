@@ -112,6 +112,9 @@ export function expandImports(root: string, start: { path: string; text: string 
   let attempts = 0;
   let capped = false;
   seen.add(start.path);
+  // A file reached under two names (a symlink) is one file: `seen` holds names, this holds what they resolve to.
+  const realOf = (rel: string): string | null => (typeof io.real === 'function' ? io.real(resolve(root, rel)) : null);
+  const seenReal = new Set([...seen].map(realOf).filter((r): r is string => r !== null));
   for (let cur = queue.shift(); cur && !capped; cur = queue.shift()) {
     if (cur.hop >= MAX_HOPS) continue;
     for (const raw of importsIn(cur.text)) {
@@ -121,6 +124,9 @@ export function expandImports(root: string, start: { path: string; text: string 
       if (++attempts > MAX_ATTEMPTS) { skipped.push({ path: rel || raw, by: cur.path, reason: 'cap' }); capped = true; break; }
       if (abs === null) { external.add(raw); continue; }
       seen.add(rel);
+      const real = realOf(rel);
+      if (real !== null && seenReal.has(real)) continue;
+      if (real !== null) seenReal.add(real);
       if (skip(rel)) { skipped.push({ path: rel, by: cur.path, reason: 'ignored' }); continue; }
       const got = load(abs, io);
       if (!('text' in got)) { if (got.reason !== 'missing') skipped.push({ path: rel, by: cur.path, reason: got.reason }); continue; }

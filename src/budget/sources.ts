@@ -11,7 +11,9 @@ import { CUT_CHARS, pathsOf, splitFrontmatter, stripComments } from './text.js';
 
 type PlatformPath = typeof nodePath;
 
-export interface SourceEntry extends ContextEntry { tokens: number; path: string; label: string; owner: Owner; load: 'always' | 'on-demand'; chars: number; note?: string; paths?: string[] }
+export interface SourceEntry extends ContextEntry {
+  tokens: number; path: string; label: string; owner: Owner; load: 'always' | 'on-demand'; chars: number; note?: string; paths?: string[];
+}
 export interface RepoMeasure { always: SourceEntry[]; onDemand: SourceEntry[]; unmeasured: string[]; notes: string[] }
 
 const ROOT_MEMORY = ['CLAUDE.md', '.claude/CLAUDE.md', 'CLAUDE.local.md'];
@@ -26,6 +28,7 @@ const MAX_RULE_DEPTH = 8;
 const OVERSIZE_NOTE = 'over 4 MiB: Claude Code skips it';
 const CUT_NOTE = 'over 40,000 characters: Claude Code cuts it there';
 const BAD_FRONT_NOTE = 'frontmatter does not parse; counted whole';
+const NO_PRESET_ID_NOTE = 'preset id not recorded';
 const OUTSIDE = 'outside the repo';
 const OVERSIZE = Symbol('oversize');
 
@@ -34,27 +37,38 @@ export const absIn = (p: Pick<PlatformPath, 'join'>, root: string, rel: string):
 
 interface Ctx {
   root: string; realRoot: string; io: RepoIO; skip: (rel: string) => boolean; owners: Map<string, Owner>;
-  out: RepoMeasure; presetOwner: Owner; seenReal: Set<string>;
+  out: RepoMeasure; preset: { id: string | null; recorded: boolean };
+  /** Real paths already counted as full text (memory files, imports, rules); a skill listing is a separate load. */
+  seenText: Set<string>;
 }
+interface Where { rel: string; label: string; owner: Owner }
 
-function entry(rel: string, label: string, owner: Owner, text: string, note?: string): SourceEntry {
+function entry({ rel, label, owner }: Where, text: string, note?: string): SourceEntry {
   const n = note ?? (text.length > CUT_CHARS ? CUT_NOTE : undefined);
   return { id: label, path: rel, label, owner, load: 'always', chars: text.length, tokens: estimateTokens(text), ...(n ? { note: n } : {}) };
 }
 
 const miss = (c: Ctx, rel: string, why: string): null => { c.out.unmeasured.push(`${rel}: ${why}`); return null; };
-const exists = (c: Ctx, rel: string): boolean => c.io.size(absIn(nodePath, c.root, rel)) !== null;
 
-/** The file's LF text, OVERSIZE (sized, never read), or null when it is missing or listed as not measured. */
-function readIn(c: Ctx, rel: string): string | typeof OVERSIZE | null {
+/** What is at `rel`, checking the real path before any stat, so a link out of the repo is never even sized. */
+function kindOf(c: Ctx, rel: string): 'missing' | 'outside' | 'file' | 'other' {
+  const abs = absIn(nodePath, c.root, rel);
+  const real = c.io.real(abs);
+  if (real === null) return 'missing';
+  if (!inside(c.realRoot, real)) return 'outside';
+  return c.io.size(abs) === null ? 'other' : 'file';
+}
+
+/** The file's LF text, OVERSIZE (sized, never read), or null when it is missing or listed as not measured. `seen` dedupes by real path. */
+function readIn(c: Ctx, rel: string, seen: Set<string> | null): string | typeof OVERSIZE | null {
   const abs = absIn(nodePath, c.root, rel);
   if (!inside(c.root, abs)) return null;
   const real = c.io.real(abs);
   if (real === null) return null; // missing, or a broken link: Claude Code loads nothing either
   if (!inside(c.realRoot, real)) return miss(c, rel, OUTSIDE);
   if (c.skip(rel)) return miss(c, rel, 'ignored');
-  if (c.seenReal.has(real)) return null; // the same file reached twice (a symlink): counted once
-  c.seenReal.add(real);
+  if (seen?.has(real)) return null; // the same file reached twice (a symlink): counted once
+  seen?.add(real);
   const got = loadRaw(abs, c.io);
   if ('text' in got) return got.text;
   if (got.reason === 'oversize') return OVERSIZE;
@@ -78,22 +92,30 @@ function cut(text: string, [start, end]: [string, string]): { block: string | nu
   return { block: text.slice(s, e + end.length), rest: text.slice(0, s) + text.slice(e + end.length) };
 }
 
-/** One memory file's rows: harness's recorded `@AGENTS.md` line and the AGENTS.md blocks apart, the rest as `owner`'s. */
-function memoryRows(c: Ctx, { rel, label, owner }: { rel: string; label: string; owner: Owner }, raw: string): void {
+/** The preset block's owner and note; null leaves it in the repo row (the manifest has no AGENTS.md, so harness did not write it). */
+function presetBlock(c: Ctx): { owner: Owner; note?: string } | null {
+  if (!c.preset.recorded) return null;
+  return c.preset.id ? { owner: `preset:${c.preset.id}` } : { owner: 'harness', note: NO_PRESET_ID_NOTE };
+}
+
+/** One memory file's rows: harness's recorded `@AGENTS.md` line and the marked blocks apart, the rest as `w.owner`'s. */
+function memoryRows(c: Ctx, w: Where, raw: string): void {
+  const { rel } = w;
   let rest = raw;
   const extra: SourceEntry[] = [];
   if (rel === 'CLAUDE.md' && c.owners.has(rel)) {
     const m = AGENTS_LINE.exec(rest); // the manifest records CLAUDE.md only for this line
-    if (m) { rest = rest.slice(0, m.index) + rest.slice(m.index + m[0].length); extra.push(entry(rel, 'CLAUDE.md line @AGENTS.md', 'harness', m[0])); }
+    if (m) { rest = rest.slice(0, m.index) + rest.slice(m.index + m[0].length); extra.push(entry({ rel, label: 'CLAUDE.md line @AGENTS.md', owner: 'harness' }, m[0])); }
   }
-  if (AGENTS_FILES.has(rel)) {
-    for (const [markers, name, who] of [[HARNESS_MARKERS, 'harness', 'harness'], [PRESET_MARKERS, 'preset', c.presetOwner]] as const) {
-      const got = cut(rest, markers);
-      rest = got.rest;
-      if (got.block !== null) extra.push(entry(rel, `${rel} ${name} block`, who, stripComments(got.block)));
-    }
+  const preset = presetBlock(c);
+  const blocks = [{ markers: HARNESS_MARKERS, name: 'harness', owner: 'harness' as Owner, note: undefined as string | undefined }, ...(preset ? [{ markers: PRESET_MARKERS, name: 'preset', ...preset }] : [])];
+  // Every memory file, not only AGENTS.md: CLAUDE.md is often a link to it, and the markers are harness's wherever they are.
+  for (const b of blocks) {
+    const got = cut(rest, b.markers);
+    rest = got.rest;
+    if (got.block !== null) extra.push(entry({ rel, label: `${rel} ${b.name} block`, owner: b.owner }, stripComments(got.block), b.note));
   }
-  c.out.always.push(entry(rel, label, owner, stripComments(rest)), ...extra);
+  c.out.always.push(entry(w, stripComments(rest)), ...extra);
 }
 
 interface Expansion { seen: Set<string>; ownerOf: Map<string, Owner> }
@@ -103,13 +125,14 @@ function expandFrom(c: Ctx, rel: string, raw: string, { seen, ownerOf }: Expansi
   for (const f of got.files) {
     const owner = c.owners.get(f.path) ?? ownerOf.get(f.by) ?? 'repo';
     ownerOf.set(f.path, owner);
-    const real = c.io.real(absIn(nodePath, c.root, f.path));
-    if (real !== null) c.seenReal.add(real); // an imported rule is not counted again as a rule
-    const label = `${f.path} (imported by ${f.by})`;
-    // An imported AGENTS.md is read again raw: its markers are gone from the comment-stripped import text.
-    const again = AGENTS_FILES.has(f.path) ? loadRaw(absIn(nodePath, c.root, f.path), c.io) : null;
-    if (again && 'text' in again) memoryRows(c, { rel: f.path, label, owner }, again.text);
-    else c.out.always.push(entry(f.path, label, owner, f.text));
+    const abs = absIn(nodePath, c.root, f.path);
+    const real = c.io.real(abs);
+    if (real !== null) c.seenText.add(real); // an imported rule is not counted again as a rule
+    const w = { rel: f.path, label: `${f.path} (imported by ${f.by})`, owner };
+    // Read again raw: the markers of a harness block are gone from the comment-stripped import text.
+    const again = loadRaw(abs, c.io);
+    if ('text' in again) memoryRows(c, w, again.text);
+    else c.out.always.push(entry(w, f.text));
   }
   for (const s of got.skipped) c.out.unmeasured.push(`import ${s.path} (in ${s.by}): ${s.reason}`);
   for (const x of got.external) c.out.unmeasured.push(`external import: ${x}`);
@@ -117,16 +140,20 @@ function expandFrom(c: Ctx, rel: string, raw: string, { seen, ownerOf }: Expansi
 
 /** Root memory files, or AGENTS.md read directly when none of them exists; their imports expanded once across all. */
 function measureMemory(c: Ctx): void {
-  const roots = ROOT_MEMORY.filter((rel) => exists(c, rel));
+  const roots = ROOT_MEMORY.filter((rel) => kindOf(c, rel) !== 'missing');
   const starts = roots.length ? roots : [...AGENTS_FILES];
   const seen = new Set(starts);
   const ownerOf = new Map<string, Owner>();
   for (const rel of starts) {
-    const raw = readIn(c, rel);
+    const raw = readIn(c, rel, c.seenText);
     if (raw === null) continue;
     const owner = c.owners.get(rel) ?? 'repo';
     ownerOf.set(rel, owner);
-    if (raw === OVERSIZE) { c.out.always.push(entry(rel, rel, owner, '', OVERSIZE_NOTE)); continue; }
+    if (raw === OVERSIZE) { // the spec's 4 MiB skip is for the root memory files; anything else is not measured
+      if (ROOT_MEMORY.includes(rel)) c.out.always.push(entry({ rel, label: rel, owner }, '', OVERSIZE_NOTE));
+      else miss(c, rel, 'oversize');
+      continue;
+    }
     memoryRows(c, { rel, label: rel, owner }, raw);
     expandFrom(c, rel, raw, { seen, ownerOf });
   }
@@ -136,21 +163,22 @@ function ruleFiles(c: Ctx, dir: string, depth: number): string[] {
   if (depth > MAX_RULE_DEPTH) return [];
   return listIn(c, dir).flatMap((name) => {
     const rel = `${dir}/${name}`;
-    if (exists(c, rel)) return name.endsWith('.md') ? [rel] : []; // a file (size is null for a folder)
-    return ruleFiles(c, rel, depth + 1);
+    const kind = kindOf(c, rel);
+    if (kind === 'file' || (kind === 'outside' && name.endsWith('.md'))) return name.endsWith('.md') ? [rel] : []; // readIn reports an outside one
+    return kind === 'missing' ? [] : ruleFiles(c, rel, depth + 1);
   });
 }
 
 /** `.claude/rules/**\/*.md` with no `paths` key: the body without frontmatter; bad frontmatter counts the file whole. */
 function measureRules(c: Ctx): void {
   for (const rel of ruleFiles(c, '.claude/rules', 0)) {
-    const raw = readIn(c, rel);
+    const raw = readIn(c, rel, c.seenText);
     if (raw === null) continue;
-    const owner = c.owners.get(rel) ?? 'repo';
-    if (raw === OVERSIZE) { c.out.always.push(entry(rel, rel, owner, '', OVERSIZE_NOTE)); continue; }
+    if (raw === OVERSIZE) { miss(c, rel, 'oversize'); continue; }
+    const w = { rel, label: rel, owner: c.owners.get(rel) ?? 'repo' };
     const f = splitFrontmatter(raw);
-    if (f.bad) c.out.always.push(entry(rel, rel, owner, raw, BAD_FRONT_NOTE));
-    else if (pathsOf(f.data) === null) c.out.always.push(entry(rel, rel, owner, f.body));
+    if (f.bad) c.out.always.push(entry(w, raw, BAD_FRONT_NOTE));
+    else if (pathsOf(f.data) === null) c.out.always.push(entry(w, f.body));
   }
 }
 
@@ -158,7 +186,7 @@ function measureRules(c: Ctx): void {
 function skillOverrides(c: Ctx): Map<string, string> {
   const out = new Map<string, string>();
   for (const rel of SETTINGS) {
-    const raw = readIn(c, rel);
+    const raw = readIn(c, rel, null);
     if (typeof raw !== 'string') continue;
     try {
       const so = (JSON.parse(raw) as { skillOverrides?: unknown })?.skillOverrides;
@@ -179,34 +207,33 @@ function listed(c: Ctx): Listed[] {
   return [...skills, ...md('.claude/commands', 'skill', 'command'), ...md('.claude/agents', 'agent', 'agent')];
 }
 
-/** Skills and commands as their listing text (skillOverrides applied), agents as their name and description. */
-function measureSkills(c: Ctx, disabled: Set<string>): void {
+/** Skills and commands as their listing text, agents as their name and description. skillOverrides applies to skills only: unverified for commands, which stay counted. */
+function measureSkills(c: Ctx): void {
   const over = skillOverrides(c);
+  const seen = new Set<string>(); // the listing is its own load: a skill CLAUDE.md also imports keeps this row
   for (const s of listed(c)) {
-    const mode = s.kind === 'skill' ? over.get(s.name) : undefined;
+    const mode = s.rel.startsWith('.claude/skills/') ? over.get(s.name) : undefined;
     if (mode !== undefined && DROPPED.has(mode)) continue;
-    const raw = readIn(c, s.rel);
+    const raw = readIn(c, s.rel, seen);
     if (raw === null) continue;
-    const owner = c.owners.get(s.rel) ?? 'repo';
-    if (raw === OVERSIZE) { c.out.always.push(entry(s.rel, s.label, owner, '', OVERSIZE_NOTE)); continue; }
-    if (disabled.has(s.name)) { c.out.always.push(entry(s.rel, s.label, owner, '')); continue; }
-    if (mode === 'name-only') { c.out.always.push(entry(s.rel, s.label, owner, `name: ${s.name}`)); continue; }
+    if (raw === OVERSIZE) { miss(c, s.rel, 'oversize'); continue; }
+    const w = { rel: s.rel, label: s.label, owner: c.owners.get(s.rel) ?? 'repo' };
+    if (mode === 'name-only') { c.out.always.push(entry(w, `name: ${s.name}`)); continue; }
     try {
-      c.out.always.push(entry(s.rel, s.label, owner, alwaysLoadedText(s.kind, raw)));
+      c.out.always.push(entry(w, alwaysLoadedText(s.kind, raw)));
     } catch {
       c.out.unmeasured.push(`${s.rel}: frontmatter does not parse`);
     }
   }
 }
 
-/** `preset` is the config's preset id; without it the owner comes from a recorded preset file. */
-export function measureRepo(root: string, o: { owners: Map<string, Owner>; skillsDisabled?: Set<string>; preset?: string }, io: RepoIO = realIO): RepoMeasure {
+/** `preset` is the config's preset id, or null when none is set (required, so no caller forgets it). */
+export function measureRepo(root: string, o: { owners: Map<string, Owner>; preset: string | null }, io: RepoIO = realIO): RepoMeasure {
   const out: RepoMeasure = { always: [], onDemand: [], unmeasured: [], notes: [] };
-  const recorded = [...o.owners.values()].find((v): v is `preset:${string}` => v.startsWith('preset:'));
-  const presetOwner: Owner = o.preset ? `preset:${o.preset}` : recorded ?? 'preset:unknown';
-  const c: Ctx = { root, realRoot: io.real(root) ?? root, io, skip: harnessIgnore(root), owners: o.owners, out, presetOwner, seenReal: new Set() };
+  const preset = { id: o.preset, recorded: o.owners.has('AGENTS.md') };
+  const c: Ctx = { root, realRoot: io.real(root) ?? root, io, skip: harnessIgnore(root), owners: o.owners, out, preset, seenText: new Set() };
   measureMemory(c);
   measureRules(c);
-  measureSkills(c, o.skillsDisabled ?? new Set());
+  measureSkills(c);
   return out;
 }

@@ -1,6 +1,6 @@
 // `@path` import expansion for CLAUDE.md-style files. Repo text is untrusted: depth, count and size are capped, and
 // nothing outside the root (lexically or through a symlink) is ever read.
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import * as nodePath from 'node:path';
 
@@ -25,6 +25,8 @@ export interface RepoIO {
   lsFiles(root: string): string[] | null;
   /** Real path with symlinks resolved, or null. Required: an IO without it has every import treated as external. */
   real(abs: string): string | null;
+  /** Entry names of a directory, or null when it is not one. */
+  list(abs: string): string[] | null;
 }
 
 export const realIO: RepoIO = {
@@ -40,6 +42,9 @@ export const realIO: RepoIO = {
   },
   real(abs) {
     try { return realpathSync(abs); } catch { return null; }
+  },
+  list(abs) {
+    try { return readdirSync(abs); } catch { return null; }
   },
 };
 
@@ -71,13 +76,19 @@ export type SkipReason = 'oversize' | 'binary' | 'unreadable' | 'cap' | 'ignored
 export interface Skipped { path: string; by: string; reason: SkipReason }
 type Loaded = { text: string } | { reason: SkipReason | 'missing' };
 
-function load(abs: string, io: RepoIO): Loaded {
+/** Sized before it is read; LF endings, comments kept. */
+export function loadRaw(abs: string, io: RepoIO): Loaded {
   const size = io.size(abs);
   if (size === null) return { reason: 'missing' }; // Claude Code loads nothing for it either
   if (size > MAX_FILE_BYTES) return { reason: 'oversize' };
   const text = io.read(abs);
   if (text === null) return { reason: 'unreadable' };
-  return text.includes('\0') ? { reason: 'binary' } : { text: stripComments(lf(text)) };
+  return text.includes('\0') ? { reason: 'binary' } : { text: lf(text) };
+}
+
+function load(abs: string, io: RepoIO): Loaded {
+  const got = loadRaw(abs, io);
+  return 'text' in got ? { text: stripComments(got.text) } : got;
 }
 
 /** The absolute path of an import inside the repo, or null when it is external or can't be verified (fail closed). */
@@ -101,6 +112,9 @@ export function expandImports(root: string, start: { path: string; text: string 
   let attempts = 0;
   let capped = false;
   seen.add(start.path);
+  // A file reached under two names (a symlink) is one file: `seen` holds names, this holds what they resolve to.
+  const realOf = (rel: string): string | null => (typeof io.real === 'function' ? io.real(resolve(root, rel)) : null);
+  const seenReal = new Set([...seen].map(realOf).filter((r): r is string => r !== null));
   for (let cur = queue.shift(); cur && !capped; cur = queue.shift()) {
     if (cur.hop >= MAX_HOPS) continue;
     for (const raw of importsIn(cur.text)) {
@@ -110,6 +124,9 @@ export function expandImports(root: string, start: { path: string; text: string 
       if (++attempts > MAX_ATTEMPTS) { skipped.push({ path: rel || raw, by: cur.path, reason: 'cap' }); capped = true; break; }
       if (abs === null) { external.add(raw); continue; }
       seen.add(rel);
+      const real = realOf(rel);
+      if (real !== null && seenReal.has(real)) continue;
+      if (real !== null) seenReal.add(real);
       if (skip(rel)) { skipped.push({ path: rel, by: cur.path, reason: 'ignored' }); continue; }
       const got = load(abs, io);
       if (!('text' in got)) { if (got.reason !== 'missing') skipped.push({ path: rel, by: cur.path, reason: got.reason }); continue; }

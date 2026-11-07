@@ -75,11 +75,30 @@ const SENSITIVE_WRITE = /(?:^|\/)\.git(?:\/|$)|(?:^|\/)\.?gitconfig$|(?:^|\/)git
  *  redirect glued to a word (`…%B>>.git/config`, `"msg">x`), after a group (`} > f`), or with a named fd (`{fd}>f`) is
  *  all seen (re-review 14, P1/P2). A bare fd dup (`2>&1`, `>&2`, `>&10`) names a number, not a file, and is left out;
  *  a `<`, `<<` or `<<<` is input, not a write. Targets keep `/dev/null` so the caller can allow just that. */
+/** The command with word-start `#` comments removed (quote-aware, so a `#` inside quotes stays). `pieces()`/`words()`
+ *  do not know comments, so a quote inside one would otherwise open a span for them; strip first. */
+function stripComments(cmd: string): string {
+  if (!cmd.includes('#')) return cmd;
+  let out = '';
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (ch === '\\') { out += ch + (cmd[i + 1] ?? ''); i++; continue; }
+    if (ch === '$' && cmd[i + 1] === '$') { out += '$$'; i++; continue; }
+    if (ch === "'") { const e = cmd.indexOf("'", i + 1), end = e < 0 ? cmd.length : e; out += cmd.slice(i, end + 1); i = end; continue; }
+    if (ch === '"') { let j = i + 1; for (; j < cmd.length && cmd[j] !== '"'; j++) if (cmd[j] === '\\') j++; out += cmd.slice(i, j + 1); i = j; continue; }
+    if (ch === '$' && cmd[i + 1] === "'") { let j = i + 2; for (; j < cmd.length && cmd[j] !== "'"; j++) if (cmd[j] === '\\') j++; out += cmd.slice(i, j + 1); i = j; continue; }
+    if (ch === '#' && (i === 0 || /[\s;&|()<>`\n]/.test(cmd[i - 1]))) { const nl = cmd.indexOf('\n', i); if (nl < 0) break; i = nl - 1; continue; }
+    out += ch;
+  }
+  return out;
+}
 function writeTargets(cmd: string): string[] {
   const out: string[] = [];
   for (let i = 0; i < cmd.length; i++) {
     const ch = cmd[i];
     if (ch === '\\') { i++; continue; }
+    if (ch === '#' && (i === 0 || /[\s;&|()<>`]/.test(cmd[i - 1]))) { const nl = cmd.indexOf('\n', i); if (nl < 0) break; i = nl; continue; } // a word-start `#` is a comment
+    if (ch === '$' && cmd[i + 1] === '$') { i++; continue; } // `$$` is the PID, not the start of a `$'…'` quote
     if (ch === "'") { const e = cmd.indexOf("'", i + 1); i = e < 0 ? cmd.length : e; continue; }
     if (ch === '"') { for (i++; i < cmd.length && cmd[i] !== '"'; i++) if (cmd[i] === '\\') i++; continue; }
     if (ch === '$' && cmd[i + 1] === "'") { for (i += 2; i < cmd.length && cmd[i] !== "'"; i++) if (cmd[i] === '\\') i++; continue; }
@@ -195,6 +214,7 @@ function safeCommand(ws: string[], k: number, pipedIn: boolean, pipedOut: boolea
  *  single-quoted `$(…)` runs is inside `test`/`[`/`[[`/`((`/`printf -v`, none of which are safe commands anyway. A
  *  `${…}` or `$[…]` does not quote its single quotes (`${x:'$(…)'}`, `$[ 'a[$(…)]' ]`), so either makes the line code. */
 export function onlySafeCommands(cmd: string): boolean {
+  cmd = stripComments(cmd);
   if (/\$\(|`|[<>]\(|\$\{|\$\[/.test(cmd.replace(/'[^']*'/g, "''"))) return false;
   if (writeTargets(cmd).some((t) => t !== '/dev/null')) return false; // any write on the line (any group depth) is code
   const ps = pieces(cmd);
@@ -228,6 +248,7 @@ export function writesGitOutputToSensitivePath(cmd: string): boolean {
  *  line runs a git-output command (`log`, `show`, `rev-parse`, `cat-file`). Over-approximate on purpose — a git-output
  *  line that writes any file is the always-block shape, grouped or piped. */
 function gitOutputTargets(cmd: string): string[] {
+  cmd = stripComments(cmd);
   const ps = pieces(cmd);
   const hasGitOutput = ps.some((p) => {
     const ws = words(p.text).map(unquote), k = commandWord(ws);

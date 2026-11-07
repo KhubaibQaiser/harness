@@ -947,6 +947,19 @@ test('a message is data only on a line with no file writes and no cd (owner ruli
   all([`git add -A && ${m}`, `git -C sub ${m.slice(4)}`, `${m} && git push`, `${m} >/dev/null`, `${m} && git push -u origin HEAD`,
     'gh pr create --title t --body "a; rm -rf ~"', "git commit -F - <<'EOF'\na; rm -rf ~\nEOF", "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit push"], 'allow');
 });
+test('$$ before a quote and a # comment do not hide a write from the scanner (round 18)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  const P = 'git commit --allow-empty -m "[core]\n\tfsmonitor = rm -rf ~"';
+  const L = 'git log -1 --format=%B';
+  // P1: $$ is the PID, so the quote after it is plain and the redirect is real.
+  all([`${m} $$'\\' >> .git/config '\\'`, `${P} ; ${L} $$'\\' >>.git/config '\\'`, `${P} && ${L} $$'\\' >>.git/config '\\'`,
+    `${m} $$$$'\\' > x '\\'`, `${L} $$$$'\\' >>.git/config '\\'`], 'deny');
+  all([`${m} $$$'\\' > x '\\'`], 'allow'); // $$ + $'…' genuinely quotes the redirect
+  // P2: a quote inside a # comment must not open a span across the real write on the next line.
+  all([`${P} # it's\n${L} >>.git/config # '`, `${m} # don't\n${L} >> .git/config # '`, `${m} # it's\necho hi > x # '`,
+    `${m} # \"\necho hi > x # \"`, `git status # don't\n${L} >> .git/config # '`], 'deny');
+  all([`${m} # note`, 'git commit -m "msg # hash"'], 'allow'); // a real trailing comment with no write stays data
+});
 test('a glued, named-fd or grouped-piped write is seen, and ref-writing git subcommands make a message code (round 17)', () => {
   const m = 'git commit -m "a; rm -rf ~"';
   // P1: a redirect glued to a word. P2: a named-fd redirect.

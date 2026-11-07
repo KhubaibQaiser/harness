@@ -1,20 +1,17 @@
 // What loads only when used (spec §3.2) and what is listed but not measured (§3.1). Reads go through sources.ts's
 // safety checks (real path inside the repo, size before read, the ignore skip); nothing here opens a file itself.
+import * as nodePath from 'node:path';
 import { harnessIgnore } from '../install/harnessignore.js';
 import type { RepoIO } from './imports.js';
 import { estimateTokens } from './measure.js';
 import type { Owner } from './owners.js';
-import { entryOf, listed, miss, readIn, ruleFiles, OVERSIZE, type Ctx, type SourceEntry } from './sources.js';
-import { pathsOf, splitFrontmatter, stripComments } from './text.js';
+import { absIn, entryOf, jsonObject, listed, miss, modeOf, newCtx, OVERSIZE, readIn, ruleFiles, skillOverrides, type Ctx, type SourceEntry } from './repo-read.js';
+import { CUT_CHARS, pathsOf, splitFrontmatter, stripComments } from './text.js';
 
 const NO_GIT_NOTE = 'not a git repository or git not found: nested CLAUDE.md files not listed';
 const NESTED = /(?:^|\/)(?:CLAUDE|AGENTS)\.md$/;
 const ROOT_MEMORY_FILES = new Set(['CLAUDE.md', 'AGENTS.md', '.claude/CLAUDE.md', '.claude/AGENTS.md']);
 const DECISION = /(?:^|\/)harness-decision-[^/]*$/;
-
-export function ctxFor(root: string, io: RepoIO, owners: Map<string, Owner>, skip: (rel: string) => boolean): Ctx {
-  return { root, realRoot: io.real(root) ?? root, io, skip, owners, out: { always: [], onDemand: [], unmeasured: [], notes: [] }, preset: { id: null, recorded: false }, seenText: new Set() };
-}
 
 interface Part { text: string; owner: Owner }
 
@@ -25,13 +22,17 @@ function group(label: string, parts: Part[], path: string): SourceEntry {
   return {
     id: label, path, label, load: 'on-demand', owner: owners.size === 1 ? parts[0].owner : 'repo',
     chars: text.reduce((n, t) => n + t.length, 0), tokens: text.reduce((n, t) => n + estimateTokens(t), 0),
+    ...(text.some((t) => t.length > CUT_CHARS) ? { note: 'a file is over 40,000 characters: Claude Code cuts it there' } : {}),
   };
 }
+
+const alreadyAlways = (c: Ctx, rel: string): boolean => { const r = c.io.real(absIn(nodePath, c.root, rel)); return r !== null && c.seenText.has(r); };
 
 function ruleRows(c: Ctx): SourceEntry[] {
   const rows: SourceEntry[] = [];
   const decisions: Part[] = [];
   for (const rel of ruleFiles(c, '.claude/rules', 0)) {
+    if (alreadyAlways(c, rel)) continue; // imported by a memory file: its always row stands
     const raw = readIn(c, rel, null);
     if (raw === null) continue;
     if (raw === OVERSIZE) { miss(c, rel, 'oversize'); continue; }
@@ -39,10 +40,14 @@ function ruleRows(c: Ctx): SourceEntry[] {
     const globs = f.bad ? null : pathsOf(f.data);
     if (globs === null) continue; // always loaded, measured by measureRules
     const owner = c.owners.get(rel) ?? 'repo';
-    if (DECISION.test(rel)) { decisions.push({ text: f.body, owner: 'harness' }); continue; }
+    if (DECISION.test(rel)) { decisions.push({ text: f.body, owner }); continue; }
     rows.push({ ...entryOf({ rel, label: `${rel} (paths: ${globs.join(', ')})`, owner }, f.body), load: 'on-demand', paths: globs });
   }
-  if (decisions.length) rows.push(group(`team decisions: ${decisions.length} rules`, decisions, '.claude/rules'));
+  // Harness owns the group only when it owns every member; a repo-owned decision file is its own group.
+  for (const owner of ['harness', 'other'] as const) {
+    const part = decisions.filter((d) => (d.owner === 'harness') === (owner === 'harness'));
+    if (part.length) rows.push(group(`team decisions: ${part.length} rules`, part, '.claude/rules'));
+  }
   return rows;
 }
 
@@ -62,7 +67,9 @@ function nestedRow(c: Ctx, notes: string[]): SourceEntry[] {
 
 function bodyRow(c: Ctx): SourceEntry[] {
   const parts: Part[] = [];
+  const over = skillOverrides(c);
   for (const s of listed(c)) {
+    if (modeOf(over, s) === 'off') continue; // never loaded; user-invocable-only still loads its body when the user runs it
     const raw = readIn(c, s.rel, null);
     if (raw === null) continue;
     if (raw === OVERSIZE) { miss(c, s.rel, 'oversize'); continue; }
@@ -79,20 +86,7 @@ export function onDemandFor(shared: Ctx): { entries: SourceEntry[]; notes: strin
 }
 
 export function onDemand(root: string, io: RepoIO, owners: Map<string, Owner>, skip: (rel: string) => boolean): { entries: SourceEntry[]; notes: string[]; unmeasured: string[] } {
-  return onDemandFor(ctxFor(root, io, owners, skip));
-}
-
-/** The parsed JSON object at `rel`, or null when absent, not an object or not valid (a note says so; never throws). */
-function jsonObject(c: Ctx, rel: string): Record<string, unknown> | null {
-  const raw = readIn(c, rel, null);
-  if (raw === OVERSIZE) { miss(c, rel, 'oversize'); return null; }
-  if (raw === null) return null;
-  try {
-    const v: unknown = JSON.parse(raw);
-    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
-  } catch { /* falls through to the note */ }
-  c.out.notes.push(`${rel}: not valid JSON, not read`);
-  return null;
+  return onDemandFor(newCtx(root, io, owners, skip));
 }
 
 const objectKeys = (v: unknown): string[] => (v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v) : []);
@@ -106,5 +100,5 @@ export function unmeasuredFor(c: Ctx): string[] {
 }
 
 export function unmeasuredSources(root: string, io: RepoIO): string[] {
-  return unmeasuredFor(ctxFor(root, io, new Map(), harnessIgnore(root)));
+  return unmeasuredFor(newCtx(root, io, new Map(), harnessIgnore(root)));
 }

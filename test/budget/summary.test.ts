@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import { contextSet, repoOnly, STATE_CARD_MAX_TOKENS, type ContextSet } from '../../src/budget/summary.js';
 import { defaults, type HarnessConfig } from '../../src/core/config.js';
@@ -32,24 +33,40 @@ test('no double count: each installed row once, total is the sum of the rows', (
 
 test('the plugin row is in always, owned by harness', () => {
   const p = contextSet(installed(), cfg(), dirs).always.find((e) => e.id === 'harness-plugin');
-  expect(p).toMatchObject({ owner: 'harness', load: 'always' });
+  expect(p).toMatchObject({ owner: 'harness', load: 'always', chars: 0, note: 'size from the catalog record', path: 'plugin:harness' });
   expect(p!.label).toMatch(/^skills harness:/);
   expect(p!.tokens).toBeGreaterThan(0);
 });
 
+const pick = (id: string, file: string) => readFileSync(join(__dirname, '../../catalog/items', file), 'utf8').replace(/^id: .*$/m, `id: ${id}`);
+const catDir = (items: Record<string, string>) => makeRepo({ 'catalog.yaml': 'version: 1\n', ...Object.fromEntries(Object.entries(items).map(([id, y]) => [`items/${id}.yaml`, y])) }, { git: false });
+
 test('a plugin pick with no number is unmeasured, and not in always', () => {
-  const s = contextSet(installed(), cfg('auth0'), dirs);
-  if (s.always.some((e) => e.owner === 'catalog:auth0')) return; // measured once the recorded cost lands (#152)
-  expect(s.unmeasured).toContain('plugin: auth0');
+  const s = contextSet(installed(), cfg('p1'), dirs, undefined, catDir({ p1: pick('p1', 'auth0.yaml') }));
+  expect(s.unmeasured).toContain('plugin: p1');
+  expect(s.always.some((e) => e.owner === 'catalog:p1')).toBe(false);
 });
 
-test('a bad catalog gives the note, keeps the plugin row and repo files, and does not throw', () => {
-  const bad = makeRepo({ 'items/x.yaml': ': : not yaml [' }, { git: false });
-  const s = contextSet(installed(), cfg('auth0'), dirs, undefined, bad);
-  expect(s.notes).toContain('the catalog has errors; catalog picks not measured');
+test('a pick that left a file in the repo is counted once, from the repo rows', () => {
+  const root = makeRepo({
+    '.claude/skills/ext/SKILL.md': '---\nname: ext\ndescription: An outside skill.\n---\nB\n',
+    '.harness/manifest.json': manifest([{ rel: '.claude/skills/ext/SKILL.md', kind: 'create', hash: 'h', item: 'ext' }]),
+  }, { git: false });
+  const s = contextSet(root, cfg('ext'), dirs, undefined, catDir({ ext: pick('ext', 'react-best-practices.yaml') }));
+  expect(s.always.filter((e) => e.owner === 'catalog:ext')).toHaveLength(1);
+  expect(s.always.find((e) => e.owner === 'catalog:ext')!.path).toBe('.claude/skills/ext/SKILL.md');
+  expect(s.unmeasured).not.toContain('plugin: ext');
+});
+
+test('a bad catalog: the note, the plugin row, repo files, and manifest files owned by harness', () => {
+  const s = contextSet(installed(), cfg('agents-md', 'review-rubric', 'auth0'), dirs, undefined, catDir({ x: ': : not yaml [' }));
+  expect(s.notes).toContain('the catalog has errors; catalog picks not measured, and harness\'s share includes them');
   expect(s.always.some((e) => e.id === 'harness-plugin')).toBe(true);
-  expect(s.always.some((e) => e.path === 'AGENTS.md')).toBe(true);
-  expect(s.always.some((e) => e.id === 'auth0')).toBe(false); // the pick is not measured
+  expect(s.always.find((e) => e.path === SK)!.owner).toBe('harness');
+  expect(s.always.some((e) => e.owner.startsWith('catalog:'))).toBe(false);
+  expect(s.catalog).toBe(0);
+  expect(s.harness).toBeGreaterThan(s.always.find((e) => e.id === 'harness-plugin')!.tokens);
+  expect(s.total).toBe(sum(s));
 });
 
 test('no manifest: every file is repo', () => {

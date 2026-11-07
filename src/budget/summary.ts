@@ -14,7 +14,8 @@ import { ownersFrom, type Owner } from './owners.js';
 import { measureRepo, type SourceEntry } from './sources.js';
 
 export const STATE_CARD_MAX_TOKENS = 300;
-const BAD_CATALOG = 'the catalog has errors; catalog picks not measured';
+const BAD_CATALOG = "the catalog has errors; catalog picks not measured, and harness's share includes them";
+const NO_TEXT_NOTE = 'size from the catalog record';
 const PICK_KINDS = new Set(['plugin', 'external-skill', 'mcp']);
 
 export interface ContextSet {
@@ -39,7 +40,10 @@ function pluginLabel(plugin: string): string {
 export function contextSet(root: string, config: HarnessConfig, dirs: { templates: string; plugin: string }, io: RepoIO = realIO, catalogDir?: string): ContextSet {
   const loaded = loadCatalog(catalogDir);
   const catalog: Catalog | null = loaded.errors.length ? null : loaded.catalog;
-  const repo = measureRepo(root, { owners: ownersFrom(readManifest(root), catalog), preset: config.preset?.id ?? null }, io);
+  // Without the catalog own items can't be told from picks; harness wrote every manifest file, so it owns them.
+  const owners = ownersFrom(readManifest(root), catalog);
+  if (!catalog) for (const [k, v] of owners) if (v.startsWith('catalog:')) owners.set(k, 'harness');
+  const repo = measureRepo(root, { owners, preset: config.preset?.id ?? null }, io);
   const always = [...repo.always];
   const unmeasured = [...repo.unmeasured];
   const notes = [...repo.notes];
@@ -56,7 +60,8 @@ export function contextSet(root: string, config: HarnessConfig, dirs: { template
     if (!isPlugin && counted.has(owner)) continue; // a pick that left files in the repo is already in the repo rows
     if (e.tokens === null) { unmeasured.push(`plugin: ${e.id}`); continue; }
     const label = isPlugin ? pluginLabel(dirs.plugin) : e.id;
-    always.push({ id: e.id, path: e.id, label, owner, load: 'always', tokens: e.tokens, chars: e.tokens * 4 });
+    // No file text behind these rows: chars is 0 and the note says the size is a recorded estimate; path is not a file.
+    always.push({ id: e.id, path: isPlugin ? 'plugin:harness' : owner, label, owner, load: 'always', tokens: e.tokens, chars: 0, note: NO_TEXT_NOTE });
   }
 
   const sumOf = (f: (o: Owner) => boolean) => always.reduce((n, e) => n + (f(e.owner) ? e.tokens : 0), 0);

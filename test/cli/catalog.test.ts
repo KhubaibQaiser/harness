@@ -100,3 +100,45 @@ test('check also checks shipped presets, prefixed presets/<id>: ', () => {
   expect(r.code).toBe(1);
   expect(r.out).toContain('presets/tiny: ');
 });
+
+// --context
+import { readFileSync } from 'node:fs';
+import { tarGz } from '../fixtures/vet/tar.js';
+import type { ExecBytes } from '../../src/core/exec.js';
+import { measureItemContext } from '../../src/catalog/context-check.js';
+const tarEx: ExecBytes = () => ({ status: 0, stdout: tarGz([{ name: 'skills/s/SKILL.md', body: '---\nname: s\ndescription: Does a useful thing for you.\n---\nBody.\n' }]) });
+const pin: Exec = () => ({ status: 0, stdout: SHA });
+const goCtx = (args: string[], d: string, eb: ExecBytes = tarEx) => {
+  const lines: string[] = [];
+  const code = catalog(args, { root: '/', env: {}, out: (s) => lines.push(s) }, { dir: d, exec: pin, execBytes: eb });
+  return { code, out: lines.join('\n') };
+};
+const measured = (measureItemContext({ kind: 'plugin', source: { type: 'github', repo: 'o/r', plugin: 'a', sha: SHA } } as never, tarEx) as { tokens: number }).tokens;
+const withTokens = (n: number | null) => y('a').replace('cost: { context: low, setup: none }', `cost: { context: low, setup: none, context_tokens: ${n} }`);
+
+test('catalog check --context: equal passes, unequal is a mismatch, missing and null are listed', () => {
+  expect(goCtx(['check', '--resolve', '--context'], dir({ a: withTokens(measured) }))).toEqual({ code: 0, out: '' });
+  const bad = goCtx(['check', '--resolve', '--context'], dir({ a: withTokens(measured + 1) }));
+  expect(bad).toEqual({ code: 1, out: `a: cost.context_tokens is ${measured + 1}, measured ${measured} at bbbbbbb` });
+  for (const t of [y('a'), withTokens(null)]) expect(goCtx(['check', '--resolve', '--context'], dir({ a: t }))).toEqual({ code: 0, out: 'Not measured:\n  a' });
+});
+
+test('catalog check --context skips mcp and own items, and a fetch error is "could not verify"', () => {
+  const mcp = y('m').replace(/source:.*/, 'source: { type: remote, url: "https://x.dev/m", unpinned: hosted }').replace('kind: plugin', 'kind: mcp') + 'unpinned_runtime: hosted\nmcp: { name: m, config: { command: x } }\n';
+  expect(goCtx(['check', '--resolve', '--context'], dir({ m: mcp })).out).toBe('Unpinned:\n  m: hosted');
+  const r = goCtx(['check', '--resolve', '--context'], dir({ a: withTokens(5) }), () => ({ status: 1, stdout: Buffer.alloc(0), stderr: 'HTTP 500' }));
+  expect(r.code).toBe(1);
+  expect(r.out).toMatch(/^a: could not verify cost\.context_tokens: /);
+  expect(r.out).not.toMatch(/measured/);
+});
+
+test('--write-context rewrites only the cost line; usage errors', () => {
+  const d = dir({ a: y('a') });
+  const file = join(d, 'items', 'a.yaml');
+  const before = readFileSync(file, 'utf8');
+  expect(goCtx(['check', '--resolve', '--context', '--write-context'], d).code).toBe(0);
+  expect(readFileSync(file, 'utf8')).toBe(before.replace('setup: none }', `setup: none, context_tokens: ${measured} }`));
+  expect(goCtx(['check', '--resolve', '--context'], d)).toEqual({ code: 0, out: '' });
+  expect(goCtx(['check', '--resolve', '--write-context'], d)).toEqual({ code: 2, out: 'Usage: --write-context needs --context' });
+  expect(goCtx(['check', '--context'], d).code).toBe(2);
+});

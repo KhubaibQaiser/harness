@@ -9,6 +9,7 @@ import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
 import { PRESET_ITEM } from '../install/plan-preset.js';
 import { loadConfig } from '../core/config.js';
+import { GATES } from '../core/gates.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
 import { readHookEnv } from '../core/hook-env.js';
 import { LOCK_RECOVERY, LOCK_REL, readManifest, ManifestError } from '../install/apply.js';
@@ -21,10 +22,6 @@ import { stats, tddStatus, type CliEnv } from './index.js';
 declare const __HARNESS_VERSION__: string;
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
 const OFF_CONFIG = 'turned off in `.harness/config.yaml`';
-
-const GATES: [string, keyof ReturnType<typeof loadConfig>['config']['checks']][] = [
-  ['guard', 'guard'], ['protect', 'protect'], ['dep-verify', 'depVerify'], ['multi-file', 'multiFile'], ['tdd', 'tdd'], ['stop', 'stop'], ['pr-size', 'prSize'],
-];
 
 export type StatusDeps = { platform?: NodeJS.Platform; pluginList?: typeof pluginList };
 

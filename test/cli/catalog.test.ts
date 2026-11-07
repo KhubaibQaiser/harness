@@ -154,5 +154,5 @@ test('--write-context prints an overwrite, and reports an unrewritable or missin
   renameSync(join(renamed, 'items', 'a.yaml'), join(renamed, 'items', 'b.yaml'));
   const r = goCtx(['check', '--resolve', '--context', '--write-context'], renamed);
   expect(r.code).toBe(1);
-  expect(r.out).toContain('a: could not rewrite cost line');
+  expect(r.out).toContain('a: items/a.yaml not found, could not rewrite cost line');
 });

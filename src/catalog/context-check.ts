@@ -51,6 +51,6 @@ export function rewriteCost(text: string, n: number): string | undefined {
     const out = setContextTokens(text, n);
     const want = parse(text) as { cost: Record<string, unknown> };
     want.cost.context_tokens = n;
-    return out !== text && isDeepStrictEqual(parse(out), want) ? out : undefined;
+    return isDeepStrictEqual(parse(out), want) ? out : undefined; // an unchanged rewrite fails this too
   } catch { return undefined; }
 }

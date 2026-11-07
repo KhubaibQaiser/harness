@@ -51,6 +51,7 @@ export function catalog(args: string[], { out }: CliEnv, deps: { dir?: string; e
       if (write) {
         if (rec === m.tokens) continue;
         const f = join(dirPath, 'items', `${it.id}.yaml`);
+        if (!existsSync(f)) { problems.push(`${it.id}: items/${it.id}.yaml not found, could not rewrite cost line`); continue; }
         let next: string | undefined;
         try { next = rewriteCost(readFileSync(f, 'utf8'), m.tokens); } catch { /* reported below */ }
         if (next === undefined) { problems.push(`${it.id}: could not rewrite cost line`); continue; }

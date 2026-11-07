@@ -59,6 +59,13 @@ test('CLAUDE.local.md alone stops the direct AGENTS.md read', () => {
   expect(labels(r)).toEqual(['CLAUDE.local.md']);
 });
 
+test('a directory named CLAUDE.md does not stop the direct AGENTS.md read', () => {
+  const root = makeRepo({ 'AGENTS.md': 'x'.repeat(8) }, { git: false });
+  mkdirSync(join(root, 'CLAUDE.md'));
+  const r = measureRepo(root, { owners: new Map(), preset: null });
+  expect(r.always.map((e) => e.label)).toEqual(['AGENTS.md']);
+});
+
 const AGENTS = 'repo text\n\n<!-- harness:start -->\n\nBLOCK\n\n<!-- harness:end -->\n';
 const PRESET = '<!-- harness:preset:start -->\n\nPRE\n\n<!-- harness:preset:end -->\n';
 

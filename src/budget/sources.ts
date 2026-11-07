@@ -140,7 +140,7 @@ function expandFrom(c: Ctx, rel: string, raw: string, { seen, ownerOf }: Expansi
 
 /** Root memory files, or AGENTS.md read directly when none of them exists; their imports expanded once across all. */
 function measureMemory(c: Ctx): void {
-  const roots = ROOT_MEMORY.filter((rel) => kindOf(c, rel) !== 'missing');
+  const roots = ROOT_MEMORY.filter((rel) => { const k = kindOf(c, rel); return k === 'file' || k === 'outside'; }); // a directory of that name is no memory file
   const starts = roots.length ? roots : [...AGENTS_FILES];
   const seen = new Set(starts);
   const ownerOf = new Map<string, Owner>();

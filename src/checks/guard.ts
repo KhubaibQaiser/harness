@@ -6,7 +6,7 @@ import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
-import { arithmeticTest, commandSkeleton, gitPlain, globReadings, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { arithmeticTest, commandSkeleton, gitPlain, globReadings, joinLines, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
 import { Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
 import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
@@ -214,7 +214,7 @@ export interface WalkHooks<T> { whole?: (words: string[]) => T | null; script?: 
 
 /** Walks every command segment of `command` the way the shell could read it; the first non-null result wins. */
 export function walkCommands<T>(command: string, w: Where, visit: Visit<T>, hooks: WalkHooks<T> = {}, depth = 0): T | null {
-  command = command.replace(/\\\r?\n/g, '');
+  command = joinLines(command);
   const whole = command;
   command = withoutHeredocBodies(command); // a body is data for its command; a shell reading it is handled below, from `whole`
   // A backslash is an escape in a POSIX shell (harn\\ess -> harness) and a path separator on Windows
@@ -635,14 +635,14 @@ const BUILDS_WHY = 'the command builds words at run time (a variable in command 
 
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
   try {
-    const joined = command.replace(/\\\r?\n/g, ''), bodiless = commandSkeleton(joined).bodiless;
+    const joined = joinLines(command), bodiless = commandSkeleton(joined).bodiless;
     // Read three ways and block if any sees the write: the heredoc-stripped reading, the raw line (a `# <<EOF` comment
-    // can make the skeleton hide commands as a heredoc body), and the line with quotes removed (a lone `'` in a comment
-    // desyncs quote tracking otherwise). Re-review 16, P3/P4.
-    const reads = [bodiless, joined, joined.replace(/['"`]/g, '')];
+    // can make the skeleton hide commands as a heredoc body), and the line with quotes and backslashes removed (a lone
+    // `'` in a comment desyncs quote tracking otherwise, and `'%B\'>` must not leave an escaped `\>`). Re-review 16, P3/P4.
+    const reads = [bodiless, joined, joined.replace(/[\\'"`]/g, '')];
     if (reads.some(writesGitOutputAndRunsFile)) return toDecision(['deny', GIT_OUTPUT_RUN_WHY]);
     if (reads.some(writesGitOutputToSensitivePath)) return toDecision(['deny', GIT_OUTPUT_CONFIG_WHY]);
-    return decideAll(command.replace(/\\\r?\n/g, ''), ctx, 0); // a backslash-newline joins the lines for the shell
+    return decideAll(joined, ctx, 0);
   } catch (e) {
     if (e instanceof ScanBudget) return toDecision(['ask', SCAN_BUDGET_WHY]);
     throw e;
@@ -699,7 +699,7 @@ function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
     ...[...command.matchAll(/(?<![\w-])eval\s+([^;&|\n]*)/g)].map((m) => m[1].replace(/['"\\]/g, '')),
   ];
   for (const p of inner) {
-    const r = decideAll(p, ctx, depth + 1);
+    const r = decideAll(joinLines(p), ctx, depth + 1); // a shell fed a quoted-delimiter body joins its lines itself
     if (r.kind === 'deny') return r;
     if (r.kind === 'ask' && own.kind === 'allow') own = r;
   }

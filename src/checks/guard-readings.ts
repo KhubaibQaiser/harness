@@ -82,9 +82,14 @@ function layout(s: Scan, tests: { sink: (l: number, at: number) => boolean }): L
         const from = p;
         for (;;) {
           if (p >= c.length) return { quotes, heredocs: [] }; // no end line: nothing is hidden
-          const nl = c.indexOf('\n', p), end = nl < 0 ? c.length : nl;
-          const l = c.slice(p, end);
-          p = nl < 0 ? c.length : nl + 1;
+          let l = '';
+          for (;;) { // an unquoted delimiter's body joins a backslash-newline before the end-line test; a quoted one does not
+            const nl = c.indexOf('\n', p), end = nl < 0 ? c.length : nl;
+            l += c.slice(p, end);
+            p = nl < 0 ? c.length : nl + 1;
+            if (h.literal || nl < 0 || !/(?<!\\)(?:\\\\)*\\\r?$/.test(l)) break;
+            l = l.replace(/\\\r?$/, '');
+          }
           if ((h.dash ? l.replace(/^\t+/, '') : l) === h.word) break;
         }
         heredocs.push({ from, to: p, literal: h.literal, program: !h.data });
@@ -109,6 +114,19 @@ function skeleton(s: Scan): Skel {
   return { skel: apply(cuts).replace(/\\/g, ''), bodiless: apply(bodies) };
 }
 export const commandSkeleton = (c: string): Skel => skeleton(new Scan(c));
+/** The command with every backslash-newline joined, as the shell does: everywhere but in a quoted-delimiter heredoc
+ *  body (`<<'EOF'`, `<<"EOF"`, `<<\EOF`), where the backslash is literal and the next line can be the end line. */
+export function joinLines(c: string): string {
+  const join = (t: string) => t.replace(/\\\r?\n/g, '');
+  if (!c.includes('<<') || !/\\\r?\n/.test(c)) return join(c);
+  let out = '', at = 0;
+  for (const h of layout(new Scan(c), { sink: () => false }).heredocs) {
+    if (!h.literal) continue;
+    out += join(c.slice(at, h.from)) + c.slice(h.from, h.to);
+    at = h.to;
+  }
+  return out + join(c.slice(at));
+}
 /** Picks the quoted spans that are data, given the command's tests and skeleton. `rerun` (optional) picks the spans
  *  whose text something on the line may run again: their text is read as a command line of its own, at the end. */
 type Blank = ((c: string, tests: ReturnType<typeof commandTests>, sk: Skel) => (q: Quoted) => boolean) & { rerun?: (c: string, tests: ReturnType<typeof commandTests>, sk: Skel) => (q: Quoted) => boolean };

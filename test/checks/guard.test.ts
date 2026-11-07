@@ -964,6 +964,21 @@ test('any unquoted # or odd whitespace on a message line is code; the always-blo
   all([`${m} # note`, `${m} # > x`], 'deny');
   all(['git commit -m "fix #12"', `git commit -m "a; rm -rf ~ # c"`, 'git add -A && git commit -m "fix #12 and cleanup"'], 'allow');
 });
+test('a quoted-delimiter heredoc body keeps its backslash-newline; the always-block strips backslashes (round 20)', () => {
+  const L = 'git log -1 --format=%B';
+  // P1: in a <<'EOF', <<"EOF" or <<\EOF body a trailing \ is literal, so the next EOF ends the body and what follows runs.
+  all([`git commit -F - <<'EOF'\nx \\\nEOF\nrm -rf ~\nEOF`, `cat > docs/x.md <<'EOF'\nx \\\nEOF\ngit push -f\nEOF`,
+    `tee f >/dev/null <<'EOF'\nx \\\nEOF\ngit push -f\nEOF`, `git commit -F - <<'EOF'\na; rm -rf ~ \\\nEOF\n${L} | sh\nEOF`,
+    `git commit -F - <<"EOF"\na; rm -rf ~ \\\nEOF\n${L} | sh\nEOF`, `git commit -F - <<\\EOF\nx \\\nEOF\nrm -rf ~\nEOF`,
+    `cat > docs/x.md <<-'EOF'\n\tx \\\n\tEOF\ngit push -f\nEOF`, `cat > docs/x.md <<'EOF'\nx \\\nEOF\ngit push -f`,
+    // A shell fed a quoted-delimiter body joins its lines itself.
+    `bash <<'EOF'\ngit push \\\n -f\nEOF`, `sh <<'EOF'\nrm -rf \\\n ~\nEOF`], 'deny');
+  // An unquoted delimiter's body does join (bash reads `x EOF`), so the command after it is body text there.
+  all([`cat > docs/x.md <<EOF\nx \\\nEOF\ngit push -f\nEOF`, `cat > docs/x.md <<'EOF'\nx \\\ny\nEOF`, `git commit -F - <<'EOF'\na \\\nEOF\ngit push`], 'allow');
+  // P2: '%B\' quote-stripped is %B\, which must not escape the real > after it.
+  all([`# say "hi\n${L.replace('%B', "'%B\\'")}> .git/config # "`, `# say "hi\n${L.replace('%B', '"%B\\""')}> .git/config # "`,
+    `true # it's\n${L.replace('%B', "'%B\\'")}> .git/config # '`, `# say "hi\n${L.replace('%B', "'%B\\'")}> x.sh\nsh x.sh # "`], 'deny');
+});
 test('$$ before a quote and a # comment do not hide a write from the scanner (round 18)', () => {
   const m = 'git commit -m "a; rm -rf ~"';
   const P = 'git commit --allow-empty -m "[core]\n\tfsmonitor = rm -rf ~"';

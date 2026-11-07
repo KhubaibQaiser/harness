@@ -15,6 +15,7 @@ const fake = (files: Record<string, string>, sizes: Record<string, number> = {},
     size: (p) => { asked.push(`size ${rel(p)}`); return sizes[rel(p)] ?? files[rel(p)]?.length ?? null; },
     lsFiles: () => null,
     real: realOf ?? ((p) => p),
+    list: () => null,
   };
   return { io, asked };
 };

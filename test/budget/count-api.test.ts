@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { expect, test } from 'vitest';
 import { defaults } from '../../src/core/config.js';
 import { apiCountTokens, COUNT_URL, countKey } from '../../src/budget/count-api.js';
@@ -142,5 +142,5 @@ test('ANTHROPIC_API_KEY is read only in count-api.ts', () => {
     }
   };
   walk(join(__dirname, '../../src'));
-  expect(hits.map((h) => h.split('/').pop())).toEqual(['count-api.ts']);
+  expect(hits.map((h) => basename(h))).toEqual(['count-api.ts']);
 });

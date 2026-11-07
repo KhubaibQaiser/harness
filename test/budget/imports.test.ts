@@ -2,23 +2,24 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
-import { MAX_HOPS, expandImports, inside, realIO, type RepoIO } from '../../src/budget/imports.js';
+import { MAX_ATTEMPTS, MAX_HOPS, MAX_IMPORTED, expandImports, inside, realIO, type RepoIO } from '../../src/budget/imports.js';
 import { MAX_FILE_BYTES } from '../../src/budget/text.js';
 
 const ROOT = '/repo';
 const ENV_SKIP = (rel: string): boolean => /(^|\/)\.env/.test(rel);
-const fake = (files: Record<string, string>, sizes: Record<string, number> = {}) => {
+const fake = (files: Record<string, string>, sizes: Record<string, number> = {}, realOf?: (p: string) => string | null) => {
   const asked: string[] = [];
   const rel = (p: string): string => p.slice(ROOT.length + 1);
   const io: RepoIO = {
     read: (p) => { asked.push(`read ${rel(p)}`); return files[rel(p)] ?? null; },
     size: (p) => { asked.push(`size ${rel(p)}`); return sizes[rel(p)] ?? files[rel(p)]?.length ?? null; },
     lsFiles: () => null,
+    real: realOf ?? ((p) => p),
   };
   return { io, asked };
 };
-const run = (files: Record<string, string>, text: string, extra: { skip?: (r: string) => boolean; sizes?: Record<string, number> } = {}) => {
-  const f = fake(files, extra.sizes);
+const run = (files: Record<string, string>, text: string, extra: { skip?: (r: string) => boolean; sizes?: Record<string, number>; real?: (p: string) => string | null } = {}) => {
+  const f = fake(files, extra.sizes, extra.real);
   const seen = new Set<string>(['CLAUDE.md']);
   const out = expandImports(ROOT, { path: 'CLAUDE.md', text }, f.io, seen, extra.skip ?? (() => false));
   return { ...out, asked: f.asked };
@@ -83,8 +84,61 @@ test('the number of files is capped', () => {
   const files: Record<string, string> = {};
   for (let i = 0; i < 300; i++) files[`f${i}.md`] = 'x';
   const r = run(files, Object.keys(files).map((k) => `@${k}`).join('\n'));
-  expect(r.files.length).toBeLessThanOrEqual(100);
-  expect(r.files.length).toBeGreaterThan(0);
+  expect(r.files).toHaveLength(MAX_IMPORTED);
+  expect(r.skipped.filter((x) => x.reason === 'cap')).toHaveLength(1);
+});
+
+test('skipped reports oversize, binary, unreadable, ignored; a missing file is silent', () => {
+  const r = run({ 'bin.md': 'a\0b', 'big.md': 'x', 'sec.md': 'x' }, '@big.md @bin.md @un.md @sec.md @gone.md', { sizes: { 'big.md': MAX_FILE_BYTES + 1, 'un.md': 5 }, skip: (rel) => rel === 'sec.md' });
+  expect(r.skipped).toEqual([
+    { path: 'big.md', by: 'CLAUDE.md', reason: 'oversize' },
+    { path: 'bin.md', by: 'CLAUDE.md', reason: 'binary' },
+    { path: 'un.md', by: 'CLAUDE.md', reason: 'unreadable' },
+    { path: 'sec.md', by: 'CLAUDE.md', reason: 'ignored' },
+  ]);
+});
+
+test('every attempt counts toward the cap, not only successes', () => {
+  const text = Array.from({ length: MAX_ATTEMPTS * 2 }, (_, i) => `@m${i}.md`).join('\n');
+  const r = run({}, text);
+  expect(r.asked.length).toBeLessThanOrEqual(MAX_ATTEMPTS);
+  expect(r.skipped.filter((x) => x.reason === 'cap')).toHaveLength(1);
+});
+
+test('without real(), every import is external (fails closed)', () => {
+  const f = fake({ 'a.md': 'x' });
+  const io: RepoIO = { read: f.io.read, size: f.io.size, lsFiles: f.io.lsFiles } as RepoIO;
+  const r = expandImports(ROOT, { path: 'CLAUDE.md', text: '@a.md' }, io, new Set(), () => false);
+  expect(r.files).toEqual([]);
+  expect(r.external).toEqual(['a.md']);
+  expect(f.asked).toEqual([]);
+});
+
+test('an existing file whose real path cannot be resolved is external', () => {
+  const r = run({ 'a.md': 'x' }, '@a.md @gone.md', { real: () => null });
+  expect(r.files).toEqual([]);
+  expect(r.external).toEqual(['a.md']);
+});
+
+test('a backslash-escaped space is part of the path', () => {
+  const r = run({ 'Design Docs/x.md': 'x' }, '@Design\\ Docs/x.md');
+  expect(paths(r)).toEqual(['Design Docs/x.md']);
+});
+
+test('an absolute path inside the repo is an import; outside is external', () => {
+  const r = run({ 'a.md': 'x' }, `@${ROOT}/a.md @/elsewhere/b.md`);
+  expect(paths(r)).toEqual(['a.md']);
+  expect(r.external).toEqual(['/elsewhere/b.md']);
+});
+
+test.skipIf(process.platform === 'win32')('a POSIX path starting with a backslash is not treated as a Windows absolute', () => {
+  const r = run({}, '@\\foo.md');
+  expect(r.external).toEqual([]);
+  expect(r.asked).toEqual(['size \\foo.md']);
+});
+
+test('realIO provides real()', () => {
+  expect(typeof realIO.real).toBe('function');
 });
 
 test('inside', () => {

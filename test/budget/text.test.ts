@@ -11,7 +11,7 @@ test('CRLF and LF give equal counts', () => {
 test('a comment outside a fence is removed, also across lines', () => {
   expect(stripComments('a\n<!-- note -->\nb')).toBe('a\nb');
   expect(stripComments('a\n<!-- one\ntwo -->\nb')).toBe('a\nb');
-  expect(stripComments('x <!-- c --> y')).toBe('x  y');
+  expect(stripComments('  <!-- c -->\nz')).toBe('z');
 });
 
 test('the same comment inside a fence is kept (backtick and tilde)', () => {
@@ -42,4 +42,17 @@ test('frontmatter: body split, none, and unparseable gives the whole text', () =
   expect(splitFrontmatter('no fm')).toEqual({ data: null, body: 'no fm', bad: false });
   const bad = '---\nname: [unclosed\n---\nbody\n';
   expect(splitFrontmatter(bad)).toEqual({ data: null, body: bad, bad: true });
+});
+
+test('an inline comment mid-line is not block-level and is kept', () => {
+  expect(stripComments('x <!-- c --> y')).toBe('x <!-- c --> y');
+  expect(stripComments('x <!-- one\ntwo --> y')).toBe('x <!-- one\ntwo --> y');
+});
+
+test('paths: commas inside braces do not split', () => {
+  expect(pathsOf({ paths: 'src/**/*.{ts,tsx}, lib/*.md' })).toEqual(['src/**/*.{ts,tsx}', 'lib/*.md']);
+});
+
+test('a BOM before the frontmatter is tolerated', () => {
+  expect(splitFrontmatter('\uFEFF---\nname: x\n---\nbody')).toMatchObject({ data: { name: 'x' }, body: 'body', bad: false });
 });

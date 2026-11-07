@@ -36,7 +36,8 @@ export function stripComments(s: string): string {
     }
     const inFence = fence !== null;
     fence = fenceAfter(line, fence);
-    if (inFence || fence !== null || !line.includes('<!--')) { out.push(line); continue; }
+    // Block-level only: the comment opens the line (CommonMark HTML block); `x <!-- c --> y` is inline and stays.
+    if (inFence || fence !== null || !line.trimStart().startsWith('<!--')) { out.push(line); continue; }
     const whole = line.replace(/<!--.*?-->/g, '');
     const open = whole.indexOf('<!--');
     if (open < 0) { if (whole.trim() !== '' || line.trim() === '') out.push(whole); continue; }
@@ -52,21 +53,36 @@ export interface Front { data: Record<string, unknown> | null; body: string; bad
 const FRONT = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
 export function splitFrontmatter(s: string): Front {
-  const m = FRONT.exec(s);
+  const t = s.startsWith('\uFEFF') ? s.slice(1) : s;
+  const m = FRONT.exec(t);
   if (!m) return { data: null, body: s, bad: false };
   try {
     const y: unknown = parse(m[1]);
-    if (y === null || y === undefined) return { data: {}, body: s.slice(m[0].length), bad: false };
+    if (y === null || y === undefined) return { data: {}, body: t.slice(m[0].length), bad: false };
     if (typeof y !== 'object' || Array.isArray(y)) return { data: null, body: s, bad: true };
-    return { data: y as Record<string, unknown>, body: s.slice(m[0].length), bad: false };
+    return { data: y as Record<string, unknown>, body: t.slice(m[0].length), bad: false };
   } catch {
     return { data: null, body: s, bad: true };
   }
 }
 
+// Split on commas outside braces, so a glob such as a/b.{ts,tsx} stays one pattern.
+function splitTop(s: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of s) {
+    if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}' && depth > 0) depth--;
+    cur += ch;
+  }
+  return [...parts, cur];
+}
+
 export function pathsOf(data: Record<string, unknown> | null): string[] | null {
   if (!data || !('paths' in data)) return null;
   const p = data.paths;
-  const list = Array.isArray(p) ? p.map(String) : typeof p === 'string' ? p.split(',') : [];
+  const list = Array.isArray(p) ? p.map(String) : typeof p === 'string' ? splitTop(p) : [];
   return list.map((x) => x.trim()).filter(Boolean);
 }

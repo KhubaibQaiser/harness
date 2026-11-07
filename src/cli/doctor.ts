@@ -16,6 +16,7 @@ import { ESLINT } from '../install/plan.js';
 import { JEST_REPORTER, hasResultsOutput, resultsRename, testConfigChange } from '../install/test-config.js';
 import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
+import { contextChecks } from './doctor-context.js';
 import { branchProtection, type Gh } from './doctor-protection.js';
 import type { CliEnv } from './index.js';
 import { dirtyPaths } from '../install/git-status.js';
@@ -239,6 +240,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   if (prot.state === 'ok') ok(prot.detail);
   else note(prot.detail);
   if (config.items.length) itemChecks(root, config, manifest, deps.pluginList ?? pluginList, { ok, fix, note });
+  contextChecks(root, config, { ok, fix, note });
   if (bad) out(`${bad} problem${bad === 1 ? '' : 's'} found.`);
   return bad ? 1 : 0;
 }

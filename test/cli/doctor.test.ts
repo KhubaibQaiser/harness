@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { expect, test } from 'vitest';
 import { doctor } from '../../src/cli/doctor.js';
+import { contextSet } from '../../src/budget/summary.js';
+import { loadConfig } from '../../src/core/config.js';
+import { packageDir } from '../../src/core/package-dir.js';
 import { init, type Prompt } from '../../src/cli/init.js';
 import { MIN_CLAUDE_CODE } from '../../src/core/min-claude.js';
 import { HOOK_ENV_REL, writeHookEnv } from '../../src/core/hook-env.js';
@@ -675,4 +678,37 @@ test('doctor: an unsafe branch name from gh is not used in the api path', async 
 test('doctor: the test setup stops a real gh from being spawned', async () => {
   const root = await installed();
   expect(() => doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE })).toThrow(/real gh/);
+});
+
+const withBudget = (root: string, n: number) => setConfig(root, (t) => `${t.replace(/^context:\n(?:[ \t].*\n?)*/m, '')}\ncontext:\n  budget_tokens: ${n}\n`);
+const sets = (root: string) => contextSet(root, loadConfig(root).config, { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) });
+
+test('doctor prints the always-loaded context: ok within budget, note over it, fix when harness alone is over; offline', async () => {
+  const root = await installed();
+  const real = globalThis.fetch;
+  globalThis.fetch = (() => { throw new Error('no network'); }) as typeof fetch;
+  try {
+    const s = sets(root);
+    let r = run(root, { path: bin('npm') });
+    expect(r.out).toContain(`ok always-loaded context ~${s.total} of ${s.budget} tokens (best estimate); harness ~${s.harness}\n`);
+    expect(r.out.match(/always-loaded context/g)).toHaveLength(1);
+    // Repo text beyond harness's own pushes the total over a budget harness fits in.
+    writeFileSync(join(root, 'CLAUDE.md'), 'x'.repeat(40000));
+    const s2 = sets(root);
+    expect(s2.total).toBeGreaterThan(s2.harness);
+    withBudget(root, s2.harness);
+    r = run(root, { path: bin('npm') });
+    expect(r.out).toContain(`note always-loaded context ~${s2.total} tokens is over the budget of ${s2.harness}: run /harness:context-optimize\n`);
+    expect(r.code).toBe(0);
+    withBudget(root, 100);
+    r = run(root, { path: bin('npm') });
+    expect(r.out).toContain(`fix harness's own always-loaded text (~${s2.harness} tokens) is over the budget of 100: report this as a harness bug, or raise context.budget_tokens\n`);
+    expect(r.code).toBe(1);
+  } finally { globalThis.fetch = real; }
+});
+
+test('doctor context line does not throw without .git', async () => {
+  const root = await installed();
+  rmSync(join(root, '.git'), { recursive: true, force: true });
+  expect(() => run(root, { path: bin('npm') })).not.toThrow();
 });

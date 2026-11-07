@@ -635,9 +635,13 @@ const BUILDS_WHY = 'the command builds words at run time (a variable in command 
 
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
   try {
-    const bodiless = commandSkeleton(command.replace(/\\\r?\n/g, '')).bodiless;
-    if (writesGitOutputAndRunsFile(bodiless)) return toDecision(['deny', GIT_OUTPUT_RUN_WHY]);
-    if (writesGitOutputToSensitivePath(bodiless)) return toDecision(['deny', GIT_OUTPUT_CONFIG_WHY]);
+    const joined = command.replace(/\\\r?\n/g, ''), bodiless = commandSkeleton(joined).bodiless;
+    // Read three ways and block if any sees the write: the heredoc-stripped reading, the raw line (a `# <<EOF` comment
+    // can make the skeleton hide commands as a heredoc body), and the line with quotes removed (a lone `'` in a comment
+    // desyncs quote tracking otherwise). Re-review 16, P3/P4.
+    const reads = [bodiless, joined, joined.replace(/['"`]/g, '')];
+    if (reads.some(writesGitOutputAndRunsFile)) return toDecision(['deny', GIT_OUTPUT_RUN_WHY]);
+    if (reads.some(writesGitOutputToSensitivePath)) return toDecision(['deny', GIT_OUTPUT_CONFIG_WHY]);
     return decideAll(command.replace(/\\\r?\n/g, ''), ctx, 0); // a backslash-newline joins the lines for the shell
   } catch (e) {
     if (e instanceof ScanBudget) return toDecision(['ask', SCAN_BUDGET_WHY]);

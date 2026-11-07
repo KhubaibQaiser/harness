@@ -947,6 +947,23 @@ test('a message is data only on a line with no file writes and no cd (owner ruli
   all([`git add -A && ${m}`, `git -C sub ${m.slice(4)}`, `${m} && git push`, `${m} >/dev/null`, `${m} && git push -u origin HEAD`,
     'gh pr create --title t --body "a; rm -rf ~"', "git commit -F - <<'EOF'\na; rm -rf ~\nEOF", "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit push"], 'allow');
 });
+test('any unquoted # or odd whitespace on a message line is code; the always-block reads the raw line (round 19)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  const P = 'git commit --allow-empty -m "[core]\n\tfsmonitor = rm -rf ~"';
+  const L = 'git log -1 --format=%B';
+  const NB = '\u00a0', CR = '\r', FF = '\f', VT = '\u000b', LS = '\u2028', BOM = '\ufeff';
+  // P1: an escaped blank before # (the word-start test must not peek past the escape).
+  all([`${m} a\\ #b; ${L} | sh`, `${m} a\\;#b; ${L} | sh`, `${m} a\\ #b >> .git/config`, `${P} && ${L} a\\ #b >>.git/config`,
+    `${L} a\\ #b >> .git/config`], 'deny');
+  // P2: a whitespace character other than space/tab/newline, outside quotes.
+  all([`${m} a${NB}#b; ${L} | sh`, `${m}${CR}#; ${L} | sh`, `${m}${FF}#`, `${m}${VT}#`, `${m}${LS}#`, `${m}${BOM}#`, `git status${NB}&& ${m}`,
+    `${P}${NB}#; ${L} >>.git/config`], 'deny');
+  // P3/P4: the always-block reads the raw line, so a comment cannot hide a heredoc or a backtick redirect.
+  all([`${P} # <<EOF\n${L} >> .git/config\nEOF`, 'git log -1 --format=%B `echo #` >> .git/config', 'git log -1 --format=%B ${x:- #} >> .git/config'], 'deny');
+  // Any unquoted # on a message line is code (accepted false block); a quoted # stays data.
+  all([`${m} # note`, `${m} # > x`], 'deny');
+  all(['git commit -m "fix #12"', `git commit -m "a; rm -rf ~ # c"`, 'git add -A && git commit -m "fix #12 and cleanup"'], 'allow');
+});
 test('$$ before a quote and a # comment do not hide a write from the scanner (round 18)', () => {
   const m = 'git commit -m "a; rm -rf ~"';
   const P = 'git commit --allow-empty -m "[core]\n\tfsmonitor = rm -rf ~"';
@@ -958,7 +975,7 @@ test('$$ before a quote and a # comment do not hide a write from the scanner (ro
   // P2: a quote inside a # comment must not open a span across the real write on the next line.
   all([`${P} # it's\n${L} >>.git/config # '`, `${m} # don't\n${L} >> .git/config # '`, `${m} # it's\necho hi > x # '`,
     `${m} # \"\necho hi > x # \"`, `git status # don't\n${L} >> .git/config # '`], 'deny');
-  all([`${m} # note`, 'git commit -m "msg # hash"'], 'allow'); // a real trailing comment with no write stays data
+  all(['git commit -m "msg # hash"'], 'allow'); // a quoted # stays data
 });
 test('a glued, named-fd or grouped-piped write is seen, and ref-writing git subcommands make a message code (round 17)', () => {
   const m = 'git commit -m "a; rm -rf ~"';

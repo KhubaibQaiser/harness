@@ -31,9 +31,10 @@ const alreadyAlways = (c: Ctx, rel: string): boolean => { const r = c.io.real(ab
 function ruleRows(c: Ctx): SourceEntry[] {
   const rows: SourceEntry[] = [];
   const decisions: Part[] = [];
+  const seen = new Set<string>(); // two links to one rule: counted once
   for (const rel of ruleFiles(c, '.claude/rules', 0)) {
     if (alreadyAlways(c, rel)) continue; // imported by a memory file: its always row stands
-    const raw = readIn(c, rel, null);
+    const raw = readIn(c, rel, seen);
     if (raw === null) continue;
     if (raw === OVERSIZE) { miss(c, rel, 'oversize'); continue; }
     const f = splitFrontmatter(raw);

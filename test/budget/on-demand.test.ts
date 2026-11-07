@@ -146,3 +146,10 @@ test('a nested CLAUDE.md that links out of the repo is listed as outside, not re
   expect(r.unmeasured).toContain('pkg/CLAUDE.md: outside the repo');
   expect(read.some((p) => p.includes('pkg'))).toBe(false);
 });
+
+test('two links to the same paths rule give one on-demand row', () => {
+  const root = makeRepo({ '.claude/rules/api.md': '---\npaths: src/api/**\n---\nAPI rule\n' }, { git: false });
+  symlinkSync('api.md', join(root, '.claude/rules/api-link.md'));
+  const r = measureRepo(root, { owners: new Map(), preset: null });
+  expect(r.onDemand.filter((e) => e.label.includes('(paths: src/api/**)'))).toHaveLength(1);
+});

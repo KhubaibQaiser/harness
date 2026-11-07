@@ -1,9 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { estimateTokens, measureSelectionSync } from '../../budget/measure.js';
-import { loadCatalog } from '../../catalog/load.js';
+import { contextSet } from '../../budget/summary.js';
 import { loadConfig } from '../../core/config.js';
-import { selectedIds } from '../../install/plan.js';
+import { ManifestError } from '../../install/manifest.js';
 import type { Acc, SessionCtx } from '../acc.js';
 import type { TRec, Usage } from '../transcript.js';
 
@@ -86,24 +83,14 @@ export function usageAcc(): Acc<UsageResult> {
   };
 }
 
-/** What harness always loads, as `harness status` measures it, plus the whole AGENTS.md and CLAUDE.md (estimate, characters / 4). */
-export function alwaysLoaded(root: string, dirs: { templates: string; plugin: string }): { id: string; tokens: number | null }[] {
-  let ids: string[] = [];
-  const lc = loadCatalog();
-  if (!lc.errors.length) {
-    try {
-      ids = selectedIds(loadConfig(root).config);
-    } catch {
-      // no readable config: the plugin and the two files still count
-    }
+export interface AlwaysRow { id: string; tokens: number | null; owner?: string }
+
+/** The always-loaded rows, one per source, from the offline context set (estimate). A throw gives no rows and a note without paths: one bad file must not lose the report. */
+export function alwaysLoadedSafe(root: string, dirs: { templates: string; plugin: string }): { rows: AlwaysRow[]; note?: string } {
+  try {
+    return { rows: contextSet(root, loadConfig(root).config, dirs).always.map(({ label, tokens, owner }) => ({ id: label, tokens, owner })) };
+  } catch (e) {
+    return { rows: [], note: `always-loaded sources not measured: ${e instanceof ManifestError ? 'the install manifest could not be read' : 'unexpected error'}` };
   }
-  const rows = measureSelectionSync(ids, lc.catalog, dirs).entries.map(({ id, tokens }) => ({ id, tokens }));
-  const file = (f: string) => {
-    try {
-      return { id: f, tokens: estimateTokens(readFileSync(join(root, f), 'utf8')) };
-    } catch {
-      return { id: f, tokens: 0 }; // absent, a directory or unreadable: nothing loaded from it
-    }
-  };
-  return [...rows, file('AGENTS.md'), file('CLAUDE.md')];
 }
+export const alwaysLoaded = (root: string, dirs: { templates: string; plugin: string }): AlwaysRow[] => alwaysLoadedSafe(root, dirs).rows;

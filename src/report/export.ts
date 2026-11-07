@@ -13,7 +13,8 @@ const WEEK_RE = /^\d{4}-W\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SOURCES = ['timing', 'transcript', 'events'];
 const EVENTS = ['PreToolUse', 'PostToolUse', 'Stop', 'SubagentStop', 'UserPromptSubmit', 'SessionStart', 'SessionEnd', 'PreCompact', 'Notification'];
-const ENUMS = new Set([OTHER, ...SOURCES, ...EVENTS]);
+const ALWAYS_CLASSES = ['harness', 'preset', 'repo', 'catalog'];
+const ENUMS = new Set([OTHER, ...ALWAYS_CLASSES, ...SOURCES, ...EVENTS]);
 const DATE_LEN = 10;
 const MS_DAY = 86_400_000, DAYS_WEEK = 7, THURSDAY = 4, PAD = 2;
 
@@ -39,10 +40,18 @@ const SKILL_FIELDS = ['listedIn', 'sessionsWithListing', 'relevantIn', 'invokedR
 const LATENCY = ['n', 'p50', 'p95', 'max', 'timeouts'];
 const OUT_KEYS = new Set([
   'schema', 'harness', 'window_days', 'generated_on', 'claude_versions', 'models', 'sessions', 'scanned', 'skipped', 'unknown', 'skills', 'rules',
-  'tokens', 'total', 'main', 'sub', 'always', 'gates', 'tally', 'v', 'false_blocks', 'hallucination', 'notes', 'latency', 'source', 'event', 'weekly',
+  'tokens', 'total', 'main', 'sub', 'always', 'always_measured', 'gates', 'tally', 'v', 'false_blocks', 'hallucination', 'notes', 'latency', 'source', 'event', 'weekly',
   'id', 'week', 'counters', 'byBucket', 'byCompact', 'pre', 'post', ...COUNT_FIELDS.rule, ...COUNT_FIELDS.top,
   ...BUCKETS, ...SPLIT, ...COUNTER_KEYS, ...HALLUCINATION, ...GATE_NOTES, ...WINDOW_NOTES, ...USAGE, ...SKILL_FIELDS, ...LATENCY, 'tokens',
 ]);
+
+/** A safe class for an always-loaded row: never its label (a repo file path). */
+function alwaysClass(owner: string | undefined, k: Known): string {
+  if (owner === 'harness' || owner === 'repo') return owner;
+  if (owner?.startsWith('preset:')) return 'preset';
+  if (owner?.startsWith('catalog:')) return id(owner.slice('catalog:'.length), k) === OTHER ? 'catalog' : owner.slice('catalog:'.length);
+  return OTHER;
+}
 
 /** Sum rows that share a folded id. */
 function fold<T extends object>(rows: T[], key: (r: T) => string, fields: string[]): Record<string, unknown>[] {
@@ -115,7 +124,7 @@ export function buildExport(d: ReportData, known: Known): Record<string, unknown
     sessions: { scanned: num(m.sessions.scanned), skipped: Object.values(m.sessions.skipped).reduce((a, b) => a + num(b), 0), unknown: num(m.sessions.unknown) },
     skills: fold(d.skills, (s) => id(s.name, known), SKILL_FIELDS),
     rules: rules(d, known),
-    tokens: { total: only(u.total, USAGE), main: only(u.main, USAGE), sub: only(u.sub, USAGE), always: fold(d.always, (a) => id(a.id, known), ['tokens']) },
+    tokens: { total: only(u.total, USAGE), main: only(u.main, USAGE), sub: only(u.sub, USAGE), always: fold(d.always, (a) => alwaysClass(a.owner, known), ['tokens']), always_measured: d.alwaysNote === undefined },
     gates: gates(d, known),
     latency: d.gates.latency.map((l) => ({ source: pick(l.source, SOURCES), event: pick(l.event, EVENTS), ...only(l, LATENCY) })),
     weekly,

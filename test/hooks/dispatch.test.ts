@@ -6,7 +6,7 @@ import { expect, onTestFinished, test, vi } from 'vitest';
 import { readEvents } from '../../src/core/events.js';
 import { isSafeSessionId, readState, statePath } from '../../src/core/state.js';
 import { readHookEnv } from '../../src/core/hook-env.js';
-import { type Check, dispatch, runHook } from '../../src/hooks/dispatch.js';
+import { type Check, dispatch, registry, runHook } from '../../src/hooks/dispatch.js';
 import type { Decision, HookEvent } from '../../src/hooks/types.js';
 import { MAX_MESSAGE } from '../../src/hooks/io.js';
 
@@ -345,4 +345,49 @@ test('at PreToolUse a deny plus a context check has no systemMessage', async () 
   const o = JSON.parse(await dispatch(pre(), [denyAll, c], {}));
   expect(o.systemMessage).toBeUndefined();
   expect(decisionOf(JSON.stringify(o))).toBe('deny');
+});
+
+// State card after compaction (context budget Task 10)
+const cardRoot = () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-card-dp-'));
+  mkdirSync(join(r, '.harness/state'), { recursive: true });
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  tdd: true\n');
+  return r;
+};
+const start = (cwd: string, source: string) => JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'cs', cwd, source });
+const seedState = (r: string, o: Record<string, unknown>) =>
+  writeFileSync(statePath(r, 'cs'), JSON.stringify({ startedAt: 1, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 2, harnessFiles: { '.harness/config.yaml': 'old' }, harnessNoticed: JSON.stringify([['.harness/config.yaml', 'new']]), pendingNotice: 'ConfigChange blocked. Ask.', ...o }));
+
+test('state card: only source compact prints, through the real registry', async () => {
+  const r = cardRoot();
+  for (const source of ['startup', 'resume', 'clear', 'fork']) expect(await dispatch(start(r, source), registry, {})).toBe('');
+  const o = JSON.parse(await dispatch(start(r, 'compact'), registry, {}));
+  expect(o.hookSpecificOutput.hookEventName).toBe('SessionStart');
+  expect(o.hookSpecificOutput.additionalContext.split('\n')).toHaveLength(5);
+  expect(o.systemMessage).toBeUndefined();
+});
+test('state card: a changed harness file and pending notice still print it, and change nothing in the state file', async () => {
+  const r = cardRoot();
+  seedState(r, {});
+  const o = JSON.parse(await dispatch(start(r, 'compact'), registry, {}));
+  expect(o.hookSpecificOutput.additionalContext).toContain('Pending: harness files changed (.harness/config.yaml)');
+  expect(o.hookSpecificOutput.additionalContext).toContain('ConfigChange blocked.');
+  expect(o.systemMessage).toBeUndefined();
+  const after = readState(r, 'cs');
+  expect(after.stopAttempts).toBe(2);
+  expect(after.harnessFiles).toEqual({ '.harness/config.yaml': 'old' });
+  expect(after.harnessNoticed).toBe(JSON.stringify([['.harness/config.yaml', 'new']]));
+  expect(after.pendingNotice).toBe('ConfigChange blocked. Ask.');
+});
+test('state card: an invalid config says so on line 2', async () => {
+  const r = cardRoot();
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: banana\n');
+  const o = JSON.parse(await dispatch(start(r, 'compact'), registry, {}));
+  expect(o.hookSpecificOutput.additionalContext.split('\n')[1]).toMatch(/^Gates: config invalid/);
+});
+test('state card: with a notice present, its own systemMessage is the only one', async () => {
+  const r = cardRoot();
+  const notice: Check = { name: 'n', events: ['SessionStart'], run: () => ({ kind: 'context', text: 'x', notice: 'seen by person', check: 'n' }) };
+  const o = JSON.parse(await dispatch(start(r, 'compact'), [...registry, notice], {}));
+  expect(o.systemMessage).toBe('seen by person');
 });

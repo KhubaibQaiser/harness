@@ -7,6 +7,7 @@ import { prSize } from '../checks/pr-size/check.js';
 import { prSizeEntry } from '../checks/pr-size/entry.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect } from '../checks/protect.js';
+import { stateCardCheck } from '../checks/state-card.js';
 import { sandboxRequired } from '../checks/sandbox-required.js';
 import { redFirst } from '../checks/tdd/red-first.js';
 import { tamper } from '../checks/tdd/tamper.js';
@@ -31,7 +32,7 @@ export { configInvalidWhy } from './config-gate.js';
 export { detectBaseHead } from './session-setup.js';
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
-export const registry: Check[] = [guard, prSize, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, configChange, stopGate];
+export const registry: Check[] = [guard, prSize, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, configChange, stopGate, stateCardCheck];
 
 const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
@@ -57,7 +58,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   const { root, config, state, unattended, configErrors, fallback, degraded } = setupSession(input, event, env);
   const platform = opts.platform ?? process.platform;
   const ctx = {
-    input, root, config, state, unattended, env, startedAt: PROCESS_START,
+    input, root, config, state, unattended, env, configErrors, startedAt: PROCESS_START,
     home: opts.home ?? homedir(), platform, managed: opts.managed ?? managedSettingsPath(platform),
     save(s: SessionState) {
       if (!fallback) writeState(root, input.session_id, s);

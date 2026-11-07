@@ -42,8 +42,8 @@ import { mkdirSync } from 'node:fs';
 const require_mkdir = (root: string) => mkdirSync(join(root, '.harness'), { recursive: true });
 const SRC = ' M src/a.ts\0';
 
-test('registered last, Stop only, not fail-closed', async () => {
-  expect(registry.at(-1)).toBe(stopGate);
+test('registered last of the Stop checks, Stop only, not fail-closed', async () => {
+  expect(registry.filter((c) => c.events.includes('Stop')).at(-1)).toBe(stopGate);
   expect(stopGate.events).toEqual(['Stop']);
   expect(stopGate.failClosed).toBeFalsy();
 });

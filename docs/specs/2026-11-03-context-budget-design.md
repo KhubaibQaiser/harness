@@ -1,6 +1,6 @@
 # Context budget and `/harness:context-optimize`: design spec
 
-- Status: owner-approved design. The 2026-11-03 decisions are in section 1. The owner's rulings on the first draft's conflicts and questions are in section 16. Nothing is open.
+- Status: owner-approved design. The 2026-11-03 decisions are in section 1. The owner's rulings on the first draft's conflicts and questions are in section 16, with the 2026-11-07 plan rulings C13 to C18. Nothing is open.
 - Date: 2026-11-03
 - Owner: khubaibqaiser
 - Inputs:
@@ -340,6 +340,16 @@ Measured on `main` at `ce31dd0` with the rules in sections 3 and 4 (offline, cha
 | Agent `staff-reviewer` | 182 | 46 | 46 |
 | **Total** | | **577** (29% of 2,000) | **444** (22%) |
 
+**Re-measured on `main` at `0cd5562` (2026-11-07), owner-accepted:** about **553** tokens after this build (28% of 2,000), counted the way `measureSelection` does (M3's `itemContext`, markers kept). The rows are:
+- the agents-md item: ~277;
+- plugin skills `doctor` ~49 and `status` ~44 (`add`, `init`, `sync` and `vet` were already slash-only);
+- the plugin agent `staff-reviewer` registered in `plugin.json`: ~50;
+- `review-rubric`: ~49;
+- `pr-ship`: ~34;
+- the installed project agent `staff-reviewer`: ~50.
+
+The 444 above is the 2026-11-03 figure. The plan's footprint test constant is the value measured in its Task 1.
+
 Planned additions:
 
 | Change | ~Tokens | Source |
@@ -435,7 +445,7 @@ With Q2 and TD, harness's share is about 525 tokens, plus `pr-ship`. M3 plan Tas
   - a change that doesn't raise the total and adds no unmeasured id doesn't ask.
 - **Skill templates:**
   - `init`, `update`, `uninstall` and `context-optimize` have `disable-model-invocation: true`; `doctor` and `status` don't;
-  - the footprint test fails if harness's own measured total grows past a constant in the test, so every change to it is reviewed (444 after this build).
+  - the footprint test fails if harness's own measured total grows past a constant in the test, so every change to it is reviewed (about 553 after this build, as re-measured in section 11).
 - **State card:**
   - golden output for each line's cases (TDD off, paused or on; 0, 3 and 7 test files; locked none, 1 and 7; pending none, harness files changed, config change);
   - the 300- and 1,200-character caps;
@@ -510,6 +520,14 @@ The owner ruled on every conflict and question in the first draft. None is open.
 - **Q4. `doctor` and `status` never use the API.**
 - **Q5. "What to add" means on-demand structure,** not new always-loaded content.
 - **Q6. In unattended runs, going over the budget is refused,** even with `--over-budget` (section 8).
+
+**Rulings of 2026-11-07 (owner, on the implementation plan `docs/plans/2026-11-07-context-budget.md`)**
+- **C13. Preset files have their own owner, `preset:<id>`.** They count with harness in every total, and `name-only` may target their skills.
+- **C14. In API mode, catalog-recorded numbers stay in the total.** Each row is marked `(catalog estimate)`, and the header adds `except <n> catalog estimates`. This is the one stated exception to "never mix the two methods" (section 4).
+- **C15. Harness's footprint is about 553 tokens after this build** (section 11, re-measured), and is accepted as it is.
+- **C16. `cost.context_tokens` is filled once by the owner,** with `harness catalog check --resolve --context --write-context`, and the values are committed in a catalog PR. CI adds `--context` afterwards.
+- **C17. A missing SessionStart group is reported by doctor's existing per-group fix line.** Section 10's separate `no compaction state-card hook` line is dropped.
+- **C18. A degraded dispatcher prints no state card.** It runs only fail-closed checks, and the card is fail-open. A missing state file gives the full 5-line card from a fresh state. Section 9's "only lines 1 and 2" case is dropped.
 
 **M3 plan alignment (added on review).** The config key, flag, rule and interface names follow M3 plan Task 13 (section 12). The two unavoidable mismatches are X1, the widened first budget line, and X2, the internal `method: 'exact'`.
 

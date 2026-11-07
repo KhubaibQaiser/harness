@@ -43,18 +43,18 @@ The spec was written on 2026-11-03, before M3, the preset, PR size and the usage
    - `pr-ship`: ~34;
    - project agent: ~50.
 
-   That totals about 553 after Task 1, not the spec's 444. Task 1's footprint constant is the number measured in that task (owner question 3).
-8. **The preset** writes its own `AGENTS.md` block (`<!-- harness:preset:start -->`) and skills recorded as `item: "preset:<id>"`. §3 knows only `harness`, `catalog:<id>` and `repo` as owners. Task 4 adds `preset:<id>` and counts it with harness in every total (owner question 1).
-9. **`cost.context_tokens` doesn't exist** in `src/catalog/schema.ts` (`cost: { context; setup }`, with unknown keys refused). There are 72 plugin and 6 external-skill items. `src/vet/fetch.ts` (`fetchTarball`) and `src/vet/scan.ts` (`scan(...).context.tokens`) already measure an item's always-loaded tokens at a sha. Tasks 17 and 18 reuse them. Filling the 78 values needs network (owner question 4).
+   That totals about 553 after Task 1, not the spec's 444. Task 1's footprint constant is the number measured in that task (owner decision 3; the spec's §11 is updated).
+8. **The preset** writes its own `AGENTS.md` block (`<!-- harness:preset:start -->`) and skills recorded as `item: "preset:<id>"`. §3 knows only `harness`, `catalog:<id>` and `repo` as owners. Task 4 adds `preset:<id>` and counts it with harness in every total (owner decision 1).
+9. **`cost.context_tokens` doesn't exist** in `src/catalog/schema.ts` (`cost: { context; setup }`, with unknown keys refused). There are 72 plugin and 6 external-skill items. `src/vet/fetch.ts` (`fetchTarball`) and `src/vet/scan.ts` (`scan(...).context.tokens`) already measure an item's always-loaded tokens at a sha. Tasks 17 and 18 reuse them. Filling the 78 values needs network, and the owner does it (owner decision 4).
 10. **A recorded `skillOverrides` set block would be deleted by the next update.** `src/install/plan-preset.ts:35` says "Every recorded `set` block outside `sandbox` is the preset's today; a new writer of set blocks needs its own marker here". `mergePresetSettings` drops any non-sandbox set block it doesn't want. Task 13 excludes `set[0] === 'skillOverrides'` in both places.
 11. **The fragment wires 6 events** (no SessionStart). The dispatcher already accepts `SessionStart` (`EVENTS` in `dispatch.ts`). Nothing runs on it, and change detection only *compares* at Stop, UserPromptSubmit and SessionEnd. So wiring it can't block, renew a baseline or eat a Stop attempt. `doctor` hard-codes `all 6 hook events` and its own `EVENTS` list. Task 11 adds the event there and derives the count.
-12. **The doctor's missing-group copy.** Doctor's per-group loop already reports a missing fragment group as ``fix `.claude/settings.json`: `hooks.SessionStart` is missing the harness group for `compact`: run /harness:update``, and a missing event as `does not run the dispatcher for SessionStart`. The spec's bespoke line (`no compaction state-card hook…: run harness update`) would say the same thing a second time. Task 11 uses the existing lines (owner question 5).
+12. **The doctor's missing-group copy.** Doctor's per-group loop already reports a missing fragment group as ``fix `.claude/settings.json`: `hooks.SessionStart` is missing the harness group for `compact`: run /harness:update``, and a missing event as `does not run the dispatcher for SessionStart`. The spec's bespoke line (`no compaction state-card hook…: run harness update`) would say the same thing a second time. Task 11 uses the existing lines (owner decision 5).
 13. **`src/cli/doctor.ts` is 296 lines,** against the 300 limit. Task 9 puts the context lines in a new `src/cli/doctor-context.ts`, and doctor gains one import and one call.
 14. **The state card's sources.**
     - `harnessNoticed` is a JSON list of `[file, hash]` pairs, not notice text. Line 5 builds its item from the file names.
     - `pendingNotice` is newline-joined notice text.
     - `status`'s `GATES` list now has 7 entries (it includes `pr-size`). It moves to a leaf `src/core/gates.ts`, so the hook bundle doesn't import `src/cli/status.ts`.
-15. **"Degraded: only lines 1 and 2" can't hold.** A degraded dispatcher runs only `failClosed` checks, and the card is pure and fail-open, so it prints nothing. A missing state file gives a fresh state, never an error, so the card prints all 5 lines from it (`0` files, `none`). The plan drops the 2-line case (owner question 6). The card reads `ctx.configErrors`, a new optional `Ctx` field set by `dispatch.ts`, to write line 2's invalid-config text.
+15. **"Degraded: only lines 1 and 2" can't hold.** A degraded dispatcher runs only `failClosed` checks, and the card is pure and fail-open, so it prints nothing. A missing state file gives a fresh state, never an error, so the card prints all 5 lines from it (`0` files, `none`). The plan drops the 2-line case (owner decision 6). The card reads `ctx.configErrors`, a new optional `Ctx` field set by `dispatch.ts`, to write line 2's invalid-config text.
 16. **`sync` also calls `budgetGate`.** The spec lists `init`, `update` and `add`. All four get the widened ask, because Task 8 changes `budgetGate` itself.
 17. **Unattended (Q6).** `isUnattended(input, env)` needs a hook input. The CLI has none, so Task 8 adds `unattendedEnv(env)` (the env parts) and `isUnattended` calls it.
 18. **The usage report** (`src/report/metrics/usage.ts` `alwaysLoaded`) counts the whole `AGENTS.md` and `CLAUDE.md` *plus* the agents-md item, so the harness block counts twice. That is §12's "M3, TD, PS plug in" point for the report: Task 16 feeds it from `summary.ts`. Its export folds unknown ids to `other`, so repo paths never leave the machine.
@@ -171,30 +171,16 @@ Results update the spec's §17 (U1 to U8):
 - **Doctor:** when harness alone is over the budget, the `fix` line replaces the `note` line (only one prints).
 - **`harness context apply` exit codes:** 0 applied or nothing to do, 1 apply failed, 2 usage error or refusal.
 
-## Owner questions (the plan follows the recommendation until answered)
+## Owner decisions (2026-11-07)
 
-1. **Preset ownership.** The spec has no owner for preset files.
-   - (a) **Recommended:** a `preset:<id>` owner, counted with harness in every total and allowed as a `name-only` target. Harness wrote the files, so harness may trim them.
-   - (b) Treat them as `harness`, with no separate label. It's simpler, but the report can't say which text the preset added.
-   - (c) Treat them as `catalog`. That mislabels them: they aren't catalog picks.
-2. **API counts against catalog-recorded numbers.** A plugin pick has no text to send, only a recorded count, and §4 says never mix methods.
-   - (a) **Recommended:** keep the recorded number, mark the row `(catalog estimate)`, and add "except <n> catalog estimates" to the header. The total stays complete.
-   - (b) List those picks as not measured in API mode. Nothing is mixed, but the total drops them.
-   - (c) Fall back to offline for the whole report whenever a recorded number is in the set. That is pure, but the API is rarely used.
-3. **The footprint constant.** About 553 tokens measured, against the spec's 444. The difference is `pr-ship` (~34), the plugin-registered `staff-reviewer` (~50) and longer descriptions.
-   - (a) **Recommended:** accept it, set the constant to the measured value in Task 1, and take nothing else out.
-   - (b) Also drop `agents` from `.claude-plugin/plugin.json`, in its own small PR. That saves ~50 a session, but the `harness:staff-reviewer` plugin agent goes away; the installed project copy stays.
-   - (c) Shorten the `doctor`/`status`/`review-rubric` descriptions to get near 444.
-4. **Filling `cost.context_tokens` for 78 items (C4).** Measuring downloads each pinned tarball through `gh`. That costs no money, but it needs network and up to 25 MB each.
-   - (a) **Recommended:** Tasks 17 and 18 build it. The owner runs `harness catalog check --resolve --context --write-context` once, locally, and commits the values in a catalog PR. CI adds `--context` to the weekly `catalog-pins` job afterwards.
-   - (b) Build Tasks 17 and 18 but leave the values empty. Every plugin pick keeps asking as unmeasured.
-   - (c) Defer C4 to a later plan, and drop Tasks 17 and 18 here.
-5. **The doctor copy for a missing SessionStart group.**
-   - (a) **Recommended:** the existing per-group `fix` line (drift 12). One line, the same as every other event.
-   - (b) Add the spec's `no compaction state-card hook (SessionStart compact): run harness update` as well, so the person sees two lines for one problem.
-6. **The card when the dispatcher is degraded.**
-   - (a) **Recommended:** no card. It's a pure, fail-open check, the same as every other non-`failClosed` check. A missing state file gives the full card from a fresh state (drift 15).
-   - (b) Special-case the card to run when degraded, printing lines 1 and 2. That adds a second kind of check to the runner for one feature.
+The owner answered questions 1 to 4, and the coordinator ruled on 5 and 6. All six took the recommended option and are **resolved**. They are recorded in the spec's §16 as C13 to C18.
+
+1. **Resolved: preset ownership.** Preset files get the owner `preset:<id>`. They count with harness in every total, and `name-only` may target their skills (Tasks 4, 6, 13).
+2. **Resolved: API counts against catalog-recorded numbers.** The recorded number stays, marked `(catalog estimate)`. The header adds `except <n> catalog estimates` (Task 12).
+3. **Resolved: the footprint.** About 553 tokens is accepted. Task 1's constant is the measured value, and nothing else is removed. The spec's §11 is updated.
+4. **Resolved: filling `cost.context_tokens`.** The owner runs `harness catalog check --resolve --context --write-context` once, locally, and commits the values. CI adds `--context` afterwards (manual step after Task 18).
+5. **Resolved: the doctor copy.** Doctor uses only the existing per-group fix line for a missing SessionStart group (Task 11, drift 12).
+6. **Resolved: the degraded dispatcher.** It prints no card. A missing state file gives the full card from a fresh state (Task 10, drift 15).
 
 ---
 
@@ -637,7 +623,7 @@ Results update the spec's §17 (U1 to U8):
 - Consumes: `contextSet`, `apiCountTokens`, `countKey`, `STATE_CARD_MAX_TOKENS`.
 - Produces:
   - `export async function context(args: string[], cli: CliEnv & { fetch?: typeof fetch }): Promise<number>`. It takes `[--json] [--offline]`.
-    - With a key, it re-counts every `always` and `onDemand` text through `apiCountTokens` (owner question 2 covers catalog-recorded numbers).
+    - With a key, it re-counts every `always` and `onDemand` text through `apiCountTokens` ; catalog-recorded numbers stay in the total, each marked `(catalog estimate)`, and the header adds `except <n> catalog estimates` (owner decision 2).
     - Exit codes: 0 within the budget, 1 over, 2 on a usage error. It writes nothing.
   - `export function reportText(s: ContextSet, recs: Rec[], fallback: string | null): string[]` gives §7.1 exactly:
     - Always-loaded rows are `'  ' + owner.padEnd(9) + label`, then tokens right-aligned to `REPORT_WIDTH = 62`.
@@ -837,7 +823,7 @@ Results update the spec's §17 (U1 to U8):
     - prints `<id>: cost.context_tokens is <x>, measured <y> at <sha7>` for a mismatch, which is a problem (exit 1);
     - lists items with no number under `Not measured:`, which isn't a problem.
   - `--write-context` rewrites each item file's `cost:` line with the measured value and changes nothing else in the file.
-  - The CI workflow is unchanged. It runs `--resolve` only, so the network cost doesn't grow until the owner adds `--context` (owner question 4).
+  - The CI workflow is unchanged. It runs `--resolve` only, so the network cost doesn't grow until the owner adds `--context` (owner decision 4).
 
 - [ ] **Step 1: Write the failing tests**, with a fake `ExecBytes` serving a tarball fixture (as `test/vet` does):
   - a recorded value equal to the measurement passes;
@@ -851,6 +837,12 @@ Results update the spec's §17 (U1 to U8):
 - [ ] **Step 4: Run the tests and confirm they pass.** Run `pnpm test`.
 - [ ] **Step 5: Check the docs.** `docs/reference.md` "Commands in full": the `catalog check` row gains `--context [--write-context]`. PR body: "README: checked, no change; reference.md: updated (commands)".
 - [ ] **Step 6: Commit.** `feat(catalog): measure context_tokens at the pinned commit`.
+
+**Manual step after this task (owner, not an agent; owner decision 4).** It needs network and `gh` auth, and costs no money. It runs once Task 18 is merged, because `--write-context` ships in Task 18; Task 17 only adds the schema field.
+1. From a checkout of `main`: `pnpm build && node dist/cli.mjs catalog check --resolve --context --write-context`.
+2. Review the changed `catalog/items/*.yaml` `cost:` lines.
+3. Commit them on a `chore/catalog-context-tokens` branch, and open a PR.
+4. After it merges, add `--context` to the `catalog check --resolve` line in `.github/workflows/catalog-pins.yml`, in its own PR.
 
 ---
 

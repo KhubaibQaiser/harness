@@ -1,7 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { expect, test } from 'vitest';
-import { measureItemContext, setContextTokens } from '../../src/catalog/context-check.js';
+import { measureItemContext, rewriteCost, setContextTokens } from '../../src/catalog/context-check.js';
 import type { CatalogItem } from '../../src/catalog/schema.js';
 import type { ExecBytes } from '../../src/core/exec.js';
 import { tarGz } from '../fixtures/vet/tar.js';
@@ -43,4 +43,22 @@ test.each([
   ['compact', 'cost: {"context":"low","setup":"low","context_tokens":123}\nstance: x\n', 'cost: {"context":"low","setup":"low","context_tokens":7}\nstance: x\n'],
 ])('replaces an existing %s value', (_k, from, want) => {
   expect(setContextTokens(from, 7)).toBe(want);
+});
+
+const base = 'id: a\nstance: x\n';
+test('a trailing comment is kept and the value is rewritten or added', () => {
+  expect(setContextTokens('cost: {"context": "low", "context_tokens": 3} # note\n', 9)).toBe('cost: {"context": "low", "context_tokens": 9} # note\n');
+  expect(setContextTokens('cost: {"context":"low","setup":"low"} # note\n', 9)).toBe('cost: {"context":"low","setup":"low","context_tokens":9} # note\n');
+});
+test('CRLF endings are kept on the changed line', () => {
+  expect(setContextTokens('cost:\r\n  context: low\r\n  setup: none\r\nstance: x\r\n', 9)).toBe('cost:\r\n  context: low\r\n  setup: none\r\n  context_tokens: 9\r\nstance: x\r\n');
+  expect(setContextTokens('cost: {"context":"low"}\r\nstance: x\r\n', 9)).toBe('cost: {"context":"low","context_tokens":9}\r\nstance: x\r\n');
+});
+test('a trailing comma does not become ,,', () => {
+  expect(setContextTokens('cost: {"context": "low", "setup": "low",}\n', 9)).toBe('cost: {"context": "low", "setup": "low", "context_tokens": 9}\n');
+});
+test('rewriteCost accepts a good rewrite and refuses one that changes nothing or breaks the item', () => {
+  expect(rewriteCost(base + 'cost: {"context":"low","setup":"low"}\n', 9)).toBe(base + 'cost: {"context":"low","setup":"low","context_tokens":9}\n');
+  expect(rewriteCost(base + 'cost: &c {"context": "low"}\n', 9)).toBeUndefined(); // line not understood: unchanged
+  expect(rewriteCost(base + 'stance: y\n', 9)).toBeUndefined();
 });

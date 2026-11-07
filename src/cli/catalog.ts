@@ -1,7 +1,7 @@
 import { checkCatalog } from '../catalog/check.js';
 import { compactCatalog, loadCatalog } from '../catalog/load.js';
 import { resolvePins } from '../catalog/resolve.js';
-import { measurable, measureItemContext, setContextTokens } from '../catalog/context-check.js';
+import { measurable, measureItemContext, rewriteCost } from '../catalog/context-check.js';
 import { defaultExec, defaultExecBytes, type Exec, type ExecBytes } from '../core/exec.js';
 import { packageDir } from '../core/package-dir.js';
 import { checkPresetDir } from './preset.js';
@@ -40,7 +40,7 @@ export function catalog(args: string[], { out }: CliEnv, deps: { dir?: string; e
     problems.push(...r.problems);
     unpinned = r.unpinned;
   }
-  const notMeasured: string[] = [];
+  const notMeasured: string[] = [], changes: string[] = [];
   if (context) {
     const dirPath = deps.dir ?? packageDir('catalog');
     for (const it of c.items.filter((i) => measurable(i) && (!only || only.includes(i.id)))) {
@@ -51,11 +51,16 @@ export function catalog(args: string[], { out }: CliEnv, deps: { dir?: string; e
       if (write) {
         if (rec === m.tokens) continue;
         const f = join(dirPath, 'items', `${it.id}.yaml`);
-        writeFileSync(f, setContextTokens(readFileSync(f, 'utf8'), m.tokens));
+        let next: string | undefined;
+        try { next = rewriteCost(readFileSync(f, 'utf8'), m.tokens); } catch { /* reported below */ }
+        if (next === undefined) { problems.push(`${it.id}: could not rewrite cost line`); continue; }
+        writeFileSync(f, next);
+        changes.push(`${it.id}: cost.context_tokens ${rec ?? 'none'} -> ${m.tokens} at ${sha}`);
       } else if (rec === undefined || rec === null) notMeasured.push(it.id);
       else if (rec !== m.tokens) problems.push(`${it.id}: cost.context_tokens is ${rec}, measured ${m.tokens} at ${sha}`);
     }
   }
+  changes.forEach((p) => out(p));
   problems.forEach((p) => out(p));
   if (notMeasured.length) out(`Not measured:\n${notMeasured.map((id) => `  ${id}`).join('\n')}`);
   if (unpinned.length) out(`Unpinned:\n${unpinned.map((u) => `  ${u.id}: ${u.reason}`).join('\n')}`);

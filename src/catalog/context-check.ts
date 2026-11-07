@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+import { parse } from 'yaml';
 import type { ExecBytes } from '../core/exec.js';
 import { cleanTmp, fetchTarball } from '../vet/fetch.js';
 import { scan } from '../vet/scan.js';
@@ -16,22 +18,39 @@ export function measureItemContext(item: CatalogItem, exec: ExecBytes): { tokens
   try { return { tokens: scan(f, path).context.tokens }; } catch (e) { return { error: (e as Error).message }; } finally { cleanTmp(f.dir); }
 }
 
-/** Sets cost.context_tokens in an item file's text, touching only the cost line or block (block, or one-line flow with or without spaces). */
+/** Sets cost.context_tokens in an item file's text, touching only the cost line or block (block, or one-line flow with or without spaces, a trailing comment, CRLF). A line it can't read comes back unchanged: callers must check with rewriteCost. */
 export function setContextTokens(text: string, n: number): string {
   const lines = text.split('\n');
+  const cr = (i: number) => (lines[i].endsWith('\r') ? '\r' : '');
   const at = lines.findIndex((l) => /^cost:/.test(l));
   if (at < 0) return text;
   const val = /(context_tokens"?\s*:\s*)(null|\d+)/;
   if (/^cost:\s*\{/.test(lines[at])) {
-    const l = lines[at], body = l.slice(l.indexOf('{') + 1);
-    const pad = /^\s/.test(body) ? ' ' : '', colon = /:\s/.test(body) ? ': ' : ':', comma = /,\s/.test(body) ? ', ' : ',';
-    lines[at] = val.test(l) ? l.replace(val, `$1${n}`) : l.replace(/\s*\}\s*$/, `${comma}${body.includes('"context"') ? '"context_tokens"' : 'context_tokens'}${colon}${n}${pad}}`);
+    const l = lines[at].replace(/\r$/, ''), m = /^(cost:\s*\{)(.*?)(\s*)\}(\s*#.*)?$/.exec(l);
+    if (!m) return text;
+    let inner = m[2];
+    if (val.test(inner)) inner = inner.replace(val, `$1${n}`);
+    else {
+      const colon = /:\s/.test(inner) ? ': ' : ':', comma = /,\s/.test(inner) ? ', ' : ',';
+      inner = `${inner.replace(/,\s*$/, '')}${comma}${inner.includes('"context"') ? '"context_tokens"' : 'context_tokens'}${colon}${n}`;
+    }
+    lines[at] = `${m[1]}${inner}${m[3]}}${m[4] ?? ''}${cr(at)}`;
     return lines.join('\n');
   }
   let end = at + 1;
   while (end < lines.length && /^\s+\S/.test(lines[end])) end++;
   const hit = lines.findIndex((l, i) => i > at && i < end && /^\s+context_tokens:/.test(l));
   if (hit >= 0) lines[hit] = lines[hit].replace(/(context_tokens:\s*)(null|\d+)/, `$1${n}`);
-  else lines.splice(end, 0, `${/^(\s+)/.exec(lines[at + 1] ?? '')?.[1] ?? '  '}context_tokens: ${n}`);
+  else lines.splice(end, 0, `${/^(\s+)/.exec(lines[at + 1] ?? '')?.[1] ?? '  '}context_tokens: ${n}${cr(at + 1)}`);
   return lines.join('\n');
+}
+
+/** setContextTokens, checked: the result must parse to the same item with only cost.context_tokens changed; otherwise undefined. */
+export function rewriteCost(text: string, n: number): string | undefined {
+  try {
+    const out = setContextTokens(text, n);
+    const want = parse(text) as { cost: Record<string, unknown> };
+    want.cost.context_tokens = n;
+    return out !== text && isDeepStrictEqual(parse(out), want) ? out : undefined;
+  } catch { return undefined; }
 }

@@ -102,7 +102,7 @@ test('check also checks shipped presets, prefixed presets/<id>: ', () => {
 });
 
 // --context
-import { readFileSync } from 'node:fs';
+import { readFileSync, renameSync } from 'node:fs';
 import { tarGz } from '../fixtures/vet/tar.js';
 import type { ExecBytes } from '../../src/core/exec.js';
 import { measureItemContext } from '../../src/catalog/context-check.js';
@@ -136,9 +136,23 @@ test('--write-context rewrites only the cost line; usage errors', () => {
   const d = dir({ a: y('a') });
   const file = join(d, 'items', 'a.yaml');
   const before = readFileSync(file, 'utf8');
-  expect(goCtx(['check', '--resolve', '--context', '--write-context'], d).code).toBe(0);
+  expect(goCtx(['check', '--resolve', '--context', '--write-context'], d)).toEqual({ code: 0, out: `a: cost.context_tokens none -> ${measured} at bbbbbbb` });
   expect(readFileSync(file, 'utf8')).toBe(before.replace('setup: none }', `setup: none, context_tokens: ${measured} }`));
   expect(goCtx(['check', '--resolve', '--context'], d)).toEqual({ code: 0, out: '' });
   expect(goCtx(['check', '--resolve', '--write-context'], d)).toEqual({ code: 2, out: 'Usage: --write-context needs --context' });
   expect(goCtx(['check', '--context'], d).code).toBe(2);
+});
+
+test('--write-context prints an overwrite, and reports an unrewritable or missing file instead of crashing', () => {
+  const d = dir({ a: withTokens(1) });
+  expect(goCtx(['check', '--resolve', '--context', '--write-context'], d).out).toBe(`a: cost.context_tokens 1 -> ${measured} at bbbbbbb`);
+  const odd = dir({ a: y('a').replace('cost: { context: low, setup: none }', 'cost: &c { context: low, setup: none }') });
+  const before = readFileSync(join(odd, 'items', 'a.yaml'), 'utf8');
+  expect(goCtx(['check', '--resolve', '--context', '--write-context'], odd)).toEqual({ code: 1, out: 'a: could not rewrite cost line' });
+  expect(readFileSync(join(odd, 'items', 'a.yaml'), 'utf8')).toBe(before);
+  const renamed = dir({ a: y('a') });
+  renameSync(join(renamed, 'items', 'a.yaml'), join(renamed, 'items', 'b.yaml'));
+  const r = goCtx(['check', '--resolve', '--context', '--write-context'], renamed);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('a: could not rewrite cost line');
 });

@@ -1,6 +1,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { contextSet } from '../../src/budget/summary.js';
+import { loadConfig } from '../../src/core/config.js';
 import { describe, expect, it } from 'vitest';
 import type { SessionCtx } from '../../src/report/acc.js';
 import { alwaysLoaded, usageAcc } from '../../src/report/metrics/usage.js';
@@ -96,16 +98,30 @@ describe('usageAcc bounds and main-thread rules', () => {
 });
 
 describe('alwaysLoaded', () => {
-  it('counts an unreadable AGENTS.md (a directory) as 0 instead of throwing', () => {
+  const dirs = { templates: '/nonexistent-t', plugin: '/nonexistent-p' };
+  const repo = (files: Record<string, string | null>) => {
     const root = mkdtempSync(join(tmpdir(), 'al-'));
-    mkdirSync(join(root, 'AGENTS.md'));
-    writeFileSync(join(root, 'CLAUDE.md'), 'x'.repeat(40));
-    const rows = alwaysLoaded(root, { templates: '/nonexistent-t', plugin: '/nonexistent-p' });
+    for (const [f, t] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, f)), { recursive: true });
+      if (t === null) mkdirSync(join(root, f)); else writeFileSync(join(root, f), t);
+    }
+    return root;
+  };
+  it('counts an unreadable AGENTS.md (a directory) as 0 instead of throwing', () => {
+    const root = repo({ 'AGENTS.md': null, 'CLAUDE.md': 'x'.repeat(40) });
+    const rows = alwaysLoaded(root, dirs), total = contextSet(root, loadConfig(root).config, dirs).total;
     rmSync(root, { recursive: true });
-    expect(rows.filter((x) => x.id.endsWith('.md')).map((x) => x.tokens)).toEqual([0, 10]);
+    expect(rows.every((x) => x.tokens !== null)).toBe(true);
+    expect(rows.reduce((n, x) => n + (x.tokens ?? 0), 0)).toBe(total);
   });
-  it('lists catalog items plus AGENTS.md and CLAUDE.md estimates', () => {
-    const rows = alwaysLoaded('/nonexistent-root', { templates: '/nonexistent-t', plugin: '/nonexistent-p' });
-    expect(rows.map((x) => x.id)).toEqual(expect.arrayContaining(['harness-plugin', 'AGENTS.md', 'CLAUDE.md']));
+  it('is one row per source: the harness block once, sum equals the context set total', () => {
+    const root = repo({ 'AGENTS.md': 'plain notes '.repeat(20), '.claude/rules/private.md': 'rule text '.repeat(10) });
+    const rows = alwaysLoaded(root, dirs);
+    const set = contextSet(root, loadConfig(root).config, dirs);
+    rmSync(root, { recursive: true });
+    expect(rows).toEqual(set.always.map((e) => ({ id: e.label, tokens: e.tokens })));
+    expect(rows.reduce((n, x) => n + (x.tokens ?? 0), 0)).toBe(set.total);
+    expect(rows.filter((x) => x.id === 'AGENTS.md')).toHaveLength(1);
+    expect(rows.length).toBe(new Set(rows.map((x) => x.id)).size);
   });
 });

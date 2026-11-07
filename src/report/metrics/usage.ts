@@ -1,9 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { estimateTokens, measureSelectionSync } from '../../budget/measure.js';
-import { loadCatalog } from '../../catalog/load.js';
+import { contextSet } from '../../budget/summary.js';
 import { loadConfig } from '../../core/config.js';
-import { selectedIds } from '../../install/plan.js';
 import type { Acc, SessionCtx } from '../acc.js';
 import type { TRec, Usage } from '../transcript.js';
 
@@ -86,24 +82,7 @@ export function usageAcc(): Acc<UsageResult> {
   };
 }
 
-/** What harness always loads, as `harness status` measures it, plus the whole AGENTS.md and CLAUDE.md (estimate, characters / 4). */
+/** The always-loaded rows, one per source, from the offline context set (estimate). */
 export function alwaysLoaded(root: string, dirs: { templates: string; plugin: string }): { id: string; tokens: number | null }[] {
-  let ids: string[] = [];
-  const lc = loadCatalog();
-  if (!lc.errors.length) {
-    try {
-      ids = selectedIds(loadConfig(root).config);
-    } catch {
-      // no readable config: the plugin and the two files still count
-    }
-  }
-  const rows = measureSelectionSync(ids, lc.catalog, dirs).entries.map(({ id, tokens }) => ({ id, tokens }));
-  const file = (f: string) => {
-    try {
-      return { id: f, tokens: estimateTokens(readFileSync(join(root, f), 'utf8')) };
-    } catch {
-      return { id: f, tokens: 0 }; // absent, a directory or unreadable: nothing loaded from it
-    }
-  };
-  return [...rows, file('AGENTS.md'), file('CLAUDE.md')];
+  return contextSet(root, loadConfig(root).config, dirs).always.map(({ label, tokens }) => ({ id: label, tokens }));
 }

@@ -335,6 +335,7 @@ Catalog items can be Claude Code plugins or MCP servers.
 
 `harness report` writes a usage and adherence report for this repo: which skills were invoked when they were relevant, which rules were enforced, token use, and where a gate probably blocked something it should not have. It reads your Claude Code session transcripts on your machine and sends nothing anywhere. Its "X of Y rules enforced" line counts how many of the rules harness knows about are held by a gate and not only written in a file, with a matrix of which are enforced and how each can be bypassed.
 
+- The always-loaded table is the same offline count as `harness context`: one row per source, summing to its total. The HTML page names each row; `--export` keeps only row names harness knows and folds the rest (repo file paths) into `other`.
 - Start Claude Code inside the repo for the report to see it. Sessions started in a parent folder are not counted.
 - The page is `.harness/reports/<date>.html`, gitignored. It quotes your sessions, so don't share it. `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose.
 - `harness eval` tests whether skills, rules and gates work in real sessions. It costs money, so it asks you to type `yes` every run, stops at a cost ceiling (default $2, set with `--max-cost-usd`), defaults to a Haiku model, and runs only in your own terminal.

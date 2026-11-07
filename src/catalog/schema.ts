@@ -27,7 +27,7 @@ export interface CatalogItem {
   applies_when: AppliesWhen;
   conflicts_with: string[];
   requires: string[];
-  cost: { context: Level; setup: Level };
+  cost: { context: Level; setup: Level; context_tokens?: number | null };
   stance: Stance;
   stance_reason: string;
   side_effects: string[];
@@ -91,8 +91,10 @@ export function validateItem(raw: unknown, file: string): { ok: true; item: Cata
   const cost = raw.cost;
   if (!isObj(cost)) err('cost', 'must be a mapping with context and setup');
   else {
-    unknownKeys(cost, ['context', 'setup'], 'cost');
+    unknownKeys(cost, ['context', 'setup', 'context_tokens'], 'cost');
     for (const k of ['context', 'setup']) if (!LEVELS.includes(cost[k] as Level)) err(`cost.${k}`, `must be one of ${LEVELS.join(', ')}`);
+    const t = cost.context_tokens;
+    if (t !== undefined && t !== null && !(Number.isInteger(t) && (t as number) >= 0 && (t as number) <= 200000)) err('cost.context_tokens', 'must be an integer from 0 to 200000 or null');
   }
 
   const src = raw.source;

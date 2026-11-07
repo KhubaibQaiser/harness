@@ -40,7 +40,8 @@ const read = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '
 
 export function itemContext(item: CatalogItem, dirs: { templates: string }): ContextEntry {
   const id = item.id;
-  if (item.kind === 'plugin' || item.kind === 'external-skill' || item.kind === 'mcp') return { id, tokens: null };
+  if (item.kind === 'plugin' || item.kind === 'external-skill') return { id, tokens: item.cost.context_tokens ?? null }; // recorded, no text: never replaced by an API count
+  if (item.kind === 'mcp') return { id, tokens: null };
   if (item.source.type !== 'own') return { id, tokens: null };
   if (item.source.merge?.includes('agents-md')) {
     const text = read(join(dirs.templates, 'agents-block.md')) + '@AGENTS.md\n';

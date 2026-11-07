@@ -54,7 +54,7 @@ test('missing input_tokens resolves null', async () => {
   const fails: string[] = [];
   const r = rec(() => resp(200, {}));
   expect(await apiCountTokens(SENTINEL, 'm', { fetch: r.fetchFn, onFail: (x) => fails.push(x) })([{ id: 'a', text: 'a' }])).toBeNull();
-  expect(fails).toHaveLength(1);
+  expect(fails).toEqual(['bad response']);
 });
 
 test('past the total deadline resolves null with timeout, without calling fetch', async () => {
@@ -64,6 +64,18 @@ test('past the total deadline resolves null with timeout, without calling fetch'
   const now = () => (t += 30000);
   expect(await apiCountTokens(SENTINEL, 'm', { fetch: r.fetchFn, now, onFail: (x) => fails.push(x) })([{ id: 'a', text: 'a' }])).toBeNull();
   expect(fails).toEqual(['timeout']);
+  expect(r.calls).toHaveLength(0);
+});
+
+test('a deadline passing mid-run resolves null with timeout and stops calling fetch', async () => {
+  const fails: string[] = [];
+  const r = rec(tokens);
+  let t = 0;
+  const now = () => (t < 3 ? 0 : 30000) + 0 * t++; // third now() onward is past the deadline
+  expect(await apiCountTokens(SENTINEL, 'm', { fetch: r.fetchFn, now, onFail: (x) => fails.push(x) })([{ id: 'a', text: 'a' }, { id: 'b', text: 'b' }])).toBeNull();
+  expect(fails).toEqual(['timeout']);
+  expect(r.calls.length).toBeGreaterThan(0);
+  expect(r.calls.length).toBeLessThan(3);
 });
 
 test('an abort from fetch reports timeout', async () => {
@@ -101,6 +113,23 @@ test('measureSelection: a count record makes it exact, null keeps the estimate',
   expect(exact.entries.every((e) => !('text' in e))).toBe(true);
   const est = await measureSelection(ids, c, dirs, { count: async () => null });
   expect(est.method).toBe('estimate');
+});
+
+test('an entry without text keeps the estimate and the result is not labelled exact', async () => {
+  const { loadCatalog } = await import('../../src/catalog/load.js');
+  const dirs = { templates: join(__dirname, '../../templates'), plugin: join(__dirname, '../..') };
+  const r = await measureSelection([], loadCatalog().catalog, dirs, { extra: [{ id: 'core', tokens: 10 }], count: async (t) => Object.fromEntries(t.map((x) => [x.id, 5])) });
+  expect(r.method).toBe('estimate');
+  expect(r.entries.find((e) => e.id === 'core')!.tokens).toBe(10);
+});
+
+test('prototype keys in the count record are not counts', async () => {
+  const { loadCatalog } = await import('../../src/catalog/load.js');
+  const dirs = { templates: join(__dirname, '../../templates'), plugin: join(__dirname, '../..') };
+  const e = { id: 'constructor', tokens: 10, text: 'abc' };
+  const r = await measureSelection([], loadCatalog().catalog, dirs, { extra: [e], count: async () => ({}) });
+  expect(r.entries.find((x) => x.id === 'constructor')!.tokens).toBe(10);
+  expect(r.method).toBe('estimate');
 });
 
 test('ANTHROPIC_API_KEY is read only in count-api.ts', () => {

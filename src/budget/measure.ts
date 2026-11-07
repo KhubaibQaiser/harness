@@ -49,8 +49,8 @@ export function itemContext(item: CatalogItem, dirs: { templates: string }): Con
   const kind = item.kind === 'own-skill' ? 'skill' : item.kind === 'own-agent' ? 'agent' : null;
   if (!kind) return { id, tokens: 0 }; // hooks, settings, ci: not loaded as text
   try {
-    const text = (item.source.files ?? []).map((f) => alwaysLoadedText(kind, read(join(dirs.templates, f.from)))).join('\n');
-    return { id, tokens: (item.source.files ?? []).reduce((n, f) => n + estimateTokens(alwaysLoadedText(kind, read(join(dirs.templates, f.from)))), 0), text };
+    const loaded = (item.source.files ?? []).map((f) => alwaysLoadedText(kind, read(join(dirs.templates, f.from))));
+    return { id, tokens: loaded.reduce((n, t) => n + estimateTokens(t), 0), text: loaded.join('\n') };
   } catch {
     return { id, tokens: null }; // unparseable frontmatter: not measured
   }
@@ -80,13 +80,13 @@ export async function measureSelection(
   ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { count?: CountTokens; exempt?: string[]; extra?: ContextEntry[] } = {},
 ): Promise<ContextMeasure> {
   const entries = collect(ids, c, dirs, opts);
-  let method: ContextMeasure['method'] = 'estimate';
   const texts = entries.flatMap((e) => (e.text !== undefined && e.text !== '' && e.tokens !== null ? [{ id: e.id, text: e.text }] : []));
   const counts = opts.count && texts.length ? await opts.count(texts) : null;
-  if (counts) {
-    method = 'exact';
-    for (const e of entries) if (e.id in counts && e.text !== undefined) e.tokens = counts[e.id];
-  }
+  const counted = new Set<string>();
+  if (counts) for (const { id } of texts) if (Object.hasOwn(counts, id)) { counted.add(id); }
+  for (const e of entries) if (counted.has(e.id)) e.tokens = counts![e.id];
+  // 'exact' only when every counted-in-principle entry got a count; a mix stays an estimate.
+  const method: ContextMeasure['method'] = counts && entries.every((e) => e.exempt || !e.tokens || counted.has(e.id)) ? 'exact' : 'estimate';
   return { ...summarize(entries), method };
 }
 

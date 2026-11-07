@@ -30,7 +30,7 @@ export function apiCountTokens(
         });
         if (!res.ok) return String(res.status);
         const n = ((await res.json()) as { input_tokens?: unknown }).input_tokens;
-        return typeof n === 'number' ? n : 'network error';
+        return typeof n === 'number' ? n : 'bad response';
       } catch (e) {
         return e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError') ? 'timeout' : 'network error';
       }

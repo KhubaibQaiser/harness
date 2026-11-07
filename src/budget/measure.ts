@@ -1,5 +1,5 @@
 // Offline estimate of the context harness always loads. No network, no API key, no env or dotenv reads: the
-// exact count (CountTokens) is the budget build's seam, and M3 never passes one.
+// exact count (CountTokens, see count-api.ts) is opt-in through measureSelection's `count`.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
@@ -31,7 +31,8 @@ export function alwaysLoadedText(kind: 'agents-block' | 'claude-import' | 'skill
   return (['name', 'description'] as const).filter((k) => y?.[k] != null).map((k) => `${k}: ${str(k)}`).join('\n');
 }
 
-export interface ContextEntry { id: string; tokens: number | null; exempt?: true }
+/** `text` is what was measured, kept so an exact count can re-measure it; measureSelection strips it. */
+export interface ContextEntry { id: string; tokens: number | null; exempt?: true; text?: string }
 export interface ContextMeasure { entries: ContextEntry[]; tokens: number; unmeasured: string[]; method: 'estimate' | 'exact' }
 export type CountTokens = (texts: { id: string; text: string }[]) => Promise<Record<string, number> | null>;
 
@@ -41,11 +42,15 @@ export function itemContext(item: CatalogItem, dirs: { templates: string }): Con
   const id = item.id;
   if (item.kind === 'plugin' || item.kind === 'external-skill' || item.kind === 'mcp') return { id, tokens: null };
   if (item.source.type !== 'own') return { id, tokens: null };
-  if (item.source.merge?.includes('agents-md')) return { id, tokens: estimateTokens(read(join(dirs.templates, 'agents-block.md')) + '@AGENTS.md\n') };
+  if (item.source.merge?.includes('agents-md')) {
+    const text = read(join(dirs.templates, 'agents-block.md')) + '@AGENTS.md\n';
+    return { id, tokens: estimateTokens(text), text };
+  }
   const kind = item.kind === 'own-skill' ? 'skill' : item.kind === 'own-agent' ? 'agent' : null;
   if (!kind) return { id, tokens: 0 }; // hooks, settings, ci: not loaded as text
   try {
-    return { id, tokens: (item.source.files ?? []).reduce((n, f) => n + estimateTokens(alwaysLoadedText(kind, read(join(dirs.templates, f.from)))), 0) };
+    const text = (item.source.files ?? []).map((f) => alwaysLoadedText(kind, read(join(dirs.templates, f.from)))).join('\n');
+    return { id, tokens: (item.source.files ?? []).reduce((n, f) => n + estimateTokens(alwaysLoadedText(kind, read(join(dirs.templates, f.from)))), 0), text };
   } catch {
     return { id, tokens: null }; // unparseable frontmatter: not measured
   }
@@ -63,23 +68,36 @@ function pluginEntry(plugin: string): ContextEntry {
   }
   const texts: ['skill' | 'agent', string][] = [...names.map((d): ['skill', string] => ['skill', read(join(root, d, 'SKILL.md'))]), ...agents.map((a): ['agent', string] => ['agent', read(join(plugin, a))])];
   try {
-    return { id: 'harness-plugin', tokens: texts.reduce((n, [k, t]) => n + estimateTokens(alwaysLoadedText(k, t)), 0) };
+    const loaded = texts.map(([k, t]) => alwaysLoadedText(k, t));
+    return { id: 'harness-plugin', tokens: loaded.reduce((n, t) => n + estimateTokens(t), 0), text: loaded.join('\n') };
   } catch {
     return { id: 'harness-plugin', tokens: null }; // a skill or agent whose frontmatter does not parse: not measured
   }
 }
 
-/** `extra` entries (measured elsewhere) are added as they are. `exempt` ids (items the person already approved) keep an entry but add nothing and are never unmeasured. harness-plugin is never exempt. */
+/** `extra` entries (measured elsewhere) are added as they are. `exempt` ids (items the person already approved) keep an entry but add nothing and are never unmeasured. harness-plugin is never exempt. With `count`, every entry that kept its text is measured exactly in one call; a null answer leaves the estimate. */
 export async function measureSelection(
   ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { count?: CountTokens; exempt?: string[]; extra?: ContextEntry[] } = {},
 ): Promise<ContextMeasure> {
-  return measureSelectionSync(ids, c, dirs, opts);
+  const entries = collect(ids, c, dirs, opts);
+  let method: ContextMeasure['method'] = 'estimate';
+  const texts = entries.flatMap((e) => (e.text !== undefined && e.text !== '' && e.tokens !== null ? [{ id: e.id, text: e.text }] : []));
+  const counts = opts.count && texts.length ? await opts.count(texts) : null;
+  if (counts) {
+    method = 'exact';
+    for (const e of entries) if (e.id in counts && e.text !== undefined) e.tokens = counts[e.id];
+  }
+  return { ...summarize(entries), method };
 }
 
 /** The same estimate without the async seam, for `status`. */
 export function measureSelectionSync(
   ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { exempt?: string[]; extra?: ContextEntry[] } = {},
 ): ContextMeasure {
+  return { ...summarize(collect(ids, c, dirs, opts)), method: 'estimate' };
+}
+
+function collect(ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { exempt?: string[]; extra?: ContextEntry[] }): ContextEntry[] {
   const byId = new Map(c.items.map((i) => [i.id, i]));
   const exempt = new Set(opts.exempt ?? []);
   const entries: ContextEntry[] = [pluginEntry(dirs.plugin)];
@@ -90,12 +108,15 @@ export function measureSelectionSync(
     entries.push(exempt.has(id) ? { ...e, exempt: true } : e);
   }
   entries.push(...(opts.extra ?? [])); // the preset's own rows, measured by presetContext
-  // opts.count is the budget build's seam; with none (always, in M3) the estimate stands.
+  return entries;
+}
+
+function summarize(all: ContextEntry[]): Omit<ContextMeasure, 'method'> {
+  const entries = all.map(({ text: _t, ...e }) => e);
   return {
     entries,
     tokens: entries.reduce((n, e) => n + (e.exempt ? 0 : e.tokens ?? 0), 0),
     unmeasured: entries.filter((e) => e.tokens === null && !e.exempt).map((e) => e.id),
-    method: 'estimate',
   };
 }
 

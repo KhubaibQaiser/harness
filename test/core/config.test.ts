@@ -188,11 +188,12 @@ test('budget_tokens default is 2000, and -1 and 1.5 are rejected', () => {
 test('context.count and context.count_model are validated', () => {
   const load = (y: string) => loadConfig(dirWith('.harness/config.yaml', y));
   expect(load('context:\n  count: exact\n').errors).toEqual(['"context.count" must be one of auto, offline']);
-  for (const m of ['gpt-4', 'claude-']) {
+  for (const m of ['gpt-4', 'claude-', 'Claude-x', `claude-${'a'.repeat(61)}`]) {
     const r = load(`context:\n  count_model: ${m}\n`);
     expect(r.errors).toEqual(['"context.count_model" must match ^claude-[a-z0-9-]{1,60}$']);
     expect(r.config.context.count_model).toBe('claude-opus-5-5');
   }
+  expect(load(`context:\n  count_model: claude-${'a'.repeat(60)}\n`).errors).toEqual([]);
   const ok = load('context:\n  count: offline\n  count_model: claude-sonnet-5-5\n');
   expect(ok.errors).toEqual([]);
   expect(ok.config.context).toMatchObject({ count: 'offline', count_model: 'claude-sonnet-5-5' });

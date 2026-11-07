@@ -40,6 +40,19 @@ class Budget {
   fits(n: number, len: number): boolean { return this.seen.size + n <= MAX_READINGS && this.chars + n * len <= MAX_READING_CHARS; }
 }
 
+/** Whether `\` CR LF is a line continuation. The base reading says yes; bash and zsh say no. Set only by eachJoin. */
+let crJoins = true;
+/** Every backslash-newline joined, `\` CR LF too unless eachJoin is reading it the shell's way. */
+export const joinAll = (t: string): string => t.replace(crJoins ? /\\\r?\n/g : /\\\n/g, '');
+/** `at`, past any backslash-newlines there. */
+function skip(c: string, at: number): number {
+  for (;;) {
+    if (c[at] === '\\' && c[at + 1] === '\n') at += 2;
+    else if (crJoins && c[at] === '\\' && c[at + 1] === '\r' && c[at + 2] === '\n') at += 3;
+    else return at;
+  }
+}
+
 /** Where the quoted spans and heredoc bodies of a command are. Offsets into the command, `to` exclusive. */
 interface Heredoc { from: number; to: number; literal: boolean; program: boolean } // the body and its end line
 interface Layout { quotes: Quoted[]; heredocs: Heredoc[] }
@@ -57,14 +70,16 @@ function layout(s: Scan, tests: { sink: (l: number, at: number) => boolean }): L
     if (ch === '\\') i++;
     else if (q) { quotes.push({ ...q, line: lineStart }); i = q.end - 1; }
     else if ((ch === '$' && c[i + 1] === '(' && c[i + 2] === '(') || (ch === '(' && c[i + 1] === '(')) i = s.closeParen(i + (ch === '$' ? 3 : 2), 2) - 1;
-    else if (ch === '<' && c[i + 1] === '<') {
-      if (c[i + 2] === '<') { i += 2; continue; } // a here-string
-      let d = i + 2;
+    else if (ch === '<' && c[skip(c, i + 1)] === '<') {
+      // The shell drops a backslash-newline before it reads the operator or the word: `<\<nl><'EOF'` is `<<'EOF'`.
+      let d = skip(c, skip(c, i + 1) + 1);
+      if (c[d] === '<') { i = d; continue; } // a here-string
       const dash = c[d] === '-';
-      if (dash) d++;
-      while (c[d] === ' ' || c[d] === '\t') d++;
+      if (dash) d = skip(c, d + 1);
+      while (c[d] === ' ' || c[d] === '\t') d = skip(c, d + 1);
       let word = '', q = '', literal = false;
       for (; d < c.length; d++) {
+        if (q !== "'" && (d = skip(c, d)) >= c.length) break; // inside '…' a backslash-newline is literal
         const x = c[d];
         if (q) { if (x === q) q = ''; else word += x; }
         else if (x === '"' || x === "'") { q = x; literal = true; }
@@ -87,7 +102,7 @@ function layout(s: Scan, tests: { sink: (l: number, at: number) => boolean }): L
             const nl = c.indexOf('\n', p), end = nl < 0 ? c.length : nl;
             l += c.slice(p, end);
             p = nl < 0 ? c.length : nl + 1;
-            if (h.literal || nl < 0 || !/(?<!\\)(?:\\\\)*\\\r?$/.test(l)) break;
+            if (h.literal || nl < 0 || !(crJoins ? /(?<!\\)(?:\\\\)*\\\r?$/ : /(?<!\\)(?:\\\\)*\\$/).test(l)) break;
             l = l.replace(/\\\r?$/, '');
           }
           if ((h.dash ? l.replace(/^\t+/, '') : l) === h.word) break;
@@ -117,8 +132,8 @@ export const commandSkeleton = (c: string): Skel => skeleton(new Scan(c));
 /** The command with every backslash-newline joined, as the shell does: everywhere but in a quoted-delimiter heredoc
  *  body (`<<'EOF'`, `<<"EOF"`, `<<\EOF`), where the backslash is literal and the next line can be the end line. */
 export function joinLines(c: string): string {
-  const join = (t: string) => t.replace(/\\\r?\n/g, '');
-  if (!c.includes('<<') || !/\\\r?\n/.test(c)) return join(c);
+  const join = joinAll, all = join(c);
+  if (all === c || !all.includes('<<')) return all; // `<\<newline><` is a `<<` too
   let out = '', at = 0;
   for (const h of layout(new Scan(c), { sink: () => false }).heredocs) {
     if (!h.literal) continue;
@@ -126,6 +141,30 @@ export function joinLines(c: string): string {
     at = h.to;
   }
   return out + join(c.slice(at));
+}
+/** Runs `judge` on each line-continuation reading of `c`, until `stop` says a result settles it:
+ *  (a) every backslash-newline joined, `\` CR LF too, as base read it;
+ *  (b) joinLines, which keeps a quoted-delimiter heredoc body unjoined;
+ *  (c) joinLines with `\` CR LF kept as a line ending in an escaped CR, as bash and zsh read it.
+ *  The caller takes the strictest result, so a heredoc that one reading misreads cannot hide a line from all of them, and
+ *  no reading is looser than (a). With no backslash before a newline all three are the text itself: one pass. */
+export function eachJoin<T>(c: string, judge: (joined: string) => T, stop: (r: T) => boolean): T[] {
+  if (!/\\\r?\n/.test(c)) return [judge(c)];
+  const out: T[] = [], was = crJoins, seen = new Set<string>();
+  try {
+    for (const [cr, smart] of [[true, false], [true, true], [false, true]]) {
+      if (!cr && !/\\\r\n/.test(c)) break; // (c) is (b) without a `\` CR LF
+      crJoins = cr;
+      const t = smart ? joinLines(c) : joinAll(c);
+      if (cr && seen.has(t)) continue;
+      seen.add(t);
+      out.push(judge(t));
+      if (stop(out[out.length - 1])) break;
+    }
+  } finally {
+    crJoins = was;
+  }
+  return out;
 }
 /** Picks the quoted spans that are data, given the command's tests and skeleton. `rerun` (optional) picks the spans
  *  whose text something on the line may run again: their text is read as a command line of its own, at the end. */

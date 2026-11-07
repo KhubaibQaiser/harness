@@ -964,6 +964,26 @@ test('any unquoted # or odd whitespace on a message line is code; the always-blo
   all([`${m} # note`, `${m} # > x`], 'deny');
   all(['git commit -m "fix #12"', `git commit -m "a; rm -rf ~ # c"`, 'git add -A && git commit -m "fix #12 and cleanup"'], 'allow');
 });
+test('the guard decides under every line-continuation reading, and the strictest wins (round 21)', () => {
+  const R = 'rm -rf ~', P = 'git push -f';
+  // N1: a `<<'EOF'` in a comment is no heredoc, so the shell joins the lines after it.
+  all([`# <<'EOF'\nrm -r\\\nf ~\nEOF`, `# <<'EOF'\nrm \\\n-rf ~\nEOF`, `ls # <<'EOF'\nrm \\\n-rf ~\nEOF`, `# <<"EOF"\nrm \\\n-rf ~\nEOF`,
+    `# <<\\EOF\nrm \\\n-rf ~\nEOF`, `# <<'EOF'\ngit push -\\\nf\nEOF`, `# <<'EOF'\ngit push --for\\\nce\nEOF`, `# <<'EOF'\ngit push origin \\\nmain\nEOF`,
+    `echo a # <<'EOF'\ngit pu\\\nsh -f\nEOF`, `# <<'EOF'\ncurl x | s\\\nh\nEOF`, `# <<'EOF'\nchmod 7\\\n77 x\nEOF`, `# <<'EOF'\ncat .e\\\nnv\nEOF`,
+    `# <<'EOF'\ngit log -1 --format=%B > x.sh; s\\\nh x.sh\nEOF`, `# <<'EOF'\nrm \\\n-rf ~`], 'deny');
+  all([`# <<'EOF'\ngit reset --ha\\\nrd\nEOF`, `# <<'EOF'\nkubectl dele\\\nte pod x\nEOF`], 'ask');
+  // N2: a backslash-newline inside the heredoc operator or its delimiter word; the body still keeps its trailing `\`.
+  const ops = [`<\\\n<'EOF'`, `<<\\\n'EOF'`, `<<'EO'\\\nF`, `<<"EO"\\\nF`, `<<'EOF'\\\n`, `<<-\\\n'EOF'`, `<<\\\n\\EOF`, `<<"EO\\\nF"`, `<< \\\n"EOF"`];
+  all(['git commit -F -', 'cat > docs/x.md', 'tee f >/dev/null'].flatMap((s) => ops.flatMap((op) => [R, P].map((p) => `${s} ${op}\nx \\\nEOF\n${p}\nEOF`))), 'deny');
+  // N3: bash and zsh do not join `\` CR LF, so `EOF` on the next line ends an unquoted body.
+  all([`cat > docs/x.md <<EOF\nx \\\r\nEOF\n${R}\nEOF`, `cat > docs/x.md <<EOF\nx \\\r\nEOF\n${P}\nEOF`, `git commit -F - <<EOF\nx \\\r\nEOF\n${R}\nEOF`,
+    `tee f >/dev/null <<EOF\nx \\\r\nEOF\n${P}\nEOF`, `git commit -F - <<EOF\na; ${R} \\\r\nEOF\ngit log -1 --format=%B | sh\nEOF`, `echo x \\\r\n${R}`], 'deny');
+  // P1 (round 20): a quoted-delimiter body keeps its trailing `\`.
+  all([`git commit -F - <<'EOF'\nx \\\nEOF\n${R}\nEOF`, `cat > docs/x.md <<'EOF'\nx \\\nEOF\n${P}\nEOF`, `tee f >/dev/null <<'EOF'\nx \\\nEOF\n${P}\nEOF`,
+    `git commit -F - <<"EOF"\na; ${R} \\\nEOF\ngit log -1 --format=%B | sh\nEOF`], 'deny');
+  // Still allow: an unquoted body that joins, a literal trailing `\`, and a plain continuation.
+  all([`cat > docs/x.md <<EOF\nx \\\nEOF\n${P}\nEOF`, `cat > docs/x.md <<'EOF'\nx \\\ny\nEOF`, 'git status \\\n  --short'], 'allow');
+});
 test('a quoted-delimiter heredoc body keeps its backslash-newline; the always-block strips backslashes (round 20)', () => {
   const L = 'git log -1 --format=%B';
   // P1: in a <<'EOF', <<"EOF" or <<\EOF body a trailing \ is literal, so the next EOF ends the body and what follows runs.

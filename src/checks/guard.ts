@@ -6,7 +6,7 @@ import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
-import { arithmeticTest, commandSkeleton, gitPlain, globReadings, joinLines, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { arithmeticTest, commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
 import { Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
 import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
@@ -212,9 +212,12 @@ export type Visit<T> = (seg: Seg) => T | null;
  *  is not walked and the walk goes on. */
 export interface WalkHooks<T> { whole?: (words: string[]) => T | null; script?: (body: string) => T | null; tooDeep?: T }
 
-/** Walks every command segment of `command` the way the shell could read it; the first non-null result wins. */
+/** Walks every command segment of `command` the way the shell could read it, under every line-continuation reading
+ *  (eachJoin); the first non-null result wins. */
 export function walkCommands<T>(command: string, w: Where, visit: Visit<T>, hooks: WalkHooks<T> = {}, depth = 0): T | null {
-  command = joinLines(command);
+  return eachJoin(command, (t) => walkJoined(t, w, visit, hooks, depth), (r) => r !== null).find((r) => r !== null) ?? null;
+}
+function walkJoined<T>(command: string, w: Where, visit: Visit<T>, hooks: WalkHooks<T>, depth: number): T | null {
   const whole = command;
   command = withoutHeredocBodies(command); // a body is data for its command; a shell reading it is handled below, from `whole`
   // A backslash is an escape in a POSIX shell (harn\\ess -> harness) and a path separator on Windows
@@ -342,7 +345,7 @@ function personOnlyVisit(w: Where): Visit<Hit> {
 const CLI_RE = /cli\.[m*?[]|c[*?]\S*\.m/i;
 const CHANGE = /(?<![\w-])(init|update|add|remove|sync|uninstall|push|pr)(?![\w-])/i;
 const TDD_OFF = /(?<![\w-])tdd\W+off(?![\w-])/i;
-const NORM = (t: string): string => t.replace(/\\\r?\n/g, '').replace(/['"\\]/g, '');
+const NORM = (t: string): string => joinAll(t).replace(/['"\\]/g, '');
 // `harness` counts as a command word (or a bare word), never as part of a directory in a path: `cd /x/harness && git push` is a push.
 function names(text: string): boolean {
   if (CLI_RE.test(text)) return true;
@@ -377,7 +380,7 @@ function previewOnly(text: string, depth = 0): boolean {
 const VET_TARGET = /((?:harness|cli\.mjs)["']?[ \t]+vet[ \t]+)[\w.@:/#-]+(?=[\s>]|$)/gi;
 const FUNC_DEF = /\bfunction\b|\(\s*\)\s*\{/;
 function backstop(raw: string): Hit | null {
-  raw = raw.replace(/\\\r?\n/g, '');
+  raw = joinAll(raw);
   const norm = NORM(raw); // `in''it` and `in\it` are init
   if (!names(norm)) return null;
   // Only words: a real `harness tdd off` the parser saw was denied before this. Prose, echo, grep, a commit message or a forwarding function asks.
@@ -635,18 +638,23 @@ const BUILDS_WHY = 'the command builds words at run time (a variable in command 
 
 export function decideCommand(command: string, ctx: GuardCtx): Decision {
   try {
-    const joined = joinLines(command), bodiless = commandSkeleton(joined).bodiless;
-    // Read three ways and block if any sees the write: the heredoc-stripped reading, the raw line (a `# <<EOF` comment
-    // can make the skeleton hide commands as a heredoc body), and the line with quotes and backslashes removed (a lone
-    // `'` in a comment desyncs quote tracking otherwise, and `'%B\'>` must not leave an escaped `\>`). Re-review 16, P3/P4.
-    const reads = [bodiless, joined, joined.replace(/[\\'"`]/g, '')];
-    if (reads.some(writesGitOutputAndRunsFile)) return toDecision(['deny', GIT_OUTPUT_RUN_WHY]);
-    if (reads.some(writesGitOutputToSensitivePath)) return toDecision(['deny', GIT_OUTPUT_CONFIG_WHY]);
-    return decideAll(joined, ctx, 0);
+    // Every line-continuation reading (eachJoin) is decided; a deny in any wins, then an ask, and an allow needs all of them.
+    const ds = eachJoin(command, (joined) => decideJoined(joined, ctx), (d) => d.kind === 'deny');
+    return ds.find((d) => d.kind === 'deny') ?? ds.find((d) => d.kind === 'ask') ?? ds[0];
   } catch (e) {
     if (e instanceof ScanBudget) return toDecision(['ask', SCAN_BUDGET_WHY]);
     throw e;
   }
+}
+function decideJoined(joined: string, ctx: GuardCtx): Decision {
+  const bodiless = commandSkeleton(joined).bodiless;
+  // Read three ways and block if any sees the write: the heredoc-stripped reading, the raw line (a `# <<EOF` comment
+  // can make the skeleton hide commands as a heredoc body), and the line with quotes and backslashes removed (a lone
+  // `'` in a comment desyncs quote tracking otherwise, and `'%B\'>` must not leave an escaped `\>`). Re-review 16, P3/P4.
+  const reads = [bodiless, joined, joined.replace(/[\\'"`]/g, '')];
+  if (reads.some(writesGitOutputAndRunsFile)) return toDecision(['deny', GIT_OUTPUT_RUN_WHY]);
+  if (reads.some(writesGitOutputToSensitivePath)) return toDecision(['deny', GIT_OUTPUT_CONFIG_WHY]);
+  return decideAll(joined, ctx, 0);
 }
 /** Every reading of a command line, the stricter verdict winning: as written, the $IFS one, and command-position globs as ruled names. */
 function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {

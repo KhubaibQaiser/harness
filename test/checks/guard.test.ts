@@ -947,6 +947,15 @@ test('a message is data only on a line with no file writes and no cd (owner ruli
   all([`git add -A && ${m}`, `git -C sub ${m.slice(4)}`, `${m} && git push`, `${m} >/dev/null`, `${m} && git push -u origin HEAD`,
     'gh pr create --title t --body "a; rm -rf ~"', "git commit -F - <<'EOF'\na; rm -rf ~\nEOF", "git commit -F - <<'EOF'\na; rm -rf ~\nEOF\ngit push"], 'allow');
 });
+test('a group redirect writes for the whole line, and file-changing git subcommands make a message code (round 16)', () => {
+  const m = 'git commit -m "a; rm -rf ~"';
+  all([`{ ${m}; } > .git/config`, `( ${m} ) > x`, `{ ${m}; } >> notes.txt`, `if true; then ${m}; fi > x`], 'deny'); // group redirect
+  all(['{ git log -1 --format=%B; } >> .git/config', '( git show -s --format=%B ) > .git/hooks/pre-commit'], 'deny'); // always-block sees it
+  all(['stash', 'apply p.diff', 'am p.mbox', 'checkout evil', 'switch evil', 'restore x', 'reset --hard', 'pull', 'merge x', 'cherry-pick x', 'revert x',
+    'worktree add w', 'remote add x u'].map((g) => `git ${g} && ${m}`), 'deny');
+  all([`git add -A && ${m}`, `${m} && git push`, `git log -1 && ${m}`, `git status && ${m}`, `git diff && ${m}`, `git fetch && ${m}`,
+    `git remote -v && ${m}`, `${m} > "/dev/null"`, `git -C sub commit -m "a; rm -rf ~"`], 'allow');
+});
 test('gh lines get a per-subcommand option allowlist, rejecting unknown options (round 14)', () => {
   const m = 'git commit -m "a; rm -rf ~"';
   all([`${m}; gh api --input x /repos`, `${m}; gh pr create --body b --frobnicate 'git log -1 --format=%B|sh'`, `${m}; gh issue create --title t --body b -i x`,

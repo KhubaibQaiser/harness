@@ -23,7 +23,8 @@ const PLAIN_WRAPPERS = new Set(['command', 'time', 'nice', 'nohup']);
 function optionSet(short: string, long: string) {
   return { short: new Set(short.split(' ').filter(Boolean).map((s) => s.replace(/[?].*/, ''))), long: new Set(long.split(' ').filter(Boolean).map((l) => l.replace(/[?:].*/, ''))) };
 }
-/** git subcommands that run nothing they are given, each mapped to the options it may take besides COMMON_GIT. An
+/** git subcommands that run nothing they are given and change no working-tree file (with hooks present, a later
+ *  commit would run what checkout, apply, stash, reset and the like wrote), each mapped to the options it may take besides COMMON_GIT. An
  *  option not listed here or in COMMON_GIT makes the message code (reject unknown by default), so a value-running
  *  option (`-O`, `--upload-pack`, `--receive-pack`, `--exec`, `--ext-diff`, `--textconv`, `-s`, …) is never allowed. */
 const COMMON_GIT = optionSet('q v p n f', 'quiet verbose dry-run porcelain no-pager color no-color all help no-optional-locks');
@@ -31,26 +32,14 @@ const GIT_SUB: Record<string, ReturnType<typeof optionSet>> = {
   add: optionSet('A a u f p n e v i', 'all force dry-run patch update intent-to-add no-ignore-removal pathspec-from-file renormalize ignore-errors'),
   commit: optionSet('a m F C S s q v n o z', 'all message file reuse-message amend no-verify allow-empty allow-empty-message signoff no-signoff no-edit fixup squash only include short long null author date reset-author gpg-sign no-gpg-sign cleanup pathspec-from-file dry-run'),
   push: optionSet('u f n v q d', 'set-upstream force force-with-lease force-if-includes tags follow-tags delete dry-run no-verify atomic all prune porcelain set-upstream-to'),
-  pull: optionSet('f n v q r', 'ff ff-only no-ff rebase no-rebase autostash no-autostash tags no-tags prune stat no-stat'),
   fetch: optionSet('f n v q p t a', 'all prune prune-tags tags no-tags depth deepen unshallow force dry-run atomic'),
   tag: optionSet('a s m F f n l d v', 'annotate sign message file force list delete contains no-contains merged no-merged points-at sort column no-sign'),
   notes: optionSet('m F f C', 'message file force reuse-message'),
-  merge: optionSet('m F n v q S', 'no-ff ff ff-only squash no-squash no-commit commit no-edit abort continue quit stat no-stat gpg-sign no-gpg-sign autostash no-autostash allow-unrelated-histories'),
-  'cherry-pick': optionSet('n x S', 'continue abort quit skip no-commit edit signoff ff allow-empty allow-empty-message keep-redundant-commits mainline'),
-  revert: optionSet('n S', 'continue abort quit skip no-commit edit signoff mainline no-edit'),
-  stash: optionSet('p k u a S q', 'patch keep-index no-keep-index include-untracked all staged quiet message push pop apply drop list show clear'),
   log: optionSet('n p q L S G', 'oneline stat shortstat numstat name-only name-status graph decorate no-decorate abbrev-commit no-abbrev-commit pretty format date author committer grep all branches tags remotes reverse merges no-merges first-parent follow since until after before max-count skip color no-color walk-reflogs patch no-patch raw'),
   show: optionSet('q s p', 'oneline stat format pretty name-only name-status abbrev-commit no-patch raw color no-color'),
   diff: optionSet('p q s w b z M C R', 'stat shortstat numstat name-only name-status cached staged no-index color no-color word-diff ignore-space-change ignore-all-space function-context unified no-color-moved patience histogram minimal find-renames find-copies diff-filter'),
   status: optionSet('s b z u v', 'short long porcelain branch show-stash untracked-files ignored no-renames find-renames column no-column'),
   branch: optionSet('a r v l d D f m M q t u', 'all remotes list delete force move copy merged no-merged contains no-contains points-at set-upstream-to unset-upstream track no-track show-current column sort verbose quiet'),
-  checkout: optionSet('b B f q t m p l', 'force quiet track no-track detach orphan ours theirs merge patch no-overlay pathspec-from-file'),
-  switch: optionSet('c C f q t d m', 'create force-create force quiet track no-track detach orphan discard-changes merge recurse-submodules'),
-  restore: optionSet('p q s W S', 'staged worktree source patch quiet ours theirs merge overlay no-overlay pathspec-from-file'),
-  reset: optionSet('q p N', 'soft mixed hard merge keep quiet patch pathspec-from-file'),
-  rm: optionSet('f r n q', 'force cached ignore-unmatch dry-run recursive quiet pathspec-from-file'),
-  mv: optionSet('f n k v', 'force dry-run verbose'),
-  clone: optionSet('n q v b l o','bare mirror depth branch single-branch no-single-branch recurse-submodules no-checkout origin shallow-since shallow-exclude filter sparse jobs progress'),
   remote: optionSet('v', 'verbose'),
   'rev-parse': optionSet('q', 'abbrev-ref short verify quiet symbolic symbolic-full-name show-toplevel git-dir is-inside-work-tree show-prefix show-cdup default'),
   'cat-file': optionSet('p t s e', 'batch batch-check allow-unknown-type'),
@@ -59,13 +48,8 @@ const GIT_SUB: Record<string, ReturnType<typeof optionSet>> = {
   describe: optionSet('', 'tags all contains abbrev long always dirty broken match exclude first-parent'),
   shortlog: optionSet('n s e w', 'numbered summary email committer group no-merges'),
   grep: optionSet('n l L i w v c e E F P', 'line-number files-with-matches files-without-match ignore-case word-regexp invert-match count extended-regexp fixed-strings perl-regexp cached no-index untracked recurse-submodules name-only context before-context after-context color no-color and or not all-match'),
-  am: optionSet('s q i p', 'signoff quiet interactive continue abort skip quit resolved three-way no-gpg-sign ignore-whitespace scissors no-scissors message-id keep keep-cr whitespace'),
-  apply: optionSet('p R v C z N', 'stat numstat summary check index cached three-way reverse reject whitespace unidiff-zero recount directory exclude include'),
-  'format-patch': optionSet('n o s v', 'stdout numbered no-numbered cover-letter signoff subject-prefix output-directory start-number thread no-thread base'),
-  worktree: optionSet('f b B q', 'force detach checkout lock no-checkout quiet'),
   gc: optionSet('', 'aggressive auto prune no-prune quiet force'),
   reflog: optionSet('n', 'all stale-fix expire expire-unreachable verbose'),
-  clean: optionSet('d f n q x X e i', 'force dry-run quiet exclude interactive'),
   'rev-list': optionSet('n', 'all branches tags remotes count max-count reverse merges no-merges first-parent since until before after objects pretty format oneline'),
   'symbolic-ref': optionSet('q m d', 'short quiet delete'),
   'update-ref': optionSet('d m', 'create-reflog no-deref stdin'),
@@ -171,7 +155,11 @@ function safeCommand(ws: string[], k: number, pipedIn: boolean, pipedOut: boolea
   const name = ws[k], rest = ws.slice(k + 1);
   if (PIPE_READERS.has(name)) return pipedIn && rest.every((o) => /^-?[A-Za-z0-9]+$/.test(o));
   if (!SAFE.has(name) || (NOT_PIPED.has(name) && pipedOut)) return false;
-  if (name === 'git') { const s = gitSubcommand(rest); return s >= 0 && gitOptionsOk(rest[s] ?? '', rest.slice(s + 1)); }
+  if (name === 'git') {
+    const s = gitSubcommand(rest), sub = rest[s] ?? '';
+    if (sub === 'remote' && rest.slice(s + 1).some((w) => !w.startsWith('-'))) return false; // remote add/set-url write config
+    return s >= 0 && gitOptionsOk(sub, rest.slice(s + 1));
+  }
   if (name === 'gh') {
     const s = ghSubcommand(rest), sub = rest[s] ?? '';
     return GH_SAFE.has(sub) && !(sub === 'repo' && GH_REPO_DANGER.has(rest[s + 1] ?? '')) && ghOptionsOk(rest.slice(s + 1));
@@ -186,6 +174,8 @@ function safeCommand(ws: string[], k: number, pipedIn: boolean, pipedOut: boolea
 export function onlySafeCommands(cmd: string): boolean {
   if (/\$\(|`|[<>]\(|\$\{|\$\[/.test(cmd.replace(/'[^']*'/g, "''"))) return false;
   const ps = pieces(cmd);
+  // A redirect after `}`, `)`, `done`, `fi` or `esac` writes for every command in the group: count every write on the line.
+  if (ps.some((p) => writeTargets(words(p.text).map(unquote)).some((t) => t !== '/dev/null'))) return false;
   return ps.every((p, i) => safeCommand(words(p.text).map(unquote), 0, i > 0 && ps[i - 1].sep === '|', p.sep === '|'));
 }
 
@@ -225,7 +215,10 @@ export function writesGitOutputToSensitivePath(cmd: string): boolean {
     if (s < 0 || !GIT_OUTPUT.has(ws.slice(k + 1)[s] ?? '')) return false;
     const next = ps[i + 1] ? words(ps[i + 1].text).map(unquote) : [];
     const teed = p.sep === '|' && next[commandWord(next)] === 'tee' ? writeTargets(next).concat(next.slice(1).filter((w) => !w.startsWith('-'))) : [];
-    return writeTargets(ws).concat(teed).some((t) => SENSITIVE_WRITE.test(t));
+    // A group's own redirect (`{ git log …; } >> .git/config`) sits in a later piece that runs no command.
+    const grouped = ps.slice(i + 1).filter((q) => { const qs = words(q.text).map(unquote); return commandWord(qs) >= qs.length; });
+    const groupTargets = grouped.flatMap((q) => writeTargets(words(q.text).map(unquote)));
+    return writeTargets(ws).concat(teed, groupTargets).some((t) => SENSITIVE_WRITE.test(t));
   });
 }
 /** The command word past keywords, assignments and redirections (writesGitOutputAndRunsFile tolerates assignments). */

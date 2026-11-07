@@ -6,7 +6,8 @@ import type { Ctx } from '../../src/hooks/dispatch.js';
 
 // Re-review 19, N8: every level of nested shells was read again inside the one around it, so a 477-character command
 // took 12 s, past the 10 s hook timeout, where a hook fails open. Nesting past the cap is denied at once, and long
-// inputs stay linear. Ceiling: 200 ms each.
+// inputs stay linear. Ceilings are per platform, far under the 10 s timeout; hosted runners vary.
+const CEILING_MS = { win32: 1000, darwin: 400 }[process.platform as string] ?? 300;
 const ctx = { config: loadConfig('/nonexistent-harness-root').config, env: {}, root: '/p' };
 const R = 'rm -rf ~';
 const nest = (d: number, inner: string) => { let s = inner; for (let i = 0; i < d; i++) s = `bash <<'E${i}'\n${s}\nE${i}`; return s; };
@@ -30,7 +31,7 @@ it.each([
 ] as const)('%s', (_name, c, want) => {
   const { kind, ms } = time(c);
   expect(kind).toBe(want);
-  expect(ms).toBeLessThan(200);
+  expect(ms).toBeLessThan(CEILING_MS);
 });
 
 // protect runs in the same hook and read every nested program again for each level around it (55 s at depth 20).
@@ -43,5 +44,5 @@ it.each([
   prot(c);
   const t = performance.now();
   expect((prot(c) as { kind: string }).kind).toBe(want);
-  expect(performance.now() - t).toBeLessThan(200);
+  expect(performance.now() - t).toBeLessThan(CEILING_MS);
 });

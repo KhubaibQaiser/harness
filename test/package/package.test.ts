@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { syncCommand } from '../../src/checks/stop/runner.js';
 import { loadCatalog } from '../../src/catalog/load.js';
-import { measureSelection } from '../../src/budget/measure.js';
+import { footprint, measureSelection } from '../../src/budget/measure.js';
 
 const json = (f: string) => JSON.parse(readFileSync(f, 'utf8'));
 const pkg = json('package.json');
@@ -118,4 +118,16 @@ if (!hasClaude) console.warn('skipping plugin validate: `claude` is not on PATH'
 test.skipIf(!hasClaude)('plugin validates with claude plugin validate', () => {
   const r = spawnSync('claude', ['plugin', 'validate', '.'], { encoding: 'utf8' });
   expect(r.status, r.stdout + r.stderr).toBe(0);
+});
+
+test('slash-only skills carry disable-model-invocation; doctor and status stay visible', () => {
+  const off = (s: string) => /^disable-model-invocation: true$/m.test(readFileSync(`skills/${s}/SKILL.md`, 'utf8'));
+  for (const s of ['init', 'update', 'uninstall', 'add', 'sync', 'vet']) expect(off(s), s).toBe(true);
+  for (const s of ['doctor', 'status']) expect(off(s), s).toBe(false);
+});
+
+// Always-loaded tokens of the default install (plugin + legacy own items). Raise only in a reviewed PR.
+const HARNESS_FOOTPRINT = 590;
+test('the default install footprint stays within HARNESS_FOOTPRINT', () => {
+  expect(footprint({ templates: 'templates', plugin: '.' }, loadCatalog().catalog)).toBeLessThanOrEqual(HARNESS_FOOTPRINT);
 });

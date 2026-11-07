@@ -1,6 +1,7 @@
 ---
 name: update
 description: Check for and apply a harness update to this repo's install. Use when the user runs /harness:update or asks to upgrade the harness.
+disable-model-invocation: true
 ---
 
 # harness update

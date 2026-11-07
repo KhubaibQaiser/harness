@@ -1,10 +1,11 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { defaults } from '../../src/core/config.js';
 import { loadCatalog } from '../../src/catalog/load.js';
 import type { Catalog, CatalogItem } from '../../src/catalog/schema.js';
-import { DEFAULT_CONTEXT_BUDGET, alwaysLoadedText, budgetLines, budgetVerdict, estimateTokens, itemContext, itemContextLine, measureSelection, measureSelectionSync, type ContextMeasure } from '../../src/budget/measure.js';
+import { DEFAULT_CONTEXT_BUDGET, SKILL_DESCRIPTION_MAX, alwaysLoadedText, budgetLines, budgetVerdict, estimateTokens, itemContext, itemContextLine, measureSelection, measureSelectionSync, type ContextMeasure } from '../../src/budget/measure.js';
 
 const templates = join(__dirname, '../../templates');
 const plugin = join(__dirname, '../..');
@@ -150,4 +151,28 @@ test('extra entries add like items, in both measure functions', async () => {
     expect(r.entries.slice(-2)).toEqual(extra);
     expect(r.unmeasured).toEqual(['plug']);
   }
+});
+
+test('a skill with disable-model-invocation: true costs nothing', () => {
+  expect(alwaysLoadedText('skill', '---\nname: x\ndescription: d\ndisable-model-invocation: true\n---\nbody')).toBe('');
+  expect(alwaysLoadedText('skill', '---\nname: x\ndescription: d\ndisable-model-invocation: false\n---\nbody')).toBe('name: x\ndescription: d');
+});
+
+test('when_to_use is appended to the description after one space', () => {
+  expect(alwaysLoadedText('skill', '---\nname: x\ndescription: Does X.\nwhen_to_use: Use it on X.\n---\n')).toBe('name: x\ndescription: Does X. Use it on X.');
+});
+
+test('the description part is cut at SKILL_DESCRIPTION_MAX', () => {
+  const out = alwaysLoadedText('skill', `---\nname: x\ndescription: ${'a'.repeat(2000)}\nwhen_to_use: Use it.\n---\n`);
+  expect(SKILL_DESCRIPTION_MAX).toBe(1536);
+  expect(out).toBe(`name: x\ndescription: ${'a'.repeat(1536)}`);
+});
+
+test('pluginEntry counts only skills the model can invoke', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cb1-'));
+  const skill = (n: string, extra: string) => { mkdirSync(join(root, 'skills', n), { recursive: true }); writeFileSync(join(root, 'skills', n, 'SKILL.md'), `---\nname: ${n}\ndescription: d\n${extra}---\n`); };
+  skill('off', 'disable-model-invocation: true\n');
+  skill('on', '');
+  const r = measureSelectionSync([], cat(), { templates, plugin: root });
+  expect(r.entries[0]!.tokens).toBe(estimateTokens('name: on\ndescription: d'));
 });

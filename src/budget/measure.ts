@@ -4,18 +4,27 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import type { Catalog, CatalogItem } from '../catalog/schema.js';
+import { LEGACY_OWN } from '../install/plan.js';
 
 export const DEFAULT_CONTEXT_BUDGET = 2000;
+/** Claude Code cuts a skill's description (plus when_to_use) at this many characters in the listing. */
+export const SKILL_DESCRIPTION_MAX = 1536;
 
 export const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
 
-/** Skills and agents load only their name and description before use (code.claude.com docs); the other two load whole. */
+/** Skills and agents load only their name and description before use (code.claude.com docs); the other two load whole. A skill adds when_to_use, is cut at SKILL_DESCRIPTION_MAX, and costs nothing with disable-model-invocation: true. */
 export function alwaysLoadedText(kind: 'agents-block' | 'claude-import' | 'skill' | 'agent', text: string): string {
   if (kind === 'agents-block' || kind === 'claude-import') return text;
   const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? '';
   try {
     const y = parse(fm) as Record<string, unknown> | null;
-    return (['name', 'description'] as const).filter((k) => y?.[k] != null).map((k) => `${k}: ${String(y![k]).trim()}`).join('\n');
+    const str = (k: string): string | null => (y?.[k] != null ? String(y[k]).trim() : null);
+    if (kind === 'skill') {
+      if (y?.['disable-model-invocation'] === true) return '';
+      const desc = [str('description'), str('when_to_use')].filter((v) => v !== null).join(' ').slice(0, SKILL_DESCRIPTION_MAX);
+      return [str('name') !== null ? `name: ${str('name')}` : null, desc ? `description: ${desc}` : null].filter((v) => v !== null).join('\n');
+    }
+    return (['name', 'description'] as const).filter((k) => y?.[k] != null).map((k) => `${k}: ${str(k)}`).join('\n');
   } catch {
     return fm; // unparseable frontmatter: count all of it; over-counting is safe
   }
@@ -100,3 +109,6 @@ export function budgetLines(v: BudgetVerdict): string[] {
 }
 
 export const itemContextLine = (e: ContextEntry): string => (e.tokens === null ? 'not measured before install' : `~${e.tokens} tokens (estimate)`);
+
+/** Always-loaded tokens of the default install: the plugin plus the legacy own items. */
+export const footprint = (dirs: { templates: string; plugin: string }, c: Catalog): number => measureSelectionSync(LEGACY_OWN, c, dirs).tokens;

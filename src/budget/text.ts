@@ -68,13 +68,21 @@ export function splitFrontmatter(s: string): Front {
 
 // Split on commas outside braces, so a glob such as a/b.{ts,tsx} stays one pattern.
 function splitTop(s: string): string[] {
+  const opens: number[] = [];
+  const matched = new Set<number>(); // a `{` with no `}` after it is a literal character
+  const closes = new Set<number>();
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '{') opens.push(i);
+    else if (s[i] === '}' && opens.length) { matched.add(opens.pop()!); closes.add(i); }
+  }
   const parts: string[] = [];
   let depth = 0;
   let cur = '';
-  for (const ch of s) {
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
     if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; continue; }
-    if (ch === '{') depth++;
-    else if (ch === '}' && depth > 0) depth--;
+    if (matched.has(i)) depth++;
+    else if (closes.has(i)) depth--;
     cur += ch;
   }
   return [...parts, cur];

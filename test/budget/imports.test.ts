@@ -141,6 +141,16 @@ test('realIO provides real()', () => {
   expect(typeof realIO.real).toBe('function');
 });
 
+test('external, missing and duplicate tokens after the file cap do not trigger a false cap skip', () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < MAX_IMPORTED; i++) files[`f${i}.md`] = 'x';
+  const text = Object.keys(files).map((k) => `@${k}`).join('\n') + '\n@~/x.md @gone.md @f0.md';
+  const r = run(files, text);
+  expect(r.files).toHaveLength(MAX_IMPORTED);
+  expect(r.skipped).toEqual([]);
+  expect(r.external).toEqual(['~/x.md']);
+});
+
 test('inside', () => {
   expect(inside('/repo', '/repo/a/b')).toBe(true);
   expect(inside('/repo', '/repo2/a')).toBe(false);

@@ -56,3 +56,8 @@ test('paths: commas inside braces do not split', () => {
 test('a BOM before the frontmatter is tolerated', () => {
   expect(splitFrontmatter('\uFEFF---\nname: x\n---\nbody')).toMatchObject({ data: { name: 'x' }, body: 'body', bad: false });
 });
+
+test('an unbalanced brace is literal and does not swallow later commas', () => {
+  expect(pathsOf({ paths: 'a{b, c, d' })).toEqual(['a{b', 'c', 'd']);
+  expect(pathsOf({ paths: '{a,{b,c}, d' })).toEqual(['{a', '{b,c}', 'd']);
+});

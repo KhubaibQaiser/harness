@@ -101,12 +101,13 @@ export function expandImports(root: string, start: { path: string; text: string 
       const abs = resolveInside(root, realRoot, dirname(cur.path), raw, io);
       const rel = abs === null ? '' : toPosix(relative(root, abs));
       if (abs !== null && seen.has(rel)) continue;
-      if (++attempts > MAX_ATTEMPTS || files.length >= MAX_IMPORTED) { skipped.push({ path: rel || raw, by: cur.path, reason: 'cap' }); capped = true; break; }
+      if (++attempts > MAX_ATTEMPTS) { skipped.push({ path: rel || raw, by: cur.path, reason: 'cap' }); capped = true; break; }
       if (abs === null) { external.add(raw); continue; }
       seen.add(rel);
       if (skip(rel)) { skipped.push({ path: rel, by: cur.path, reason: 'ignored' }); continue; }
       const got = load(abs, io);
       if (!('text' in got)) { if (got.reason !== 'missing') skipped.push({ path: rel, by: cur.path, reason: got.reason }); continue; }
+      if (files.length >= MAX_IMPORTED) { skipped.push({ path: rel, by: cur.path, reason: 'cap' }); capped = true; break; }
       files.push({ path: rel, text: got.text, by: cur.path });
       queue.push({ path: rel, text: got.text, hop: cur.hop + 1 });
     }

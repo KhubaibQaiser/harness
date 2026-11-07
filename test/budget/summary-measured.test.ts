@@ -1,22 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, test, vi } from 'vitest';
+import { expect, test } from 'vitest';
+import { contextSet } from '../../src/budget/summary.js';
 import { defaults, type HarnessConfig } from '../../src/core/config.js';
 import { makeRepo } from '../install/helpers.js';
 
-// Stands in for #152: a recorded cost.context_tokens makes itemContext return a number for a plugin pick.
-vi.mock('../../src/budget/measure.js', async (orig) => {
-  const m = await orig<typeof import('../../src/budget/measure.js')>();
-  return { ...m, measureSelectionSync: (...a: Parameters<typeof m.measureSelectionSync>) => {
-    const r = m.measureSelectionSync(...a);
-    const entries = r.entries.map((e) => (e.id === 'p1' ? { ...e, tokens: 61 } : e));
-    return { ...r, entries, unmeasured: r.unmeasured.filter((id) => id !== 'p1') };
-  } };
-});
-const { contextSet } = await import('../../src/budget/summary.js');
-
-test('a measured plugin pick is a catalog row that counts in `catalog`, not unmeasured', () => {
-  const y = readFileSync(join(__dirname, '../../catalog/items/auth0.yaml'), 'utf8').replace(/^id: .*$/m, 'id: p1');
+test('a plugin pick with a recorded cost.context_tokens is a catalog row that counts in `catalog`', () => {
+  const y = readFileSync(join(__dirname, '../../catalog/items/auth0.yaml'), 'utf8').replace(/^id: .*$/m, 'id: p1').replace(/^cost: .*$/m, 'cost: {"context":"low","setup":"low","context_tokens":61}');
   const cat = makeRepo({ 'catalog.yaml': 'version: 1\n', 'items/p1.yaml': y }, { git: false });
   const root = makeRepo({ 'CLAUDE.md': 'x' }, { git: false });
   const config: HarnessConfig = { ...defaults(), items: [{ id: 'p1', include: 'optional', selected: true }] as HarnessConfig['items'] };

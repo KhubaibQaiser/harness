@@ -60,8 +60,9 @@ export function contextSet(root: string, config: HarnessConfig, dirs: { template
     if (!isPlugin && counted.has(owner)) continue; // a pick that left files in the repo is already in the repo rows
     if (e.tokens === null) { unmeasured.push(`plugin: ${e.id}`); continue; }
     const label = isPlugin ? pluginLabel(dirs.plugin) : e.id;
-    // No file text behind these rows: chars is 0 and the note says the size is a recorded estimate; path is not a file.
-    always.push({ id: e.id, path: isPlugin ? 'plugin:harness' : owner, label, owner, load: 'always', tokens: e.tokens, chars: 0, note: NO_TEXT_NOTE });
+    // measureSelectionSync strips the text, so chars is 0 (ponytail: keep real chars only if measure.ts ever returns it); path is not a file.
+    // A pick's tokens come from the catalog record; the plugin row is measured from harness's own files.
+    always.push({ id: e.id, path: isPlugin ? 'plugin:harness' : owner, label, owner, load: 'always', tokens: e.tokens, chars: 0, ...(isPlugin ? {} : { note: NO_TEXT_NOTE }) });
   }
 
   const sumOf = (f: (o: Owner) => boolean) => always.reduce((n, e) => n + (f(e.owner) ? e.tokens : 0), 0);

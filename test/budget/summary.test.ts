@@ -33,7 +33,8 @@ test('no double count: each installed row once, total is the sum of the rows', (
 
 test('the plugin row is in always, owned by harness', () => {
   const p = contextSet(installed(), cfg(), dirs).always.find((e) => e.id === 'harness-plugin');
-  expect(p).toMatchObject({ owner: 'harness', load: 'always', chars: 0, note: 'size from the catalog record', path: 'plugin:harness' });
+  expect(p).toMatchObject({ owner: 'harness', load: 'always', chars: 0, path: 'plugin:harness' });
+  expect(p!.note).toBeUndefined(); // measured from harness's own files, not a catalog record
   expect(p!.label).toMatch(/^skills harness:/);
   expect(p!.tokens).toBeGreaterThan(0);
 });

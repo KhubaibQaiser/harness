@@ -79,6 +79,10 @@ test('serializeConfig writes the header and a comment per section', () => {
   for (const k of Object.keys(defaults())) expect(s).toMatch(new RegExp(`^# .+\\n${k}:`, 'm'));
 });
 
+test('context section has its comment and the count keys', () => {
+  expect(serializeConfig(defaults())).toContain('# Always-loaded context budget. harness context measures it; init, update, add and sync ask before going over.\ncontext:\n  budget_tokens: 2000\n  count: auto\n  count_model: claude-opus-5-5\n');
+});
+
 test('config.example.yaml equals serializeConfig(defaults)', () => {
   expect(readFileSync(join(__dirname, '../../templates/config.example.yaml'), 'utf8')).toBe(serializeConfig(defaults()));
 });

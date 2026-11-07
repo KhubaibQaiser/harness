@@ -1,6 +1,6 @@
 ---
 name: init
-description: Set up the harness in this repo: interview, recommend, select, apply. Run via /harness:init.
+description: "Set up the harness in this repo: interview, recommend, select, apply. Run via /harness:init."
 disable-model-invocation: true
 ---
 

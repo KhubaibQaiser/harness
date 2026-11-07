@@ -485,7 +485,9 @@ export function scan(f: Fetched, path: string): Omit<ScanResult, 'target' | 'rep
     const fmSeen = new Set<string>();
     if (/\.md$/i.test(inner) && (ck || isPrompt(inner, rootPrompt))) {
       const fr = frontmatter(bare);
-      if (fr && ck) tokens += contextTokens(ck, fr.fm);
+      if (fr && ck) {
+        try { tokens += contextTokens(ck, fr.fm); } catch { unmeasured.add(`${rel}: frontmatter does not parse`); }
+      }
       if (fr) for (const x of fmRules(rel, bare, fr)) { findings.push(x); fmSeen.add(`${x.rule}:${x.line}`); }
     }
     if (!textRules(inner, bare)) continue;

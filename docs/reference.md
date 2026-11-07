@@ -299,7 +299,7 @@ Two more flags are optional:
 
 Skills, agents and the `AGENTS.md` block are loaded into every Claude Code session. Each one costs tokens before you ask anything. Harness keeps a budget for that.
 
-- **What counts.** Always-loaded text only. For a skill or agent, that's its name and description. For the `AGENTS.md` block, the whole block. The harness plugin's own skills are always counted. Hooks, settings and CI files count as 0.
+- **What counts.** Always-loaded text only. For an agent, that's its name and description. For a skill, that's its name and description, plus `when_to_use` (together cut at 1,536 characters); a skill with `disable-model-invocation: true` costs nothing. For the `AGENTS.md` block, the whole block. The harness plugin's own skills are always counted. Hooks, settings and CI files count as 0.
 - **Not measured.** Plugins, external skills and MCP servers can't be measured before install. They're listed as not measured, and the install asks you once.
 - **An estimate.** The count is characters divided by 4, labelled `estimate`. It makes no API call and needs no API key.
 - **The limit.** `context.budget_tokens`, default 2000. If a selection goes over it, `init` and `update` ask before installing. With `--yes`, they stop unless you pass `--over-budget`.
@@ -405,6 +405,8 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `items` | `[]` | Catalog items chosen for this project (`id`, `include`, `selected`, `reason`, `addresses`, `pin`). Value must be a list of item mappings. |
 | `git.commit_trailer` | `""` | Line added to the end of commit messages. Empty adds none. |
 | `context.budget_tokens` | `2000` | Estimated tokens of always-loaded context harness may add before it asks you to confirm an install. Items you approved earlier are not counted. Value must be an integer from 0 to 200000. |
+| `context.count` | `"auto"` | auto: use Anthropic's token-counting API in `harness context` when ANTHROPIC_API_KEY is set; offline: never. Value must be one of auto, offline. |
+| `context.count_model` | `"claude-opus-5-5"` | The model `harness context` asks the token-counting API to count for. Value must match ^claude-[a-z0-9-]{1,60}$. |
 | `tdd.paths` | `[]` | Globs for the files TDD covers. |
 | `tdd.exempt` | `[]` | Globs inside `tdd.paths` that TDD skips. |
 | `tdd.diff_coverage` | `80` | Minimum coverage, in percent, for changed lines. Value must be a number from 0 to 100. |
@@ -443,6 +445,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 
 ## Known limits
 
+- `init`, `update`, `uninstall` and `context-optimize` start only from their slash commands, not from plain words.
 - The guard recognises the commands `harness` and `cli.mjs` by name. A renamed copy or symlink of the CLI (`node h.mjs add x --yes`) isn't recognised, so it doesn't ask first.
 - Two hooks writing at once can lose or double a `timing.jsonl` rotation (rename after a size check). Lines are append-only and never torn.
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.

@@ -13,6 +13,7 @@ export interface Ctx {
   platform: NodeJS.Platform;
   managed: string; // managed-settings.json path; tests point it away from the real system file
   startedAt: number; // process start, for the hook time budget
+  configErrors?: string[]; // config.yaml errors; set by the dispatcher
   save(s: SessionState): void;
 }
 

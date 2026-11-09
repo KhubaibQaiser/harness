@@ -1,5 +1,4 @@
 import { recordedPresetContext } from '../catalog/presets.js';
-import { lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { realIO, type RepoIO } from '../budget/imports.js';
 import { budgetLines, budgetVerdict, fmt, measureSelection, type ContextEntry } from '../budget/measure.js';
@@ -9,7 +8,7 @@ import type { Catalog } from '../catalog/schema.js';
 import { unattendedEnv } from '../core/unattended.js';
 import type { Exec } from '../core/exec.js';
 import { packageDir } from '../core/package-dir.js';
-import { ApplyError, type Change } from '../install/apply.js';
+import { ApplyError, linkedPath, type Change } from '../install/apply.js';
 import { readManifest, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
 import { pinnedPlugins } from '../install/merge.js';
 import { installPlugins } from '../install/plugin-install.js';
@@ -60,7 +59,7 @@ function measureMemory(root: string, cat: Catalog, changes: Change[]): SourceEnt
   const planned = new Map<string, string | null>();
   for (const c of changes) {
     // A link is never overlaid: the plan refuses one, and a made-up real path would hide where it points.
-    if (!MEMORY.has(c.rel) || lstatSync(join(root, c.rel), { throwIfNoEntry: false })?.isSymbolicLink()) continue;
+    if (!MEMORY.has(c.rel) || linkedPath(root, c.rel)) continue;
     planned.set(c.rel, c.kind === 'create' ? c.content : c.kind === 'update' ? c.after : null);
     if (c.kind !== 'delete') owners.set(c.rel, 'repo'); // a merged file is the repo's; harness's line and blocks are split out
     else owners.delete(c.rel);

@@ -358,3 +358,15 @@ test.skipIf(process.platform === 'win32')('init refuses a CLAUDE.md that links t
     expect(r.out).not.toMatch(/Always-loaded context/);
   }
 });
+
+// Fix round 5: every repo file the plan reads is refused when it is a link (or under one), before it is read.
+// The test-config reads are covered in test/install/test-config.test.ts.
+test.skipIf(process.platform === 'win32').each(['.gitignore'])('a dry run with %s linked to a dotenv file prints no value and exits 1', async (rel) => {
+  const root = repo();
+  writeFileSync(join(root, DOT), SECRET);
+  linkTo(root, rel, DOT);
+  const r = await run(root, aiArgs([...OWN]).map((a) => (a === '--yes' ? '--dry-run' : a)));
+  expect(r.out).not.toContain(SECRET);
+  expect(r.code, r.out).toBe(1);
+  expect(r.out).toContain(`refusing symlink: ${rel}`);
+});

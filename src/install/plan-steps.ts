@@ -1,8 +1,8 @@
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { HarnessConfig } from '../core/config.js';
 import type { LoadedPreset } from '../catalog/presets.js';
-import { ApplyError, type Change } from './apply.js';
+import { refuseSymlink, type Change } from './apply.js';
 import type { Facts } from './detect.js';
 import { factsJson } from './facts.js';
 import { finalizeReport } from '../ai/report.js';
@@ -33,15 +33,11 @@ export interface Plan {
   dropOwn: (rel: string, who: string) => void;
 }
 
-/** The memory files harness merges into: a symlink there is refused, dry runs included. */
-const MEMORY_FILES = new Set(['AGENTS.md', 'CLAUDE.md']);
-
 export function newPlan(root: string, recordedFiles?: Manifest['files']): Plan {
   const changes: Change[] = [];
   const notes: string[] = [];
   const read = (rel: string): string | null => {
-    // Refused before reading, as apply would refuse the write: a link's target (a dotenv file, say) never reaches a diff.
-    if (MEMORY_FILES.has(rel) && lstatSync(join(root, rel), { throwIfNoEntry: false })?.isSymbolicLink()) throw new ApplyError(`refusing symlink: ${rel}`);
+    refuseSymlink(root, rel); // before reading, as apply refuses the write: a link's target (a dotenv file, say) never reaches a diff
     return existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null;
   };
   const put = (rel: string, after: string, { blocks = [], mode, item }: PutOpts = {}) => {

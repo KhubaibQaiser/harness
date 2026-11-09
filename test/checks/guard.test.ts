@@ -350,6 +350,16 @@ test('fileWriteTargets sees through prefixes, tight redirects and awk junk', () 
   expect(fileWriteTargets(`awk '{print 1}' in > 'out.txt'`)).toEqual(['out.txt']);
 });
 
+// Round 27 (re-review 24b, N5): the `)`, backtick or quote that ends a substitution is not part of the target.
+test('fileWriteTargets drops the end of a substitution', () => {
+  const t = ['.harness/config.yaml'];
+  expect(fileWriteTargets('echo "$(echo x > .harness/config.yaml)"')).toEqual(t);
+  expect(fileWriteTargets('echo $(echo x >.harness/config.yaml)')).toEqual(t);
+  expect(fileWriteTargets('echo `echo x > .harness/config.yaml`')).toEqual(t);
+  expect(fileWriteTargets('echo "`echo x > .harness/config.yaml`"')).toEqual(t);
+  expect(fileWriteTargets('echo "$(echo "$(echo x > ".harness/config.yaml")")"')).toEqual(t);
+});
+
 test('fileWriteTargets follows sudo, env, xargs flags and shell -c', () => {
   const t = ['packages/core/src/x.ts'];
   expect(fileWriteTargets("sudo -u root sed -i 's/a/b/' packages/core/src/x.ts")).toEqual(t);

@@ -343,7 +343,9 @@ test.each([
   test.each(built.flatMap((x) => [`git commit -m "$(cat <<EOF\n$(${x})\nEOF\n)"`, `git commit -m "$(cat <<EOF\nmsg \`${x}\`\nEOF\n)"`,
     `git commit -m "$(cat <<'EOF'\nmsg\nEOF\n${x}\nEOF\n)"`]))('round 25: %s is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
   test('round 25: a quoted-delimiter body, and a commit body with only $NAME, stay data', () => {
-    for (const c of [`cat > docs/x.md <<'EOF'\n$(echo x > .harness/config.yaml)\nEOF`, `git commit -m "$(cat <<'EOF'\nfix: see .harness/config.yaml\nEOF\n)"`,
+    // Round 27 (N5): `$(echo x > .harness/config.yaml)` in a body now denies like `echo x > .harness/config.yaml` there does,
+    // because fileWriteTargets reads body lines and no longer keeps the `)`; this body names the path without a direct write.
+    for (const c of [`cat > docs/x.md <<'EOF'\n$(cd .harness && echo x > config.yaml)\nEOF`, `git commit -m "$(cat <<'EOF'\nfix: see .harness/config.yaml\nEOF\n)"`,
       `git commit -m "$(cat <<EOF\nfix: $HOME .harness/config.yaml\nEOF\n)"`]) expect(bash(c), c).toBe('allow');
   });
 }
@@ -373,6 +375,48 @@ test.each([
       `git commit -m "$(cat <<'EOF'\nmsg\nEOF)\n${W}\nEOF\n)"`]) // `EOF)` is body text, so W is too
       expect(bash(c), c).toBe('allow');
   });
+}
+
+// Round 27 (re-review 24b, N4): only Claude Code's exact `"$(cat <<…" … )"` word is a message. An opener inside a
+// single-quoted word, or one whose quote closes and reopens, is text: the shell then runs the `"$(…)"` that follows.
+{
+  const pays = ['cd .harness && echo x > config.yaml', W, 'echo x > .harness/config.yaml', 'cp /dev/null .harness/state/tdd-pause.json', 'echo SENTINEL > .harness/x'];
+  const n4 = pays.flatMap((x) => [
+    `git commit -m '$(cat <<'EOF'\n'"$(${x})"'\nEOF\n)'`, `git commit -m '$(cat <<"EOF"\n'"$(${x})"'\nEOF\n)'`,
+    `git commit --message='$(cat <<'EOF'\n'"$(${x})"'\nEOF\n)'`, `gh pr create --title t --body '$(cat <<'EOF'\n'"$(${x})"'\nEOF\n)'`,
+    `gh pr create --title t --body='$(cat <<'EOF'\n'"$(${x})"'\nEOF\n)'`, `git commit -m x"$(cat <<'EOF'\n'"$(${x})"'\nEOF\n)"`,
+    `git commit -m "$(cat <<'EOF'\nm\nEOF\n)"' '"$(${x})"`, `git commit -m 'a\n"$(cat <<'EOF'\n'"$(${x})"'\nEOF\n)"'`,
+  ]);
+  test.each(n4)('round 27: %j is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
+  test.each(n4)('round 27: %j is not allowed through the dispatcher', async (c) => {
+    const root = mkdtempSync(join(tmpdir(), 'h-pr-27-'));
+    mkdirSync(join(root, '.git'));
+    const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: c } });
+    const out = await dispatch(raw, registry, {}, { home: root });
+    expect(out && JSON.parse(out).hookSpecificOutput?.permissionDecision).toMatch(/^(ask|deny)$/);
+  });
+  // N5: the `)` of a substitution no longer hides the target, so the direct write is denied, not asked.
+  test.each(['echo "$(echo x > .harness/config.yaml)"', 'echo `echo x > .harness/config.yaml`', `git commit -m '$(cat <<'EOF'\n'"$(echo x > .harness/config.yaml)"'\nEOF\n)'`])(
+    'round 27: %j is denied', (c) => expect(bash(c)).toBe('deny'));
+  test('round 27: Claude Code commit and PR bodies, and quoted bodies with quotes inside, stay messages', () => {
+    for (const c of [`git commit -m "$(cat <<'EOF'\nfix(protect): read .harness/state.json once\n\n- keeps .harness/config.yaml untouched\nEOF\n)"`,
+      `git commit -m "$(cat <<'EOF'\nfeat: x\n\nBody mentioning .harness/state.json and .claude/settings.json.\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)"`,
+      `git add src/a.ts && git commit -m "$(cat <<'EOF'\nchore: bump\n\nSee .harness/state.json.\nEOF\n)"`,
+      `git commit --message="$(cat <<'EOF'\nfix: don't touch .harness/state.json\nEOF\n)"`,
+      `gh pr create --title "fix: x" --body "$(cat <<'EOF'\n## Summary\n- .harness/state.json\nEOF\n)"`,
+      `git commit -m "$(cat <<'EOF'\n"'$(echo x > .harness/state.json)'"\nEOF\n)"`, // quoted body: data in the shell
+      `git commit -m "$(cat <<'A'\nm\nA\n)$(cat <<'B'\n${W}\nB\n)"`]) // two quoted bodies: data
+      expect(bash(c), c).toBe('allow');
+  });
+  // Re-review 24b probes the shell runs (bash 3.2 or zsh 5.9): each payload still asks or denies.
+  test.each(['cd .harness && echo x > config.yaml', W].flatMap((x) => [
+    `git commit -m "$(cat <<'A'$(cat <<'B'\nB\n)\n${x}\nA\n)"`, `git commit -m "$(cat <<'A'\nm\nA\n)" -m "$(cat <<'B'\nn\nB\n)" && ${x}`,
+    `git commit -m "$(cat <<'EOF'\r\nmsg\nEOF\n)"; ${x}`, `git commit -m "$(cat <<'EOF'\r\nmsg\r\nEOF\r\n)"\r\n${x}`,
+    `git commit -m "$(cat <<EOF\nmsg\nEOF\n)$(${x})"`, `git commit -m "$(cat <<EOF\nEOF $(${x})\nEOF\n)"`,
+    `git commit -m "$(cat <<-'EOF'\nmsg\n  EOF\n)\nEOF\n${x}\n)"`, `git commit -m "$(cat <<'${'W'.repeat(5000)}'\nmsg\n${'W'.repeat(5000)}\n)"; ${x}`,
+    `git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)" -m x; ${x}`, `git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)tail$(${x})"`,
+    `gh pr create --title t --body "$(cat <<'EOF'\nmsg\nEOF\n)"; ${x}`,
+  ]))('round 27: probe %j is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
 }
 
 // Round 14 D1: env -S strings are split with env's own rules, so `(` is an ordinary character.

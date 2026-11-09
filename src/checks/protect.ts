@@ -239,13 +239,18 @@ const MESSAGE_FLAGS = new Set(['-m', '--message', '-F', '--file', '-b', '--body'
 // follows that `)` stays text. A body under an unquoted delimiter that expands (lexer's EXPANDS), or a body line ending
 // in `\` (it can join the end line), is code. Any opener that does not close that way leaves the whole text as code.
 const CAT_OPEN = /^cat[ \t]+<<-?[ \t]*(['"]?)[A-Za-z_]\w*\1$/; // the opener ends its line; lexLine reads its delimiter
+// Round 27 (re-review 24b, N4): an opener counts only as `"$(cat` with the lexer reading no open quote before that `"`,
+// on its line (from the last close on) or on any earlier line, so `'$(cat <<'EOF'` is text, as in the shell.
 const withoutCatMessages = (t: string): string => {
   const lines = t.split('\n'), out: string[] = [];
+  let lexed = 0, neutral = true; // out[0, lexed) lexed so far, each ending outside a quote; lazy and linear
   for (let i = 0; i < lines.length; i++) {
-    let cur = lines[i], from = 0;
+    let cur = lines[i], from = 0, at = 0;
     for (;;) {
       const k = cur.lastIndexOf('$(cat');
-      const op = k >= from && CAT_OPEN.test(cur.slice(k + 2)) ? lexLine(cur.slice(k + 2))?.ends[0] : undefined;
+      if (k < from || cur[k - 1] !== '"' || !CAT_OPEN.test(cur.slice(k + 2))) break;
+      for (; neutral && lexed < out.length; lexed++) neutral = lexLine(out[lexed]) !== null;
+      const op = neutral && lexLine(cur.slice(at, k - 1)) ? lexLine(cur.slice(k + 2))?.ends[0] : undefined;
       if (!op) break;
       let j = i + 1;
       for (; j < lines.length && (op.dash ? lines[j].replace(/^\t+/, '') : lines[j]) !== op.word; j++)
@@ -254,19 +259,28 @@ const withoutCatMessages = (t: string): string => {
       if (j >= lines.length || !close) return t;
       cur = cur.slice(0, k) + lines[j + 1].slice(close[0].length);
       from = k;
+      at = k - 1; // cur[0, k - 1) lexed neutral; the next opener's prefix is lexed from this `"`
       i = j + 1;
     }
     out.push(cur);
   }
   return out.join('\n');
 };
-const isMessage = (w: string): boolean => !/\$\(|`/.test(withoutCatMessages(w).replace(/`[^`\s]*`/g, ''));
+// A word with a substitution is a message only in Claude Code's exact shape, after -m, --message(=) or --body(=): it
+// starts `"$(cat <<` and, bodies removed, is just `""` (it ends `)"` after the close line, no quote outside the bodies).
+const CAT_FLAGS = new Set(['-m', '--message', '--body']);
+const isMessage = (w: string, flag: string): boolean => {
+  const eq = /^--(message|body|body-file|title|file)=/.exec(w)?.[0];
+  const v = eq ? w.slice(eq.length) : w;
+  if (!/\$\(|`/.test(v.replace(/`[^`\s]*`/g, ''))) return true;
+  return (eq ? /^--(message|body)=$/.test(eq) : CAT_FLAGS.has(flag)) && v.startsWith('"$(cat <<') && withoutCatMessages(v) === '""';
+};
 /** A segment's words without its data: the text of an echo or printf whose output nobody reads as code (no redirect, no
  *  substitution in the command), and the message, body and title values of git and gh that run no other substitution. */
 const codeWords = (ws: string[], consumed: boolean): string[] => {
   const n = ws.length ? commandName(ws[0]) : '';
   if ((n === 'echo' || n === 'printf') && !ws.includes('-v') && !consumed && !ws.some((w) => /[<>]/.test(w))) return ws.slice(0, 1);
-  if (n === 'git' || n === 'gh') return ws.filter((w, i) => !((MESSAGE_FLAGS.has(ws[i - 1]) || /^--(message|body|body-file|title|file)=/.test(w)) && isMessage(w)));
+  if (n === 'git' || n === 'gh') return ws.filter((w, i) => !((MESSAGE_FLAGS.has(ws[i - 1]) || /^--(message|body|body-file|title|file)=/.test(w)) && isMessage(w, ws[i - 1])));
   return ws;
 };
 const WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'dd', 'ln', 'rsync', 'truncate', 'touch']);

@@ -522,7 +522,7 @@ export function fileWriteTargets(cmd: string): string[] {
     toks.splice(0, k); // look past sudo, env, VAR=value and xargs, with their flags
     const name = toks[0];
     for (const m of seg.matchAll(/\d*>>?\s*([^\s;&|>]+)/g)) {
-      const t = m[1].replace(/^['"]+/, '').replace(/['"}]+$/, '');
+      const t = m[1].replace(/^['"]+/, '').replace(/['"`)}]+$/, ''); // `)`, a backtick or quote ends a substitution ("$(… > f)")
       if (!t.startsWith('&') && t !== '/dev/null') out.push(t);
     }
     const c = toks.findIndex((t) => /^-[a-z]*c$/.test(t));

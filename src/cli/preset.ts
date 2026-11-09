@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { loadCatalog } from '../catalog/load.js';
 import { checkPreset, identityProblems, listPresets, loadPreset } from '../catalog/presets.js';
@@ -42,7 +42,12 @@ function checkDir(dir: string, out: (s: string) => void): { id: string; errors: 
   return results.length ? results : (out(`${esc(dir)}: no <id>.yaml found`), 1);
 }
 
-const filesUnder = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(join(d, e.name)) : [join(d, e.name)]));
+/** Regular files under `d`; any other entry (a symlink, a device) is pushed to `bad`. */
+const filesUnder = (d: string, bad: string[]): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+  const p = join(d, e.name);
+  if (e.isDirectory()) return filesUnder(p, bad);
+  return e.isFile() ? [p] : (bad.push(p), []);
+});
 
 /** `preset install <dir> [--dry-run|--yes]`: checks the folder, then copies each `<id>.yaml` and `<id>/` to `.harness/presets/`. */
 export async function presetInstall(args: string[], cli: CliEnv & { prompt: Prompt }): Promise<number> {
@@ -62,7 +67,10 @@ export async function presetInstall(args: string[], cli: CliEnv & { prompt: Prom
     const taken = [join(dest, id), join(dest, `${id}.yaml`)].find(existsSync);
     if (taken) return out(`${rel(taken)}${taken.endsWith('.yaml') ? '' : '/'} already exists; remove it first.`), 1;
   }
-  const copies = results.flatMap(({ id }) => [[join(dir, `${id}.yaml`), join(dest, `${id}.yaml`)], ...(existsSync(join(dir, id)) ? filesUnder(join(dir, id)).map((f) => [f, join(dest, id, relative(join(dir, id), f))]) : [])]);
+  const bad: string[] = [];
+  const regular = (p: string) => lstatSync(p).isFile() || (bad.push(p), false);
+  const copies = results.flatMap(({ id }) => [...(regular(join(dir, `${id}.yaml`)) ? [[join(dir, `${id}.yaml`), join(dest, `${id}.yaml`)]] : []), ...(existsSync(join(dir, id)) && (lstatSync(join(dir, id)).isDirectory() || (bad.push(join(dir, id)), false)) ? filesUnder(join(dir, id), bad).map((f) => [f, join(dest, id, relative(join(dir, id), f))]) : [])]);
+  if (bad.length) return out(bad.map((p) => `${safe(p)}: not a regular file or folder (symlinks are not copied); nothing was written`).join('\n')), 1;
   if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
   out(copies.map(([, to]) => rel(to)).join('\n'));
   if (dryRun) return 0;

@@ -135,7 +135,7 @@ try {
     } else if (argv[0] === 'preset' && argv[1] === 'install') {
       const prompt = readlinePrompt();
       try {
-        process.exitCode = await presetInstall(argv.slice(2), { ...cli, root: process.cwd(), prompt });
+        process.exitCode = await presetInstall(argv.slice(2), { ...cli, prompt });
       } finally {
         prompt.close();
       }

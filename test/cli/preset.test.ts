@@ -1,4 +1,5 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -123,4 +124,34 @@ test('install refuses a folder that fails check, and an existing install', async
   expect(dup).toMatchObject({ code: 1, out: '.harness/presets/tiny/ already exists; remove it first.' });
   expect(existsSync(join(root, '.harness/presets/tiny.yaml'))).toBe(false);
   expect((await install([], root)).code).toBe(2);
+});
+
+test('install refuses a symlinked file or folder, naming it, and writes nothing', async () => {
+  const outside = tmp();
+  writeFileSync(join(outside, 'secret.txt'), 'x');
+  const a = copyTiny();
+  symlinkSync(join(outside, 'secret.txt'), join(a, 'tiny/templates/link.md'));
+  const b = copyTiny();
+  symlinkSync(outside, join(b, 'tiny/templates/linkdir'));
+  for (const d of [a, b]) {
+    const root = tmp();
+    const r = await install([d, '--yes'], root);
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/link(dir|\.md)/);
+    expect(existsSync(join(root, '.harness'))).toBe(false);
+  }
+});
+
+test('built CLI: install from a subdirectory writes to the repo root, and list shows it', () => {
+  const root = tmp();
+  spawnSync('git', ['init', '-q'], { cwd: root });
+  const sub = join(root, 'sub');
+  mkdirSync(sub);
+  const cli = join(process.cwd(), 'dist/cli.mjs');
+  const r = spawnSync('node', [cli, 'preset', 'install', copyTiny(), '--yes'], { cwd: sub, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  expect(r.status, r.stdout + r.stderr).toBe(0);
+  expect(existsSync(join(root, '.harness/presets/tiny.yaml'))).toBe(true);
+  expect(existsSync(join(sub, '.harness'))).toBe(false);
+  const l = spawnSync('node', [cli, 'preset', 'list'], { cwd: sub, encoding: 'utf8' });
+  expect(l.stdout).toContain('tiny  Smallest valid preset.  (repo)');
 });

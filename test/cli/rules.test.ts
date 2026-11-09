@@ -240,6 +240,21 @@ test('uninstall after an edit inside a harness block removes none of its blocks 
   // the kept config still imports the harness file, so it is kept too and lint keeps loading
   expect(existsSync(join(root, HARNESS_FILE))).toBe(true);
   expect(r.out).toContain(`Kept \`${HARNESS_FILE}\``);
+  expect(r.out).toContain('kept because your edited eslint config still imports them');
+  expect(r.out).not.toMatch(/harness\.config\.mjs`[^\n]*because you edited them/);
+
+  // init again, then uninstall again: the config still imports the file, so it stays
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'uninstalled');
+  await init(['--yes'], { ...base, root, out: () => {}, prompt: prompt() });
+  expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'again');
+  const again = await unOut(root);
+  expect(again.code).toBe(0);
+  expect(readFileSync(cfg, 'utf8')).toContain('harnessRules');
+  expect(existsSync(join(root, HARNESS_FILE))).toBe(true);
+  expect(again.out).toContain('kept because your edited eslint config still imports them');
 });
 
 const TS_CFG = "import js from '@eslint/js';\n\nexport default [\n  js.configs.recommended,\n];\n";

@@ -6,6 +6,7 @@ import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, withEol } from '../install/text.js';
 import { MANIFEST_REL, backupText } from '../install/manifest.js';
+import { ESLINT } from '../install/plan.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall } from './preamble.js';
@@ -123,21 +124,21 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     }
   }
 
-  // A kept JS config still imports harness's ESLint files: keep them too, so the person's lint keeps loading.
-  if (keptWhole.some((t) => t.includes('.harness/eslint/'))) {
-    const keepRels = HARNESS_ESLINT.filter((rel) => changes.some((c) => c.rel === rel && c.kind === 'delete'));
-    for (const rel of keepRels) changes.splice(changes.findIndex((c) => c.rel === rel), 1);
-    if (keepRels.length) {
-      kept.push(...keepRels);
-      notes.push(`Kept ${list(keepRels)}: the config above still imports it. Delete it after you remove those lines.`);
-    }
-  }
+  // An ESLint config that still imports harness's ESLint files (from its text after this uninstall, not the manifest,
+  // so a later install's uninstall agrees): keep them too, so the person's lint keeps loading.
+  const textAfter = (rel: string) => { const c = changes.find((x) => x.rel === rel); return c ? (c.kind === 'update' ? c.after : null) : read(join(root, rel)); };
+  const imported = ESLINT.some((rel) => textAfter(rel)?.includes('.harness/eslint/'))
+    ? HARNESS_ESLINT.filter((rel) => existsSync(join(root, rel)))
+    : [];
+  for (const rel of imported) { const i = changes.findIndex((c) => c.rel === rel); if (i >= 0) changes.splice(i, 1); }
+  const importedWhy = `${list(imported)} kept because your edited eslint config still imports them. Delete them after you remove its harness lines.`;
 
   if (dryRun) {
     for (const c of changes) out(`Would ${c.kind === 'delete' ? 'remove' : 'restore'} \`${c.rel}\``);
     for (const n of notes) out(`Note: ${n}`);
     if (kept.length) out(`Would keep ${list(kept)} because you edited them (--force removes them too).`);
-    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length ? ', except the edited files above' : ''}${existsSync(join(root, '.harness', 'presets')) ? ' (`.harness/presets/` stays: it holds your committed presets)' : ''}.`);
+    if (imported.length) out(`Would keep ${importedWhy}`);
+    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length || imported.length ? ', except the kept files above' : ''}${existsSync(join(root, '.harness', 'presets')) ? ' (`.harness/presets/` stays: it holds your committed presets)' : ''}.`);
     return out('Dry run: nothing was written.'), 0;
   }
 
@@ -165,15 +166,16 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     // .harness/presets/ is the person's own committed source, not something harness wrote: it stays.
     const presets = join(root, '.harness', 'presets');
     const keepPresets = existsSync(presets);
-    pruneExcept(join(root, '.harness'), [...kept.map((k) => join(root, k)), presets]);
-    const edited = kept.some((k) => k.startsWith('.harness/'));
-    out(`Removed \`.harness/\`${edited ? ' except the edited files' : ''}${keepPresets ? `${edited ? ' and' : ' except'} \`.harness/presets/\`, your committed presets` : ''}.`);
+    pruneExcept(join(root, '.harness'), [...kept, ...imported].map((k) => join(root, k)).concat(presets));
+    const edited = [...kept, ...imported].some((k) => k.startsWith('.harness/'));
+    out(`Removed \`.harness/\`${edited ? ' except the kept files' : ''}${keepPresets ? `${edited ? ' and' : ' except'} \`.harness/presets/\`, your committed presets` : ''}.`);
   } else {
     // Keep the logs but mark harness as uninstalled so init can run again.
     rmSync(join(root, MANIFEST_REL), { force: true });
     out('Kept `.harness/` (manifest removed).');
     stampHarnessFiles(root); // change detection: these writes are harness's own
   }
+  if (imported.length) out(`Kept ${importedWhy}`);
   if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run /harness:init to install again.`);
   out('Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.');
   return 0;

@@ -10,6 +10,7 @@ import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { dirtyTouched } from '../install/finish.js';
 import { mergeManifestFiles, rawOf } from '../install/manifest.js';
+import { matchesHash } from '../install/text.js';
 import { HARNESS_RULES_IMPORT, mergeEslintHarnessRules } from '../install/merge.js';
 import { ESLINT } from '../install/plan.js';
 import { countViolations, type Counts } from '../rules/count.js';
@@ -47,12 +48,18 @@ export default proposal.map((b) => (b.rules ? { ...b, rules: Object.fromEntries(
 `;
 }
 
+/** Why counting failed on `eslint.config.ts`: Node below 22.18 can't import it (the preview imports the repo config). */
+export function oldNodeHint(cfg: string | undefined, node: string): string | null {
+  const [major = 0, minor = 0] = node.split('.').map(Number);
+  const old = major < TS_CONFIG_NODE[0]! || (major === TS_CONFIG_NODE[0] && minor < TS_CONFIG_NODE[1]!);
+  return cfg?.endsWith('.ts') && old ? `Counting loads ${cfg} through Node, which needs Node ${TS_CONFIG_NODE.join('.')} or later (this is Node ${node}).` : null;
+}
+
 function printCounts(c: Counts['eslint'], p: Proposal, cfg: string | undefined, out: (s: string) => void): void {
   if (c.error) {
     out(`Violation counts unknown (${c.error}). The effect on the stop gate is unknown.`);
-    const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
-    if (cfg?.endsWith('.ts') && (major < TS_CONFIG_NODE[0]! || (major === TS_CONFIG_NODE[0] && minor < TS_CONFIG_NODE[1]!)))
-      out(`Counting loads ${cfg} through Node, which needs Node ${TS_CONFIG_NODE.join('.')} or later (this is Node ${process.versions.node}).`);
+    const hint = oldNodeHint(cfg, process.versions.node);
+    if (hint) out(hint);
     return;
   }
   const rows = Object.entries(c.byRule).sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1));
@@ -124,6 +131,9 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
   for (const c of changes) out(unifiedDiff(c.kind === 'update' ? c.before : '', c.kind === 'update' ? c.after : c.kind === 'create' ? c.content : '', c.rel).trimEnd());
   if (!apply) return out(merged ? 'Run harness rules --apply to write this.' : 'harness rules --apply needs a flat ESLint config it can edit.'), 0;
   if (!changes.length) return out('Nothing to change.'), 0;
+  const own = m.files.find((f) => f.rel === FILE);
+  if (old !== null && old !== text && !(own && matchesHash(old, own.hash))) // never overwrite a file harness did not write, or one edited since
+    return out(`\`${FILE}\` exists, but harness did not write it or it was edited since. Move or delete it, then run harness rules --apply again. ${NOT_APPLIED}`), 1;
   const dirty = dirtyTouched(root, changes);
   if (dirty.length) return out(`Commit or stash these files first, so the change can be undone cleanly: ${dirty.join(', ')}. ${NOT_APPLIED}`), 1;
 

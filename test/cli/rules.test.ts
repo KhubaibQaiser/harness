@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { init } from '../../src/cli/init.js';
 import type { Prompt } from '../../src/cli/prompt.js';
-import { rules } from '../../src/cli/rules.js';
+import { oldNodeHint, rules } from '../../src/cli/rules.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import type { Exec } from '../../src/core/exec.js';
 import { makeRepo } from '../install/helpers.js';
@@ -137,4 +137,52 @@ test('--apply without a terminal and bad flags are refused', async () => {
   expect((await run(root, ['--apply'], prompt('yes'), exec, false)).code).toBe(2);
   expect((await run(root, ['--yes'], prompt('yes'), exec)).code).toBe(2);
   expect(existsSync(join(root, HARNESS_FILE))).toBe(false);
+});
+
+test.each([
+  ['not recorded in the manifest', false],
+  ['edited since harness wrote it', true],
+])('--apply refuses when %s, naming the file, and writes nothing', async (_n, recorded) => {
+  const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG });
+  const exec = execWith({ status: 0, stdout: '[]' });
+  if (recorded) {
+    expect((await run(root, ['--apply'], prompt('yes'), exec)).code).toBe(0);
+    writeFileSync(join(root, HARNESS_FILE), '// mine\nexport default [];\n');
+  } else {
+    mkdirSync(join(root, '.harness/eslint'), { recursive: true });
+    writeFileSync(join(root, HARNESS_FILE), '// mine\nexport default [];\n');
+  }
+  git(root, 'add', '-A');
+  git(root, 'commit', '-q', '-m', 'mine');
+  const before = snapshot(root) + readFileSync(join(root, '.harness/manifest.json'), 'utf8');
+  const p = prompt('yes');
+  const r = await run(root, ['--apply'], p, exec);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`\`${HARNESS_FILE}\``);
+  expect(r.out).toContain('Nothing was written.');
+  expect(p.asked).toEqual([]);
+  expect(readFileSync(join(root, HARNESS_FILE), 'utf8')).toBe('// mine\nexport default [];\n');
+  expect(snapshot(root) + readFileSync(join(root, '.harness/manifest.json'), 'utf8')).toBe(before);
+});
+
+test('--apply rewrites its own unedited file when the proposal changed', async () => {
+  const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG });
+  expect((await run(root, ['--apply'], prompt('yes'), execWith({ status: 0, stdout: '[]' }))).code).toBe(0);
+  git(root, 'add', '-A');
+  git(root, 'commit', '-q', '-m', 'rules');
+  const err = { status: 2, stdout: '', stderr: "Definition for rule 'no-await-in-loop' not found." };
+  let calls = 0;
+  const exec: Exec = (_c, [bin = '']) => (bin.endsWith('eslint.js') ? (calls++ ? { status: 0, stdout: '[]' } : err) : { status: 0, stdout: '' });
+  const r = await run(root, ['--apply'], prompt('yes'), exec);
+  expect(r.code).toBe(0);
+  expect(readFileSync(join(root, HARNESS_FILE), 'utf8')).toContain('const drop = new Set(["no-await-in-loop"])');
+});
+
+test('the old-Node hint shows for eslint.config.ts below Node 22.18 only', () => {
+  expect(oldNodeHint('eslint.config.ts', '22.17.1')).toBe('Counting loads eslint.config.ts through Node, which needs Node 22.18 or later (this is Node 22.17.1).');
+  expect(oldNodeHint('eslint.config.ts', '20.19.0')).toMatch(/needs Node 22\.18/);
+  expect(oldNodeHint('eslint.config.ts', '22.18.0')).toBeNull();
+  expect(oldNodeHint('eslint.config.ts', '24.0.0')).toBeNull();
+  expect(oldNodeHint('eslint.config.mjs', '20.0.0')).toBeNull();
+  expect(oldNodeHint(undefined, '20.0.0')).toBeNull();
 });

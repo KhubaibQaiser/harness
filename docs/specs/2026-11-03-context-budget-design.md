@@ -126,9 +126,11 @@ harness context apply <n>[,<n>…] [--dry-run] [--yes]
   "sources": [{ "id": "agents-block", "path": "AGENTS.md", "owner": "harness", "load": "always", "tokens": 263, "chars": 1050 }],
   "unmeasured": ["plugin: some-plugin@market", "mcp: github"],
   "not_measured": ["system prompt and tools", "output style", "personal context"],
-  "recommendations": [{ "n": 1, "kind": "name-only", "owner": "catalog:seo-audit", "target": "seo-audit", "saves": 61, "apply": true }] }
+  "recommendations": [{ "n": 1, "kind": "name-only", "owner": "catalog:seo-audit", "target": "seo-audit", "saves": 61, "apply": true }],
+  "fallback": null }
 ```
 
+- `fallback` is last: the fixed reason (an HTTP status, `timeout`, `network error` or `bad response`) when an API count was tried and failed, else `null`. It never holds the key.
 - Exit codes: 0 when within the budget, 1 when over it, 2 on a usage error. It never writes anything. It works outside Claude Code, so CI can run it.
 
 **Recommendations.** These are deterministic. The CLI finds them; the skill words them.
@@ -212,6 +214,8 @@ Recommendations
 
 - Over the budget, the first line becomes `Context budget: ~2,410 of 2,000 tokens always loaded, over by ~410.`
 - With the API, the label becomes `Counted by Anthropic's token-counting API (claude-opus-5-5).` and the `~` marks go away.
+- The `set ANTHROPIC_API_KEY …` hint shows only when there is no key and the user did not choose offline (`--offline` or `count: offline`).
+- In an exact report, the header adds `, except <n> estimate(s)` for every row that stayed an estimate, catalog picks included (C14).
 - Numbers are rounded to whole tokens and use thousands separators.
 - The figures above are an example, except the harness rows, which are measured after Q2 (section 11).
 

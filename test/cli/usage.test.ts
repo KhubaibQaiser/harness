@@ -17,7 +17,7 @@ test('usage lists add, remove, why and explain', () => {
 });
 
 test('every `harness <cmd>` in src names a real command', () => {
-  const real = new Set(['tdd', 'stats', 'init', 'uninstall', 'update', 'sync', 'doctor', 'status', 'scan', 'catalog', 'validate', 'select', 'git', 'add', 'remove', 'why', 'explain', 'vet', 'report', 'eval', 'context']);
+  const real = new Set(['tdd', 'stats', 'init', 'uninstall', 'update', 'sync', 'doctor', 'status', 'scan', 'catalog', 'validate', 'select', 'git', 'add', 'remove', 'why', 'explain', 'vet', 'report', 'eval', 'context', 'rules']);
   const prose = new Set(['commands', 'inside', 'dispatcher', 'check', 'files', 'blocked']); // `harness check` in dispatch.ts is a log prefix, not a command
   const bad: string[] = [];
   for (const f of files('src'))
@@ -29,7 +29,7 @@ test('every `harness <cmd>` in src names a real command', () => {
 });
 
 test('usage lists report and eval with their flags', () => {
-  for (const c of ['harness report [--days N] [--open] [--export]', 'harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model M]']) expect(usage(), c).toContain(c);
+  for (const c of ['harness report [--days N] [--open] [--export]', 'harness rules [--apply]', 'harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model M]']) expect(usage(), c).toContain(c);
 });
 
 test('usage lists context and context apply', () => {

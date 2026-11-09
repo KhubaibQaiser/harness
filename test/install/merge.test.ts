@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, describe, expect, it, test } from 'vitest';
 import { BETA_GROUPS, betaSettings } from './helpers.js';
-import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, STRUCTURAL } from '../../src/install/merge.js';
+import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeEslintHarnessRules, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, STRUCTURAL } from '../../src/install/merge.js';
 import { TELEMETRY_ENV, type LoadedPreset } from '../../src/catalog/presets.js';
 import { guardedView } from '../../src/core/harness-files.js';
 
@@ -715,5 +715,44 @@ describe('preset merge kinds', () => {
       expect(envOf(m.after)).toEqual({ DO_NOT_TRACK: '1', B_OFF: 'x' });
       expect(m.dropped.filter((b) => b.startsWith('{"set"')).every((b) => b.includes('"sandbox"'))).toBe(true);
     }
+  });
+});
+
+describe('mergeEslintHarnessRules', () => {
+  const IMPORT = "// harness:rules\nimport harnessRules from './.harness/eslint/harness.config.mjs';\n// harness:rules\n";
+  it('adds the import after the last import and the spread at the end of the array, both marked', () => {
+    const src = "import js from '@eslint/js';\n\nexport default [\n  js.configs.recommended,\n  { ignores: ['.harness/'] },\n];\n";
+    const r = mergeEslintHarnessRules(src)!;
+    expect(r.after).toBe(
+      "import js from '@eslint/js';\n" + IMPORT + "\nexport default [\n  js.configs.recommended,\n  { ignores: ['.harness/'] },\n  // harness:rules\n  ...harnessRules,\n  // harness:rules\n];\n",
+    );
+    expect(r.blocks).toHaveLength(2);
+    expect(removeBlocks(r.after, r.blocks)).toBe(src);
+    expect(mergeEslintHarnessRules(r.after)).toEqual({ after: r.after, blocks: [] });
+  });
+  it('no trailing comma, one-line and empty arrays, defineConfig and identifier exports, CRLF', () => {
+    for (const src of [
+      'export default [\n  { rules: {} }\n];\n',
+      'export default [{ rules: {} }];\n',
+      'export default [];\n',
+      "import { defineConfig } from 'eslint/config';\nexport default defineConfig([{ rules: {} }]);\n",
+      'const cfg = [{ rules: {} }];\nexport default cfg;\n',
+      "import a from 'a';\r\nexport default [\r\n  a,\r\n];\r\n",
+    ]) {
+      const r = mergeEslintHarnessRules(src)!;
+      expect(r, src).not.toBeNull();
+      expect(r.after).toContain('...harnessRules');
+      expect(removeBlocks(r.after, r.blocks)).toBe(src);
+    }
+    expect(mergeEslintHarnessRules('export default [\n  { rules: {} }\n];\n')!.after).toBe(`${IMPORT}export default [\n  { rules: {} },\n  // harness:rules\n  ...harnessRules\n  // harness:rules\n];\n`);
+    expect(mergeEslintHarnessRules('export default [{ rules: {} }];\n')!.after).toBe(`${IMPORT}export default [{ rules: {} },\n// harness:rules\n...harnessRules\n// harness:rules\n];\n`);
+  });
+  it('uses the file\'s quotes', () => {
+    expect(mergeEslintHarnessRules('import a from "a";\nexport default [a];\n')!.after).toContain('import harnessRules from "./.harness/eslint/harness.config.mjs";');
+  });
+  it('null when the shape is not a flat-config array', () => {
+    expect(mergeEslintHarnessRules('export default makeConfig();\n')).toBeNull();
+    expect(mergeEslintHarnessRules('module.exports = [];\n')).toBeNull();
+    expect(mergeEslintHarnessRules('export default [ {{{')).toBeNull();
   });
 });

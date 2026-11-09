@@ -176,6 +176,18 @@ test('add agents-md asks when the AGENTS.md text its new import makes load takes
   expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# Team\n');
 });
 
+// Fix round 3: a CLAUDE.md that already imports AGENTS.md by hand gets no new line, so the ask counts no second one.
+test('add agents-md with a hand-written @AGENTS.md line: the ask total equals status afterwards', async () => {
+  const root = installed(OWN.filter((id) => id !== 'agents-md'), { ...REPO, 'CLAUDE.md': '# Team\n@AGENTS.md\n' });
+  const d = await add(root, 'add', ['agents-md', '--dry-run']);
+  const preview = Number(/Always-loaded context: ~([\d,]+) tokens/.exec(d.out)![1].replace(/,/g, ''));
+  expect((await add(root, 'add', ['agents-md', '--yes'])).code).toBe(0);
+  expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# Team\n@AGENTS.md\n');
+  let out = '';
+  await status([], { env: CLAUDE, root, out: (s) => (out += s + '\n') });
+  expect(preview, d.out + out).toBe(Number(/Context: ~([\d,]+) of/.exec(out)![1].replace(/,/g, '')));
+});
+
 // M1
 test('add keeps a comment under items:', async () => {
   const root = installed();

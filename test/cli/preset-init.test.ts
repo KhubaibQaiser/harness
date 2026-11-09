@@ -197,7 +197,8 @@ test('the init budget total includes the preset core and skills, and status prin
   expect(d.out).toContain('Not measured before install:');
   expect(d.out).toMatch(/Not measured before install: .*impeccable/);
   const bare = await run(repo(), dry([...OWN]));
-  expect(all - total(bare.out)).toBe(presetSum(['core-rules', 'engineering-principles', 'frontend-react']));
+  // The answers name the preset in both runs, so both install its core block: the difference is the other preset items.
+  expect(all - total(bare.out)).toBe(presetSum(['engineering-principles', 'frontend-react']));
   expect((await run(root, [...aiArgs([...OWN, ...WEB]), '--over-budget'])).code).toBe(0);
   let out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') });
@@ -221,9 +222,9 @@ test.each([
   ['an AGENTS.md of its own', {}],
   ['no AGENTS.md', { 'AGENTS.md': null }],
   ['a CLAUDE.md that does not import AGENTS.md', { 'CLAUDE.md': '# Team\n', 'AGENTS.md': '# Mine\n' + 'agent text '.repeat(40) + '\n' }],
-])('init preview total equals status after install (%s), with and without the preset', async (_name, files) => {
+])('init preview total equals status after install (%s), with the preset, its core alone, and none', async (_name, files) => {
   const noPreset = { ...ANSWERS, preset: undefined };
-  for (const [ids, answers] of [[[...OWN, ...PRESET_IDS], ANSWERS], [[...OWN], noPreset]] as const) {
+  for (const [ids, answers] of [[[...OWN, ...PRESET_IDS], ANSWERS], [[...OWN], ANSWERS], [[...OWN], noPreset]] as const) { // OWN with ANSWERS: the preset core alone
     const root = withFiles(files);
     const d = await run(root, aiArgs([...ids], answers).map((a) => (a === '--yes' ? '--dry-run' : a)));
     const r = await run(root, [...aiArgs([...ids], answers), '--over-budget']);

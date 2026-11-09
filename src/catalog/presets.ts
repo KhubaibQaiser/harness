@@ -216,7 +216,7 @@ export function presetContext(l: LoadedPreset, ids: string[]): ContextEntry[] {
       // Up to the end marker, as the installed row cuts it: the newline after the block is the repo's. Markers count 0 (spec 3.4).
       const after = mergeAgentsPreset(null, readFileSync(join(templates, 'core.md'), 'utf8')).after;
       const text = stripComments(after.slice(0, after.lastIndexOf(PRESET_END) + PRESET_END.length));
-      return { id, tokens: estimateTokens(text), text };
+      return { id, tokens: estimateTokens(text), text, block: true };
     }
     return itemContext(l.items.find((i) => i.id === id)!, { templates });
   });

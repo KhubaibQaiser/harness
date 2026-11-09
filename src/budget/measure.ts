@@ -35,7 +35,11 @@ export function alwaysLoadedText(kind: 'agents-block' | 'claude-import' | 'skill
 }
 
 /** `text` is what was measured, kept so an exact count can re-measure it; measureSelection strips it. */
-export interface ContextEntry { id: string; tokens: number | null; exempt?: true; text?: string; owner?: Owner }
+export interface ContextEntry {
+  id: string; tokens: number | null; exempt?: true; text?: string; owner?: Owner;
+  /** A block written into AGENTS.md (the preset core): a caller that measures AGENTS.md as a file drops this entry. */
+  block?: true;
+}
 export interface ContextMeasure { entries: ContextEntry[]; tokens: number; unmeasured: string[]; method: 'estimate' | 'exact' }
 export type CountTokens = (texts: { id: string; text: string }[]) => Promise<Record<string, number> | null>;
 
@@ -85,7 +89,7 @@ export function pluginEntry(plugin: string): ContextEntry {
 
 /** `extra` entries (measured elsewhere) are added as they are. `exempt` ids (items the person already approved) count in the total but are never unmeasured, so with the same ids on both sides of a verdict they never ask again. harness-plugin is never exempt. With `count`, every entry that kept its text is measured exactly in one call; a null answer leaves the estimate. */
 export async function measureSelection(
-  ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { count?: CountTokens; exempt?: string[]; extra?: ContextEntry[] } = {},
+  ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { count?: CountTokens; exempt?: string[]; extra?: ContextEntry[]; fromFiles?: string[] } = {},
 ): Promise<ContextMeasure> {
   const entries = collect(ids, c, dirs, opts);
   const texts = entries.flatMap((e) => (e.text !== undefined && e.text !== '' && e.tokens !== null ? [{ id: e.id, text: e.text }] : []));
@@ -105,14 +109,15 @@ export function measureSelectionSync(
   return { ...summarize(collect(ids, c, dirs, opts)), method: 'estimate' };
 }
 
-function collect(ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { exempt?: string[]; extra?: ContextEntry[] }): ContextEntry[] {
+function collect(ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { exempt?: string[]; extra?: ContextEntry[]; fromFiles?: string[] }): ContextEntry[] {
   const byId = new Map(c.items.map((i) => [i.id, i]));
   const exempt = new Set(opts.exempt ?? []);
   const entries: ContextEntry[] = [pluginEntry(dirs.plugin)];
   for (const id of new Set(ids)) {
     const it = byId.get(id);
     if (!it) continue;
-    const e = itemContext(it, dirs);
+    // `fromFiles`: the caller counts this item's text from the files it writes (in `extra`), so its entry adds nothing.
+    const e: ContextEntry = opts.fromFiles?.includes(id) ? { id, tokens: 0 } : itemContext(it, dirs);
     entries.push(exempt.has(id) ? { ...e, exempt: true } : e);
   }
   entries.push(...(opts.extra ?? [])); // the preset's own rows, measured by presetContext

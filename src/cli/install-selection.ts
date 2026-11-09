@@ -2,9 +2,8 @@ import { recordedPresetContext } from '../catalog/presets.js';
 import { dirname, join } from 'node:path';
 import { realIO, type RepoIO } from '../budget/imports.js';
 import { budgetLines, budgetVerdict, fmt, measureSelection, type ContextEntry } from '../budget/measure.js';
-import { measureRepo } from '../budget/sources.js';
+import { measureRepo, type SourceEntry } from '../budget/sources.js';
 import { ownersFrom } from '../budget/owners.js';
-import { repoOnly } from '../budget/summary.js';
 import type { Catalog } from '../catalog/schema.js';
 import { unattendedEnv } from '../core/unattended.js';
 import type { Exec } from '../core/exec.js';
@@ -25,9 +24,13 @@ export async function budgetGate({ cat, before, after, exempt, extra = [], extra
   cat: Catalog; before: string[]; after: string[]; exempt: string[]; extra?: ContextEntry[]; extraBefore?: ContextEntry[]; changes?: Change[]; budget: number; templatesDir: string; root: string; env: NodeJS.ProcessEnv; out: (s: string) => void; f: { yes: boolean; dryRun: boolean; overBudget: boolean };
 }): Promise<number | null> {
   const dirs = { templates: templatesDir, plugin: dirname(packageDir('templates')) };
+  // AGENTS.md and CLAUDE.md are measured as files, before and as the plan leaves them, so harness's blocks and line count
+  // exactly what is written: the agents-md item and the preset core add nothing of their own here.
+  const fromFiles = cat.items.filter((i) => i.source.type === 'own' && i.source.merge?.includes('agents-md')).map((i) => i.id);
+  const notBlock = (xs: ContextEntry[]) => xs.filter((e) => !e.block);
   const v = budgetVerdict(
-    await measureSelection(before, cat, dirs, { exempt, extra: [...extraBefore, ...repoEntries(root, cat)] }),
-    await measureSelection(after, cat, dirs, { exempt, extra: [...extra, ...repoEntries(root, cat, changes)] }),
+    await measureSelection(before, cat, dirs, { exempt, fromFiles, extra: [...notBlock(extraBefore), ...gateEntries(root, cat)] }),
+    await measureSelection(after, cat, dirs, { exempt, fromFiles, extra: [...notBlock(extra), ...gateEntries(root, cat, changes)] }),
     budget,
   );
   for (const l of budgetLines(v)) out(l);
@@ -40,12 +43,18 @@ export async function budgetGate({ cat, before, after, exempt, extra = [], extra
 
 const MEMORY = new Set(['AGENTS.md', 'CLAUDE.md']);
 
+/** The repo's own always-loaded files (never exempt: every teammate loads them). Harness's files are told apart by the manifest. */
+export const repoEntries = (root: string, cat: Catalog): ContextEntry[] => measureMemory(root, cat, []).filter((e) => e.owner === 'repo');
+
 /**
- * The repo's own always-loaded files (never exempt: every teammate loads them). Harness's files are told apart by the
- * manifest. With `changes`, AGENTS.md and CLAUDE.md are read as the plan leaves them: a new `@AGENTS.md` line makes the
- * repo's own AGENTS.md text load, and the newline after harness's block is the repo's (re-review N1).
+ * What the gate counts from the repo: its own files, plus harness's rows in AGENTS.md and CLAUDE.md. With `changes`, those
+ * two are read as the plan leaves them: a new `@AGENTS.md` line makes the repo's own AGENTS.md text load (re-review N1),
+ * and a line the person wrote stays theirs and counts once.
  */
-export function repoEntries(root: string, cat: Catalog, changes: Change[] = []): ContextEntry[] {
+const gateEntries = (root: string, cat: Catalog, changes: Change[] = []): ContextEntry[] =>
+  measureMemory(root, cat, changes).filter((e) => e.owner === 'repo' || MEMORY.has(e.path));
+
+function measureMemory(root: string, cat: Catalog, changes: Change[]): SourceEntry[] {
   const owners = ownersFrom(readManifest(root), cat);
   const planned = new Map<string, string | null>();
   for (const c of changes) {
@@ -63,8 +72,8 @@ export function repoEntries(root: string, cat: Catalog, changes: Change[] = []):
     size: (abs) => at(abs, (t) => (t === null ? null : Buffer.byteLength(t)), () => realIO.size(abs)),
     real: (abs) => at(abs, (t, rel) => (t === null ? null : join(realRoot, rel)), () => realIO.real(abs)),
   } : realIO;
-  // The preset id only names the owner of the preset block, which repoOnly drops either way.
-  return repoOnly(measureRepo(root, { owners, preset: null }, io));
+  // The preset id only names the owner of the preset block; any owner but repo counts in harness's share.
+  return measureRepo(root, { owners, preset: null }, io).always;
 }
 
 /** The recorded preset's entries, for the paths where the preset does not change (add, sync, update without answers). */

@@ -53,7 +53,8 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   const where =
     platform === 'darwin' ? 'macOS: available' : platform === 'win32' ? 'native Windows: not available'
     : platform !== 'linux' ? `${platform}: not checked` : cli.env.WSL_DISTRO_NAME ? 'WSL2: available' : 'Linux: available';
-  lines.push(contextLine(contextSet(root, config, contextDirs())));
+  const lc = loadCatalog(); // one load for the Context: line and the item lines
+  lines.push(contextLine(contextSet(root, config, contextDirs(), undefined, lc)));
   lines.push(`Enforcement: sandbox ${config.sandbox} (${where})`);
   lines.push(blocksOnFailure(root)
     ? 'Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open'
@@ -64,7 +65,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   if (blocked) lines.push(`Last blocked settings change: ${blocked.ts} (${blocked.reason})`);
   const changed = lastHarnessFilesChange(root);
   if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
-  if (config.items.length) lines.push(...itemLines(root, config, deps.pluginList ?? pluginList));
+  if (config.items.length) lines.push(...itemLines(config, lc, deps.pluginList ?? pluginList));
   const pr = config.preset;
   if (pr) lines.push(`Preset: ${pr.id}`, ...m.files.filter((f) => f.item === `${PRESET_ITEM}${pr.id}`).map((f) => `  ${f.rel}`));
   lines.push('Last day');
@@ -84,8 +85,7 @@ function blocksOnFailure(root: string): boolean {
 }
 
 /** Catalog version, selected items, and plugins not installed. A catalog that fails to load adds nothing. */
-function itemLines(root: string, config: ReturnType<typeof loadConfig>['config'], list: typeof pluginList): string[] {
-  const lc = loadCatalog();
+function itemLines(config: ReturnType<typeof loadConfig>['config'], lc: ReturnType<typeof loadCatalog>, list: typeof pluginList): string[] {
   if (lc.errors.length) return [];
   const ids = selectedIds(config);
   const lines = [`Catalog ${config.catalog_version}`, `Items: ${ids.length} selected`];

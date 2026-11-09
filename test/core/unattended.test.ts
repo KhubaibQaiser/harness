@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { isUnattended } from '../../src/core/unattended.js';
+import { isUnattended, unattendedEnv } from '../../src/core/unattended.js';
 
 test.each([
   [{ CLAUDE_CODE_REMOTE: 'true' }, {}, true],
@@ -17,4 +17,11 @@ test.each([
   [{ CLAUDE_CODE_REMOTE: '1' }, {}, false],
 ])('isUnattended(%o, %o) = %s', (env, input, expected) => {
   expect(isUnattended({ hook_event_name: 'PreToolUse', session_id: 's', cwd: '/r', ...input }, env)).toBe(expected);
+});
+
+test('unattendedEnv reads the env parts only', () => {
+  expect(unattendedEnv({ CI: 'true' })).toBe(true);
+  expect(unattendedEnv({ HARNESS_UNATTENDED: 'true' })).toBe(true);
+  expect(unattendedEnv({ CLAUDE_CODE_REMOTE: 'true' })).toBe(true);
+  expect(unattendedEnv({ CI: 'false', CLAUDE_CODE_REMOTE: '1' })).toBe(false);
 });

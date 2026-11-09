@@ -378,7 +378,7 @@ test('AI init dry run shows the plan and the budget', async () => {
   const r = await ai(root, [...aiArgs([...OWN, 'impeccable', 'mobile-mcp']), '--dry-run']);
   expect(r.code, r.out).toBe(0);
   for (const f of ['.mcp.json', '.claude/settings.json', '.harness/facts.json', '.harness/picks.json', '.harness/report.md', '.harness/context/product.md', '.harness/config.yaml']) expect(r.out, f).toContain(f);
-  expect(r.out).toContain('Always-loaded context from harness');
+  expect(r.out).toMatch(/Always-loaded context: ~\d+ tokens \(estimate\), budget \d+; harness and its picks ~\d+\./);
   expect(r.out).toContain('Dry run: nothing was written.');
   expect(tree(root)).toBe('');
 });

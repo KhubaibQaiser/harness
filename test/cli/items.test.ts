@@ -194,7 +194,13 @@ test('explain lists items and files', async () => {
   expect(r.code).toBe(0);
   expect(r.out).toContain('staff-reviewer (own-agent): Reviews every diff.');
   expect(r.out).toContain(`  ${SR}`);
-  expect(r.out).toMatch(/Always-loaded context from harness: ~\d+ tokens/);
+  expect(r.out).toMatch(/Always-loaded context: ~\d+ tokens \(estimate\), budget 2000; harness and its picks ~\d+\./);
+});
+
+test('explain counts the repo own CLAUDE.md in the total, not in the harness share', async () => {
+  const root = installed(OWN, { ...REPO, 'CLAUDE.md': 'x'.repeat(400) });
+  const [, total, h] = /Always-loaded context: ~(\d+) tokens .*harness and its picks ~(\d+)\./.exec((await run(root, 'explain', [], {})).out)!.map(Number);
+  expect(total - h).toBeGreaterThanOrEqual(100);
 });
 
 test('add refuses outside Claude Code; remove, why and explain do not', async () => {

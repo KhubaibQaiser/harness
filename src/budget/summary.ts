@@ -36,24 +36,24 @@ function pluginLabel(plugin: string): string {
   return `skills harness:${names.join(', ')}${agents.length ? ` + agents ${agents.map((a) => basename(a, '.md')).join(', ')}` : ''}`;
 }
 
-/** `catalogDir` is for tests; the bundled catalog by default. */
-export function contextSet(root: string, config: HarnessConfig, dirs: { templates: string; plugin: string }, io: RepoIO = realIO, catalogDir?: string): ContextSet {
-  const loaded = loadCatalog(catalogDir);
-  const catalog: Catalog | null = loaded.errors.length ? null : loaded.catalog;
+/** `catalog` is a catalog dir (tests) or one already loaded (status shares its load); the bundled catalog by default. */
+export function contextSet(root: string, config: HarnessConfig, dirs: { templates: string; plugin: string }, io: RepoIO = realIO, catalog?: string | ReturnType<typeof loadCatalog>): ContextSet {
+  const loaded = typeof catalog === 'object' ? catalog : loadCatalog(catalog);
+  const cat: Catalog | null = loaded.errors.length ? null : loaded.catalog;
   // Without the catalog own items can't be told from picks; harness wrote every manifest file, so it owns them.
-  const owners = ownersFrom(readManifest(root), catalog);
-  if (!catalog) for (const [k, v] of owners) if (v.startsWith('catalog:')) owners.set(k, 'harness');
+  const owners = ownersFrom(readManifest(root), cat);
+  if (!cat) for (const [k, v] of owners) if (v.startsWith('catalog:')) owners.set(k, 'harness');
   const repo = measureRepo(root, { owners, preset: config.preset?.id ?? null }, io);
   const always = [...repo.always];
   const unmeasured = [...repo.unmeasured];
   const notes = [...repo.notes];
-  if (!catalog) notes.push(BAD_CATALOG);
+  if (!cat) notes.push(BAD_CATALOG);
 
-  const byId = new Map((catalog?.items ?? []).map((i) => [i.id, i]));
+  const byId = new Map((cat?.items ?? []).map((i) => [i.id, i]));
   const picks = selectedIds(config).filter((id) => PICK_KINDS.has(byId.get(id)?.kind ?? ''));
   // Own skills and the agents-md block are files measureRepo already read; the plugin row and the picks are the rest.
   const counted = new Set(always.map((e) => e.owner));
-  const m = measureSelectionSync(picks, catalog ?? { version: 1, items: [] }, dirs);
+  const m = measureSelectionSync(picks, cat ?? { version: 1, items: [] }, dirs);
   for (const e of m.entries) {
     const isPlugin = e.id === 'harness-plugin';
     const owner: Owner = isPlugin ? 'harness' : `catalog:${e.id}`;

@@ -1,8 +1,10 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
-import { preset } from '../../src/cli/preset.js';
+import { preset, presetInstall } from '../../src/cli/preset.js';
+import { NO_TTY } from '../../src/cli/prompt.js';
 import { run } from '../../src/cli/index.js';
 
 afterEach(() => vi.unstubAllEnvs());
@@ -74,4 +76,86 @@ test('run routes preset', () => {
   const lines: string[] = [];
   expect(run(['preset', 'bogus'], { root: '/', env: {}, out: (s) => lines.push(s) })).toBe(2);
   expect(lines[0]).toContain('harness preset check <dir>');
+});
+
+const install = async (args: string[], root: string, o: { tty?: boolean; yes?: boolean } = {}) => {
+  const lines: string[] = [];
+  const asked: string[] = [];
+  const code = await presetInstall(args, { root, env: {}, tty: o.tty, out: (s) => lines.push(s), prompt: { confirm: async (q) => (asked.push(q), o.yes ?? false), edit: async (_l, v) => v } });
+  return { code, out: lines.join('\n'), asked };
+};
+
+test('install --dry-run lists the files and writes nothing; --yes copies, then list shows repo', async () => {
+  const d = copyTiny();
+  const root = tmp();
+  const dry = await install([d, '--dry-run'], root);
+  expect(dry.code).toBe(0);
+  expect(dry.out).toContain('.harness/presets/tiny.yaml');
+  expect(dry.out).toContain('.harness/presets/tiny/templates/core.md');
+  expect(existsSync(join(root, '.harness'))).toBe(false);
+  const r = await install([d, '--yes'], root);
+  expect(r.code).toBe(0);
+  expect(readFileSync(join(root, '.harness/presets/tiny/templates/core.md'), 'utf8')).toBe(readFileSync(join(d, 'tiny/templates/core.md'), 'utf8'));
+  expect(go(['list'], root).out).toContain('tiny  Smallest valid preset.  (repo)');
+});
+
+test('install with no flag asks; yes copies, no copies nothing, no terminal exits 2', async () => {
+  const d = copyTiny();
+  const a = tmp(), b = tmp(), c = tmp();
+  expect((await install([d], a, { yes: true })).asked).toHaveLength(1);
+  expect(existsSync(join(a, '.harness/presets/tiny.yaml'))).toBe(true);
+  expect((await install([d], b, { yes: false })).code).toBe(0);
+  expect(existsSync(join(b, '.harness'))).toBe(false);
+  expect(await install([d], c, { tty: false })).toMatchObject({ code: 2, out: NO_TTY });
+  expect(existsSync(join(c, '.harness'))).toBe(false);
+});
+
+test('install refuses a folder that fails check, and an existing install', async () => {
+  const d = copyTiny();
+  writeFileSync(join(d, 'tiny/templates/core.md'), 'ask jane@example.com\n');
+  const root = tmp();
+  const bad = await install([d, '--yes'], root);
+  expect(bad.code).toBe(1);
+  expect(bad.out).toContain('contains an email address');
+  expect(existsSync(join(root, '.harness'))).toBe(false);
+  const ok = copyTiny();
+  mkdirSync(join(root, '.harness/presets/tiny'), { recursive: true });
+  const dup = await install([ok, '--yes'], root);
+  expect(dup).toMatchObject({ code: 1, out: '.harness/presets/tiny/ already exists; remove it first.' });
+  expect(existsSync(join(root, '.harness/presets/tiny.yaml'))).toBe(false);
+  expect((await install([], root)).code).toBe(2);
+});
+
+test('install refuses a symlink anywhere in the preset (the check gate), naming it, and writes nothing', async () => {
+  const outside = tmp();
+  writeFileSync(join(outside, 'secret.txt'), 'x');
+  const cases: [string, (d: string) => void][] = [
+    ['link.md', (d) => symlinkSync(join(outside, 'secret.txt'), join(d, 'tiny/templates/link.md'))],
+    ['linkdir', (d) => symlinkSync(outside, join(d, 'tiny/templates/linkdir'))],
+    ['tiny', (d) => { cpSync(join(d, 'tiny'), join(outside, 'tiny'), { recursive: true }); rmSync(join(d, 'tiny'), { recursive: true }); symlinkSync(join(outside, 'tiny'), join(d, 'tiny')); }],
+    ['tiny.yaml', (d) => { cpSync(join(d, 'tiny.yaml'), join(outside, 'tiny.yaml')); rmSync(join(d, 'tiny.yaml')); symlinkSync(join(outside, 'tiny.yaml'), join(d, 'tiny.yaml')); }],
+  ];
+  for (const [name, mk] of cases) {
+    const d = copyTiny();
+    mk(d);
+    const root = tmp();
+    const r = await install([d, '--yes'], root);
+    expect(r.code, name).toBe(1);
+    expect(r.out, name).toContain(name === 'tiny.yaml' ? 'tiny.yaml: not a regular file (symlinks are not followed)' : `${name}: symlink not followed`);
+    expect(existsSync(join(root, '.harness')), name).toBe(false);
+  }
+});
+
+test('built CLI: install from a subdirectory writes to the repo root, and list shows it', () => {
+  const root = tmp();
+  spawnSync('git', ['init', '-q'], { cwd: root });
+  const sub = join(root, 'sub');
+  mkdirSync(sub);
+  const cli = join(process.cwd(), 'dist/cli.mjs');
+  const r = spawnSync('node', [cli, 'preset', 'install', copyTiny(), '--yes'], { cwd: sub, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  expect(r.status, r.stdout + r.stderr).toBe(0);
+  expect(existsSync(join(root, '.harness/presets/tiny.yaml'))).toBe(true);
+  expect(existsSync(join(sub, '.harness'))).toBe(false);
+  const l = spawnSync('node', [cli, 'preset', 'list'], { cwd: sub, encoding: 'utf8' });
+  expect(l.stdout).toContain('tiny  Smallest valid preset.  (repo)');
 });

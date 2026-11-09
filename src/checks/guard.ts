@@ -85,6 +85,7 @@ const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string
   remove: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is removing a harness item, which deletes its files and settings' },
   sync: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is syncing the harness items, which rewrites their files and settings' },
   git: { kind: 'ask', allowed: (a) => a[0] === 'branch' || a[0] === 'commit', why: () => 'the agent is pushing or opening a pull request for the harness changes' },
+  preset: { kind: 'ask', allowed: (a) => a[0] === 'list' || a[0] === 'check' || (a[0] === 'install' && a.includes('--dry-run') && !a.includes('--yes')), why: () => 'the agent is installing a preset, which writes rules, skills and settings (global ones go to ~/.claude)' },
   context: { kind: 'ask', allowed: (a) => a[0] !== 'apply' || PREVIEW(a.slice(1)), why: () => 'the agent is changing which skills load, in .claude/settings.json' },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);

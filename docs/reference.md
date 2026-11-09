@@ -414,7 +414,7 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `checks.tdd` | `false` | Red-first TDD, test-lock and tamper check. |
 | `checks.stop` | `true` | Stop gate. |
 | `checks.prSize` | `true` | PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`. It also turns the size warnings, the pause ask, the raise and the hand-run dispatcher deny on or off. |
-| `checks.decisions` | `true` | Team decisions: protect covers generated rules and decision files, Stop and doctor report stale ones. |
+| `checks.decisions` | `true` | Turns on team decisions and the `decisions.*` keys. It belongs to the `agents-md` item: with a catalog, `update` sets it from the selected items, so unticking `agents-md` turns it off. |
 | `sandbox` | `"unattended"` | `unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only. Value must be one of unattended, always, off. |
 | `catalog_version` | `0` | Version of the catalog the recommendations came from. `0` means no catalog. |
 | `project.type` | `""` | What kind of project this is. Empty until the interview sets it. Value must be one of web, landing, mobile, api, infra, library, other. |

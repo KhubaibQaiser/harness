@@ -14,7 +14,7 @@ cost:
   setup: none
 stance: default
 why: >-
-  A harness block in AGENTS.md with only what the agent cannot infer from the code, kept under 60 lines, plus an @AGENTS.md import in CLAUDE.md.
+  A harness block in AGENTS.md with only what the agent cannot infer from the code, kept under 60 lines, plus an @AGENTS.md import in CLAUDE.md. It also owns the checks.decisions gate, so deselecting it turns that gate off.
 evidence:
   - docs/specs/2026-11-01-harness-beta-design.md#3-what-each-repo-gets
   - docs/specs/2026-10-30-harness-design.md#6-target-repo-layout

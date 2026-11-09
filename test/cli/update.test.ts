@@ -985,6 +985,38 @@ test('partial answers change only the given keys, and config.yaml comments survi
   expect(text).toContain('# my note');
 });
 
+// An older config has no checks.decisions and no decisions section.
+const olderConfig = (text: string) => '# my note\n' + text.replace(/^  decisions: true\n/m, '').replace(/# Team decisions[^\n]*\ndecisions:\n(  .*\n)+\n?/, '');
+
+test('update on the AI path adds checks.decisions and the decisions section additively, keeping comments', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  const c = join(root, '.harness/config.yaml');
+  writeFileSync(c, olderConfig(readFileSync(c, 'utf8')));
+  commitAll(root);
+  const old = readFileSync(c, 'utf8');
+  expect(old).not.toContain('decisions');
+  const r = await upAi(root, [...reFlags(OWN_IDS), '--yes']);
+  expect(r.code).toBe(0);
+  const after = readFileSync(c, 'utf8');
+  expect(after).toContain('# my note');
+  const y = parseYaml(after) as any;
+  expect(y.checks.decisions).toBe(true);
+  expect(y.decisions).toEqual({ max_lines: 20, expiry_days: 90, nudge: true });
+  const { decisions: _c, ...checks } = y.checks;
+  const o = parseYaml(old) as any; // the re-recommend flags set project answers, so only the sections this change owns are compared
+  expect(checks).toEqual(o.checks);
+  for (const k of ['sandbox', 'tdd', 'pr_size', 'stop', 'unattended', 'context', 'multi_file_gate']) expect(y[k]).toEqual(o[k]);
+});
+
+test('update on the plain path leaves an older config byte-identical', async () => {
+  const root = await installed();
+  const c = join(root, '.harness/config.yaml');
+  writeFileSync(c, olderConfig(readFileSync(c, 'utf8')));
+  const before = readFileSync(c, 'utf8');
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readFileSync(c, 'utf8')).toBe(before);
+});
+
 test('update gives the same budget verdict as add and sync for a hand-selected, never-installed item', async () => {
   const root = aiInstalled(REPO, OWN_IDS);
   const c = join(root, '.harness/config.yaml');

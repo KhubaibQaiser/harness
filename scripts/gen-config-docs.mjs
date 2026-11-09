@@ -15,7 +15,7 @@ const WHAT = {
   'checks.tdd': 'Red-first TDD, test-lock and tamper check.',
   'checks.stop': 'Stop gate.',
   'checks.prSize': 'PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`. It also turns the size warnings, the pause ask, the raise and the hand-run dispatcher deny on or off.',
-  'checks.decisions': 'Team decisions: protect covers generated rules and decision files, Stop and doctor report stale ones.',
+  'checks.decisions': 'Turns on team decisions and the `decisions.*` keys. It belongs to the `agents-md` item: with a catalog, `update` sets it from the selected items, so unticking `agents-md` turns it off.',
   catalog_version: 'Version of the catalog the recommendations came from. `0` means no catalog.',
   'project.type': 'What kind of project this is. Empty until the interview sets it.',
   'project.domain': 'What the project is about, in a few words.',

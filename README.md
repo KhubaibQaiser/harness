@@ -71,6 +71,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `sync` (`/harness:sync`) | Fixes drift between `config.yaml`, the manifest and the files. |
 | `status` | Shows each gate as on or off, and why. |
 | `doctor` | Checks the install and prints a fix for each problem. |
+| `/harness:context-optimize` | Measures what loads into context, proposes trims, and applies harness's own after a yes. Your own files change only after you approve each diff. |
 | `context [--json] [--offline]` | Shows what loads into context and what it costs against the budget. Writes nothing. |
 | `context apply <n>[,<n>…]` | Applies harness's own context recommendations, such as showing a skill by name only. `uninstall` undoes it. |
 | `why <id>` / `explain` | Why an item is installed, and what every item loads into context. |

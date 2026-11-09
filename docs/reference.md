@@ -308,6 +308,7 @@ Skills, agents and the `AGENTS.md` block are loaded into every Claude Code sessi
 - **An estimate.** The count is characters divided by 4, labelled `estimate`. It makes no API call and needs no API key.
 - **The limit.** `context.budget_tokens`, default 2000. `init`, `update`, `add` and `sync` ask before going past it. With `--yes`, they stop unless you pass `--over-budget`. An unattended run is refused, even with `--over-budget`.
 - **doctor and status.** `harness doctor` and `harness status` show the always-loaded total, counted offline. Doctor notes when the total is over the budget, and reports a problem when harness's own text alone is.
+- **Trimming.** Run `/harness:context-optimize` to trim it.
 - **Ask once, then exempt.** Items you approved earlier show in the report but don't count toward the budget again.
 
 ## Plugins and MCP servers

@@ -301,6 +301,32 @@ test('a dotenv file is never read: not by import, as a rule, or as a variant', (
   expect(JSON.stringify(r)).not.toContain(FAKE);
 });
 
+// Re-review item 4: a link that sorts before the folder it points to gets the note; the files keep their real path.
+test.skipIf(process.platform === 'win32')('a link to a rules folder is the one noted, whatever the sort order', () => {
+  const root = makeRepo({ '.claude/rules/real/x.md': 'X', '.claude/rules/z/deep/y.md': 'Y' }, { git: false });
+  symlinkSync('real', join(root, '.claude/rules/a'), 'dir');
+  symlinkSync('z/deep', join(root, '.claude/rules/b'), 'dir'); // to a folder one level further down
+  const r = measureRepo(root, { owners: new Map(), preset: null });
+  expect(labels(r)).toEqual(['.claude/rules/real/x.md', '.claude/rules/z/deep/y.md']);
+  expect(r.unmeasured).toEqual(expect.arrayContaining(['.claude/rules/a: already searched (symlink)', '.claude/rules/b: already searched (symlink)']));
+  expect(r.unmeasured.filter((u) => u.includes('real:') || u.includes('deep:'))).toEqual([]);
+});
+
+// Re-review I4: a link with an innocent name that points at a dotenv file is skipped by its target; every `.env*` name too.
+test.skipIf(process.platform === 'win32')('a link to a dotenv file and every .env* name are never read', () => {
+  const env = '.' + 'env';
+  const FAKE = 'API_TOKEN=fake-value-not-a-secret';
+  const variants = [`${env}rc`, `${env}-local`, `${env}_prod`];
+  const io: RepoIO = { ...realIO, read: (p) => { if (p.includes(env)) throw new Error(`read ${p}`); return realIO.read(p); } };
+  const root = makeRepo({ 'CLAUDE.md': `@docs/notes.md\n${variants.map((v) => `@${v}`).join('\n')}\n`, [env]: FAKE, 'docs/keep.md': 'K', ...Object.fromEntries(variants.map((v) => [v, FAKE])) }, { git: false });
+  symlinkSync(`../${env}`, join(root, 'docs/notes.md'));
+  mkdirSync(join(root, '.claude/rules'), { recursive: true });
+  symlinkSync(`../../${env}`, join(root, '.claude/rules/secrets.md'));
+  const r = measureRepo(root, { owners: new Map(), preset: null }, io);
+  expect(labels(r)).toEqual(['CLAUDE.md']);
+  expect(JSON.stringify(r)).not.toContain(FAKE);
+});
+
 test('a .mcp.json that parses but is not an object says so', () => {
   const r = measure({ '.mcp.json': '[]', '.claude/settings.json': '"x"' });
   expect(r.notes).toEqual(expect.arrayContaining(['.mcp.json: not a JSON object, not read', '.claude/settings.json: not a JSON object, not read']));

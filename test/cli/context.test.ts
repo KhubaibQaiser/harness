@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { realIO } from '../../src/budget/imports.js';
@@ -164,4 +164,22 @@ test('one context run lists the repo once', async () => {
   await go([]);
   expect(spy).toHaveBeenCalledTimes(1);
   spy.mockRestore();
+});
+
+// Re-review I4: links with innocent names pointing at a dotenv file are skipped by their target.
+test.skipIf(process.platform === 'win32')('a link to a dotenv file is never read, shown or sent', async () => {
+  const name = '.' + 'env';
+  const FAKE = 'API_TOKEN=fake-value-not-a-secret';
+  const root = makeRepo({ 'CLAUDE.md': 'memory\n@docs/notes.md\n', [name]: FAKE, 'docs/keep.md': 'K' }, { git: false });
+  symlinkSync(`../${name}`, join(root, 'docs/notes.md'));
+  mkdirSync(join(root, '.claude/rules'), { recursive: true });
+  symlinkSync(`../../${name}`, join(root, '.claude/rules/secrets.md'));
+  const f = fakeFetch(ok);
+  const text = await go([], { root, env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn });
+  const json = await go(['--json'], { root, env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn });
+  expect(f.calls.length).toBeGreaterThan(0);
+  for (const c of f.calls) expect(c.body as string).not.toContain(FAKE);
+  for (const r of [text, json]) expect(r.out).not.toContain(FAKE);
+  expect(text.out).not.toMatch(/^ {2}repo +(docs\/notes\.md|\.claude\/rules\/secrets\.md)/m);
+  expect(JSON.parse(json.out).sources.filter((s: { path?: string }) => s.path === 'docs/notes.md' || s.path === '.claude/rules/secrets.md')).toEqual([]);
 });

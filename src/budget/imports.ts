@@ -128,7 +128,7 @@ export function expandImports(root: string, start: { path: string; text: string 
       const real = realOf(rel);
       if (real !== null && seenReal.has(real)) continue;
       if (real !== null) seenReal.add(real);
-      if (skip(rel)) { skipped.push({ path: rel, by: cur.path, reason: 'ignored' }); continue; }
+      if (skip(rel) || (real !== null && skip(relPosix(nodePath, realRoot, real)))) { skipped.push({ path: rel, by: cur.path, reason: 'ignored' }); continue; }
       const got = load(abs, io);
       if (!('text' in got)) { if (got.reason !== 'missing') skipped.push({ path: rel, by: cur.path, reason: got.reason }); continue; }
       if (files.length >= MAX_IMPORTED) { skipped.push({ path: rel, by: cur.path, reason: 'cap' }); capped = true; break; }

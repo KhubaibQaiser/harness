@@ -30,7 +30,7 @@ const WHAT = {
   apps: 'Runnable apps (`dir`, `kind`, `install`, `start`, `ready_url`, `port`, `public_facing`, `login`). `login.credentials` holds file and variable names, never values.',
   items: 'Catalog items chosen for this project (`id`, `include`, `selected`, `reason`, `addresses`, `pin`).',
   'git.commit_trailer': 'Line added to the end of commit messages. Empty adds none.',
-  'context.budget_tokens': 'Estimated tokens of always-loaded context harness may add before it asks you to confirm an install. Items you approved earlier are not counted.',
+  'context.budget_tokens': 'Estimated tokens of all always-loaded context, your repo\'s own files (`CLAUDE.md`, rules, skills) included. `init`, `update`, `add` and `sync` ask before an install takes the total past it. Items you approved earlier count but are never asked about again.',
   'context.count': "auto: use Anthropic's token-counting API in `harness context` when ANTHROPIC_API_KEY is set; offline: never.",
   'context.count_model': 'The model `harness context` asks the token-counting API to count for.',
   sandbox: '`unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only.',

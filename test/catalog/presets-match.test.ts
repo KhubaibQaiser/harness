@@ -54,6 +54,9 @@ test('presetContext: one entry per id, equal to the estimate of its text', () =>
   const text = (f: string) => readFileSync(join(base, f), 'utf8');
   const e = presetContext(l, ['core-rules', 'alpha', 'beta']);
   expect(e.map((x) => x.id)).toEqual(['core-rules', 'alpha', 'beta']);
-  expect(e[0].tokens).toBe(estimateTokens(stripComments(mergeAgentsPreset(null, text('core.md')).after))); // markers count 0 (spec 3.4)
+  // As the installed row cuts it: up to the end marker; the newline after it is the repo's. Markers count 0 (spec 3.4).
+  const after = mergeAgentsPreset(null, text('core.md')).after;
+  expect(after.endsWith('-->\n')).toBe(true);
+  expect(e[0]).toMatchObject({ tokens: estimateTokens(stripComments(after.slice(0, -1))), text: stripComments(after.slice(0, -1)) });
   expect(e[1].tokens).toBe(estimateTokens(alwaysLoadedText('skill', text('skills/alpha/SKILL.md'))));
 });

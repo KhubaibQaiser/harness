@@ -80,7 +80,7 @@ test('serializeConfig writes the header and a comment per section', () => {
 });
 
 test('context section has its comment and the count keys', () => {
-  expect(serializeConfig(defaults())).toContain('# Always-loaded context budget. harness context measures it; init, update, add and sync ask before going over.\ncontext:\n  budget_tokens: 2000\n  count: auto\n  count_model: claude-opus-5-5\n');
+  expect(serializeConfig(defaults())).toContain('# Always-loaded context budget, your repo\'s own files included. harness context measures it; init, update, add and sync ask before going over.\ncontext:\n  budget_tokens: 2000\n  count: auto\n  count_model: claude-opus-5-5\n');
 });
 
 test('config.example.yaml equals serializeConfig(defaults)', () => {

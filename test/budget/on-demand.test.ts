@@ -71,7 +71,7 @@ test('malformed settings and .mcp.json never throw and add a note', () => {
   const root = makeRepo({ '.claude/settings.json': '[1]', '.mcp.json': '{nope' }, { git: false });
   expect(unmeasuredSources(root, realIO)).toEqual([]);
   const r = measureRepo(root, { owners: new Map(), preset: null });
-  expect(r.notes).toEqual(expect.arrayContaining(['.claude/settings.json: not valid JSON, not read', '.mcp.json: not valid JSON, not read']));
+  expect(r.notes).toEqual(expect.arrayContaining(['.claude/settings.json: not a JSON object, not read', '.mcp.json: not valid JSON, not read']));
 });
 
 test('measureRepo fills onDemand, unmeasured and keeps earlier entries', () => {

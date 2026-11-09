@@ -3,7 +3,7 @@
 // repo: the harness plugin's own skills and agents, and catalog plugins, outside skills and MCP servers.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { loadCatalog } from '../catalog/load.js';
+import { loadCatalog, type LoadedCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
 import type { HarnessConfig } from '../core/config.js';
 import { readManifest } from '../install/manifest.js';
@@ -36,9 +36,9 @@ function pluginLabel(plugin: string): string {
   return `skills harness:${names.join(', ')}${agents.length ? ` + agents ${agents.map((a) => basename(a, '.md')).join(', ')}` : ''}`;
 }
 
-/** `catalog` is a catalog dir (tests) or one already loaded (status shares its load); the bundled catalog by default. */
-export function contextSet(root: string, config: HarnessConfig, dirs: { templates: string; plugin: string }, io: RepoIO = realIO, catalog?: string | ReturnType<typeof loadCatalog>): ContextSet {
-  const loaded = typeof catalog === 'object' ? catalog : loadCatalog(catalog);
+/** `catalog`: one already loaded (status shares its load). `catalogDir`: for tests. The bundled catalog by default. */
+export function contextSet(root: string, config: HarnessConfig, dirs: { templates: string; plugin: string }, io: RepoIO = realIO, o: { catalog?: LoadedCatalog; catalogDir?: string } = {}): ContextSet {
+  const loaded = o.catalog ?? loadCatalog(o.catalogDir);
   const cat: Catalog | null = loaded.errors.length ? null : loaded.catalog;
   // Without the catalog own items can't be told from picks; harness wrote every manifest file, so it owns them.
   const owners = ownersFrom(readManifest(root), cat);

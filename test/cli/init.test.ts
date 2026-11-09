@@ -378,7 +378,7 @@ test('AI init dry run shows the plan and the budget', async () => {
   const r = await ai(root, [...aiArgs([...OWN, 'impeccable', 'mobile-mcp']), '--dry-run']);
   expect(r.code, r.out).toBe(0);
   for (const f of ['.mcp.json', '.claude/settings.json', '.harness/facts.json', '.harness/picks.json', '.harness/report.md', '.harness/context/product.md', '.harness/config.yaml']) expect(r.out, f).toContain(f);
-  expect(r.out).toMatch(/Always-loaded context: ~\d+ tokens \(estimate\), budget \d+; harness and its picks ~\d+\./);
+  expect(r.out).toMatch(/Always-loaded context: ~[\d,]+ tokens \(estimate\), budget [\d,]+; harness and its picks ~[\d,]+\./);
   expect(r.out).toContain('Dry run: nothing was written.');
   expect(tree(root)).toBe('');
 });
@@ -388,7 +388,7 @@ test('over budget with --yes refuses before writing; --over-budget applies', asy
   const args = [...aiArgs(OWN, { budget: 10 }), '--yes'];
   const r = await ai(root, args);
   expect(r.code).toBe(2);
-  expect(r.out).toMatch(/This goes over the context budget \(~\d+ of 10 tokens, estimate\)\. Run again with --over-budget to accept, or pick fewer items\./);
+  expect(r.out).toMatch(/This goes over the context budget \(~[\d,]+ of 10 tokens, estimate\)\. Run again with --over-budget to accept, or pick fewer items\./);
   expect(tree(root)).toBe('');
   const r2 = await ai(root, [...args, '--over-budget']);
   expect(r2.code).toBe(0);

@@ -131,11 +131,14 @@ export function budgetVerdict(before: ContextMeasure, after: ContextMeasure, bud
   return { budget, before, after, ask, added_unmeasured };
 }
 
+/** Whole tokens with thousands separators, as every context line prints them (spec §7.1). */
+export const fmt = (n: number): string => n.toLocaleString('en-US');
+
 export function budgetLines(v: BudgetVerdict): string[] {
   const approved = v.after.entries.filter((e) => e.exempt).map((e) => e.id);
   const h = v.after.entries.reduce((n, e) => n + (e.exempt || e.owner === 'repo' ? 0 : e.tokens ?? 0), 0);
   return [
-    `Always-loaded context: ~${v.after.tokens} tokens (${v.after.method}), budget ${v.budget}; harness and its picks ~${h}.`,
+    `Always-loaded context: ~${fmt(v.after.tokens)} tokens (${v.after.method}), budget ${fmt(v.budget)}; harness and its picks ~${fmt(h)}.`,
     ...(approved.length ? [`Approved earlier, not counted: ${approved.join(', ')}.`] : []),
     ...(v.added_unmeasured.length ? [`Not measured before install: ${v.added_unmeasured.join(', ')}.`] : []),
     ...(v.ask ? ['Over budget: confirm before installing.'] : []),

@@ -191,23 +191,24 @@ test('previewLines drops telemetry_off ids that are not selected', () => {
 test('the init budget total includes the preset core and skills, and status prints the same one', async () => {
   const root = repo();
   const d = await run(root, dry([...OWN, ...WEB]));
-  const line = /Always-loaded context: ~(\d+) tokens .*harness and its picks ~(\d+)\./.exec(d.out)!;
+  const line = /Always-loaded context: ~([\d,]+) tokens .*harness and its picks ~([\d,]+)\./.exec(d.out)!;
   expect(line, d.out).toBeTruthy();
+  const [all, h] = [line[1], line[2]].map((s) => Number(s.replace(/,/g, '')));
   expect(d.out).toContain('Not measured before install:');
   expect(d.out).toMatch(/Not measured before install: .*impeccable/);
   const bare = await run(repo(), dry([...OWN]));
-  expect(Number(line[1]) - Number(/~(\d+) tokens/.exec(bare.out)![1])).toBe(presetSum(['core-rules', 'engineering-principles', 'frontend-react']));
+  expect(all - total(bare.out)).toBe(presetSum(['core-rules', 'engineering-principles', 'frontend-react']));
   expect((await run(root, [...aiArgs([...OWN, ...WEB]), '--over-budget'])).code).toBe(0);
   let out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') });
-  expect(statusTotal(out)).toBe(Number(line[2]));
+  expect(statusTotal(out)).toBe(h);
 });
 
 // ---- update, add, explain and sync count the preset like init and status ----
 const loaded = () => { const l = loadPreset(join(fixture, 'stacks.yaml')); if (!l.ok) throw new Error('fixture'); return l.loaded; };
 const presetSum = (ids: string[]) => presetContext(loaded(), ids).reduce((n, e) => n + (e.tokens ?? 0), 0);
 const PRESET_IDS = ['core-rules', 'engineering-principles', 'frontend-react'];
-const total = (out: string) => Number(/Always-loaded context: ~(\d+) tokens/.exec(out)![1]);
+const total = (out: string) => Number(/Always-loaded context: ~([\d,]+) tokens/.exec(out)![1].replace(/,/g, ''));
 const statusTotal = (out: string) => Number(/^Context: .*harness ~([\d,]+)\./m.exec(out)![1].replace(/,/g, ''));
 const sh = (root: string, ...a: string[]) => git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a);
 /** An installed repo with the preset (ids include its items) or without (the same picks, no preset key). */

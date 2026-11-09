@@ -104,9 +104,9 @@ test('verdict asks for a new unmeasured item under budget', () => {
 });
 
 test('budgetLines say estimate and name the unmeasured ids', () => {
-  expect(budgetLines(budgetVerdict(m(10), m(20), 2000))).toEqual(['Always-loaded context: ~20 tokens (estimate), budget 2000; harness and its picks ~0.']);
+  expect(budgetLines(budgetVerdict(m(10), m(20), 2000))).toEqual(['Always-loaded context: ~20 tokens (estimate), budget 2,000; harness and its picks ~0.']);
   expect(budgetLines(budgetVerdict(m(10), m(3000, ['a', 'b']), 2000))).toEqual([
-    'Always-loaded context: ~3000 tokens (estimate), budget 2000; harness and its picks ~0.',
+    'Always-loaded context: ~3,000 tokens (estimate), budget 2,000; harness and its picks ~0.',
     'Not measured before install: a, b.',
     'Over budget: confirm before installing.',
   ]);
@@ -115,7 +115,7 @@ test('budgetLines say estimate and name the unmeasured ids', () => {
 test('budgetLines lists approved ids', () => {
   const after: ContextMeasure = { ...m(5), entries: [{ id: 'x', tokens: 9, exempt: true }, { id: 'y', tokens: 3 }, { id: 'z', tokens: null, exempt: true }] };
   expect(budgetLines(budgetVerdict(m(5), after, 2000))).toEqual([
-    'Always-loaded context: ~5 tokens (estimate), budget 2000; harness and its picks ~3.',
+    'Always-loaded context: ~5 tokens (estimate), budget 2,000; harness and its picks ~3.',
     'Approved earlier, not counted: x, z.',
   ]);
 });
@@ -223,12 +223,13 @@ test('a recorded plugin number survives an API count and keeps the result an est
 
 test('budgetLines: harness and its picks sums the non-exempt entries that are not the repo', () => {
   const after: ContextMeasure = { ...m(19), entries: [{ id: 'a', tokens: 7 }, { id: 'r', tokens: 12, owner: 'repo' }, { id: 'x', tokens: 9, exempt: true }, { id: 'n', tokens: null }] };
-  expect(budgetLines(budgetVerdict(m(19), after, 2000))[0]).toBe('Always-loaded context: ~19 tokens (estimate), budget 2000; harness and its picks ~7.');
+  expect(budgetLines(budgetVerdict(m(19), after, 2000))[0]).toBe('Always-loaded context: ~19 tokens (estimate), budget 2,000; harness and its picks ~7.');
 });
 
 // ---- budgetGate counts the repo's own context (spec 8, Q6) ----
 const p120 = { ...item('p120', 'plugin', gh), cost: { context: 'low', setup: 'none', context_tokens: 120 } } as CatalogItem;
 const harnessTokens = pluginEntry(plugin).tokens!;
+const n = (x: number) => x.toLocaleString('en-US');
 const gate = async (o: { claude?: boolean; before?: string[]; yes?: boolean; overBudget?: boolean; env?: NodeJS.ProcessEnv }) => {
   const root = mkdtempSync(join(tmpdir(), 'gate-'));
   if (o.claude !== false) writeFileSync(join(root, 'CLAUDE.md'), 'x'.repeat(7600)); // 1,900 tokens
@@ -246,7 +247,7 @@ const gate = async (o: { claude?: boolean; before?: string[]; yes?: boolean; ove
 test('budgetGate: a 1,900-token repo CLAUDE.md plus a 120-token pick asks; without the file it does not', async () => {
   const r = await gate({});
   expect(r.code).toBeNull();
-  expect(r.out).toContain(`Always-loaded context: ~${harnessTokens + 2020} tokens (estimate), budget ${harnessTokens + 2000}; harness and its picks ~${harnessTokens + 120}.`);
+  expect(r.out).toContain(`Always-loaded context: ~${n(harnessTokens + 2020)} tokens (estimate), budget ${n(harnessTokens + 2000)}; harness and its picks ~${n(harnessTokens + 120)}.`);
   expect(r.out).toContain('Over budget: confirm before installing.');
   expect((await gate({ claude: false })).out).not.toContain('Over budget');
 });
@@ -254,7 +255,7 @@ test('budgetGate: a 1,900-token repo CLAUDE.md plus a 120-token pick asks; witho
 test('budgetGate: --yes with an ask and no --over-budget exits 2 with the M3 copy', async () => {
   const r = await gate({ yes: true });
   expect(r.code).toBe(2);
-  expect(r.out).toContain(`This goes over the context budget (~${harnessTokens + 2020} of ${harnessTokens + 2000} tokens, estimate). Run again with --over-budget to accept, or pick fewer items.`);
+  expect(r.out).toContain(`This goes over the context budget (~${n(harnessTokens + 2020)} of ${n(harnessTokens + 2000)} tokens, estimate). Run again with --over-budget to accept, or pick fewer items.`);
   expect((await gate({ yes: true, overBudget: true })).code).toBeNull();
 });
 
@@ -262,7 +263,7 @@ test('budgetGate: an unattended run is refused even with --over-budget --yes', a
   for (const env of [{ CI: 'true' }, { HARNESS_UNATTENDED: '1' }, { CLAUDE_CODE_REMOTE: 'true' }]) {
     const r = await gate({ yes: true, overBudget: true, env });
     expect(r.code).toBe(2);
-    expect(r.out).toContain(`Not added: it would take always-loaded context past the budget of ${harnessTokens + 2000} tokens, and no person is here to approve it. Run it in a session, or raise context.budget_tokens.`);
+    expect(r.out).toContain(`Not added: it would take always-loaded context past the budget of ${n(harnessTokens + 2000)} tokens, and no person is here to approve it. Run it in a session, or raise context.budget_tokens.`);
   }
 });
 

@@ -1,6 +1,6 @@
 import { recordedPresetContext } from '../catalog/presets.js';
 import { dirname } from 'node:path';
-import { budgetLines, budgetVerdict, measureSelection, type ContextEntry } from '../budget/measure.js';
+import { budgetLines, budgetVerdict, fmt, measureSelection, type ContextEntry } from '../budget/measure.js';
 import { measureRepo } from '../budget/sources.js';
 import { ownersFrom } from '../budget/owners.js';
 import { repoOnly } from '../budget/summary.js';
@@ -28,9 +28,9 @@ export async function budgetGate({ cat, before, after, exempt, extra = [], extra
   const v = budgetVerdict(await measureSelection(before, cat, dirs, { exempt, extra: [...extraBefore, ...repo] }), await measureSelection(after, cat, dirs, { exempt, extra: [...extra, ...repo] }), budget);
   for (const l of budgetLines(v)) out(l);
   if (!v.ask || f.dryRun) return null;
-  if (unattendedEnv(env)) return out(`Not added: it would take always-loaded context past the budget of ${budget} tokens, and no person is here to approve it. Run it in a session, or raise context.budget_tokens.`), EXIT_OVER_BUDGET; // Q6: --over-budget needs a person
+  if (unattendedEnv(env)) return out(`Not added: it would take always-loaded context past the budget of ${fmt(budget)} tokens, and no person is here to approve it. Run it in a session, or raise context.budget_tokens.`), EXIT_OVER_BUDGET; // Q6: --over-budget needs a person
   if (f.overBudget || !f.yes) return null;
-  out(`This goes over the context budget (~${v.after.tokens} of ${budget} tokens, estimate). Run again with --over-budget to accept, or pick fewer items.`);
+  out(`This goes over the context budget (~${fmt(v.after.tokens)} of ${fmt(budget)} tokens, estimate). Run again with --over-budget to accept, or pick fewer items.`);
   return EXIT_OVER_BUDGET;
 }
 

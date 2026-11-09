@@ -812,3 +812,21 @@ test('preset install --yes is denied unattended', async () => {
   expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision).toBe('ask');
   expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision).toBe('deny');
 });
+
+test('harness report asks, harness eval is denied, --help is allowed', async () => {
+  const d = decideCommand('harness report --days 7', ctx());
+  expect(d.kind).toBe('ask');
+  expect(reason(d)).toBe("Confirm: the agent is running the usage and adherence report, which reads this repo's session transcripts");
+  all(['harness report --help'], 'allow');
+  const e = decideCommand('npx @khubaibqaiser/harness eval', ctx());
+  expect(e.kind).toBe('deny');
+  expect(reason(e)).toContain('Only a person can run paid evals');
+  expect(kind('eval harness tdd off')).toBe('deny');
+  all(['harness eval --help'], 'allow');
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-report-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'harness report --days 7' } });
+  expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision).toBe('ask');
+  expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision).toBe('deny');
+});

@@ -30,26 +30,26 @@ export const workSpent = (): number => work;
 export function pieces(cmd: string): Piece[] {
   if (work >= 0 && (work += cmd.length) > WORK_BUDGET_CHARS) throw new WorkBudget(WORK_BUDGET_WHY);
   const out: Piece[] = [];
-  let cur = '';
+  let from = 0; // the piece so far is cmd.slice(from, i): offsets, not a string built a char at a time (re-review 22b, F4)
   let quote = ''; // ', ", or $ for $'…'
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd[i];
     if (quote) {
-      cur += c;
-      if (c === '\\' && (quote === '"' || quote === '$') && i + 1 < cmd.length) cur += cmd[++i];
+      if (c === '\\' && (quote === '"' || quote === '$') && i + 1 < cmd.length) i++;
       else if (c === (quote === '$' ? "'" : quote)) quote = '';
-    } else if (c === '\\' && i + 1 < cmd.length) cur += c + cmd[++i];
-    else if (c === '$' && cmd[i + 1] === "'") (quote = '$'), (cur += c + cmd[++i]);
-    else if (c === '"' || c === "'") (quote = c), (cur += c);
+    } else if (c === '\\' && i + 1 < cmd.length) i++;
+    else if (c === '$' && cmd[i + 1] === "'") (quote = '$'), i++;
+    else if (c === '"' || c === "'") quote = c;
     else if (/[;&|\n()`]/.test(c)) {
       // 2>&1, >&2 and &> are redirections, not separators.
-      if (c === '&' && (/[<>]$/.test(cur) || cmd[i + 1] === '>')) { cur += c; continue; }
+      if (c === '&' && ((i > from && (cmd[i - 1] === '>' || cmd[i - 1] === '<')) || cmd[i + 1] === '>')) continue;
+      const text = cmd.slice(from, i);
       const sep = (c === '|' || c === '&') && cmd[i + 1] === c ? c + cmd[++i] : c;
-      out.push({ text: cur, sep });
-      cur = '';
-    } else cur += c;
+      out.push({ text, sep });
+      from = i + 1;
+    }
   }
-  out.push({ text: cur, sep: '' });
+  out.push({ text: cmd.slice(from), sep: '' });
   return out.map((p) => ({ ...p, text: p.text.trim() })).filter((p) => p.text);
 }
 export const segments = (cmd: string): string[] => pieces(cmd).map((p) => p.text);

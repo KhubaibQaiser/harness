@@ -1,7 +1,7 @@
 // Extra readings of a Bash command for the guard's text rules: what the shell can turn a word into before it runs.
 // Imported by guard.ts, which this module imports back: use guard.ts names only inside functions, never at load time.
 import picomatch from 'picomatch';
-import { commandStart, quoteFree, SEGMENTS, SPANS_LINES } from './guard.js';
+import { commandStart, lexText, quoteFree, SEGMENTS, SPANS_LINES } from './guard.js';
 import { Groups, quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, type Skel, wholeFlags } from './guard-sinks.js';
 import { onlySafeCommands } from './guard-allow.js';
@@ -64,6 +64,10 @@ interface Layout { quotes: Quoted[]; heredocs: Heredoc[] }
  *  takes the lines up to WORD. A body is a program unless `tests.sink` says it goes to a data sink, outside any
  *  group. A heredoc this cannot read (a delimiter with an expansion, no end line) leaves every body in place. */
 function layout(s: Scan, tests: { sink: (l: number, at: number) => boolean }): Layout {
+  // Canonical text with a `<<`: the lexer is the one reader of its quotes and heredocs (re-review 22b, F1 and F5). The
+  // reader below is for other text, which main's decision bounds.
+  const lx = lexText(s.c);
+  if (lx) return { quotes: lx.quotes, heredocs: lx.heredocs.some((h) => h.to < 0) ? [] : lx.heredocs.map((h) => ({ from: h.from, to: h.to, literal: h.literal, program: !tests.sink(h.lineStart, h.at) })) };
   const c = s.c, quotes: Quoted[] = [], heredocs: Heredoc[] = [], groups = new Groups();
   let pending: { word: string; dash: boolean; literal: boolean; data: boolean }[] = [], lineStart = 0, ticks = 0;
   for (let i = 0; i < c.length; i++) {

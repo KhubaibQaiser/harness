@@ -1,5 +1,6 @@
 import { WorkBudget } from '../core/shell-words.js';
 import type { Check, Ctx } from './check.js';
+import { isShell } from './edit-target.js';
 import { type Log, warn } from './event-log.js';
 import type { Decision, HookEvent } from './types.js';
 
@@ -33,9 +34,18 @@ function resolveAsk(d: AskDecision, event: HookEvent, unattended: boolean, log: 
   return unattended ? { kind: 'deny', reason: `Unattended run: ${d.reason}`, check: d.check } : d;
 }
 
+/** A shell command longer than this is denied before any check reads it, so no reading of it can outrun the hook timeout. */
+export const MAX_COMMAND_BYTES = 256 * 1024;
+export const TOO_LARGE_WHY = `the command is over ${MAX_COMMAND_BYTES / 1024} KB, more than harness reads before the hook times out, so it is denied; split it into smaller commands or put it in a script file`;
+
 /** Runs the event's checks in registry order and returns the decisions that count. */
 export async function runChecks(ctx: Ctx, checks: Check[], degraded: boolean, log: Log): Promise<Decision[]> {
   const event = ctx.input.hook_event_name as HookEvent;
+  const command = ctx.input.tool_input?.command;
+  if (event === 'PreToolUse' && isShell(ctx.input.tool_name) && typeof command === 'string' && Buffer.byteLength(command) > MAX_COMMAND_BYTES) {
+    log('harness', 'deny', TOO_LARGE_WHY);
+    return [{ kind: 'deny', reason: TOO_LARGE_WHY, check: 'harness' }];
+  }
   const decisions: Decision[] = [];
   let denied = false; // after the first PreToolUse deny only pure checks run; their findings are logged, not returned
   for (const c of checks.filter((c) => c.events.includes(event) && (!degraded || c.failClosed))) {

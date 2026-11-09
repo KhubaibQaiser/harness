@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { readCliPath, recordCliPath } from '../../src/core/cli-path.js';
-import { canonicalText, decideCommand, decidePaths, fileWriteTargets, guard } from '../../src/checks/guard.js';
+import { canonicalText, decideCommand, decidePaths, fileWriteTargets, guard, withoutHeredocBodies } from '../../src/checks/guard.js';
 import { protect } from '../../src/checks/protect.js';
 import { loadConfig } from '../../src/core/config.js';
 import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
@@ -1060,11 +1060,36 @@ test('only text the canonical lexer accepts keeps the heredoc data exemption (ro
     'function f', 'a\r', "echo 'x", 'echo "x', 'echo "\\"', 'echo x\\', 'x <<<<y', 'echo $', 'echo "$(x)"']) expect(canonicalText(`${c}\ncat <<E\nx\nE`), c).toBe(false);
   // What it accepts: words, quotes, escapes, separators, redirections, $NAME, and plain heredocs.
   for (const c of ['git status', `echo 'a b' "c \\" $HOME" \\; x`, 'a && b || c; d & e | f', 'x > a >> b < c 2> d &> e 2>&1', 'echo "$x" $1 if.md',
-    'cat > docs/x.md <<EOF\n# Title (x)\nit\'s $(here)\nEOF', "cat <<-'E' | tee f\n\tx\n\tE", 'git commit -m "fix #12"', `echo "\\\\"\ncat > docs/x.md <<EOF\n${R}\nEOF`, 'x <<< y'])
+    "cat > docs/x.md <<'EOF'\n# Title (x)\nit's $(here)\nEOF", "cat <<-'E' | tee f\n\tx\n\tE", 'git commit -m "fix #12"', `echo "\\\\"\ncat > docs/x.md <<EOF\n${R}\nEOF`, 'x <<< y'])
     expect(canonicalText(`${c}\ncat <<E\nx\nE`), c).toBe(true);
   expect(canonicalText('echo $(x) ${y} # z'), 'no `<<`: no body to find').toBe(true);
   // Legitimate data heredocs keep the exemption.
   all([`cat > docs/x.md <<'EOF'\n# What's new (x)\n${P}\nEOF`, `tee docs/x.md >/dev/null <<EOF\n${R}\nEOF`], 'allow');
+});
+test('the lexer alone finds the heredocs, the full canonicalText gate strips them, and unquoted bodies with an opener are code (round 25)', () => {
+  const T = 'harness tdd off';
+  // F1: `"\" <<W "` is one quoted word, so there is no heredoc and line 2 is code.
+  const f1 = [`cat > docs/x.md "\\" <<W "\n${T}\nW`, `cat "\\" <<W " > docs/x.md\n${T}\nW`];
+  for (const c of f1) expect(withoutHeredocBodies(c), c).toBe(c);
+  all(f1, 'deny');
+  // F2: an unquoted delimiter's body expands substitutions, so it is not canonical and is read as code.
+  const f2 = [`cat > docs/x.md <<EOF\n$(${T})\nEOF`, `cat > docs/x.md <<EOF\n\`${T}\`\nEOF`, `cat > docs/x.md <<EOF\n\${x:-$(${T})}\nEOF`,
+    `cat > docs/x.md <<EOF\n$[1]$((2))\n${T}\nEOF`, `tee f >/dev/null <<-EOF\n\techo $(${T})\n\tEOF`];
+  for (const c of f2) expect(canonicalText(c), c).toBe(false);
+  for (const c of f2.slice(0, 3)) expect(kind(c), c).toBe('deny');
+  // A quoted delimiter's body is data, and so is an unquoted one with only $NAME in it.
+  for (const c of [`cat > docs/x.md <<'EOF'\n$(${T})\nEOF`, `cat > docs/x.md <<"EOF"\n\`${T}\`\nEOF`, `cat > docs/x.md <<EOF\n$HOME and $1 ${T}\nEOF`])
+    expect(canonicalText(c), c).toBe(true);
+  all([`cat > docs/x.md <<'EOF'\n$(echo SENTINEL)\nEOF`, `cat > docs/x.md <<EOF\n$HOME echo SENTINEL\nEOF`], 'allow'); // `harness tdd off` as text asks anyway (backstop)
+  // F3: `EO\` + `F` is the end line where the delimiter is unquoted: the text is not canonical, so no body is taken out.
+  const f3 = `cat > docs/x.md <<EOF\nEO\\\nF\n${T}\nEOF`;
+  expect(canonicalText(f3)).toBe(false);
+  expect(withoutHeredocBodies(f3)).toBe(f3);
+  all([f3], 'deny');
+  // F5: `<<<x` is a here-string, not a heredoc: line 2 is code.
+  const f5 = `cat > docs/x.md <<<x\n${T}\nx`;
+  expect(withoutHeredocBodies(f5)).toBe(f5);
+  all([f5], 'deny');
 });
 test('a quoted-delimiter heredoc body keeps its backslash-newline; the always-block strips backslashes (round 20)', () => {
   const L = 'git log -1 --format=%B';

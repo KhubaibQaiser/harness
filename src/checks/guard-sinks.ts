@@ -25,7 +25,7 @@ function plainPath(t: string | undefined): t is string {
   return n === '/dev/null' ? t === '/dev/null' : !n.split('/').some((p) => p === 'dev' || p === 'proc');
 }
 /** `exec` with a redirect anywhere: it moves fds for every later command, so no writer is a plain file write. */
-const EXEC_REDIRECT = /(?:^|[\s;&|(){}`])exec\b[^;&|\n]*[<>]/;
+const EXEC_REDIRECT = /(?:^|[\s;&|(){}`])exec\b(?:(?![\s;&|(){}`]exec\b)[^;&|\n])*[<>]/; // a scan stops at the next `exec`, which starts its own: linear (re-review 22b, F4)
 /** An editor or pager setting: git, gh or less runs that program on the message (`GIT_EDITOR=sh git commit -e -m …`). */
 export const EDITOR_SET = /\b(?:GIT_EDITOR|GH_EDITOR|EDITOR|VISUAL|GIT_SEQUENCE_EDITOR|GIT_PAGER|GH_PAGER|PAGER|LESS|LESSOPEN|LESSCLOSE)=|\b(?:core\.(?:editor|pager)|sequence\.editor|pager\.[\w-]+)\b/i;
 /** An editor flag: git and gh open the message in an editor (`git commit -e -m …`, `-em`, `--edit`, `gh … --editor`). */

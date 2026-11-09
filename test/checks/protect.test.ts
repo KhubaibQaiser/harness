@@ -327,6 +327,27 @@ test.each([
   `echo "\\"\ncat > docs/x.md <<EOF\n"; ${W}\nEOF`, `echo "a\\"b\ncat > docs/x.md <<'EOF'\n"; ${W}\nEOF`,
 ])('P2: %s is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
 
+// Round 25 (re-review 22b): the lexer alone finds heredocs (F1, F5), only full canonicalText strips them (F3), and an
+// unquoted delimiter's body with a substitution is code (F2). Each payload on its own asks or denies.
+{
+  const ch = (...c: number[]) => String.fromCharCode(...c);
+  const built = ['p=.harness/config.yaml; echo x > $p', 'cd .harness && echo x > config.yaml'];
+  test.each([
+    ...built.flatMap((x) => [`cat > docs/x.md "\\" <<W "\n${x}\nW`, `cat "\\" <<W " > docs/x.md\n${x}\nW`]), // F1
+    ...['$(echo x > .harness/config.yaml)', `\`${ch(114, 109)} -rf .harness\``, ...built.map((x) => `$(${x})`)].map((x) => `cat > docs/x.md <<EOF\n${x}\nEOF`), // F2
+    ...built.map((x) => `cat > docs/x.md <<EOF\nEO\\\nF\n${x}\nEOF`), // F3
+    ...built.map((x) => `cat > docs/x.md <<<x\n${x}\nx`), // F5
+  ])('round 25: %s is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
+  // F2 in protect's own `$(cat <<EOF … EOF)` message reader: an unquoted body with a substitution, or a body whose first
+  // end line comes before the one the reader stopped at, is not a message.
+  test.each(built.flatMap((x) => [`git commit -m "$(cat <<EOF\n$(${x})\nEOF\n)"`, `git commit -m "$(cat <<EOF\nmsg \`${x}\`\nEOF\n)"`,
+    `git commit -m "$(cat <<'EOF'\nmsg\nEOF\n${x}\nEOF\n)"`]))('round 25: %s is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
+  test('round 25: a quoted-delimiter body, and a commit body with only $NAME, stay data', () => {
+    for (const c of [`cat > docs/x.md <<'EOF'\n$(echo x > .harness/config.yaml)\nEOF`, `git commit -m "$(cat <<'EOF'\nfix: see .harness/config.yaml\nEOF\n)"`,
+      `git commit -m "$(cat <<EOF\nfix: $HOME .harness/config.yaml\nEOF\n)"`]) expect(bash(c), c).toBe('allow');
+  });
+}
+
 // Round 14 D1: env -S strings are split with env's own rules, so `(` is an ordinary character.
 test.each([`env -S "node -e require('fs').rmSync('node_modules')"`, `env --split-string="node -p require('fs').rmSync('node_modules/x')"`, `env -S 'node -e "require(\\"fs\\").rmSync(\\"node_modules\\")"'`])(
   'D1: %s is denied', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));

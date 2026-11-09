@@ -234,8 +234,13 @@ const readOnly = (ws: string[]): boolean => {
 };
 const MESSAGE_FLAGS = new Set(['-m', '--message', '-F', '--file', '-b', '--body', '--body-file', '-t', '--title']);
 // `$(cat <<'EOF' … EOF)`, Claude Code's commit and PR body form, and a one-word `.harness` in backticks are message text.
-const HEREDOC_CAT = /\$\(cat\s+<<-?\s*(['"]?)(\w+)\1\n[\s\S]*?\n\s*\2\s*\n?\s*\)/g;
-const isMessage = (w: string): boolean => !/\$\(|`/.test(w.replace(HEREDOC_CAT, '').replace(/`[^`\s]*`/g, ''));
+// Round 25 (re-review 22b, F2): only a body that ends at its first end line, as the shell reads it, and that holds no
+// substitution when the delimiter is unquoted. A body is not searched past the next `$(cat`, so the scan is linear (F4).
+const HEREDOC_CAT = /\$\(cat\s+<<(-?)\s*(['"]?)(\w+)\2\n((?:(?!\$\(cat\s)[\s\S])*?)\n\s*\3\s*\n?\s*\)/g;
+const withoutCatMessages = (t: string): string =>
+  t.replace(HEREDOC_CAT, (m, dash: string, q: string, w: string, body: string) =>
+    body.split('\n').some((l) => (dash ? l.replace(/^\t+/, '') : l) === w) || (!q && /`|\$[({[]/.test(body)) ? m : '');
+const isMessage = (w: string): boolean => !/\$\(|`/.test(withoutCatMessages(w).replace(/`[^`\s]*`/g, ''));
 /** A segment's words without its data: the text of an echo or printf whose output nobody reads as code (no redirect, no
  *  substitution in the command), and the message, body and title values of git and gh that run no other substitution. */
 const codeWords = (ws: string[], consumed: boolean): string[] => {
@@ -262,14 +267,14 @@ const feedsWriter = (ws: string[]): boolean => {
  *  ponytail: a name built from pieces (x=.har; y=ness), or a path passed to a script the agent wrote, is not seen. */
 const touchesProtectedText = (cmd: string): boolean => {
   const body = withoutHeredocBodies(cmd);
-  const consumed = /\$\(|`|\|/.test(body.replace(HEREDOC_CAT, '')); // echo output read by a substitution or a pipe
+  const consumed = /\$\(|`|\|/.test(withoutCatMessages(body)); // echo output read by a substitution or a pipe
   const segs = segments(body).map((s) => codeWords(words(s), consumed));
   const text = segs.map((ws) => ws.join(' ')).join(' ; ');
   const names = (t: string) => [t, quoteFree(t), decodeAnsiC(t)].some((x) => PROTECTED_TEXT.test(x)); // decodeAnsiC: x='\x2eharness'; ${x@E}
   if (segs.some(feedsWriter) || (names(cmd) && segs.some((ws) => ws.some((w) => commandName(unquote(w)) === 'xargs')))) return true;
   const writes = segs.filter((ws) => !readOnly(ws));
   if (writes.some((ws) => globNamesProtected(ws) || ws.some((w) => /['"\\]/.test(w) && PROTECTED_TEXT.test(unquote(w))))) return true;
-  return names(text) && (/`/.test(body.replace(HEREDOC_CAT, "").replace(/`[^`\s]*`/g, "")) || /[$`]|\w=\(|\(\s*\)|\bfunction\s/.test(text) || REDIRECT_TO_FILE.test(text) ||
+  return names(text) && (/`/.test(withoutCatMessages(body).replace(/`[^`\s]*`/g, "")) || /[$`]|\w=\(|\(\s*\)|\bfunction\s/.test(text) || REDIRECT_TO_FILE.test(text) ||
     writes.some((ws) => ws.some((w) => /[*?[{]/.test(w) && /harness|claude/i.test(w))) || segs.some(binds));
 };
 const GLOB = /[*?[{]/;
@@ -338,7 +343,7 @@ export const protect: Check = {
       const git = gitRestoreTargets(cmds);
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
-      paths = [...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)];
+      paths = [...new Set([...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)])]; // once each: every check of one touches the disk (re-review 22b, F4)
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(cmd);
       if (!paths.some((p) => p && isProtected(root, p))) return built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };

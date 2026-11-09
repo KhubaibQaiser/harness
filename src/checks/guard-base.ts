@@ -125,8 +125,9 @@ export function commandStart(toks: string[], stop: (name: string) => boolean = (
     const t = toks[k];
     if (stop(runnerName(t))) break;
     if (t === 'find') {
-      const e = toks.findIndex((x, i) => i > k && /^-(exec|execdir|ok|okdir)$/.test(x));
-      if (e < 0) break;
+      let e = k + 1; // from k, not from 0: many `find` words stay linear (re-review 22b, F4)
+      while (e < toks.length && !/^-(exec|execdir|ok|okdir)$/.test(toks[e])) e++;
+      if (e >= toks.length) break;
       [k, wrapper] = [e + 1, ''];
     } else if (RESERVED.has(t)) k++; // `{ harness …; }`, `! harness …`, `then harness …`
     else if (RUNNERS.has(runnerName(t))) [k, wrapper, scriptFile] = [k + 1, runnerName(t), runnerName(t) === 'script'];
@@ -424,10 +425,10 @@ function sensitiveForm(form: string): boolean {
 }
 
 const DENY: [RegExp, string][] = [
-  [/\bgit\s+push\b[^;&|\n]*(\s--force(?!-with-lease)(\s|=|$)|\s-f(\s|$))/, 'force push (use --force-with-lease, and only on your own branch)'],
-  [/\b(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/, 'piping a download straight into a shell'],
-  [/\bchmod\b[^;&|\n]*\b0?777\b/, 'chmod 777'],
-  [/\bdd\b[^;&|\n]*\bof=\/dev\//, 'writing to a block device'],
+  [/\bgit\s+push\b(?:(?!\bgit\s+push\b)[^;&|\n])*(\s--force(?!-with-lease)(\s|=|$)|\s-f(\s|$))/, 'force push (use --force-with-lease, and only on your own branch)'],
+  [/\b(curl|wget)\b(?:(?!\b(?:curl|wget)\b)[^|\n])*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/, 'piping a download straight into a shell'],
+  [/\bchmod\b(?:(?!\bchmod\b)[^;&|\n])*\b0?777\b/, 'chmod 777'],
+  [/\bdd\b(?:(?!\bdd\b)[^;&|\n])*\bof=\/dev\//, 'writing to a block device'],
 ];
 
 const ASK: [RegExp, string][] = [
@@ -439,12 +440,12 @@ const ASK: [RegExp, string][] = [
   [/\b(npm|pnpm|yarn)\s+(publish|unpublish)\b/, 'publishing a package'],
   [/\bcdk\s+(destroy|deploy)\b/, 'CDK deploy or destroy'],
   [/\bterraform\s+(destroy|apply)\b/, 'Terraform apply or destroy'],
-  [/\baws\b[^;&|\n]*\b(delete|terminate|remove|rb)\b/, 'destructive AWS CLI call'],
-  [/\baws\s+s3\s+rm\b[^;&|\n]*--recursive/, 'recursive S3 delete'],
+  [/\baws\b(?:(?!\baws\b)[^;&|\n])*\b(delete|terminate|remove|rb)\b/, 'destructive AWS CLI call'],
+  [/\baws\s+s3\s+rm\b(?:(?!\baws\s+s3\s+rm\b)[^;&|\n])*--recursive/, 'recursive S3 delete'],
   [/\bkubectl\s+delete\b/, 'kubectl delete'],
   [/\bdocker\s+(system|volume|image)\s+prune\b/, 'docker prune'],
   [/\bgh\s+(repo|release)\s+delete\b/, 'deleting a GitHub repo or release'],
-  [/\bvercel\b[^;&|\n]*--prod\b/, 'production deploy'],
+  [/\bvercel\b(?:(?!\bvercel\b)[^;&|\n])*--prod\b/, 'production deploy'],
   [/\bdrop\s+(table|database|schema)\b/i, 'SQL DROP'],
 ];
 
@@ -598,6 +599,12 @@ export function decidePaths(paths: string[]): Decision {
   return { kind: 'allow' };
 }
 
+/** `$IFS` and `${IFS…}` made spaces. A `${IFS` with no `}` after it matches nothing, so the braced form is only tried
+ *  up to the last `}`: otherwise each such `${IFS` scans to the end (quadratic; re-review 22b, F4). */
+const ifsSpaces = (c: string): string => {
+  const k = c.lastIndexOf('}') + 1;
+  return c.slice(0, k).replace(/\$(?:IFS(?!\w)|\{IFS(?!\w)[^}]*\})/g, ' ') + c.slice(k).replace(/\$IFS(?!\w)/g, ' ');
+};
 /**
  * The command as the shell splits it when it uses $IFS: `$IFS` and every `${IFS…}` (`${IFS:0:1}`, `${IFS%?}`,
  * `${IFS[0]}`) become a space (a word separator, or nothing, with the default IFS), and `$1`-`$9`, `$@`, `$*` become
@@ -606,7 +613,7 @@ export function decidePaths(paths: string[]): Decision {
  */
 export function ifsReading(command: string): string | null {
   if (!/\$\{?IFS(?!\w)/.test(command)) return null;
-  return command.replace(/\$(?:IFS(?!\w)|\{IFS(?!\w)[^}]*\})/g, ' ').replace(/\$(?:[1-9@*]|\{[1-9@*]\})/g, '');
+  return ifsSpaces(command).replace(/\$(?:[1-9@*]|\{[1-9@*]\})/g, '');
 }
 
 // Shell constructs that build words the guard cannot read: ${!x}, zsh ${(s:_:)x} ${=x}, ${x//a/b} ${x%a} ${x#a} ${x:…}
@@ -614,7 +621,7 @@ export function ifsReading(command: string): string | null {
 // expansion in command position.
 /** A protected harness path named in the text: `.harness`, `.harness/…`, `.claude/settings*.json`. */
 export const PROTECTED_TEXT = /\.harness(?![\w.-])|\.claude(?![\w./-])|\.claude[\\/]settings/i;
-const BUILDS = /\$\{[!(=~^]|\$\{(?!IFS\W)[^}]*?[/%#:,^@]|\$['"]|(?<!\w)IFS=/; // , ^ @: bash ${x,,} ${x^^} ${x@E}
+const BUILDS = /\$\{[!(=~^]|\$\{(?!IFS\W)(?:[^}$]|\$(?!\{))*?[/%#:,^@]|\$['"]|(?<!\w)IFS=/; // , ^ @: bash ${x,,} ${x^^} ${x@E}. A scan stops at the next `${`, which is its own start: linear (re-review 22b, F4)
 /** True when the command builds words at run time and names harness or its CLI as a word (never a directory in a path:
  *  `cd /x/harness && …` does not count) or a protected path: the guard asks. ${CLAUDE_PLUGIN_ROOT…} is the skills' own form. */
 export function buildsGuardedWords(command: string, w: Where): boolean {

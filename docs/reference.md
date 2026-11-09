@@ -204,7 +204,7 @@ Your format and lint checks must skip the committed `.harness/` files. When Pret
 
 ## Guard details
 
-The agent has to ask before it runs `harness context apply`, which changes which skills load; unattended it is denied. `harness context` and `harness context apply <n> --dry-run` are allowed.
+The agent has to ask before it runs `harness context apply`, which changes which skills load; unattended it is denied. `harness context` and `harness context apply <n> --dry-run` are allowed. A preview of any command the agent has to ask about passes only when written out in plain words: an argument with `$`, a backtick, a brace, a glob or a leading `~` asks (unattended it is denied).
 
 The guard matches secrets paths without regard to case, and the way Windows resolves them: trailing dots and spaces, `::$DATA` streams, drive-relative `C:name`, and 8.3 short names. It can't map a short name (`~1`) back exactly, so it denies any short-name segment that could stand for a protected name. A short-name path through a folder that starts like one (for example `AWSADM~1`) is then denied too.
 
@@ -229,7 +229,7 @@ The hooks are in the repo, so a teammate needs nothing for them. Plugins you pic
 
 ## Commands in full
 
-The plugin adds `/harness:init`, `/harness:doctor`, `/harness:status`, `/harness:update`, `/harness:add`, `/harness:sync`, `/harness:uninstall` and `/harness:vet`. In a plain terminal, `init` and `update` print `Run /harness:init inside Claude Code` and exit.
+The plugin adds `/harness:init`, `/harness:doctor`, `/harness:status`, `/harness:update`, `/harness:add`, `/harness:sync`, `/harness:uninstall`, `/harness:vet` and `/harness:preset`. In a plain terminal, `init` and `update` print `Run /harness:init inside Claude Code` and exit.
 
 Run each terminal command as `harness <command>`. From source, use `node /path/to/harness/dist/cli.mjs <command>`.
 
@@ -269,6 +269,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `validate picks <file> --answers <file> [--merge-config] [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. `--merge-config` works as above. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
 | `validate vet-review <file> --scan <file> [--attempt 1\|2]` | Checks a vet reviewer's `vet-review.json` against the scan (`harness vet --json`) and the installed items. |
+| `validate preset-answers <file>` | Checks the `/harness:preset` interview's `answers.json`: id (not a shipped preset's), title, description, `target` (`repo` or `global`), rules, preselects (catalog ids, not discouraged), git (branch prefixes match `^[a-z0-9-]+/$`) and `stacks` (`react`, `next`, `react-native`, each with only the twelve known topics). Free text may hold no control characters, email addresses or `user.name`/`user.email`. Prints `ok` (exit 0) or one error per line (exit 2). No command turns answers into a folder: the skill writes the files and `preset check` is the guard. |
 | `vet <target> [--json]` | Pins a GitHub plugin or skill to a commit, scans it without running it, and writes `.harness/vet/<id>-<sha>.md`. Installs nothing. |
 | `vet <target> --json [--keep]` | Prints the scan as JSON and writes no report. `--keep` adds `dir` and `map` and keeps the unpacked folder (under the OS temp dir) for a reviewer. `map` lists only the in-scope files unpacked under another name (such as `CLAUDE.md.vetted`), keyed by the file name the findings use. |
 | `vet --finish <scan.json> --review <file>` | Checks the reviewer's file like `validate vet-review`, writes the report with the review, then deletes the kept folder. |
@@ -350,6 +351,8 @@ A preset you built can also go in for every repo, at user scope, with `harness p
 | Global | `~/.claude/harness/presets/<id>/` | `~/.claude/CLAUDE.md`, preset markers | `~/.claude/skills/<name>/` | `~/.claude/settings.json` (attribution only) | `~/.claude/harness/manifest.json` |
 
 A file the global install changes is backed up under `~/.claude/harness/backup/`.
+
+To build your own, run `/harness:preset` in Claude Code. It interviews you (id, install target, working rules, picks, git, then each stack's topics), drafts the preset in a temp folder from your answers only, shows each file for edits, and runs `harness preset check`. For a repo target it runs `harness preset install`; then choose the preset in `/harness:init` or `/harness:update`. For a global target it shows the dry run and asks a separate yes for each path. It never asks for or stores a git name, email or secret.
 
 ## Usage and adherence report
 

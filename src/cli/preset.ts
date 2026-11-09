@@ -58,7 +58,7 @@ export type PresetEnv = CliEnv & { prompt: Prompt; /** Default `os.homedir()`; t
 
 /** The global install's manifest, backups and lock, relative to the home folder. */
 export const GLOBAL_STATE = statePaths('.claude/harness');
-export const GLOBAL_LOCK_RECOVERY = 'A previous global preset install was interrupted or could not roll back, so the files under ~/.claude and `~/.claude/harness/manifest.json` may disagree. To recover: 1) open `~/.claude/harness/apply.lock`, which lists the files that run was writing, 2) put each back from its copy under `~/.claude/harness/backup/`, or delete it if it has no copy there, 3) delete `~/.claude/harness/apply.lock`, 4) run the command again.';
+export const GLOBAL_LOCK_RECOVERY = 'A previous global preset install or uninstall was interrupted or could not roll back, so the files under ~/.claude and `~/.claude/harness/manifest.json` may disagree. To recover: 1) open `~/.claude/harness/apply.lock`, which lists the files that run was writing, 2) put each back from its copy under `~/.claude/harness/backup/`, or delete it if it has no copy there, 3) delete `~/.claude/harness/apply.lock`, 4) run the command again.';
 
 /** `preset install <dir> [--global] [--dry-run|--yes [--take <path,...>]]`: checks the folder, then installs it in the repo or under `~/.claude`. */
 export async function presetInstall(args: string[], cli: PresetEnv): Promise<number> {

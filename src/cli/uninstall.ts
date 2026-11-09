@@ -1,12 +1,13 @@
-import { existsSync, readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, LOCK_RECOVERY, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
 import { STRUCTURAL, removeBlocks, removeFromMcp, removeFromSettings } from '../install/merge.js';
 import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, withEol } from '../install/text.js';
-import { MANIFEST_REL, ManifestError, REPO_STATE, backupText, isBackupPath, readManifest, type Manifest, type StatePaths } from '../install/manifest.js';
+import { MANIFEST_REL, ManifestError, REPO_STATE, backupText, readManifest, type Manifest, type StatePaths } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall } from './preamble.js';
@@ -25,6 +26,22 @@ const read = (p: string): string | null => {
     return null;
   }
 };
+
+const sameJson = (a: string, b: string): boolean => { try { return isDeepStrictEqual(JSON.parse(a), JSON.parse(b)); } catch { return false; } };
+
+/** A manifest path harness may touch under home: `.claude/…`, forward slashes, no empty, `.` or `..` segment. */
+const underClaude = (p: unknown): p is string => typeof p === 'string' && p.startsWith('.claude/') && !p.includes('\\') && !p.split('/').some((s) => s === '' || s === '.' || s === '..');
+
+/** The first entry of a global manifest that is not a safe path under ~/.claude (the whole value when `dirs` is not an array), or undefined. */
+function badGlobalEntry(m: Manifest, sp: StatePaths): { bad: unknown } | undefined {
+  if (m.dirs !== undefined && !Array.isArray(m.dirs)) return { bad: m.dirs };
+  for (const d of m.dirs ?? []) if (d !== '.claude' && !underClaude(d)) return { bad: d }; // the install may have created ~/.claude itself
+  for (const f of m.files) {
+    if (!underClaude(f?.rel)) return { bad: f?.rel };
+    if (f.backup !== undefined && !(underClaude(f.backup) && f.backup.startsWith(`${sp.backup}/`) && f.backup.split('/').length > sp.backup.split('/').length + 1)) return { bad: f.backup };
+  }
+  return undefined;
+}
 
 const list = (rels: string[]) => rels.map((k) => `\`${k}\``).join(', ');
 
@@ -63,7 +80,7 @@ export function removalChanges(root: string, m: Manifest, force: boolean, sp: St
       const r = (f.rel === SETTINGS ? removeFromSettings : removeFromMcp)(cur, f, backup, notes);
       if (!r) notes.push(`\`${f.rel}\` is not valid JSON; left as is. Remove the harness ${f.rel === SETTINGS ? 'hooks and deny rules' : 'entries'} by hand.`);
       else if (r.empty && f.kind === 'create') changes.push({ kind: 'delete', rel: f.rel, before: cur });
-      else if (r.after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] });
+      else if (r.after !== cur && !sameJson(r.after, cur)) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] }); // nothing removed: leave its bytes
       continue;
     }
     const merged = !!f.blocks?.length || !!f.replace?.length;
@@ -176,7 +193,12 @@ async function uninstallGlobal(cli: UninstallEnv, o: { yes: boolean; force: bool
     throw e;
   }
   if (!m) return out(`No global preset is installed (no ~/${sp.manifest}).`), 1;
-  const { changes, kept, notes } = removalChanges(home, m, o.force, sp);
+  const tampered = badGlobalEntry(m, sp);
+  if (tampered) return out(`\`~/${sp.manifest}\` lists ${JSON.stringify(tampered.bad) ?? String(tampered.bad)}, which is not a path under ~/.claude, so nothing was removed.`), 1;
+  const r = removalChanges(home, m, o.force, sp);
+  const { changes } = r;
+  const toHome = (t: string) => t.split('`.claude/').join('`~/.claude/'); // every rel is under .claude/ (checked above)
+  const notes = r.notes.map(toHome), kept = r.kept.map((k) => `~/${k}`);
   if (o.dryRun) {
     for (const c of changes) out(`Would ${c.kind === 'delete' ? 'remove' : 'restore'} \`~/${c.rel}\``);
     for (const n of notes) out(`Note: ${n}`);
@@ -193,13 +215,16 @@ async function uninstallGlobal(cli: UninstallEnv, o: { yes: boolean; force: bool
   }
   for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} \`~/${c.rel}\``);
   for (const n of notes) out(`Note: ${n}`);
-  // Each run's backups sit in their own timestamped folder: the install's, and the one this apply just made.
+  // Locked again until the manifest is gone: a crash in between makes the next run stop instead of half-redoing it.
+  writeFileSync(join(home, sp.lock), `${sp.manifest}\n`);
+  // Each run's backups sit in their own timestamped folder: the install's (validated above), and the one this apply just made.
   const depth = sp.backup.split('/').length + 1;
-  for (const b of [...m.files, ...(written?.files ?? [])].map((f) => f.backup))
-    if (b && isBackupPath(b, sp)) rmSync(join(home, b.split('/').slice(0, depth).join('/')), { recursive: true, force: true });
+  for (const b of new Set([...m.files, ...(written?.files ?? [])].flatMap((f) => (f.backup ? [f.backup.split('/').slice(0, depth).join('/')] : []))))
+    rmSync(join(home, b), { recursive: true, force: true });
   rmSync(join(home, sp.manifest), { force: true });
+  rmSync(join(home, sp.lock), { force: true });
   // Deepest first; rmdir refuses a folder that still holds something (an edited file, the person's own).
-  for (const d of [...(m.dirs ?? [])].filter((d) => !d.split('/').includes('..')).sort((a, b) => b.length - a.length)) {
+  for (const d of [...(m.dirs ?? [])].sort((a, b) => b.length - a.length)) {
     try { rmdirSync(join(home, d)); } catch {}
   }
   out(`Removed ~/${sp.manifest} and the backups.`);

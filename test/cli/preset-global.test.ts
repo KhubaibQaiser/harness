@@ -6,6 +6,7 @@ import { GLOBAL_STATE, presetInstall } from '../../src/cli/preset.js';
 import { NO_TTY } from '../../src/cli/prompt.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import { PRESET_START } from '../../src/install/merge.js';
+import { hashText } from '../../src/install/text.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'harness-preset-global-'));
 const copyTiny = () => {
@@ -247,7 +248,8 @@ test('files edited after install: blocks removed, edits kept, an edited skill ke
   expect(md).not.toContain(PRESET_START);
   expect(JSON.parse(readFileSync(join(home, '.claude/settings.json'), 'utf8'))).toEqual({ theme: 'dark', model: 'x' });
   expect(readFileSync(join(home, '.claude/skills/alpha/SKILL.md'), 'utf8')).toBe('my edit\n');
-  expect(r.out).toContain('Kept `.claude/skills/alpha/SKILL.md` because you edited them.');
+  expect(r.out).toContain('Kept `~/.claude/skills/alpha/SKILL.md` because you edited them.');
+  expect(r.out.split('\n').filter((l) => l.startsWith('Note:') || l.startsWith('Kept')).every((l) => !/`\.claude\//.test(l))).toBe(true);
   expect(existsSync(join(home, '.claude/skills/beta'))).toBe(false);
   expect(existsSync(join(home, GLOBAL_STATE.manifest))).toBe(false);
   expect(existsSync(join(home, '.claude/harness'))).toBe(false);
@@ -276,5 +278,65 @@ test('uninstall --global --dry-run lists the removals and writes nothing; no ter
   const no = await un(['--global'], home, { tty: true, answer: false });
   expect(no).toMatchObject({ code: 0, out: 'Cancelled. Nothing was removed.' });
   expect(no.asked).toEqual(['Remove the global preset from ~/.claude? (y/N)']);
+  expect(tree(home)).toEqual(before);
+});
+
+const editManifest = (home: string, f: (m: { dirs?: unknown; files: Record<string, unknown>[] }) => void) => {
+  const p = join(home, GLOBAL_STATE.manifest);
+  const m = JSON.parse(readFileSync(p, 'utf8'));
+  f(m);
+  writeFileSync(p, JSON.stringify(m, null, 2) + '\n');
+};
+
+test('a tampered global manifest is refused whole, naming the entry, and home is unchanged', async () => {
+  const cases: [string, (m: { dirs?: unknown; files: Record<string, unknown>[] }) => void][] = [
+    ['"Documents"', (m) => { m.dirs = 'Documents'; }],
+    ['"a"', (m) => { m.dirs = 'a'; }],
+    ['5', (m) => { m.dirs = [...(m.dirs as string[]), 5]; }],
+    ['"Documents"', (m) => { m.dirs = [...(m.dirs as string[]), 'Documents']; }],
+    ['"Documents/x.txt"', (m) => { m.files.push({ rel: 'Documents/x.txt', kind: 'create', hash: hashText('precious\n') }); }],
+    ['".claude/x\\\\..\\\\..\\\\Documents"', (m) => { m.dirs = [...(m.dirs as string[]), '.claude/x\\..\\..\\Documents']; }],
+    ['".claude/harness/backup//x"', (m) => { m.files[0].backup = '.claude/harness/backup//x'; }],
+  ];
+  for (const [named, edit] of cases) {
+    const home = tmp();
+    mkdirSync(join(home, 'Documents'));
+    mkdirSync(join(home, 'a'));
+    writeFileSync(join(home, 'Documents/x.txt'), 'precious\n');
+    await installAll(home);
+    editManifest(home, edit);
+    const before = tree(home);
+    const r = await un(['--global', '--yes'], home);
+    expect(r.code, named).toBe(1);
+    expect(r.out, named).toBe(`\`~/.claude/harness/manifest.json\` lists ${named}, which is not a path under ~/.claude, so nothing was removed.`);
+    expect(tree(home), named).toEqual(before);
+  }
+});
+
+test('a re-run after a crash that left the manifest is byte-identical: settings are not re-serialised', async () => {
+  const home = tmp();
+  mkdirSync(join(home, '.claude'));
+  writeFileSync(join(home, '.claude/CLAUDE.md'), '# Mine\n');
+  writeFileSync(join(home, '.claude/settings.json'), '{"theme":"dark"}\n');
+  const before = tree(home);
+  await installAll(home);
+  const manifest = readFileSync(join(home, GLOBAL_STATE.manifest), 'utf8');
+  expect((await un(['--global', '--yes'], home)).code).toBe(0);
+  // The crash: files restored and backups gone, but the manifest still there.
+  mkdirSync(join(home, GLOBAL_STATE.dir), { recursive: true });
+  writeFileSync(join(home, GLOBAL_STATE.manifest), manifest);
+  const r = await un(['--global', '--yes'], home);
+  expect(r.code, r.out).toBe(0);
+  expect(tree(home)).toEqual(before);
+});
+
+test('a lock left by an interrupted uninstall --global is refused with the global recovery steps', async () => {
+  const home = tmp();
+  await installAll(home);
+  writeFileSync(join(home, GLOBAL_STATE.lock), '.claude/harness/manifest.json\n');
+  const before = tree(home);
+  const r = await un(['--global', '--yes'], home);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('A previous global preset install or uninstall was interrupted');
   expect(tree(home)).toEqual(before);
 });

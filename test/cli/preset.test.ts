@@ -166,7 +166,7 @@ const retarget = (d: string, skill: string, to: string) => {
 };
 
 test('check refuses a skill file outside its own .claude/skills/<name>/ folder, naming the path', () => {
-  for (const to of ['.git/hooks/pre-commit', '.claude/settings.json', '.claude/skills/beta/SKILL.md', '.claude/skills/alpha', '.claude/skills/alpha/./SKILL.md', '.claude/skills/alpha//SKILL.md']) {
+  for (const to of ['.git/hooks/pre-commit', '.claude/settings.json', '.claude/skills/beta/SKILL.md', '.claude/skills/alpha', '.claude/skills/alpha/./SKILL.md', '.claude/skills/alpha//SKILL.md', '.claude/skills/alpha/x./SKILL.md', '.claude/skills/alpha/x/.. /SKILL.md', '.claude/skills/alpha/x /SKILL.md', '.claude/skills/alpha/ SKILL.md', '.claude/skills/alpha/...']) {
     const d = copyTiny();
     retarget(d, 'alpha', to);
     const r = go(['check', d]);

@@ -104,10 +104,10 @@ export function loadPreset(yamlPath: string): { ok: true; loaded: LoadedPreset }
   return errors.length ? { ok: false, errors } : { ok: true, loaded: { preset, base, yamlPath, items } };
 }
 
-/** `to` is `.claude/skills/<id>/<rest>`, `<rest>` relative with no `.`, `..` or empty part and no backslash. */
+/** `to` is `.claude/skills/<id>/<rest>`, `<rest>` relative with no backslash and no empty part; a part may not end in `.` or a space or start with a space (Windows drops those, so `x.` or `.. ` could land elsewhere). */
 const inSkillDir = (id: string, to: string): boolean => {
   const pre = `.claude/skills/${id}/`;
-  return to.startsWith(pre) && !to.includes('\\') && to.slice(pre.length).split('/').every((s) => s !== '' && s !== '.' && s !== '..');
+  return to.startsWith(pre) && !to.includes('\\') && to.slice(pre.length).split('/').every((s) => s !== '' && !/[. ]$/.test(s) && !s.startsWith(' '));
 };
 
 /** The preset folder and its items/ and templates/ must be real directories, not links. */

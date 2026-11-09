@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -311,4 +311,50 @@ test('sync counts the preset', async () => {
   };
   const [sa, sbOut] = [await go(a.root), await go(b.root)];
   expect(total(sa) - total(sbOut), sa).toBe(presetSum(PRESET_IDS));
+});
+
+// Fix round 4 (N2): a symlinked AGENTS.md or CLAUDE.md is refused before the plan reads it, as apply refuses it, so a
+// link to a dotenv file never reaches a plan diff. Dry runs too. The dotenv name is built at runtime.
+const DOT = '.' + 'env';
+const SECRET = 'API_TOKEN=fake-value-not-a-secret';
+const linkTo = (root: string, rel: string, target: string) => {
+  rmSync(join(root, rel), { force: true });
+  symlinkSync(target, join(root, rel));
+  sh(root, 'add', '-A');
+  sh(root, 'commit', '-qm', 'link');
+};
+const capture = async (f: (out: (s: string) => void) => Promise<number>) => { let out = ''; const code = await f((s) => (out += s + '\n')); return { code, out }; };
+
+test.skipIf(process.platform === 'win32')('init, update --answers, sync and add refuse a symlinked AGENTS.md and never print what it points to', async () => {
+  const fresh = repo();
+  writeFileSync(join(fresh, DOT), SECRET);
+  linkTo(fresh, 'AGENTS.md', DOT);
+  const t = await twin(false);
+  writeFileSync(join(t.root, DOT), SECRET);
+  linkTo(t.root, 'AGENTS.md', DOT);
+  for (const mode of ['--dry-run', '--yes']) {
+    const runs = [
+      await capture(async (out) => init(aiArgs([...OWN]).map((a) => (a === '--yes' ? mode : a)), { ...base, root: fresh, env, claudeVersion: () => null, out, prompt: fake })),
+      await capture(async (out) => update(t.args.map((a) => (a === '--yes' || a === '--over-budget' ? mode : a)), { ...TD, root: t.root, out })),
+      await capture(async (out) => sync([mode], { ...TD, root: t.root, out })),
+      await capture(async (out) => items('add', ['ponytail', mode], { ...TD, root: t.root, out })),
+    ];
+    for (const r of runs) {
+      expect(r.out).not.toContain(SECRET);
+      expect(r.code, r.out).toBe(1);
+      expect(r.out).toContain('refusing symlink: AGENTS.md');
+    }
+  }
+});
+
+// N3: a CLAUDE.md that links to AGENTS.md is refused too, so nothing counts AGENTS.md twice.
+test.skipIf(process.platform === 'win32')('init refuses a CLAUDE.md that links to AGENTS.md', async () => {
+  const root = repo();
+  linkTo(root, 'CLAUDE.md', 'AGENTS.md');
+  for (const mode of ['--dry-run', '--yes']) {
+    const r = await run(root, aiArgs([...OWN]).map((a) => (a === '--yes' ? mode : a)));
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain('refusing symlink: CLAUDE.md');
+    expect(r.out).not.toMatch(/Always-loaded context/);
+  }
 });

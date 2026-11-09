@@ -1,4 +1,5 @@
 import { recordedPresetContext } from '../catalog/presets.js';
+import { lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { realIO, type RepoIO } from '../budget/imports.js';
 import { budgetLines, budgetVerdict, fmt, measureSelection, type ContextEntry } from '../budget/measure.js';
@@ -58,7 +59,8 @@ function measureMemory(root: string, cat: Catalog, changes: Change[]): SourceEnt
   const owners = ownersFrom(readManifest(root), cat);
   const planned = new Map<string, string | null>();
   for (const c of changes) {
-    if (!MEMORY.has(c.rel)) continue;
+    // A link is never overlaid: the plan refuses one, and a made-up real path would hide where it points.
+    if (!MEMORY.has(c.rel) || lstatSync(join(root, c.rel), { throwIfNoEntry: false })?.isSymbolicLink()) continue;
     planned.set(c.rel, c.kind === 'create' ? c.content : c.kind === 'update' ? c.after : null);
     if (c.kind !== 'delete') owners.set(c.rel, 'repo'); // a merged file is the repo's; harness's line and blocks are split out
     else owners.delete(c.rel);

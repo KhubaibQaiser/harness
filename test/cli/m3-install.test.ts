@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { budgetGate } from '../../src/cli/install-selection.js';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -186,6 +187,20 @@ test('add agents-md with a hand-written @AGENTS.md line: the ask total equals st
   let out = '';
   await status([], { env: CLAUDE, root, out: (s) => (out += s + '\n') });
   expect(preview, d.out + out).toBe(Number(/Context: ~([\d,]+) of/.exec(out)![1].replace(/,/g, '')));
+});
+
+// Fix round 4: the gate never overlays a planned AGENTS.md that is a link, so its planned text is not counted as the file's.
+test.skipIf(process.platform === 'win32')('the budget gate ignores a planned change to a symlinked AGENTS.md', async () => {
+  const dot = '.' + 'env';
+  const root = installed(OWN.filter((id) => id !== 'agents-md'));
+  writeFileSync(join(root, dot), 'API_TOKEN=fake-value-not-a-secret');
+  rmSync(join(root, 'AGENTS.md'));
+  symlinkSync(dot, join(root, 'AGENTS.md'));
+  const lines: string[] = [];
+  const stop = await budgetGate({ cat: loadCatalog().catalog, before: [], after: [], exempt: [], changes: [{ kind: 'update', rel: 'AGENTS.md', before: '', after: 'x'.repeat(40000), blocks: [] }], budget: 2000, templatesDir, root, env: {}, out: (l) => lines.push(l), f: { yes: true, dryRun: false, overBudget: false } });
+  expect(stop).toBeNull();
+  expect(lines.join('\n')).not.toContain('fake-value');
+  expect(Number(/~([\d,]+) tokens/.exec(lines[0])![1].replace(/,/g, ''))).toBeLessThan(2000);
 });
 
 // M1

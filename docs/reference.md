@@ -4,7 +4,7 @@ The full detail behind the [README](../README.md). Start there; come here when y
 
 ## How it works, and how it differs
 
-- **Hooks, not prompts.** The rules run as `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `ConfigChange`, `Stop` and `SessionEnd` hooks. `AGENTS.md` gets a short block that explains the rules, but the hooks enforce them.
+- **Hooks, not prompts.** The rules run as `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `ConfigChange`, `Stop`, `SessionEnd` and `SessionStart` (matcher `compact`) hooks. `AGENTS.md` gets a short block that explains the rules, but the hooks enforce them.
 - **Deterministic.** The hooks call no model. They read the tool call, your test results, coverage files and `git diff`, and decide from those.
 - **Tests decide, not the agent.** The TDD gate reads JSON results that your own Vitest or Jest run writes. A source edit needs a fresh failing test from this session.
 - **Fails closed where it matters.** If the dispatcher can't start or crashes, Claude Code blocks the tool call, the prompt or the settings change (`onFailure: "block"`). The Stop gate fails open if its process can't run. If `.harness/config.yaml` is invalid, agent edits are denied and Stop blocks until a person fixes it. The guard and protected-path checks deny the call if they crash.
@@ -67,7 +67,7 @@ Run `init` anywhere in a git repo: it installs at the repo root and prints that 
 | `.harness/hooks/dispatch.mjs` | Created. The hook dispatcher every hook runs. Commit it. |
 | `.harness/config.yaml` | Created. Your settings (see [Configuration](#configuration-details)). |
 | `.harness/manifest.json` | Created. Every file and block `init` wrote, with hashes, so `uninstall` can undo it. |
-| `.claude/settings.json` | Created or merged. Adds the hook entries and `permissions.deny` rules for `.env` reads and edits to harness files. Hooks from other tools are kept. |
+| `.claude/settings.json` | Created or merged. Adds the hook entries (including the `SessionStart` `compact` hook, which re-adds a 5-line state card after compaction) and `permissions.deny` rules for `.env` reads and edits to harness files. Hooks from other tools are kept. |
 | `AGENTS.md` | Created or merged. Adds a block between `<!-- harness:start -->` and `<!-- harness:end -->` that explains the rules. |
 | `CLAUDE.md` | Created as `@AGENTS.md`, or that line is appended, unless it already imports `AGENTS.md`. |
 | `.gitignore` | Adds `.harness/state/`, `.harness/logs/`, `.harness/backup/` and `.harness/results/`. |
@@ -471,6 +471,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 - Mid-session, only the harness CLI's own change to `.claude/settings.json` is let through. A change to the user or local settings, by anyone, applies from the next session.
 - TDD and coverage gates for JS/TS only. Other repos get every other gate.
 - Cloud Claude Code sessions don't load repo-enabled plugins. The committed hooks still run there, but `/harness:*` skills don't.
+- The state card is added after compaction, but the summary of earlier hook messages is Claude Code's. The card doesn't restore them.
 - Hooks run with the user's permissions. Only CI and branch protection enforce rules for everyone.
 - The CLI path the guard prints is trusted by location only (the repo's `node_modules/@khubaibqaiser/harness`). The agent can still put a copy there with commands protect doesn't parse, such as `git clone … node_modules/…`, `curl -o`/`wget -O`, `patch`, `git apply --directory`, or a `file:` dependency in `package.json` followed by an install. Read the printed command before you run it in your own terminal.
 - The protected-path and `node_modules` rules read the paths a shell command names, and inline code only when it is literal in the command. Not seen by them: a program that writes files itself (a script file, a build script, an install hook), code that assembles a path at run time, a command hidden in a variable or built at run time, and quoting rules other than POSIX. Change detection reports a change to harness's own files from any of these at the next prompt and Stop, after the fact, unless the same script also rewrote the fingerprints in `.harness/state/`; it doesn't cover `node_modules` or other files.

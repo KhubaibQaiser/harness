@@ -81,7 +81,7 @@ export function propose(
   const list = [...blocks.values()];
   const head = {
     files: TS_GLOBS,
-    plugins: '__PLUGINS__',
+    ...(Object.keys(plugins).length && { plugins: '__PLUGINS__' }),
     ...(imports.has('react') && { settings: { react: { version: 'detect' } } }),
     ...(hasTs && {
       languageOptions: { parser: '__PARSER__', parserOptions: { projectService: { allowDefaultProject: LOOSE_GLOBS } } },
@@ -114,5 +114,6 @@ export function propose(
   ].filter(Boolean);
   const importLines = [...imports].map(([n, p]) => `import ${n} from '${p}';`);
   const configText = `// Written by harness.\n${importLines.join('\n')}\n${helpers.join('\n')}\nexport default ${body};\n`;
-  return { configText, rules, missing, skipped, ts: TS_OPTIONS, noLint: NO_LINT };
+  const noLint = NO_LINT.filter((n) => !n.stacks || n.stacks.some((s) => stacks.has(s)));
+  return { configText, rules, missing, skipped, ts: TS_OPTIONS, noLint };
 }

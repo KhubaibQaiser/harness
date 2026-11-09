@@ -303,13 +303,16 @@ Two more flags are optional:
 
 Skills, agents and the `AGENTS.md` block are loaded into every Claude Code session. Each one costs tokens before you ask anything. Harness keeps a budget for that.
 
-- **What counts.** Always-loaded text only. For an agent, that's its name and description. For a skill, that's its name and description, plus `when_to_use` (together cut at 1,536 characters); a skill with `disable-model-invocation: true` costs nothing. For the `AGENTS.md` block, the whole block. The harness plugin's own skills are always counted. Hooks, settings and CI files count as 0. The repo's own CLAUDE.md, AGENTS.md, rules, skills and agents count too, because every teammate loads them.
+- **What counts.** Always-loaded text only. For an agent, that's its name and description. For a skill, that's its name and description, plus `when_to_use` (together cut at 1,536 characters); a skill with `disable-model-invocation: true` costs nothing. For the `AGENTS.md` block, the whole block. Hooks, settings and CI files count as 0. The repo's own CLAUDE.md, AGENTS.md, rules, skills and agents count too, because every teammate loads them.
+- **Owners.** Each row has an owner: `harness`, `preset:<id>`, `catalog:<id>` or `repo`. The harness plugin's own skills are always counted.
 - **Not measured.** Plugins and external skills count the number the catalog records, measured at the pinned commit; with none recorded, they're listed as not measured. MCP servers can't be measured before install and are always listed as not measured. The install asks you once about anything not measured.
-- **An estimate.** The count is characters divided by 4, labelled `estimate`. It makes no API call and needs no API key.
-- **The limit.** `context.budget_tokens`, default 2000. `init`, `update`, `add` and `sync` ask before going past it. With `--yes`, they stop unless you pass `--over-budget`. An unattended run is refused, even with `--over-budget`.
-- **doctor and status.** `harness doctor` and `harness status` show the always-loaded total, counted offline. Doctor notes when the total is over the budget, and reports a problem when harness's own text alone is.
-- **Trimming.** Run `/harness:context-optimize` to trim it.
+- **The count.** The default is an estimate: characters divided by 4. `harness context` uses Anthropic's token-counting API only when `ANTHROPIC_API_KEY` is set, `context.count` is `auto` and `--offline` isn't passed. The key is read from the environment only and never stored. The API receives the measured text, under the key's account. If the call fails, `context` falls back to a full estimate and shows the reason (and `fallback` in `--json`). Catalog picks stay `(catalog estimate)`.
+- **The limit.** `context.budget_tokens`, default 2000. `init`, `update`, `add` and `sync` count your repo's own files and ask before going past it. With `--yes`, they stop unless you pass `--over-budget`. An unattended run over the budget is refused, even with `--over-budget`; a dry run is not.
+- **doctor and status.** They show a `Context:` line, counted offline, and never call the API. Doctor notes when the total is over the budget, and reports a problem when harness's own text alone is.
+- **harness context.** Shows the always-loaded and on-demand rows, the total and numbered recommendations. Writes nothing. `harness context apply <n>[,<n>…]` applies only harness-owned name-only and remove recommendations; a No stops the whole list, and an unattended run is denied by the guard.
+- **Trimming.** `/harness:context-optimize` measures, proposes trims, and applies harness's own after a yes. Your own files change only after you approve each diff.
 - **Ask once, then exempt.** Items you approved earlier show in the report but don't count toward the budget again.
+- **After compaction.** The `SessionStart` `compact` hook re-adds the state card.
 
 ## Plugins and MCP servers
 
@@ -484,7 +487,14 @@ More detail: [TDD setup details](#tdd-setup-details).
 - Harness's guard is a speed bump for mistakes and prompt injection, not a security sandbox. A determined shell trick can still get past it. Claude Code's own permission rules and its sandbox are the real boundary.
 - Plugin install messages are matched by guessed wording until a live check on the real Claude Code output. If a plugin install fails oddly, run the printed command yourself.
 - LSP plugin config in the `harness-pins` marketplace is unverified live. Claude Code may ignore it.
-- The context count is an estimate (characters divided by 4). Plugins, external skills and MCP servers aren't measured before install, and committed picks load for every teammate but only the person installing is asked about the budget.
+- Harness measures files, not the live session. Claude Code's system prompt and tools, the output style, MCP tools, the skill listing's own budget cuts and your personal context aren't in harness's numbers. `/context` is the truth for a session.
+- Plugins enabled in `.claude/settings.json` that aren't M3 picks aren't measured: harness doesn't read the plugin cache.
+- The offline estimate (characters ÷ 4) is a guess and probably runs low on current models. API counts are estimates too, by Anthropic's own docs.
+- The **Project instructions** setting (`claude-md-and-agents-md` and others) lives in user or managed settings. Harness assumes the default.
+- The on-demand total is the most that could load, not what a session loads.
+- The budget asks cover only harness's own commands. A person editing CLAUDE.md, or another tool adding skills, is caught only when `doctor`, `status` or `harness context` runs.
+- Committed picks load for every teammate, but only the person installing them is asked (M3 plan ruling 18).
+- Using the API sends the measured files' text to Anthropic under the key's account.
 - Plugin picks are "local only" in Claude Code and are missing in cloud sessions.
 - `extraKnownMarketplaces` (where the `harness-pins` marketplace lives) needs folder trust.
 - MCP servers need each user's approval.

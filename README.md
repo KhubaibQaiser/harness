@@ -30,7 +30,7 @@ You need Node 22.11 or newer, git, and Claude Code 2.1.314 or newer.
 3. **Commit the files it lists.** Branch, commit, push and PR are each a separate question.
 4. **Run `harness doctor`.** It checks the install and prints the fix for each problem.
 
-**Teammates** need nothing for the hooks. For the plugins you picked, each person runs `/harness:sync --install-plugins` once.
+**Teammates** need nothing for the hooks. For picked plugins, each runs `/harness:sync --install-plugins` once.
 
 ## What it changes in your repo
 
@@ -73,7 +73,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `doctor` | Checks the install and prints a fix for each problem. |
 | `/harness:context-optimize` | Measures what loads into context, proposes trims, and applies harness's own after a yes. Your own files change only after you approve each diff. |
 | `context [--json] [--offline]` | Shows what loads into context and what it costs against the budget. Writes nothing. |
-| `context apply <n>[,<n>…]` | Applies harness's own context recommendations, such as showing a skill by name only. `uninstall` undoes it. |
+| `context apply <n>[,<n>…]` | Applies harness's own recommendations, such as a skill by name only. `uninstall` undoes it. |
 | `why <id>` / `explain` | Why an item is installed, and what every item loads into context. |
 | `stats [--days N]` | Counts harness events (default: the last 7 days). |
 | `report [--days N] [--open] [--export]` | Writes the usage and adherence report to `.harness/reports/`. Local only. |
@@ -87,7 +87,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 
 ## What it costs
 
-- **Context.** Always-loaded text has a budget of 2000 tokens by default (`context.budget_tokens`). `harness explain` shows what each item loads. The budget counts your repo's own `CLAUDE.md`, rules and skills too. `init`, `update`, `add` and `sync` ask before going past it. With `--yes`, they stop unless you also pass `--over-budget`. An unattended run is refused, even with `--over-budget`.
+- **Context.** Always-loaded text has a budget of 2000 tokens by default (`context.budget_tokens`). `harness explain` shows what each item loads. The budget counts your repo's own `CLAUDE.md`, rules and skills too. `init`, `update`, `add` and `sync` ask before going past it. With `--yes`, they stop unless you also pass `--over-budget`. An unattended run over the budget is refused, even with `--over-budget`. `doctor` and `status` show the total and never call the API. Counts are estimates (characters ÷ 4). `harness context` uses Anthropic's token-counting API only when `ANTHROPIC_API_KEY` is set (never stored); that sends the measured text to Anthropic under your key's account. `--offline` skips it.
 - **Money, for `harness eval`.** It tests skills, rules and gates in real sessions, so it costs money. It asks you to type `yes` every run. It stops at a cost ceiling (default $2, set with `--max-cost-usd`). It defaults to a Haiku model and runs only in your own terminal.
 - **The hooks call no model.** They add no token cost of their own.
 
@@ -99,7 +99,7 @@ A run is unattended when `CI` is `true` or `1`, `HARNESS_UNATTENDED` is `1` or `
 HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false}}'
 ```
 
-Native Windows has no sandbox and keeps the text checks. More detail: [docs/reference.md](docs/reference.md#unattended-runs-and-ci).
+Native Windows has no sandbox and keeps the text checks. More: [docs/reference.md](docs/reference.md#unattended-runs-and-ci).
 
 ## Limits worth knowing
 

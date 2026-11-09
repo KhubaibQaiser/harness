@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { esc } from '../core/config.js';
 
 /** The person's own command line, for a step Claude Code's sandbox blocks. */
-export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove' | 'sync', args: string[]): string {
+export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove' | 'sync' | 'context', args: string[]): string {
   return `Claude Code's sandbox blocks harness's own files. ${ownCommand(cmd, args)}`;
 }
 /** The person's own command line, with the `!` prefix hint. */

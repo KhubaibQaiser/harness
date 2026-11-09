@@ -32,9 +32,9 @@ test('usage lists report and eval with their flags', () => {
   for (const c of ['harness report [--days N] [--open] [--export]', 'harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model M]']) expect(usage(), c).toContain(c);
 });
 
-test('usage lists context, and no context apply until it exists', () => {
+test('usage lists context and context apply', () => {
   expect(usage()).toContain('harness context [--json] [--offline]');
-  expect(usage()).not.toContain('context apply');
+  expect(usage()).toContain('harness context apply <n>[,<n>…] [--dry-run|--yes]');
 });
 
 test('report and eval keep exit 2 on bad arguments through the router', () => {

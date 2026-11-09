@@ -113,6 +113,13 @@ function measureRules(c: Ctx): void {
   }
 }
 
+/** The description's full length (with when_to_use, joined as alwaysLoadedText does, before the cut) and the body. */
+function skillFacts(raw: string): NonNullable<SourceEntry['skill']> {
+  const f = splitFrontmatter(raw);
+  const str = (k: string): string | null => (f.data?.[k] != null ? String(f.data[k]).trim() : null);
+  return { description: [str('description'), str('when_to_use')].filter((v) => v !== null).join(' ').length, body: f.body };
+}
+
 /** Skills and commands as their listing text, agents as their name and description. skillOverrides applies to skills only: unverified for commands, which stay counted. */
 function measureSkills(c: Ctx): void {
   const over = skillOverrides(c);
@@ -126,7 +133,7 @@ function measureSkills(c: Ctx): void {
     const w = { rel: s.rel, label: s.label, owner: c.owners.get(s.rel) ?? 'repo' };
     if (mode === 'name-only') { c.out.always.push(entryOf(w, `name: ${s.name}`)); continue; }
     try {
-      c.out.always.push(entryOf(w, alwaysLoadedText(s.kind, raw)));
+      c.out.always.push({ ...entryOf(w, alwaysLoadedText(s.kind, raw)), ...(s.rel.startsWith('.claude/skills/') ? { skill: { ...skillFacts(raw), ...(mode !== undefined ? { override: mode } : {}) } } : {}) });
     } catch {
       c.out.unmeasured.push(`${s.rel}: frontmatter does not parse`);
     }

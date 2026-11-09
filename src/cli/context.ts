@@ -6,6 +6,7 @@ import { pluginEntry } from '../budget/measure.js';
 import { contextSet, ownerTotals, type ContextSet } from '../budget/summary.js';
 import { loadConfig } from '../core/config.js';
 import { packageDir } from '../core/package-dir.js';
+import { contextRecs } from './context-apply.js';
 import { CATALOG_ESTIMATE, ESTIMATE_NOTE, reportJson, reportText } from './context-copy.js';
 import type { CliEnv } from './index.js';
 
@@ -39,11 +40,12 @@ export async function context(args: string[], cli: CliEnv & { fetch?: typeof fet
   const templates = packageDir('templates');
   const plugin = dirname(templates);
   let s = contextSet(cli.root, config, { templates, plugin });
+  const recs = contextRecs(cli.root, config, { templates, plugin });
   let fallback: string | null = null;
   const offline = flags.has('--offline') || config.context.count === 'offline';
   const key = offline ? null : countKey(cli.env, config);
   if (key) s = (await apiCounted(s, key, config.context.count_model, { plugin, fetch: cli.fetch, onFail: (r) => { fallback = r; } })) ?? s;
-  if (flags.has('--json')) cli.out(JSON.stringify(reportJson(s, [], fallback), null, 2));
-  else for (const line of [...reportText(s, [], fallback, !offline && !key), ...warnings.map((w) => `warn ${w}`)]) cli.out(line);
+  if (flags.has('--json')) cli.out(JSON.stringify(reportJson(s, recs, fallback), null, 2));
+  else for (const line of [...reportText(s, recs, fallback, !offline && !key), ...warnings.map((w) => `warn ${w}`)]) cli.out(line);
   return s.total > s.budget ? 1 : 0;
 }

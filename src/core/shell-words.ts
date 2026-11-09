@@ -179,15 +179,24 @@ export function stdinPrograms(cmd: string, start: (ws: string[]) => number): { n
   }
   // cmd <<'EOF' … EOF (the body is not split into commands by the reader above)
   const lines = cmd.split('\n');
+  // Where each possible end word stands, so finding a body's end is one step, not a search to the end (re-review 20, P1).
+  let ends: Map<string, { at: number[]; next: number }> | undefined;
   for (let i = 0; i < lines.length; i++) {
     const m = /<<-?\s*(['"]?)([A-Za-z_]\w*)\1/.exec(lines[i]);
     if (!m || /<<</.test(lines[i])) continue;
     const before = words(lines[i].slice(0, m.index));
     const k = start(before.map((w) => w.replace(/["']/g, '')));
     if (!reads(before, k)) continue;
-    let end = i + 1; // from the next line, not from 0: many heredocs stay linear
-    while (end < lines.length && lines[end].trim() !== m[2]) end++;
-    out.push({ name: commandName(before[k] ?? ''), text: lines.slice(i + 1, end).join('\n'), lines: [i, end] });
+    if (!ends) {
+      ends = new Map();
+      lines.forEach((l, j) => { const t = l.trim(); if (/^[A-Za-z_]\w*$/.test(t)) (ends!.get(t) ?? ends!.set(t, { at: [], next: 0 }).get(t)!).at.push(j); });
+    }
+    const e = ends.get(m[2]);
+    while (e && e.next < e.at.length && e.at[e.next] <= i) e.next++; // i only grows, so each list is walked once
+    const end = e?.at[e.next] ?? lines.length;
+    // The body is built only when read: callers keep shell and interpreter programs and drop the rest.
+    let text: string | undefined;
+    out.push({ name: commandName(before[k] ?? ''), get text() { return (text ??= lines.slice(i + 1, end).join('\n')); }, lines: [i, end] });
   }
   return out;
 }

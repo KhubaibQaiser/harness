@@ -195,7 +195,13 @@ function inlineCode(cmd: string, depth = 0): string[] {
   if (depth < 3) {
     for (const p of cPayloads(cmd)) out.push(...inlineCode(p, depth + 1));
     // A program fed on stdin to an interpreter (echo … | node, node <<'EOF') is inline code; to a shell, a command line.
-    for (const p of stdinProgramsOf(cmd)) out.push(...(SHELLS.has(p.name) ? inlineCode(p.text, depth + 1) : [p.text]));
+    // A body inside one already kept is a substring of it, and the segment tests match it there: skip it, so heredocs
+    // with no end line stay linear (re-review 20, P1).
+    let kept = -1;
+    for (const p of stdinProgramsOf(cmd)) {
+      if (SHELLS.has(p.name)) out.push(...inlineCode(p.text, depth + 1));
+      else if (!p.lines || p.lines[1] > kept) { out.push(p.text); kept = p.lines?.[1] ?? kept; }
+    }
   }
   return out;
 }

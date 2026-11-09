@@ -159,3 +159,27 @@ test('built CLI: install from a subdirectory writes to the repo root, and list s
   const l = spawnSync('node', [cli, 'preset', 'list'], { cwd: sub, encoding: 'utf8' });
   expect(l.stdout).toContain('tiny  Smallest valid preset.  (repo)');
 });
+
+const retarget = (d: string, skill: string, to: string) => {
+  const p = join(d, `tiny/items/${skill}.yaml`);
+  writeFileSync(p, readFileSync(p, 'utf8').replace(`to: .claude/skills/${skill}/SKILL.md`, `to: ${to}`));
+};
+
+test('check refuses a skill file outside its own .claude/skills/<name>/ folder, naming the path', () => {
+  for (const to of ['.git/hooks/pre-commit', '.claude/settings.json', '.claude/skills/beta/SKILL.md', '.claude/skills/alpha', '.claude/skills/alpha/./SKILL.md', '.claude/skills/alpha//SKILL.md', '.claude/skills/alpha/x./SKILL.md', '.claude/skills/alpha/x/.. /SKILL.md', '.claude/skills/alpha/x /SKILL.md', '.claude/skills/alpha/ SKILL.md', '.claude/skills/alpha/...']) {
+    const d = copyTiny();
+    retarget(d, 'alpha', to);
+    const r = go(['check', d]);
+    expect(r.code, to).toBe(1);
+    expect(r.out, to).toContain('must be under .claude/skills/alpha/');
+    expect(r.out, to).toContain(JSON.stringify(to).slice(1, -1));
+  }
+  for (const to of ['.claude/skills/alpha/../beta/SKILL.md', '.claude/skills/alpha/x\\y.md']) { // the schema's relPath refuses these first
+    const d = copyTiny();
+    retarget(d, 'alpha', to);
+    expect(go(['check', d]), to).toMatchObject({ code: 1, out: expect.stringContaining('alpha.yaml: source.files[0].to: must be a relative path') });
+  }
+  const ok = copyTiny();
+  retarget(ok, 'alpha', '.claude/skills/alpha/refs/more.md');
+  expect(go(['check', ok]).out).toBe('ok');
+});

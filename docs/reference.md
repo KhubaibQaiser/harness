@@ -264,6 +264,7 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `preset list` | Prints `<id>  <description>` for each shipped and repo preset (`.harness/presets/`), or `No presets.`. Writes nothing. |
 | `preset check <dir>` | Checks every `<id>.yaml` in `<dir>` with its `<id>/` folder: schema, items, templates, skill limits, no email or git identity, and an id that isn't a shipped preset's (unless `<dir>` is the shipped folder). Prints `ok` or one error per line. `catalog check` also checks each shipped preset, as `presets/<id>: <error>`. |
 | `preset install <dir> [--dry-run\|--yes]` | Runs the same checks as `preset check` (including the shipped-id rule), then copies each `<id>.yaml` and `<id>/` to `.harness/presets/` (commit it; `uninstall` keeps it). `--dry-run` lists the files and writes nothing. Without a flag it lists them and asks once in a terminal; with no terminal it prints the no-terminal message and exits 2. A folder that fails the check, or an id already in `.harness/presets/`, is refused and nothing is copied. Then choose the preset in `/harness:init` or `/harness:update`. An agent running it (other than `--dry-run`) is asked to confirm first. |
+| `preset install <dir> --global [--dry-run\|--yes --take <path,...>]` | Same checks, for a folder with one preset, then installs it under `~/.claude` (see [Named presets](#named-presets) for the paths). It prints every global path with its diff and the always-loaded total (estimate). In a terminal it asks a separate yes for each path; with `--yes` it writes only the paths in `--take` (as listed, with or without `~/`), and `--yes` without `--take` exits 2. `--dry-run` writes nothing. It refuses, writing nothing, when a global preset is already installed (it names `~/.claude/harness/manifest.json`; remove it and the files it lists yourself, or keep that preset), when `CLAUDE_CONFIG_DIR` points anywhere but `~/.claude`, when a skill or preset file is already there, or when a path goes through a symlink (such as a symlinked `~/.claude`). |
 | `validate answers\|product <file> [--merge-config]` | Checks an interview answers file or a product file. With `--merge-config`, an answers file holding only some keys is laid over the answers in `.harness/config.yaml` first (what `/harness:update` uses). |
 | `validate picks <file> --answers <file> [--merge-config] [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. `--merge-config` works as above. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
@@ -341,6 +342,15 @@ Catalog items can be Claude Code plugins or MCP servers.
 - It sets `"attribution": false`, so commits and PRs get no AI trailer.
 - `harness git pr` warns when a PR is large, even if `checks.prSize` is off.
 - To turn it off, answer "No preset" in `/harness:update`. The plugins it preselected stay until `harness remove` takes them out.
+
+A preset you built can also go in for every repo, at user scope, with `harness preset install <dir> --global`. It shows each global path and its diff first, and each write needs its own yes, so you can take the core rules and leave a skill out. It offers every skill of the preset (user scope has no stack to match) and only the attribution setting, never the `env` opt-outs. Git checks (the guard asks and the `harness git` checks) stay per repo, because they need the hooks `/harness:init` installs. One global preset at a time.
+
+| Target | Preset folder | Core block | Skills | Settings | Manifest |
+|---|---|---|---|---|---|
+| Repo | `.harness/presets/<id>/` (committed) | `AGENTS.md`, preset markers | `.claude/skills/<name>/` | `.claude/settings.json` | `.harness/manifest.json` |
+| Global | `~/.claude/harness/presets/<id>/` | `~/.claude/CLAUDE.md`, preset markers | `~/.claude/skills/<name>/` | `~/.claude/settings.json` (attribution only) | `~/.claude/harness/manifest.json` |
+
+A file the global install changes is backed up under `~/.claude/harness/backup/`.
 
 To build your own, run `/harness:preset` in Claude Code. It interviews you (id, install target, working rules, picks, git, then each stack's topics), drafts the preset in a temp folder from your answers only, shows each file for edits, and runs `harness preset check`. For a repo target it runs `harness preset install`; then choose the preset in `/harness:init` or `/harness:update`. For a global target it shows the dry run and asks a separate yes for each path. It never asks for or stores a git name, email or secret.
 

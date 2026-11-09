@@ -813,6 +813,11 @@ test('preset install --yes is denied unattended', async () => {
   expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision).toBe('deny');
 });
 
+test('preset install --global asks with --yes --take, and its --dry-run is allowed', () => {
+  all(['harness preset install x --global --dry-run'], 'allow');
+  all(['harness preset install x --global --yes --take .claude/CLAUDE.md', 'harness preset install x --global'], 'ask');
+});
+
 test('harness report asks, harness eval is denied, --help is allowed', async () => {
   const d = decideCommand('harness report --days 7', ctx());
   expect(d.kind).toBe('ask');

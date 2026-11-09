@@ -204,7 +204,7 @@ Your format and lint checks must skip the committed `.harness/` files. When Pret
 
 ## Guard details
 
-The agent has to ask before it runs `harness context apply`, which changes which skills load; unattended it is denied. `harness context` and `harness context apply <n> --dry-run` are allowed.
+The agent has to ask before it runs `harness context apply`, which changes which skills load; unattended it is denied. `harness context` and `harness context apply <n> --dry-run` are allowed. A preview of any command the agent has to ask about passes only when written out in plain words: an argument with `$`, a backtick, a brace, a glob or a leading `~` asks (unattended it is denied).
 
 The guard matches secrets paths without regard to case, and the way Windows resolves them: trailing dots and spaces, `::$DATA` streams, drive-relative `C:name`, and 8.3 short names. It can't map a short name (`~1`) back exactly, so it denies any short-name segment that could stand for a protected name. A short-name path through a folder that starts like one (for example `AWSADM~1`) is then denied too.
 

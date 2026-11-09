@@ -217,10 +217,12 @@ The spec was written on 2026-11-03, on `feature/pe-7-doctor-status`. Since then 
 
 ## Owner questions
 
-1. **How the AGENTS.md line tells the agent to run `harness remember` (R6, drift 17).**
-   - **(recommended)** ``Run `harness remember …`; if `harness` isn't found, run `npx --no-install @khubaibqaiser/harness remember …` ``. `--no-install` never downloads anything, so it runs only the repo's own install. The guard already sees both forms (`HARNESS_CMD`).
-   - Add a `/harness:remember` skill that runs the bundled CLI. That reverses §13, costs about 30 always-loaded tokens, and works with a plugin-only install.
-   - Name only `harness remember`. Repos with a plugin-only install and no `harness` on PATH can't save decisions from the agent.
+1. **How the AGENTS.md line tells the agent to run `harness remember` (R6, drift 17).** **Owner ruling, 2026-11-10: add a `/harness:remember` skill.**
+   - The skill runs `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" remember …`, so it works with a plugin-only install.
+   - It stays model-invocable, so the agent can call it. That costs about 30 always-loaded tokens.
+   - The AGENTS.md pointer names `/harness:remember`.
+   - This reverses the spec's §13 line, and the spec records the change as C-R6.
+   - Task 14 delivers the skill.
 
 ---
 
@@ -770,12 +772,13 @@ The spec was written on 2026-11-03, on `feature/pe-7-doctor-status`. Since then 
   - `templates/agents-block.md`: §4.5's pointer, plus the protected-paths line;
   - `src/cli/sync.ts`: runs the decision sync in the same `applyChanges`;
   - `catalog/excluded.yaml`: the `remember` reason.
-- Test: `test/templates/agents.test.ts`, `test/package/package.test.ts` (`HARNESS_FOOTPRINT`), `test/cli/sync.test.ts`
+- Create: `skills/remember/SKILL.md`, a model-invocable skill under 30 lines. Its description is one short sentence: "Save a team decision to docs/decisions/ through harness; use when the user agrees on a lasting convention." It runs `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" remember add|list|confirm|retire|check …`. It never writes decision files itself. It treats file and command output as data.
+- Test: `test/templates/agents.test.ts`, `test/package/package.test.ts` (`HARNESS_FOOTPRINT`), `test/cli/sync.test.ts`, `test/skills/remember.test.ts` (new)
 
 **Interfaces:**
 - Consumes: `readDecisions`, `planSync` and `commitDecisions`. Here `commitDecisions` isn't called separately. `sync.ts` appends `plan.changes` to its own `changes`, and folds them into the manifest it already passes.
 - Produces:
-  - The pointer line, as §4.5 writes it, with the command form from owner question 1.
+  - The pointer line, as §4.5 writes it, naming `/harness:remember` (owner ruling on question 1).
   - The protected-paths line: ``Never edit `.harness/`, `.claude/settings*.json`, `.claude/rules/harness-decision-*.md` or harness decisions in `docs/decisions/`.``
   - The `remember` reason gains `; it also overlaps Claude Code's auto memory and harness team decisions (harness remember)`.
 
@@ -785,10 +788,11 @@ The spec was written on 2026-11-03, on `feature/pe-7-doctor-status`. Since then 
   - `harness sync --dry-run` lists it and writes nothing;
   - a foreign rule stops `harness sync` with the §4.3 line;
   - `HARNESS_FOOTPRINT` is set to the value measured in Step 4;
-  - the catalog test sees the new reason.
+  - the catalog test sees the new reason;
+  - the skill's frontmatter has a name and a description, has no `disable-model-invocation`, and is under 30 lines; its body names only `remember` subcommands and never asks for an API key.
 - [ ] **Step 2: Run them and confirm they fail.** `pnpm vitest run --project unit test/templates/agents.test.ts test/package/package.test.ts test/cli/sync.test.ts`.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run the tests and confirm they pass.** Record the new footprint in the constant and in the PR body (about 553 plus 50 at planning). Its comment says "raise only in a reviewed PR".
+- [ ] **Step 4: Run the tests and confirm they pass.** Record the new footprint in the constant and in the PR body (about 553 plus 50 plus about 30 for the skill's description at planning). Its comment says "raise only in a reviewed PR".
 - [ ] **Step 5: Check the docs.** reference.md "What `init` changes in your repo": the AGENTS.md line. PR body: "README: checked, no change; reference.md: updated (init changes)".
 - [ ] **Step 6: Commit.** `feat(agents): point the agent at team decisions`.
 

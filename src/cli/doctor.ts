@@ -30,7 +30,7 @@ import { selectedIds } from '../install/plan.js';
 export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJS.Platform; pluginList?: typeof pluginList; gh?: Gh };
 
 const DISPATCH = '.harness/hooks/dispatch.mjs';
-const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd'];
+const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 export const BLOCKING = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange']; // the events whose hook carries onFailure "block"
 const SANDBOX_WHY = { unattended: 'required for unattended runs', always: 'on in every session', off: 'text checks only' };
 const GH_TIMEOUT_MS = 5000;
@@ -84,7 +84,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     (Array.isArray(settings?.hooks?.[ev]) ? settings.hooks[ev] : []).filter((g: any) => Array.isArray(g?.hooks) && g.hooks.some(isHarnessHook));
   const unwired = EVENTS.filter((e) => !groups(e).length);
   if (unwired.length) fix(`\`.claude/settings.json\` does not run the dispatcher for ${unwired.join(', ')}`, 'run /harness:update to restore the hooks');
-  else ok('settings run the dispatcher for all 6 hook events');
+  else ok(`settings run the dispatcher for all ${EVENTS.length} hook events`);
 
   const he = readHookEnv(root);
   if (!he) note('no hook has run here yet', 'start a Claude Code session, send a prompt, then run harness doctor again');

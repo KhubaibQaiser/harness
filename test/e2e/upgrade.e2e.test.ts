@@ -68,6 +68,10 @@ const hook = (root: string, input: Record<string, unknown>) => {
 function expectMigrated(root: string, results: Record<string, string>) {
   const s = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'));
   for (const [event, groups] of Object.entries(FRAGMENT.hooks as Record<string, object[]>)) expect(s.hooks[event], event).toContainEqual(groups[0]);
+  expect(s.hooks.SessionStart, 'SessionStart').toContainEqual(FRAGMENT.hooks.SessionStart[0]);
+  const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
+  const blocks: string[] = m.files.find((f: { rel: string }) => f.rel === '.claude/settings.json').blocks;
+  expect(blocks).toContain(JSON.stringify({ event: 'SessionStart', group: FRAGMENT.hooks.SessionStart[0] }));
   for (const [event, group] of Object.entries(BETA_GROUPS)) expect(s.hooks[event] ?? [], event).not.toContainEqual(group);
   expect(JSON.stringify(s.hooks)).not.toContain('node \\"${CLAUDE_PROJECT_DIR}');
   expect(readFileSync(join(root, '.gitignore'), 'utf8').split(/\r?\n/)).toContain('.harness/results/');

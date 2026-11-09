@@ -76,13 +76,17 @@ function listIn(c: Ctx, rel: string): string[] {
   if (c.skip(rel)) { miss(c, rel, 'ignored'); return []; }
   return [...(c.io.list(abs) ?? [])].sort();
 }
-export function ruleFiles(c: Ctx, dir: string, depth: number): string[] {
+/** `walked`: real paths of folders already searched in this walk, so a link back to one (a loop) is skipped, not fanned out. */
+export function ruleFiles(c: Ctx, dir: string, depth: number, walked = new Set<string>()): string[] {
   if (depth > MAX_RULE_DEPTH) return [];
+  const real = c.io.real(absIn(nodePath, c.root, dir));
+  if (real !== null && walked.has(real)) return miss(c, dir, 'symlink loop') ?? [];
+  if (real !== null) walked.add(real);
   return listIn(c, dir).flatMap((name) => {
     const rel = `${dir}/${name}`;
     const kind = kindOf(c, rel);
     if (kind === 'file' || (kind === 'outside' && name.endsWith('.md'))) return name.endsWith('.md') ? [rel] : []; // readIn reports an outside one
-    return kind === 'missing' ? [] : ruleFiles(c, rel, depth + 1);
+    return kind === 'missing' ? [] : ruleFiles(c, rel, depth + 1, walked);
   });
 }
 
@@ -95,8 +99,12 @@ export function listed(c: Ctx): Listed[] {
   return [...skills, ...md('.claude/commands', 'skill', 'command'), ...md('.claude/agents', 'agent', 'agent')];
 }
 
+/** `.env` and `.env.<anything>` in any folder (spec §3: never read). */
+const DOTENV = /(?:^|\/)\.env(?:\.[^/]*)?$/i;
+
+/** Every reader passes `c.skip`, so the dotenv rule here covers imports, rules, skills and the JSON files alike. */
 export function newCtx(root: string, io: RepoIO, owners: Map<string, Owner>, skip: (rel: string) => boolean, preset: Ctx['preset'] = { id: null, recorded: false }): Ctx {
-  return { root, realRoot: io.real(root) ?? root, io, skip, owners, out: { always: [], onDemand: [], unmeasured: [], notes: [] }, preset, seenText: new Set(), json: new Map() };
+  return { root, realRoot: io.real(root) ?? root, io, skip: (rel) => DOTENV.test(rel) || skip(rel), owners, out: { always: [], onDemand: [], unmeasured: [], notes: [] }, preset, seenText: new Set(), json: new Map() };
 }
 
 /** The JSON object at `rel`, read once: null when absent, over size, not an object or not valid (one note; never throws). */
@@ -106,11 +114,13 @@ export function jsonObject(c: Ctx, rel: string): Record<string, unknown> | null 
   let v: Record<string, unknown> | null = null;
   if (raw === OVERSIZE) miss(c, rel, 'oversize');
   else if (raw !== null) {
+    let why = 'not valid JSON';
     try {
       const x: unknown = JSON.parse(raw);
       if (x && typeof x === 'object' && !Array.isArray(x)) v = x as Record<string, unknown>;
+      else why = 'not a JSON object';
     } catch { /* falls through to the note */ }
-    if (v === null) c.out.notes.push(`${rel}: not valid JSON, not read`);
+    if (v === null) c.out.notes.push(`${rel}: ${why}, not read`);
   }
   c.json.set(rel, v);
   return v;

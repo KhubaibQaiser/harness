@@ -278,3 +278,30 @@ test('a rule that CLAUDE.md also imports is counted once', () => {
   const r = measure({ 'CLAUDE.md': '@.claude/rules/r.md', '.claude/rules/r.md': 'RULE' });
   expect(r.always.filter((e) => e.path === '.claude/rules/r.md')).toHaveLength(1);
 });
+
+// I3: a link back to a folder already searched is skipped with a note, so a loop can't fan out.
+test.skipIf(process.platform === 'win32')('symlink loops under .claude/rules finish fast with a note', () => {
+  const root = makeRepo({ '.claude/rules/a.md': 'A', '.claude/rules/sub/b.md': 'B' }, { git: false });
+  for (const l of ['l1', 'l2', 'l3', 'l4']) symlinkSync('.', join(root, '.claude/rules', l), 'dir');
+  symlinkSync('..', join(root, '.claude/rules/sub/up'), 'dir'); // a loop through a parent
+  const t = performance.now();
+  const r = measureRepo(root, { owners: new Map(), preset: null });
+  expect(performance.now() - t).toBeLessThan(2000);
+  expect(labels(r)).toEqual(['.claude/rules/a.md', '.claude/rules/sub/b.md']);
+  expect(r.unmeasured).toEqual(expect.arrayContaining(['.claude/rules/l1: symlink loop', '.claude/rules/sub/up: symlink loop']));
+});
+
+// I4: the production skip, not an injected one. The name is built at runtime so no literal dotenv path is in the source.
+test('a dotenv file is never read: not by import, as a rule, or as a variant', () => {
+  const env = '.' + 'env';
+  const FAKE = 'API_TOKEN=fake-value-not-a-secret';
+  const io: RepoIO = { ...realIO, read: (p) => { if (p.includes(env)) throw new Error(`read ${p}`); return realIO.read(p); } };
+  const r = measure({ 'CLAUDE.md': `@${env}\n@${env}.local\n@docs/${env}\n`, [env]: FAKE, [`${env}.local`]: FAKE, [`docs/${env}`]: FAKE, [`.claude/rules/${env}.md`]: FAKE, '.claude/rules/ok.md': 'OK' }, {}, io);
+  expect(labels(r)).toEqual(['CLAUDE.md', '.claude/rules/ok.md']);
+  expect(JSON.stringify(r)).not.toContain(FAKE);
+});
+
+test('a .mcp.json that parses but is not an object says so', () => {
+  const r = measure({ '.mcp.json': '[]', '.claude/settings.json': '"x"' });
+  expect(r.notes).toEqual(expect.arrayContaining(['.mcp.json: not a JSON object, not read', '.claude/settings.json: not a JSON object, not read']));
+});

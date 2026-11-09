@@ -1,3 +1,4 @@
+import * as nodeFs from 'node:fs';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -297,6 +298,11 @@ test('a tampered global manifest is refused whole, naming the entry, and home is
     ['"Documents/x.txt"', (m) => { m.files.push({ rel: 'Documents/x.txt', kind: 'create', hash: hashText('precious\n') }); }],
     ['".claude/x\\\\..\\\\..\\\\Documents"', (m) => { m.dirs = [...(m.dirs as string[]), '.claude/x\\..\\..\\Documents']; }],
     ['".claude/harness/backup//x"', (m) => { m.files[0].backup = '.claude/harness/backup//x'; }],
+    ['".claude/a\\u0000b"', (m) => { m.dirs = [...(m.dirs as string[]), '.claude/a\u0000b']; }],
+    ['".claude/skills/a\\u001bb"', (m) => { m.files[0].rel = '.claude/skills/a\u001bb'; }],
+    ['".claude/harness/manifest.json"', (m) => { m.files[0].rel = '.claude/harness/manifest.json'; }],
+    ['".claude/harness/apply.lock"', (m) => { m.files[0].rel = '.claude/harness/apply.lock'; }],
+    ['".claude/harness/backup/x/y"', (m) => { m.files[0].rel = '.claude/harness/backup/x/y'; }],
   ];
   for (const [named, edit] of cases) {
     const home = tmp();
@@ -339,4 +345,15 @@ test('a lock left by an interrupted uninstall --global is refused with the globa
   expect(r.code).toBe(1);
   expect(r.out).toContain('A previous global preset install or uninstall was interrupted');
   expect(tree(home)).toEqual(before);
+});
+
+test('the cleanup after the restore runs under the lock: a crash there leaves it, and the next run stops', async () => {
+  const home = tmp();
+  await installAll(home);
+  const lock = join(home, GLOBAL_STATE.lock), manifest = join(home, GLOBAL_STATE.manifest);
+  // Crash on the manifest delete, after the files were restored.
+  const fs = { ...nodeFs, rmSync: (p: nodeFs.PathLike, o?: nodeFs.RmOptions) => { if (p === manifest) { expect(existsSync(lock)).toBe(true); throw new Error('crash'); } nodeFs.rmSync(p, o); } };
+  await expect(uninstall(['--global', '--yes'], { root: tmp(), home, env: {}, fs, out: () => {}, prompt: { confirm: async () => true, edit: async (_l, v) => v } })).rejects.toThrow('crash');
+  expect(existsSync(lock)).toBe(true);
+  expect((await un(['--global', '--yes'], home)).out).toContain('install or uninstall was interrupted');
 });

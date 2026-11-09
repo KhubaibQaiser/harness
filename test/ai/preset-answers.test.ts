@@ -47,3 +47,40 @@ test('shape errors', () => {
   expect(errs({ ...good, git: { branch_prefixes: [], no_ai_trailer: 'yes', pr_size_warning: true } })).toEqual(['git.branch_prefixes: must be a non-empty list', 'git.no_ai_trailer: must be true or false']);
   expect(errs({ ...good, rules: [''] })).toEqual(['rules[0]: must be a non-empty string']);
 });
+
+test('ids that could escape a folder are rejected', () => {
+  for (const id of ['../x', 'a/b', '/etc', '.x', '']) expect(errs({ ...good, id }), id).toEqual(['id: must be lowercase letters, digits and hyphens']);
+});
+
+test('the other shape branches', () => {
+  expect(errs({ ...good, title: 3 })).toEqual(['title: must be a non-empty string']);
+  expect(errs({ ...good, rules: 'x', preselect: 'y' })).toEqual(['rules: must be a list', 'preselect: must be a list']);
+  expect(errs({ ...good, rules: ['a'.repeat(2001)] })).toEqual(['rules[0]: must be at most 2000 characters']);
+  expect(errs({ ...good, git: { ...good.git, sign: true } })).toEqual(['git.sign: unknown key']);
+  expect(errs({ ...good, stacks: [] })).toEqual(['stacks: must be a mapping']);
+  expect(errs({ ...good, stacks: { react: 'x' } })).toEqual(['stacks.react: must be a mapping']);
+});
+
+test('duplicates in preselect and branch_prefixes give one error each', () => {
+  expect(errs({ ...good, preselect: ['ponytail', 'ponytail', 'ponytail'] })).toEqual(['preselect: "ponytail" is listed more than once']);
+  expect(errs({ ...good, git: { ...good.git, branch_prefixes: ['fix/', 'fix/'] } })).toEqual(['git.branch_prefixes: "fix/" is listed more than once']);
+});
+
+test('values that look like keys or tokens are rejected without echoing them', () => {
+  // Fake values, built at runtime so no secret-shaped literal sits in the repo.
+  const fakes = [
+    ['sk', '-', 'x'.repeat(24)].join(''),
+    ['gh', 'p_', 'A1'.repeat(10)].join(''),
+    ['github', '_pat_', 'B2'.repeat(10)].join(''),
+    ['xo', 'xb-', '1234-abcd'].join(''),
+    ['AK', 'IA', 'Q'.repeat(16)].join(''),
+    ['-----BEGIN', ' PRIVATE KEY-----'].join(''),
+    'aZ09'.repeat(9),
+  ];
+  for (const f of fakes) {
+    const e = errs({ ...good, rules: [`use ${f} here`] });
+    expect(e, f).toEqual(['rules[0]: looks like a key or token; never put secrets in a preset']);
+    expect(e.join('\n')).not.toContain(f);
+  }
+  expect(errs({ ...good, rules: ['Use @tanstack/react-query and react@19.0.0 with kebab-case-file-names.'] })).toEqual([]);
+});

@@ -167,6 +167,15 @@ test('installed items push the repo near the budget: a small add asks, and its t
   expect(Number(/Always-loaded context: ~([\d,]+) tokens/.exec(a.out)![1].replace(/,/g, ''))).toBe((await st()) + sr);
 });
 
+// Re-review N1: adding agents-md makes CLAUDE.md import AGENTS.md, so the repo's own AGENTS.md text starts loading.
+test('add agents-md asks when the AGENTS.md text its new import makes load takes the total past the budget', async () => {
+  const root = installed(OWN.filter((id) => id !== 'agents-md'), { ...REPO, 'CLAUDE.md': '# Team\n', 'AGENTS.md': '# Mine\n' + 'x'.repeat(8000) + '\n' });
+  const a = await add(root, 'add', ['agents-md', '--yes']);
+  expect(a.code, a.out).toBe(2);
+  expect(a.out).toContain('Over budget: confirm before installing.');
+  expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# Team\n');
+});
+
 // M1
 test('add keeps a comment under items:', async () => {
   const root = installed();

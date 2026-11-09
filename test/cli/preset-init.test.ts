@@ -54,12 +54,12 @@ const ANSWERS = {
 const OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'review-rubric', 'agents-md'];
 const dir = mkdtempSync(join(tmpdir(), 'harness-pi-'));
 let n = 0;
-const aiArgs = (ids: string[]): string[] => {
+const aiArgs = (ids: string[], answers: object = ANSWERS): string[] => {
   const d = join(dir, `r${n++}`);
   mkdirSync(d);
   const f = (name: string, text: string) => (writeFileSync(join(d, name), text), join(d, name));
   const picks = { catalog_version: 1, findings: [], items: OWN.map((id) => ({ id, include: 'recommended', reason: 'r', addresses: [] })) };
-  return ['--answers', f('answers.json', JSON.stringify(ANSWERS)), '--product', f('product.md', PRODUCT), '--picks', f('picks.json', JSON.stringify(picks)), '--report', f('report.md', SECTIONS), '--choose', ids.join(','), '--yes'];
+  return ['--answers', f('answers.json', JSON.stringify(answers)), '--product', f('product.md', PRODUCT), '--picks', f('picks.json', JSON.stringify(picks)), '--report', f('report.md', SECTIONS), '--choose', ids.join(','), '--yes'];
 };
 const fake: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
 const git = (root: string, ...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8' });
@@ -202,6 +202,44 @@ test('the init budget total includes the preset core and skills, and status prin
   let out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') });
   expect(statusTotal(out)).toBe(h);
+});
+
+// Re-review N1 and M9: init's preview total (not only harness's share) equals status after the install, with and
+// without the preset and an existing AGENTS.md, and when CLAUDE.md doesn't import AGENTS.md until harness adds the line.
+const statusAll = (out: string) => Number(/^Context: ~([\d,]+) of/m.exec(out)![1].replace(/,/g, ''));
+const withFiles = (files: Record<string, string | null>) => {
+  const root = repo();
+  for (const [rel, text] of Object.entries(files)) {
+    if (text === null) rmSync(join(root, rel));
+    else writeFileSync(join(root, rel), text);
+  }
+  git(root, 'add', '-A');
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x');
+  return root;
+};
+test.each([
+  ['an AGENTS.md of its own', {}],
+  ['no AGENTS.md', { 'AGENTS.md': null }],
+  ['a CLAUDE.md that does not import AGENTS.md', { 'CLAUDE.md': '# Team\n', 'AGENTS.md': '# Mine\n' + 'agent text '.repeat(40) + '\n' }],
+])('init preview total equals status after install (%s), with and without the preset', async (_name, files) => {
+  const noPreset = { ...ANSWERS, preset: undefined };
+  for (const [ids, answers] of [[[...OWN, ...PRESET_IDS], ANSWERS], [[...OWN], noPreset]] as const) {
+    const root = withFiles(files);
+    const d = await run(root, aiArgs([...ids], answers).map((a) => (a === '--yes' ? '--dry-run' : a)));
+    const r = await run(root, [...aiArgs([...ids], answers), '--over-budget']);
+    expect(r.code, r.out).toBe(0);
+    let out = '';
+    status([], { root, env: {}, out: (s) => (out += s + '\n') });
+    expect(total(d.out), `${ids.length} ids\n${d.out}\n${out}`).toBe(statusAll(out));
+  }
+});
+
+test('init asks when the AGENTS.md its new @AGENTS.md line makes load takes the total past the budget', async () => {
+  const root = withFiles({ 'CLAUDE.md': '# Team\n', 'AGENTS.md': '# Mine\n' + 'x'.repeat(8000) + '\n' });
+  const r = await run(root, aiArgs([...OWN]));
+  expect(r.code, r.out).toBe(2);
+  expect(r.out).toContain('Over budget: confirm before installing.');
+  expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# Team\n'); // nothing written
 });
 
 // ---- update, add, explain and sync count the preset like init and status ----

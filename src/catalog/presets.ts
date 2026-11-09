@@ -10,7 +10,7 @@ import { TELEMETRY_ENV } from './telemetry-env.js';
 import type { AppliesWhen, Catalog, CatalogItem } from './schema.js';
 import type { Facts } from '../install/detect.js';
 import { checklist, type ChecklistRow } from '../install/select.js';
-import { mergeAgentsPreset } from '../install/merge.js';
+import { PRESET_END, mergeAgentsPreset } from '../install/merge.js';
 import { stripComments } from '../budget/text.js';
 import { estimateTokens, itemContext, itemContextLine, type ContextEntry } from '../budget/measure.js';
 
@@ -212,7 +212,12 @@ export function appliesTo(aw: AppliesWhen, facts: Pick<Facts, 'deps' | 'framewor
 export function presetContext(l: LoadedPreset, ids: string[]): ContextEntry[] {
   const templates = join(l.base, 'templates');
   return ids.map((id) => {
-    if (id === l.preset.core) return { id, tokens: estimateTokens(stripComments(mergeAgentsPreset(null, readFileSync(join(templates, 'core.md'), 'utf8')).after)) };
+    if (id === l.preset.core) {
+      // Up to the end marker, as the installed row cuts it: the newline after the block is the repo's. Markers count 0 (spec 3.4).
+      const after = mergeAgentsPreset(null, readFileSync(join(templates, 'core.md'), 'utf8')).after;
+      const text = stripComments(after.slice(0, after.lastIndexOf(PRESET_END) + PRESET_END.length));
+      return { id, tokens: estimateTokens(text), text };
+    }
     return itemContext(l.items.find((i) => i.id === id)!, { templates });
   });
 }

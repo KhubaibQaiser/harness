@@ -798,3 +798,8 @@ test('harness context and an apply preview are allowed; context apply asks, and 
   expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision).toBe('ask');
   expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision).toBe('deny');
 });
+
+test('preset install asks unless it is a preview; list, check and a preview are allowed', () => {
+  all(['harness preset list', 'harness preset check x', 'harness preset install x --dry-run'], 'allow');
+  all(['harness preset install x --yes', 'harness preset install x', 'harness preset install x --dry-run --yes'], 'ask');
+});

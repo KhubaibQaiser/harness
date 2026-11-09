@@ -5,6 +5,8 @@ import type { CountTokens } from './measure.js';
 export const COUNT_URL = 'https://api.anthropic.com/v1/messages/count_tokens';
 export const PER_CALL_MS = 5000;
 export const TOTAL_MS = 20000;
+// The key's name lives here too, so the report's hint keeps it in one file.
+export const KEY_HINT = "; set ANTHROPIC_API_KEY to count with Anthropic's token-counting API";
 
 export const countKey = (env: NodeJS.ProcessEnv, config: HarnessConfig): string | null =>
   config.context.count === 'offline' ? null : env.ANTHROPIC_API_KEY || null;

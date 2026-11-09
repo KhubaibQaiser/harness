@@ -690,7 +690,7 @@ test('doctor prints the always-loaded context: ok within budget, note over it, f
   try {
     const s = sets(root);
     let r = run(root, { path: bin('npm') });
-    expect(r.out).toContain(`ok always-loaded context ~${s.total.toLocaleString('en-US')} of 2,000 tokens (best estimate); harness ~${s.harness.toLocaleString('en-US')}\n`); // a literal comma pins the format
+    expect(r.out).toContain(`ok always-loaded context ~${s.total.toLocaleString('en-US')} of 2,000 tokens (best estimate); harness ~${s.harness.toLocaleString('en-US')}. Run harness context for details.\n`); // a literal comma pins the format
     expect(r.out.match(/always-loaded context/g)).toHaveLength(1);
     // Repo text beyond harness's own pushes the total over a budget harness fits in.
     writeFileSync(join(root, 'CLAUDE.md'), 'x'.repeat(40000));
@@ -698,7 +698,7 @@ test('doctor prints the always-loaded context: ok within budget, note over it, f
     expect(s2.total).toBeGreaterThan(s2.harness);
     withBudget(root, s2.harness);
     r = run(root, { path: bin('npm') });
-    expect(r.out).toContain(`note always-loaded context ~${s2.total.toLocaleString('en-US')} tokens is over the budget of ${s2.harness.toLocaleString('en-US')}\n`);
+    expect(r.out).toContain(`note always-loaded context ~${s2.total.toLocaleString('en-US')} tokens is over the budget of ${s2.harness.toLocaleString('en-US')}. Run harness context for details.\n`);
     expect(r.code).toBe(0);
     withBudget(root, 100);
     r = run(root, { path: bin('npm') });

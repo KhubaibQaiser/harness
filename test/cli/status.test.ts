@@ -168,7 +168,7 @@ test('status shows the catalog, the item count, missing plugins and the budget l
   expect(out).toContain(`Catalog ${cat.version}\n`);
   expect(out).toContain('Items: 2 selected\n');
   expect(out).toContain('Plugins not installed: 1\n');
-  expect(out).toMatch(/^Context: ~[\d,]+ of 2,000 tokens always loaded \(best estimate\); harness ~[\d,]+\.$/m);
+  expect(out).toMatch(/^Context: ~[\d,]+ of 2,000 tokens always loaded \(best estimate\); harness ~[\d,]+\. Run harness context for details\.$/m);
   expect(out).not.toContain('Always-loaded context from harness');
   expect(calls).toBe(1);
   expect(out.indexOf('Enforcement:')).toBeLessThan(out.indexOf('Catalog '));
@@ -190,7 +190,7 @@ test('status says so when claude is not found, and skips item lines for a legacy
   expect(legacy).not.toMatch(/^(Catalog|Items:|Plugins not installed|Always-loaded)/m);
   // Context sits right before Enforcement (after the gate lines), also for a legacy install, and needs no network.
   expect(legacy).toMatch(/^Context: ~[\d,]+ of [\d,]+ tokens always loaded[^\n]*\nEnforcement:/m);
-  expect(legacy).not.toContain('harness context');
+  expect(legacy).toContain(' Run harness context for details.\n');
 });
 
 test('status lists the preset files under the preset id', () => {

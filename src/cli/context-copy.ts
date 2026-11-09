@@ -1,4 +1,5 @@
 // The `harness context` report (spec §7.1) and its `--json` form (§5). Pure: the numbers come from the context set.
+import { KEY_HINT } from '../budget/count-api.js';
 import type { Owner } from '../budget/owners.js';
 import type { SourceEntry } from '../budget/sources.js';
 import { STATE_CARD_MAX_TOKENS, type ContextSet } from '../budget/summary.js';
@@ -10,7 +11,6 @@ const PERCENT = 100;
 export const CATALOG_ESTIMATE = 'catalog estimate';
 export const ESTIMATE_NOTE = 'estimate';
 const ESTIMATE = 'Best estimate (characters ÷ 4)';
-const KEY_HINT = "; set ANTHROPIC_API_KEY to count with Anthropic's token-counting API";
 const ON_DEMAND = 'On demand (loads when used or when matching files are touched)';
 const NOT_MEASURED = ['system prompt and tools', 'output style', 'personal context'];
 const OWNER_ORDER = ['repo', 'harness', 'preset', 'catalog'];

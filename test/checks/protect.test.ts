@@ -311,6 +311,15 @@ test.each([
 ])('N4: stdin code naming a protected path is denied: %s', (c) => expect(bash(c)).toBe('deny'));
 test.each([`echo 'ls node_modules' | bash`, `echo hi | node -e "process.stdin.pipe(process.stdout)"`, "cat <<'EOF'\nnode_modules\nEOF", `echo node_modules | grep x`])(
   'N4: %s is allowed', (c) => expect(bash(c)).toBe('allow'));
+// Round 23, C2: a substitution opened after the operator, or a quote open at a line end, runs the next lines before
+// the body starts, so they are not body text. W alone asks; hidden that way it must not be allowed.
+const W = 'echo x > .harness/state.json';
+test.each([
+  `cat > docs/x.md <<EOF; echo $(\n${W}\n)\nEOF`, `cat > docs/x.md <<'EOF'; x=$(\n${W}\n)\nEOF`, `cat > docs/x.md <<-EOF; echo \${x:-$(\n${W}\n)}\nEOF`,
+  `cat > docs/x.md <<EOF; echo \`\n${W}\n\`\nEOF`, `cat > docs/x.md <<EOF; echo $(true\n${W})\nEOF`, `tee docs/x.md >/dev/null <<"EOF"; echo $(\n${W}\n)\nEOF`,
+  `echo '\ncat > docs/x.md <<EOF\n'; ${W}\nEOF`, `echo "\ncat > docs/x.md <<EOF\n"; ${W}\nEOF`,
+])('C2: %s is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
+test('C2: a plain heredoc body naming a harness path stays data', () => expect(bash(`cat > docs/x.md <<'EOF'\n${W}\nEOF`)).toBe('allow'));
 
 // Round 14 D1: env -S strings are split with env's own rules, so `(` is an ordinary character.
 test.each([`env -S "node -e require('fs').rmSync('node_modules')"`, `env --split-string="node -p require('fs').rmSync('node_modules/x')"`, `env -S 'node -e "require(\\"fs\\").rmSync(\\"node_modules\\")"'`])(

@@ -188,10 +188,13 @@ export function withoutHeredocBodies(cmd: string): string {
           else word += x;
         }
         if (q || !/^\w+$/.test(word)) return cmd;
+        // The shell reads a substitution opened after the operator, across lines, before the body (re-review 20, C2).
+        if (!ends.length && SPANS_LINES.test(line.slice(c))) return cmd;
         ends.push({ word, dash, data: (tests ??= commandTests(new Scan(line), flags)).sink(0, c) });
         c = d - 1;
       }
     }
+    if (quote) return cmd; // a quote open past the line end: a `<<` on the lines it spans is not an operator
     for (const e of ends) {
       let found = false;
       while (++i < lines.length) {
@@ -645,14 +648,22 @@ const BUILDS_WHY = 'the command builds words at run time (a variable in command 
 export const canonicalText = (c: string): boolean => !/\\\n|[^\S \t\n]|\$'/.test(c) && (!c.includes('<<') || canonicalLines(c.split('\n'), 0, Infinity, 0));
 const MAX_NESTING = 2;
 const HEREDOC_OPS = /<<+/g, HEREDOC_WORD = /-?[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|([A-Za-z_]\w*))(?=[ \t;|&<>()]|$)/y;
+/** A `#` where the shell may start a comment, and what the guard's layout reads in a comment that the shell skips: a
+ *  quote, backslash, backtick, group bracket or group-closing keyword would move its quote pairing or group count. */
+const COMMENT_START = /(?<=^|[ \t;&|()<>`])#/, COMMENT_MOVES_LAYOUT = /['"`\\(){}]|\b(?:fi|done|esac)\b/;
+/** After a heredoc operator, a substitution (or `((`) the shell reads across lines before the body. */
+export const SPANS_LINES = /`|\$[({[]|\(\(/;
 /** Lines from..to (to past the end is fine) hold only plain heredocs, each body nested under MAX_NESTING. Linear: a line
  *  is read once per level, and past MAX_NESTING levels the answer is no. */
 function canonicalLines(lines: string[], from: number, to: number, level: number): boolean {
   for (let i = from; i < Math.min(to, lines.length); i++) {
     const line = lines[i], hash = line.indexOf('#'), ends: { word: string; dash: boolean }[] = [];
+    const comment = line.search(COMMENT_START);
+    if (comment >= 0 && COMMENT_MOVES_LAYOUT.test(line.slice(comment))) return false; // re-review 20, C1
     for (const m of line.matchAll(HEREDOC_OPS)) {
       if (m[0].length === 3) continue; // a here-string
       if (m[0].length !== 2 || (hash >= 0 && hash < m.index)) return false;
+      if (!ends.length && SPANS_LINES.test(line.slice(m.index))) return false; // re-review 20, C2
       HEREDOC_WORD.lastIndex = m.index + 2;
       const w = HEREDOC_WORD.exec(line);
       if (!w) return false;

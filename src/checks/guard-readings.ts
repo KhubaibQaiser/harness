@@ -1,7 +1,7 @@
 // Extra readings of a Bash command for the guard's text rules: what the shell can turn a word into before it runs.
 // Imported by guard.ts, which this module imports back: use guard.ts names only inside functions, never at load time.
 import picomatch from 'picomatch';
-import { commandStart, quoteFree, SEGMENTS } from './guard.js';
+import { commandStart, quoteFree, SEGMENTS, SPANS_LINES } from './guard.js';
 import { Groups, quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, type Skel, wholeFlags } from './guard-sinks.js';
 import { onlySafeCommands } from './guard-allow.js';
@@ -90,6 +90,9 @@ function layout(s: Scan, tests: { sink: (l: number, at: number) => boolean }): L
         else word += x;
       }
       if (q || !/^\w+$/.test(word)) return { quotes, heredocs: [] };
+      // The shell reads a substitution opened after the operator, across lines, before the body (re-review 20, C2).
+      const eol = c.indexOf('\n', i);
+      if (!pending.length && SPANS_LINES.test(c.slice(i, eol < 0 ? c.length : eol))) return { quotes, heredocs: [] };
       // A writer inside ( ), { }, $( ) or backticks is code: the group may pipe, redirect or capture what it prints.
       pending.push({ word, dash, literal, data: groups.depth === 0 && ticks % 2 === 0 && tests.sink(lineStart, i) });
       i = d - 1;

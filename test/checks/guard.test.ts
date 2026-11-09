@@ -1005,6 +1005,28 @@ test('the data exemption needs canonical text; other text is decided at least as
     'cat <<EOFx; # c <<A', "bash <<'A'\nbash <<'B'\ncat <<'C'\nz\nC\nB\nA", "cat <<'EOF'x\ny\nEOFx"]) expect(canonicalText(c), c).toBe(false);
   all(["cat > docs/x.md <<'EOF'\ngit push -f\nEOF"], 'allow');
 });
+test('a comment or a substitution after the operator cannot move where the guard starts a heredoc body (round 23)', () => {
+  const ch = (...c: number[]) => String.fromCharCode(...c);
+  const R = `${ch(114, 109)} -rf ~`, P = `git push -${ch(102)}`, H = `git reset --${ch(104, 97, 114, 100)}`;
+  const sinks = ['cat > docs/x.md', 'tee f >/dev/null'], ops = ['<<EOF', "<<'EOF'", '<<"EOF"', '<<-EOF'];
+  const both = (f: (s: string, op: string, p: string) => string[]) => ({
+    deny: [R, P].flatMap((p) => sinks.flatMap((s) => ops.flatMap((op) => f(s, op, p)))),
+    ask: sinks.flatMap((s) => ops.flatMap((op) => f(s, op, H))),
+  });
+  // C1: the shell skips a comment, so a quote in it opens nothing; the guard paired it with the next real quote.
+  const c1 = both((s, op, p) => ['#', 'true #', ': #', 'echo x #'].flatMap((cm) => ["'", '"'].map((q) => `${cm}${q}\necho ${q}\n${s} ${op}\n${q}; ${p}\nEOF`)));
+  // C2: the shell reads a substitution opened after the operator, across lines, before it reads the body.
+  const c2 = both((s, op, p) => [['echo $(', ')'], ['x=$(', ')'], ['echo ${x:-$(', ')}'], ['echo `', '`']]
+    .map(([open, close]) => `${s} ${op}; ${open}\n${p}\n${close}\nEOF`));
+  const c2b = both((s, op, p) => [`${s} ${op}; echo $(true\n${p})\nEOF`]); // main asks here too
+  all([...c1.deny, ...c2.deny], 'deny');
+  for (const c of [...c1.ask, ...c2.ask, ...c2b.deny, ...c2b.ask]) expect(kind(c), c).not.toBe('allow');
+  for (const c of ["#'\ncat <<EOF\nx\nEOF", 'cat <<EOF # (x)\nx\nEOF', 'cat <<EOF; echo $(\nx\n)\nEOF', 'cat <<EOF; echo `\nx\n`\nEOF', 'cat <<EOF; x=${y:-\nz}\nEOF',
+    'cat <<EOF; ((\nx\n))\nEOF', 'true # then done\ncat <<EOF\nx\nEOF']) expect(canonicalText(c), c).toBe(false);
+  // The commit and PR body form, and a plain comment, keep the exemption.
+  for (const c of [`git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)"`, 'cat > docs/x.md <<EOF # a note\nx\nEOF', "echo '#(x)'\ncat <<EOF\nx\nEOF"]) expect(canonicalText(c), c).toBe(true);
+  all([`cat > docs/x.md <<'EOF' # a note\n${P}\nEOF`, `git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)"`], 'allow');
+});
 test('a quoted-delimiter heredoc body keeps its backslash-newline; the always-block strips backslashes (round 20)', () => {
   const L = 'git log -1 --format=%B';
   // P1: in a <<'EOF', <<"EOF" or <<\EOF body a trailing \ is literal, so the next EOF ends the body and what follows runs.

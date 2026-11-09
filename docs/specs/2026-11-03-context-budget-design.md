@@ -229,6 +229,8 @@ Not measured before install: gsap-skills.
 Over budget: confirm before installing.
 ```
 
+When the selection keeps items the person approved earlier, `Approved earlier: <ids>.` follows the first line. Those items count in both `before` and `after`, so the first line equals the `harness context` total plus the change, and they never ask again (final review I2).
+
 The `--yes` refusal is M3's copy: ``This goes over the context budget (~2,056 of 2,000 tokens, estimate). Run again with --over-budget to accept, or pick fewer items.``
 
 The skill's question, asked once before it passes `--over-budget` (M3 plan Task 17 skill step):

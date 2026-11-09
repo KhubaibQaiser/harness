@@ -11,6 +11,12 @@ export const KEY_HINT = "; set ANTHROPIC_API_KEY to count with Anthropic's token
 export const countKey = (env: NodeJS.ProcessEnv, config: HarnessConfig): string | null =>
   config.context.count === 'offline' ? null : env.ANTHROPIC_API_KEY || null;
 
+/** The env for every child process src/budget spawns: the parent's, without the API key (spec §4). */
+export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const { ANTHROPIC_API_KEY: _key, ...rest } = env;
+  return rest;
+}
+
 export function apiCountTokens(
   key: string, model: string, deps: { fetch?: typeof fetch; now?: () => number; onFail?: (reason: string) => void } = {},
 ): CountTokens {

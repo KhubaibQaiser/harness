@@ -1,19 +1,21 @@
 import { existsSync, readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
-import { ApplyError, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
+import { ApplyError, LOCK_RECOVERY, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
 import { STRUCTURAL, removeBlocks, removeFromMcp, removeFromSettings } from '../install/merge.js';
 import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, withEol } from '../install/text.js';
-import { MANIFEST_REL, backupText } from '../install/manifest.js';
+import { MANIFEST_REL, ManifestError, REPO_STATE, backupText, isBackupPath, readManifest, type Manifest, type StatePaths } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall } from './preamble.js';
+import { GLOBAL_LOCK_RECOVERY, GLOBAL_STATE } from './preset.js';
 import type { CliEnv } from './index.js';
 
-export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike };
+export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike; /** Default `os.homedir()`; tests pass a temp dir. */ home?: string };
 
-const USAGE = 'Usage: harness uninstall [--yes] [--force] [--dry-run]';
+const USAGE = 'Usage: harness uninstall [--global] [--yes] [--force] [--dry-run]';
 const SETTINGS = '.claude/settings.json';
 
 const read = (p: string): string | null => {
@@ -37,18 +39,8 @@ function pruneExcept(dir: string, keep: string[]): void {
   try { rmdirSync(dir); } catch {} // only when nothing was kept in it
 }
 
-export async function uninstall(args: string[], cli: UninstallEnv): Promise<number> {
-  const { out, prompt } = cli;
-  if (args.some((a) => a !== '--yes' && a !== '--force' && a !== '--dry-run')) return out(USAGE), 2;
-  const yes = args.includes('--yes');
-  const force = args.includes('--force');
-  const dryRun = args.includes('--dry-run');
-  if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
-
-  const opened = openInstall(cli, 'Not a git repository. Run harness uninstall inside a git repo.');
-  if (typeof opened === 'number') return opened;
-  const { root, m } = opened;
-
+/** What uninstall writes for each file `m` records: deletes and restores, the edited files it keeps, and notes. Backups are read through `sp`. */
+export function removalChanges(root: string, m: Manifest, force: boolean, sp: StatePaths = REPO_STATE): { changes: Change[]; kept: string[]; notes: string[] } {
   const changes: Change[] = [];
   const kept: string[] = [];
   const notes: string[] = [];
@@ -58,7 +50,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       notes.push(`\`${f.rel}\` is already gone.`);
       continue;
     }
-    const backup = backupText(root, f.backup);
+    const backup = backupText(root, f.backup, sp);
     if (STRUCTURAL.has(f.rel)) {
       if (matchesHash(cur, f.hash) && f.kind === 'create') {
         changes.push({ kind: 'delete', rel: f.rel, before: cur });
@@ -106,6 +98,24 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     }
   }
 
+  return { changes, kept, notes };
+}
+
+export async function uninstall(args: string[], cli: UninstallEnv): Promise<number> {
+  const { out, prompt } = cli;
+  if (args.some((a) => !['--yes', '--force', '--dry-run', '--global'].includes(a))) return out(USAGE), 2;
+  const yes = args.includes('--yes');
+  const force = args.includes('--force');
+  const dryRun = args.includes('--dry-run');
+  if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
+  if (args.includes('--global')) return uninstallGlobal(cli, { yes, force, dryRun });
+
+  const opened = openInstall(cli, 'Not a git repository. Run harness uninstall inside a git repo.');
+  if (typeof opened === 'number') return opened;
+  const { root, m } = opened;
+
+  const { changes, kept, notes } = removalChanges(root, m, force);
+
   if (dryRun) {
     for (const c of changes) out(`Would ${c.kind === 'delete' ? 'remove' : 'restore'} \`${c.rel}\``);
     for (const n of notes) out(`Note: ${n}`);
@@ -149,5 +159,50 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   }
   if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run /harness:init to install again.`);
   out('Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.');
+  return 0;
+}
+
+/** `uninstall --global`: removes what `~/.claude/harness/manifest.json` records, restores the backups, then the folders the install created. No git repo needed. */
+async function uninstallGlobal(cli: UninstallEnv, o: { yes: boolean; force: boolean; dryRun: boolean }): Promise<number> {
+  const { out } = cli;
+  const home = cli.home ?? homedir();
+  const sp = GLOBAL_STATE;
+  if (existsSync(join(home, sp.lock))) return out(GLOBAL_LOCK_RECOVERY), 1;
+  let m: Manifest | null;
+  try {
+    m = readManifest(home, undefined, sp);
+  } catch (e) {
+    if (e instanceof ManifestError) return out(`\`~/${sp.manifest}\` is unreadable, so nothing was removed. Fix or delete it, then remove the preset's files by hand.`), 1;
+    throw e;
+  }
+  if (!m) return out(`No global preset is installed (no ~/${sp.manifest}).`), 1;
+  const { changes, kept, notes } = removalChanges(home, m, o.force, sp);
+  if (o.dryRun) {
+    for (const c of changes) out(`Would ${c.kind === 'delete' ? 'remove' : 'restore'} \`~/${c.rel}\``);
+    for (const n of notes) out(`Note: ${n}`);
+    if (kept.length) out(`Would keep ${list(kept)} because you edited them (--force removes them too).`);
+    return out('Dry run: nothing was written.'), 0;
+  }
+  if (!o.yes && !(await cli.prompt.confirm('Remove the global preset from ~/.claude? (y/N)'))) return out('Cancelled. Nothing was removed.'), 0;
+  let written: Manifest | undefined;
+  try {
+    if (changes.length) written = applyChanges(home, changes, m.version, undefined, cli.fs, { writeManifest: false, state: sp });
+  } catch (e) {
+    if (!(e instanceof ApplyError)) throw e;
+    return out(e.message === LOCK_RECOVERY ? GLOBAL_LOCK_RECOVERY : e.message), 1;
+  }
+  for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} \`~/${c.rel}\``);
+  for (const n of notes) out(`Note: ${n}`);
+  // Each run's backups sit in their own timestamped folder: the install's, and the one this apply just made.
+  const depth = sp.backup.split('/').length + 1;
+  for (const b of [...m.files, ...(written?.files ?? [])].map((f) => f.backup))
+    if (b && isBackupPath(b, sp)) rmSync(join(home, b.split('/').slice(0, depth).join('/')), { recursive: true, force: true });
+  rmSync(join(home, sp.manifest), { force: true });
+  // Deepest first; rmdir refuses a folder that still holds something (an edited file, the person's own).
+  for (const d of [...(m.dirs ?? [])].filter((d) => !d.split('/').includes('..')).sort((a, b) => b.length - a.length)) {
+    try { rmdirSync(join(home, d)); } catch {}
+  }
+  out(`Removed ~/${sp.manifest} and the backups.`);
+  if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them.`);
   return 0;
 }

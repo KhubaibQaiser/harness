@@ -862,3 +862,11 @@ test('a person-only preview never passes when an argument holds a shell expansio
     expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision, command).toBe('deny');
   }
 });
+
+test('the uninstall ask covers --global, its --dry-run too', () => {
+  for (const c of ['harness uninstall --global', 'harness uninstall --global --yes', 'harness uninstall --global --yes --force', 'harness uninstall --global --dry-run', 'npx @khubaibqaiser/harness uninstall --global --yes']) {
+    const d = decideCommand(c, ctx());
+    expect(d.kind, c).toBe('ask');
+    expect(reason(d), c).toBe(UNINSTALL_WHY);
+  }
+});

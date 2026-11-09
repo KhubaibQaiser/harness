@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { join, posix, relative, resolve } from 'node:path';
 import { DEFAULT_CONTEXT_BUDGET, fmt } from '../budget/measure.js';
 import { loadCatalog } from '../catalog/load.js';
 import { checkPreset, identityProblems, listPresets, loadPreset, presetContext } from '../catalog/presets.js';
@@ -58,7 +58,7 @@ export type PresetEnv = CliEnv & { prompt: Prompt; /** Default `os.homedir()`; t
 
 /** The global install's manifest, backups and lock, relative to the home folder. */
 export const GLOBAL_STATE = statePaths('.claude/harness');
-const GLOBAL_LOCK_RECOVERY = 'A previous global preset install was interrupted or could not roll back, so the files under ~/.claude and `~/.claude/harness/manifest.json` may disagree. To recover: 1) open `~/.claude/harness/apply.lock`, which lists the files that run was writing, 2) put each back from its copy under `~/.claude/harness/backup/`, or delete it if it has no copy there, 3) delete `~/.claude/harness/apply.lock`, 4) run the command again.';
+export const GLOBAL_LOCK_RECOVERY = 'A previous global preset install was interrupted or could not roll back, so the files under ~/.claude and `~/.claude/harness/manifest.json` may disagree. To recover: 1) open `~/.claude/harness/apply.lock`, which lists the files that run was writing, 2) put each back from its copy under `~/.claude/harness/backup/`, or delete it if it has no copy there, 3) delete `~/.claude/harness/apply.lock`, 4) run the command again.';
 
 /** `preset install <dir> [--global] [--dry-run|--yes [--take <path,...>]]`: checks the folder, then installs it in the repo or under `~/.claude`. */
 export async function presetInstall(args: string[], cli: PresetEnv): Promise<number> {
@@ -83,7 +83,7 @@ export async function presetInstall(args: string[], cli: PresetEnv): Promise<num
     if (existsSync(join(home, GLOBAL_STATE.manifest))) {
       let id = 'unknown';
       try { id = readManifest(home, undefined, GLOBAL_STATE)?.files.find((f) => f.item?.startsWith(PRESET_ITEM))?.item?.slice(PRESET_ITEM.length) ?? id; } catch { /* unreadable: still installed */ }
-      return out(`A global preset is already installed (${esc(id)}): ~/${GLOBAL_STATE.manifest} exists. Remove it and the files it lists yourself, or keep the installed preset.`), 1;
+      return out(`A global preset is already installed (${esc(id)}): ~/${GLOBAL_STATE.manifest} exists. Run \`harness uninstall --global\` first, or keep the installed preset.`), 1;
     }
   }
   const results = checkDir(dir, out);
@@ -150,12 +150,16 @@ async function globalInstall(dir: string, ids: string[], cli: PresetEnv, o: { dr
   const chosen: Change[] = [];
   for (const c of changes) if (o.take ? o.take.includes(c.rel) : await cli.prompt.confirm(`Write ~/${c.rel}? [y/N]`)) chosen.push(c);
   if (!chosen.length) return out('Nothing was written.'), 0;
+  // The folders this install creates, so uninstall --global removes those and keeps the person's own empty ones.
+  const dirs = new Set<string>();
+  for (const rel of [...chosen.map((c) => c.rel), GLOBAL_STATE.manifest, `${GLOBAL_STATE.backup}/x`])
+    for (let d = posix.dirname(rel); d !== '.' && !existsSync(join(home, d)); d = posix.dirname(d)) dirs.add(d);
   try {
-    applyChanges(home, chosen, VERSION, undefined, undefined, { state: GLOBAL_STATE });
+    applyChanges(home, chosen, VERSION, undefined, undefined, { state: GLOBAL_STATE, dirs: [...dirs] });
   } catch (e) {
     if (!(e instanceof ApplyError)) throw e;
     if (e.message === LOCK_RECOVERY) return out(GLOBAL_LOCK_RECOVERY), 1; // the repo wording names .harness and git
     return out(safe(e.message.startsWith('Rollback failed') ? e.message : `${e.message} Nothing was written.`)), 1;
   }
-  return out(`Installed ${esc(id)} under ~/.claude: ${chosen.length} of ${changes.length} writes, listed in ~/${GLOBAL_STATE.manifest}.`), 0;
+  return out(`Installed ${esc(id)} under ~/.claude: ${chosen.length} of ${changes.length} writes, listed in ~/${GLOBAL_STATE.manifest}. Remove them with \`harness uninstall --global\`.`), 0;
 }

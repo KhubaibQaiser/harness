@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { addBody, DECISIONS_DIR, globProblem, isDecisionText, parseDecision, SCHEMA, serializeDecision, slugId, type TeamDecision } from '../../src/core/decision-file.js';
 
 const ID = '2026-11-03-validate-env-with-zod';
@@ -47,6 +47,31 @@ describe('parseDecision', () => {
     expect(isDecisionText(broken)).toBe(true);
     expect(parseDecision(REL, broken, TODAY)).toEqual({ decision: null, errors: [`${REL}: frontmatter must be valid YAML`] });
   });
+  test('other YAML spellings of the schema key count', () => {
+    for (const line of ['"schema": harness-decision/1', "'schema': 'harness-decision/1'", 'schema: !!str harness-decision/1', '? schema\n: harness-decision/1']) {
+      const t = FIXTURE.replace(/^schema: .*$/m, line);
+      expect(isDecisionText(t)).toBe(true);
+      expect(parseDecision(REL, t, TODAY).errors).toEqual([]);
+    }
+  });
+  test('a huge non-decision file is still ignored', () => {
+    const adr = `---\ntitle: ADR\nnotes: ${'x'.repeat(64 * 1024)}\n---\nbody\n`;
+    expect(parseDecision(`${DECISIONS_DIR}/0001-adr.md`, adr, TODAY)).toEqual({ decision: null, errors: [] });
+  });
+  test('a YAML warning is invalid YAML and prints nothing', () => {
+    const warn = vi.spyOn(process, 'emitWarning');
+    const write = vi.spyOn(process.stderr, 'write');
+    try {
+      const t = FIXTURE.replace(/^status: active$/m, 'status: !evil "\u001b]0;pwn\u0007"');
+      expect(parseDecision(REL, t, TODAY)).toEqual({ decision: null, errors: [`${REL}: frontmatter must be valid YAML`] });
+      expect(isDecisionText(t)).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      write.mockRestore();
+    }
+  });
   test('schema must be exact: a quoted value counts, another version is not a decision', () => {
     expect(edit(/^schema: .*$/m, 'schema: "harness-decision/1"').errors).toEqual([]);
     expect(edit(/^schema: .*$/m, 'schema: harness-decision/2')).toEqual({ decision: null, errors: [] });
@@ -65,6 +90,11 @@ describe('parseDecision', () => {
     }
     expect(errorsOf({ id: `${ID}-2` }, `${DECISIONS_DIR}/${ID}-2.md`)).toEqual([]);
   });
+  test('the id date is a real calendar date and the slug has no -- or trailing -', () => {
+    for (const id of ['9999-99-99-x', '2026-02-30-x', '2026-11-03--', '2026-11-03-a--b', '2026-11-03-a-']) {
+      expect(errorsOf({ id }, `${DECISIONS_DIR}/${id}.md`)).toEqual([`${DECISIONS_DIR}/${id}.md: id must match YYYY-MM-DD-<slug of a-z, 0-9 and ->`]);
+    }
+  });
   test('the shown file name drops control characters', () => {
     expect(errorsOf({}, `${DECISIONS_DIR}/a\u001b[2Jb.md`)).toEqual([`${DECISIONS_DIR}/a?[2Jb.md: id must equal the file name without .md`]);
   });
@@ -76,12 +106,19 @@ describe('parseDecision', () => {
     expect(errorsOf({ title: 'two\nlines' })).toEqual([msg]);
     expect(errorsOf({ title: 'tab\tbell\u0007' })).toEqual([msg]);
     expect(errorsOf({ title: 'sep\u2028x' })).toEqual([msg]);
+    for (const c of ['\u202e', '\u200b', '\u2066', '\u2060', '\ufeff', '\u001b']) expect(errorsOf({ title: `ok${c}evil` })).toEqual([msg]);
     expect(edit(/^title: .*$/m, 'title: 42').errors).toEqual([msg]);
   });
   test('a title that looks like YAML is quoted and round-trips', () => {
     const r = file({ title: 'a: b # c' });
     expect(r.errors).toEqual([]);
     expect(r.decision?.title).toBe('a: b # c');
+  });
+  test('the body refuses control and invisible format characters, by field and without echoing them', () => {
+    for (const c of ['\u001b[8m', '\u0007', '\u009b', '\u202e', '\u202a', '\u2069', '\u200b', '\u200f', '\u2060', '\ufeff']) {
+      expect(errorsOf({ body: `**Rule:** a${c}b` })).toEqual([`${REL}: body must not hold control or invisible format characters`]);
+    }
+    expect(errorsOf({ body: '**Rule:** tabs\tand\nnew lines are fine' })).toEqual([]);
   });
   test('status is one of three', () => expect(errorsOf({ status: 'draft' })).toEqual([`${REL}: status must be active, superseded or retired`]));
   test('superseded_by is required with superseded and forbidden otherwise', () => {
@@ -134,10 +171,16 @@ describe('parseDecision', () => {
 
 describe('globProblem', () => {
   test('ordinary globs pass', () => {
-    for (const g of ['src/env/**', 'src/config.ts', '.github/*.yml', 'src/**/*.{ts,tsx}', 'docs/a b.md']) expect(globProblem(g)).toBeNull();
+    for (const g of ['src/env/**', 'src/config.ts', '.github/*.yml', 'src/**/*.ts', 'src/**/*.{ts,tsx}', 'docs/a b.md', '**/*.ts']) expect(globProblem(g)).toBeNull();
   });
   test('forbidden forms', () => {
     for (const g of ['/a', './a', 'a/../b', 'a\\b', '*', '**', '**/*', '**/**', 'C:/x', 'c:x', 'a\u0000b', 'a\u009bb', '', 'x'.repeat(201)]) expect(globProblem(g)).not.toBeNull();
+  });
+  test('brace, extglob and negation forms that cover the repo are refused', () => {
+    for (const g of ['{**,x}', '{,**}', '**/{*,}', '**/*{,}', '{*,*/**}', '*{,/**}', '@(**)', '?(**)', '**/!(x)', '!src/x']) expect(globProblem(g), g).not.toBeNull();
+  });
+  test('invisible format characters are refused', () => {
+    for (const g of ['src/\u200b**', 'src/\u202e**', 'src/\u2066a', 'src/\ufeffa', 'src/\u2060a']) expect(globProblem(g)).toBe('must not hold control or invisible format characters');
   });
 });
 
@@ -147,6 +190,9 @@ describe('slugId', () => {
     const title = 'abcdefghij'.repeat(6);
     const id = slugId(title, '2026-11-03', () => false);
     expect(id).toBe(`2026-11-03-${title.slice(0, 40)}`);
+  });
+  test('a dash left at the cut is trimmed', () => {
+    expect(slugId('a'.repeat(39) + ' bcd', '2026-11-03', () => false)).toBe(`2026-11-03-${'a'.repeat(39)}`);
   });
   test('a taken id gets -2, then -3', () => {
     expect(slugId('Validate env with Zod!', '2026-11-03', (id) => id === ID)).toBe(`${ID}-2`);

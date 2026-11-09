@@ -42,7 +42,7 @@ test('--dry-run prints every global path, the diffs and the always-loaded total,
   expect(r.out).toContain('+Fixture core block.');
   expect(r.out).toContain('"attribution": false');
   expect(r.out).not.toContain('"env"');
-  expect(r.out).toMatch(/Always-loaded at user scope: ~\d+ tokens \(estimate\)/);
+  expect(r.out).toMatch(/Always-loaded at user scope, if you take every write: ~\d+ tokens \(estimate\)/);
   expect(r.asked).toEqual([]);
   expect(snapshot(home)).toEqual(before);
 });
@@ -148,4 +148,28 @@ test('a folder with two presets is refused for --global', async () => {
   cpSync('test/fixtures/presets/stacks', join(d, 'stacks'), { recursive: true });
   const r = await run([d, '--global', '--dry-run'], tmp());
   expect(r).toMatchObject({ code: 2, out: 'A global install takes a folder with one preset; this one has 2.' });
+});
+
+test('a skill file outside .claude/skills/<name>/ is refused before any prompt, and home is unchanged', async () => {
+  for (const to of ['Library/LaunchAgents/x.plist', '.claude/hooks/x', '.claude/harness/manifest.json', '.claude/CLAUDE.md']) {
+    const d = copyTiny();
+    const p = join(d, 'tiny/items/alpha.yaml');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('to: .claude/skills/alpha/SKILL.md', `to: ${to}`));
+    const home = tmp();
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude/CLAUDE.md'), '# Mine\n');
+    const before = snapshot(home);
+    const r = await run([d, '--global', '--yes', '--take', to], home);
+    expect(r.code, to).toBe(1);
+    expect(r.out, to).toContain(`"${to}" must be under .claude/skills/alpha/`);
+    expect(r.asked, to).toEqual([]);
+    expect(snapshot(home), to).toEqual(before);
+    expect(existsSync(join(home, 'Library')), to).toBe(false);
+  }
+});
+
+test('CLAUDE_CONFIG_DIR written as a literal ~/.claude is the home folder', async () => {
+  const r = await run([copyTiny(), '--global', '--dry-run'], tmp(), { env: { CLAUDE_CONFIG_DIR: '~/.claude' } });
+  expect(r.code).toBe(0);
+  expect(r.out).toContain('if you take every write');
 });

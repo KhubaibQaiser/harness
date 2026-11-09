@@ -77,7 +77,7 @@ export async function presetInstall(args: string[], cli: PresetEnv): Promise<num
     const home = cli.home ?? homedir();
     const ccd = cli.env.CLAUDE_CONFIG_DIR;
     // ponytail: refused rather than followed; write to CLAUDE_CONFIG_DIR when someone asks for it.
-    if (ccd && resolve(ccd) !== resolve(home, '.claude')) return out(`CLAUDE_CONFIG_DIR is set to ${esc(ccd)}, so Claude Code would not read ~/.claude. Unset it, or install the preset at repo level.`), 1;
+    if (ccd && resolve(home, ccd.replace(/^~(?=[\\/]|$)/, home)) !== resolve(home, '.claude')) return out(`CLAUDE_CONFIG_DIR is set to ${esc(ccd)}, so Claude Code would not read ~/.claude. Unset it, or install the preset at repo level.`), 1;
     if (existsSync(join(home, GLOBAL_STATE.lock))) return out(GLOBAL_LOCK_RECOVERY), 1;
     // ponytail: one global preset at a time; a second one needs per-preset manifests.
     if (existsSync(join(home, GLOBAL_STATE.manifest))) {
@@ -144,7 +144,7 @@ async function globalInstall(dir: string, ids: string[], cli: PresetEnv, o: { dr
   const tokens = presetContext(l, [l.preset.core, ...l.preset.skills]).reduce((n, e) => n + (e.tokens ?? 0), 0);
   out(['Global writes (each needs its own yes):', ...changes.map((c) => `  ~/${c.rel}`), '',
     ...changes.map((c) => unifiedDiff(c.kind === 'update' ? c.before : '', c.kind === 'update' ? c.after : c.kind === 'create' ? c.content : '', `~/${c.rel}`).trimEnd()),
-    `Always-loaded at user scope: ~${fmt(tokens)} tokens (estimate), against the budget of ${fmt(DEFAULT_CONTEXT_BUDGET)}.`,
+    `Always-loaded at user scope, if you take every write: ~${fmt(tokens)} tokens (estimate), against the budget of ${fmt(DEFAULT_CONTEXT_BUDGET)}.`,
     'Git checks stay per repo: they need the hooks /harness:init installs.'].join('\n').split('\n').map(safe).join('\n'));
   if (o.dryRun) return 0;
   const chosen: Change[] = [];

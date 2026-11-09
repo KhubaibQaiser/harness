@@ -9,9 +9,9 @@ export type CompactItem = Pick<CatalogItem, 'id' | 'kind' | 'applies_when' | 'wh
 
 const readYaml = (p: string): unknown => parse(readFileSync(p, 'utf8'));
 
-/** File-level checks live here; per-field checks are validateItem's. A missing items/ is an empty catalog. */
 export type LoadedCatalog = ReturnType<typeof loadCatalog>;
 
+/** File-level checks live here; per-field checks are validateItem's. A missing items/ is an empty catalog. */
 export function loadCatalog(dir = packageDir('catalog')): { catalog: Catalog; excluded: { id: string; reason: string }[]; errors: string[] } {
   const errors: string[] = [];
   const items: CatalogItem[] = [];

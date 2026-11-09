@@ -370,3 +370,19 @@ test.skipIf(process.platform === 'win32').each(['.gitignore'])('a dry run with %
   expect(r.code, r.out).toBe(1);
   expect(r.out).toContain(`refusing symlink: ${rel}`);
 });
+
+test('init with a preset whose skill writes outside .claude/skills/<name>/ writes nothing', async () => {
+  for (const to of ['.git/hooks/pre-commit', '.claude/settings.json']) {
+    const root = repo();
+    const p = join(root, '.harness/presets/stacks/items/frontend-react.yaml');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('to: .claude/skills/frontend-react/SKILL.md', `to: ${to}`));
+    const before = hashes(root);
+    const r = await run(root, aiArgs(CHOSEN));
+    expect(r.code, to).not.toBe(0);
+    expect(r.out, to).toContain('must be under .claude/skills/frontend-react/');
+    expect(hashes(root), to).toEqual(before);
+    expect(existsSync(join(root, '.harness/config.yaml')), to).toBe(false);
+    expect(existsSync(join(root, '.git/hooks/pre-commit')), to).toBe(false);
+    expect(existsSync(join(root, '.claude/skills')), to).toBe(false);
+  }
+});

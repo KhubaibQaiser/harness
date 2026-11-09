@@ -53,7 +53,7 @@ export function applyChanges(
   fs: FsLike = nodeFs,
   /** `manifest`: write this instead of the computed one, as the transaction's last step (rolled back with the files). */
   /** `manifestBefore`: the manifest text the plan was built from (`rawOf`); the apply stops if the disk no longer holds it. */
-  opts: { writeManifest?: boolean; manifest?: Manifest; tddOff?: string[]; manifestBefore?: string; /** Where the manifest, backups and lock live (default: the repo's `.harness`). */ state?: StatePaths } = {},
+  opts: { writeManifest?: boolean; manifest?: Manifest; tddOff?: string[]; manifestBefore?: string; /** Where the manifest, backups and lock live (default: the repo's `.harness`). */ state?: StatePaths; /** Recorded as the manifest's `dirs`. */ dirs?: string[] } = {},
 ): Manifest {
   const sp = opts.state ?? REPO_STATE;
   const LOCK = sp.lock;
@@ -102,6 +102,7 @@ export function applyChanges(
     version,
     createdAt,
     ...(opts.tddOff?.length ? { tddOff: opts.tddOff } : {}),
+    ...(opts.dirs?.length ? { dirs: opts.dirs } : {}),
     files: changes.map((c) => ({
       rel: c.rel,
       kind: c.kind,

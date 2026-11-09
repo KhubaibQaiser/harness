@@ -91,6 +91,11 @@ const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string
   eval: { kind: 'deny', allowed: (a) => a.includes('--help'), why: (run) => `Only a person can run paid evals: run ${run('eval')} in your own terminal.` },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
+// The shell can turn such a word into any subcommand or flag, so no preview test passes it; `next` is the separator after
+// the segment (the split eats `$(`, a backtick and the `(` of `<(`/`>(`, so `context $(echo apply)` reaches here as `context`).
+const EXPANDS = /[$`{}*?[\]]|^~/;
+const passes = (name: string, args: string[], next?: string): boolean =>
+  !/^(\$\(|`|\()$/.test(next ?? '') && !args.some((t) => EXPANDS.test(t)) && PERSON_ONLY[name].allowed(args);
 const ANY_WHY = 'Only a person can change or remove the harness gates: run the harness command in your own terminal.';
 type Hit = { kind: 'deny' | 'ask'; reason: string };
 export type Where = { root: string; env: NodeJS.ProcessEnv };
@@ -306,9 +311,9 @@ function personOnlyVisit(w: Where): Visit<Hit> {
   const judge = (toks: string[], k: number, next: string | undefined): Hit | null => {
     const rest = toks.slice(k + 1);
     if (rest[0]?.startsWith('-')) { // no global flags in M1, so flag values cannot be told apart from subcommands
-      for (const [name, rule] of Object.entries(PERSON_ONLY)) {
+      for (const name of Object.keys(PERSON_ONLY)) {
         const t = rest.indexOf(name);
-        if (t >= 0 && !rule.allowed(rest.slice(t + 1))) return hit(name, toks[k]);
+        if (t >= 0 && !passes(name, rest.slice(t + 1), next)) return hit(name, toks[k]);
       }
     }
     const s = rest.findIndex((t) => !t.startsWith('-'));
@@ -317,14 +322,14 @@ function personOnlyVisit(w: Where): Visit<Hit> {
     if (/[$`]/.test(rest[s])) return /^\$[@*0-9]$/.test(rest[s]) ? { kind: 'ask', reason: BUILT } : hidden; // "$@", $*, $1: the caller's words
     // A brace, glob or character class the shell expands into the subcommand: `tdd off` shaped is denied, the rest asks.
     if (/[{*?[]/.test(rest[s])) return rest[s + 1] === 'off' ? hit('tdd', toks[k]) : { kind: 'ask', reason: BUILT };
-    if (isPersonOnly(rest[s]) && !PERSON_ONLY[rest[s]].allowed(rest.slice(s + 1))) return hit(rest[s], toks[k]);
+    if (isPersonOnly(rest[s]) && !passes(rest[s], rest.slice(s + 1), next)) return hit(rest[s], toks[k]);
     return null;
   };
   return ({ toks, k, prev, next }) => {
     // $X tdd …, `…` tdd … or $(…) tdd …: the command name is hidden in a variable or substitution.
     // Whatever the hidden command is, the allowed arguments stay allowed.
     const at = toks[k]?.startsWith('$') && !HARNESS_CMD.test(toks[k]) ? k + 1 : k === 0 && /^[`)]$/.test(prev ?? '') ? 0 : -1;
-    if (at >= 0 && isPersonOnly(toks[at]) && !PERSON_ONLY[toks[at]].allowed(toks.slice(at + 1))) return hidden;
+    if (at >= 0 && isPersonOnly(toks[at]) && !passes(toks[at], toks.slice(at + 1), next)) return hidden;
     // A glob in the CLI path (dist/cli.mj?) is expanded by the shell: judge it as the harness CLI.
     // `function harness { … }` defines a harness that runs something else, like the `harness() { … }` form (caught at the `(` above).
     if (toks[k] === 'function' && toks[k + 1] && HARNESS_CMD.test(toks[k + 1])) return hidden;
@@ -336,7 +341,7 @@ function personOnlyVisit(w: Where): Visit<Hit> {
 // redirections, odd whitespace). Text that names harness or its CLI and a word that changes things asks, unless the parser
 // saw every such segment as a plain harness command and the text is clean.
 const CLI_RE = /cli\.[m*?[]|c[*?]\S*\.m/i;
-const CHANGE = /(?<![\w-])(init|update|add|remove|sync|uninstall|push|pr)(?![\w-])/i;
+const CHANGE = /(?<![\w-])(init|update|add|remove|sync|uninstall|push|pr|apply)(?![\w-])/i;
 const TDD_OFF = /(?<![\w-])tdd\W+off(?![\w-])/i;
 const NORM = (t: string): string => t.replace(/\\\r?\n/g, '').replace(/['"\\]/g, '');
 // `harness` counts as a command word (or a bare word), never as part of a directory in a path: `cd /x/harness && git push` is a push.
@@ -381,7 +386,7 @@ function backstop(raw: string): Hit | null {
   // A function defined anywhere can forward the masked word (`function harness { command harness "$2"; }`): mask nothing then.
   const t = (s: string) => (FUNC_DEF.test(s) ? s : s.replace(VET_TARGET, '$1T'));
   if (!(CHANGE.test(t(raw)) || CHANGE.test(t(norm))) || previewOnly(raw)) return null;
-  return { kind: 'ask', reason: 'the command names harness and a word that changes it (init, update, add, remove, sync, uninstall, push, pr), and the guard cannot tell that it is only a preview' };
+  return { kind: 'ask', reason: 'the command names harness and a word that changes it (init, update, add, remove, sync, uninstall, push, pr, apply), and the guard cannot tell that it is only a preview' };
 }
 const unquote = (t: string) => t.replace(/^['"]|['"]$/g, '');
 

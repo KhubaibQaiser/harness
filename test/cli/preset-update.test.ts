@@ -198,3 +198,16 @@ test('a legacy results_dir is migrated in the same update that drops a gone stac
   expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).not.toContain('state/test-results');
   expect(cfg(root).preset.items).not.toContain('frontend-react-native');
 });
+
+test('a preset folder whose skill now writes outside its own folder is reported invalid, and update changes nothing', async () => {
+  const root = await installed();
+  const p = join(root, '.harness/presets/stacks/items/frontend-react.yaml');
+  writeFileSync(p, readFileSync(p, 'utf8').replace('to: .claude/skills/frontend-react/SKILL.md', 'to: .git/hooks/pre-commit'));
+  commit(root, 'bad destination');
+  const before = hashes(root);
+  const r = await up(root, ['--yes']);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toMatch(/Preset "stacks" is invalid \(.*must be under \.claude\/skills\/frontend-react\/.*\); its files are kept as they are\./);
+  expect(hashes(root)).toEqual(before);
+  expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(false);
+});

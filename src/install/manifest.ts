@@ -12,6 +12,8 @@ export interface Manifest {
   createdAt: string;
   /** Package dirs init left out of tdd.paths because their test config could not be edited safely. */
   tddOff?: string[];
+  /** The folders a global install created, so uninstall --global removes only those. */
+  dirs?: string[];
   files: {
     rel: string; kind: 'create' | 'update' | 'delete'; hash: string; backup?: string; blocks?: string[];
     /** Set when the repo's Prettier formatted harness's edit: the line hunks that undo it (blocks no longer match). */

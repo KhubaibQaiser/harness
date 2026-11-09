@@ -94,10 +94,21 @@ export function loadPreset(yamlPath: string): { ok: true; loaded: LoadedPreset }
     if (!r.ok) errors.push(...r.errors);
     else if (r.item.id !== id) errors.push(`${rel}: id must be ${id}`);
     else if (r.item.kind !== (what === 'core' ? 'rule' : 'own-skill')) errors.push(`${rel}: kind must be ${what === 'core' ? 'rule' : 'own-skill'}`);
-    else items.push(r.item);
+    else {
+      // Every install path loads through here, so this is the one rule keeping preset writes inside the item's own skill folder.
+      const bad = (r.item.source.type === 'own' ? r.item.source.files ?? [] : []).map((f) => f.to).filter((to) => !inSkillDir(id, to));
+      if (bad.length) errors.push(...bad.map((to) => `${rel}: source.files to "${esc(to)}" must be under .claude/skills/${id}/`));
+      else items.push(r.item);
+    }
   }
   return errors.length ? { ok: false, errors } : { ok: true, loaded: { preset, base, yamlPath, items } };
 }
+
+/** `to` is `.claude/skills/<id>/<rest>`, `<rest>` relative with no backslash and no empty part; a part may not end in `.` or a space or start with a space (Windows drops those, so `x.` or `.. ` could land elsewhere). */
+const inSkillDir = (id: string, to: string): boolean => {
+  const pre = `.claude/skills/${id}/`;
+  return to.startsWith(pre) && !to.includes('\\') && to.slice(pre.length).split('/').every((s) => s !== '' && !/[. ]$/.test(s) && !s.startsWith(' '));
+};
 
 /** The preset folder and its items/ and templates/ must be real directories, not links. */
 function dirErrors(base: string, subs: string[]): string[] {

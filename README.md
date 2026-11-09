@@ -71,6 +71,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `sync` (`/harness:sync`) | Fixes drift between `config.yaml`, the manifest and the files. |
 | `status` | Shows each gate as on or off, and why. |
 | `doctor` | Checks the install and prints a fix for each problem. |
+| `/harness:preset` | Builds your own named preset through an interview, checks it, then installs it for this repo or globally. Global writes each get their own yes. |
 | `/harness:context-optimize` | Measures what loads into context, proposes trims, and applies harness's own after a yes. Your own files change only after you approve each diff. |
 | `context [--json] [--offline]` | Shows what loads into context and what it costs against the budget. Writes nothing. |
 | `context apply <n>[,<n>…]` | Applies harness's own recommendations, such as a skill by name only. `uninstall` undoes it. |
@@ -80,7 +81,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `eval [--kind skills\|rules] [--runs N] [--max-cost-usd X]` | Paid checks that your skills and rules change what the agent does. Costs money and asks every run. |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. |
 | `vet <target>` | Scans a plugin or skill before you install it. Needs `gh`. Installs nothing. |
-| `uninstall [--dry-run]` | Removes what harness added and restores your files. |
+| `uninstall [--dry-run]` | Removes what harness added and restores your files. `--global` does the same for a preset installed under `~/.claude`. |
 
 - **Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted.
 - The report quotes your sessions, so don't share it. It sends nothing anywhere.

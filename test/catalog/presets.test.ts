@@ -75,7 +75,7 @@ test('preselect checks', () => {
 test('skill item and template checks', () => {
   one({ 'x.yaml': presetYaml({ skills: '[x, y]' }) }, 'skills "y": no item at x/items/y.yaml');
   one({ 'x/templates/skills/x/SKILL.md': null }, 'x: template skills/x/SKILL.md not found');
-  one({ 'x/items/ponytail.yaml': itemYaml('ponytail', 'own-skill', skillSrc('x')), 'x.yaml': presetYaml({ skills: '[x, ponytail]' }) }, 'item "ponytail" clashes with a catalog id');
+  one({ 'x/items/ponytail.yaml': itemYaml('ponytail', 'own-skill', '{type: own, files: [{from: skills/x/SKILL.md, to: .claude/skills/ponytail/SKILL.md}]}'), 'x.yaml': presetYaml({ skills: '[x, ponytail]' }) }, 'item "ponytail" clashes with a catalog id');
 });
 test('skill body checks', () => {
   one({ 'x/templates/skills/x/SKILL.md': skillMd('- Use X.\n', 'name: x') }, 'skills/x/SKILL.md: frontmatter needs name and description');
@@ -179,7 +179,7 @@ test('prototype names are not telemetry vars, labels are escaped, missing file i
   one({ 'x.yaml': presetYaml({ preselect: '[ponytail]', tel: '[constructor]' }) }, 'telemetry_off "constructor" is not in preselect');
   const r = loadPreset(join(mk(), 'nope.yaml'));
   expect(r.ok ? [] : r.errors).toEqual([expect.stringContaining('cannot read')]);
-  one({ 'x/items/x.yaml': itemYaml('x', 'own-skill', '{type: own, files: [{from: "skills/a\\u001bb/SKILL.md", to: .claude/s.md}]}') }, 'template skills/a\\u001bb/SKILL.md not found');
+  one({ 'x/items/x.yaml': itemYaml('x', 'own-skill', '{type: own, files: [{from: "skills/a\\u001bb/SKILL.md", to: .claude/skills/x/SKILL.md}]}') }, 'template skills/a\\u001bb/SKILL.md not found');
 });
 test('listPresets skips an id that differs from its file name', () => {
   stubShipped({ 'a.yaml': 'id: other\n', 'b.yaml': 'id: b\n' });

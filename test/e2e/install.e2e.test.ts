@@ -70,6 +70,10 @@ describe('fixture repos', () => {
     expect(i.out).toContain('Teammates need nothing else');
     expect(i.code).toBe(0);
     expect(existsSync(join(root, DISPATCH))).toBe(true);
+    const ss = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).hooks.SessionStart;
+    expect(ss).toHaveLength(1);
+    expect(ss[0].matcher).toBe('compact');
+    expect(ss[0].hooks[0]).toMatchObject({ command: 'node', args: ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'] });
 
     // The session's first hook fixes its start time; results must be written after it.
     expect(hook(root, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })).toBeNull();
@@ -113,6 +117,7 @@ describe('fixture repos', () => {
     rmSync(join(root, 'coverage'), { recursive: true, force: true }); // the test's own artifact, not the harness's
     const u = cli(root, 'uninstall', '--yes');
     expect(u.code).toBe(0);
+    expect(existsSync(join(root, '.claude/settings.json')) ? readFileSync(join(root, '.claude/settings.json'), 'utf8') : '').not.toContain('SessionStart');
     expect(walk(root)).toEqual(before);
     expect(spawnSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).stdout).toBe('');
   });

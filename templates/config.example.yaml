@@ -12,6 +12,7 @@ checks:
   tdd: false
   stop: true
   prSize: true
+  decisions: true
 
 # Claude Code's sandbox: required for unattended runs (unattended), on for everyone (always), or not used (off).
 sandbox: unattended
@@ -84,6 +85,12 @@ pr_size:
     - "**/.!(npm|harness)ignore"
     - "**/__snapshots__/**"
     - "**/*.snap"
+
+# Team decisions in docs/decisions/ (needs checks.decisions). Each loads as a rule when its paths are touched.
+decisions:
+  max_lines: 20
+  expiry_days: 90
+  nudge: true
 
 # Behaviour when no human is watching.
 unattended:

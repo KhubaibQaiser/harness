@@ -3,6 +3,7 @@ kind: rule
 title: AGENTS.md block
 source:
   type: own
+  checks: [decisions]
   merge: [agents-md]
 license: Apache-2.0
 min_claude_code: 2.1.314

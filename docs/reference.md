@@ -414,6 +414,7 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `checks.tdd` | `false` | Red-first TDD, test-lock and tamper check. |
 | `checks.stop` | `true` | Stop gate. |
 | `checks.prSize` | `true` | PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`. It also turns the size warnings, the pause ask, the raise and the hand-run dispatcher deny on or off. |
+| `checks.decisions` | `true` | Team decisions: protect covers generated rules and decision files, Stop and doctor report stale ones. |
 | `sandbox` | `"unattended"` | `unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only. Value must be one of unattended, always, off. |
 | `catalog_version` | `0` | Version of the catalog the recommendations came from. `0` means no catalog. |
 | `project.type` | `""` | What kind of project this is. Empty until the interview sets it. Value must be one of web, landing, mobile, api, infra, library, other. |
@@ -444,6 +445,9 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `pr_size.max_lines` | `400` | Changed lines above which opening or growing a PR asks you first (denied when unattended). Value must be an integer from 1 to 100000. |
 | `pr_size.max_files` | `20` | Changed files above which opening or growing a PR asks you first (denied when unattended). Value must be an integer from 1 to 10000. |
 | `pr_size.exclude` | `["**/pnpm-lock.yaml","**/package-lock.json","**/npm-shrinkwrap.json","**/yarn.lock","**/bun.lock","**/bun.lockb","**/Cargo.lock","**/poetry.lock","**/uv.lock","**/Pipfile.lock","**/Gemfile.lock","**/composer.lock","**/go.sum","**/.!(npm\|harness)ignore","**/__snapshots__/**","**/*.snap"]` | Globs not counted toward a PR's size: lockfiles, `.*ignore` files except `.npmignore` and `.harnessignore`, and snapshots. A list you set replaces the whole default, so keep the defaults you want. |
+| `decisions.max_lines` | `20` | Content lines of one generated rule. Value must be an integer from 5 to 200. |
+| `decisions.expiry_days` | `90` | A decision not confirmed for this long stops loading at the next sync. Value must be an integer from 7 to 365. |
+| `decisions.nudge` | `true` | Stop suggests saving a decision when the session shows signals. |
 | `unattended.multi_file_gate` | `"block"` | What the multi-file gate does when no human is watching. Value must be one of block, allow-log, off. |
 | `unattended.require_reason` | `false` | With `allow-log`, extra files need a one-line reason. No effect while the gate is `block`. |
 | `stop.steps` | `["format:check","lint","typecheck","test"]` | Commands that must pass before the agent may stop. Value must be a list of script names or { name, run } objects. |

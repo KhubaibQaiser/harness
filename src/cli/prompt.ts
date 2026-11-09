@@ -11,9 +11,11 @@ export interface Prompt {
 export function readlinePrompt(input: NodeJS.ReadableStream = process.stdin, output: NodeJS.WritableStream = process.stdout): Prompt & { close(): void } {
   const rl = createInterface({ input, output });
   const closed = new Promise<string>((done) => rl.once('close', () => done('')));
+  const refuse = closed.then((): never => { throw new Error('input closed before an answer'); });
+  refuse.catch(() => {}); // only an edit waiting at close should see the rejection
   return {
     confirm: async (q) => /^y(es)?$/i.test((await Promise.race([rl.question(`${q} `).catch(() => ''), closed])).trim()),
-    edit: async (label, value) => (await rl.question(`${label} [${value}] (Enter keeps it): `)).trim() || value,
+    edit: async (label, value) => (await Promise.race([rl.question(`${label} [${value}] (Enter keeps it): `), refuse])).trim() || value, // a pending question never settles on EOF
     close: () => rl.close(),
   };
 }

@@ -21,6 +21,7 @@ import { NO_TTY } from './prompt.js';
 const USAGE = 'Usage: harness context apply <n>[,<n>…] [--dry-run|--yes]';
 const SETTINGS = '.claude/settings.json';
 const NUMBERS = /^[1-9]\d*(,[1-9]\d*)*$/;
+const CANCELLED = -1;
 
 /** The recommendations, always from the offline estimate, so the report and apply number them the same. */
 export function contextRecs(root: string, config: HarnessConfig, dirs: { templates: string; plugin: string }, catalog?: Catalog): Rec[] {
@@ -56,7 +57,7 @@ export async function contextApply(args: string[], cli: ItemsEnv): Promise<numbe
   const names = recs.filter((r) => r.kind === 'name-only').map((r) => r.target);
   if (names.length) {
     const code = await applyNameOnly(root, m, names, { yes, dryRun, args }, cli);
-    if (code !== 0) return code;
+    if (code !== 0) return code === CANCELLED ? 0 : code; // a No to the prompt is a No to the batch: no remove runs
   }
   for (const r of recs.filter((x) => x.kind === 'remove')) {
     const code = await items('remove', [r.target, ...flags], cli);
@@ -65,7 +66,7 @@ export async function contextApply(args: string[], cli: ItemsEnv): Promise<numbe
   return 0;
 }
 
-/** One `.claude/settings.json` change for every name, with one plan, one diff and one prompt. */
+/** One `.claude/settings.json` change for every name, with one plan, one diff and one prompt; CANCELLED on a No. */
 async function applyNameOnly(root: string, m: Manifest, names: string[], f: { yes: boolean; dryRun: boolean; args: string[] }, cli: ItemsEnv): Promise<number> {
   const { out } = cli;
   const abs = join(root, SETTINGS);
@@ -87,7 +88,7 @@ async function applyNameOnly(root: string, m: Manifest, names: string[], f: { ye
   out(`  ${change.kind} ${SETTINGS}`);
   out(unifiedDiff(before ?? '', merged.after, SETTINGS).trimEnd());
   if (f.dryRun) return out('Dry run: nothing was written.'), 0;
-  if (!f.yes && !(await cli.prompt.confirm('Apply these changes? [y/N]'))) return out('Cancelled. Nothing was written.'), 0;
+  if (!f.yes && !(await cli.prompt.confirm('Apply these changes? [y/N]'))) return out('Cancelled. Nothing was written.'), CANCELLED;
 
   const at = new Date();
   const files = mergeManifestFiles(m, [change], `.harness/backup/${at.toISOString().replace(/:/g, '-')}`);

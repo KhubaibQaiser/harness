@@ -171,6 +171,12 @@ test('apply remove runs harness remove with the same flags', async () => {
   expect(r0.code, r0.out).toBe(0);
   expect(r0.out).toMatch(/^\+.*"pr-ship": "name-only"/m);
   expect(items).toHaveBeenLastCalledWith('remove', ['agent-sdk-dev', '--dry-run'], expect.objectContaining({ root }));
+  // A No (or EOF) at the name-only prompt is a No to the batch: no remove runs.
+  vi.mocked(items).mockClear();
+  const no1 = await apply(root, [`${rm.n},${named.n}`], { catalog: cat, prompt: no });
+  expect(no1.code, no1.out).toBe(0);
+  expect(no1.out).toContain('Cancelled. Nothing was written.');
+  expect(items).not.toHaveBeenCalled();
   await apply(root, [String(rm.n), '--yes'], { catalog: cat });
   expect(items).toHaveBeenLastCalledWith('remove', ['agent-sdk-dev', '--yes'], expect.objectContaining({ root }));
 });

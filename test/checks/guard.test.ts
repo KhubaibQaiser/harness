@@ -843,3 +843,17 @@ test('a shell eval next to a harness word stays denied; harness eval keeps its o
     expect(reason(d), c).toContain('Only a person can run paid evals');
   }
 });
+
+test('a person-only preview never passes when an argument holds a shell expansion', async () => {
+  all(['harness context $(echo apply) 1 --yes', 'A=apply; harness context $A 1 --yes', 'harness context {apply,} 1 --yes', 'harness context ap?ly 1 --yes',
+    'harness context `echo apply` 1 --yes', 'harness context ~/apply 1 --yes', 'harness git <(echo push)', 'harness preset install $D --dry-run', 'harness preset install d* --dry-run', 'harness report $(echo --help)'], 'ask');
+  all(['harness eval $H', 'harness tdd on$X'], 'deny');
+  all(['harness context', 'harness context --json', 'harness context apply 1 --dry-run', 'harness preset install d --dry-run', 'harness report --help'], 'allow');
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-expand-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  for (const command of ['harness context $(echo apply) 1 --yes', 'harness context {apply,} 1 --yes', 'harness preset install $D --dry-run']) {
+    const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command } });
+    expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision, command).toBe('deny');
+  }
+});

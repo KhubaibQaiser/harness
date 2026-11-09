@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+import { realIO } from '../../src/budget/imports.js';
 import { context } from '../../src/cli/context.js';
 import { makeRepo } from '../install/helpers.js';
 
@@ -55,7 +56,7 @@ test('a 429 falls back to estimates for every row, never mixed', async () => {
   const f = fakeFetch(() => new Response('{}', { status: 429 }));
   const r = await go([], { env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn });
   const lines = r.out.split('\n');
-  expect(lines[1]).toBe("Couldn't use the token-counting API (429); counts are best estimates.");
+  expect(lines[lines.findIndex((l) => l.startsWith('Context budget:')) + 1]).toBe("Couldn't use the token-counting API (429); counts are best estimates.");
   expect(r.out).not.toContain('Counted by');
   expect(r.out).toMatch(/^ {2}repo {5}CLAUDE\.md +~12$/m);
   expect(JSON.parse((await go(['--json'], { env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn })).out).fallback).toBe('429');
@@ -119,4 +120,48 @@ test('a repo that is not a git repo still reports, with a note', async () => {
   const r = await go([], { root });
   expect(r.code).toBe(0);
   expect(r.out).toContain('Note: not a git repository or git not found: nested CLAUDE.md files not listed');
+});
+
+// I4, through the CLI with the production skip: the fake value is not a row, not in --json, and never sent.
+test('a dotenv file a CLAUDE.md imports is never read, shown or sent', async () => {
+  const name = '.' + 'env';
+  const FAKE = 'API_TOKEN=fake-value-not-a-secret';
+  const root = makeRepo({ 'CLAUDE.md': `memory\n@${name}\n@${name}.local\n`, [name]: FAKE, [`${name}.local`]: FAKE, [`.claude/rules/${name}.md`]: FAKE });
+  const f = fakeFetch(ok);
+  const text = await go([], { root, env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn });
+  const json = await go(['--json'], { root, env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn });
+  expect(f.calls.length).toBeGreaterThan(0);
+  for (const c of f.calls) expect(c.body as string).not.toContain(FAKE);
+  for (const r of [text, json]) expect(r.out).not.toContain(FAKE);
+  expect(text.out).not.toMatch(new RegExp(`^ {2}repo +[^ ]*\\${name}`, 'm'));
+  const j = JSON.parse(json.out);
+  expect(j.sources.filter((s: { path?: string }) => s.path?.includes(name))).toEqual([]);
+});
+
+// M2: a config that doesn't parse can't say `count: offline`, so it fails closed: no API, and the warning comes first.
+test('an invalid config never uses the API and warns before the report', async () => {
+  const f = fakeFetch(ok);
+  const r = await go([], { root: repo('context:\n  count: offline\n  bad: [\n'), env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn });
+  expect(f.calls).toHaveLength(0);
+  expect(r.out.split('\n')[0]).toMatch(/^warn config\.yaml is invalid YAML/);
+  expect(r.out).toContain('Best estimate (characters ÷ 4).');
+  expect(r.out).not.toContain('set ANTHROPIC_API_KEY');
+});
+
+// M4: exit codes stay 0/1/2 (spec §5), so a corrupt manifest is a note and the exit follows the budget.
+test('a corrupt manifest is a note, not exit 1; the exit follows the budget', async () => {
+  const root = makeRepo({ 'CLAUDE.md': 'x\n', '.harness/manifest.json': '{nope' });
+  const r = await go([], { root });
+  expect(r.code).toBe(0);
+  expect(r.out).toContain('Note: `.harness/manifest.json` is unreadable.');
+  expect((await go([], { root: makeRepo({ 'CLAUDE.md': 'x\n', '.harness/manifest.json': '{nope', '.harness/config.yaml': 'context:\n  budget_tokens: 1\n' }) })).code).toBe(1);
+  expect(JSON.parse((await go(['--json'], { root })).out).always.total).toBeGreaterThan(0);
+});
+
+// M7: one run measures the repo once (one git ls-files).
+test('one context run lists the repo once', async () => {
+  const spy = vi.spyOn(realIO, 'lsFiles');
+  await go([]);
+  expect(spy).toHaveBeenCalledTimes(1);
+  spy.mockRestore();
 });

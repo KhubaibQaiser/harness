@@ -43,7 +43,7 @@ items: []
 git:
   commit_trailer: ""
 
-# Always-loaded context budget. harness context measures it; init, update, add and sync ask before going over.
+# Always-loaded context budget, your repo's own files included. harness context measures it; init, update, add and sync ask before going over.
 context:
   budget_tokens: 2000
   count: auto

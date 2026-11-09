@@ -3,10 +3,10 @@
 import { dirname } from 'node:path';
 import { apiCountTokens, countKey } from '../budget/count-api.js';
 import { pluginEntry } from '../budget/measure.js';
+import { preloadedSkills, recommend } from '../budget/recommend.js';
 import { contextSet, ownerTotals, type ContextSet } from '../budget/summary.js';
 import { loadConfig } from '../core/config.js';
 import { packageDir } from '../core/package-dir.js';
-import { contextRecs } from './context-apply.js';
 import { CATALOG_ESTIMATE, ESTIMATE_NOTE, reportJson, reportText } from './context-copy.js';
 import type { CliEnv } from './index.js';
 
@@ -36,16 +36,19 @@ async function apiCounted(s: ContextSet, key: string, model: string, deps: { plu
 export async function context(args: string[], cli: CliEnv & { fetch?: typeof fetch }): Promise<number> {
   const flags = new Set(args);
   if (flags.size !== args.length || args.some((a) => !FLAGS.has(a))) return cli.out(USAGE), 2;
-  const { config, warnings } = loadConfig(cli.root);
+  const { config, warnings, errors } = loadConfig(cli.root);
+  const json = flags.has('--json');
+  if (!json) for (const w of warnings) cli.out(`warn ${w}`); // before any measurement or upload
   const templates = packageDir('templates');
   const plugin = dirname(templates);
-  let s = contextSet(cli.root, config, { templates, plugin });
-  const recs = contextRecs(cli.root, config, { templates, plugin });
+  let s = contextSet(cli.root, config, { templates, plugin }, undefined, { manifestNote: true }); // spec §5 has no exit code for a bad manifest
+  const recs = recommend(s, preloadedSkills(cli.root)); // from the offline set, as context apply numbers them
   let fallback: string | null = null;
-  const offline = flags.has('--offline') || config.context.count === 'offline';
+  // A config with errors fell back to defaults, so it can't be trusted to say `count: offline`: never upload then.
+  const offline = flags.has('--offline') || config.context.count === 'offline' || errors.length > 0;
   const key = offline ? null : countKey(cli.env, config);
   if (key) s = (await apiCounted(s, key, config.context.count_model, { plugin, fetch: cli.fetch, onFail: (r) => { fallback = r; } })) ?? s;
-  if (flags.has('--json')) cli.out(JSON.stringify(reportJson(s, recs, fallback), null, 2));
-  else for (const line of [...reportText(s, recs, fallback, !offline && !key), ...warnings.map((w) => `warn ${w}`)]) cli.out(line);
+  if (json) cli.out(JSON.stringify(reportJson(s, recs, fallback), null, 2));
+  else for (const line of reportText(s, recs, fallback, !offline && !key)) cli.out(line);
   return s.total > s.budget ? 1 : 0;
 }

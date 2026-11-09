@@ -44,6 +44,15 @@ const GOLDEN = [
   "Not measured: Claude Code's system prompt and tools, output style, MCP servers (github), and your personal context (~/.claude files, user plugins, auto memory). Run /context all in a Claude Code session to see them.",
 ];
 
+test('a label wider than the table widens the whole table, so the token column stays one column', () => {
+  const long = row('harness', 'skills harness:doctor, harness:status + agents staff-reviewer', 123);
+  const lines = reportText(example({ always: [...example().always, long] }), [], null, true);
+  const table = lines.slice(lines.indexOf('') + 1, lines.findIndex((l) => l.startsWith('  Total')) + 1);
+  expect(new Set(table.map((l) => l.length)).size).toBe(1);
+  expect(table[0].length).toBeGreaterThan(62);
+  expect(table.find((l) => l.includes('+ agents'))).toMatch(/staff-reviewer +~123$/);
+});
+
 test('golden: the §7.1 report within the budget, no recommendations section when there are none', () => {
   expect(reportText(example(), [], null, true)).toEqual(GOLDEN);
 });

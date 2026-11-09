@@ -9,6 +9,7 @@ import { readHookEnv } from '../../src/core/hook-env.js';
 import { type Check, dispatch, runHook } from '../../src/hooks/dispatch.js';
 import type { Decision, HookEvent } from '../../src/hooks/types.js';
 import { MAX_MESSAGE } from '../../src/hooks/io.js';
+import { WORK_BUDGET_WHY, WorkBudget } from '../../src/core/shell-words.js';
 
 const root = mkdtempSync(join(tmpdir(), 'h-dp-'));
 mkdirSync(join(root, '.harness'));
@@ -84,6 +85,12 @@ test('throwing check fails open unless failClosed', async () => {
   expect(decisionOf(r)).toBe('deny');
   expect(out(r).hookSpecificOutput?.permissionDecisionReason).toBe('harness check boom failed: bad');
   err.mockRestore();
+});
+test('a spent work budget denies with its own reason, even for a check that fails open (re-review 21, P1b)', async () => {
+  const spent: Check = { name: 'big', events: ['PreToolUse'], run: () => { throw new WorkBudget(WORK_BUDGET_WHY); } };
+  const r = await dispatch(pre(), [spent], {});
+  expect(decisionOf(r)).toBe('deny');
+  expect(out(r).hookSpecificOutput?.permissionDecisionReason).toBe(WORK_BUDGET_WHY);
 });
 test('non-allow decisions are logged', async () => {
   await dispatch(pre(), [denyAll], {});

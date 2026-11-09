@@ -3,10 +3,10 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
-import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
+import { cPayloads, SHELLS, stdinPrograms, withWorkBudget } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
-import { arithmeticTest, commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
 import { Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
 import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
@@ -158,13 +158,17 @@ function scriptsOf(root: string): Record<string, string> {
  * and a code body stays as command lines). `<<` counts only outside quotes; the delimiter has its quotes taken
  * out (`<<E"O"F` is EOF); `<<-` ignores leading tabs on the end line, `<<` wants the line exactly. If anything is odd (a
  * delimiter with an expansion, a body with no end line) the command is returned whole, so nothing is hidden from the parser.
+ * Round 24: bodies come out only of text whose lines outside them the canonical lexer accepts (canonicalLines), so no
+ * substitution, process substitution, group or multi-line quote can start the body later than this reader thinks.
  */
 export function withoutHeredocBodies(cmd: string): string {
   if (!cmd.includes('<<')) return cmd;
-  const lines = cmd.split('\n'), flags = wholeFlags(cmd, commandSkeleton(cmd)); // once, not once per line
+  const lines = cmd.split('\n');
+  if (!canonicalLines(lines, 0, 0)) return cmd;
+  const flags = wholeFlags(cmd, commandSkeleton(cmd)); // once, not once per line
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i], inArithmetic = arithmeticTest(line);
+    const line = lines[i];
     out.push(line);
     const ends: { word: string; dash: boolean; data: boolean }[] = [];
     let tests: ReturnType<typeof commandTests> | undefined;
@@ -174,7 +178,7 @@ export function withoutHeredocBodies(cmd: string): string {
       if (quote) { if (ch === quote) quote = ''; continue; }
       if (ch === '"' || ch === "'") quote = ch;
       else if (ch === '\\') c++;
-      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<' && !inArithmetic(c)) {
+      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<') {
         let d = c + 2;
         const dash = line[d] === '-';
         if (dash) d++;
@@ -188,13 +192,10 @@ export function withoutHeredocBodies(cmd: string): string {
           else word += x;
         }
         if (q || !/^\w+$/.test(word)) return cmd;
-        // The shell reads a substitution opened after the operator, across lines, before the body (re-review 20, C2).
-        if (!ends.length && SPANS_LINES.test(line.slice(c))) return cmd;
         ends.push({ word, dash, data: (tests ??= commandTests(new Scan(line), flags)).sink(0, c) });
         c = d - 1;
       }
     }
-    if (quote) return cmd; // a quote open past the line end: a `<<` on the lines it spans is not an operator
     for (const e of ends) {
       let found = false;
       while (++i < lines.length) {
@@ -643,38 +644,64 @@ export function buildsGuardedWords(command: string, w: Where): boolean {
 const BUILDS_WHY = 'the command builds words at run time (a variable in command position, ${!…}, ${…/…}, $\'…\', IFS=, or eval) and names harness or a protected path, so the guard cannot read what it runs';
 
 /** The text the data exemption trusts: no backslash before a newline, no whitespace but space, tab and newline, no
- *  `$'`, and every `<<` a plain `<<WORD`, `<<'WORD'` or `<<"WORD"` (`-` and blanks allowed), not after a `#` on its
- *  line, nested at most MAX_NESTING deep. Other text is decided as strictly as main decides it (round 22). */
-export const canonicalText = (c: string): boolean => !/\\\n|[^\S \t\n]|\$'/.test(c) && (!c.includes('<<') || canonicalLines(c.split('\n'), 0, Infinity, 0));
+ *  `$'`, and every line outside a heredoc body accepted by lexLine, with heredocs nested at most MAX_NESTING deep. A
+ *  body is lexed too when it holds a `<<` (a shell may read it, and its own bodies are exempt there). Other text is
+ *  decided as strictly as main decides it (round 22). Round 24: an allowlist, so nothing the lexer does not know can
+ *  move where a body starts. Text with no `<<` has no body to find, so it needs no lexing. */
+export const canonicalText = (c: string): boolean => !/\\\n|[^\S \t\n]|\$'/.test(c) && (!c.includes('<<') || canonicalLines(c.split('\n'), 0, 0));
 const MAX_NESTING = 2;
-const HEREDOC_OPS = /<<+/g, HEREDOC_WORD = /-?[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|([A-Za-z_]\w*))(?=[ \t;|&<>()]|$)/y;
-/** A `#` where the shell may start a comment, and what the guard's layout reads in a comment that the shell skips: a
- *  quote, backslash, backtick, group bracket or group-closing keyword would move its quote pairing or group count. */
-const COMMENT_START = /(?<=^|[ \t;&|()<>`])#/, COMMENT_MOVES_LAYOUT = /['"`\\(){}]|\b(?:fi|done|esac)\b/;
-/** After a heredoc operator, a substitution (or `((`) the shell reads across lines before the body. */
-export const SPANS_LINES = /`|\$[({[]|\(\(/;
-/** Lines from..to (to past the end is fine) hold only plain heredocs, each body nested under MAX_NESTING. Linear: a line
- *  is read once per level, and past MAX_NESTING levels the answer is no. */
-function canonicalLines(lines: string[], from: number, to: number, level: number): boolean {
-  for (let i = from; i < Math.min(to, lines.length); i++) {
-    const line = lines[i], hash = line.indexOf('#'), ends: { word: string; dash: boolean }[] = [];
-    const comment = line.search(COMMENT_START);
-    if (comment >= 0 && COMMENT_MOVES_LAYOUT.test(line.slice(comment))) return false; // re-review 20, C1
-    for (const m of line.matchAll(HEREDOC_OPS)) {
-      if (m[0].length === 3) continue; // a here-string
-      if (m[0].length !== 2 || (hash >= 0 && hash < m.index)) return false;
-      if (!ends.length && SPANS_LINES.test(line.slice(m.index))) return false; // re-review 20, C2
-      HEREDOC_WORD.lastIndex = m.index + 2;
+/** After a heredoc operator, a substitution, process substitution (`<(`, `>(`, zsh `=(`) or `((` the shell reads across
+ *  lines before the body. layout uses it on text that is not canonical, where main's decision is the floor anyway. */
+export const SPANS_LINES = /`|\$[({[]|\(\(|[<>=]\(/;
+const HEREDOC_WORD = /-?[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|([A-Za-z_]\w*))(?=[ \t;|&<>]|$)/y;
+/** One token of a canonical line: blanks; an operator or redirection (`&&`, `||`, `;`, `&`, `|`, `>`, `>>`, `<`, `&>`,
+ *  `&>>`, `>&`, and the here-string `<<<`; a digit before one is a word); a quoted string with no opener inside (`\"` escapes in "…", `$NAME` and
+ *  `$1` allowed); an escape; `$NAME` or `$1`; or plain word characters. `<<` and `<<-` are read before this. Anything
+ *  else (`$(`, `${`, `$[`, `$'`, `$"`, a backtick, `(`, `)`, `{`, `}`, `#`) matches nothing, so the line is refused. */
+const LEX = /([ \t]+)|(&&|\|\||&>>?|>>|>&|[;&|<>])|('[^']*'|"(?:[^"\\$`]|\\.|\$(?=\w))*"|\\.|\$(?:[A-Za-z_]\w*|\d))|([^\s'"\\$`;&|<>(){}#]+)/y;
+/** Plain words that open a compound command (bash and zsh), and `[[`. */
+const OPENS = /^(?:if|case|for|select|while|until|function|coproc|repeat|foreach|\[\[)$/;
+/** The heredocs one line outside a body opens, or null when the line is not in the canonical grammar. It must end
+ *  neutral: an open quote or a trailing backslash matches no token. */
+export function lexLine(line: string): { word: string; dash: boolean }[] | null {
+  if (/[^\S \t]/.test(line)) return null; // CR and other whitespace
+  const ends: { word: string; dash: boolean }[] = [];
+  let i = 0, piece = false, keyword = false;
+  while (i < line.length) {
+    let isPiece = false, plain: string | undefined;
+    if (line.startsWith('<<<', i) && line[i + 3] !== '<') i += 3; // a here-string: a redirection, its word is lexed next
+    else if (line.startsWith('<<', i)) {
+      HEREDOC_WORD.lastIndex = i + 2;
       const w = HEREDOC_WORD.exec(line);
-      if (!w) return false;
-      ends.push({ word: w[1] ?? w[2] ?? w[3], dash: line[m.index + 2] === '-' });
+      if (!w) return null; // `<<\EOF`, `<<$X`, `<<E"O"F`
+      ends.push({ word: w[1] ?? w[2] ?? w[3], dash: line[i + 2] === '-' });
+      i = HEREDOC_WORD.lastIndex;
+    } else {
+      LEX.lastIndex = i;
+      const m = LEX.exec(line);
+      if (!m) return null;
+      isPiece = m[3] !== undefined || m[4] !== undefined;
+      plain = m[4];
+      i = LEX.lastIndex;
     }
+    if (keyword && !isPiece) return null; // a whole plain word that opens a compound command
+    keyword = plain !== undefined && !piece && OPENS.test(plain);
+    piece = isPiece;
+  }
+  return keyword ? null : ends;
+}
+/** Every line from `from` that is not body text passes lexLine; each body runs to its end line, or to the end as the
+ *  shell reads a body with none. Linear: a line is lexed once per level, and past MAX_NESTING levels the answer is no. */
+function canonicalLines(lines: string[], from: number, level: number, to = lines.length): boolean {
+  for (let i = from; i < to; i++) {
+    const ends = lexLine(lines[i]);
+    if (!ends) return false;
     if (ends.length && level >= MAX_NESTING) return false;
     let start = i + 1;
-    for (const e of ends) { // each body runs to its end line, or to the end as the shell reads a body with none
-      let end = start;
-      while (end < Math.min(to, lines.length) && (e.dash ? lines[end].replace(/^\t+/, '') : lines[end]) !== e.word) end++;
-      if (!canonicalLines(lines, start, end, level + 1)) return false;
+    for (const e of ends) {
+      let end = start, nested = false;
+      for (; end < to && (e.dash ? lines[end].replace(/^\t+/, '') : lines[end]) !== e.word; end++) nested ||= lines[end].includes('<<');
+      if (nested && !canonicalLines(lines, start, level + 1, end)) return false;
       start = end + 1;
     }
     i = start - 1;
@@ -703,7 +730,10 @@ export function shellNesting(c: string): number {
 }
 export const NESTING_WHY = `shells fed a heredoc nest more than ${MAX_SHELL_NESTING} deep, deeper than the guard reads`;
 
-export function decideCommand(command: string, ctx: GuardCtx): Decision {
+/** The guard's decision on one Bash command, within one work budget shared with main's reading (re-review 21, P1b):
+ *  past it, WorkBudget is thrown and the dispatcher denies. */
+export const decideCommand = (command: string, ctx: GuardCtx): Decision => withWorkBudget(() => decideBudgeted(command, ctx));
+function decideBudgeted(command: string, ctx: GuardCtx): Decision {
   if (shellNesting(command) > MAX_SHELL_NESTING) return deny(NESTING_WHY); // fail closed, and fast (re-review 19, N8)
   if (canonicalText(command)) return decideNew(command, ctx); // no backslash-newline, so one reading is all of them
   // Odd text gets no data exemption: main's decision path reads it, and the stricter of that and this PR's rules, read

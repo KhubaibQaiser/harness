@@ -5,8 +5,30 @@
 
 type Piece = { text: string; sep: string };
 
+/** Characters of command text one guard or protect run may split into pieces. Every reading at every nesting level
+ *  is split here, so this bounds the whole run's work (re-review 21, P1b): 100 KB read 40 times over. The most a plain
+ *  input took when measured was 2.9 M (a 99 KB shell body); four nested shell bodies of 90 KB take 16 to 20 M. */
+export const WORK_BUDGET_CHARS = 4_000_000;
+/** Thrown when a run spends WORK_BUDGET_CHARS: the check cannot read the command in time, so the hook denies. */
+export class WorkBudget extends Error {}
+export const WORK_BUDGET_WHY = 'the command is too large or too deeply nested for harness to read before the hook times out, so it is denied; split it into smaller commands';
+let work = -1; // characters charged in the open run, or -1 outside one
+/** Runs `fn` as one run with a fresh budget; a run inside a run shares the outer one. */
+export function withWorkBudget<T>(fn: () => T): T {
+  if (work >= 0) return fn();
+  work = 0;
+  try {
+    return fn();
+  } finally {
+    work = -1;
+  }
+}
+/** The characters charged so far in the open run (for tests). */
+export const workSpent = (): number => work;
+
 /** The command split at ; & | && || newlines, parentheses and backticks outside quotes, with the separator after each. */
 export function pieces(cmd: string): Piece[] {
+  if (work >= 0 && (work += cmd.length) > WORK_BUDGET_CHARS) throw new WorkBudget(WORK_BUDGET_WHY);
   const out: Piece[] = [];
   let cur = '';
   let quote = ''; // ', ", or $ for $'…'

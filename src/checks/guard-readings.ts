@@ -217,24 +217,6 @@ const messages: Blank = Object.assign((c: string, tests: Tests, sk: Skel) => {
   },
 });
 export const textRulesView = (c: string): string => withoutData(c, messages);
-/** A test for one line: true when `<<` at `at` sits in arithmetic (`$((1<<E))`), which the heredoc reader skips. One scan
- *  per line, and `at` must grow from call to call, so a line of many `<<` is linear. A line too deep to scan counts as
- *  arithmetic everywhere: its bodies stay in place, which is only stricter. */
-export function arithmeticTest(line: string): (at: number) => boolean {
-  const s = new Scan(line), opens: number[] = [], ends: number[] = [];
-  let scanned = 0, k = 0, deep = false;
-  return (at) => {
-    for (; !deep && scanned < at; scanned++) {
-      const i = scanned;
-      if (!((line[i] === '$' && line[i + 1] === '(' && line[i + 2] === '(') || (line[i] === '(' && line[i + 1] === '('))) continue;
-      try { ends.push(s.closeParen(i + (line[i] === '$' ? 3 : 2), 2)); } catch (err) { if (!(err instanceof ScanBudget)) throw err; deep = true; break; }
-      opens.push(i);
-      scanned = ends[ends.length - 1] - 1;
-    }
-    while (k < ends.length && ends[k] <= at) k++;
-    return deep || (k < ends.length && opens[k] < at);
-  };
-}
 
 /** The offsets of each segment's command word, as commandStart reads it. Alternation groups are masked first, so their
  *  `(`, `|` and `)` split nothing. */

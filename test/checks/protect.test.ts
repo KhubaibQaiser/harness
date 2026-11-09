@@ -320,6 +320,12 @@ test.each([
   `echo '\ncat > docs/x.md <<EOF\n'; ${W}\nEOF`, `echo "\ncat > docs/x.md <<EOF\n"; ${W}\nEOF`,
 ])('C2: %s is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
 test('C2: a plain heredoc body naming a harness path stays data', () => expect(bash(`cat > docs/x.md <<'EOF'\n${W}\nEOF`)).toBe('allow'));
+// Round 24, P2: bodies are taken out only of text the canonical lexer accepts, so a process substitution after the
+// operator, or a `\"` that keeps a quote open past the line end, leaves every line in place as code.
+test.each([
+  `cat > docs/x.md <<EOF; cat <(\n${W}\n)\nEOF`, `cat > docs/x.md <<EOF; echo >(\n${W}\n)\nEOF`,
+  `echo "\\"\ncat > docs/x.md <<EOF\n"; ${W}\nEOF`, `echo "a\\"b\ncat > docs/x.md <<'EOF'\n"; ${W}\nEOF`,
+])('P2: %s is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
 
 // Round 14 D1: env -S strings are split with env's own rules, so `(` is an ordinary character.
 test.each([`env -S "node -e require('fs').rmSync('node_modules')"`, `env --split-string="node -p require('fs').rmSync('node_modules/x')"`, `env -S 'node -e "require(\\"fs\\").rmSync(\\"node_modules\\")"'`])(

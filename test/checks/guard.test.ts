@@ -676,7 +676,7 @@ test('rereview2 M1: heredoc stripping respects quotes, quoted delimiters and <<-
   expect(kind('cat <<E"O"F\nx\nEOF\nharness tdd off\nE')).toBe('deny');
   expect(kind("cat > f <<'EOF'\nharness tdd off\nEOF")).toBe('ask');
   expect(kind('cat > f <<"EOF"\nharness tdd off\nEOF')).toBe('ask');
-  expect(kind('cat > f <<E"O"F\nharness tdd off\nEOF')).toBe('ask');
+  expect(kind('cat > f <<E"O"F\nharness tdd off\nEOF')).toBe('deny'); // not canonical (round 24): no body is taken out, so it is code
   expect(kind('cat > f <<-EOF\n\tharness tdd off\n\tEOF')).toBe('ask');
   expect(kind("cat <<'EOF'\nharness tdd off\nEOF")).toBe('deny'); // to stdout, not a data sink: a body is code
   expect(kind('cat <<EOF\nharness tdd off')).toBe('deny'); // no end line: nothing is stripped
@@ -1024,8 +1024,47 @@ test('a comment or a substitution after the operator cannot move where the guard
   for (const c of ["#'\ncat <<EOF\nx\nEOF", 'cat <<EOF # (x)\nx\nEOF', 'cat <<EOF; echo $(\nx\n)\nEOF', 'cat <<EOF; echo `\nx\n`\nEOF', 'cat <<EOF; x=${y:-\nz}\nEOF',
     'cat <<EOF; ((\nx\n))\nEOF', 'true # then done\ncat <<EOF\nx\nEOF']) expect(canonicalText(c), c).toBe(false);
   // The commit and PR body form, and a plain comment, keep the exemption.
-  for (const c of [`git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)"`, 'cat > docs/x.md <<EOF # a note\nx\nEOF', "echo '#(x)'\ncat <<EOF\nx\nEOF"]) expect(canonicalText(c), c).toBe(true);
-  all([`cat > docs/x.md <<'EOF' # a note\n${P}\nEOF`, `git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)"`], 'allow');
+  // Round 24: the commit and PR body form opens `$(` before its operator, so it takes the strict path (still allowed).
+  for (const c of ["echo '#(x)'\ncat <<EOF\nx\nEOF"]) expect(canonicalText(c), c).toBe(true);
+  all([`git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)"`], 'allow');
+  all([`cat > docs/x.md <<'EOF' # a note\n${P}\nEOF`], 'deny'); // a comment is not canonical (round 24): main's reading decides
+});
+test('only text the canonical lexer accepts keeps the heredoc data exemption (round 24)', () => {
+  const ch = (...c: number[]) => String.fromCharCode(...c);
+  const R = `${ch(114, 109)} -rf ~`, P = `git push -${ch(102)}`;
+  const sinks = ['cat > docs/x.md', 'tee f >/dev/null'];
+  const rows = (S: string, X: string) => [
+    // H1: a `${` opened before the operator makes the operator text; the shell runs what follows the `}`.
+    ...['echo ${x-', 'echo ${x:-', 'echo ${x:+', 'echo ${x#', ': ${x:=', 'x=${y-', 'echo "a" ${x-'].flatMap((o) =>
+      ['<<EOF', "<<'EOF'", '<<"EOF"', '<<-EOF'].map((op) => `${o}\n${S} ${op}\n}; ${X}\nEOF`)),
+    `echo \${x-\n\n${S} <<EOF\nz}; ${X}\nEOF`, `bash <<'ZZ'\necho \${x-\n${S} <<EOF\n}; ${X}\nEOF\nZZ`,
+    // H2: a quote spanning lines after the operator, then a substitution where it closes.
+    `${S} <<EOF; echo '\n'; echo $(\n${X}\n)\nEOF`, `${S} <<'EOF'; echo "\n"; echo $(\n${X}\n)\nEOF`, `${S} <<EOF; echo '\n'\`\n${X}\n\`\nEOF`,
+    `${S} <<EOF; echo '\n'\${x:-$(\n${X}\n)}\nEOF`, `${S} <<EOF; echo '\n' <(\n${X}\n)\nEOF`, `${S} <<EOF '\n'$(\n${X}\n)\nEOF`,
+    `${S} <<EOF; echo '\n' '\n'; echo $(\n${X}\n)\nEOF`, `${S} <<EOF; echo "\n" && echo $(\n${X}\n)\nEOF`, `bash <<'ZZ'\n${S} <<EOF; echo '\n'; echo $(\n${X}\n)\nEOF\nZZ`,
+    // H3: a process substitution after the operator is read, across lines, before the body.
+    `${S} <<EOF; cat <(\n${X}\n)\nEOF`, `${S} <<EOF; echo >(\n${X}\n)\nEOF`, `${S} <<EOF; : =(\n${X}\n)\nEOF`, `${S} <<-EOF; cat <(\n${X}\n)\nEOF`,
+    `${S} <<'EOF' && cat <(\n${X}\n)\nEOF`, `${S} <<EOF; cat <(true\n${X})\nEOF`, `bash <<'ZZ'\n${S} <<EOF; cat <(\n${X}\n)\nEOF\nZZ`,
+  ];
+  // Each is non-canonical, so it is decided at least as strictly as main (main asks on some); the review's minimal rows deny.
+  for (const c of sinks.flatMap((s) => [R, P].flatMap((p) => rows(s, p)))) expect(kind(c), c).not.toBe('allow');
+  all([`echo \${x-\ncat > docs/x.md <<EOF\n}; ${R}\nEOF`, `cat > docs/x.md <<EOF; echo '\n'; echo $(\n${R}\n)\nEOF`, `cat > docs/x.md <<EOF; cat <(\n${R}\n)\nEOF`], 'deny');
+  for (const c of sinks.flatMap((s) => rows(s, 'x'))) expect(canonicalText(c), c).toBe(false);
+  // L1: rows looser than main that the shell does not run are not canonical either, so main's reading decides them.
+  const l1 = [`echo $[\ncat > docs/x.md <<EOF\n]; ${R}\nEOF`, `[[ -n x &&\ncat > docs/x.md <<EOF\n]]; ${R}\nEOF`];
+  for (const c of l1) expect(canonicalText(c), c).toBe(false);
+  all(l1, 'deny');
+  // The lexer's refusals: every opener, a comment, a keyword that opens a compound command, CR, an open quote or escape.
+  for (const c of ['echo $(x)', 'echo `x`', 'echo ${x}', 'echo $[1]', 'echo $((1))', '((x))', 'cat <(x)', 'cat >(x)', ': =(x)', '[[ x ]]', '{ x; }', '(x)',
+    "echo $'x'", 'echo $"x"', 'x # c', 'case x in x) ;; esac', 'if x; then y; fi', 'for x in y; do z; done', 'while x; do y; done', 'f() { x; }',
+    'function f', 'a\r', "echo 'x", 'echo "x', 'echo "\\"', 'echo x\\', 'x <<<<y', 'echo $', 'echo "$(x)"']) expect(canonicalText(`${c}\ncat <<E\nx\nE`), c).toBe(false);
+  // What it accepts: words, quotes, escapes, separators, redirections, $NAME, and plain heredocs.
+  for (const c of ['git status', `echo 'a b' "c \\" $HOME" \\; x`, 'a && b || c; d & e | f', 'x > a >> b < c 2> d &> e 2>&1', 'echo "$x" $1 if.md',
+    'cat > docs/x.md <<EOF\n# Title (x)\nit\'s $(here)\nEOF', "cat <<-'E' | tee f\n\tx\n\tE", 'git commit -m "fix #12"', `echo "\\\\"\ncat > docs/x.md <<EOF\n${R}\nEOF`, 'x <<< y'])
+    expect(canonicalText(`${c}\ncat <<E\nx\nE`), c).toBe(true);
+  expect(canonicalText('echo $(x) ${y} # z'), 'no `<<`: no body to find').toBe(true);
+  // Legitimate data heredocs keep the exemption.
+  all([`cat > docs/x.md <<'EOF'\n# What's new (x)\n${P}\nEOF`, `tee docs/x.md >/dev/null <<EOF\n${R}\nEOF`], 'allow');
 });
 test('a quoted-delimiter heredoc body keeps its backslash-newline; the always-block strips backslashes (round 20)', () => {
   const L = 'git log -1 --format=%B';
@@ -1101,7 +1140,8 @@ test('a case pattern ) does not close the case, and a redefined command or -e ma
   all(["case x in\nx) cat > f <<'EOF'\ngit push -f\nEOF\n;;\nesac | sh", "case x in *) cat > f <<'EOF'\ngit push -f\nEOF\n;; esac", "cat() { sh; }; cat > f <<'EOF'\ngit push -f\nEOF",
     "hash -p /bin/sh cat; cat > f <<'EOF'\ngit push -f\nEOF", "alias cat=sh; cat > f <<'EOF'\ngit push -f\nEOF", "git() { sh; }; git commit -F - <<'EOF'\ngit push -f\nEOF",
     "git commit -e -F - <<'EOF'\ngit push -f\nEOF", "GH_EDITOR=sh gh pr create --editor --body-file - <<'EOF'\ngit push -f\nEOF"], 'deny');
-  all(["case x in (x) echo a;; esac; cat > f <<'EOF'\ngit push -f\nEOF", "cat > f <<'EOF'\nfunction x() { eval it; }\ngit push -f\nEOF"], 'allow');
+  all(["cat > f <<'EOF'\nfunction x() { eval it; }\ngit push -f\nEOF"], 'allow');
+  all(["case x in (x) echo a;; esac; cat > f <<'EOF'\ngit push -f\nEOF"], 'deny'); // `case` is not canonical (round 24): main's reading decides
 });
 test('a shell -c payload is found after other options', () => {
   const forms = ['sh -c -m', 'bash -c -x', 'bash -c -o pipefail', 'sh -c -e -u', 'bash -c -x --', 'zsh -c -x', 'bash --rcfile x -c', 'bash -xc', 'bash -ce', 'sh -euc',

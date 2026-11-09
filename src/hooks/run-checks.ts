@@ -1,16 +1,19 @@
+import { WorkBudget } from '../core/shell-words.js';
 import type { Check, Ctx } from './check.js';
 import { type Log, warn } from './event-log.js';
 import type { Decision, HookEvent } from './types.js';
 
 type AskDecision = { kind: 'ask'; reason: string; check: string };
 
-/** One check's decision; a throw denies for a failClosed check and is skipped (null) for any other. */
+/** One check's decision; a throw denies for a failClosed check and is skipped (null) for any other. A spent work budget
+ *  (WorkBudget) always denies, with its own reason. */
 async function runOne(c: Check, ctx: Ctx): Promise<Decision | null> {
   try {
     const r = await c.run(ctx);
     if (!r || typeof r !== 'object' || typeof r.kind !== 'string') throw new Error('invalid check result');
     return r;
   } catch (e) {
+    if (e instanceof WorkBudget) return { kind: 'deny', reason: e.message, check: c.name }; // fail closed, whatever the check
     const msg = String((e as Error)?.message ?? e);
     if (!c.failClosed) {
       process.stderr.write(`harness: check ${c.name} failed: ${msg}\n`);

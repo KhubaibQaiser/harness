@@ -7,7 +7,7 @@ import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, fileWriteTargets, gitArgs, ifsReading, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
-import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
+import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
@@ -346,3 +346,7 @@ export const protect: Check = {
     return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };
   },
 };
+// One work budget per run, the nested runs above included (re-review 21, P1b): past it WorkBudget is thrown and the
+// dispatcher denies.
+const unbudgeted = protect.run;
+protect.run = (ctx) => withWorkBudget(() => unbudgeted(ctx));

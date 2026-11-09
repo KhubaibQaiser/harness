@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { CATALOG_ESTIMATE, reportJson, reportText, type Rec } from '../../src/cli/context-copy.js';
+import { CATALOG_ESTIMATE, ESTIMATE_NOTE, reportJson, reportText, type Rec } from '../../src/cli/context-copy.js';
 import type { ContextSet } from '../../src/budget/summary.js';
 import type { SourceEntry } from '../../src/budget/sources.js';
 
@@ -45,16 +45,16 @@ const GOLDEN = [
 ];
 
 test('golden: the §7.1 report within the budget, no recommendations section when there are none', () => {
-  expect(reportText(example(), [], null)).toEqual(GOLDEN);
+  expect(reportText(example(), [], null, true)).toEqual(GOLDEN);
 });
 
 test('golden: over the budget the first line says by how much', () => {
   const s = example({ total: 2410, repo: 1966, always: [...example().always, row('repo', 'big.md', 1007)] });
-  expect(reportText(s, [], null)[0]).toBe("Context budget: ~2,410 of 2,000 tokens always loaded, over by ~410. Best estimate (characters ÷ 4); set ANTHROPIC_API_KEY to count with Anthropic's token-counting API.");
+  expect(reportText(s, [], null, true)[0]).toBe("Context budget: ~2,410 of 2,000 tokens always loaded, over by ~410. Best estimate (characters ÷ 4); set ANTHROPIC_API_KEY to count with Anthropic's token-counting API.");
 });
 
 test('without MCP servers the not-measured sentence leaves them out', () => {
-  const t = reportText(example({ unmeasured: [] }), [], null);
+  const t = reportText(example({ unmeasured: [] }), [], null, true);
   expect(t.at(-1)).toBe("Not measured: Claude Code's system prompt and tools, output style, and your personal context (~/.claude files, user plugins, auto memory). Run /context all in a Claude Code session to see them.");
   expect(t).not.toContain('  Not measured: plugin some-plugin@market (enabled in .claude/settings.json)');
 });
@@ -64,7 +64,7 @@ test('the recommendations section prints the §7.1 lines', () => {
     { n: 1, kind: 'name-only', owner: 'catalog:seo-audit', target: 'seo-audit', saves: 61, apply: true, line: 'Show skill seo-audit by name only (saves ~61). Apply: harness context apply 1' },
     { n: 2, kind: 'long-file', owner: 'repo', target: 'CLAUDE.md', saves: 0, apply: false, line: 'CLAUDE.md is 260 lines; move the parts that only matter for some folders into path-scoped rules. /harness:context-optimize proposes the diff.' },
   ];
-  expect(reportText(example(), recs, null).slice(-4)).toEqual([
+  expect(reportText(example(), recs, null, true).slice(-4)).toEqual([
     '',
     'Recommendations',
     '  1. harness  Show skill seo-audit by name only (saves ~61). Apply: harness context apply 1',
@@ -73,7 +73,7 @@ test('the recommendations section prints the §7.1 lines', () => {
 });
 
 test("with the API the label names the model and counted rows have no ~", () => {
-  const t = reportText(example({ method: 'exact', model: 'claude-opus-5-5' }), [], null);
+  const t = reportText(example({ method: 'exact', model: 'claude-opus-5-5' }), [], null, false);
   expect(t[0]).toBe("Context budget: 1,403 of 2,000 tokens always loaded (70%). Counted by Anthropic's token-counting API (claude-opus-5-5).");
   expect(t[3]).toBe('  repo     CLAUDE.md                                       412');
   expect(t[11]).toBe('  Total                                                  1,403');
@@ -83,20 +83,20 @@ test("with the API the label names the model and counted rows have no ~", () => 
 
 test('with the API catalog-recorded rows stay estimates, marked and counted in the header', () => {
   const pick = row('catalog:seo-audit', 'seo-audit', 61, { path: 'catalog:seo-audit', chars: 0, text: undefined, note: CATALOG_ESTIMATE });
-  const t = reportText(example({ method: 'exact', model: 'claude-opus-5-5', always: [...example().always, pick], total: 1464, catalog: 61 }), [], null);
-  expect(t[0]).toBe("Context budget: 1,464 of 2,000 tokens always loaded (73%). Counted by Anthropic's token-counting API (claude-opus-5-5), except 1 catalog estimate.");
+  const t = reportText(example({ method: 'exact', model: 'claude-opus-5-5', always: [...example().always, pick], total: 1464, catalog: 61 }), [], null, false);
+  expect(t[0]).toBe("Context budget: 1,464 of 2,000 tokens always loaded (73%). Counted by Anthropic's token-counting API (claude-opus-5-5), except 1 estimate.");
   expect(t).toContain('  catalog  seo-audit (catalog estimate)                    ~61');
 });
 
 test('a failed API call gives the fallback line and ~ estimates', () => {
-  const t = reportText(example(), [], '429');
+  const t = reportText(example(), [], '429', false);
   expect(t[0]).toBe('Context budget: ~1,403 of 2,000 tokens always loaded (70%). Best estimate (characters ÷ 4).');
   expect(t[1]).toBe("Couldn't use the token-counting API (429); counts are best estimates.");
   expect(t[4]).toBe('  repo     CLAUDE.md                                      ~412');
 });
 
 test('notes print, and a row note follows its label', () => {
-  const t = reportText(example({ notes: ['not a git repository or git not found: nested CLAUDE.md files not listed'], always: [row('repo', 'CLAUDE.md', 0, { chars: 0, note: 'over 4 MiB: Claude Code skips it' })], total: 0 }), [], null);
+  const t = reportText(example({ notes: ['not a git repository or git not found: nested CLAUDE.md files not listed'], always: [row('repo', 'CLAUDE.md', 0, { chars: 0, note: 'over 4 MiB: Claude Code skips it' })], total: 0 }), [], null, true);
   expect(t).toContain('  repo     CLAUDE.md (over 4 MiB: Claude Code skips it)     ~0');
   expect(t).toContain('Note: not a git repository or git not found: nested CLAUDE.md files not listed');
 });
@@ -104,8 +104,9 @@ test('notes print, and a row note follows its label', () => {
 test('json follows §5: no chars or file path for rows without text', () => {
   const pick = row('catalog:seo-audit', 'seo-audit', 61, { path: 'catalog:seo-audit', chars: 0, text: undefined, note: 'size from the catalog record' });
   const plugin = row('harness', 'skills harness:doctor', 93, { id: 'harness-plugin', path: 'plugin:harness', chars: 0, text: undefined });
-  const j = reportJson(example({ always: [...example().always, pick, plugin], method: 'exact', model: 'claude-opus-5-5' }), []) as Record<string, unknown>;
-  expect(Object.keys(j)).toEqual(['method', 'model', 'budget', 'always', 'on_demand', 'sources', 'unmeasured', 'not_measured', 'recommendations']);
+  const j = reportJson(example({ always: [...example().always, pick, plugin], method: 'exact', model: 'claude-opus-5-5' }), [], null) as Record<string, unknown>;
+  expect(Object.keys(j)).toEqual(['method', 'model', 'budget', 'always', 'on_demand', 'sources', 'unmeasured', 'not_measured', 'recommendations', 'fallback']);
+  expect(j.fallback).toBeNull();
   expect(j).toMatchObject({ method: 'exact', model: 'claude-opus-5-5', budget: 2000, always: { total: 1403, harness: 444, catalog: 0, repo: 959 }, on_demand: { total: 2730 } });
   expect(j.not_measured).toEqual(['system prompt and tools', 'output style', 'personal context']);
   expect(j.unmeasured).toEqual(['mcp: github', 'plugin: some-plugin@market']);
@@ -118,8 +119,21 @@ test('json follows §5: no chars or file path for rows without text', () => {
 
 test('json recommendations drop the worded line; model is null offline', () => {
   const rec: Rec = { n: 1, kind: 'remove', owner: 'catalog:x', target: 'x', saves: 5, apply: true, line: 'words' };
-  const j = reportJson(example(), [rec]) as Record<string, unknown>;
+  const j = reportJson(example(), [rec], '429') as Record<string, unknown>;
   expect(j.model).toBeNull();
   expect(j.method).toBe('estimate');
+  expect(j.fallback).toBe('429');
   expect(j.recommendations).toEqual([{ n: 1, kind: 'remove', owner: 'catalog:x', target: 'x', saves: 5, apply: true }]);
+});
+
+test('an offline choice drops the key hint; the estimate method sentence stays', () => {
+  expect(reportText(example(), [], null, false)[0]).toBe('Context budget: ~1,403 of 2,000 tokens always loaded (70%). Best estimate (characters ÷ 4).');
+});
+
+test('the header counts every row left an estimate in an exact report, always and on demand', () => {
+  const pick = row('catalog:seo-audit', 'seo-audit', 61, { path: 'catalog:seo-audit', chars: 0, text: undefined, note: CATALOG_ESTIMATE });
+  const other = row('repo', 'textless', 7, { text: undefined, note: ESTIMATE_NOTE });
+  const lazy = { ...row('repo', 'od textless', 9, { text: undefined, note: ESTIMATE_NOTE }), load: 'on-demand' as const };
+  const t = reportText(example({ method: 'exact', model: 'm', always: [...example().always, pick, other], onDemand: [...example().onDemand, lazy] }), [], null, false);
+  expect(t[0]).toMatch(/Counted by Anthropic's token-counting API \(m\), except 3 estimates\.$/);
 });

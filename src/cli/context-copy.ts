@@ -24,14 +24,14 @@ const right = (left: string, n: string): string => left + ' '.repeat(Math.max(1,
 const kept = (e: SourceEntry): boolean => e.note === CATALOG_ESTIMATE || e.note === ESTIMATE_NOTE;
 const labelOf = (e: SourceEntry): string => e.label + (e.note ? ` (${e.note})` : '');
 
-function header(s: ContextSet, fallback: string | null): string {
+function header(s: ContextSet, hint: boolean): string {
   const exact = s.method === 'exact';
   const where = s.total > s.budget
     ? `, over by ${num(s.total - s.budget, !exact)}.`
     : ` (${s.budget ? Math.round((s.total / s.budget) * PERCENT) : 0}%).`;
-  const est = s.always.filter((e) => e.note === CATALOG_ESTIMATE).length;
-  const except = est ? `, except ${est} catalog estimate${est === 1 ? '' : 's'}` : '';
-  const method = exact ? `Counted by Anthropic's token-counting API (${s.model})${except}.` : `${ESTIMATE}${fallback ? '' : KEY_HINT}.`;
+  const est = [...s.always, ...s.onDemand].filter(kept).length;
+  const except = est ? `, except ${est} estimate${est === 1 ? '' : 's'}` : '';
+  const method = exact ? `Counted by Anthropic's token-counting API (${s.model})${except}.` : `${ESTIMATE}${hint ? KEY_HINT : ''}.`;
   return `Context budget: ${num(s.total, !exact)} of ${s.budget.toLocaleString('en-US')} tokens always loaded${where} ${method}`;
 }
 
@@ -44,14 +44,15 @@ function closing(s: ContextSet): string {
   return `Not measured: Claude Code's system prompt and tools, output style,${servers} and your personal context (~/.claude files, user plugins, auto memory). Run /context all in a Claude Code session to see them.`;
 }
 
-export function reportText(s: ContextSet, recs: Rec[], fallback: string | null): string[] {
+/** `hint`: the estimate is only for want of a key (no offline choice, no failed API call), so say how to get exact counts. */
+export function reportText(s: ContextSet, recs: Rec[], fallback: string | null, hint: boolean): string[] {
   const exact = s.method === 'exact';
   const tok = (e: SourceEntry) => num(e.tokens, !exact || kept(e));
   const rank = (e: SourceEntry) => OWNER_ORDER.indexOf(ownerWord(e.owner));
   const always = [...s.always].sort((a, b) => rank(a) - rank(b));
   const onDemand = s.onDemand.reduce((n, e) => n + e.tokens, 0);
   return [
-    header(s, fallback),
+    header(s, hint),
     ...(fallback ? [`Couldn't use the token-counting API (${fallback}); counts are best estimates.`] : []),
     '',
     right('Always loaded', 'tokens'),
@@ -75,7 +76,8 @@ function source(e: SourceEntry): Record<string, unknown> {
   return { id: e.id, ...(file ? { path: e.path } : {}), owner: e.owner, load: e.load, tokens: e.tokens, ...(file && e.chars ? { chars: e.chars } : {}), ...(e.note ? { note: e.note } : {}) };
 }
 
-export function reportJson(s: ContextSet, recs: Rec[]): object {
+/** `fallback` is last so the §5 key order before it is unchanged; it is a fixed reason string, never key material. */
+export function reportJson(s: ContextSet, recs: Rec[], fallback: string | null): object {
   return {
     method: s.method, model: s.method === 'exact' ? s.model : null, budget: s.budget,
     always: { total: s.total, harness: s.harness, catalog: s.catalog, repo: s.repo },
@@ -83,5 +85,6 @@ export function reportJson(s: ContextSet, recs: Rec[]): object {
     sources: [...s.always, ...s.onDemand].map(source),
     unmeasured: s.unmeasured, not_measured: NOT_MEASURED,
     recommendations: recs.map(({ line: _l, ...r }) => r),
+    fallback,
   };
 }

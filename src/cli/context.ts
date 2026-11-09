@@ -37,11 +37,13 @@ export async function context(args: string[], cli: CliEnv & { fetch?: typeof fet
   if (flags.size !== args.length || args.some((a) => !FLAGS.has(a))) return cli.out(USAGE), 2;
   const { config, warnings } = loadConfig(cli.root);
   const templates = packageDir('templates');
-  let s = contextSet(cli.root, config, { templates, plugin: dirname(templates) });
+  const plugin = dirname(templates);
+  let s = contextSet(cli.root, config, { templates, plugin });
   let fallback: string | null = null;
-  const key = flags.has('--offline') ? null : countKey(cli.env, config);
-  if (key) s = (await apiCounted(s, key, config.context.count_model, { plugin: dirname(templates), fetch: cli.fetch, onFail: (r) => { fallback = r; } })) ?? s;
-  if (flags.has('--json')) cli.out(JSON.stringify(reportJson(s, []), null, 2));
-  else for (const line of [...reportText(s, [], fallback), ...warnings.map((w) => `warn ${w}`)]) cli.out(line);
+  const offline = flags.has('--offline') || config.context.count === 'offline';
+  const key = offline ? null : countKey(cli.env, config);
+  if (key) s = (await apiCounted(s, key, config.context.count_model, { plugin, fetch: cli.fetch, onFail: (r) => { fallback = r; } })) ?? s;
+  if (flags.has('--json')) cli.out(JSON.stringify(reportJson(s, [], fallback), null, 2));
+  else for (const line of [...reportText(s, [], fallback, !offline && !key), ...warnings.map((w) => `warn ${w}`)]) cli.out(line);
   return s.total > s.budget ? 1 : 0;
 }

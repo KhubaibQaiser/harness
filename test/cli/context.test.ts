@@ -58,13 +58,14 @@ test('a 429 falls back to estimates for every row, never mixed', async () => {
   expect(lines[1]).toBe("Couldn't use the token-counting API (429); counts are best estimates.");
   expect(r.out).not.toContain('Counted by');
   expect(r.out).toMatch(/^ {2}repo {5}CLAUDE\.md +~12$/m);
+  expect(JSON.parse((await go(['--json'], { env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn })).out).fallback).toBe('429');
 });
 
 test('--json prints one object of the §5 shape', async () => {
   const r = await go(['--json']);
   const j = JSON.parse(r.out);
-  expect(Object.keys(j)).toEqual(['method', 'model', 'budget', 'always', 'on_demand', 'sources', 'unmeasured', 'not_measured', 'recommendations']);
-  expect(j).toMatchObject({ method: 'estimate', model: null, budget: 2000, unmeasured: ['mcp: github'], recommendations: [] });
+  expect(Object.keys(j)).toEqual(['method', 'model', 'budget', 'always', 'on_demand', 'sources', 'unmeasured', 'not_measured', 'recommendations', 'fallback']);
+  expect(j).toMatchObject({ method: 'estimate', model: null, fallback: null, budget: 2000, unmeasured: ['mcp: github'], recommendations: [] });
   expect(j.sources.find((s: { id: string }) => s.id === 'harness-plugin')).not.toHaveProperty('path');
   expect(j.sources.find((s: { id: string }) => s.id === 'harness-plugin')).not.toHaveProperty('chars');
 });
@@ -83,7 +84,10 @@ test('no network: --offline with a key, and count: offline, never call fetch', a
   const a = await go(['--offline'], { env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn });
   const b = await go([], { root: repo('context:\n  count: offline\n'), env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: f.fetchFn });
   expect(f.calls).toHaveLength(0);
-  for (const r of [a, b]) expect(r.out).toContain('Best estimate (characters ÷ 4)');
+  for (const r of [a, b]) expect(r.out).toContain('Best estimate (characters ÷ 4).');
+  // The key hint is advice for the no-key case only.
+  for (const r of [a, b, await go(['--offline'])]) expect(r.out).not.toContain('set ANTHROPIC_API_KEY');
+  expect((await go([])).out).toContain('; set ANTHROPIC_API_KEY to count');
 });
 
 test('the sentinel key appears in no output, no events.jsonl, and no error text', async () => {
@@ -93,6 +97,7 @@ test('the sentinel key appears in no output, no events.jsonl, and no error text'
     for (const args of [[], ['--json']]) {
       const r = await go(args, { env: { ANTHROPIC_API_KEY: SENTINEL }, fetch: fetchFn });
       expect(r.out).not.toContain(SENTINEL);
+      if (args.length) expect(['network error', '401']).toContain(JSON.parse(r.out).fallback);
       const events = join(r.root, '.harness', 'events.jsonl');
       if (existsSync(events)) expect(readFileSync(events, 'utf8')).not.toContain(SENTINEL);
     }

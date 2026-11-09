@@ -10,6 +10,8 @@ type PlatformPath = typeof nodePath;
 
 export interface SourceEntry extends ContextEntry {
   tokens: number; path: string; label: string; owner: Owner; load: 'always' | 'on-demand'; chars: number; note?: string; paths?: string[];
+  /** A `.claude/skills/` row: its full description length (before the cut) and body, for the recommendations. Never in the JSON. */
+  skill?: { description: number; body: string };
 }
 export interface RepoMeasure { always: SourceEntry[]; onDemand: SourceEntry[]; unmeasured: string[]; notes: string[] }
 /** Folder depth searched under .claude/rules; also bounds a symlink loop that stays inside the repo. */

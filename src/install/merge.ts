@@ -205,14 +205,14 @@ export function presetSets(l: LoadedPreset, opts: { selected: string[]; env: boo
   return out;
 }
 
-/** Adds the wanted keys that are missing (a created parent first), keeps a differing value with a note, and drops recorded non-sandbox set blocks no longer wanted. */
-export function mergePresetSettings(before: string | null, want: SetBlock[], recorded: string[], label = SETTINGS): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
+/** Adds the wanted keys that are missing (a created parent first), keeps a differing value with a note, and drops recorded preset set blocks (not sandbox, not context apply's skillOverrides) no longer wanted. `who` names the writer in the note. */
+export function mergePresetSettings(before: string | null, want: SetBlock[], recorded: string[], label = SETTINGS, who = 'the preset'): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
   let s: any;
   try { s = before === null ? {} : JSON.parse(before); } catch (e) { throw new MergeError(`${label}: is not valid JSON: ${(e as Error).message}`); }
   if (!isObj(s)) throw new MergeError(`${label}: must be a JSON object`);
   const blocks: string[] = [], notes: string[] = [];
   const keep = (set: string[]) => want.some((w) => set.every((k, i) => w.set[i] === k));
-  const stale = recorded.filter((b) => { const p: any = parse(b); return Array.isArray(p?.set) && p.set[0] !== 'sandbox' && !keep(p.set); });
+  const stale = recorded.filter((b) => { const p: any = parse(b); return Array.isArray(p?.set) && p.set[0] !== 'sandbox' && p.set[0] !== 'skillOverrides' && !keep(p.set); });
   const r = removeSets(s, stale);
   const dropped = [...r.sets];
   for (const p of r.changed) notes.push(`\`${label}\`: \`${p}\` was changed; left as is.`);
@@ -225,7 +225,7 @@ export function mergePresetSettings(before: string | null, want: SetBlock[], rec
     }, s);
     const k = set.at(-1)!;
     if (!Object.hasOwn(parent, k)) { parent[k] = value; blocks.push(JSON.stringify({ set, value })); }
-    else if (!isDeepStrictEqual(parent[k], value)) notes.push(`\`${label}\`: \`${path}\` is already ${JSON.stringify(parent[k])}; left as is (the preset would set ${JSON.stringify(value)}).`);
+    else if (!isDeepStrictEqual(parent[k], value)) notes.push(`\`${label}\`: \`${path}\` is already ${JSON.stringify(parent[k])}; left as is (${who} would set ${JSON.stringify(value)}).`);
   }
   return { after: dump(s, before), blocks, dropped, notes };
 }

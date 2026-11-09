@@ -1,8 +1,11 @@
 // The `harness context` report (spec §7.1) and its `--json` form (§5). Pure: the numbers come from the context set.
 import { KEY_HINT } from '../budget/count-api.js';
 import type { Owner } from '../budget/owners.js';
+import type { Rec } from '../budget/recommend.js';
 import type { SourceEntry } from '../budget/sources.js';
 import { STATE_CARD_MAX_TOKENS, type ContextSet } from '../budget/summary.js';
+
+export type { Rec } from '../budget/recommend.js';
 
 export const REPORT_WIDTH = 62;
 const OWNER_WIDTH = 9;
@@ -15,8 +18,6 @@ const ON_DEMAND = 'On demand (loads when used or when matching files are touched
 const NOT_MEASURED = ['system prompt and tools', 'output style', 'personal context'];
 const OWNER_ORDER = ['repo', 'harness', 'preset', 'catalog'];
 
-/** A recommendation (Task 13 finds them); `line` is its worded text, never part of the JSON. */
-export interface Rec { n: number; kind: string; owner: string; target: string; saves: number; apply: boolean; line: string }
 
 const ownerWord = (o: Owner): string => o.split(':')[0];
 const num = (n: number, approx: boolean): string => (approx ? '~' : '') + n.toLocaleString('en-US');

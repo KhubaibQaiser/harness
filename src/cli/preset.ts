@@ -83,7 +83,7 @@ export async function presetInstall(args: string[], cli: PresetEnv): Promise<num
     if (existsSync(join(home, GLOBAL_STATE.manifest))) {
       let id = 'unknown';
       try { id = readManifest(home, undefined, GLOBAL_STATE)?.files.find((f) => f.item?.startsWith(PRESET_ITEM))?.item?.slice(PRESET_ITEM.length) ?? id; } catch { /* unreadable: still installed */ }
-      return out(`A global preset is already installed (${esc(id)}). Run harness uninstall --global first.`), 1;
+      return out(`A global preset is already installed (${esc(id)}): ~/${GLOBAL_STATE.manifest} exists. Remove it and the files it lists yourself, or keep the installed preset.`), 1;
     }
   }
   const results = checkDir(dir, out);
@@ -157,5 +157,5 @@ async function globalInstall(dir: string, ids: string[], cli: PresetEnv, o: { dr
     if (e.message === LOCK_RECOVERY) return out(GLOBAL_LOCK_RECOVERY), 1; // the repo wording names .harness and git
     return out(safe(e.message.startsWith('Rollback failed') ? e.message : `${e.message} Nothing was written.`)), 1;
   }
-  return out(`Installed ${esc(id)} under ~/.claude: ${chosen.length} of ${changes.length} writes. Remove it with harness uninstall --global.`), 0;
+  return out(`Installed ${esc(id)} under ~/.claude: ${chosen.length} of ${changes.length} writes, listed in ~/${GLOBAL_STATE.manifest}.`), 0;
 }

@@ -104,10 +104,12 @@ test('an existing ~/.claude/CLAUDE.md is backed up under ~/.claude/harness/backu
 
 test('a second install while the global manifest exists is refused', async () => {
   const home = tmp();
-  expect((await run([copyTiny(), '--global', '--yes', '--take', '.claude/CLAUDE.md'], home)).code).toBe(0);
+  const first = await run([copyTiny(), '--global', '--yes', '--take', '.claude/CLAUDE.md'], home);
+  expect(first.code).toBe(0);
+  expect(first.out).not.toContain('uninstall --global'); // no pointer at a command that doesn't exist yet
   const before = snapshot(home);
   const again = await run([copyTiny(), '--global', '--dry-run'], home);
-  expect(again).toMatchObject({ code: 1, out: 'A global preset is already installed (tiny). Run harness uninstall --global first.' });
+  expect(again).toMatchObject({ code: 1, out: 'A global preset is already installed (tiny): ~/.claude/harness/manifest.json exists. Remove it and the files it lists yourself, or keep the installed preset.' });
   expect(snapshot(home)).toEqual(before);
 });
 

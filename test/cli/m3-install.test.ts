@@ -7,6 +7,7 @@ import { parseDocument } from 'yaml';
 import { items } from '../../src/cli/items.js';
 import { doctor } from '../../src/cli/doctor.js';
 import { status } from '../../src/cli/status.js';
+import { itemContext } from '../../src/budget/measure.js';
 import { sync } from '../../src/cli/sync.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import type { Prompt } from '../../src/cli/prompt.js';
@@ -143,9 +144,27 @@ test('add and sync count the same tokens for the same repo state', async () => {
   const line = (o: string) => o.split('\n').filter((l) => /Approved earlier|context/i.test(l));
   const s = await syn(root, ['--dry-run']);
   const a = await add(root, 'add', ['staff-reviewer', '--dry-run']);
-  expect(s.out).toMatch(/Approved earlier, not counted: .*agents-md/);
-  expect(a.out).toMatch(/Approved earlier, not counted: .*agents-md/);
+  expect(s.out).toMatch(/Approved earlier: .*agents-md/);
+  expect(a.out).toMatch(/Approved earlier: .*agents-md/);
   expect(line(s.out).find((l) => l.startsWith('Approved'))).toBe(line(a.out).find((l) => l.startsWith('Approved')));
+});
+
+// Final review I2: approved items count in both before and after, so the ask sees the real total and still never re-asks them.
+test('installed items push the repo near the budget: a small add asks, and its total is status plus the item', async () => {
+  const root = installed();
+  const st = async () => { let out = ''; await status([], { env: CLAUDE, root, out: (s) => (out += s + '\n') }); return Number(/Context: ~([\d,]+) of/.exec(out)![1].replace(/,/g, '')); };
+  const total = await st();
+  const p = join(root, CONFIG);
+  const doc = parseDocument(readFileSync(p, 'utf8'));
+  doc.setIn(['context', 'budget_tokens'], total + 5); // the item adds more than 5
+  writeFileSync(p, doc.toString());
+  commitAll(root);
+  const a = await add(root, 'add', ['staff-reviewer', '--yes']);
+  expect(a.code, a.out).toBe(2);
+  expect(a.out).toContain('Over budget: confirm before installing.');
+  expect(a.out).toMatch(/Approved earlier: .*agents-md\./);
+  const sr = itemContext(loadCatalog().catalog.items.find((i) => i.id === 'staff-reviewer')!, { templates: templatesDir }).tokens!;
+  expect(Number(/Always-loaded context: ~([\d,]+) tokens/.exec(a.out)![1].replace(/,/g, ''))).toBe((await st()) + sr);
 });
 
 // M1

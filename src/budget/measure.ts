@@ -8,6 +8,7 @@ import type { Owner } from './owners.js';
 import { stripComments } from './text.js';
 
 export const DEFAULT_CONTEXT_BUDGET = 2000;
+const BLOCK_END = '<!-- harness:end -->';
 /** Claude Code cuts a skill's description (plus when_to_use) at this many characters in the listing. */
 export const SKILL_DESCRIPTION_MAX = 1536;
 
@@ -46,8 +47,12 @@ export function itemContext(item: CatalogItem, dirs: { templates: string }): Con
   if (item.kind === 'mcp') return { id, tokens: null };
   if (item.source.type !== 'own') return { id, tokens: null };
   if (item.source.merge?.includes('agents-md')) {
-    const text = stripComments(read(join(dirs.templates, 'agents-block.md'))) + '@AGENTS.md\n'; // markers count 0 (spec 3.4)
-    return { id, tokens: estimateTokens(text), text };
+    // Installed, these are two rows, each rounded: the block cut at its end marker (the newline after it is the repo's) and
+    // the CLAUDE.md line. Measuring the same text the same way keeps the preview equal to the installed count. Markers count 0 (spec 3.4).
+    const raw = read(join(dirs.templates, 'agents-block.md'));
+    const end = raw.lastIndexOf(BLOCK_END);
+    const parts = [stripComments(end < 0 ? raw : raw.slice(0, end + BLOCK_END.length)), '@AGENTS.md\n'];
+    return { id, tokens: parts.reduce((n, t) => n + estimateTokens(t), 0), text: parts.join('') };
   }
   const kind = item.kind === 'own-skill' ? 'skill' : item.kind === 'own-agent' ? 'agent' : null;
   if (!kind) return { id, tokens: 0 }; // hooks, settings, ci: not loaded as text
@@ -78,7 +83,7 @@ export function pluginEntry(plugin: string): ContextEntry {
   }
 }
 
-/** `extra` entries (measured elsewhere) are added as they are. `exempt` ids (items the person already approved) keep an entry but add nothing and are never unmeasured. harness-plugin is never exempt. With `count`, every entry that kept its text is measured exactly in one call; a null answer leaves the estimate. */
+/** `extra` entries (measured elsewhere) are added as they are. `exempt` ids (items the person already approved) count in the total but are never unmeasured, so with the same ids on both sides of a verdict they never ask again. harness-plugin is never exempt. With `count`, every entry that kept its text is measured exactly in one call; a null answer leaves the estimate. */
 export async function measureSelection(
   ids: string[], c: Catalog, dirs: { templates: string; plugin: string }, opts: { count?: CountTokens; exempt?: string[]; extra?: ContextEntry[] } = {},
 ): Promise<ContextMeasure> {
@@ -89,7 +94,7 @@ export async function measureSelection(
   if (counts) for (const { id } of texts) if (Object.hasOwn(counts, id)) { counted.add(id); }
   for (const e of entries) if (counted.has(e.id)) e.tokens = counts![e.id];
   // 'exact' only when every counted-in-principle entry got a count; a mix stays an estimate.
-  const method: ContextMeasure['method'] = counts && entries.every((e) => e.exempt || !e.tokens || counted.has(e.id)) ? 'exact' : 'estimate';
+  const method: ContextMeasure['method'] = counts && entries.every((e) => !e.tokens || counted.has(e.id)) ? 'exact' : 'estimate';
   return { ...summarize(entries), method };
 }
 
@@ -118,7 +123,7 @@ function summarize(all: ContextEntry[]): Omit<ContextMeasure, 'method'> {
   const entries = all.map(({ text: _t, ...e }) => e);
   return {
     entries,
-    tokens: entries.reduce((n, e) => n + (e.exempt ? 0 : e.tokens ?? 0), 0),
+    tokens: entries.reduce((n, e) => n + (e.tokens ?? 0), 0),
     unmeasured: entries.filter((e) => e.tokens === null && !e.exempt).map((e) => e.id),
   };
 }
@@ -136,10 +141,10 @@ export const fmt = (n: number): string => n.toLocaleString('en-US');
 
 export function budgetLines(v: BudgetVerdict): string[] {
   const approved = v.after.entries.filter((e) => e.exempt).map((e) => e.id);
-  const h = v.after.entries.reduce((n, e) => n + (e.exempt || e.owner === 'repo' ? 0 : e.tokens ?? 0), 0);
+  const h = v.after.entries.reduce((n, e) => n + (e.owner === 'repo' ? 0 : e.tokens ?? 0), 0);
   return [
     `Always-loaded context: ~${fmt(v.after.tokens)} tokens (${v.after.method}), budget ${fmt(v.budget)}; harness and its picks ~${fmt(h)}.`,
-    ...(approved.length ? [`Approved earlier, not counted: ${approved.join(', ')}.`] : []),
+    ...(approved.length ? [`Approved earlier: ${approved.join(', ')}.`] : []),
     ...(v.added_unmeasured.length ? [`Not measured before install: ${v.added_unmeasured.join(', ')}.`] : []),
     ...(v.ask ? ['Over budget: confirm before installing.'] : []),
   ];

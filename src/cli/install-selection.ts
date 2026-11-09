@@ -18,7 +18,7 @@ const EXIT_OVER_BUDGET = 2;
 
 /**
  * Prints the budget lines. Returns 2 when the install must stop (over budget, --yes, no --over-budget), else null.
- * `exempt` holds the ids the person already approved: they show but do not count.
+ * `exempt` holds the ids the person already approved: they count in both totals, so only new text or a new unmeasured id asks.
  */
 export async function budgetGate({ cat, before, after, exempt, extra = [], extraBefore = [], budget, templatesDir, root, env, out, f }: {
   cat: Catalog; before: string[]; after: string[]; exempt: string[]; extra?: ContextEntry[]; extraBefore?: ContextEntry[]; budget: number; templatesDir: string; root: string; env: NodeJS.ProcessEnv; out: (s: string) => void; f: { yes: boolean; dryRun: boolean; overBudget: boolean };

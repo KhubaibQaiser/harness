@@ -193,3 +193,11 @@ test('validate vet-review: unsaved failure says Vet review output', () => {
   expect(r.code).toBe(1);
   expect(r.lines.join('\n')).toContain('Vet review output failed validation twice. Raw output follows. Stopping.');
 });
+
+test('validate preset-answers: ok, one error per line, bad JSON, usage', () => {
+  const ok = { id: 'my-x', title: 'X', description: 'Mine.', target: 'global', rules: ['TDD.'], preselect: [], git: { branch_prefixes: ['feature/'], no_ai_trailer: true, pr_size_warning: true }, stacks: {} };
+  expect(go(['validate', 'preset-answers', file('a.json', JSON.stringify(ok))], root)).toEqual({ code: 0, lines: ['ok'] });
+  expect(go(['validate', 'preset-answers', file('a.json', JSON.stringify({ ...ok, target: 'x', extra: 1 }))], root)).toEqual({ code: 2, lines: ['extra: unknown key', 'target: must be repo or global'] });
+  expect(go(['validate', 'preset-answers', file('a.json', '{nope')], root)).toEqual({ code: 2, lines: ['preset-answers: not valid JSON'] });
+  expect(go(['validate', 'preset-answers'], root).lines[0]).toMatch(/^Usage:/);
+});

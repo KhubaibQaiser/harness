@@ -18,6 +18,6 @@ export function contextChecks(
 ): void {
   const s = contextSet(root, config, contextDirs());
   if (s.harness > s.budget) p.fix(`harness's own always-loaded text (~${n(s.harness)} tokens) is over the budget of ${n(s.budget)}`, 'report this as a harness bug, or raise context.budget_tokens');
-  else if (s.total > s.budget) p.note(`always-loaded context ~${n(s.total)} tokens is over the budget of ${n(s.budget)}.${MORE}`);
+  else if (s.total > s.budget) p.note(`always-loaded context ~${n(s.total)} tokens is over the budget of ${n(s.budget)}: run /harness:context-optimize`);
   else p.ok(`always-loaded context ~${n(s.total)} of ${n(s.budget)} tokens (best estimate); harness ~${n(s.harness)}.${MORE}`);
 }

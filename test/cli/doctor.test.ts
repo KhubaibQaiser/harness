@@ -709,7 +709,7 @@ test('doctor prints the always-loaded context: ok within budget, note over it, f
     expect(s2.total).toBeGreaterThan(s2.harness);
     withBudget(root, s2.harness);
     r = run(root, { path: bin('npm') });
-    expect(r.out).toContain(`note always-loaded context ~${s2.total.toLocaleString('en-US')} tokens is over the budget of ${s2.harness.toLocaleString('en-US')}. Run harness context for details.\n`);
+    expect(r.out).toContain(`note always-loaded context ~${s2.total.toLocaleString('en-US')} tokens is over the budget of ${s2.harness.toLocaleString('en-US')}: run /harness:context-optimize\n`);
     expect(r.code).toBe(0);
     withBudget(root, 100);
     r = run(root, { path: bin('npm') });

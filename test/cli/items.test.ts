@@ -194,7 +194,15 @@ test('explain lists items and files', async () => {
   expect(r.code).toBe(0);
   expect(r.out).toContain('staff-reviewer (own-agent): Reviews every diff.');
   expect(r.out).toContain(`  ${SR}`);
-  expect(r.out).toMatch(/Always-loaded context from harness: ~\d+ tokens/);
+  expect(r.out).toMatch(/Always-loaded context: ~[\d,]+ tokens \(estimate\), budget 2,000; harness and its picks ~[\d,]+\./);
+});
+
+test('explain counts the repo own CLAUDE.md in the total, not in the harness share', async () => {
+  const { 'AGENTS.md': _mine, ...noAgents } = REPO; // AGENTS.md's own text would be in the repo total too
+  const root = installed(OWN, { ...noAgents, 'CLAUDE.md': 'x'.repeat(400) }); // 100 tokens
+  const [, total, h] = /Always-loaded context: ~([\d,]+) tokens .*harness and its picks ~([\d,]+)\./.exec((await run(root, 'explain', [], {})).out)!.map((s) => Number(s.replace(/,/g, '')));
+  // 100 from the file, plus the newline left by cutting harness's @AGENTS.md line, plus AGENTS.md's newline around its block.
+  expect(total - h).toBe(102);
 });
 
 test('add refuses outside Claude Code; remove, why and explain do not', async () => {

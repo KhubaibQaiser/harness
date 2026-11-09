@@ -174,7 +174,7 @@ function buildPlan({ cli, f, root, facts }: Run, config: HarnessConfig, sel: AiI
 }
 
 /** Prints the plan, then the budget, dry-run and confirm stops: the exit code to stop with, or null to apply. */
-async function showPlan({ cli, f, p }: Run, { plan, touched }: Built, config: HarnessConfig, sel: AiInputs | null): Promise<number | null> {
+async function showPlan({ cli, f, p, root }: Run, { plan, touched }: Built, config: HarnessConfig, sel: AiInputs | null): Promise<number | null> {
   const { out, prompt } = cli;
   out('Plan:');
   for (const c of plan.changes) {
@@ -188,7 +188,7 @@ async function showPlan({ cli, f, p }: Run, { plan, touched }: Built, config: Ha
   if (sel?.preset) for (const l of previewLines(sel.preset, sel.ids)) out(l);
   if (sel) {
     const extra = sel.preset ? presetContext(sel.preset, sel.presetItems) : [];
-    const stop = await budgetGate({ cat: sel.catalog, before: [], after: sel.ids, exempt: approvedIds(config, null, sel.catalog), extra, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, out, f: { ...f.opts, overBudget: f.ai.overBudget } });
+    const stop = await budgetGate({ cat: sel.catalog, before: [], after: sel.ids, exempt: approvedIds(config, null, sel.catalog), extra, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, root, env: cli.env, out, f: { ...f.opts, overBudget: f.ai.overBudget } });
     if (stop !== null) return stop;
   }
   if (f.opts.dryRun) {

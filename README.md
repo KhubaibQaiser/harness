@@ -85,7 +85,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 
 ## What it costs
 
-- **Context.** Always-loaded text has a budget of 2000 tokens by default (`context.budget_tokens`). `harness explain` shows what each item loads. Harness asks before going over the budget. With `--yes`, an install over the budget stops unless you also pass `--over-budget`.
+- **Context.** Always-loaded text has a budget of 2000 tokens by default (`context.budget_tokens`). `harness explain` shows what each item loads. The budget counts your repo's own `CLAUDE.md`, rules and skills too. `init`, `update`, `add` and `sync` ask before going past it. With `--yes`, they stop unless you also pass `--over-budget`. An unattended run is refused, even with `--over-budget`.
 - **Money, for `harness eval`.** It tests skills, rules and gates in real sessions, so it costs money. It asks you to type `yes` every run. It stops at a cost ceiling (default $2, set with `--max-cost-usd`). It defaults to a Haiku model and runs only in your own terminal.
 - **The hooks call no model.** They add no token cost of their own.
 

@@ -216,7 +216,7 @@ The full flow runs only inside Claude Code, where Claude does the interview and 
 2. **Interview.** Claude asks one question at a time: scope first, then "Use a named preset?" ("No preset" is the default; `harness preset list` shows the others), then gaps the scan can't answer. It drafts `product.md` for you to edit. It reads only files you point to, never dotenv files or `.harnessignore` paths, and credentials are names only.
 3. **Recommend.** A fresh-context reviewer audits the repo against the catalog and proposes items and a report.
 4. **Select.** You tick items, four per question, with the reason, context cost and side effects of each. With a preset, its rows are ticked and say they came from it.
-5. **Apply.** It shows the plan, the preset's extra lines (Impeccable's hooks and download, the opt-out variables, the attribution setting) and the always-loaded context from harness. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
+5. **Apply.** It shows the plan, the preset's extra lines (Impeccable's hooks and download, the opt-out variables, the attribution setting) and the always-loaded context, the repo's own files included. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
 6. **Git.** Each of branch, commit, push and PR is its own question. Nothing runs without a yes.
 
 It writes the same files as `init`, plus `.harness/context/product.md` and `.harness/report.md`.
@@ -300,10 +300,10 @@ Two more flags are optional:
 
 Skills, agents and the `AGENTS.md` block are loaded into every Claude Code session. Each one costs tokens before you ask anything. Harness keeps a budget for that.
 
-- **What counts.** Always-loaded text only. For an agent, that's its name and description. For a skill, that's its name and description, plus `when_to_use` (together cut at 1,536 characters); a skill with `disable-model-invocation: true` costs nothing. For the `AGENTS.md` block, the whole block. The harness plugin's own skills are always counted. Hooks, settings and CI files count as 0.
+- **What counts.** Always-loaded text only. For an agent, that's its name and description. For a skill, that's its name and description, plus `when_to_use` (together cut at 1,536 characters); a skill with `disable-model-invocation: true` costs nothing. For the `AGENTS.md` block, the whole block. The harness plugin's own skills are always counted. Hooks, settings and CI files count as 0. The repo's own CLAUDE.md, AGENTS.md, rules, skills and agents count too, because every teammate loads them.
 - **Not measured.** Plugins and external skills count the number the catalog records, measured at the pinned commit; with none recorded, they're listed as not measured. MCP servers can't be measured before install and are always listed as not measured. The install asks you once about anything not measured.
 - **An estimate.** The count is characters divided by 4, labelled `estimate`. It makes no API call and needs no API key.
-- **The limit.** `context.budget_tokens`, default 2000. If a selection goes over it, `init` and `update` ask before installing. With `--yes`, they stop unless you pass `--over-budget`.
+- **The limit.** `context.budget_tokens`, default 2000. `init`, `update`, `add` and `sync` ask before going past it. With `--yes`, they stop unless you pass `--over-budget`. An unattended run is refused, even with `--over-budget`.
 - **doctor and status.** `harness doctor` and `harness status` show the always-loaded total, counted offline. Doctor notes when the total is over the budget, and reports a problem when harness's own text alone is.
 - **Ask once, then exempt.** Items you approved earlier show in the report but don't count toward the budget again.
 

@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import type { Catalog, CatalogItem } from '../catalog/schema.js';
+import type { Owner } from './owners.js';
 import { stripComments } from './text.js';
 
 export const DEFAULT_CONTEXT_BUDGET = 2000;
@@ -33,7 +34,7 @@ export function alwaysLoadedText(kind: 'agents-block' | 'claude-import' | 'skill
 }
 
 /** `text` is what was measured, kept so an exact count can re-measure it; measureSelection strips it. */
-export interface ContextEntry { id: string; tokens: number | null; exempt?: true; text?: string }
+export interface ContextEntry { id: string; tokens: number | null; exempt?: true; text?: string; owner?: Owner }
 export interface ContextMeasure { entries: ContextEntry[]; tokens: number; unmeasured: string[]; method: 'estimate' | 'exact' }
 export type CountTokens = (texts: { id: string; text: string }[]) => Promise<Record<string, number> | null>;
 
@@ -130,10 +131,14 @@ export function budgetVerdict(before: ContextMeasure, after: ContextMeasure, bud
   return { budget, before, after, ask, added_unmeasured };
 }
 
+/** Whole tokens with thousands separators, as every context line prints them (spec §7.1). */
+export const fmt = (n: number): string => n.toLocaleString('en-US');
+
 export function budgetLines(v: BudgetVerdict): string[] {
   const approved = v.after.entries.filter((e) => e.exempt).map((e) => e.id);
+  const h = v.after.entries.reduce((n, e) => n + (e.exempt || e.owner === 'repo' ? 0 : e.tokens ?? 0), 0);
   return [
-    `Always-loaded context from harness: ~${v.after.tokens} tokens (${v.after.method}), budget ${v.budget}.`,
+    `Always-loaded context: ~${fmt(v.after.tokens)} tokens (${v.after.method}), budget ${fmt(v.budget)}; harness and its picks ~${fmt(h)}.`,
     ...(approved.length ? [`Approved earlier, not counted: ${approved.join(', ')}.`] : []),
     ...(v.added_unmeasured.length ? [`Not measured before install: ${v.added_unmeasured.join(', ')}.`] : []),
     ...(v.ask ? ['Over budget: confirm before installing.'] : []),

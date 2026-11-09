@@ -1,5 +1,6 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'vitest';
@@ -8,7 +9,7 @@ import type { Prompt } from '../../src/cli/prompt.js';
 import { oldNodeHint, rules } from '../../src/cli/rules.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import type { Exec } from '../../src/core/exec.js';
-import { makeRepo } from '../install/helpers.js';
+import { makeRepo, withPrettier } from '../install/helpers.js';
 
 const realFetch = globalThis.fetch;
 beforeAll(() => { globalThis.fetch = (() => { throw new Error('no network in tests'); }) as typeof fetch; });
@@ -156,7 +157,9 @@ test.each([
   git(root, 'commit', '-q', '-m', 'mine');
   const before = snapshot(root) + readFileSync(join(root, '.harness/manifest.json'), 'utf8');
   const p = prompt('yes');
-  const r = await run(root, ['--apply'], p, exec);
+  let linted = 0;
+  const r = await run(root, ['--apply'], p, (c, a, o) => (a[0]?.endsWith('eslint.js') && linted++, exec(c, a, o)));
+  expect(linted).toBe(0); // the cheap check runs before the slow ESLint run
   expect(r.code).toBe(1);
   expect(r.out).toContain(`\`${HARNESS_FILE}\``);
   expect(r.out).toContain('Nothing was written.');
@@ -185,4 +188,96 @@ test('the old-Node hint shows for eslint.config.ts below Node 22.18 only', () =>
   expect(oldNodeHint('eslint.config.ts', '24.0.0')).toBeNull();
   expect(oldNodeHint('eslint.config.mjs', '20.0.0')).toBeNull();
   expect(oldNodeHint(undefined, '20.0.0')).toBeNull();
+});
+
+const unOut = async (root: string) => {
+  const lines: string[] = [];
+  const code = await uninstall(['--yes'], { env: {}, root, out: (s) => lines.push(s), prompt: prompt() });
+  return { code, out: lines.join('\n') };
+};
+const applied = async (eslint: Record<string, string>, extra: Record<string, string> = {}) => {
+  const r = await installed({ ...eslint, ...extra });
+  expect((await run(r.root, ['--apply'], prompt('yes'), execWith({ status: 0, stdout: '[]' }))).code).toBe(0);
+  git(r.root, 'add', '-A');
+  git(r.root, 'commit', '-q', '-m', 'rules');
+  return r;
+};
+
+test('--apply with an uncommitted ESLint config is refused before ESLint runs', async () => {
+  const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG });
+  writeFileSync(join(root, 'eslint.config.mjs'), ESLINT_CFG + '// wip\n');
+  let linted = 0;
+  const r = await run(root, ['--apply'], prompt('yes'), (_c, [bin = '']) => (bin.endsWith('eslint.js') && linted++, { status: 0, stdout: '[]' }));
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('eslint.config.mjs');
+  expect(linted).toBe(0);
+});
+
+test('uninstall after an element is appended past the closing marker removes both lines', async () => {
+  const { root } = await applied({ 'eslint.config.mjs': ESLINT_CFG });
+  const cfg = join(root, 'eslint.config.mjs');
+  writeFileSync(cfg, readFileSync(cfg, 'utf8').replace(/(  \/\/ harness:rules\n)(\];)/, '$1  { rules: {} },\n$2'));
+  git(root, 'commit', '-qam', 'mine');
+  expect((await unOut(root)).code).toBe(0);
+  const after = readFileSync(cfg, 'utf8');
+  expect(after).not.toContain('harnessRules');
+  expect(after).not.toContain('harness:rules');
+  expect(after).toContain('{ rules: {} },');
+});
+
+test('uninstall after an edit inside a harness block removes none of its blocks and names the lines', async () => {
+  const { root } = await applied({ 'eslint.config.mjs': ESLINT_CFG });
+  const cfg = join(root, 'eslint.config.mjs');
+  const edited = readFileSync(cfg, 'utf8').replace('  ...harnessRules,\n', '  ...harnessRules, // mine\n');
+  writeFileSync(cfg, edited);
+  git(root, 'commit', '-qam', 'mine');
+  const r = await unOut(root);
+  expect(r.code).toBe(0);
+  expect(readFileSync(cfg, 'utf8')).toBe(edited); // no half removal: the import stays with its spread
+  expect(r.out).toContain('`eslint.config.mjs`');
+  expect(r.out).toContain("import harnessRules from './.harness/eslint/harness.config.mjs';");
+  expect(r.out).toContain('...harnessRules,');
+});
+
+const TS_CFG = "import js from '@eslint/js';\n\nexport default [\n  js.configs.recommended,\n];\n";
+const DTS = '.harness/eslint/harness.config.d.mts';
+test('an eslint.config.ts also gets a declaration file, recorded and removed by uninstall', async () => {
+  const { root, original } = await applied({ 'eslint.config.ts': TS_CFG });
+  expect(readFileSync(join(root, DTS), 'utf8')).toContain('Linter.Config[]');
+  const manifest = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8')) as { files: { rel: string }[] };
+  expect(manifest.files.map((f) => f.rel)).toEqual(expect.arrayContaining([HARNESS_FILE, DTS, 'eslint.config.ts']));
+  expect((await unOut(root)).code).toBe(0);
+  expect(readFileSync(join(root, 'eslint.config.ts'), 'utf8')).toBe(original['eslint.config.ts']);
+  expect(existsSync(join(root, '.harness'))).toBe(false);
+});
+
+test('a strict tsconfig typechecks the edited eslint.config.ts', async () => {
+  const { root } = await applied({ 'eslint.config.ts': TS_CFG });
+  const d = mkdtempSync(join(tmpdir(), 'rules-tsc-'));
+  const put = (rel: string, text: string) => (mkdirSync(dirname(join(d, rel)), { recursive: true }), writeFileSync(join(d, rel), text));
+  for (const rel of ['eslint.config.ts', HARNESS_FILE, DTS]) put(rel, readFileSync(join(root, rel), 'utf8'));
+  put('package.json', '{ "type": "module" }');
+  put('node_modules/eslint/package.json', JSON.stringify({ name: 'eslint', type: 'module', types: 'index.d.ts' }));
+  put('node_modules/eslint/index.d.ts', 'export declare namespace Linter { interface Config { rules?: Record<string, unknown> } }\n');
+  put('node_modules/@eslint/js/package.json', JSON.stringify({ name: '@eslint/js', type: 'module', types: 'index.d.ts' }));
+  put('node_modules/@eslint/js/index.d.ts', 'declare const js: { configs: { recommended: object } };\nexport default js;\n');
+  put('tsconfig.json', JSON.stringify({ compilerOptions: { strict: true, module: 'nodenext', moduleResolution: 'nodenext', noEmit: true, skipLibCheck: false }, include: ['eslint.config.ts'] }));
+  const tsc = join(pkgDir, 'node_modules', 'typescript', 'bin', 'tsc');
+  const r = spawnSync(process.execPath, [tsc, '-p', d], { encoding: 'utf8' });
+  expect(r.stdout + r.stderr).toBe('');
+  expect(r.status).toBe(0);
+  rmSync(d, { recursive: true, force: true });
+});
+
+test('the config edit goes through the repo\'s Prettier, and uninstall still restores it', async () => {
+  // A stand-in Prettier that indents the lines a one-line array expansion leaves at column 0.
+  const fmt = "let s='';process.stdin.on('data',(d)=>(s+=d)).on('end',()=>process.stdout.write(s.replace(/^(\\/\\/ harness:rules|\\.\\.\\.harnessRules,)$/gm,'  $1')));\n";
+  const one = "export default [{ ignores: ['.harness/'] }, { rules: {} }];\n";
+  const { root, original } = await applied({ 'eslint.config.mjs': one }, { ...withPrettier, 'node_modules/prettier/bin/prettier.cjs': fmt });
+  const after = readFileSync(join(root, 'eslint.config.mjs'), 'utf8');
+  expect(after).toContain('\n  ...harnessRules,\n');
+  const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8')) as { files: { rel: string; formatted?: true }[] };
+  expect(m.files.find((f) => f.rel === 'eslint.config.mjs')?.formatted).toBe(true);
+  expect((await unOut(root)).code).toBe(0);
+  expect(readFileSync(join(root, 'eslint.config.mjs'), 'utf8')).toBe(original['eslint.config.mjs']);
 });

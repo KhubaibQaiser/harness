@@ -12,7 +12,7 @@ import { dirtyTouched } from '../install/finish.js';
 import { mergeManifestFiles, rawOf } from '../install/manifest.js';
 import { matchesHash } from '../install/text.js';
 import { HARNESS_RULES_IMPORT, mergeEslintHarnessRules } from '../install/merge.js';
-import { ESLINT } from '../install/plan.js';
+import { ESLINT, formatJsEdit } from '../install/plan.js';
 import { countViolations, type Counts } from '../rules/count.js';
 import { propose, type Proposal } from '../rules/propose.js';
 import type { Stack } from '../rules/table.js';
@@ -22,6 +22,8 @@ import type { Prompt } from './prompt.js';
 
 const USAGE = 'Usage: harness rules [--apply]';
 const FILE = '.harness/eslint/harness.config.mjs';
+const DTS = '.harness/eslint/harness.config.d.mts';
+const DTS_TEXT = "// Written by harness.\nimport type { Linter } from 'eslint';\ndeclare const rules: Linter.Config[];\nexport default rules;\n";
 const LEGACY = /^\.eslintrc(\.(js|cjs|json|ya?ml))?$/;
 const TS_CONFIG_NODE = [22, 18]; // first Node that loads eslint.config.ts without a flag
 const NOT_APPLIED = 'Not applied. Nothing was written.';
@@ -116,26 +118,41 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
   const before = cfg ? readFileSync(join(root, cfg), 'utf8') : null;
   const merged = before === null ? null : mergeEslintHarnessRules(before);
   if (apply && !merged) return refuse(root, cfg, p, out);
+  // An eslint.config.ts imports the .mjs, so a strict typecheck needs its declaration.
+  const own = [FILE, ...(cfg?.endsWith('.ts') ? [DTS] : [])];
+  const read = (rel: string) => (existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null);
+  if (apply) { // the cheap refusals, before the slow ESLint runs
+    for (const rel of own) {
+      const old = read(rel);
+      const rec = m.files.find((f) => f.rel === rel);
+      if (old !== null && !(rec && matchesHash(old, rec.hash))) // never overwrite a file harness did not write, or one edited since
+        return out(`\`${rel}\` exists, but harness did not write it or it was edited since. Move or delete it, then run harness rules --apply again. ${NOT_APPLIED}`), 1;
+    }
+    const dirty = dirtyTouched(root, [...own, ...(merged?.blocks.length ? [cfg!] : [])].map((rel) => ({ rel })));
+    if (dirty.length) return out(`Commit or stash these files first, so the change can be undone cleanly: ${dirty.join(', ')}. ${NOT_APPLIED}`), 1;
+  }
 
   const counts = await countViolations(root, { ...p, ts: {} }, cli.exec ?? defaultExec); // only the ESLint part is applied
   printCounts(counts.eslint, p, cfg, out);
   printGaps(p, counts.eslint.dropped, out);
 
-  const text = fileText(p, counts.eslint.dropped.map((d) => d.rule));
-  const abs = join(root, FILE);
-  const old = existsSync(abs) ? readFileSync(abs, 'utf8') : null;
+  const texts: Record<string, string> = { [FILE]: fileText(p, counts.eslint.dropped.map((d) => d.rule)), [DTS]: DTS_TEXT };
   const changes: Change[] = [];
-  if (old === null) changes.push({ kind: 'create', rel: FILE, content: text });
-  else if (old !== text) changes.push({ kind: 'update', rel: FILE, before: old, after: text, blocks: [], rewrite: true });
-  if (cfg && merged?.blocks.length) changes.push({ kind: 'update', rel: cfg, before: before!, after: merged.after, blocks: merged.blocks });
+  for (const rel of own) {
+    const old = read(rel);
+    if (old === null) changes.push({ kind: 'create', rel, content: texts[rel]! });
+    else if (old !== texts[rel]) changes.push({ kind: 'update', rel, before: old, after: texts[rel]!, blocks: [], rewrite: true });
+  }
+  if (cfg && merged?.blocks.length) {
+    const c: Extract<Change, { kind: 'update' }> = { kind: 'update', rel: cfg, before: before!, after: merged.after, blocks: merged.blocks };
+    const notes: string[] = [];
+    formatJsEdit(root, c, notes); // as install does: only when the file was Prettier-clean, and recorded as undoable hunks
+    notes.forEach((n) => out(`Note: ${n}`));
+    changes.push(c);
+  }
   for (const c of changes) out(unifiedDiff(c.kind === 'update' ? c.before : '', c.kind === 'update' ? c.after : c.kind === 'create' ? c.content : '', c.rel).trimEnd());
   if (!apply) return out(merged ? 'Run harness rules --apply to write this.' : 'harness rules --apply needs a flat ESLint config it can edit.'), 0;
   if (!changes.length) return out('Nothing to change.'), 0;
-  const own = m.files.find((f) => f.rel === FILE);
-  if (old !== null && old !== text && !(own && matchesHash(old, own.hash))) // never overwrite a file harness did not write, or one edited since
-    return out(`\`${FILE}\` exists, but harness did not write it or it was edited since. Move or delete it, then run harness rules --apply again. ${NOT_APPLIED}`), 1;
-  const dirty = dirtyTouched(root, changes);
-  if (dirty.length) return out(`Commit or stash these files first, so the change can be undone cleanly: ${dirty.join(', ')}. ${NOT_APPLIED}`), 1;
 
   const answer = await cli.prompt.edit('Type yes to apply these ESLint rules', '').catch(() => ''); // closed input is a No
   if (answer.trim() !== 'yes') return out(NOT_APPLIED), 1;

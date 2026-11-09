@@ -80,10 +80,16 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     else if (f.kind === 'update' && matchesHash(cur, f.hash) && backup !== null) changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
     else if (f.kind === 'create' || f.kind === 'update') {
       // A merged file the user edited: remove only harness's blocks and keep the rest.
+      // All or nothing: a file's blocks can depend on each other (an import and its use), so one missing block keeps them all.
       let after = cur;
       for (const b of f.blocks ?? []) {
         const next = removeBlocks(after, [b]);
-        if (next === after) notes.push(`\`${f.rel}\`: a block harness added was not found; left as is.`);
+        if (next === after) {
+          const lines = (f.blocks ?? []).flatMap((x) => x.split(/\r?\n/)).map((l) => l.trim()).filter((l) => l && l !== ',');
+          notes.push(`\`${f.rel}\`: a block harness added was not found or was edited, so none of harness's lines were removed. Remove these by hand:\n${lines.map((l) => `  ${l}`).join('\n')}`);
+          after = cur;
+          break;
+        }
         after = next;
       }
       // A config the repo's Prettier formatted at install: undo the formatted hunks, then format again, as install did.

@@ -471,7 +471,9 @@ function flatArray(lf: string): { body: any[]; root: any } | null {
   const def = body.find((n) => n.type === 'ExportDefaultDeclaration');
   if (!def) return null;
   let root = def.declaration;
-  if (root.type === 'CallExpression') root = root.arguments.length === 1 ? root.arguments[0] : null; // defineConfig([...])
+  // defineConfig([...]) or tseslint.config([...]): wrappers that take the flat-config array as is. Any other call may read it differently.
+  const wrapper = (c: any) => c?.type === 'Identifier' ? c.name === 'defineConfig' : c?.type === 'MemberExpression' && !c.computed && c.property?.name === 'config';
+  if (root.type === 'CallExpression') root = root.arguments.length === 1 && wrapper(root.callee) ? root.arguments[0] : null;
   if (root?.type === 'Identifier') {
     for (const n of body) {
       const decl = n.type === 'ExportNamedDeclaration' ? n.declaration : n;
@@ -499,6 +501,7 @@ function insertBlocks(before: string, lf: string, at: [number, string][]): { aft
 }
 
 export const HARNESS_RULES_MARK = '// harness:rules';
+const SPREAD_BLOCK = /\n[ \t]*\/\/ harness:rules\n[ \t]*\.\.\.harnessRules,?\n[ \t]*\/\/ harness:rules(\n|$)/;
 export const HARNESS_RULES_IMPORT = "import harnessRules from './.harness/eslint/harness.config.mjs';";
 
 /**
@@ -508,7 +511,11 @@ export const HARNESS_RULES_IMPORT = "import harnessRules from './.harness/eslint
 export function mergeEslintHarnessRules(before: string): { after: string; blocks: string[] } | null {
   try {
     const lf = before.replace(/\r\n/g, '\n');
-    if (lf.includes(HARNESS_RULES_MARK)) return { after: before, blocks: [] };
+    if (lf.includes(HARNESS_RULES_MARK)) {
+      // Already applied only when both marked blocks are whole; a stray or half-removed marker is a manual step.
+      const imp = [`'`, '"'].some((q) => lf.includes(`${HARNESS_RULES_MARK}\n${requote(HARNESS_RULES_IMPORT, q as "'" | '"')}\n${HARNESS_RULES_MARK}\n`));
+      return imp && SPREAD_BLOCK.test(lf) ? { after: before, blocks: [] } : null;
+    }
     const found = flatArray(lf);
     if (!found) return null;
     const { body, root } = found;
@@ -519,9 +526,12 @@ export function mergeEslintHarnessRules(before: string): { after: string; blocks
     let at = last ? last.end : root.start + 1;
     const comma = last && /^\s*,/.exec(lf.slice(at));
     if (comma) at += comma[0].length;
+    const note = /^[ \t]*\/\/[^\n]*/.exec(lf.slice(at)); // a trailing `// comment` stays on the element's line
+    if (note && last && !comma) return null; // ponytail: the comma would go before the comment, a second insert; left as a manual step
+    if (note) at += note[0].length;
     const ind = last ? /^[ \t]*/.exec(lf.slice(lf.lastIndexOf('\n', last.start) + 1))![0] : '';
     const multiline = lf.slice(at, root.end - 1).includes('\n');
-    const spread = `${last && !comma ? ',' : ''}\n${ind}${HARNESS_RULES_MARK}\n${ind}...harnessRules${comma ? ',' : ''}\n${ind}${HARNESS_RULES_MARK}${multiline ? '' : '\n'}`;
+    const spread = `${last && !comma ? ',' : ''}\n${ind}${HARNESS_RULES_MARK}\n${ind}...harnessRules,\n${ind}${HARNESS_RULES_MARK}${multiline ? '' : '\n'}`;
     return insertBlocks(before, lf, [[impAt, line], [at, spread]]);
   } catch {
     return null;

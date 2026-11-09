@@ -744,11 +744,41 @@ describe('mergeEslintHarnessRules', () => {
       expect(r.after).toContain('...harnessRules');
       expect(removeBlocks(r.after, r.blocks)).toBe(src);
     }
-    expect(mergeEslintHarnessRules('export default [\n  { rules: {} }\n];\n')!.after).toBe(`${IMPORT}export default [\n  { rules: {} },\n  // harness:rules\n  ...harnessRules\n  // harness:rules\n];\n`);
-    expect(mergeEslintHarnessRules('export default [{ rules: {} }];\n')!.after).toBe(`${IMPORT}export default [{ rules: {} },\n// harness:rules\n...harnessRules\n// harness:rules\n];\n`);
+    expect(mergeEslintHarnessRules('export default [\n  { rules: {} }\n];\n')!.after).toBe(`${IMPORT}export default [\n  { rules: {} },\n  // harness:rules\n  ...harnessRules,\n  // harness:rules\n];\n`);
+    expect(mergeEslintHarnessRules('export default [{ rules: {} }];\n')!.after).toBe(`${IMPORT}export default [{ rules: {} },\n// harness:rules\n...harnessRules,\n// harness:rules\n];\n`);
   });
   it('uses the file\'s quotes', () => {
     expect(mergeEslintHarnessRules('import a from "a";\nexport default [a];\n')!.after).toContain('import harnessRules from "./.harness/eslint/harness.config.mjs";');
+  });
+  it('a trailing comment stays on the last element\'s line', () => {
+    const src = 'export default [\n  a, // last\n];\n';
+    const r = mergeEslintHarnessRules(src)!;
+    expect(r.after).toBe(`${IMPORT}export default [\n  a, // last\n  // harness:rules\n  ...harnessRules,\n  // harness:rules\n];\n`);
+    expect(removeBlocks(r.after, r.blocks)).toBe(src);
+    // ponytail shape: no comma before the comment would need a second insert, so it is a manual step
+    expect(mergeEslintHarnessRules('export default [\n  a // last\n];\n')).toBeNull();
+  });
+  it('appending after the closing marker, or a trailing-comma-all reformat, leaves both blocks intact', () => {
+    for (const src of ['export default [\n  a\n];\n', 'export default [\n  a,\n];\n', 'export default [a];\n']) {
+      const r = mergeEslintHarnessRules(src)!;
+      // what a person (or Prettier's trailingComma: all) does: every element line ends in a comma, and more go after the marker
+      expect(r.after, src).toMatch(/\.\.\.harnessRules,\n/);
+      expect(r.after, src).toMatch(/\ba,/);
+      const appended = r.after.replace(/(\/\/ harness:rules\n)(\s*\];)/, '$1  b,\n$2');
+      expect(appended).not.toBe(r.after);
+      expect(r.blocks.every((b) => appended.includes(b)), src).toBe(true);
+    }
+  });
+  it('a stray or half-removed marker is null, never a no-op', () => {
+    expect(mergeEslintHarnessRules("export default [{ ignores: ['// harness:rules'] }];\n")).toBeNull();
+    const done = mergeEslintHarnessRules('export default [\n  a,\n];\n')!.after;
+    expect(mergeEslintHarnessRules(done.replace("import harnessRules from './.harness/eslint/harness.config.mjs';\n", ''))).toBeNull();
+    expect(mergeEslintHarnessRules(done.replace('  ...harnessRules,\n', ''))).toBeNull();
+  });
+  it('accepts only defineConfig(...) and *.config(...) wrappers', () => {
+    expect(mergeEslintHarnessRules('export default tseslint.config([a]);\n')).not.toBeNull();
+    expect(mergeEslintHarnessRules('export default whatever([a]);\n')).toBeNull();
+    expect(mergeEslintFlatIgnores('export default whatever([a]);\n')).toBeNull();
   });
   it('null when the shape is not a flat-config array', () => {
     expect(mergeEslintHarnessRules('export default makeConfig();\n')).toBeNull();

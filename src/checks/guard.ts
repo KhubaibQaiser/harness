@@ -87,6 +87,8 @@ const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string
   git: { kind: 'ask', allowed: (a) => a[0] === 'branch' || a[0] === 'commit', why: () => 'the agent is pushing or opening a pull request for the harness changes' },
   preset: { kind: 'ask', allowed: (a) => a[0] === 'list' || a[0] === 'check' || (a[0] === 'install' && a.includes('--dry-run') && !a.includes('--yes')), why: () => 'the agent is installing a preset, which writes rules, skills and settings (global ones go to ~/.claude)' },
   context: { kind: 'ask', allowed: (a) => a[0] !== 'apply' || PREVIEW(a.slice(1)), why: () => 'the agent is changing which skills load, in .claude/settings.json' },
+  report: { kind: 'ask', allowed: (a) => a.includes('--help'), why: () => "the agent is running the usage and adherence report, which reads this repo's session transcripts" },
+  eval: { kind: 'deny', allowed: (a) => a.includes('--help'), why: (run) => `Only a person can run paid evals: run ${run('eval')} in your own terminal.` },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
 const ANY_WHY = 'Only a person can change or remove the harness gates: run the harness command in your own terminal.';
@@ -233,7 +235,8 @@ export function walkCommands<T>(command: string, w: Where, visit: Visit<T>, hook
 function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
   return walkCommands(command, w, personOnlyVisit(w), {
     // eval re-parses its input, so any eval near a harness token and a person-only subcommand is denied.
-    whole: (words) => (words.includes('eval') && words.some(isPersonOnly) && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, ''))) ? { kind: 'deny', reason: ANY_WHY } : null),
+    // `eval` itself is left out of the person-only test, so harness's own `eval` subcommand is judged by its table entry.
+    whole: (words) => (words.includes('eval') && words.some((t) => t !== 'eval' && isPersonOnly(t)) && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, ''))) ? { kind: 'deny', reason: ANY_WHY } : null),
     script: backstop,
     tooDeep: { kind: 'ask', reason: 'a chain of npm scripts is too deep for the guard to read; run it yourself or read the scripts first' },
   }, depth);

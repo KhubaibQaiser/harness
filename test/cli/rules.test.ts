@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { init } from '../../src/cli/init.js';
 import type { Prompt } from '../../src/cli/prompt.js';
@@ -237,6 +237,9 @@ test('uninstall after an edit inside a harness block removes none of its blocks 
   expect(r.out).toContain('`eslint.config.mjs`');
   expect(r.out).toContain("import harnessRules from './.harness/eslint/harness.config.mjs';");
   expect(r.out).toContain('...harnessRules,');
+  // the kept config still imports the harness file, so it is kept too and lint keeps loading
+  expect(existsSync(join(root, HARNESS_FILE))).toBe(true);
+  expect(r.out).toContain(`Kept \`${HARNESS_FILE}\``);
 });
 
 const TS_CFG = "import js from '@eslint/js';\n\nexport default [\n  js.configs.recommended,\n];\n";
@@ -280,4 +283,23 @@ test('the config edit goes through the repo\'s Prettier, and uninstall still res
   expect(m.files.find((f) => f.rel === 'eslint.config.mjs')?.formatted).toBe(true);
   expect((await unOut(root)).code).toBe(0);
   expect(readFileSync(join(root, 'eslint.config.mjs'), 'utf8')).toBe(original['eslint.config.mjs']);
+});
+
+test('a two-hunk Prettier-formatted config with an edit in the spread is kept whole, and still loads', async () => {
+  const fmt = "let s='';process.stdin.on('data',(d)=>(s+=d)).on('end',()=>process.stdout.write(s.replace(/^(\\/\\/ harness:rules|\\.\\.\\.harnessRules,)$/gm,'  $1')));\n";
+  const src = "const x = { rules: {} };\nconst y = 1;\nconst z = y + 1;\n\nexport default [{ ignores: ['.harness/'] }, x];\n";
+  const { root } = await applied({ 'eslint.config.mjs': src }, { ...withPrettier, 'node_modules/prettier/bin/prettier.cjs': fmt });
+  const cfg = join(root, 'eslint.config.mjs');
+  const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8')) as { files: { rel: string; replace?: unknown[] }[] };
+  expect(m.files.find((f) => f.rel === 'eslint.config.mjs')?.replace).toHaveLength(2);
+  const edited = readFileSync(cfg, 'utf8').replace('  ...harnessRules,\n', '  ...harnessRules, // mine\n');
+  writeFileSync(cfg, edited);
+  git(root, 'commit', '-qam', 'mine');
+  const r = await unOut(root);
+  expect(r.code).toBe(0);
+  expect(readFileSync(cfg, 'utf8')).toBe(edited);
+  expect(r.out).toContain('Remove these by hand');
+  expect(r.out).toContain("import harnessRules from './.harness/eslint/harness.config.mjs';");
+  const loaded = (await import(`${pathToFileURL(cfg).href}?t=${Date.now()}`)) as { default: unknown[] };
+  expect(Array.isArray(loaded.default)).toBe(true);
 });

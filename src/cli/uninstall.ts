@@ -24,6 +24,8 @@ const read = (p: string): string | null => {
   }
 };
 
+const JS = /\.[cm]?[jt]s$/;
+const HARNESS_ESLINT = ['.harness/eslint/harness.config.mjs', '.harness/eslint/harness.config.d.mts'];
 const list = (rels: string[]) => rels.map((k) => `\`${k}\``).join(', ');
 
 /** Deletes everything under `dir` except the `keep` files (absolute paths) and the folders that hold them. */
@@ -52,6 +54,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   const changes: Change[] = [];
   const kept: string[] = [];
   const notes: string[] = [];
+  const keptWhole: string[] = []; // the texts of JS files kept whole
   for (const f of m.files) {
     const cur = read(join(root, f.rel));
     if (cur === null) {
@@ -80,23 +83,31 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     else if (f.kind === 'update' && matchesHash(cur, f.hash) && backup !== null) changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
     else if (f.kind === 'create' || f.kind === 'update') {
       // A merged file the user edited: remove only harness's blocks and keep the rest.
-      // All or nothing: a file's blocks can depend on each other (an import and its use), so one missing block keeps them all.
+      // In a JS/TS file the blocks depend on each other (an import and its use), so one missing block keeps them all.
+      const whole = JS.test(f.rel);
+      const keepAll = (lines: string[]) => {
+        notes.push(`\`${f.rel}\`: a change harness made was not found or was edited, so none of harness's lines were removed. Remove these by hand:\n${lines.map((l) => `  ${l}`).join('\n')}`);
+        keptWhole.push(cur);
+      };
       let after = cur;
       for (const b of f.blocks ?? []) {
         const next = removeBlocks(after, [b]);
-        if (next === after) {
-          const lines = (f.blocks ?? []).flatMap((x) => x.split(/\r?\n/)).map((l) => l.trim()).filter((l) => l && l !== ',');
-          notes.push(`\`${f.rel}\`: a block harness added was not found or was edited, so none of harness's lines were removed. Remove these by hand:\n${lines.map((l) => `  ${l}`).join('\n')}`);
+        if (next !== after) after = next;
+        else if (!whole) notes.push(`\`${f.rel}\`: a block harness added was not found; left as is.`);
+        else {
+          keepAll((f.blocks ?? []).flatMap((x) => x.split(/\r?\n/)).map((l) => l.trim()).filter((l) => l && l !== ','));
           after = cur;
           break;
         }
-        after = next;
       }
-      // A config the repo's Prettier formatted at install: undo the formatted hunks, then format again, as install did.
-      for (const h of [...(f.replace ?? [])].reverse()) {
-        const next = revertHunks(after, [h]);
-        if (next === null) notes.push(`\`${f.rel}\`: a change harness made was not found; left as is.`);
-        else after = next;
+      // A config the repo's Prettier formatted at install: undo the formatted hunks together, then format again, as install did.
+      if (f.replace?.length && !keptWhole.includes(cur)) {
+        const next = revertHunks(after, f.replace);
+        if (next !== null) after = next;
+        else if (whole) {
+          keepAll(f.replace.flatMap((h) => { const to = new Set(h.to.split('\n')); return h.from.split('\n').filter((l) => l.trim() && !to.has(l)).map((l) => l.trim()); }));
+          after = cur;
+        } else notes.push(`\`${f.rel}\`: a change harness made was not found; left as is.`);
       }
       const bin = f.formatted && after !== cur ? repoPrettier(root, f.rel) : null;
       if (bin) {
@@ -109,6 +120,16 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       // A created file that held only harness's blocks and whitespace is removed whole.
       if (f.kind === 'create' && !after.trim()) changes.push({ kind: 'delete', rel: f.rel, before: cur });
       else if (after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after, blocks: [] });
+    }
+  }
+
+  // A kept JS config still imports harness's ESLint files: keep them too, so the person's lint keeps loading.
+  if (keptWhole.some((t) => t.includes('.harness/eslint/'))) {
+    const keepRels = HARNESS_ESLINT.filter((rel) => changes.some((c) => c.rel === rel && c.kind === 'delete'));
+    for (const rel of keepRels) changes.splice(changes.findIndex((c) => c.rel === rel), 1);
+    if (keepRels.length) {
+      kept.push(...keepRels);
+      notes.push(`Kept ${list(keepRels)}: the config above still imports it. Delete it after you remove those lines.`);
     }
   }
 

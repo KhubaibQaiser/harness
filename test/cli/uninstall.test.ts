@@ -308,3 +308,21 @@ test('uninstall removes plugin, marketplace and MCP blocks and leaves the person
   expect(JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'))).toEqual({ enabledPlugins: { 'foo@other': true } });
   expect(JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8'))).toEqual({ mcpServers: { mine: { command: 'x' } } });
 });
+
+test('a Markdown file removes its blocks one by one: the untouched harness block goes, an edited one stays', async () => {
+  const root = await installed();
+  const p = join(root, 'AGENTS.md');
+  const mPath = join(root, '.harness/manifest.json');
+  const m = JSON.parse(readFileSync(mPath, 'utf8')) as { files: { rel: string; blocks?: string[] }[] };
+  m.files.find((f) => f.rel === 'AGENTS.md')!.blocks!.push('\n<!-- second -->\nsecond block\n');
+  writeFileSync(mPath, JSON.stringify(m, null, 2) + '\n');
+  writeFileSync(p, readFileSync(p, 'utf8') + '\n<!-- second -->\nsecond block, edited\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'second');
+  const r = await un(root, ['--yes']);
+  expect(r.code).toBe(0);
+  const after = readFileSync(p, 'utf8');
+  expect(after).not.toContain('harness:start');
+  expect(after).toContain('second block, edited');
+  expect(r.out).toContain('`AGENTS.md`: a block harness added was not found; left as is.');
+});

@@ -235,7 +235,8 @@ export function walkCommands<T>(command: string, w: Where, visit: Visit<T>, hook
 function personOnlyInvocation(command: string, w: Where, depth = 0): Hit | null {
   return walkCommands(command, w, personOnlyVisit(w), {
     // eval re-parses its input, so any eval near a harness token and a person-only subcommand is denied.
-    whole: (words) => (words.some((t, i) => t === 'eval' && !(i > 0 && HARNESS_CMD.test(words[i - 1]))) && words.some(isPersonOnly) && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, ''))) ? { kind: 'deny', reason: ANY_WHY } : null),
+    // `eval` itself is left out of the person-only test, so harness's own `eval` subcommand is judged by its table entry.
+    whole: (words) => (words.includes('eval') && words.some((t) => t !== 'eval' && isPersonOnly(t)) && words.some((t) => HARNESS_CMD.test(t.replace(/^\w+=/, ''))) ? { kind: 'deny', reason: ANY_WHY } : null),
     script: backstop,
     tooDeep: { kind: 'ask', reason: 'a chain of npm scripts is too deep for the guard to read; run it yourself or read the scripts first' },
   }, depth);

@@ -830,3 +830,16 @@ test('harness report asks, harness eval is denied, --help is allowed', async () 
   expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision).toBe('ask');
   expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision).toBe('deny');
 });
+
+test('a shell eval next to a harness word stays denied; harness eval keeps its own verdicts', () => {
+  for (const c of [">/tmp/harness eval 'ha${x}rness tdd off' --help", ">/tmp/harness eval 'ha${x}rness tdd off #' --help", "X=/x/harness eval 'ha${x}rness tdd off #' --help",
+    'eval harness tdd off']) expect(kind(c), c).toBe('deny');
+  expect(kind("harness eval --help && eval 'ha${x}rness tdd off'")).toBe('deny');
+  expect(kind("echo harness; eval 'ha${x}rness tdd off'")).toBe('ask'); // built at run time, no literal subcommand: asks (denied unattended), as before this task
+  expect(kind('harness eval --help')).toBe('allow');
+  for (const c of ['harness eval', 'npx @khubaibqaiser/harness eval', 'harness --verbose eval']) {
+    const d = decideCommand(c, ctx());
+    expect(d.kind, c).toBe('deny');
+    expect(reason(d), c).toContain('Only a person can run paid evals');
+  }
+});

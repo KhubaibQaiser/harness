@@ -348,6 +348,33 @@ test.each([
   });
 }
 
+// Round 26 (re-review 23b, N1): a commit or PR body ends only at a line that is exactly its delimiter (leading tabs under
+// `<<-`), with `)` on the next line. ` EOF`, `\tEOF`, `EOF `, `EOF )` are body text in zsh and bash 5, so the line after
+// the real end line runs. Each payload alone asks.
+{
+  const pays = ['cd .harness && echo x > config.yaml', W];
+  const n1 = pays.flatMap((x) => [
+    `git commit -m "$(cat <<'EOF'\nmsg\nEOF \n)\nEOF\n${x}\n)"`, `git commit -m "$(cat <<'EOF'\nmsg\n EOF\n)\nEOF\n${x}\n)"`,
+    `git commit -m "$(cat <<'EOF'\nmsg\n\tEOF\n)\nEOF\n${x}\n)"`, `git commit -m "$(cat <<'EOF'\nmsg\nEOF )\nEOF\n${x}\n)"`,
+    `git commit -m "$(cat <<EOF\nmsg\nEOF \n)\nEOF\n${x}\n)"`, `gh pr create --title t --body "$(cat <<'EOF'\nmsg\nEOF \n)\nEOF\n${x}\n)"`,
+    `git commit -m "$(cat <<'EOF'\nmsg\nEOF\r\n)\nEOF\n${x}\n)"`,
+  ]);
+  test.each(n1)('round 26: %j is not allowed', (c) => expect(bash(c)).not.toBe('allow'));
+  test.each(n1)('round 26: %j is not allowed through the dispatcher', async (c) => {
+    const root = mkdtempSync(join(tmpdir(), 'h-pr-26-'));
+    mkdirSync(join(root, '.git'));
+    const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: c } });
+    const out = await dispatch(raw, registry, {}, { home: root });
+    expect(out && JSON.parse(out).hookSpecificOutput?.permissionDecision).toMatch(/^(ask|deny)$/);
+  });
+  test('round 26: exact end lines, <<- tabs and the closing quote stay a message', () => {
+    for (const c of [`git commit -m "$(cat <<'EOF'\nfix: see .harness/config.yaml\nEOF\n)"`, `git commit -m "$(cat <<-'EOF'\n\tfix: .harness/state.json\n\t\tEOF\n  )"`,
+      `gh pr create --title t --body "$(cat <<'EOF'\n.harness/config.yaml\nEOF\n)"`, `git commit -m "$(cat <<'EOF'\n.harness/x\nEOF\n)" && git status`,
+      `git commit -m "$(cat <<'EOF'\nmsg\nEOF)\n${W}\nEOF\n)"`]) // `EOF)` is body text, so W is too
+      expect(bash(c), c).toBe('allow');
+  });
+}
+
 // Round 14 D1: env -S strings are split with env's own rules, so `(` is an ordinary character.
 test.each([`env -S "node -e require('fs').rmSync('node_modules')"`, `env --split-string="node -p require('fs').rmSync('node_modules/x')"`, `env -S 'node -e "require(\\"fs\\").rmSync(\\"node_modules\\")"'`])(
   'D1: %s is denied', (c) => expect(run('Bash', { command: c }).reason).toBe(NM_INLINE));

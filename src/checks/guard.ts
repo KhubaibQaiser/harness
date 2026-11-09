@@ -626,7 +626,7 @@ const MAX_NESTING = 2;
  *  lines before the body. layout uses it on text that is not canonical, where main's decision is the floor anyway. */
 export const SPANS_LINES = /`|\$[({[]|\(\(|[<>=]\(/;
 /** What an unquoted delimiter's body expands and runs: a backtick, `$(`, `$((`, `${`, `$[`. */
-const EXPANDS = /`|\$[({[]/;
+export const EXPANDS = /`|\$[({[]/;
 const HEREDOC_WORD = /-?[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|([A-Za-z_]\w*))(?=[ \t;|&<>]|$)/y;
 /** One token of a canonical line: blanks; an operator or redirection (`&&`, `||`, `;`, `&`, `|`, `>`, `>>`, `<`, `&>`,
  *  `&>>`, `>&`, and the here-string `<<<`; a digit before one is a word); a quoted string with no opener inside (`\"` escapes in "…", `$NAME` and

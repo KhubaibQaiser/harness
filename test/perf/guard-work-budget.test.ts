@@ -51,3 +51,17 @@ it('a Bash command over 256 KB is denied with its reason, before any check reads
   expect(ds).toEqual([{ kind: 'deny', reason: TOO_LARGE_WHY, check: 'harness' }]);
   expect(await hook(`echo ${'a'.repeat(MAX_COMMAND_BYTES - 6)}`)).toEqual([]);
 });
+// Re-review 23b, N3: the cap measures the text the checks read, String(command), whatever its type.
+it('a non-string Bash command over 256 KB is denied before any check reads it', async () => {
+  const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: '/p', tool_name: 'Bash', tool_input: { command: ['x'.repeat(MAX_COMMAND_BYTES + 1)] } };
+  const ds = await runChecks({ input, root: '/p', config, env: {}, unattended: false } as unknown as Ctx, [guard, protect], false, () => {});
+  expect(ds).toEqual([{ kind: 'deny', reason: TOO_LARGE_WHY, check: 'harness' }]);
+});
+// Re-review 23b, N2: an open `$(cat <<EOF` before a newline run made protect's commit-body regex quadratic (15 s at 80 KB).
+it.each([80_000, 256 * 1024 - 64])('%i bytes of newlines after an open commit body finish within the ceiling', async (n) => {
+  const c = 'git commit -m "$(cat <<EOF\n' + '\n'.repeat(n) + '"';
+  await hook(c);
+  const t = performance.now();
+  await hook(c);
+  expect(performance.now() - t).toBeLessThan(CEILING_MS);
+});

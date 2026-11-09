@@ -6,7 +6,7 @@ import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
-import { commandStart, decodeAnsiC, fileWriteTargets, gitArgs, ifsReading, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
+import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
@@ -234,12 +234,32 @@ const readOnly = (ws: string[]): boolean => {
 };
 const MESSAGE_FLAGS = new Set(['-m', '--message', '-F', '--file', '-b', '--body', '--body-file', '-t', '--title']);
 // `$(cat <<'EOF' … EOF)`, Claude Code's commit and PR body form, and a one-word `.harness` in backticks are message text.
-// Round 25 (re-review 22b, F2): only a body that ends at its first end line, as the shell reads it, and that holds no
-// substitution when the delimiter is unquoted. A body is not searched past the next `$(cat`, so the scan is linear (F4).
-const HEREDOC_CAT = /\$\(cat\s+<<(-?)\s*(['"]?)(\w+)\2\n((?:(?!\$\(cat\s)[\s\S])*?)\n\s*\3\s*\n?\s*\)/g;
-const withoutCatMessages = (t: string): string =>
-  t.replace(HEREDOC_CAT, (m, dash: string, q: string, w: string, body: string) =>
-    body.split('\n').some((l) => (dash ? l.replace(/^\t+/, '') : l) === w) || (!q && /`|\$[({[]/.test(body)) ? m : '');
+// Round 26 (re-review 23b, N1, N2): one linear walk over lines. A body ends only at the first line that is exactly its
+// delimiter (leading tabs under `<<-`; no blanks, CR or `)`), and the next line must start with `)` after blanks; what
+// follows that `)` stays text. A body under an unquoted delimiter that expands (lexer's EXPANDS), or a body line ending
+// in `\` (it can join the end line), is code. Any opener that does not close that way leaves the whole text as code.
+const CAT_OPEN = /^cat[ \t]+<<-?[ \t]*(['"]?)[A-Za-z_]\w*\1$/; // the opener ends its line; lexLine reads its delimiter
+const withoutCatMessages = (t: string): string => {
+  const lines = t.split('\n'), out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    let cur = lines[i], from = 0;
+    for (;;) {
+      const k = cur.lastIndexOf('$(cat');
+      const op = k >= from && CAT_OPEN.test(cur.slice(k + 2)) ? lexLine(cur.slice(k + 2))?.ends[0] : undefined;
+      if (!op) break;
+      let j = i + 1;
+      for (; j < lines.length && (op.dash ? lines[j].replace(/^\t+/, '') : lines[j]) !== op.word; j++)
+        if (lines[j].endsWith('\\') || (!op.literal && EXPANDS.test(lines[j]))) return t;
+      const close = /^[ \t]*\)/.exec(lines[j + 1] ?? '');
+      if (j >= lines.length || !close) return t;
+      cur = cur.slice(0, k) + lines[j + 1].slice(close[0].length);
+      from = k;
+      i = j + 1;
+    }
+    out.push(cur);
+  }
+  return out.join('\n');
+};
 const isMessage = (w: string): boolean => !/\$\(|`/.test(withoutCatMessages(w).replace(/`[^`\s]*`/g, ''));
 /** A segment's words without its data: the text of an echo or printf whose output nobody reads as code (no redirect, no
  *  substitution in the command), and the message, body and title values of git and gh that run no other substitution. */

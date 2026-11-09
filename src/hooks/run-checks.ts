@@ -41,8 +41,8 @@ export const TOO_LARGE_WHY = `the command is over ${MAX_COMMAND_BYTES / 1024} KB
 /** Runs the event's checks in registry order and returns the decisions that count. */
 export async function runChecks(ctx: Ctx, checks: Check[], degraded: boolean, log: Log): Promise<Decision[]> {
   const event = ctx.input.hook_event_name as HookEvent;
-  const command = ctx.input.tool_input?.command;
-  if (event === 'PreToolUse' && isShell(ctx.input.tool_name) && typeof command === 'string' && Buffer.byteLength(command) > MAX_COMMAND_BYTES) {
+  const command = String(ctx.input.tool_input?.command ?? ''); // the text guard and protect read, for any type
+  if (event === 'PreToolUse' && isShell(ctx.input.tool_name) && Buffer.byteLength(command) > MAX_COMMAND_BYTES) {
     log('harness', 'deny', TOO_LARGE_WHY);
     return [{ kind: 'deny', reason: TOO_LARGE_WHY, check: 'harness' }];
   }

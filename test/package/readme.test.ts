@@ -47,6 +47,14 @@ test('the reference carries the platform enforcement known limits, verbatim', ()
   for (const l of limits) expect(reference).toContain(l + '\n');
 });
 
+const cb = readFileSync('docs/specs/2026-11-03-context-budget-design.md', 'utf8');
+
+test('the reference carries the context-budget known limits, verbatim', () => {
+  const limits = between(cb, '## 14.', '## 15.').split('\n').filter((l) => l.startsWith('- '));
+  expect(limits).toHaveLength(10);
+  for (const l of limits) expect(reference).toContain(l + '\n');
+});
+
 test('README carries the unattended launch command', () => {
   const cmd = /```sh\n(HARNESS_SANDBOX=1 claude -p [^\n]+)\n```/.exec(between(pe, '### 3.4', '### 3.5'))![1];
   expect(readme).toContain(cmd);

@@ -479,7 +479,7 @@ What offline tests can't prove: what Claude Code really puts in context (U1 to U
 - The **Project instructions** setting (`claude-md-and-agents-md` and others) lives in user or managed settings. Harness assumes the default.
 - The on-demand total is the most that could load, not what a session loads.
 - The budget asks cover only harness's own commands. A person editing CLAUDE.md, or another tool adding skills, is caught only when `doctor`, `status` or `harness context` runs.
-- Committed picks load for every teammate, but only the person installing them is asked (M3 plan ruling 18).
+- Committed picks load for every teammate, but only the person installing them is asked.
 - `init`, `update`, `uninstall` and `context-optimize` start only from their slash commands, not from plain words.
 - The state card is added after compaction, but the summary of earlier hook messages is Claude Code's. The card doesn't restore them.
 - Using the API sends the measured files' text to Anthropic under the key's account.

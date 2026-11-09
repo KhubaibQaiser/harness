@@ -80,7 +80,7 @@ function listIn(c: Ctx, rel: string): string[] {
 export function ruleFiles(c: Ctx, dir: string, depth: number, walked = new Set<string>()): string[] {
   if (depth > MAX_RULE_DEPTH) return [];
   const real = c.io.real(absIn(nodePath, c.root, dir));
-  if (real !== null && walked.has(real)) return miss(c, dir, 'symlink loop') ?? [];
+  if (real !== null && walked.has(real)) return miss(c, dir, 'already searched (symlink)') ?? [];
   if (real !== null) walked.add(real);
   return listIn(c, dir).flatMap((name) => {
     const rel = `${dir}/${name}`;

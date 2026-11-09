@@ -138,6 +138,6 @@ test.skipIf(process.platform === 'win32')('harness context with symlink loops un
   const t = performance.now();
   const r = spawnSync(process.execPath, [join(process.cwd(), 'dist/cli.mjs'), 'context', '--offline'], { cwd: repo, encoding: 'utf8', timeout: 10_000 });
   const ms = performance.now() - t;
-  expect(r.stdout).toContain('.claude/rules/l1: symlink loop');
+  expect(r.stdout).toContain('.claude/rules/l1: already searched (symlink)');
   expect(ms, `context with loops took ${ms.toFixed(0)} ms`).toBeLessThan(CEILING_MS * 2);
 }, 30000);

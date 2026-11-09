@@ -288,7 +288,7 @@ test.skipIf(process.platform === 'win32')('symlink loops under .claude/rules fin
   const r = measureRepo(root, { owners: new Map(), preset: null });
   expect(performance.now() - t).toBeLessThan(2000);
   expect(labels(r)).toEqual(['.claude/rules/a.md', '.claude/rules/sub/b.md']);
-  expect(r.unmeasured).toEqual(expect.arrayContaining(['.claude/rules/l1: symlink loop', '.claude/rules/sub/up: symlink loop']));
+  expect(r.unmeasured).toEqual(expect.arrayContaining(['.claude/rules/l1: already searched (symlink)', '.claude/rules/sub/up: already searched (symlink)']));
 });
 
 // I4: the production skip, not an injected one. The name is built at runtime so no literal dotenv path is in the source.

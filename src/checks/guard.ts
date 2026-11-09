@@ -98,9 +98,9 @@ const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
 // The shell can turn such a word into any subcommand or flag, so no preview test passes it; `next` is the separator after
 // the segment (the split eats `$(`, a backtick and the `(` of `<(`/`>(`, so `context $(echo apply)` reaches here as `context`).
-const EXPANDS = /[$`{}*?[\]]|^~/;
+const PREVIEW_EXPANDS = /[$`{}*?[\]]|^~/;
 const passes = (name: string, args: string[], next?: string): boolean =>
-  !/^(\$\(|`|\()$/.test(next ?? '') && !args.some((t) => EXPANDS.test(t)) && PERSON_ONLY[name].allowed(args);
+  !/^(\$\(|`|\()$/.test(next ?? '') && !args.some((t) => PREVIEW_EXPANDS.test(t)) && PERSON_ONLY[name].allowed(args);
 const ANY_WHY = 'Only a person can change or remove the harness gates: run the harness command in your own terminal.';
 type Hit = { kind: 'deny' | 'ask'; reason: string };
 export type Where = { root: string; env: NodeJS.ProcessEnv };

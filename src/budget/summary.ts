@@ -65,12 +65,14 @@ export function contextSet(root: string, config: HarnessConfig, dirs: { template
     always.push({ id: e.id, path: isPlugin ? 'plugin:harness' : owner, label, owner, load: 'always', tokens: e.tokens, chars: 0, ...(isPlugin ? {} : { note: NO_TEXT_NOTE }) });
   }
 
+  return { always, onDemand: repo.onDemand, unmeasured, notes, ...ownerTotals(always), budget: config.context.budget_tokens, method: 'estimate', model: null };
+}
+
+/** The always-loaded total and its three shares; preset rows count with harness. */
+export function ownerTotals(always: SourceEntry[]): Pick<ContextSet, 'total' | 'harness' | 'catalog' | 'repo'> {
   const sumOf = (f: (o: Owner) => boolean) => always.reduce((n, e) => n + (f(e.owner) ? e.tokens : 0), 0);
   const harness = sumOf((o) => o === 'harness' || o.startsWith('preset:'));
-  const cat = sumOf((o) => o.startsWith('catalog:'));
-  const repoTokens = sumOf((o) => o === 'repo');
-  return {
-    always, onDemand: repo.onDemand, unmeasured, notes, total: harness + cat + repoTokens, harness, catalog: cat, repo: repoTokens,
-    budget: config.context.budget_tokens, method: 'estimate', model: null,
-  };
+  const catalog = sumOf((o) => o.startsWith('catalog:'));
+  const repo = sumOf((o) => o === 'repo');
+  return { total: harness + catalog + repo, harness, catalog, repo };
 }

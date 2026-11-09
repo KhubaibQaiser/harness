@@ -33,7 +33,7 @@ export interface Where { rel: string; label: string; owner: Owner }
 
 export function entryOf({ rel, label, owner }: Where, text: string, note?: string): SourceEntry {
   const n = note ?? (text.length > CUT_CHARS ? CUT_NOTE : undefined);
-  return { id: label, path: rel, label, owner, load: 'always', chars: text.length, tokens: estimateTokens(text), ...(n ? { note: n } : {}) };
+  return { id: label, path: rel, label, owner, load: 'always', chars: text.length, tokens: estimateTokens(text), text, ...(n ? { note: n } : {}) };
 }
 
 export const miss = (c: Ctx, rel: string, why: string): null => { c.out.unmeasured.push(`${rel}: ${why}`); return null; };

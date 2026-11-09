@@ -21,7 +21,7 @@ function group(label: string, parts: Part[], path: string): SourceEntry {
   const text = parts.map((p) => p.text);
   return {
     id: label, path, label, load: 'on-demand', owner: owners.size === 1 ? parts[0].owner : 'repo',
-    chars: text.reduce((n, t) => n + t.length, 0), tokens: text.reduce((n, t) => n + estimateTokens(t), 0),
+    chars: text.reduce((n, t) => n + t.length, 0), tokens: text.reduce((n, t) => n + estimateTokens(t), 0), text: text.join('\n'),
     ...(text.some((t) => t.length > CUT_CHARS) ? { note: 'a file is over 40,000 characters: Claude Code cuts it there' } : {}),
   };
 }

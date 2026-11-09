@@ -58,7 +58,7 @@ export function itemContext(item: CatalogItem, dirs: { templates: string }): Con
   }
 }
 
-function pluginEntry(plugin: string): ContextEntry {
+export function pluginEntry(plugin: string): ContextEntry {
   const root = join(plugin, 'skills');
   const names = existsSync(root) ? readdirSync(root) : [];
   // The agents plugin.json registers load their name and description too.

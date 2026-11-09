@@ -126,19 +126,23 @@ test('install refuses a folder that fails check, and an existing install', async
   expect((await install([], root)).code).toBe(2);
 });
 
-test('install refuses a symlinked file or folder, naming it, and writes nothing', async () => {
+test('install refuses a symlink anywhere in the preset (the check gate), naming it, and writes nothing', async () => {
   const outside = tmp();
   writeFileSync(join(outside, 'secret.txt'), 'x');
-  const a = copyTiny();
-  symlinkSync(join(outside, 'secret.txt'), join(a, 'tiny/templates/link.md'));
-  const b = copyTiny();
-  symlinkSync(outside, join(b, 'tiny/templates/linkdir'));
-  for (const d of [a, b]) {
+  const cases: [string, (d: string) => void][] = [
+    ['link.md', (d) => symlinkSync(join(outside, 'secret.txt'), join(d, 'tiny/templates/link.md'))],
+    ['linkdir', (d) => symlinkSync(outside, join(d, 'tiny/templates/linkdir'))],
+    ['tiny', (d) => { cpSync(join(d, 'tiny'), join(outside, 'tiny'), { recursive: true }); rmSync(join(d, 'tiny'), { recursive: true }); symlinkSync(join(outside, 'tiny'), join(d, 'tiny')); }],
+    ['tiny.yaml', (d) => { cpSync(join(d, 'tiny.yaml'), join(outside, 'tiny.yaml')); rmSync(join(d, 'tiny.yaml')); symlinkSync(join(outside, 'tiny.yaml'), join(d, 'tiny.yaml')); }],
+  ];
+  for (const [name, mk] of cases) {
+    const d = copyTiny();
+    mk(d);
     const root = tmp();
     const r = await install([d, '--yes'], root);
-    expect(r.code).toBe(1);
-    expect(r.out).toMatch(/link(dir|\.md)/);
-    expect(existsSync(join(root, '.harness'))).toBe(false);
+    expect(r.code, name).toBe(1);
+    expect(r.out, name).toContain(name === 'tiny.yaml' ? 'tiny.yaml: not a regular file (symlinks are not followed)' : `${name}: symlink not followed`);
+    expect(existsSync(join(root, '.harness')), name).toBe(false);
   }
 });
 

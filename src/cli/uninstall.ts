@@ -1,20 +1,23 @@
-import { existsSync, readdirSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
-import { ApplyError, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
+import { isDeepStrictEqual } from 'node:util';
+import { ApplyError, LOCK_RECOVERY, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
 import { STRUCTURAL, removeBlocks, removeFromMcp, removeFromSettings } from '../install/merge.js';
 import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, withEol } from '../install/text.js';
-import { MANIFEST_REL, backupText } from '../install/manifest.js';
+import { MANIFEST_REL, ManifestError, REPO_STATE, backupText, readManifest, type Manifest, type StatePaths } from '../install/manifest.js';
 import { ESLINT } from '../install/plan.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall } from './preamble.js';
+import { GLOBAL_LOCK_RECOVERY, GLOBAL_STATE } from './preset.js';
 import type { CliEnv } from './index.js';
 
-export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike };
+export type UninstallEnv = CliEnv & { prompt: Prompt; fs?: FsLike; /** Default `os.homedir()`; tests pass a temp dir. */ home?: string };
 
-const USAGE = 'Usage: harness uninstall [--yes] [--force] [--dry-run]';
+const USAGE = 'Usage: harness uninstall [--global] [--yes] [--force] [--dry-run]';
 const SETTINGS = '.claude/settings.json';
 
 const read = (p: string): string | null => {
@@ -27,6 +30,24 @@ const read = (p: string): string | null => {
 
 const JS = /\.[cm]?[jt]s$/;
 const HARNESS_ESLINT = ['.harness/eslint/harness.config.mjs', '.harness/eslint/harness.config.d.mts'];
+
+const sameJson = (a: string, b: string): boolean => { try { return isDeepStrictEqual(JSON.parse(a), JSON.parse(b)); } catch { return false; } };
+
+/** A manifest path harness may touch under home: `.claude/…`, forward slashes, no control character, no empty, `.` or `..` segment. */
+const underClaude = (p: unknown): p is string => typeof p === 'string' && p.startsWith('.claude/') && !p.includes('\\') && !/[\u0000-\u001f\u007f]/.test(p) && !p.split('/').some((s) => s === '' || s === '.' || s === '..');
+
+/** The first entry of a global manifest that is not a safe path under ~/.claude (the whole value when `dirs` is not an array), or undefined. */
+function badGlobalEntry(m: Manifest, sp: StatePaths): { bad: unknown } | undefined {
+  if (m.dirs !== undefined && !Array.isArray(m.dirs)) return { bad: m.dirs };
+  for (const d of m.dirs ?? []) if (d !== '.claude' && !underClaude(d)) return { bad: d }; // the install may have created ~/.claude itself
+  for (const f of m.files) {
+    // Under ~/.claude/harness a file is only ever a preset copy: never the manifest, the lock or a backup.
+    if (!underClaude(f?.rel) || (f.rel.startsWith(`${sp.dir}/`) && !f.rel.startsWith(`${sp.dir}/presets/`))) return { bad: f?.rel };
+    if (f.backup !== undefined && !(underClaude(f.backup) && f.backup.startsWith(`${sp.backup}/`) && f.backup.split('/').length > sp.backup.split('/').length + 1)) return { bad: f.backup };
+  }
+  return undefined;
+}
+
 const list = (rels: string[]) => rels.map((k) => `\`${k}\``).join(', ');
 
 /** Deletes everything under `dir` except the `keep` files (absolute paths) and the folders that hold them. */
@@ -40,18 +61,8 @@ function pruneExcept(dir: string, keep: string[]): void {
   try { rmdirSync(dir); } catch {} // only when nothing was kept in it
 }
 
-export async function uninstall(args: string[], cli: UninstallEnv): Promise<number> {
-  const { out, prompt } = cli;
-  if (args.some((a) => a !== '--yes' && a !== '--force' && a !== '--dry-run')) return out(USAGE), 2;
-  const yes = args.includes('--yes');
-  const force = args.includes('--force');
-  const dryRun = args.includes('--dry-run');
-  if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
-
-  const opened = openInstall(cli, 'Not a git repository. Run harness uninstall inside a git repo.');
-  if (typeof opened === 'number') return opened;
-  const { root, m } = opened;
-
+/** What uninstall writes for each file `m` records: deletes and restores, the edited files it keeps, and notes. Backups are read through `sp`. */
+export function removalChanges(root: string, m: Manifest, force: boolean, sp: StatePaths = REPO_STATE): { changes: Change[]; kept: string[]; notes: string[]; /** harness ESLint files kept because a config still imports them */ imported: string[] } {
   const changes: Change[] = [];
   const kept: string[] = [];
   const notes: string[] = [];
@@ -62,7 +73,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       notes.push(`\`${f.rel}\` is already gone.`);
       continue;
     }
-    const backup = backupText(root, f.backup);
+    const backup = backupText(root, f.backup, sp);
     if (STRUCTURAL.has(f.rel)) {
       if (matchesHash(cur, f.hash) && f.kind === 'create') {
         changes.push({ kind: 'delete', rel: f.rel, before: cur });
@@ -75,7 +86,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       const r = (f.rel === SETTINGS ? removeFromSettings : removeFromMcp)(cur, f, backup, notes);
       if (!r) notes.push(`\`${f.rel}\` is not valid JSON; left as is. Remove the harness ${f.rel === SETTINGS ? 'hooks and deny rules' : 'entries'} by hand.`);
       else if (r.empty && f.kind === 'create') changes.push({ kind: 'delete', rel: f.rel, before: cur });
-      else if (r.after !== cur) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] });
+      else if (r.after !== cur && !sameJson(r.after, cur)) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] }); // nothing removed: leave its bytes
       continue;
     }
     const merged = !!f.blocks?.length || !!f.replace?.length;
@@ -131,6 +142,23 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     ? HARNESS_ESLINT.filter((rel) => existsSync(join(root, rel)))
     : [];
   for (const rel of imported) { const i = changes.findIndex((c) => c.rel === rel); if (i >= 0) changes.splice(i, 1); }
+  return { changes, kept, notes, imported };
+}
+
+export async function uninstall(args: string[], cli: UninstallEnv): Promise<number> {
+  const { out, prompt } = cli;
+  if (args.some((a) => !['--yes', '--force', '--dry-run', '--global'].includes(a))) return out(USAGE), 2;
+  const yes = args.includes('--yes');
+  const force = args.includes('--force');
+  const dryRun = args.includes('--dry-run');
+  if (!yes && !dryRun && cli.tty === false) return out(NO_TTY), 2;
+  if (args.includes('--global')) return uninstallGlobal(cli, { yes, force, dryRun });
+
+  const opened = openInstall(cli, 'Not a git repository. Run harness uninstall inside a git repo.');
+  if (typeof opened === 'number') return opened;
+  const { root, m } = opened;
+
+  const { changes, kept, notes, imported } = removalChanges(root, m, force);
   const importedWhy = `${list(imported)} kept because your edited eslint config still imports them. Delete them after you remove its harness lines.`;
 
   if (dryRun) {
@@ -178,5 +206,59 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   if (imported.length) out(`Kept ${importedWhy}`);
   if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run /harness:init to install again.`);
   out('Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.');
+  return 0;
+}
+
+/** `uninstall --global`: removes what `~/.claude/harness/manifest.json` records, restores the backups, then the folders the install created. No git repo needed. */
+async function uninstallGlobal(cli: UninstallEnv, o: { yes: boolean; force: boolean; dryRun: boolean }): Promise<number> {
+  const { out } = cli;
+  const home = cli.home ?? homedir();
+  const sp = GLOBAL_STATE;
+  if (existsSync(join(home, sp.lock))) return out(GLOBAL_LOCK_RECOVERY), 1;
+  let m: Manifest | null;
+  try {
+    m = readManifest(home, undefined, sp);
+  } catch (e) {
+    if (e instanceof ManifestError) return out(`\`~/${sp.manifest}\` is unreadable, so nothing was removed. Fix or delete it, then remove the preset's files by hand.`), 1;
+    throw e;
+  }
+  if (!m) return out(`No global preset is installed (no ~/${sp.manifest}).`), 1;
+  const tampered = badGlobalEntry(m, sp);
+  if (tampered) return out(`\`~/${sp.manifest}\` lists ${JSON.stringify(tampered.bad) ?? String(tampered.bad)}, which is not a path under ~/.claude, so nothing was removed.`), 1;
+  const r = removalChanges(home, m, o.force, sp);
+  const { changes } = r;
+  const toHome = (t: string) => t.split('`.claude/').join('`~/.claude/'); // every rel is under .claude/ (checked above)
+  const notes = r.notes.map(toHome), kept = r.kept.map((k) => `~/${k}`);
+  if (o.dryRun) {
+    for (const c of changes) out(`Would ${c.kind === 'delete' ? 'remove' : 'restore'} \`~/${c.rel}\``);
+    for (const n of notes) out(`Note: ${n}`);
+    if (kept.length) out(`Would keep ${list(kept)} because you edited them (--force removes them too).`);
+    return out('Dry run: nothing was written.'), 0;
+  }
+  if (!o.yes && !(await cli.prompt.confirm('Remove the global preset from ~/.claude? (y/N)'))) return out('Cancelled. Nothing was removed.'), 0;
+  let written: Manifest | undefined;
+  try {
+    if (changes.length) written = applyChanges(home, changes, m.version, undefined, cli.fs, { writeManifest: false, state: sp });
+  } catch (e) {
+    if (!(e instanceof ApplyError)) throw e;
+    return out(e.message === LOCK_RECOVERY ? GLOBAL_LOCK_RECOVERY : e.message), 1;
+  }
+  for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} \`~/${c.rel}\``);
+  for (const n of notes) out(`Note: ${n}`);
+  const { writeFileSync: write, rmSync: rm, rmdirSync: rmdir } = cli.fs ?? { writeFileSync, rmSync, rmdirSync };
+  // Locked again until the manifest is gone: a crash in between makes the next run stop instead of half-redoing it.
+  write(join(home, sp.lock), `${sp.manifest}\n`);
+  // Each run's backups sit in their own timestamped folder: the install's (validated above), and the one this apply just made.
+  const depth = sp.backup.split('/').length + 1;
+  for (const b of new Set([...m.files, ...(written?.files ?? [])].flatMap((f) => (f.backup ? [f.backup.split('/').slice(0, depth).join('/')] : []))))
+    rm(join(home, b), { recursive: true, force: true });
+  rm(join(home, sp.manifest), { force: true });
+  rm(join(home, sp.lock), { force: true });
+  // Deepest first; rmdir refuses a folder that still holds something (an edited file, the person's own).
+  for (const d of [...(m.dirs ?? [])].sort((a, b) => b.length - a.length)) {
+    try { rmdir(join(home, d)); } catch {}
+  }
+  out(`Removed ~/${sp.manifest} and the backups.`);
+  if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them.`);
   return 0;
 }

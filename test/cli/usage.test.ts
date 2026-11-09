@@ -32,6 +32,10 @@ test('usage lists report and eval with their flags', () => {
   for (const c of ['harness report [--days N] [--open] [--export]', 'harness rules [--apply]', 'harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model M]']) expect(usage(), c).toContain(c);
 });
 
+test('usage lists the global preset install', () => {
+  expect(usage()).toContain('harness preset install <dir> --global [--dry-run|--yes --take <path,...>]');
+});
+
 test('usage lists context and context apply', () => {
   expect(usage()).toContain('harness context [--json] [--offline]');
   expect(usage()).toContain('harness context apply <n>[,<n>…] [--dry-run|--yes]');

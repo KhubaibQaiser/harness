@@ -82,7 +82,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `eval [--kind skills\|rules] [--runs N] [--max-cost-usd X]` | Paid checks that your skills and rules change what the agent does. Costs money and asks every run. |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. |
 | `vet <target>` | Scans a plugin or skill before you install it. Needs `gh`. Installs nothing. |
-| `uninstall [--dry-run]` | Removes what harness added and restores your files. |
+| `uninstall [--dry-run]` | Removes what harness added and restores your files. `--global` does the same for a preset installed under `~/.claude`. |
 
 - **Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted.
 - The report quotes your sessions, so don't share it. It sends nothing anywhere.

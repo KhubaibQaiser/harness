@@ -34,7 +34,7 @@ test('usage lists report and eval with their flags', () => {
 
 test('usage lists context and context apply', () => {
   expect(usage()).toContain('harness context [--json] [--offline]');
-  expect(usage()).toContain('harness context apply <n> [--dry-run] [--yes]');
+  expect(usage()).toContain('harness context apply <n>[,<n>…] [--dry-run|--yes]');
 });
 
 test('report and eval keep exit 2 on bad arguments through the router', () => {

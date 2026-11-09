@@ -72,7 +72,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `status` | Shows each gate as on or off, and why. |
 | `doctor` | Checks the install and prints a fix for each problem. |
 | `context [--json] [--offline]` | Shows what loads into context and what it costs against the budget. Writes nothing. |
-| `context apply <n>` | Applies one of harness's own context recommendations, such as showing a skill by name only. `uninstall` undoes it. |
+| `context apply <n>[,<n>…]` | Applies harness's own context recommendations, such as showing a skill by name only. `uninstall` undoes it. |
 | `why <id>` / `explain` | Why an item is installed, and what every item loads into context. |
 | `stats [--days N]` | Counts harness events (default: the last 7 days). |
 | `report [--days N] [--open] [--export]` | Writes the usage and adherence report to `.harness/reports/`. Local only. |

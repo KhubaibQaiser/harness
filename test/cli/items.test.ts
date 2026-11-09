@@ -325,3 +325,19 @@ test('remove and why on a preset: id print the preset lines', async () => {
   expect(why.code).toBe(0);
   expect(why.out).toContain('Installed by the khubaib-frontend preset.');
 });
+
+test('EOF at the remove prompt is a No: nothing is written', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { readlinePrompt } = await import('../../src/cli/prompt.js');
+  const root = installed([...OWN, 'staff-reviewer']);
+  const input = new PassThrough();
+  const prompt = readlinePrompt(input, new PassThrough());
+  let out = '';
+  const p = items('remove', ['staff-reviewer'], { env: {}, root, out: (s) => (out += s + '\n'), prompt, templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null });
+  setTimeout(() => input.end(), 50);
+  const code = await p;
+  prompt.close();
+  expect(code, out).toBe(0);
+  expect(out).toContain('Cancelled. Nothing was written.');
+  expect(existsSync(join(root, SR))).toBe(true);
+});

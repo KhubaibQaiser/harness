@@ -1,3 +1,5 @@
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import type { Owner } from '../../src/budget/owners.js';
 import { preloadedSkills, recommend } from '../../src/budget/recommend.js';
@@ -43,10 +45,20 @@ describe('name-only', () => {
 });
 
 test('remove targets a catalog plugin pick, with the settings.local.json hint', () => {
-  const s = set([row('catalog:seo', 60, 'catalog:seo', { id: 'seo', label: 'seo', text: undefined, chars: 0 })], 2000);
+  const s = set([row('catalog:seo', 60, 'catalog:seo', { id: 'seo', label: 'seo', text: undefined, chars: 0, pick: 'plugin' })], 2000);
   const [r] = recommend(s, new Set());
   expect(r).toMatchObject({ n: 1, kind: 'remove', owner: 'catalog:seo', target: 'seo', saves: 60, apply: true });
   expect(r.line).toBe('Remove plugin seo (saves ~60). Apply: harness context apply 1. To turn it off for yourself only, disable it in .claude/settings.local.json.');
+});
+
+test('remove is for plugin picks only: an external-skill or MCP pick gets none (C8)', () => {
+  const pick = (id: string, kind: string) => row(`catalog:${id}`, 60, `catalog:${id}`, { id, label: id, text: undefined, chars: 0, pick: kind });
+  expect(kinds(set([pick('ext', 'external-skill'), pick('srv', 'mcp'), pick('plug', 'plugin')], 2000))).toEqual([['remove', 'plug']]);
+});
+
+test('name-only skips a skill whose skillOverrides key the person already set', () => {
+  const s = set([skill('set', 900, 'harness', { skill: { description: 1, body: '', override: 'on' } }), skill('free', 800, 'harness')], 100);
+  expect(kinds(s).filter(([k]) => k === 'name-only')).toEqual([['name-only', 'free']]);
 });
 
 test('long-file: a repo CLAUDE.md or AGENTS.md over 200 lines, its imports included', () => {
@@ -96,7 +108,7 @@ test('name-only and remove first by saving, then the user-file kinds in table or
     row('CLAUDE.md', 400, 'repo', { text: lines(300) }),
     row('.claude/rules/style.md', 5, 'repo'),
     skill('big', 300, 'harness'),
-    row('catalog:seo', 400, 'catalog:seo', { id: 'seo', label: 'seo', text: undefined, chars: 0 }),
+    row('catalog:seo', 400, 'catalog:seo', { id: 'seo', label: 'seo', text: undefined, chars: 0, pick: 'plugin' }),
   ], 1000);
   const a = recommend(s, new Set());
   expect(a.map((r) => [r.n, r.kind, r.target])).toEqual([
@@ -112,4 +124,22 @@ test('measureRepo keeps a skill row\'s full description length and body for the 
   const root = makeRepo({ '.claude/skills/ship/SKILL.md': `---\nname: ship\ndescription: ${desc}\nwhen_to_use: now\n---\nrun git push\n` });
   const r = measureRepo(root, { owners: new Map(), preset: null });
   expect(r.always.find((e) => e.label === 'skill ship')?.skill).toEqual({ description: 1604, body: 'run git push\n' });
+  const set2 = makeRepo({ '.claude/skills/ship/SKILL.md': '---\nname: ship\ndescription: d\n---\nb\n', '.claude/settings.local.json': JSON.stringify({ skillOverrides: { ship: 'on' } }) });
+  expect(measureRepo(set2, { owners: new Map(), preset: null }).always.find((e) => e.label === 'skill ship')?.skill?.override).toBe('on');
+});
+
+test('a catalog pick row carries its kind, and the JSON leaves it out', async () => {
+  const { contextSet } = await import('../../src/budget/summary.js');
+  const { loadCatalog } = await import('../../src/catalog/load.js');
+  const { loadConfig } = await import('../../src/core/config.js');
+  const { reportJson } = await import('../../src/cli/context-copy.js');
+  const loaded = structuredClone(loadCatalog());
+  loaded.catalog.items.find((i) => i.id === 'agent-sdk-dev')!.cost.context_tokens = 70;
+  const root = makeRepo({});
+  const { config } = loadConfig(root);
+  config.items = [{ id: 'agent-sdk-dev', include: 'optional', selected: true, reason: 'r', addresses: [], pin: '' }];
+  const tpl = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates');
+  const s = contextSet(root, config, { templates: tpl, plugin: dirname(tpl) }, undefined, { catalog: loaded });
+  expect(s.always.find((e) => e.id === 'agent-sdk-dev')?.pick).toBe('plugin');
+  expect(JSON.stringify(reportJson(s, [], null))).not.toContain('"pick"');
 });

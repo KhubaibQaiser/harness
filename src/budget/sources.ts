@@ -133,7 +133,7 @@ function measureSkills(c: Ctx): void {
     const w = { rel: s.rel, label: s.label, owner: c.owners.get(s.rel) ?? 'repo' };
     if (mode === 'name-only') { c.out.always.push(entryOf(w, `name: ${s.name}`)); continue; }
     try {
-      c.out.always.push({ ...entryOf(w, alwaysLoadedText(s.kind, raw)), ...(s.rel.startsWith('.claude/skills/') ? { skill: skillFacts(raw) } : {}) });
+      c.out.always.push({ ...entryOf(w, alwaysLoadedText(s.kind, raw)), ...(s.rel.startsWith('.claude/skills/') ? { skill: { ...skillFacts(raw), ...(mode !== undefined ? { override: mode } : {}) } } : {}) });
     } catch {
       c.out.unmeasured.push(`${s.rel}: frontmatter does not parse`);
     }

@@ -47,15 +47,15 @@ function harnessRecs(s: ContextSet, preloaded: Set<string>): Draft[] {
   const apply = (n: number) => `Apply: harness context apply ${n}`;
   const named = s.always.flatMap((e): Draft[] => {
     const name = SKILL.exec(e.path)?.[1];
-    if (!name || e.owner === 'repo' || preloaded.has(name) || e.text === `name: ${name}`) return [];
+    if (!name || e.owner === 'repo' || preloaded.has(name) || e.text === `name: ${name}` || e.skill?.override !== undefined) return []; // a key the person set stays theirs
     const saves = e.tokens - estimateTokens(`name: ${name}`);
     return saves > 0 ? [{ kind: 'name-only', owner: e.owner, target: name, saves, apply: true, line: (n) => `Show skill ${name} by name only (saves ~${k(saves)}). ${apply(n)}` }] : [];
   }).sort((a, b) => b.saves! - a.saves! || a.target.localeCompare(b.target));
   const limit = NAME_ONLY_SHARE * s.budget;
   let total = s.total;
   const nameOnly = named.filter((d) => (total > limit ? ((total -= d.saves!), true) : false));
-  // A pick row is text-less and its path is `catalog:<id>`, not a file (plugin skills ignore skillOverrides, C8).
-  const remove = s.always.filter((e) => e.path.startsWith('catalog:') && e.text === undefined).map((e): Draft => (
+  // A pick row is text-less and its path is `catalog:<id>`, not a file. Only plugins: their skills ignore skillOverrides (C8).
+  const remove = s.always.filter((e) => e.path.startsWith('catalog:') && e.text === undefined && e.pick === 'plugin').map((e): Draft => (
     { kind: 'remove', owner: e.owner, target: e.id, saves: e.tokens, apply: true, line: (n) => `Remove plugin ${e.id} (saves ~${k(e.tokens)}). ${apply(n)}. ${LOCAL}` }));
   return [...nameOnly, ...remove].sort((a, b) => b.saves! - a.saves! || a.target.localeCompare(b.target));
 }

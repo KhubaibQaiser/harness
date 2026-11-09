@@ -62,7 +62,7 @@ export function contextSet(root: string, config: HarnessConfig, dirs: { template
     const label = isPlugin ? pluginLabel(dirs.plugin) : e.id;
     // measureSelectionSync strips the text, so chars is 0 (ponytail: keep real chars only if measure.ts ever returns it); path is not a file.
     // A pick's tokens come from the catalog record; the plugin row is measured from harness's own files.
-    always.push({ id: e.id, path: isPlugin ? 'plugin:harness' : owner, label, owner, load: 'always', tokens: e.tokens, chars: 0, ...(isPlugin ? {} : { note: NO_TEXT_NOTE }) });
+    always.push({ id: e.id, path: isPlugin ? 'plugin:harness' : owner, label, owner, load: 'always', tokens: e.tokens, chars: 0, ...(isPlugin ? {} : { note: NO_TEXT_NOTE, pick: byId.get(e.id)?.kind }) });
   }
 
   return { always, onDemand: repo.onDemand, unmeasured, notes, ...ownerTotals(always), budget: config.context.budget_tokens, method: 'estimate', model: null };

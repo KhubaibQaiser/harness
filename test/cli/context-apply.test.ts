@@ -7,11 +7,16 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, expect, test, vi } from 'vitest';
 import { loadCatalog } from '../../src/catalog/load.js';
 import { changedFiles, readRepoSnapshot, snapshotHarnessFiles } from '../../src/core/harness-files.js';
-import { contextApply } from '../../src/cli/context-apply.js';
+import { contextApply, contextRecs } from '../../src/cli/context-apply.js';
+import { sync } from '../../src/cli/sync.js';
+import { loadConfig } from '../../src/core/config.js';
+import type { FsLike } from '../../src/install/apply.js';
+import * as realFs from 'node:fs';
+import { PassThrough } from 'node:stream';
 import { context } from '../../src/cli/context.js';
 import { init } from '../../src/cli/init.js';
 import { items } from '../../src/cli/items.js';
-import { NO_TTY, type Prompt } from '../../src/cli/prompt.js';
+import { NO_TTY, readlinePrompt, type Prompt } from '../../src/cli/prompt.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import { update } from '../../src/cli/update.js';
 import { applyChanges, readManifest } from '../../src/install/apply.js';
@@ -92,12 +97,12 @@ const up = async (root: string, args: string[]) => {
   const code = await update(args, { ...base, version: '1.2.3', root, env, claudeVersion: () => null, out: (s) => (out += s + '\n'), prompt: no });
   return { code, out };
 };
-const apply = async (root: string, args: string[], o: { prompt?: Prompt; tty?: boolean; catalog?: ReturnType<typeof loadCatalog>['catalog'] } = {}) => {
+const apply = async (root: string, args: string[], o: { prompt?: Prompt; tty?: boolean; catalog?: ReturnType<typeof loadCatalog>['catalog']; fs?: FsLike } = {}) => {
   const lines: string[] = [];
   const asked: string[] = [];
   const p = o.prompt ?? yes;
   const prompt: Prompt = { confirm: (q) => (asked.push(q), p.confirm(q)), edit: p.edit };
-  const code = await contextApply(args, { ...base, env: {}, root, out: (l) => lines.push(l), prompt, tty: o.tty, claudeVersion: () => null, catalog: o.catalog });
+  const code = await contextApply(args, { ...base, env: {}, root, out: (l) => lines.push(l), prompt, tty: o.tty, claudeVersion: () => null, catalog: o.catalog, fs: o.fs });
   return { code, out: lines.join('\n'), asked };
 };
 type Rec = { n: number; kind: string; target: string; apply: boolean };
@@ -139,19 +144,13 @@ test('apply name-only writes the key and records the set block and its parent in
   expect(readRepoSnapshot(root).cli?.settings?.[SETTINGS]).toBeTruthy();
 });
 
-test('a key the person already set is left alone, with the note', async () => {
+test('a key the person already set is not recommended again', async () => {
   const root = await initAt(repo());
   const s = settings(root);
   s.skillOverrides = { 'pr-ship': 'on' };
   writeFileSync(join(root, SETTINGS), JSON.stringify(s, null, 2) + '\n');
   commit(root, 'mine');
-  const before = readFileSync(join(root, SETTINGS), 'utf8');
-  const n = await numberOf(root, 'name-only', 'pr-ship');
-  const r = await apply(root, [String(n), '--yes']);
-  expect(r.code, r.out).toBe(0);
-  expect(r.out).toContain('`.claude/settings.json`: `skillOverrides.pr-ship` is already "on"; left as is (harness would set "name-only").');
-  expect(r.out).toContain('Nothing to change.');
-  expect(readFileSync(join(root, SETTINGS), 'utf8')).toBe(before);
+  expect((await recs(root)).some((x) => x.target === 'pr-ship')).toBe(false);
 });
 
 test('apply remove runs harness remove with the same flags', async () => {
@@ -163,11 +162,76 @@ test('apply remove runs harness remove with the same flags', async () => {
   config.items = [...OWN, 'agent-sdk-dev'].map((id) => ({ id, include: 'recommended' as const, selected: true, reason: 'r', addresses: [], pin: '' }));
   applyChanges(root, planChanges(root, config, facts, { version: '1.0.0', ...base, catalog: cat, ai: { picks: JSON.stringify({ catalog_version: 1, findings: [], items: [] }), report: '# R\n\n## Limits\n\nx\n', product: '# P\n' } }).changes, '1.0.0');
   commit(root, 'harness');
-  const r0 = await apply(root, ['1', '--dry-run'], { catalog: cat });
+  const list = contextRecs(root, loadConfig(root).config, { templates: base.templatesDir, plugin: dirname(base.templatesDir) }, cat);
+  const rm = list.find((x) => x.kind === 'remove')!;
+  const named = list.find((x) => x.kind === 'name-only' && x.target === 'pr-ship')!;
+  expect(rm.target).toBe('agent-sdk-dev');
+  // A mixed list: name-only first, in one transaction, then each remove through harness remove with the same flags.
+  const r0 = await apply(root, [`${rm.n},${named.n}`, '--dry-run'], { catalog: cat });
   expect(r0.code, r0.out).toBe(0);
-  expect(items).toHaveBeenCalledWith('remove', ['agent-sdk-dev', '--dry-run'], expect.objectContaining({ root }));
-  await apply(root, ['1', '--yes'], { catalog: cat });
+  expect(r0.out).toMatch(/^\+.*"pr-ship": "name-only"/m);
+  expect(items).toHaveBeenLastCalledWith('remove', ['agent-sdk-dev', '--dry-run'], expect.objectContaining({ root }));
+  await apply(root, [String(rm.n), '--yes'], { catalog: cat });
   expect(items).toHaveBeenLastCalledWith('remove', ['agent-sdk-dev', '--yes'], expect.objectContaining({ root }));
+});
+
+test('a list applies every name-only in one transaction, with one prompt and one diff; a bad number refuses the whole call', async () => {
+  const root = await initAt(repo(), WITH_PRESET, { ...ANSWERS, preset: 'stacks' });
+  const r = await recs(root);
+  const named = r.filter((x) => x.kind === 'name-only');
+  expect(named.length).toBeGreaterThanOrEqual(2);
+  const [a, b] = named;
+  const own = r.find((x) => !x.apply)!;
+  const status = git(root, 'status', '--porcelain');
+  const mixed = await apply(root, [`${a.n},${own.n},${b.n}`, '--yes']);
+  expect(mixed.code).toBe(2);
+  expect(mixed.out).toBe(`Recommendation ${own.n} changes your own file; the context-optimize skill shows you the diff first.`);
+  expect(git(root, 'status', '--porcelain')).toBe(status);
+  const dry = await apply(root, [`${a.n},${b.n},${a.n}`, '--dry-run']);
+  expect(dry.code, dry.out).toBe(0);
+  expect(dry.out.match(/^Plan:$/gm)).toHaveLength(1);
+  for (const x of [a, b]) expect(dry.out).toMatch(new RegExp(`^\\+.*"${x.target}": "name-only"`, 'm'));
+  const ok = await apply(root, [`${a.n},${b.n}`]);
+  expect(ok.code, ok.out).toBe(0);
+  expect(ok.asked).toEqual(['Apply these changes? [y/N]']);
+  expect(settings(root).skillOverrides).toEqual({ [a.target]: 'name-only', [b.target]: 'name-only' });
+  expect(blocks(root)).toEqual(expect.arrayContaining([SET_PARENT, ...[a, b].map((x) => JSON.stringify({ set: ['skillOverrides', x.target], value: 'name-only' }))]));
+});
+
+test('a sandbox-denied write prints the context apply command to run with the ! prefix', async () => {
+  const root = await initAt(repo());
+  const n = await numberOf(root, 'name-only', 'pr-ship');
+  const denied = { ...realFs, renameSync: (x: string, y: string) => { if (y.endsWith('settings.json') || y.endsWith('manifest.json')) throw Object.assign(new Error('EPERM: nope'), { code: 'EPERM' }); return realFs.renameSync(x, y); } } as unknown as FsLike;
+  const r = await apply(root, [String(n), '--yes'], { fs: denied });
+  expect(r.code, r.out).toBe(1);
+  expect(r.out).toContain("Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's `!` prefix:");
+  expect(r.out).toMatch(new RegExp(` context apply ${n} --yes$`));
+});
+
+test('EOF at the prompt is a No', async () => {
+  const root = await initAt(repo());
+  const n = await numberOf(root, 'name-only', 'pr-ship');
+  const input = new PassThrough();
+  const prompt = readlinePrompt(input, new PassThrough());
+  const status = git(root, 'status', '--porcelain');
+  const p = apply(root, [String(n)], { prompt });
+  setTimeout(() => input.end(), 50);
+  const r = await p;
+  prompt.close();
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('Cancelled. Nothing was written.');
+  expect(git(root, 'status', '--porcelain')).toBe(status);
+});
+
+test('after apply, sync keeps the block', async () => {
+  const root = await initAt(repo());
+  expect((await apply(root, [String(await numberOf(root, 'name-only', 'pr-ship')), '--yes'])).code).toBe(0);
+  commit(root, 'apply');
+  let out = '';
+  const code = await sync(['--yes'], { ...base, version: '1.2.3', root, env, out: (l) => (out += l + '\n'), prompt: no });
+  expect(code, out).toBe(0);
+  expect(settings(root).skillOverrides).toEqual({ 'pr-ship': 'name-only' });
+  expect(blocks(root)).toEqual(expect.arrayContaining([SET_PARENT, SET_PR_SHIP]));
 });
 
 test('a recommendation on your own file refuses with exit 2', async () => {
@@ -180,7 +244,7 @@ test('a recommendation on your own file refuses with exit 2', async () => {
 
 test('bad arguments and an unknown number exit 2', async () => {
   const root = await initAt(repo());
-  for (const a of [[], ['x'], ['1', '2'], ['1', '--yes', '--yes'], ['1', '--force']]) expect((await apply(root, a)).code, a.join(' ')).toBe(2);
+  for (const a of [[], ['x'], ['1', '2'], ['1', '--yes', '--yes'], ['1', '--force'], ['1', '--dry-run', '--yes'], ['1,x'], ['1,,2'], ['0']]) expect((await apply(root, a)).code, a.join(' ')).toBe(2);
   const r = await apply(root, ['99', '--yes']);
   expect(r.code).toBe(2);
   expect(r.out).toContain('No recommendation 99.');

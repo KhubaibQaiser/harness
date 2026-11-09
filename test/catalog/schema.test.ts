@@ -20,6 +20,11 @@ test('validateItem accepts the §7.1 example plus plugin', () => {
   if (res.ok) expect(res.item).toMatchObject({ id: 'gsap-skills', kind: 'plugin', stance: 'optional', cost: { context: 'low', setup: 'none' } });
 });
 
+test('cost.context_tokens: integer 0 to 200000 or null', () => {
+  for (const ok of [0, 120, 200000, null]) expect(mut((r) => (r.cost.context_tokens = ok))).toEqual([]);
+  for (const bad of [-1, 1.5, 'x', 200001, NaN, Infinity, '61']) expect(mut((r) => (r.cost.context_tokens = bad))).toEqual(['gsap-skills.yaml: cost.context_tokens: must be an integer from 0 to 200000 or null']);
+});
+
 test('validateItem names the bad field', () => {
   expect(mut((r) => (r.source.sha = 'abc'))).toEqual(['gsap-skills.yaml: source.sha: must be a 40-character lowercase hex commit']);
   expect(mut((r) => ((r.stance = 'discouraged'), (r.stance_reason = '')))).toEqual(['gsap-skills.yaml: stance_reason: required when stance is discouraged']);

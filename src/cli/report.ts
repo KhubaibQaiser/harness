@@ -19,7 +19,7 @@ import { enforcedLine, ruleRows } from '../report/rules.js';
 import { locateSessions, type GitRun } from '../report/locate.js';
 import { gatesAcc } from '../report/metrics/gates.js';
 import { installedSkills, skillSpecs, skillsAcc } from '../report/metrics/skills.js';
-import { alwaysLoaded, usageAcc } from '../report/metrics/usage.js';
+import { alwaysLoadedSafe, usageAcc } from '../report/metrics/usage.js';
 import { TESTED } from '../report/transcript.js';
 import { runSession } from '../report/turns.js';
 import { COUNTERS, windowsAcc } from '../report/windows.js';
@@ -92,13 +92,13 @@ async function collect(root: string, cli: ReportEnv, days: number, now: number):
   }
   const vs = [...versions].sort();
   const dirs = { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) };
-  const evals = readEvalResults(root), gr = gates.result(), wr = windows.result();
+  const ao = alwaysLoadedSafe(root, dirs), evals = readEvalResults(root), gr = gates.result(), wr = windows.result();
   return {
     meta: {
       generated: new Date(now).toISOString(), days, harness: VERSION, claudeVersions: vs, untested: untested(vs),
       sessions: { scanned: located.sessions.length - unknown, skipped: located.skipped as Record<string, number>, unknown },
     },
-    usage: usage.result(), always: alwaysLoaded(root, dirs), skills: skills.result(), windows: wr, gates: gr, rules: ruleRows(cfg, gr, wr), ...(evals.length > 0 && { evals }),
+    usage: usage.result(), always: ao.rows, ...(ao.note && { alwaysNote: ao.note }), skills: skills.result(), windows: wr, gates: gr, rules: ruleRows(cfg, gr, wr), ...(evals.length > 0 && { evals }),
   };
 }
 
@@ -114,6 +114,7 @@ function summary(d: ReportData, rel: string, expRel?: string): string[] {
     `Rules enforced: ${d.rules ? enforcedLine(d.rules) : 'not computed'}`,
     `Tokens: input ${t.input}, cache write ${t.cacheWrite}, cache read ${t.cacheRead}, output ${t.output}`,
     `Windows notes: ${notes}`,
+    ...(d.alwaysNote ? [d.alwaysNote] : []),
     ...(expRel ? [`Export: ${expRel}`] : []),
     `Report: ${rel}`,
   ];

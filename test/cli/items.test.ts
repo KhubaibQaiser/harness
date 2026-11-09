@@ -159,6 +159,17 @@ test('add and remove leave no change for change detection', async () => {
   expect(changedFiles(readRepoSnapshot(root).lastSeen!.files, snapshotHarnessFiles(root))).toEqual([]);
 });
 
+test('why prints a recorded plugin context_tokens as an estimate', async () => {
+  const root = installed([...OWN, 'staff-reviewer']);
+  const cat = structuredClone(loadCatalog().catalog);
+  const it = cat.items.find((i) => i.id === 'staff-reviewer')!;
+  it.kind = 'plugin'; // plugin picks count the recorded number; no catalog data is changed
+  it.cost.context_tokens = 61;
+  const r = await run(root, 'why', ['staff-reviewer'], CLAUDE, cat);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain('Context: ~61 tokens (estimate).\n');
+});
+
 test('why prints reason, findings and cost', async () => {
   const root = installed([...OWN, 'staff-reviewer']);
   const r = await run(root, 'why', ['staff-reviewer'], {});
@@ -183,7 +194,15 @@ test('explain lists items and files', async () => {
   expect(r.code).toBe(0);
   expect(r.out).toContain('staff-reviewer (own-agent): Reviews every diff.');
   expect(r.out).toContain(`  ${SR}`);
-  expect(r.out).toMatch(/Always-loaded context from harness: ~\d+ tokens/);
+  expect(r.out).toMatch(/Always-loaded context: ~[\d,]+ tokens \(estimate\), budget 2,000; harness and its picks ~[\d,]+\./);
+});
+
+test('explain counts the repo own CLAUDE.md in the total, not in the harness share', async () => {
+  const { 'AGENTS.md': _mine, ...noAgents } = REPO; // AGENTS.md's own text would be in the repo total too
+  const root = installed(OWN, { ...noAgents, 'CLAUDE.md': 'x'.repeat(400) }); // 100 tokens
+  const [, total, h] = /Always-loaded context: ~([\d,]+) tokens .*harness and its picks ~([\d,]+)\./.exec((await run(root, 'explain', [], {})).out)!.map((s) => Number(s.replace(/,/g, '')));
+  // 100 from the file, plus the newline left by cutting harness's @AGENTS.md line, plus AGENTS.md's newline around its block.
+  expect(total - h).toBe(102);
 });
 
 test('add refuses outside Claude Code; remove, why and explain do not', async () => {
@@ -305,4 +324,20 @@ test('remove and why on a preset: id print the preset lines', async () => {
   const why = await run(root, 'why', ['preset:khubaib-frontend']);
   expect(why.code).toBe(0);
   expect(why.out).toContain('Installed by the khubaib-frontend preset.');
+});
+
+test('EOF at the remove prompt is a No: nothing is written', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { readlinePrompt } = await import('../../src/cli/prompt.js');
+  const root = installed([...OWN, 'staff-reviewer']);
+  const input = new PassThrough();
+  const prompt = readlinePrompt(input, new PassThrough());
+  let out = '';
+  const p = items('remove', ['staff-reviewer'], { env: {}, root, out: (s) => (out += s + '\n'), prompt, templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null });
+  setTimeout(() => input.end(), 50);
+  const code = await p;
+  prompt.close();
+  expect(code, out).toBe(0);
+  expect(out).toContain('Cancelled. Nothing was written.');
+  expect(existsSync(join(root, SR))).toBe(true);
 });

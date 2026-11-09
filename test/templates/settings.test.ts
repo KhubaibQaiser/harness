@@ -6,9 +6,10 @@ const ARGS = ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'];
 const BLOCK = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange'];
 
 test('hooks: events, matchers, exec form, timeouts and onFailure (spec section 2)', () => {
-  expect(Object.keys(s.hooks)).toEqual(['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd']);
+  expect(Object.keys(s.hooks)).toEqual(['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd', 'SessionStart']);
   expect(s.hooks.PreToolUse[0].matcher).toBe('Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit');
   expect(s.hooks.PostToolUse[0].matcher).toBe('Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit');
+  expect(s.hooks.SessionStart[0].matcher).toBe('compact');
   for (const e of ['UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd']) expect(s.hooks[e][0]).not.toHaveProperty('matcher');
   for (const [event, groups] of Object.entries<any[]>(s.hooks)) {
     expect(groups).toHaveLength(event === 'PreToolUse' || event === 'PostToolUse' ? 2 : 1);

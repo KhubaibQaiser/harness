@@ -1,14 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { recordedPresetContext } from '../catalog/presets.js';
-import { loadCatalog } from '../catalog/load.js';
-import { budgetLines, budgetVerdict, measureSelectionSync } from '../budget/measure.js';
-import { packageDir } from '../core/package-dir.js';
+import { join } from 'node:path';
+import { loadCatalog, type LoadedCatalog } from '../catalog/load.js';
+import { contextSet } from '../budget/summary.js';
+import { contextDirs, contextLine } from './doctor-context.js';
 import { pinnedPlugins } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
 import { PRESET_ITEM } from '../install/plan-preset.js';
 import { loadConfig } from '../core/config.js';
+import { GATES } from '../core/gates.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
 import { readHookEnv } from '../core/hook-env.js';
 import { LOCK_RECOVERY, LOCK_REL, readManifest, ManifestError } from '../install/apply.js';
@@ -21,10 +21,6 @@ import { stats, tddStatus, type CliEnv } from './index.js';
 declare const __HARNESS_VERSION__: string;
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
 const OFF_CONFIG = 'turned off in `.harness/config.yaml`';
-
-const GATES: [string, keyof ReturnType<typeof loadConfig>['config']['checks']][] = [
-  ['guard', 'guard'], ['protect', 'protect'], ['dep-verify', 'depVerify'], ['multi-file', 'multiFile'], ['tdd', 'tdd'], ['stop', 'stop'], ['pr-size', 'prSize'],
-];
 
 export type StatusDeps = { platform?: NodeJS.Platform; pluginList?: typeof pluginList };
 
@@ -57,6 +53,8 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   const where =
     platform === 'darwin' ? 'macOS: available' : platform === 'win32' ? 'native Windows: not available'
     : platform !== 'linux' ? `${platform}: not checked` : cli.env.WSL_DISTRO_NAME ? 'WSL2: available' : 'Linux: available';
+  const lc = loadCatalog(); // one load for the Context: line and the item lines
+  lines.push(contextLine(contextSet(root, config, contextDirs(), undefined, { catalog: lc })));
   lines.push(`Enforcement: sandbox ${config.sandbox} (${where})`);
   lines.push(blocksOnFailure(root)
     ? 'Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open'
@@ -67,7 +65,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   if (blocked) lines.push(`Last blocked settings change: ${blocked.ts} (${blocked.reason})`);
   const changed = lastHarnessFilesChange(root);
   if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
-  if (config.items.length) lines.push(...itemLines(root, config, deps.pluginList ?? pluginList));
+  if (config.items.length) lines.push(...itemLines(config, lc, deps.pluginList ?? pluginList));
   const pr = config.preset;
   if (pr) lines.push(`Preset: ${pr.id}`, ...m.files.filter((f) => f.item === `${PRESET_ITEM}${pr.id}`).map((f) => `  ${f.rel}`));
   lines.push('Last day');
@@ -86,9 +84,8 @@ function blocksOnFailure(root: string): boolean {
   return BLOCKING.every((ev) => Array.isArray(hooks?.[ev]) && hooks[ev].some((g: any) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => isHarnessHook(h) && h.onFailure === 'block')));
 }
 
-/** Catalog version, selected items, plugins not installed and the budget's first line. A catalog that fails to load adds nothing. */
-function itemLines(root: string, config: ReturnType<typeof loadConfig>['config'], list: typeof pluginList): string[] {
-  const lc = loadCatalog();
+/** Catalog version, selected items, and plugins not installed. A catalog that fails to load adds nothing. */
+function itemLines(config: ReturnType<typeof loadConfig>['config'], lc: LoadedCatalog, list: typeof pluginList): string[] {
   if (lc.errors.length) return [];
   const ids = selectedIds(config);
   const lines = [`Catalog ${config.catalog_version}`, `Items: ${ids.length} selected`];
@@ -97,7 +94,5 @@ function itemLines(root: string, config: ReturnType<typeof loadConfig>['config']
     const have = list(); // one call
     lines.push(have ? `Plugins not installed: ${wanted.filter((id) => !have.some((p) => p.id === id)).length}` : 'Plugins not installed: unknown (claude not found)');
   }
-  const m = measureSelectionSync(ids, lc.catalog, { templates: packageDir('templates'), plugin: dirname(packageDir('templates')) }, { extra: config.preset ? recordedPresetContext(root, config.preset) : [] });
-  lines.push(budgetLines(budgetVerdict(m, m, config.context.budget_tokens))[0]);
   return lines;
 }

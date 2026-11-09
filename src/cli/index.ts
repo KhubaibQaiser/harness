@@ -15,11 +15,13 @@ import { readlinePrompt } from './prompt.js';
 import { doctor } from './doctor.js';
 import { status } from './status.js';
 import { catalog } from './catalog.js';
-import { preset } from './preset.js';
+import { preset, presetInstall } from './preset.js';
 import { validate } from './validate.js';
 import { vet } from './vet.js';
 import { evalCmd } from './eval.js';
 import { report } from './report.js';
+import { context } from './context.js';
+import { contextApply } from './context-apply.js';
 import { select } from './select.js';
 import { gitStep } from './git.js';
 import { detect } from '../install/detect.js';
@@ -36,7 +38,7 @@ export interface CliEnv {
 
 declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       /harness:init [--yes] [--dry-run] [--config <file>] [--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]\n       harness uninstall [--yes] [--force] [--dry-run]\n       /harness:update [--yes] [--check] [--dry-run] [AI flags as init]\n       /harness:sync [--dry-run|--yes] [--take <file,...>] [--install-plugins] [--over-budget]\n       harness doctor\n       harness status\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness preset list|check <dir>\n       harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]\n       harness vet <target> [--json [--keep]]\n       harness vet --finish <scan.json> --review <file>\n       harness vet --install <scan.json>\n       harness vet --clean\n       harness select --picks <file> [--choose <id,...>]\n       harness git branch|commit|push|pr [--title <t>]\n       /harness:add <id> [--take <file,...>] [--over-budget] [--dry-run|--yes]\n       harness remove <id> [--take <file,...>] [--dry-run|--yes]\n       harness why <id>\n       harness explain\n       harness report [--days N] [--open] [--export]\n       harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model M] (gates: not yet)';
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       /harness:init [--yes] [--dry-run] [--config <file>] [--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]\n       harness uninstall [--yes] [--force] [--dry-run]\n       /harness:update [--yes] [--check] [--dry-run] [AI flags as init]\n       /harness:sync [--dry-run|--yes] [--take <file,...>] [--install-plugins] [--over-budget]\n       harness doctor\n       harness status\n       harness context [--json] [--offline]\n       harness context apply <n>[,<n>…] [--dry-run|--yes]\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness preset list|check <dir>\n       harness preset install <dir> [--dry-run|--yes]\n       harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]\n       harness vet <target> [--json [--keep]]\n       harness vet --finish <scan.json> --review <file>\n       harness vet --install <scan.json>\n       harness vet --clean\n       harness select --picks <file> [--choose <id,...>]\n       harness git branch|commit|push|pr [--title <t>]\n       /harness:add <id> [--take <file,...>] [--over-budget] [--dry-run|--yes]\n       harness remove <id> [--take <file,...>] [--dry-run|--yes]\n       harness why <id>\n       harness explain\n       harness report [--days N] [--open] [--export]\n       harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model M] (gates: not yet)';
 const DAY = 86_400_000;
 
 export function tddStatus(root: string): string {
@@ -130,6 +132,13 @@ try {
       } finally {
         prompt.close();
       }
+    } else if (argv[0] === 'preset' && argv[1] === 'install') {
+      const prompt = readlinePrompt();
+      try {
+        process.exitCode = await presetInstall(argv.slice(2), { ...cli, prompt });
+      } finally {
+        prompt.close();
+      }
     } else if (argv[0] === 'uninstall') {
       const prompt = readlinePrompt();
       try {
@@ -152,6 +161,15 @@ try {
       } finally {
         prompt.close();
       }
+    } else if (argv[0] === 'context' && argv[1] === 'apply') {
+      const prompt = readlinePrompt();
+      try {
+        process.exitCode = await contextApply(argv.slice(2), { ...cli, root: process.cwd(), prompt, templatesDir: packageDir('templates'), distDir: packageDir('dist') });
+      } finally {
+        prompt.close();
+      }
+    } else if (argv[0] === 'context') {
+      process.exitCode = await context(argv.slice(1), cli);
     } else if (argv[0] === 'report') {
       process.exitCode = await report(argv.slice(1), cli);
     } else if (argv[0] === 'eval') {

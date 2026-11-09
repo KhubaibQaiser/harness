@@ -11,6 +11,7 @@ import type { AppliesWhen, Catalog, CatalogItem } from './schema.js';
 import type { Facts } from '../install/detect.js';
 import { checklist, type ChecklistRow } from '../install/select.js';
 import { mergeAgentsPreset } from '../install/merge.js';
+import { stripComments } from '../budget/text.js';
 import { estimateTokens, itemContext, itemContextLine, type ContextEntry } from '../budget/measure.js';
 
 export { PREFIX_RE, slug, suggestBranches } from '../core/branch-prefix.js';
@@ -207,11 +208,11 @@ export function appliesTo(aw: AppliesWhen, facts: Pick<Facts, 'deps' | 'framewor
     && (!aw.project_types || (aw.project_types as string[]).includes(projectType));
 }
 
-/** The core is counted with its markers, as mergeAgentsPreset writes it. Templates come from the preset folder. */
+/** The core is counted as mergeAgentsPreset writes it, its markers at 0 (spec 3.4). Templates come from the preset folder. */
 export function presetContext(l: LoadedPreset, ids: string[]): ContextEntry[] {
   const templates = join(l.base, 'templates');
   return ids.map((id) => {
-    if (id === l.preset.core) return { id, tokens: estimateTokens(mergeAgentsPreset(null, readFileSync(join(templates, 'core.md'), 'utf8')).after) };
+    if (id === l.preset.core) return { id, tokens: estimateTokens(stripComments(mergeAgentsPreset(null, readFileSync(join(templates, 'core.md'), 'utf8')).after)) };
     return itemContext(l.items.find((i) => i.id === id)!, { templates });
   });
 }

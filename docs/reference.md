@@ -4,7 +4,7 @@ The full detail behind the [README](../README.md). Start there; come here when y
 
 ## How it works, and how it differs
 
-- **Hooks, not prompts.** The rules run as `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `ConfigChange`, `Stop` and `SessionEnd` hooks. `AGENTS.md` gets a short block that explains the rules, but the hooks enforce them.
+- **Hooks, not prompts.** The rules run as `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `ConfigChange`, `Stop`, `SessionEnd` and `SessionStart` (matcher `compact`) hooks. `AGENTS.md` gets a short block that explains the rules, but the hooks enforce them.
 - **Deterministic.** The hooks call no model. They read the tool call, your test results, coverage files and `git diff`, and decide from those.
 - **Tests decide, not the agent.** The TDD gate reads JSON results that your own Vitest or Jest run writes. A source edit needs a fresh failing test from this session.
 - **Fails closed where it matters.** If the dispatcher can't start or crashes, Claude Code blocks the tool call, the prompt or the settings change (`onFailure: "block"`). The Stop gate fails open if its process can't run. If `.harness/config.yaml` is invalid, agent edits are denied and Stop blocks until a person fixes it. The guard and protected-path checks deny the call if they crash.
@@ -67,7 +67,7 @@ Run `init` anywhere in a git repo: it installs at the repo root and prints that 
 | `.harness/hooks/dispatch.mjs` | Created. The hook dispatcher every hook runs. Commit it. |
 | `.harness/config.yaml` | Created. Your settings (see [Configuration](#configuration-details)). |
 | `.harness/manifest.json` | Created. Every file and block `init` wrote, with hashes, so `uninstall` can undo it. |
-| `.claude/settings.json` | Created or merged. Adds the hook entries and `permissions.deny` rules for `.env` reads and edits to harness files. Hooks from other tools are kept. |
+| `.claude/settings.json` | Created or merged. Adds the hook entries (including the `SessionStart` `compact` hook, which re-adds a 5-line state card after compaction) and `permissions.deny` rules for `.env` reads and edits to harness files. Hooks from other tools are kept. |
 | `AGENTS.md` | Created or merged. Adds a block between `<!-- harness:start -->` and `<!-- harness:end -->` that explains the rules. |
 | `CLAUDE.md` | Created as `@AGENTS.md`, or that line is appended, unless it already imports `AGENTS.md`. |
 | `.gitignore` | Adds `.harness/state/`, `.harness/logs/`, `.harness/backup/` and `.harness/results/`. |
@@ -204,6 +204,8 @@ Your format and lint checks must skip the committed `.harness/` files. When Pret
 
 ## Guard details
 
+The agent has to ask before it runs `harness context apply`, which changes which skills load; unattended it is denied. `harness context` and `harness context apply <n> --dry-run` are allowed.
+
 The guard matches secrets paths without regard to case, and the way Windows resolves them: trailing dots and spaces, `::$DATA` streams, drive-relative `C:name`, and 8.3 short names. It can't map a short name (`~1`) back exactly, so it denies any short-name segment that could stand for a protected name. A short-name path through a folder that starts like one (for example `AWSADM~1`) is then denied too.
 
 The multi-file gate never counts test files: JS/TS `*.test.*`, `*.spec.*` and `__tests__/`, and Python `test_*.py`, `*_test.py`, `conftest.py` and `.py` files under `tests/`. Writing a test and then its code is one change.
@@ -216,7 +218,7 @@ The full flow runs only inside Claude Code, where Claude does the interview and 
 2. **Interview.** Claude asks one question at a time: scope first, then "Use a named preset?" ("No preset" is the default; `harness preset list` shows the others), then gaps the scan can't answer. It drafts `product.md` for you to edit. It reads only files you point to, never dotenv files or `.harnessignore` paths, and credentials are names only.
 3. **Recommend.** A fresh-context reviewer audits the repo against the catalog and proposes items and a report.
 4. **Select.** You tick items, four per question, with the reason, context cost and side effects of each. With a preset, its rows are ticked and say they came from it.
-5. **Apply.** It shows the plan, the preset's extra lines (Impeccable's hooks and download, the opt-out variables, the attribution setting) and the always-loaded context from harness. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
+5. **Apply.** It shows the plan, the preset's extra lines (Impeccable's hooks and download, the opt-out variables, the attribution setting) and the always-loaded context, the repo's own files included. If that goes over the budget (2000 tokens by default), it asks once. Then you confirm separately: apply the changes, and, if you picked plugins, install them now.
 6. **Git.** Each of branch, commit, push and PR is its own question. Nothing runs without a yes.
 
 It writes the same files as `init`, plus `.harness/context/product.md` and `.harness/report.md`.
@@ -244,8 +246,10 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 
 | Command | What it does |
 |---|---|
-| `status` | Shows each gate as on or off, and why. Also the catalog version, how many items are selected, how many selected plugins aren't installed, and the always-loaded context estimate. |
-| `doctor` | Checks the install and prints a fix for each problem. Exits 1 if there is one. For installs with items it also reports the catalog version, items whose files or settings entries are missing (`/harness:sync` restores them), selected plugins that are enabled but not installed, plugin versions that differ from the catalog's pin, a plugin enabled from two marketplaces, an edited `harness-pins` marketplace or MCP server, and `checks` in `config.yaml` that differ from the selected items. It runs `claude plugin list` once; without `claude` it skips the plugin checks. |
+| `status` | Shows each gate as on or off, and why. Also the catalog version, how many items are selected, how many selected plugins aren't installed, and the always-loaded context total (`Context:` line, counted offline). |
+| `doctor` | Checks the install and prints a fix for each problem. It also prints one always-loaded context line (ok, note when over budget, fix when harness alone is over). Exits 1 if there is one. For installs with items it also reports the catalog version, items whose files or settings entries are missing (`/harness:sync` restores them), selected plugins that are enabled but not installed, plugin versions that differ from the catalog's pin, a plugin enabled from two marketplaces, an edited `harness-pins` marketplace or MCP server, and `checks` in `config.yaml` that differ from the selected items. It runs `claude plugin list` once; without `claude` it skips the plugin checks. |
+| `context [--json] [--offline]` | Lists the always-loaded and on-demand context rows (repo, harness, preset, catalog) with their tokens, the total against `context.budget_tokens`, and what is not measured. Writes nothing. Exits 1 when the always-loaded total is over the budget, 2 on a bad argument, 0 otherwise. Counts with Anthropic's token-counting API only when `ANTHROPIC_API_KEY` is set, `context.count` is `auto` and `--offline` is not passed; otherwise, or if the API call fails, it estimates (characters ÷ 4) and says so; only with no key does it add how to get exact counts. Catalog picks keep their recorded estimate and are marked `(catalog estimate)`, and the header says how many rows stayed estimates. `--json` prints the same as JSON, ending with `fallback`: why the API count failed (`timeout`, `network error`, `bad response` or the HTTP status), or `null`. It also lists numbered recommendations: `harness` ones it can apply (show a harness, preset or catalog skill by name only while the total is over 80% of the budget, never one an agent preloads through `skills:` or one whose `skillOverrides` key you set; remove a catalog plugin pick) and `yours` ones on your own files, which `/harness:context-optimize` proposes as a diff. |
+| `context apply <n>[,<n>…] [--dry-run\|--yes]` | Applies recommendations from `harness context`, harness-owned ones only. All the name-only ones go into one change, with one diff and one prompt: it writes `skillOverrides.<name>: "name-only"` to `.claude/settings.json` and records it in the manifest, so `uninstall` takes it out. A key you set yourself is never recommended. Then each remove runs `harness remove <id>` with the same flags. If any number is a recommendation on your own file, the whole call is refused (exit 2). `--dry-run` prints the diff; without `--yes` it asks, and closing the input counts as no. `--dry-run` and `--yes` together are a usage error. A No to the name-only change stops the call, so no remove runs (a No on one remove skips only that remove); a remove that fails after the name-only change exits with its code, and that change stays. In Claude Code's sandbox it prints the command to run yourself with the `!` prefix. Exits 0 when applied or nothing to do, 1 when the apply failed, 2 on a bad argument or a refusal. The agent has to ask before running it. |
 | `uninstall [--yes\|--force\|--dry-run]` | Removes what harness added and restores your files. Close open Claude Code sessions first. |
 | `remove <id> [--dry-run\|--yes] [--take <file,...>]` | Removes one installed item and what it wrote, and restores your files. Refuses while another installed item requires it. A file you edited, of this or another item, is kept and listed unless you name it in `--take`. The agent has to ask before running it. |
 | `why <id>` | For an installed item: why it is there, the findings it addresses, its cost and its context. For one that isn't installed: why it is in the catalog and its cost. |
@@ -256,9 +260,10 @@ Run each terminal command as `harness <command>`. From source, use `node /path/t
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. `off` works only in your own terminal. |
 | `scan` | Prints the facts harness detects about your repo, as JSON. Writes nothing. |
 | `catalog` | Prints the catalog of items harness can install, as JSON. |
-| `catalog check [--resolve] [--only <id,...>]` | Checks the catalog for problems. `--resolve` also looks up each pin, which needs the network. `--only` limits that to the listed ids. |
+| `catalog check [--resolve [--context [--write-context]]] [--only <id,...>]` | Checks the catalog for problems. `--resolve` also looks up each pin, which needs the network. `--context` (with `--resolve`) also downloads each plugin and external skill at its pinned commit and compares `cost.context_tokens` with the measured count: a different number is a problem, and items with no number are listed under `Not measured:`. `--write-context` (with `--context`) writes the measured number into each item file's `cost:` and changes nothing else. `--only` limits the checks to the listed ids. |
 | `preset list` | Prints `<id>  <description>` for each shipped and repo preset (`.harness/presets/`), or `No presets.`. Writes nothing. |
 | `preset check <dir>` | Checks every `<id>.yaml` in `<dir>` with its `<id>/` folder: schema, items, templates, skill limits, no email or git identity, and an id that isn't a shipped preset's (unless `<dir>` is the shipped folder). Prints `ok` or one error per line. `catalog check` also checks each shipped preset, as `presets/<id>: <error>`. |
+| `preset install <dir> [--dry-run\|--yes]` | Runs the same checks as `preset check` (including the shipped-id rule), then copies each `<id>.yaml` and `<id>/` to `.harness/presets/` (commit it; `uninstall` keeps it). `--dry-run` lists the files and writes nothing. Without a flag it lists them and asks once in a terminal; with no terminal it prints the no-terminal message and exits 2. A folder that fails the check, or an id already in `.harness/presets/`, is refused and nothing is copied. Then choose the preset in `/harness:init` or `/harness:update`. An agent running it (other than `--dry-run`) is asked to confirm first. |
 | `validate answers\|product <file> [--merge-config]` | Checks an interview answers file or a product file. With `--merge-config`, an answers file holding only some keys is laid over the answers in `.harness/config.yaml` first (what `/harness:update` uses). |
 | `validate picks <file> --answers <file> [--merge-config] [--attempt 1\|2]` | Checks a picks file against the answers and the catalog. `--merge-config` works as above. |
 | `validate report <file> --picks <file> [--attempt 1\|2]` | Checks a report file against the picks. |
@@ -299,11 +304,16 @@ Two more flags are optional:
 
 Skills, agents and the `AGENTS.md` block are loaded into every Claude Code session. Each one costs tokens before you ask anything. Harness keeps a budget for that.
 
-- **What counts.** Always-loaded text only. For a skill or agent, that's its name and description. For the `AGENTS.md` block, the whole block. The harness plugin's own skills are always counted. Hooks, settings and CI files count as 0.
-- **Not measured.** Plugins, external skills and MCP servers can't be measured before install. They're listed as not measured, and the install asks you once.
-- **An estimate.** The count is characters divided by 4, labelled `estimate`. It makes no API call and needs no API key.
-- **The limit.** `context.budget_tokens`, default 2000. If a selection goes over it, `init` and `update` ask before installing. With `--yes`, they stop unless you pass `--over-budget`.
+- **What counts.** Always-loaded text only. For an agent, that's its name and description. For a skill, that's its name and description, plus `when_to_use` (together cut at 1,536 characters); a skill with `disable-model-invocation: true` costs nothing. For the `AGENTS.md` block, the whole block. Hooks, settings and CI files count as 0. The repo's own CLAUDE.md, AGENTS.md, rules, skills and agents count too, because every teammate loads them.
+- **Owners.** Each row has an owner: `harness`, `preset:<id>`, `catalog:<id>` or `repo`. The harness plugin's own skills are always counted.
+- **Not measured.** Plugins and external skills count the number the catalog records, measured at the pinned commit; with none recorded, they're listed as not measured. MCP servers can't be measured before install and are always listed as not measured. The install asks you once about anything not measured.
+- **The count.** The default is an estimate: characters divided by 4. `harness context` uses Anthropic's token-counting API only when `ANTHROPIC_API_KEY` is set, `context.count` is `auto` and `--offline` isn't passed. The key is read from the environment only and never stored. The API receives the measured text, under the key's account. If the call fails, `context` falls back to a full estimate and shows the reason (and `fallback` in `--json`). Catalog picks stay `(catalog estimate)`.
+- **The limit.** `context.budget_tokens`, default 2000. `init`, `update`, `add` and `sync` count your repo's own files and ask before going past it. With `--yes`, they stop unless you pass `--over-budget`. An unattended run over the budget is refused, even with `--over-budget`; a dry run is not.
+- **doctor and status.** `status` shows a `Context:` line and `doctor` one context check line. Both count offline and never call the API. Doctor notes when the total is over the budget, and reports a problem when harness's own text alone is.
+- **harness context.** Shows the always-loaded and on-demand rows, the total and numbered recommendations. Writes nothing. `harness context apply <n>[,<n>…]` applies only harness-owned name-only and remove recommendations; a No stops the whole list, and an unattended run is denied by the guard.
+- **Trimming.** `/harness:context-optimize` measures, proposes trims, and applies harness's own after a yes. Your own files change only after you approve each diff.
 - **Ask once, then exempt.** Items you approved earlier show in the report but don't count toward the budget again.
+- **After compaction.** The `SessionStart` `compact` hook re-adds the state card.
 
 ## Plugins and MCP servers
 
@@ -335,6 +345,7 @@ Catalog items can be Claude Code plugins or MCP servers.
 
 `harness report` writes a usage and adherence report for this repo: which skills were invoked when they were relevant, which rules were enforced, token use, and where a gate probably blocked something it should not have. It reads your Claude Code session transcripts on your machine and sends nothing anywhere. Its "X of Y rules enforced" line counts how many of the rules harness knows about are held by a gate and not only written in a file, with a matrix of which are enforced and how each can be bypassed.
 
+- The always-loaded table is the same offline count as `harness context`: one row per source, summing to its total. The HTML page names each row; `--export` sums rows by owner class (`harness`, `preset`, `repo`, a known catalog id or `catalog`), never by file name.
 - Start Claude Code inside the repo for the report to see it. Sessions started in a parent folder are not counted.
 - The page is `.harness/reports/<date>.html`, gitignored. It quotes your sessions, so don't share it. `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose.
 - `harness eval` tests whether skills, rules and gates work in real sessions. It costs money, so it asks you to type `yes` every run, stops at a cost ceiling (default $2, set with `--max-cost-usd`), defaults to a Haiku model, and runs only in your own terminal.
@@ -405,6 +416,8 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `items` | `[]` | Catalog items chosen for this project (`id`, `include`, `selected`, `reason`, `addresses`, `pin`). Value must be a list of item mappings. |
 | `git.commit_trailer` | `""` | Line added to the end of commit messages. Empty adds none. |
 | `context.budget_tokens` | `2000` | Estimated tokens of always-loaded context harness may add before it asks you to confirm an install. Items you approved earlier are not counted. Value must be an integer from 0 to 200000. |
+| `context.count` | `"auto"` | auto: use Anthropic's token-counting API in `harness context` when ANTHROPIC_API_KEY is set; offline: never. Value must be one of auto, offline. |
+| `context.count_model` | `"claude-opus-5-5"` | The model `harness context` asks the token-counting API to count for. Value must match ^claude-[a-z0-9-]{1,60}$. |
 | `tdd.paths` | `[]` | Globs for the files TDD covers. |
 | `tdd.exempt` | `[]` | Globs inside `tdd.paths` that TDD skips. |
 | `tdd.diff_coverage` | `80` | Minimum coverage, in percent, for changed lines. Value must be a number from 0 to 100. |
@@ -443,6 +456,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 
 ## Known limits
 
+- `init`, `update`, `uninstall` and `context-optimize` start only from their slash commands, not from plain words.
 - The guard recognises the commands `harness` and `cli.mjs` by name. A renamed copy or symlink of the CLI (`node h.mjs add x --yes`) isn't recognised, so it doesn't ask first.
 - Two hooks writing at once can lose or double a `timing.jsonl` rotation (rename after a size check). Lines are append-only and never torn.
 - Windows: unit tests run in CI, but live Claude Code use is untested. The guard doesn't parse PowerShell syntax.
@@ -468,6 +482,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 - Mid-session, only the harness CLI's own change to `.claude/settings.json` is let through. A change to the user or local settings, by anyone, applies from the next session.
 - TDD and coverage gates for JS/TS only. Other repos get every other gate.
 - Cloud Claude Code sessions don't load repo-enabled plugins. The committed hooks still run there, but `/harness:*` skills don't.
+- The state card is added after compaction, but the summary of earlier hook messages is Claude Code's. The card doesn't restore them.
 - Hooks run with the user's permissions. Only CI and branch protection enforce rules for everyone.
 - The CLI path the guard prints is trusted by location only (the repo's `node_modules/@khubaibqaiser/harness`). The agent can still put a copy there with commands protect doesn't parse, such as `git clone … node_modules/…`, `curl -o`/`wget -O`, `patch`, `git apply --directory`, or a `file:` dependency in `package.json` followed by an install. Read the printed command before you run it in your own terminal.
 - The protected-path and `node_modules` rules read the paths a shell command names, and inline code only when it is literal in the command. Not seen by them: a program that writes files itself (a script file, a build script, an install hook), code that assembles a path at run time, a command hidden in a variable or built at run time, and quoting rules other than POSIX. Change detection reports a change to harness's own files from any of these at the next prompt and Stop, after the fact, unless the same script also rewrote the fingerprints in `.harness/state/`; it doesn't cover `node_modules` or other files.
@@ -476,7 +491,14 @@ More detail: [TDD setup details](#tdd-setup-details).
 - Harness's guard is a speed bump for mistakes and prompt injection, not a security sandbox. A determined shell trick can still get past it. Claude Code's own permission rules and its sandbox are the real boundary.
 - Plugin install messages are matched by guessed wording until a live check on the real Claude Code output. If a plugin install fails oddly, run the printed command yourself.
 - LSP plugin config in the `harness-pins` marketplace is unverified live. Claude Code may ignore it.
-- The context count is an estimate (characters divided by 4). Plugins, external skills and MCP servers aren't measured before install, and committed picks load for every teammate but only the person installing is asked about the budget.
+- Harness measures files, not the live session. Claude Code's system prompt and tools, the output style, MCP tools, the skill listing's own budget cuts and your personal context aren't in harness's numbers. `/context` is the truth for a session.
+- Plugins enabled in `.claude/settings.json` that aren't M3 picks aren't measured: harness doesn't read the plugin cache.
+- The offline estimate (characters ÷ 4) is a guess and probably runs low on current models. API counts are estimates too, by Anthropic's own docs.
+- The **Project instructions** setting (`claude-md-and-agents-md` and others) lives in user or managed settings. Harness assumes the default.
+- The on-demand total is the most that could load, not what a session loads.
+- The budget asks cover only harness's own commands. A person editing CLAUDE.md, or another tool adding skills, is caught only when `doctor`, `status` or `harness context` runs.
+- Committed picks load for every teammate, but only the person installing them is asked.
+- Using the API sends the measured files' text to Anthropic under the key's account.
 - Plugin picks are "local only" in Claude Code and are missing in cloud sessions.
 - `extraKnownMarketplaces` (where the `harness-pins` marketplace lives) needs folder trust.
 - MCP servers need each user's approval.

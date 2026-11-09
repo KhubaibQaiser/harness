@@ -2,7 +2,13 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+
+const loads = vi.hoisted(() => ({ n: 0 }));
+vi.mock('../../src/catalog/load.js', async (orig) => {
+  const m = await orig<typeof import('../../src/catalog/load.js')>();
+  return { ...m, loadCatalog: (...a: Parameters<typeof m.loadCatalog>) => (loads.n++, m.loadCatalog(...a)) };
+});
 import { init, type Prompt } from '../../src/cli/init.js';
 import { status } from '../../src/cli/status.js';
 import { appendEvent } from '../../src/core/events.js';
@@ -164,11 +170,14 @@ test('status shows the catalog, the item count, missing plugins and the budget l
   execFileSync('git', ['add', '-A'], { cwd: root });
   let out = '';
   let calls = 0;
+  loads.n = 0;
   status([], { root, env: {}, out: (s) => (out += s + '\n') }, { pluginList: () => (calls++, []) });
+  expect(loads.n).toBe(1); // itemLines and the Context: line share one catalog load
   expect(out).toContain(`Catalog ${cat.version}\n`);
   expect(out).toContain('Items: 2 selected\n');
   expect(out).toContain('Plugins not installed: 1\n');
-  expect(out).toMatch(/^Always-loaded context from harness: ~\d+ tokens \(estimate\), budget \d+\.$/m);
+  expect(out).toMatch(/^Context: ~[\d,]+ of 2,000 tokens always loaded \(best estimate\); harness ~[\d,]+\. Run harness context for details\.$/m);
+  expect(out).not.toContain('Always-loaded context:');
   expect(calls).toBe(1);
   expect(out.indexOf('Enforcement:')).toBeLessThan(out.indexOf('Catalog '));
 });
@@ -183,8 +192,13 @@ test('status says so when claude is not found, and skips item lines for a legacy
   let out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') }, { pluginList: () => null });
   expect(out).toContain('Plugins not installed: unknown (claude not found)\n');
-  const legacy = (await go({ 'package.json': '{"name":"a"}\n', 'package-lock.json': '{}\n' })).out;
+  const real = globalThis.fetch;
+  globalThis.fetch = (() => { throw new Error('no network'); }) as typeof fetch;
+  const legacy = await go({ 'package.json': '{"name":"a"}\n', 'package-lock.json': '{}\n' }).then((r) => r.out).finally(() => { globalThis.fetch = real; });
   expect(legacy).not.toMatch(/^(Catalog|Items:|Plugins not installed|Always-loaded)/m);
+  // Context sits right before Enforcement (after the gate lines), also for a legacy install, and needs no network.
+  expect(legacy).toMatch(/^Context: ~[\d,]+ of [\d,]+ tokens always loaded[^\n]*\nEnforcement:/m);
+  expect(legacy).toContain(' Run harness context for details.\n');
 });
 
 test('status lists the preset files under the preset id', () => {

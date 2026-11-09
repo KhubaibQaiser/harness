@@ -23,7 +23,6 @@ import { alwaysLoadedSafe, usageAcc } from '../report/metrics/usage.js';
 import { TESTED } from '../report/transcript.js';
 import { runSession } from '../report/turns.js';
 import { COUNTERS, windowsAcc } from '../report/windows.js';
-import { insideClaude } from './claude-only.js';
 import type { CliEnv } from './index.js';
 
 declare const __HARNESS_VERSION__: string;
@@ -131,7 +130,6 @@ const rootIgnores = (root: string): boolean => {
 export async function report(args: string[], cli: ReportEnv): Promise<number> {
   const a = parseArgs(args);
   if (!a) return cli.out(USAGE), BAD_ARGS;
-  if (insideClaude(cli.env)) return cli.out('Run harness report in your own terminal for now.'), 1;
   const now = (cli.now ?? Date.now)();
   let data: ReportData;
   try {

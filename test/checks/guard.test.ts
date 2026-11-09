@@ -1307,3 +1307,61 @@ test('preset install --yes is denied unattended', async () => {
   expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision).toBe('ask');
   expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision).toBe('deny');
 });
+
+test('preset install --global asks with --yes --take, and its --dry-run is allowed', () => {
+  all(['harness preset install x --global --dry-run'], 'allow');
+  all(['harness preset install x --global --yes --take .claude/CLAUDE.md', 'harness preset install x --global'], 'ask');
+});
+
+test('harness report asks, harness eval is denied, --help is allowed', async () => {
+  const d = decideCommand('harness report --days 7', ctx());
+  expect(d.kind).toBe('ask');
+  expect(reason(d)).toBe("Confirm: the agent is running the usage and adherence report, which reads this repo's session transcripts");
+  all(['harness report --help'], 'allow');
+  const e = decideCommand('npx @khubaibqaiser/harness eval', ctx());
+  expect(e.kind).toBe('deny');
+  expect(reason(e)).toContain('Only a person can run paid evals');
+  expect(kind('eval harness tdd off')).toBe('deny');
+  all(['harness eval --help'], 'allow');
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-report-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'harness report --days 7' } });
+  expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision).toBe('ask');
+  expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision).toBe('deny');
+});
+
+test('a shell eval next to a harness word stays denied; harness eval keeps its own verdicts', () => {
+  for (const c of [">/tmp/harness eval 'ha${x}rness tdd off' --help", ">/tmp/harness eval 'ha${x}rness tdd off #' --help", "X=/x/harness eval 'ha${x}rness tdd off #' --help",
+    'eval harness tdd off']) expect(kind(c), c).toBe('deny');
+  expect(kind("harness eval --help && eval 'ha${x}rness tdd off'")).toBe('deny');
+  expect(kind("echo harness; eval 'ha${x}rness tdd off'")).toBe('ask'); // built at run time, no literal subcommand: asks (denied unattended), as before this task
+  expect(kind('harness eval --help')).toBe('allow');
+  for (const c of ['harness eval', 'npx @khubaibqaiser/harness eval', 'harness --verbose eval']) {
+    const d = decideCommand(c, ctx());
+    expect(d.kind, c).toBe('deny');
+    expect(reason(d), c).toContain('Only a person can run paid evals');
+  }
+});
+
+test('a person-only preview never passes when an argument holds a shell expansion', async () => {
+  all(['harness context $(echo apply) 1 --yes', 'A=apply; harness context $A 1 --yes', 'harness context {apply,} 1 --yes', 'harness context ap?ly 1 --yes',
+    'harness context `echo apply` 1 --yes', 'harness context ~/apply 1 --yes', 'harness git <(echo push)', 'harness preset install $D --dry-run', 'harness preset install d* --dry-run', 'harness report $(echo --help)'], 'ask');
+  all(['harness eval $H', 'harness tdd on$X'], 'deny');
+  all(['harness context', 'harness context --json', 'harness context apply 1 --dry-run', 'harness preset install d --dry-run', 'harness report --help'], 'allow');
+  const root = mkdtempSync(join(tmpdir(), 'h-guard-expand-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  for (const command of ['harness context $(echo apply) 1 --yes', 'harness context {apply,} 1 --yes', 'harness preset install $D --dry-run']) {
+    const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command } });
+    expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision, command).toBe('deny');
+  }
+});
+
+test('the uninstall ask covers --global, its --dry-run too', () => {
+  for (const c of ['harness uninstall --global', 'harness uninstall --global --yes', 'harness uninstall --global --yes --force', 'harness uninstall --global --dry-run', 'npx @khubaibqaiser/harness uninstall --global --yes']) {
+    const d = decideCommand(c, ctx());
+    expect(d.kind, c).toBe('ask');
+    expect(reason(d), c).toBe(UNINSTALL_WHY);
+  }
+});

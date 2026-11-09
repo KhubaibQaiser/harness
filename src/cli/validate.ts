@@ -9,6 +9,7 @@ import { saveDebug } from '../ai/debug.js';
 import { type Picks, validatePicks } from '../ai/picks.js';
 import { validateReport } from '../ai/report.js';
 import { validateVetReview } from '../ai/vet-review.js';
+import { validatePresetAnswers } from '../ai/preset-answers.js';
 import { selectedIds } from '../install/plan.js';
 import type { ScanResult } from '../vet/scan.js';
 import { loadCatalog } from '../catalog/load.js';
@@ -17,7 +18,7 @@ import { validateProduct } from '../ai/product.js';
 import { detect } from '../install/detect.js';
 import type { CliEnv } from './index.js';
 
-const USAGE = 'Usage: harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]';
+const USAGE = 'Usage: harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]\n       harness validate preset-answers <file>';
 
 /** Checks what the interview wrote. Exit 0 prints ok; exit 2 prints one error per line. Safe in a plain terminal and in Claude Code. */
 export function validate(argv: string[], { root, out }: CliEnv): number {
@@ -31,7 +32,7 @@ export function validate(argv: string[], { root, out }: CliEnv): number {
   }
   if (args[0] === 'picks' || args[0] === 'report' || args[0] === 'vet-review') return recommend(args, root, out, merge);
   const [what, file] = args;
-  if (args.length !== 2 || (what !== 'answers' && what !== 'product')) return out(USAGE), 2;
+  if (args.length !== 2 || (what !== 'answers' && what !== 'product' && what !== 'preset-answers')) return out(USAGE), 2;
   let text: string;
   try {
     text = readFileSync(file, 'utf8');
@@ -45,9 +46,9 @@ export function validate(argv: string[], { root, out }: CliEnv): number {
     try {
       raw = JSON.parse(text);
     } catch {
-      return out('answers: not valid JSON'), 2;
+      return out(`${what}: not valid JSON`), 2;
     }
-    const r = validateAnswers(merge(raw), detect(root));
+    const r = what === 'preset-answers' ? validatePresetAnswers(raw, loadCatalog(packageDir('catalog')).catalog, root) : validateAnswers(merge(raw), detect(root));
     errors = r.ok ? [] : r.errors;
   }
   if (!errors.length) return out('ok'), 0;

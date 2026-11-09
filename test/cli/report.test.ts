@@ -84,12 +84,11 @@ describe('harness report', () => {
       expect(r.text).toContain('harness report [--days N] [--open] [--export]');
     }
   });
-  it('refuses inside Claude Code', async () => {
+  it('runs inside Claude Code (the guard asks first)', async () => {
     const w = world(1);
     const r = await go(w, [], { env: { CLAUDECODE: '1' } });
-    expect(r.code).toBe(1);
-    expect(r.text).toContain('Run harness report in your own terminal for now.');
-    expect(existsSync(htmlPath(w))).toBe(false);
+    expect(r.code).toBe(0);
+    expect(existsSync(htmlPath(w))).toBe(true);
   });
   it('with no sessions exits 0 and says to start Claude Code inside the repo', async () => {
     const r = await go(world(0), []);

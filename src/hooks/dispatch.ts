@@ -2,6 +2,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { configChange } from '../checks/config-change.js';
+import { decisionSignals } from '../checks/decisions-stop.js';
 import { guard } from '../checks/guard.js';
 import { prSize } from '../checks/pr-size/check.js';
 import { prSizeEntry } from '../checks/pr-size/entry.js';
@@ -32,7 +33,7 @@ export { configInvalidWhy } from './config-gate.js';
 export { detectBaseHead } from './session-setup.js';
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
-export const registry: Check[] = [guard, prSize, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, configChange, stopGate, stateCardCheck];
+export const registry: Check[] = [guard, prSize, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, decisionSignals, configChange, stopGate, stateCardCheck];
 
 const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];

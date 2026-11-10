@@ -6,8 +6,8 @@ import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
-import { commandStart, decodeAnsiC, fileWriteTargets, gitArgs, ifsReading, PROTECTED_TEXT, quoteFree, rmTargets, withoutHeredocBodies } from './guard.js';
-import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, words } from '../core/shell-words.js';
+import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
+import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
@@ -19,8 +19,9 @@ const H_INLINE = `${INLINE_WHY} harness files or Claude settings is denied: it m
 // Owner rule: nobody edits node_modules directly. Installs still go through the guard's install gate.
 const inNodeModules = (root: string, p: string): boolean => !!toRepoPath(root, p)?.toLowerCase().split('/').includes('node_modules');
 
-const segTokens = (cmd: string): string[][] =>
-  cmd.split(/[;&|\n]+/).map((seg) => [...(seg.match(/'[^']*'|"[^"]*"|\S+/g) ?? [])].map((t) => t.replace(/^['"]|['"]$/g, '')));
+// Kept per text (round 28): expand and each target reader ask it of the same commands. Callers must not mutate it.
+const segTokens = remember((cmd: string): string[][] =>
+  cmd.split(/[;&|\n]+/).map((seg) => [...(seg.match(/'[^']*'|"[^"]*"|\S+/g) ?? [])].map((t) => t.replace(/^['"]|['"]$/g, ''))));
 
 // The command plus the strings of any bash|sh|zsh -c inside it, recursively.
 function expand(cmd: string): string[] {
@@ -195,12 +196,18 @@ function inlineCode(cmd: string, depth = 0): string[] {
   if (depth < 3) {
     for (const p of cPayloads(cmd)) out.push(...inlineCode(p, depth + 1));
     // A program fed on stdin to an interpreter (echo … | node, node <<'EOF') is inline code; to a shell, a command line.
-    for (const p of stdinProgramsOf(cmd)) out.push(...(SHELLS.has(p.name) ? inlineCode(p.text, depth + 1) : [p.text]));
+    // A body inside one already kept is a substring of it, and the segment tests match it there: skip it, so heredocs
+    // with no end line stay linear (re-review 20, P1).
+    let kept = -1;
+    for (const p of stdinProgramsOf(cmd)) {
+      if (SHELLS.has(p.name)) out.push(...inlineCode(p.text, depth + 1));
+      else if (!p.lines || p.lines[1] > kept) { out.push(p.text); kept = p.lines?.[1] ?? kept; }
+    }
   }
   return out;
 }
-const stdinProgramsOf = (cmd: string) =>
-  stdinPrograms(cmd, (ws) => commandStart(ws, (n) => SHELLS.has(n) || Object.hasOwn(INTERPRETERS, n))).filter((p) => SHELLS.has(p.name) || Object.hasOwn(INTERPRETERS, p.name));
+const stdinProgramsOf = remember((cmd: string) =>
+  stdinPrograms(cmd, (ws) => commandStart(ws, (n) => SHELLS.has(n) || Object.hasOwn(INTERPRETERS, n))).filter((p) => SHELLS.has(p.name) || Object.hasOwn(INTERPRETERS, p.name)));
 // A protected name as a path segment (not node_modules.txt or my_node_modules).
 const NM_SEG = /(^|[\\/'"`\s(,=:])node_modules([\\/'"`\s),;:]|$)/i;
 const H_SEG = /(^|[\\/'"`\s(,=:])(\.harness|\.claude[\\/]settings[^\\/'"`\s),;:]*)([\\/'"`\s),;:]|$)/i;
@@ -228,14 +235,53 @@ const readOnly = (ws: string[]): boolean => {
 };
 const MESSAGE_FLAGS = new Set(['-m', '--message', '-F', '--file', '-b', '--body', '--body-file', '-t', '--title']);
 // `$(cat <<'EOF' … EOF)`, Claude Code's commit and PR body form, and a one-word `.harness` in backticks are message text.
-const HEREDOC_CAT = /\$\(cat\s+<<-?\s*(['"]?)(\w+)\1\n[\s\S]*?\n\s*\2\s*\n?\s*\)/g;
-const isMessage = (w: string): boolean => !/\$\(|`/.test(w.replace(HEREDOC_CAT, '').replace(/`[^`\s]*`/g, ''));
+// Round 26 (re-review 23b, N1, N2): one linear walk over lines. A body ends only at the first line that is exactly its
+// delimiter (leading tabs under `<<-`; no blanks, CR or `)`), and the next line must start with `)` after blanks; what
+// follows that `)` stays text. A body under an unquoted delimiter that expands (lexer's EXPANDS), or a body line ending
+// in `\` (it can join the end line), is code. Any opener that does not close that way leaves the whole text as code.
+const CAT_OPEN = /^cat[ \t]+<<-?[ \t]*(['"]?)[A-Za-z_]\w*\1$/; // the opener ends its line; lexLine reads its delimiter
+// Round 27 (re-review 24b, N4): an opener counts only as `"$(cat` with the lexer reading no open quote before that `"`,
+// on its line (from the last close on) or on any earlier line, so `'$(cat <<'EOF'` is text, as in the shell.
+const withoutCatMessages = (t: string): string => {
+  const lines = t.split('\n'), out: string[] = [];
+  let lexed = 0, neutral = true; // out[0, lexed) lexed so far, each ending outside a quote; lazy and linear
+  for (let i = 0; i < lines.length; i++) {
+    let cur = lines[i], from = 0, at = 0;
+    for (;;) {
+      const k = cur.lastIndexOf('$(cat');
+      if (k < from || cur[k - 1] !== '"' || !CAT_OPEN.test(cur.slice(k + 2))) break;
+      for (; neutral && lexed < out.length; lexed++) neutral = lexLine(out[lexed]) !== null;
+      const op = neutral && lexLine(cur.slice(at, k - 1)) ? lexLine(cur.slice(k + 2))?.ends[0] : undefined;
+      if (!op) break;
+      let j = i + 1;
+      for (; j < lines.length && (op.dash ? lines[j].replace(/^\t+/, '') : lines[j]) !== op.word; j++)
+        if (lines[j].endsWith('\\') || (!op.literal && EXPANDS.test(lines[j]))) return t;
+      const close = /^[ \t]*\)/.exec(lines[j + 1] ?? '');
+      if (j >= lines.length || !close) return t;
+      cur = cur.slice(0, k) + lines[j + 1].slice(close[0].length);
+      from = k;
+      at = k - 1; // cur[0, k - 1) lexed neutral; the next opener's prefix is lexed from this `"`
+      i = j + 1;
+    }
+    out.push(cur);
+  }
+  return out.join('\n');
+};
+// A word with a substitution is a message only in Claude Code's exact shape, after -m, --message(=) or --body(=): it
+// starts `"$(cat <<` and, bodies removed, is just `""` (it ends `)"` after the close line, no quote outside the bodies).
+const CAT_FLAGS = new Set(['-m', '--message', '--body']);
+const isMessage = (w: string, flag: string): boolean => {
+  const eq = /^--(message|body|body-file|title|file)=/.exec(w)?.[0];
+  const v = eq ? w.slice(eq.length) : w;
+  if (!/\$\(|`/.test(v.replace(/`[^`\s]*`/g, ''))) return true;
+  return (eq ? /^--(message|body)=$/.test(eq) : CAT_FLAGS.has(flag)) && v.startsWith('"$(cat <<') && withoutCatMessages(v) === '""';
+};
 /** A segment's words without its data: the text of an echo or printf whose output nobody reads as code (no redirect, no
  *  substitution in the command), and the message, body and title values of git and gh that run no other substitution. */
 const codeWords = (ws: string[], consumed: boolean): string[] => {
   const n = ws.length ? commandName(ws[0]) : '';
   if ((n === 'echo' || n === 'printf') && !ws.includes('-v') && !consumed && !ws.some((w) => /[<>]/.test(w))) return ws.slice(0, 1);
-  if (n === 'git' || n === 'gh') return ws.filter((w, i) => !((MESSAGE_FLAGS.has(ws[i - 1]) || /^--(message|body|body-file|title|file)=/.test(w)) && isMessage(w)));
+  if (n === 'git' || n === 'gh') return ws.filter((w, i) => !((MESSAGE_FLAGS.has(ws[i - 1]) || /^--(message|body|body-file|title|file)=/.test(w)) && isMessage(w, ws[i - 1])));
   return ws;
 };
 const WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'dd', 'ln', 'rsync', 'truncate', 'touch']);
@@ -256,14 +302,14 @@ const feedsWriter = (ws: string[]): boolean => {
  *  ponytail: a name built from pieces (x=.har; y=ness), or a path passed to a script the agent wrote, is not seen. */
 const touchesProtectedText = (cmd: string): boolean => {
   const body = withoutHeredocBodies(cmd);
-  const consumed = /\$\(|`|\|/.test(body.replace(HEREDOC_CAT, '')); // echo output read by a substitution or a pipe
+  const consumed = /\$\(|`|\|/.test(withoutCatMessages(body)); // echo output read by a substitution or a pipe
   const segs = segments(body).map((s) => codeWords(words(s), consumed));
   const text = segs.map((ws) => ws.join(' ')).join(' ; ');
   const names = (t: string) => [t, quoteFree(t), decodeAnsiC(t)].some((x) => PROTECTED_TEXT.test(x)); // decodeAnsiC: x='\x2eharness'; ${x@E}
   if (segs.some(feedsWriter) || (names(cmd) && segs.some((ws) => ws.some((w) => commandName(unquote(w)) === 'xargs')))) return true;
   const writes = segs.filter((ws) => !readOnly(ws));
   if (writes.some((ws) => globNamesProtected(ws) || ws.some((w) => /['"\\]/.test(w) && PROTECTED_TEXT.test(unquote(w))))) return true;
-  return names(text) && (/`/.test(body.replace(HEREDOC_CAT, "").replace(/`[^`\s]*`/g, "")) || /[$`]|\w=\(|\(\s*\)|\bfunction\s/.test(text) || REDIRECT_TO_FILE.test(text) ||
+  return names(text) && (/`/.test(withoutCatMessages(body).replace(/`[^`\s]*`/g, "")) || /[$`]|\w=\(|\(\s*\)|\bfunction\s/.test(text) || REDIRECT_TO_FILE.test(text) ||
     writes.some((ws) => ws.some((w) => /[*?[{]/.test(w) && /harness|claude/i.test(w))) || segs.some(binds));
 };
 const GLOB = /[*?[{]/;
@@ -310,6 +356,8 @@ export const protect: Check = {
     if (target !== null) paths = [target];
     else if (isShell(tool_name)) {
       const cmd = String(tool_input.command ?? '');
+      // Each nested program is read again for every level around it: past the cap, deny fast, before the hook times out.
+      if (shellNesting(cmd) > MAX_SHELL_NESTING) return { kind: 'deny', reason: NESTING_WHY, check: 'protect' };
       // A program fed to a shell on stdin is a command line of its own (echo 'rm -rf node_modules' | bash).
       // So is the command as the shell splits it on $IFS (tee$IFS.harness/x).
       const ifs = ifsReading(cmd);
@@ -330,7 +378,7 @@ export const protect: Check = {
       const git = gitRestoreTargets(cmds);
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
-      paths = [...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)];
+      paths = [...new Set([...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)])]; // once each: every check of one touches the disk (re-review 22b, F4)
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(cmd);
       if (!paths.some((p) => p && isProtected(root, p))) return built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
@@ -338,3 +386,7 @@ export const protect: Check = {
     return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };
   },
 };
+// One work budget per run, the nested runs above included (re-review 21, P1b): past it WorkBudget is thrown and the
+// dispatcher denies.
+const unbudgeted = protect.run;
+protect.run = (ctx) => withWorkBudget(() => unbudgeted(ctx));

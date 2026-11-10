@@ -24,6 +24,9 @@ export interface SessionState {
   guardedBase?: Record<string, GuardedView>; // ConfigChange's baseline: the guarded settings views at the first other hook
   guardedCli?: string; // cli.id when guardedBase was taken: only a later CLI record allows a ConfigChange
   pendingNotice?: string; // a blocked ConfigChange, shown at the next prompt
+  decisionHits?: { pattern: string; excerpt: string }[]; // team-decision signals from prompts, at most 3
+  decisionNudged?: true; // the team-decision nudge was shown this session
+  rememberAdded?: true; // a harness remember add ran this session
 }
 
 export const isSafeSessionId = (id: string): boolean => /^[A-Za-z0-9._-]+$/.test(id) && id !== '.' && id !== '..';

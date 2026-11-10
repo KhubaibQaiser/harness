@@ -7,6 +7,7 @@ import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
 import { readTiming } from '../../../src/core/timing.js';
 import { readState, writeState } from '../../../src/core/state.js';
+import { decisionSignals } from '../../../src/checks/decisions-stop.js';
 import { type Ctx, detectBaseHead, dispatch, registry } from '../../../src/hooks/dispatch.js';
 
 // Existing tests fake the exec; pretend every binary is on PATH (found as itself: on Windows the gate execs the found path).
@@ -433,4 +434,65 @@ test('a timed-out step and a spent budget log outcome timeout, not block', async
   let t = 0;
   await runStop(b.ctx, b.exec(SRC), () => (t += 60000));
   expect(readTiming(b.root).map((x) => x.outcome)).toEqual(['timeout']);
+});
+
+// Team-decision nudge (spec §8, C10): a note on the gate's allow path only.
+const HIT = { decisionHits: [{ pattern: 'P1', excerpt: 'from now on use zod' }] };
+const NUDGE = /^Harness: this session may hold a team decision \(you said "from now on use zod"\)/m;
+const text = (d: unknown) => (d as { text?: string }).text ?? '';
+
+test('nudge: a blocked Stop holds it; the next passing Stop shows it once', async () => {
+  const s = setup();
+  s.ctx.state = { ...s.ctx.state, ...HIT };
+  expect(await runStop(s.ctx, s.exec(SRC, 'lint'))).toMatchObject({ kind: 'block' });
+  expect(s.ctx.state.decisionNudged).toBeUndefined();
+  const d = await runStop(s.ctx, s.exec(SRC));
+  expect(d).toMatchObject({ kind: 'context', check: 'stop' });
+  expect(text(d)).toMatch(NUDGE);
+  expect(s.ctx.state.decisionNudged).toBe(true);
+  expect(await runStop(s.ctx, s.exec(SRC))).toEqual({ kind: 'allow' });
+});
+
+test('nudge: a session that changed only docs/decisions/ still gets it', async () => {
+  const s = setup();
+  s.ctx.state = { ...s.ctx.state, ...HIT };
+  expect(text(await runStop(s.ctx, s.exec('?? docs/decisions/0001-zod.md\0')))).toMatch(NUDGE);
+  expect(s.steps()).toEqual([]);
+});
+
+test('nudge: joined with the tool-missing warning in one note', async () => {
+  const s = setup({ yaml: PY });
+  s.ctx.state = { ...s.ctx.state, ...HIT };
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  expect(text(d).split('\n')).toHaveLength(2);
+  expect(text(d)).toMatch(new RegExp(`^${MISSING.slice(0, 20)}`));
+  expect(text(d)).toMatch(NUDGE);
+});
+
+test('nudge: none with checks.decisions: false or checks.stop: false', async () => {
+  const off = setup({ yaml: 'checks:\n  decisions: false\n' });
+  off.ctx.state = { ...off.ctx.state, ...HIT };
+  expect(await runStop(off.ctx, off.exec(SRC))).toEqual({ kind: 'allow' });
+  const stopOff = setup({ yaml: 'checks:\n  stop: false\n' });
+  writeState(stopOff.root, 's', { ...stopOff.ctx.state, ...HIT });
+  expect(await dispatch(JSON.stringify(stopOff.ctx.input), [stopGate], {})).toBe('');
+});
+
+test('nudge: an A-only hit on a blocked Stop is held for the next passing Stop', async () => {
+  const s = setup();
+  const signals = (last: string) => {
+    s.ctx.input = { ...s.ctx.input, last_assistant_message: last };
+    decisionSignals.run(s.ctx);
+  };
+  signals("Going forward, I'll run lint first.");
+  expect(await runStop(s.ctx, s.exec(SRC, 'lint'))).toMatchObject({ kind: 'block' });
+  signals('Fixed lint.');
+  expect(text(await runStop(s.ctx, s.exec(SRC)))).toContain('(you said "Going forward, I\'ll run lint first.")');
+});
+
+test('nudge: the gave-up allow shows it too', async () => {
+  const s = setup();
+  s.ctx.state = { ...s.ctx.state, ...HIT };
+  for (let n = 1; n <= 3; n++) expect(await runStop(s.ctx, s.exec(SRC, 'test'))).toMatchObject({ kind: 'block' });
+  expect(text(await runStop(s.ctx, s.exec(SRC, 'test')))).toMatch(NUDGE);
 });

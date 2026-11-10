@@ -11,6 +11,10 @@ afterEach(() => { while (roots.length) rmSync(roots.pop()!, { recursive: true, f
 
 const git = (cwd: string, ...a: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8' }).trim();
+const real = (cwd: string, calls: string[][] = []): Git => (a, input) => {
+  calls.push(a);
+  try { return { ok: true, out: execFileSync('git', a, { cwd, encoding: 'utf8', ...(input === undefined ? {} : { input }) }) }; } catch { return { ok: false, out: '' }; }
+};
 const repo = (): string => {
   const r = mkdtempSync(join(tmpdir(), 'stale-'));
   roots.push(r);
@@ -91,10 +95,7 @@ describe('staleness', () => {
     const r = repo(); put(r, 'src/a.ts'); put(r, 'docs/decisions/2026-11-01-a.md'); put(r, 'docs/decisions/2026-11-01-b.md');
     const sha = commit(r, 'one'); put(r, 'src/a.ts', 'y'); commit(r, 'two');
     const calls: string[][] = [];
-    const spy: Git = (a) => {
-      calls.push(a);
-      try { return { ok: true, out: git(r, ...a) }; } catch { return { ok: false, out: '' }; }
-    };
+    const spy = real(r, calls);
     const ds = [dec({ verified_at: sha }), dec({ id: '2026-11-01-b', rel: 'docs/decisions/2026-11-01-b.md', verified_at: sha })];
     staleness(r, ds, { ...O, git: spy });
     expect(calls.filter((c) => c[2] === 'ls-files')).toHaveLength(1);
@@ -103,16 +104,26 @@ describe('staleness', () => {
   test('a timeout on cat-file or merge-base is a git failure, not a "no"', () => {
     for (const cmd of ['cat-file', 'merge-base']) {
       const g: Git = (a) => a.includes(cmd) ? { ok: false, out: '', reason: 'timeout' }
-        : a.includes('ls-files') ? { ok: true, out: 'src/a.ts\0' } : a.includes('log') ? { ok: true, out: 'b'.repeat(40) } : { ok: true, out: '' };
+        : a.includes('ls-files') ? { ok: true, out: 'src/a.ts\0' }
+        : a.includes('cat-file') ? { ok: true, out: `${'a'.repeat(40)}^{commit} commit 200\n` }
+        : a.includes('log') ? { ok: true, out: `\x01${'b'.repeat(40)}\0\ndocs/decisions/2026-11-01-a.md\0` } : { ok: true, out: '' };
       const r = staleness('/x', [dec()], { ...O, git: g });
       expect(r.note).toBe("couldn't check decision staleness (timeout)");
       expect(r.states[0]).toMatchObject({ ref: '', fallback: false, changed: [] });
     }
   });
+  test('git work is batched: one cat-file, one log, one merge-base per distinct pair', () => {
+    const r = repo(); put(r, 'src/a.ts'); const ds = [1, 2, 3].map((n) => { put(r, `docs/decisions/2026-11-01-${n}.md`); return n; });
+    const sha = commit(r, 'one'); put(r, 'docs/decisions/2026-11-01-1.md', 'y'); put(r, 'docs/decisions/2026-11-01-2.md', 'y'); commit(r, 'two');
+    const calls: string[][] = [];
+    staleness(r, ds.map((n) => dec({ id: `2026-11-01-${n}`, rel: `docs/decisions/2026-11-01-${n}.md`, verified_at: sha })), { ...O, git: real(r, calls) });
+    const n = (c: string) => calls.filter((x) => x.includes(c)).length;
+    expect([n('cat-file'), n('log'), n('merge-base')]).toEqual([1, 1, 2]); // files 1 and 2 share a commit; file 3 was last touched at sha itself
+  });
   test('a large ls-files output works', () => {
     const big = Array.from({ length: 60_000 }, (_, i) => `src/dir${i}/some-long-file-name-${i}.ts`).join('\0') + '\0';
     expect(big.length).toBeGreaterThan(2_000_000);
-    const g: Git = (a) => a.includes('ls-files') ? { ok: true, out: big } : a.includes('log') ? { ok: true, out: '' } : { ok: false, out: '' };
+    const g: Git = (a) => a.includes('ls-files') ? { ok: true, out: big } : a.includes('log') || a.includes('cat-file') ? { ok: true, out: '' } : { ok: false, out: '' };
     const r = staleness('/x', [dec()], { ...O, git: g });
     expect(r.note).toBeNull();
     expect(r.states[0]).toMatchObject({ dead: [], ref: '', fallback: false });
@@ -121,7 +132,7 @@ describe('staleness', () => {
     const r = repo(); put(r, 'src/a.ts'); put(r, 'docs/decisions/2026-11-01-a.md'); const sha = commit(r, 'one');
     put(r, 'src/a.ts', 'y'); commit(r, 'two');
     const calls: string[][] = [];
-    const spy: Git = (a) => { calls.push(a); try { return { ok: true, out: git(r, ...a) }; } catch { return { ok: false, out: '' }; } };
+    const spy = real(r, calls);
     staleness(r, [dec({ verified_at: sha })], { ...O, git: spy });
     expect(calls.length).toBeGreaterThan(3);
     for (const c of calls) expect(c.slice(0, 2)).toEqual(['-c', 'core.fsmonitor=false']);

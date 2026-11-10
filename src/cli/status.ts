@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { loadCatalog, type LoadedCatalog } from '../catalog/load.js';
 import { contextSet } from '../budget/summary.js';
 import { contextDirs, contextLine } from './doctor-context.js';
+import { decisionsStatusLine } from './doctor-decisions.js';
 import { pinnedPlugins } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
@@ -55,6 +56,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
     : platform !== 'linux' ? `${platform}: not checked` : cli.env.WSL_DISTRO_NAME ? 'WSL2: available' : 'Linux: available';
   const lc = loadCatalog(); // one load for the Context: line and the item lines
   lines.push(contextLine(contextSet(root, config, contextDirs(), undefined, { catalog: lc })));
+  lines.push(decisionsStatusLine(root, config));
   lines.push(`Enforcement: sandbox ${config.sandbox} (${where})`);
   lines.push(blocksOnFailure(root)
     ? 'Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open'

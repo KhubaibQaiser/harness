@@ -1042,3 +1042,20 @@ test('Review focus 1: update keeps a synced decision rule, its entry and its fil
   expect(readManifest(root)!.files.find((f) => f.rel === rel)).toEqual(entry);
   expect(readFileSync(join(root, rel), 'utf8')).toBe(text);
 });
+
+test('Important 2: a sync after update neither rewrites nor reorders the manifest', async () => {
+  const root = await installed();
+  writeDecision(root, decision('2026-11-03-use-zod'));
+  syncNow(root);
+  commitAll(root);
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  const manifest = readFileSync(join(root, '.harness/manifest.json'), 'utf8');
+  syncNow(root);
+  expect(readFileSync(join(root, '.harness/manifest.json'), 'utf8')).toBe(manifest);
+  const order = readManifest(root)!.files.map((f) => f.rel);
+  writeDecision(root, decision('2026-11-04-no-default-exports'));
+  syncNow(root);
+  const rule = '.claude/rules/harness-decision-2026-11-04-no-default-exports.md';
+  const at = order.indexOf('.claude/rules/harness-decision-2026-11-03-use-zod.md') + 1;
+  expect(readManifest(root)!.files.map((f) => f.rel)).toEqual([...order.slice(0, at), rule, ...order.slice(at)]);
+});

@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { defaults } from '../../src/core/config.js';
-import { parseDecision } from '../../src/core/decision-file.js';
+import { MAX_DECISION_BYTES, parseDecision, serializeDecision } from '../../src/core/decision-file.js';
+import { uninstall } from '../../src/cli/uninstall.js';
 import { renderRule, ruleRel } from '../../src/core/decision-rule.js';
 import { commitDecisions, isLive, outOfSync, planSync, readDecisions } from '../../src/core/decisions.js';
 import { readManifest } from '../../src/install/manifest.js';
@@ -41,7 +42,7 @@ test('isLive: active and confirmed within expiry_days', () => {
   expect(isLive({ ...d, status: 'retired' }, TODAY, 90)).toBe(false);
 });
 
-test('add: one create, and after commit one sorted create entry per rule and none for docs/decisions/', async () => {
+test('add: one create, and after commit one create entry per rule, sorted by rel and none for docs/decisions/', async () => {
   const root = await installedRepo();
   writeDecision(root, decision(B));
   writeDecision(root, decision(A));
@@ -53,7 +54,6 @@ test('add: one create, and after commit one sorted create entry per rule and non
   expect({ foreign: p.foreign, wanted: p.wanted, leftOut: p.leftOut, out: outOfSync(p) }).toEqual({ foreign: [], wanted: 2, leftOut: 0, out: true });
   syncNow(root);
   const files = readManifest(root)!.files;
-  expect(files.map((f) => f.rel)).toEqual([...files.map((f) => f.rel)].sort());
   expect(files.filter((f) => f.rel.startsWith('.claude/rules/harness-decision-'))).toEqual([
     { rel: ruleRel(A), kind: 'create', hash: hashText(ruleText(root, A)) },
     { rel: ruleRel(B), kind: 'create', hash: hashText(ruleText(root, B)) },
@@ -166,3 +166,63 @@ test('decision changes are written in the same transaction and never enter the m
   expect(onDisk(root, ruleRel(A))).toBe(ruleText(root, A));
   expect(readManifest(root)!.files.some((f) => f.rel.startsWith('docs/'))).toBe(false);
 });
+
+const backups = (root: string) => (existsSync(join(root, '.harness/backup')) ? readdirSync(join(root, '.harness/backup')) : []);
+const rels = (root: string) => readManifest(root)!.files.map((f) => f.rel);
+
+test('Important 1: a conflict that keeps the other side\'s manifest gets the edited rule\'s hash back, and uninstall then removes it', async () => {
+  const root = await installedRepo();
+  writeDecision(root, decision(A));
+  syncNow(root);
+  writeDecision(root, decision(B));
+  syncNow(root);
+  const ySide = onDisk(root, '.harness/manifest.json'); // branch Y: added B, A as it was
+  writeDecision(root, decision(A, { title: 'Edited on X' }));
+  syncNow(root); // branch X: edited A, which rehashed its rule
+  writeFileSync(join(root, '.harness/manifest.json'), ySide);
+  const p = plan(root);
+  expect({ changes: p.changes, rehash: p.rehash, out: outOfSync(p) }).toEqual({ changes: [], rehash: [ruleRel(A)], out: false });
+  syncNow(root);
+  expect(readManifest(root)!.files.find((f) => f.rel === ruleRel(A))!.hash).toBe(hashText(onDisk(root, ruleRel(A))));
+  let out = '';
+  expect(await uninstall(['--yes'], { env: {}, root, out: (s) => (out += s + '\n'), prompt: { async confirm() { return false; }, async edit(_l, v) { return v; } } })).toBe(0);
+  expect(out).not.toContain('because you edited them');
+  expect(existsSync(join(root, '.claude'))).toBe(false);
+});
+
+test('Important 2: an empty sync after init leaves the manifest byte-identical and makes no backup', async () => {
+  const root = await installedRepo();
+  const manifest = onDisk(root, '.harness/manifest.json');
+  const before = backups(root);
+  syncNow(root);
+  expect(onDisk(root, '.harness/manifest.json')).toBe(manifest);
+  expect(backups(root)).toEqual(before);
+});
+
+test('Important 2: only the rule entries are sorted, as one block; every other entry keeps its place', async () => {
+  const root = await installedRepo();
+  const others = rels(root);
+  writeDecision(root, decision(B));
+  syncNow(root);
+  writeDecision(root, decision(A));
+  syncNow(root);
+  expect(rels(root)).toEqual([...others, ruleRel(A), ruleRel(B)]);
+  // A non-rule entry written after the rules (as update or add appends) stays after them.
+  const m = readManifest(root)!;
+  writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ ...m, files: [...m.files, { rel: 'zz.txt', kind: 'create', hash: 'h' }] }, null, 2) + '\n');
+  writeDecision(root, decision('2026-11-01-first'));
+  syncNow(root);
+  expect(rels(root)).toEqual([...others, ruleRel('2026-11-01-first'), ruleRel(A), ruleRel(B), 'zz.txt']);
+});
+
+test('Important 3: a file one byte over the cap gets the size error; a big non-decision file is in others', async () => {
+  const root = await installedRepo();
+  const text = serializeDecision(decision(A));
+  writeDecision(root, decision(A));
+  writeFileSync(join(root, `docs/decisions/${A}.md`), text + 'x'.repeat(MAX_DECISION_BYTES + 1 - Buffer.byteLength(text)));
+  writeFileSync(join(root, 'docs/decisions/README.md'), '# ADRs\n' + 'y'.repeat(MAX_DECISION_BYTES));
+  const set = readDecisions(root, TODAY);
+  expect(set.errors).toEqual([`docs/decisions/${A}.md: file must be at most ${MAX_DECISION_BYTES} bytes`]);
+  expect(set.others).toEqual(['docs/decisions/README.md']);
+});
+

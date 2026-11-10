@@ -5,7 +5,7 @@ import { applyChanges, linkedPath, refuseSymlink, type Change, type FsLike } fro
 import { mergeManifestFiles, rawOf, readManifest, type Manifest } from '../install/manifest.js';
 import { hashText, matchesHash } from '../install/text.js';
 import type { HarnessConfig } from './config.js';
-import { DECISIONS_DIR, MAX_DECISION_BYTES, isDecisionText, parseDecision, type TeamDecision } from './decision-file.js';
+import { DECISIONS_DIR, MAX_DECISION_BYTES, isDecisionText, parseDecision, shown, type TeamDecision } from './decision-file.js';
 import { RULE_GLOB, renderRule, ruleRel } from './decision-rule.js';
 import { stampHarnessFiles } from './harness-files.js';
 
@@ -15,7 +15,6 @@ const RULES_DIR = '.claude/rules';
 // ponytail: a plain string: usage.test.ts flags this command name in a template until Task 6 adds the command.
 const PREFIX = 'harness remember:';
 const DAY_MS = 86_400_000;
-const shown = (s: string): string => s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '?'); // as decision-file.ts prints names
 
 const files = (root: string, dir: string): string[] => {
   try {
@@ -51,11 +50,11 @@ export function readDecisions(root: string, today: string): DecisionSet {
     const { decision, errors } = parseDecision(rel, c.text, today);
     if (errors.length) set.errors.push(...errors);
     else if (!decision) set.others.push(rel);
-    else if (seen.has(decision.id)) set.errors.push(`${rel}: id must be unique in ${DECISIONS_DIR}/`);
+    else if (seen.has(decision.id)) set.errors.push(`${shown(rel)}: id must be unique in ${DECISIONS_DIR}/`);
     else { seen.add(decision.id); set.decisions.push(decision); }
   }
   const dangling = set.decisions.filter((d) => d.superseded_by !== undefined && !seen.has(d.superseded_by));
-  set.errors.push(...dangling.map((d) => `${d.rel}: superseded_by must name a decision in ${DECISIONS_DIR}/`));
+  set.errors.push(...dangling.map((d) => `${shown(d.rel)}: superseded_by must name a decision in ${DECISIONS_DIR}/`));
   set.decisions = set.decisions.filter((d) => !dangling.includes(d));
   return set;
 }

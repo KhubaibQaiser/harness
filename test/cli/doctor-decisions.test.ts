@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { expect, test } from 'vitest';
@@ -44,7 +44,7 @@ test('invalid file and out of sync are fix rows', async () => {
   expect(lines.some((l) => /^fix docs\/decisions\/2026-11-03-bad\.md: .*: correct it by hand, then run harness remember sync$/.test(l))).toBe(true);
   expect(lines).toContain('fix decision rules are out of sync with docs/decisions/: run harness remember sync');
   expect(bad).toBeGreaterThan(1);
-  expect(decisionsStatusLine(r, cfg, { today: TODAY })).toMatch(/^Decisions: 1 active .*rules out of sync$/);
+  expect(decisionsStatusLine(r, cfg, { today: TODAY })).toMatch(/^Decisions: 1 active .*rules out of sync, 1 invalid$/);
 });
 
 test('foreign rule file is a fix row', async () => {
@@ -76,7 +76,7 @@ test('a git timeout gives the staleness note and does not throw', async () => {
   const r = await installedRepo(); writeDecision(r, decision('2026-11-03-a')); syncNow(r);
   const git: Git = () => ({ ok: false, out: '', reason: 'timeout' });
   expect(run(r, { git }).lines).toContain("note couldn't check decision staleness (timeout)");
-  expect(decisionsStatusLine(r, cfg, { today: TODAY, git })).toBe('Decisions: 1 active (0 stale, 0 expired), rules in sync');
+  expect(decisionsStatusLine(r, cfg, { today: TODAY, git })).toBe('Decisions: 1 active (0 expired, staleness unchecked), rules in sync');
 });
 
 test('the Context: total does not move when a decision is added (drift 9)', async () => {
@@ -85,4 +85,45 @@ test('the Context: total does not move when a decision is added (drift 9)', asyn
   const before = total();
   writeDecision(r, decision('2026-11-03-a', { verified_at: sha })); syncNow(r);
   expect(total()).toBe(before);
+});
+
+test('a symlinked rule file is a fix row in doctor and "unreadable" in status, never a throw', async () => {
+  const r = await installedRepo(); put(r, 'src/env/a.ts'); const sha = commit(r);
+  writeDecision(r, decision('2026-11-03-a', { verified_at: sha }));
+  mkdirSync(join(r, '.claude/rules'), { recursive: true });
+  put(r, 'elsewhere.md', 'x'); symlinkSync(join(r, 'elsewhere.md'), join(r, '.claude/rules/harness-decision-2026-11-03-a.md'));
+  const { lines, bad } = run(r);
+  expect(lines).toContain('fix refusing symlink: .claude/rules/harness-decision-2026-11-03-a.md: replace it with a real file or rename it');
+  expect(bad).toBe(1);
+  expect(decisionsStatusLine(r, cfg, { today: TODAY })).toBe('Decisions: unreadable (refusing symlink: .claude/rules/harness-decision-2026-11-03-a.md)');
+});
+
+test('control characters in file names never reach the output', async () => {
+  const r = await installedRepo(); put(r, 'src/env/a.ts'); const sha = commit(r);
+  writeDecision(r, decision('2026-11-03-a', { verified_at: sha })); syncNow(r);
+  commit(r); put(r, 'src/env/evil\x1b[31mx.ts'); commit(r);
+  put(r, '.claude/rules/harness-decision-b\x1b]0;x\x07\ny.md', 'mine');
+  const out = run(r).lines.join('\n');
+  expect(out).toContain('evil?[31mx.ts');
+  expect(out).toContain("harness-decision-b?]0;x??y.md is named like");
+  expect(/[\x00-\x09\x0b-\x1f\x7f]/.test(out)).toBe(false);
+});
+
+test('status counts invalid files; doctor prints the summary even with fix rows', async () => {
+  const r = await installedRepo();
+  put(r, 'docs/decisions/2026-11-03-bad.md', '---\nschema: harness-decision/1\nid: 2026-11-03-bad\n---\n');
+  expect(decisionsStatusLine(r, cfg, { today: TODAY })).toBe('Decisions: none, 1 invalid');
+  const { lines, bad } = run(r);
+  expect(bad).toBeGreaterThan(0);
+  expect(lines).toContain('ok no team decisions yet');
+});
+
+test('checks.decisions: false still reports (plan decision)', async () => {
+  const r = await installedRepo(); put(r, 'src/env/a.ts'); const sha = commit(r);
+  writeDecision(r, decision('2026-11-03-a', { verified_at: sha }));
+  const off = { ...cfg, checks: { ...cfg.checks, decisions: false } };
+  const lines: string[] = [];
+  decisionChecks(r, off, { ok: (s) => lines.push(s), fix: (w) => lines.push(w), note: (w) => lines.push(w) }, { today: TODAY });
+  expect(lines.some((l) => l.includes('out of sync'))).toBe(true);
+  expect(decisionsStatusLine(r, off, { today: TODAY })).toMatch(/^Decisions: 1 active/);
 });

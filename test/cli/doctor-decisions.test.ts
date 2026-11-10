@@ -98,7 +98,8 @@ test('a symlinked rule file is a fix row in doctor and "unreadable" in status, n
   expect(decisionsStatusLine(r, cfg, { today: TODAY })).toBe('Decisions: unreadable (refusing symlink: .claude/rules/harness-decision-2026-11-03-a.md)');
 });
 
-test('control characters in file names never reach the output', async () => {
+// Windows can't create a file name holding ESC or a newline; the escaping itself is platform-independent.
+test.skipIf(process.platform === 'win32')('control characters in file names never reach the output', async () => {
   const r = await installedRepo(); put(r, 'src/env/a.ts'); const sha = commit(r);
   writeDecision(r, decision('2026-11-03-a', { verified_at: sha })); syncNow(r);
   commit(r); put(r, 'src/env/evil\x1b[31mx.ts'); commit(r);

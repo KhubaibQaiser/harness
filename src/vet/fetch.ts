@@ -32,15 +32,15 @@ export function neutralise(path: string): string {
 }
 
 // ponytail: the live `gh api repos/o/r/tarball/<sha>` (redirect to codeload, raw binary stdout) is checked only in the Task 27 live run.
-export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: string } {
+export function fetchTarball(r: Resolved, exec: ExecBytes): Fetched | { error: string; limit?: true } {
   const at = `${r.repo}@${r.sha.slice(0, 7)}`;
   const g = exec('gh', ['api', `repos/${r.repo}/tarball/${r.sha}`], LIMITS.compressed + 1);
   if (g.missing) return { error: 'harness vet needs the GitHub CLI (gh). Install the GitHub CLI (gh), then run harness vet again.' };
-  if (g.tooBig || g.stdout.length > LIMITS.compressed) return { error: `${at}: the archive is over 25 MB; vet stops.` };
+  if (g.tooBig || g.stdout.length > LIMITS.compressed) return { error: `${at}: the archive is over 25 MB; vet stops.`, limit: true };
   if (g.status !== 0) return { error: isNotFound(g.stderr) ? `${at}: tarball not found on GitHub.` : `${at}: could not download the tarball (gh exited ${g.status}). Check your network or run gh auth status, then try again.` };
   let entries;
   try { entries = readTar(g.stdout, LIMITS.unpacked); } catch (e) { return { error: `${at}: ${(e as Error).message}; vet stops.` }; }
-  if (entries.filter((e) => e.type === 'file').length > LIMITS.files) return { error: `${at}: the archive has over ${LIMITS.files} files; vet stops.` };
+  if (entries.filter((e) => e.type === 'file').length > LIMITS.files) return { error: `${at}: the archive has over ${LIMITS.files} files; vet stops.`, limit: true };
 
   const skipped: Fetched['skipped'] = [], large: string[] = [];
   const todo: { path: string; to: string; data: Buffer }[] = [];

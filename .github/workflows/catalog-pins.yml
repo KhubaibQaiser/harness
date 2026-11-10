@@ -21,6 +21,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: node dist/cli.mjs catalog check --resolve
+      - run: node dist/cli.mjs catalog check --resolve --context
         env:
           GH_TOKEN: ${{ github.token }}

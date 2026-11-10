@@ -251,7 +251,7 @@ verified_on: 2026-11-03
 **Rule:** Parse every environment variable through `src/env/schema.ts`.
 ```
 
-`status` is `active`, `superseded` (with `superseded_by: <id>`) or `retired`. `paths` holds 1 to 10 repo-relative globs, none of them repo-wide. Unknown keys are errors. If you edit a file by hand, run `harness remember sync`.
+`status` is `active`, `superseded` (with `superseded_by: <id>`) or `retired`. `paths` holds 1 to 10 repo-relative globs, none of them repo-wide. Unknown keys are errors. If you edit a file by hand, run `harness remember sync`. `confirm` and `retire` rewrite the whole file in the standard layout above, so hand formatting in the frontmatter is not kept.
 
 The subcommands are `add`, `confirm`, `retire`, `sync`, `list` and `check` (see [Commands in full](#commands-in-full)). The write subcommands never commit or stage: open a PR so the team reviews the decision.
 

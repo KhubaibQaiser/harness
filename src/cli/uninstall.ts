@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, LOCK_RECOVERY, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
-import { STRUCTURAL, removeBlocks, removeFromMcp, removeFromSettings } from '../install/merge.js';
+import { STRUCTURAL, TSCONFIG, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig } from '../install/merge.js';
 import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, withEol } from '../install/text.js';
@@ -83,8 +83,8 @@ export function removalChanges(root: string, m: Manifest, force: boolean, sp: St
         changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
         continue;
       }
-      const r = (f.rel === SETTINGS ? removeFromSettings : removeFromMcp)(cur, f, backup, notes);
-      if (!r) notes.push(`\`${f.rel}\` is not valid JSON; left as is. Remove the harness ${f.rel === SETTINGS ? 'hooks and deny rules' : 'entries'} by hand.`);
+      const r = (f.rel === SETTINGS ? removeFromSettings : f.rel === TSCONFIG ? removeFromTsconfig : removeFromMcp)(cur, f, backup, notes);
+      if (!r) notes.push(`\`${f.rel}\` is not valid JSON; left as is. Remove the harness ${f.rel === SETTINGS ? 'hooks and deny rules' : f.rel === TSCONFIG ? 'compilerOptions' : 'entries'} by hand.`);
       else if (r.empty && f.kind === 'create') changes.push({ kind: 'delete', rel: f.rel, before: cur });
       else if (r.after !== cur && !sameJson(r.after, cur)) changes.push({ kind: 'update', rel: f.rel, before: cur, after: r.after, blocks: [] }); // nothing removed: leave its bytes
       continue;

@@ -4,12 +4,14 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { init, type Prompt } from '../../src/cli/init.js';
-import { uninstall } from '../../src/cli/uninstall.js';
+import { removalChanges, uninstall } from '../../src/cli/uninstall.js';
+import { readManifest } from '../../src/install/manifest.js';
 import { status } from '../../src/cli/status.js';
 import { doctor } from '../../src/cli/doctor.js';
 import { makeRepo } from '../install/helpers.js';
+import { decision, syncNow, writeDecision } from '../core/decisions-helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const base = { env: { HARNESS_PLAIN_INIT: '1' }, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') };
@@ -325,4 +327,48 @@ test('a Markdown file removes its blocks one by one: the untouched harness block
   expect(after).not.toContain('harness:start');
   expect(after).toContain('second block, edited');
   expect(r.out).toContain('`AGENTS.md`: a block harness added was not found; left as is.');
+});
+
+describe('tsconfig.json TS options (harness rules --apply)', () => {
+  test('an edited tsconfig loses only the recorded options, and keeps a changed one with a note', async () => {
+    const root = await installed({ ...REPO, 'tsconfig.json': '{\n  "compilerOptions": {\n    "target": "es2022",\n    "strict": false,\n    "noImplicitReturns": false,\n    "noImplicitOverride": true\n  }\n}\n' });
+    const m = readManifest(root)!;
+    const set = (k: string) => JSON.stringify({ set: ['compilerOptions', k], value: true });
+    // strict was the person's (not recorded); noImplicitReturns was recorded, then the person turned it off
+    const r = removalChanges(root, { ...m, files: [{ rel: 'tsconfig.json', kind: 'update', hash: 'edited', blocks: [set('noImplicitReturns'), set('noImplicitOverride')] }] }, false);
+    expect(r.notes).toEqual(['`tsconfig.json`: `compilerOptions.noImplicitReturns` was changed; left as is.']);
+    expect(r.changes).toHaveLength(1);
+    const c = r.changes[0]!;
+    expect(c.kind === 'update' && JSON.parse(c.after)).toEqual({ compilerOptions: { target: 'es2022', strict: false, noImplicitReturns: false } });
+  });
+});
+
+const RULE_A = '.claude/rules/harness-decision-2026-11-03-use-zod.md';
+const RULE_B = '.claude/rules/harness-decision-2026-11-04-no-default-exports.md';
+const withRules = async () => {
+  const root = await installed();
+  writeDecision(root, decision('2026-11-03-use-zod'));
+  writeDecision(root, decision('2026-11-04-no-default-exports'));
+  syncNow(root);
+  return root;
+};
+
+test('decision rules: an unedited one is deleted, an edited one kept with the edited line, docs/decisions/ stays', async () => {
+  const root = await withRules();
+  const decisions = readdirSync(join(root, 'docs/decisions')).map((f) => readFileSync(join(root, 'docs/decisions', f), 'utf8'));
+  writeFileSync(join(root, RULE_B), readFileSync(join(root, RULE_B), 'utf8') + 'mine\n');
+  const r = await un(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(existsSync(join(root, RULE_A))).toBe(false);
+  expect(readFileSync(join(root, RULE_B), 'utf8')).toContain('mine');
+  expect(r.out).toContain(`Kept \`${RULE_B}\` because you edited them`);
+  expect(readdirSync(join(root, 'docs/decisions')).map((f) => readFileSync(join(root, 'docs/decisions', f), 'utf8'))).toEqual(decisions);
+});
+
+test('decision rules: --force removes an edited one, and the emptied .claude/rules/ goes', async () => {
+  const root = await withRules();
+  writeFileSync(join(root, RULE_B), 'edited\n');
+  expect((await un(root, ['--yes', '--force'])).code).toBe(0);
+  expect(existsSync(join(root, '.claude/rules'))).toBe(false);
+  expect(readdirSync(join(root, 'docs/decisions'))).toHaveLength(2);
 });

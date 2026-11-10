@@ -18,6 +18,7 @@ import { planChanges } from '../../src/install/plan.js';
 import { preset } from '../../src/install/preset.js';
 import { sha256 } from '../../src/install/text.js';
 import { betaSettings, makeRepo } from '../install/helpers.js';
+import { decision, syncNow, writeDecision } from '../core/decisions-helpers.js';
 import { execFileSync } from 'node:child_process';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -1027,4 +1028,34 @@ test('update gives the same budget verdict as add and sync for a hand-selected, 
   const r = await upAi(root, [...reFlags([...OWN_IDS, 'mobile-mcp']), '--yes']);
   expect(r.code).toBe(2);
   expect(r.out).toContain('Not measured before install: mobile-mcp');
+});
+
+test('Review focus 1: update keeps a synced decision rule, its entry and its file', async () => {
+  const root = await installed();
+  writeDecision(root, decision('2026-11-03-use-zod'));
+  syncNow(root);
+  commitAll(root);
+  const rel = '.claude/rules/harness-decision-2026-11-03-use-zod.md';
+  const text = readFileSync(join(root, rel), 'utf8');
+  const entry = readManifest(root)!.files.find((f) => f.rel === rel);
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readManifest(root)!.files.find((f) => f.rel === rel)).toEqual(entry);
+  expect(readFileSync(join(root, rel), 'utf8')).toBe(text);
+});
+
+test('Important 2: a sync after update neither rewrites nor reorders the manifest', async () => {
+  const root = await installed();
+  writeDecision(root, decision('2026-11-03-use-zod'));
+  syncNow(root);
+  commitAll(root);
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  const manifest = readFileSync(join(root, '.harness/manifest.json'), 'utf8');
+  syncNow(root);
+  expect(readFileSync(join(root, '.harness/manifest.json'), 'utf8')).toBe(manifest);
+  const order = readManifest(root)!.files.map((f) => f.rel);
+  writeDecision(root, decision('2026-11-04-no-default-exports'));
+  syncNow(root);
+  const rule = '.claude/rules/harness-decision-2026-11-04-no-default-exports.md';
+  const at = order.indexOf('.claude/rules/harness-decision-2026-11-03-use-zod.md') + 1;
+  expect(readManifest(root)!.files.map((f) => f.rel)).toEqual([...order.slice(0, at), rule, ...order.slice(at)]);
 });

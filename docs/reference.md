@@ -322,6 +322,15 @@ Skills, agents and the `AGENTS.md` block are loaded into every Claude Code sessi
 - **Ask once, then exempt.** Items you approved earlier count in every total, so the ask shows the same number as `status` plus the change. You're never asked about them again: an install asks only when new text takes the total past the budget, or when it adds an item that can't be measured. The ask lists them as `Approved earlier: <ids>.`
 - **After compaction.** The `SessionStart` `compact` hook re-adds the state card.
 
+## Team decisions
+
+`harness doctor` and `harness status` report on the decisions in `docs/decisions/` and the rules generated from them. Both work offline, and `checks.decisions: false` doesn't turn them off.
+
+- `doctor` exits 1 for an invalid decision file, for rules out of sync with the decisions, and for a `harness-decision-*.md` rule file that isn't harness's. Each line says the fix.
+- `doctor` only notes a decision that is stale (a `paths` glob matches no tracked file, or linked files changed since it was confirmed), expired, or oversized (its rule is cut to `decisions.max_lines`), and a `verified_at` that is not in this clone. These never fail `doctor`.
+- If git can't answer in time, `doctor` prints `couldn't check decision staleness (<reason>)` and carries on.
+- `status` adds `Decisions: <n> active (<s> stale, <x> expired), rules <in sync|out of sync>` after the `Context:` line, or `Decisions: none`.
+
 ## Plugins and MCP servers
 
 Catalog items can be Claude Code plugins or MCP servers.
@@ -417,7 +426,7 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `checks.tdd` | `false` | Red-first TDD, test-lock and tamper check. |
 | `checks.stop` | `true` | Stop gate. |
 | `checks.prSize` | `true` | PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`. It also turns the size warnings, the pause ask, the raise and the hand-run dispatcher deny on or off. |
-| `checks.decisions` | `true` | Turns on team decisions and the `decisions.*` keys. It belongs to the `agents-md` item: with a catalog, `update` sets it from the selected items, so unticking `agents-md` turns it off. |
+| `checks.decisions` | `true` | Turns on team decisions and the `decisions.*` keys. It belongs to the `agents-md` item: with a catalog, `update` sets it from the selected items, so unticking `agents-md` turns it off. `doctor` and `status` report on decisions whatever this is set to. |
 | `sandbox` | `"unattended"` | `unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only. Value must be one of unattended, always, off. |
 | `catalog_version` | `0` | Version of the catalog the recommendations came from. `0` means no catalog. |
 | `project.type` | `""` | What kind of project this is. Empty until the interview sets it. Value must be one of web, landing, mobile, api, infra, library, other. |

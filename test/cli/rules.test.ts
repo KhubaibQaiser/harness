@@ -387,6 +387,39 @@ describe('TS options', () => {
     expect(readFileSync(join(root, 'tsconfig.json'), 'utf8')).toBe(cfg);
   });
 
+  test('with no ESLint config, --apply still sets the TS options, and uninstall restores tsconfig byte for byte', async () => {
+    const { root, original } = await installed({ 'tsconfig.json': TSCONFIG });
+    const r = await run(root, ['--apply'], prompt('yes'), withTsc(root));
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('This repo has no ESLint config');
+    expect(r.out).toContain('Updated `tsconfig.json`');
+    const after = JSON.parse(readFileSync(join(root, 'tsconfig.json'), 'utf8')) as { compilerOptions: Record<string, unknown> };
+    expect(Object.keys(after.compilerOptions)).toHaveLength(6);
+    expect(existsSync(join(root, '.harness/eslint'))).toBe(false);
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'rules');
+    expect((await unOut(root)).code).toBe(0);
+    expect(readFileSync(join(root, 'tsconfig.json'), 'utf8')).toBe(original['tsconfig.json']);
+  });
+
+  test('a commented tsconfig leaves out of the manual lines and counts the options it already names', async () => {
+    const cfg = '{\n  // mine\n  "compilerOptions": { "strict": false }\n}\n';
+    const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG, 'tsconfig.json': cfg });
+    const seen: string[] = [];
+    const r = await run(root, [], prompt(), withTsc(root, seen));
+    expect(r.out).not.toContain(tsOpt('strict'));
+    expect(r.out).toContain(tsOpt('noImplicitReturns'));
+    expect(seen.some((s) => s.endsWith('tsconfig.strict.json'))).toBe(false);
+  });
+
+  test('the count header names TS options only when there is a tsconfig', async () => {
+    const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG });
+    const r = await run(root, [], prompt(), execWith({ status: 1, stdout: report(['max-depth']) }));
+    expect(r.out).toContain('Violations today, by rule (highest first):');
+    const t = await installed({ 'eslint.config.mjs': ESLINT_CFG, 'tsconfig.json': TSCONFIG });
+    expect((await run(t.root, [], prompt(), withTsc(t.root))).out).toContain('Violations today, by rule and TS option (highest first):');
+  });
+
   test('a symlinked tsconfig is never read or written', async () => {
     const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG });
     const outside = join(mkdtempSync(join(tmpdir(), 'rules-link-')), 'tsconfig.json');

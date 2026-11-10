@@ -70,7 +70,7 @@ function printCounts(c: Counts, p: Proposal, ts: string[], cfg: string | undefin
   const rows = [...(c.eslint.error ? [] : Object.entries(c.eslint.byRule)), ...tsRows].filter(([, n]) => n > 0).sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1));
   const total = rows.reduce((n, [, k]) => n + k, 0);
   if (rows.length) {
-    out('Violations today, by rule and TS option (highest first):');
+    out(`Violations today, by rule${ts.length ? ' and TS option' : ''} (highest first):`);
     for (const [id, n] of rows) out(`  ${id}: ${n}`);
     out(`Total: ${total}`);
     if (!c.eslint.error && !unknown.length) out(`The stop gate's lint and typecheck steps will fail until these ${total} violations are fixed. CI fails too if it runs them.`);
@@ -98,11 +98,11 @@ function printGaps(p: Proposal, dropped: Counts['eslint']['dropped'], out: (s: s
 }
 
 /** Why --apply can't edit the repo's ESLint config, with what the person does instead. */
-function refuse(root: string, cfg: string | undefined, p: Proposal, out: (s: string) => void): number {
+function refuse(root: string, cfg: string | undefined, p: Proposal, out: (s: string) => void, result = 'Nothing was written.'): number {
   const legacy = readdirSync(root).find((f) => LEGACY.test(f));
   out(cfg
-    ? `Harness can't edit \`${cfg}\` safely: it does not export a plain flat-config array. Nothing was written.`
-    : `${legacy ? `\`${legacy}\` is a legacy ESLint config` : 'This repo has no ESLint config'}. Harness only adds to a flat config (\`eslint.config.mjs\`); it never creates one. Nothing was written.`);
+    ? `Harness can't edit \`${cfg}\` safely: it does not export a plain flat-config array. ${result}`
+    : `${legacy ? `\`${legacy}\` is a legacy ESLint config` : 'This repo has no ESLint config'}. Harness only adds to a flat config (\`eslint.config.mjs\`); it never creates one. ${result}`);
   out('Manual steps:');
   out(cfg ? `  1. Make \`${cfg}\` export a plain array: \`export default [...]\`.` : legacy ? `  1. Move \`${legacy}\` to a flat config, \`eslint.config.mjs\` (ESLint's Configuration Migration Guide).` : '  1. Add an ESLint flat config, `eslint.config.mjs`.');
   const missing = [...new Set([...p.missing, ...p.skipped].map((m) => m.plugin))];
@@ -126,15 +126,20 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
   const cfg = ESLINT.find((f) => existsSync(join(root, f)));
   const before = cfg ? readFileSync(join(root, cfg), 'utf8') : null;
   const merged = before === null ? null : mergeEslintHarnessRules(before);
-  if (apply && !merged) return refuse(root, cfg, p, out);
-  // An eslint.config.ts imports the .mjs, so a strict typecheck needs its declaration.
-  const own = [FILE, ...(cfg?.endsWith('.ts') ? [DTS] : [])];
   // The TS options: only the keys tsconfig.json does not set yet. Never through a symlink, and never a tsconfig the repo didn't have.
   const tsLinked = linkedPath(root, TSCONFIG);
   const tsBefore = !tsLinked && existsSync(join(root, TSCONFIG)) ? readFileSync(join(root, TSCONFIG), 'utf8') : null;
   const tsMerged = tsBefore === null ? null : mergeTsconfigOptions(tsBefore, p.ts);
   const tsSet = (tsMerged?.blocks ?? []).map((b) => JSON.parse(b) as { set: string[] }).filter((b) => b.set.length === 2).map((b) => b.set[1]!);
-  const tsCount = tsMerged ? tsSet : tsBefore === null ? [] : Object.keys(p.ts); // tsc reads a commented tsconfig, so those counts still show
+  // tsc reads a commented tsconfig, so those counts still show, for the options it doesn't name yet.
+  // ponytail: a key named only inside a comment also counts as set; a JSONC parser would tell them apart.
+  const tsManualOpts = tsBefore === null ? Object.keys(p.ts) : Object.keys(p.ts).filter((o) => !new RegExp(`"${o}"\\s*:`).test(tsBefore));
+  const tsCount = tsMerged ? tsSet : tsBefore === null ? [] : tsManualOpts;
+  // The ESLint and TS edits are independent: with no flat config to edit, the TS options still apply.
+  if (apply && !merged) refuse(root, cfg, p, out, tsSet.length ? 'The ESLint part is skipped; the TS options below still apply.' : undefined);
+  if (apply && !merged && !tsSet.length) return 1;
+  // An eslint.config.ts imports the .mjs, so a strict typecheck needs its declaration.
+  const own = merged ? [FILE, ...(cfg?.endsWith('.ts') ? [DTS] : [])] : [];
   const read = (rel: string) => (existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null);
   if (apply) { // the cheap refusals, before the slow ESLint runs
     for (const rel of own) {
@@ -150,8 +155,8 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
   const counts = await countViolations(root, { ...p, ts: Object.fromEntries(tsCount.map((o) => [o, true as const])) }, cli.exec ?? defaultExec);
   printCounts(counts, p, tsCount, cfg, out);
   printGaps(p, counts.eslint.dropped, out);
-  if (tsLinked) tsManual(`\`${TSCONFIG}\` is a symlink, and harness never reads or writes through one.`, Object.keys(p.ts), out);
-  else if (tsBefore !== null && !tsMerged) tsManual(`Harness can't edit \`${TSCONFIG}\` safely: it has comments or trailing commas.`, Object.keys(p.ts), out);
+  if (tsLinked) tsManual(`\`${TSCONFIG}\` is a symlink, and harness never reads or writes through one.`, tsManualOpts, out);
+  else if (tsBefore !== null && !tsMerged && tsManualOpts.length) tsManual(`Harness can't edit \`${TSCONFIG}\` safely: it has comments or trailing commas.`, tsManualOpts, out);
   else if (tsMerged) {
     const recorded = m.files.find((f) => f.rel === TSCONFIG)?.blocks ?? [];
     const opts = (JSON.parse(tsBefore!) as { compilerOptions?: Record<string, unknown> }).compilerOptions ?? {};
@@ -181,10 +186,10 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
     changes.push(c);
   }
   for (const c of changes) out(unifiedDiff(c.kind === 'update' ? c.before : '', c.kind === 'update' ? c.after : c.kind === 'create' ? c.content : '', c.rel).trimEnd());
-  if (!apply) return out(merged ? 'Run harness rules --apply to write this.' : 'harness rules --apply needs a flat ESLint config it can edit.'), 0;
+  if (!apply) return out(merged ? 'Run harness rules --apply to write this.' : tsSet.length ? 'Run harness rules --apply to write the TS options. The ESLint rules need a flat ESLint config it can edit.' : 'harness rules --apply needs a flat ESLint config it can edit.'), 0;
   if (!changes.length) return out('Nothing to change.'), 0;
 
-  const answer = await cli.prompt.edit(`Type yes to apply these ESLint rules${tsSet.length ? ' and TS options' : ''}`, '').catch(() => ''); // closed input is a No
+  const answer = await cli.prompt.edit(`Type yes to apply these ${[merged && 'ESLint rules', tsSet.length && 'TS options'].filter(Boolean).join(' and ')}`, '').catch(() => ''); // closed input is a No
   if (answer.trim() !== 'yes') return out(NOT_APPLIED), 1;
   const at = new Date();
   const files = mergeManifestFiles(m, changes, `.harness/backup/${at.toISOString().replace(/:/g, '-')}`);

@@ -6,7 +6,7 @@ license: Apache-2.0
 min_claude_code: 2.1.314
 plugin_version: "1.0.0"
 applies_when: {"any_dep": ["wrangler", "@cloudflare/workers-types"]}
-cost: {"context": "low", "setup": "low"}
+cost: {"context": "low", "setup": "low", "context_tokens": 699}
 stance: optional
 why: "Build, test, and deploy applications on Cloudflare with platform guidance Skills and the Cloudflare MCP server."
 evidence:

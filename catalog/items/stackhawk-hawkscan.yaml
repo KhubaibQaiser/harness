@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "stackhawk/agent-skills", "path": "plugin
 license: MIT
 min_claude_code: 2.1.314
 applies_when: {"project_types": ["api"]}
-cost: {"context": "medium", "setup": "high"}
+cost: {"context": "medium", "setup": "high", "context_tokens": 262}
 stance: optional
 side_effects: ["installs-hook"]
 why: "Configure, run, and interpret HawkScan DAST results inside Claude Code."

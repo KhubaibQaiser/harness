@@ -132,7 +132,7 @@ test('counted PostToolUse Edit in a 20-file repo with checks.prSize on: harness 
 }, 60000);
 
 // Team-decision nudge: with no stored hit, an attended Stop with no last_assistant_message reads the transcript's
-// last 8 MiB for the A signals. A 50 MB transcript must stay inside the plain ceilings.
+// last 1 MiB for the A signals. A 50 MB transcript must stay inside the plain ceilings.
 test('attended Stop with a 50 MB transcript and no stored hit: harness overhead over a bare node spawn', () => {
   const repo = mkdtempSync(join(tmpdir(), 'h-lat-stop-'));
   spawnSync('git', ['init', '-q'], { cwd: repo });

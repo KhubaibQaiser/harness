@@ -198,11 +198,11 @@ test('the init budget total includes the preset core and skills, and status prin
   expect(d.out).toMatch(/Not measured before install: .*impeccable/);
   const bare = await run(repo(), dry([...OWN]));
   // The answers name the preset in both runs, so both install its core block: the difference is the other preset items.
-  expect(all - total(bare.out)).toBe(presetSum(['engineering-principles', 'frontend-react']));
+  expect(all - total(bare.out)).toBe(presetSum(['engineering-principles', 'frontend-react']) + recorded('superpowers')); // a catalog pick counts its recorded number
   expect((await run(root, [...aiArgs([...OWN, ...WEB]), '--over-budget'])).code).toBe(0);
   let out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') });
-  expect(statusTotal(out)).toBe(h);
+  expect(statusTotal(out)).toBe(h - recorded('superpowers')); // init says "harness and its picks"; status's harness share leaves catalog picks out
 });
 
 // Re-review N1 and M9: init's preview total (not only harness's share) equals status after the install, with and
@@ -245,6 +245,7 @@ test('init asks when the AGENTS.md its new @AGENTS.md line makes load takes the 
 
 // ---- update, add, explain and sync count the preset like init and status ----
 const loaded = () => { const l = loadPreset(join(fixture, 'stacks.yaml')); if (!l.ok) throw new Error('fixture'); return l.loaded; };
+const recorded = (id: string) => Number(/"context_tokens": ?(\d+)/.exec(readFileSync(join(__dirname, '../../catalog/items', `${id}.yaml`), 'utf8'))?.[1] ?? 0);
 const presetSum = (ids: string[]) => presetContext(loaded(), ids).reduce((n, e) => n + (e.tokens ?? 0), 0);
 const PRESET_IDS = ['core-rules', 'engineering-principles', 'frontend-react'];
 const total = (out: string) => Number(/Always-loaded context: ~([\d,]+) tokens/.exec(out)![1].replace(/,/g, ''));

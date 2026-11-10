@@ -5,7 +5,7 @@ source: {"type":"git-subdir","repo":"vercel-labs/agent-skills","path":"skills/re
 license: MIT
 min_claude_code: 2.1.314
 applies_when: {"frameworks":["react","next"]}
-cost: {"context":"low","setup":"low"}
+cost: {"context":"low","setup":"low","context_tokens":94}
 stance: optional
 why: "React and Next.js performance optimization guidelines from Vercel Engineering, as 70 rules across 8 categories."
 evidence:

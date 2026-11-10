@@ -6,7 +6,7 @@ license: MIT
 min_claude_code: 2.1.314
 plugin_version: "2.14.0"
 applies_when: {"project_types": ["landing"]}
-cost: {"context": "low", "setup": "low"}
+cost: {"context": "low", "setup": "low", "context_tokens": 10946}
 stance: optional
 why: "Marketing skills for AI agents — conversion optimization, copywriting, SEO, paid ads, ad creative, and growth"
 evidence:

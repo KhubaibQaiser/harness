@@ -6,7 +6,7 @@ license: MIT
 min_claude_code: 2.1.314
 plugin_version: "0e181866f095"
 applies_when: {"frameworks":["three"],"any_dep":["three","@react-three/fiber"]}
-cost: {"context":"low","setup":"low"}
+cost: {"context":"low","setup":"low","context_tokens":1052}
 stance: optional
 why: "Skill files that give Claude Code current, verified knowledge of three.js, so the code it writes runs on the release you install."
 evidence:

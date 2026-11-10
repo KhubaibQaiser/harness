@@ -5,7 +5,7 @@ import { redactSecrets } from '../core/secrets.js';
 import type { Check, Ctx } from '../hooks/check.js';
 import type { Decision } from '../hooks/types.js';
 import { decisionWarnings } from './decisions-warn.js';
-import { readTranscript, TRANSCRIPT_TAIL } from './multi-file.js';
+import { readTranscript } from './multi-file.js';
 
 type Signals = readonly [id: string, re: RegExp][];
 type Hit = { pattern: string; excerpt: string };
@@ -58,11 +58,14 @@ const failed = (res: unknown): boolean => {
   return r.interrupted === true || r.is_error === true || (typeof code === 'number' && code !== 0);
 };
 
+// Only the last record is read, so a short tail is enough; a final record over 1 MiB is skipped (no nudge, the safe way).
+const STOP_TAIL = 1024 * 1024;
+
 // Last assistant text: the Stop input's field, else the transcript tail's last record when it is this turn's answer.
 function lastAssistant(ctx: Ctx): string {
   const { last_assistant_message: m, transcript_path: t } = ctx.input;
   if (typeof m === 'string') return m;
-  const last = readTranscript(t, TRANSCRIPT_TAIL)?.at(-1);
+  const last = readTranscript(t, STOP_TAIL)?.at(-1);
   return last && !last.prompt ? last.texts.join('\n') : '';
 }
 

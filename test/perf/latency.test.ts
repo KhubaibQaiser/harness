@@ -16,11 +16,15 @@ const CEILING_MS = 1000; // gross-regression guard on the whole spawn
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 
-function measure(input: string, check: (r: ReturnType<typeof spawnSync>) => void): { overhead: number; total: number } {
+// CI sets CI=true, which makes every hook unattended; an attended case drops the unattended signals.
+const UNATTENDED_KEYS = ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE'];
+const attendedEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => Object.fromEntries(Object.entries(env).filter(([k]) => !UNATTENDED_KEYS.includes(k)));
+
+function measure(input: string, check: (r: ReturnType<typeof spawnSync>) => void, attended = false): { overhead: number; total: number } {
   const home = mkdtempSync(join(tmpdir(), 'h-lat-empty-')); // also the spawns' home: the hook never reads the real ~/.claude
   const empty = join(home, 'empty.mjs');
   writeFileSync(empty, '');
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+  const env: NodeJS.ProcessEnv = { ...(attended ? attendedEnv(process.env) : process.env), HOME: home, USERPROFILE: home };
   delete env.CLAUDE_CONFIG_DIR; // the hook reads its own home only
   delete env.HARNESS_SANDBOX;
   const time = (args: string[], stdin?: string) => {
@@ -126,6 +130,28 @@ test('counted PostToolUse Edit in a 20-file repo with checks.prSize on: harness 
   expect(m.overhead, `counted edit overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(COUNTED_EDIT_OVERHEAD_MS);
   expect(m.total, `counted edit total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
+
+// Team-decision nudge: with no stored hit, an attended Stop with no last_assistant_message reads the transcript's
+// last 1 MiB for the A signals. A 50 MB transcript must stay inside the plain ceilings.
+test('attended Stop with a 50 MB transcript and no stored hit: harness overhead over a bare node spawn', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'h-lat-stop-'));
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  const line = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(1000) }] } }) + '\n';
+  const t = join(repo, 't.jsonl');
+  writeFileSync(t, line.repeat(Math.ceil((50 * 1024 * 1024) / line.length)));
+  const input = (session: string, path: string) => JSON.stringify({ hook_event_name: 'Stop', session_id: session, cwd: repo, transcript_path: path });
+  const m = measure(input('lat', t), (r) => {
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('');
+  }, true);
+  // Control: the tail is read, so an A signal at the end shows the nudge.
+  const hit = join(repo, 'hit.jsonl');
+  writeFileSync(hit, readFileSync(t, 'utf8') + JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: "I'll remember that." }] } }) + '\n');
+  const ctl = spawnSync(process.execPath, [DISPATCH], { input: input('ctl', hit), encoding: 'utf8', env: { ...attendedEnv(process.env), HOME: repo, USERPROFILE: repo } });
+  expect(ctl.stdout).toContain('team decision');
+  expect(m.overhead, `stop overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.total, `stop total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
+}, 120000);
 
 // Final review I3: links back into .claude/rules once took 22 s at 3 links and never finished at 4. Each folder is now
 // searched once, so 6 self-links and a loop through a parent finish in about a plain run's time.

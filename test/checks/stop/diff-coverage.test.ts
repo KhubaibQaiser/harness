@@ -210,6 +210,15 @@ test('gate blocks with the fresh-coverage message when nothing fresh exists', as
   expect((d as { reason: string }).reason).toBe('Diff coverage needs fresh coverage output (**/coverage/coverage-final.json). Make the test step write coverage, then finish again.');
 });
 
+test('coverage gave up (attempts past max): the allow goes through done(), so the team-decision nudge shows', async () => {
+  const root = repo(null);
+  const ctx = gateCtx(root);
+  ctx.state = { ...ctx.state, stopAttempts: ctx.config.stop.max_attempts, decisionHits: [{ pattern: 'P1', excerpt: 'from now on use zod' }] };
+  const d = await stopWith(root, gitExec({ diff: addDiff('src/a.ts', [3]) }), ctx);
+  expect(d).toMatchObject({ kind: 'context', check: 'stop' });
+  expect((d as { text: string }).text).toContain('(you said "from now on use zod")');
+});
+
 test('gate allows and logs coverage-skipped when there is no base', async () => {
   const root = repo(null);
   const g = gitExec({ mergeBase: { status: 128, output: 'fatal' } });

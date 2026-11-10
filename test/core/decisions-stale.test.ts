@@ -93,11 +93,38 @@ describe('staleness', () => {
     const calls: string[][] = [];
     const spy: Git = (a) => {
       calls.push(a);
-      try { return { ok: true, out: git(r, ...a) + (a[0] === 'ls-files' || a[0] === 'diff' ? '' : '') }; } catch { return { ok: false, out: '' }; }
+      try { return { ok: true, out: git(r, ...a) }; } catch { return { ok: false, out: '' }; }
     };
     const ds = [dec({ verified_at: sha }), dec({ id: '2026-11-01-b', rel: 'docs/decisions/2026-11-01-b.md', verified_at: sha })];
     staleness(r, ds, { ...O, git: spy });
-    expect(calls.filter((c) => c[0] === 'ls-files')).toHaveLength(1);
-    expect(calls.filter((c) => c[0] === 'diff')).toHaveLength(1);
+    expect(calls.filter((c) => c[2] === 'ls-files')).toHaveLength(1);
+    expect(calls.filter((c) => c[2] === 'diff')).toHaveLength(1);
+  });
+  test('a timeout on cat-file or merge-base is a git failure, not a "no"', () => {
+    for (const cmd of ['cat-file', 'merge-base']) {
+      const g: Git = (a) => a.includes(cmd) ? { ok: false, out: '', reason: 'timeout' }
+        : a.includes('ls-files') ? { ok: true, out: 'src/a.ts\0' } : a.includes('log') ? { ok: true, out: 'b'.repeat(40) } : { ok: true, out: '' };
+      const r = staleness('/x', [dec()], { ...O, git: g });
+      expect(r.note).toBe("couldn't check decision staleness (timeout)");
+      expect(r.states[0]).toMatchObject({ ref: '', fallback: false, changed: [] });
+    }
+  });
+  test('a large ls-files output works', () => {
+    const big = Array.from({ length: 60_000 }, (_, i) => `src/dir${i}/some-long-file-name-${i}.ts`).join('\0') + '\0';
+    expect(big.length).toBeGreaterThan(2_000_000);
+    const g: Git = (a) => a.includes('ls-files') ? { ok: true, out: big } : a.includes('log') ? { ok: true, out: '' } : { ok: false, out: '' };
+    const r = staleness('/x', [dec()], { ...O, git: g });
+    expect(r.note).toBeNull();
+    expect(r.states[0]).toMatchObject({ dead: [], ref: '', fallback: false });
+  });
+  test('every git call disables fsmonitor; diff also disables ext-diff and textconv', () => {
+    const r = repo(); put(r, 'src/a.ts'); put(r, 'docs/decisions/2026-11-01-a.md'); const sha = commit(r, 'one');
+    put(r, 'src/a.ts', 'y'); commit(r, 'two');
+    const calls: string[][] = [];
+    const spy: Git = (a) => { calls.push(a); try { return { ok: true, out: git(r, ...a) }; } catch { return { ok: false, out: '' }; } };
+    staleness(r, [dec({ verified_at: sha })], { ...O, git: spy });
+    expect(calls.length).toBeGreaterThan(3);
+    for (const c of calls) expect(c.slice(0, 2)).toEqual(['-c', 'core.fsmonitor=false']);
+    expect(calls.find((c) => c[2] === 'diff')).toEqual(expect.arrayContaining(['--no-ext-diff', '--no-textconv']));
   });
 });

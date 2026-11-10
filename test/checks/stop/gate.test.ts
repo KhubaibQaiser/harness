@@ -7,6 +7,7 @@ import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
 import { readTiming } from '../../../src/core/timing.js';
 import { readState, writeState } from '../../../src/core/state.js';
+import { decisionSignals } from '../../../src/checks/decisions-stop.js';
 import { type Ctx, detectBaseHead, dispatch, registry } from '../../../src/hooks/dispatch.js';
 
 // Existing tests fake the exec; pretend every binary is on PATH (found as itself: on Windows the gate execs the found path).
@@ -475,4 +476,23 @@ test('nudge: none with checks.decisions: false or checks.stop: false', async () 
   const stopOff = setup({ yaml: 'checks:\n  stop: false\n' });
   writeState(stopOff.root, 's', { ...stopOff.ctx.state, ...HIT });
   expect(await dispatch(JSON.stringify(stopOff.ctx.input), [stopGate], {})).toBe('');
+});
+
+test('nudge: an A-only hit on a blocked Stop is held for the next passing Stop', async () => {
+  const s = setup();
+  const signals = (last: string) => {
+    s.ctx.input = { ...s.ctx.input, last_assistant_message: last };
+    decisionSignals.run(s.ctx);
+  };
+  signals("Going forward, I'll run lint first.");
+  expect(await runStop(s.ctx, s.exec(SRC, 'lint'))).toMatchObject({ kind: 'block' });
+  signals('Fixed lint.');
+  expect(text(await runStop(s.ctx, s.exec(SRC)))).toContain('(you said "Going forward, I\'ll run lint first.")');
+});
+
+test('nudge: the gave-up allow shows it too', async () => {
+  const s = setup();
+  s.ctx.state = { ...s.ctx.state, ...HIT };
+  for (let n = 1; n <= 3; n++) expect(await runStop(s.ctx, s.exec(SRC, 'test'))).toMatchObject({ kind: 'block' });
+  expect(text(await runStop(s.ctx, s.exec(SRC, 'test')))).toMatch(NUDGE);
 });

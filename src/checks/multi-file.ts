@@ -1,6 +1,6 @@
 // Asks once before an agent edits a second source unit in one turn; approval covers the rest of the turn.
 // ponytail: Bash writes are not counted in M1 (spec 9b).
-import { readFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { basename } from 'node:path';
 import { appendEvent } from '../core/events.js';
 import { isAnyTestFile, matches, pairKey, toRepoPath } from '../core/paths.js';
@@ -32,13 +32,27 @@ function hasName(line: string, name: string): boolean {
 
 type Rec = { at: number; prompt: boolean; texts: string[] };
 
+export const TRANSCRIPT_TAIL = 8 * 1024 * 1024; // team-decisions plan: read at most the last 8 MiB of a transcript
+
+/** The last `max` bytes of a file as UTF-8. A line cut at the start is dropped by the JSON-line parsers. */
+export function readTail(path: string, max: number): string {
+  const fd = openSync(path, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    const buf = Buffer.alloc(Math.min(size, max));
+    return buf.toString('utf8', 0, readSync(fd, buf, 0, buf.length, size - buf.length));
+  } finally {
+    closeSync(fd);
+  }
+}
+
 // The transcript's user prompts and assistant text, or undefined when unreadable.
 // ponytail: the transcript JSONL format is not a documented stable API; unknown shapes are skipped and an unreadable file fails open.
-export function readTranscript(path: unknown): Rec[] | undefined {
+export function readTranscript(path: unknown, max = Infinity): Rec[] | undefined {
   if (typeof path !== 'string' || !path) return undefined;
   let raw: string;
   try {
-    raw = readFileSync(path, 'utf8');
+    raw = readTail(path, max);
   } catch {
     return undefined;
   }

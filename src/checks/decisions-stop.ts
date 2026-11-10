@@ -4,7 +4,7 @@ import { appendEvent } from '../core/events.js';
 import { redactSecrets } from '../core/secrets.js';
 import type { Check, Ctx } from '../hooks/check.js';
 import type { Decision } from '../hooks/types.js';
-import { readTranscript } from './multi-file.js';
+import { readTranscript, TRANSCRIPT_TAIL } from './multi-file.js';
 
 type Signals = readonly [id: string, re: RegExp][];
 type Hit = { pattern: string; excerpt: string };
@@ -57,16 +57,23 @@ const failed = (res: unknown): boolean => {
   return r.interrupted === true || r.is_error === true || (typeof code === 'number' && code !== 0);
 };
 
-// Last assistant text: the Stop input's field, else the transcript's last assistant record.
+// Last assistant text: the Stop input's field, else the transcript tail's last record when it is this turn's answer.
 function lastAssistant(ctx: Ctx): string {
   const { last_assistant_message: m, transcript_path: t } = ctx.input;
   if (typeof m === 'string') return m;
-  return (readTranscript(t) ?? []).filter((r) => !r.prompt).at(-1)?.texts.join('\n') ?? '';
+  const last = readTranscript(t, TRANSCRIPT_TAIL)?.at(-1);
+  return last && !last.prompt ? last.texts.join('\n') : '';
 }
+
+// Attended, a Stop scan can't change what shows: skip it (and its transcript read).
+const stopSettled = (ctx: Ctx): boolean => {
+  const { config, state } = ctx;
+  return !config.checks.stop || !config.decisions.nudge || !!state.decisionNudged || !!state.rememberAdded || (state.decisionHits?.length ?? 0) >= MAX_HITS;
+};
 
 export const decisionSignals: Check = {
   name: 'decision-signals',
-  events: ['UserPromptSubmit', 'PostToolUse'],
+  events: ['UserPromptSubmit', 'PostToolUse', 'Stop'], // registered before stopGate, which reads the hits stored here
   run(ctx) {
     const { input, config, state } = ctx;
     if (!config.checks.decisions) return ALLOW;
@@ -75,7 +82,9 @@ export const decisionSignals: Check = {
       if (!state.rememberAdded && typeof cmd === 'string' && REMEMBER_ADD.test(cmd) && !failed(input.tool_response)) ctx.save({ ...state, rememberAdded: true });
       return ALLOW;
     }
-    const hits = scan(String(input.prompt ?? '').slice(0, PROMPT_SCAN), PROMPT_SIGNALS);
+    const stop = input.hook_event_name === 'Stop';
+    if (stop && !ctx.unattended && stopSettled(ctx)) return ALLOW;
+    const hits = stop ? scan(lastAssistant(ctx), ASSISTANT_SIGNALS) : scan(String(input.prompt ?? '').slice(0, PROMPT_SCAN), PROMPT_SIGNALS);
     const kept = state.decisionHits ?? [];
     if (ctx.unattended) logCandidates(ctx, hits);
     else if (hits.length && kept.length < MAX_HITS) ctx.save({ ...state, decisionHits: [...kept, ...hits].slice(0, MAX_HITS) });
@@ -87,12 +96,8 @@ export const decisionSignals: Check = {
 export function decisionNotes(ctx: Ctx, changed: string[]): string[] {
   void changed; // Task 13: warnings for decisions linked to changed files
   const { config, state } = ctx;
-  if (ctx.unattended) {
-    logCandidates(ctx, scan(lastAssistant(ctx), ASSISTANT_SIGNALS));
-    return [];
-  }
-  if (!config.decisions.nudge || state.decisionNudged || state.rememberAdded) return [];
-  const hit = state.decisionHits?.[0] ?? scan(lastAssistant(ctx), ASSISTANT_SIGNALS)[0];
+  if (ctx.unattended || !config.decisions.nudge || state.decisionNudged || state.rememberAdded) return [];
+  const hit = state.decisionHits?.[0];
   if (!hit) return [];
   ctx.save({ ...ctx.state, decisionNudged: true });
   return [`Harness: this session may hold a team decision (you said "${hit.excerpt}"). To keep it for the team, ask Claude to save it with \`harness remember add\`; you approve the write and the PR reviews it. If it's only your own preference, Claude Code's auto memory is the place.`];

@@ -138,7 +138,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     if (attempts > max) {
       setAttempts(0);
       log('stop-gave-up');
-      return allow;
+      return done(allow);
     }
     setAttempts(attempts);
     return { kind: 'block', reason: reason.replace('{n}', `${attempts} of ${max}`), check: 'stop' };
@@ -208,7 +208,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       if (attempts > max) {
         setAttempts(0);
         log('stop-gave-up');
-        return allow;
+        return done(allow);
       }
       setAttempts(attempts);
     }

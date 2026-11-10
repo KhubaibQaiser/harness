@@ -7,7 +7,7 @@ min_claude_code: 2.1.314
 plugin_version: "2.15.0"
 applies_when: {"project_types":["web","landing","mobile"]}
 conflicts_with: ["impeccable", "superdesign", "taste-skill"]
-cost: {"context":"low","setup":"low"}
+cost: {"context":"low","setup":"low","context_tokens":719}
 stance: optional
 why: "Searchable local database of 79 styles, 192 palettes, 74 font pairings, 25 charts and 22 stack guidelines for designing and reviewing UI."
 evidence:

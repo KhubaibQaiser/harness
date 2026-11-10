@@ -6,7 +6,7 @@ license: MIT
 min_claude_code: 2.1.314
 plugin_version: "0.3.0"
 applies_when: {"project_types": ["web", "api"]}
-cost: {"context": "low", "setup": "medium"}
+cost: {"context": "low", "setup": "medium", "context_tokens": 2334}
 stance: optional
 side_effects: ["installs-hook"]
 why: "Deploy, debug, and monitor applications on Render. Includes skills, an agent, slash commands, a render.yaml validation hook, and the Render MCP server preconfigured over OAuth."

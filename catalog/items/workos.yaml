@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "workos/skills", "path": "plugins/workos"
 license: MIT
 min_claude_code: 2.1.314
 applies_when: {"any_dep": ["@workos-inc/node", "@workos-inc/authkit-nextjs"]}
-cost: {"context": "low", "setup": "low"}
+cost: {"context": "low", "setup": "low", "context_tokens": 314}
 stance: optional
 why: "WorkOS integration skills for AuthKit, SSO, Directory Sync, RBAC, Vault, Audit Logs, migrations, and API references."
 evidence:

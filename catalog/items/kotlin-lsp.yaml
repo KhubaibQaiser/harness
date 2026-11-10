@@ -5,7 +5,7 @@ source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":
 license: Apache-2.0
 min_claude_code: 2.1.314
 applies_when: {"project_types":["mobile"]}
-cost: {"context":"low","setup":"medium"}
+cost: {"context":"low","setup":"medium","context_tokens":0}
 stance: optional
 lsp_servers: {"kotlin-lsp":{"command":"kotlin-lsp","args":["--stdio"],"extensionToLanguage":{".kt":"kotlin",".kts":"kotlin"},"startupTimeout":120000}}
 why: "Kotlin language server for code intelligence"

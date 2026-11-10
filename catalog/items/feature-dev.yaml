@@ -5,7 +5,7 @@ source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":
 license: Apache-2.0
 min_claude_code: 2.1.314
 applies_when: {"always":true}
-cost: {"context":"low","setup":"low"}
+cost: {"context":"low","setup":"low","context_tokens":207}
 stance: discouraged
 stance_reason: "overlaps superpowers; use one process pack."
 why: "Comprehensive feature development workflow with specialized agents for codebase exploration, architecture design, and quality review."

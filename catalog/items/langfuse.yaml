@@ -6,7 +6,7 @@ license: MIT
 min_claude_code: 2.1.314
 plugin_version: "1.10.0"
 applies_when: {"any_dep": ["@anthropic-ai/sdk", "openai", "ai", "langfuse", "@langfuse/client"]}
-cost: {"context": "low", "setup": "medium"}
+cost: {"context": "low", "setup": "medium", "context_tokens": 278}
 stance: optional
 why: "Skills for working with Langfuse, the open-source LLM engineering platform for tracing, prompt management, and evaluation."
 evidence:

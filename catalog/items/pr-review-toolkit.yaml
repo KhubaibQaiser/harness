@@ -5,7 +5,7 @@ source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":
 license: Apache-2.0
 min_claude_code: 2.1.314
 applies_when: {"always":true}
-cost: {"context":"low","setup":"low"}
+cost: {"context":"low","setup":"low","context_tokens":1259}
 stance: discouraged
 stance_reason: "overlaps the built-in /code-review and the harness reviewer."
 why: "Comprehensive PR review agents specializing in comments, tests, error handling, type design, code quality, and code simplification."

@@ -6,7 +6,7 @@ license: MIT
 min_claude_code: 2.1.314
 plugin_version: "7.0.1"
 applies_when: {"always":true}
-cost: {"context":"medium","setup":"low"}
+cost: {"context":"medium","setup":"low","context_tokens":739}
 stance: default
 side_effects: ["installs-hook","telemetry-on-by-default","network-service"]
 why: "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques."

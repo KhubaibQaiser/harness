@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "nizos/tdd-guard", "path": "plugin", "plu
 license: MIT
 min_claude_code: 2.1.314
 applies_when: {"always": true}
-cost: {"context": "low", "setup": "medium"}
+cost: {"context": "low", "setup": "medium", "context_tokens": 0}
 stance: discouraged
 stance_reason: "superseded by probity"
 side_effects: ["installs-hook"]

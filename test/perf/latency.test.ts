@@ -16,11 +16,15 @@ const CEILING_MS = 1000; // gross-regression guard on the whole spawn
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 
-function measure(input: string, check: (r: ReturnType<typeof spawnSync>) => void): { overhead: number; total: number } {
+// CI sets CI=true, which makes every hook unattended; an attended case drops the unattended signals.
+const UNATTENDED_KEYS = ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE'];
+const attendedEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => Object.fromEntries(Object.entries(env).filter(([k]) => !UNATTENDED_KEYS.includes(k)));
+
+function measure(input: string, check: (r: ReturnType<typeof spawnSync>) => void, attended = false): { overhead: number; total: number } {
   const home = mkdtempSync(join(tmpdir(), 'h-lat-empty-')); // also the spawns' home: the hook never reads the real ~/.claude
   const empty = join(home, 'empty.mjs');
   writeFileSync(empty, '');
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+  const env: NodeJS.ProcessEnv = { ...(attended ? attendedEnv(process.env) : process.env), HOME: home, USERPROFILE: home };
   delete env.CLAUDE_CONFIG_DIR; // the hook reads its own home only
   delete env.HARNESS_SANDBOX;
   const time = (args: string[], stdin?: string) => {
@@ -139,11 +143,11 @@ test('attended Stop with a 50 MB transcript and no stored hit: harness overhead 
   const m = measure(input('lat', t), (r) => {
     expect(r.status).toBe(0);
     expect(r.stdout).toBe('');
-  });
+  }, true);
   // Control: the tail is read, so an A signal at the end shows the nudge.
   const hit = join(repo, 'hit.jsonl');
   writeFileSync(hit, readFileSync(t, 'utf8') + JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: "I'll remember that." }] } }) + '\n');
-  const ctl = spawnSync(process.execPath, [DISPATCH], { input: input('ctl', hit), encoding: 'utf8', env: { ...process.env, HOME: repo, USERPROFILE: repo } });
+  const ctl = spawnSync(process.execPath, [DISPATCH], { input: input('ctl', hit), encoding: 'utf8', env: { ...attendedEnv(process.env), HOME: repo, USERPROFILE: repo } });
   expect(ctl.stdout).toContain('team decision');
   expect(m.overhead, `stop overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
   expect(m.total, `stop total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);

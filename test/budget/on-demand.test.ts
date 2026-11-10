@@ -8,6 +8,9 @@ import { onDemand, unmeasuredSources } from '../../src/budget/on-demand.js';
 import { measureRepo } from '../../src/budget/sources.js';
 import { estimateTokens } from '../../src/budget/measure.js';
 import { makeRepo } from '../install/helpers.js';
+import { contextSet } from '../../src/budget/summary.js';
+import { defaults } from '../../src/core/config.js';
+import { decision, installedRepo, syncNow, writeDecision } from '../core/decisions-helpers.js';
 
 const run = (files: Record<string, string>, io: RepoIO = realIO, owners = new Map<string, Owner>(), skip: (rel: string) => boolean = () => false) => {
   const root = makeRepo(files, { git: false });
@@ -71,7 +74,7 @@ test('malformed settings and .mcp.json never throw and add a note', () => {
   const root = makeRepo({ '.claude/settings.json': '[1]', '.mcp.json': '{nope' }, { git: false });
   expect(unmeasuredSources(root, realIO)).toEqual([]);
   const r = measureRepo(root, { owners: new Map(), preset: null });
-  expect(r.notes).toEqual(expect.arrayContaining(['.claude/settings.json: not valid JSON, not read', '.mcp.json: not valid JSON, not read']));
+  expect(r.notes).toEqual(expect.arrayContaining(['.claude/settings.json: not a JSON object, not read', '.mcp.json: not valid JSON, not read']));
 });
 
 test('measureRepo fills onDemand, unmeasured and keeps earlier entries', () => {
@@ -152,4 +155,15 @@ test('two links to the same paths rule give one on-demand row', () => {
   symlinkSync('api.md', join(root, '.claude/rules/api-link.md'));
   const r = measureRepo(root, { owners: new Map(), preset: null });
   expect(r.onDemand.filter((e) => e.label.includes('(paths: src/api/**)'))).toHaveLength(1);
+});
+
+test('a synced decision rule is on demand as team decisions, owned by harness, and the always-loaded total is unchanged', async () => {
+  const root = await installedRepo();
+  const dirs = { templates: join(__dirname, '../../templates'), plugin: join(__dirname, '../..') };
+  const before = contextSet(root, defaults(), dirs);
+  writeDecision(root, decision('2026-11-03-use-zod'));
+  syncNow(root);
+  const after = contextSet(root, defaults(), dirs);
+  expect(after.onDemand.filter((e) => e.label.startsWith('team decisions'))).toMatchObject([{ label: 'team decisions: 1 rules', owner: 'harness' }]);
+  expect(after.total).toBe(before.total);
 });

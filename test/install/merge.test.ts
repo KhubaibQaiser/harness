@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, describe, expect, it, test } from 'vitest';
 import { BETA_GROUPS, betaSettings } from './helpers.js';
-import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, STRUCTURAL } from '../../src/install/merge.js';
+import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeEslintHarnessRules, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig, mergeTsconfigOptions, STRUCTURAL } from '../../src/install/merge.js';
 import { TELEMETRY_ENV, type LoadedPreset } from '../../src/catalog/presets.js';
 import { guardedView } from '../../src/core/harness-files.js';
 
@@ -598,8 +598,8 @@ describe('mergeMcp', () => {
     expect(mergeMcp(text, [PW], first.blocks).notes).toEqual(['`.mcp.json`: server "playwright" was edited; left as is.']);
   });
 
-  it('STRUCTURAL names the two structural files', () => {
-    expect([...STRUCTURAL].sort()).toEqual(['.claude/settings.json', '.mcp.json']);
+  it('STRUCTURAL names the three structural files', () => {
+    expect([...STRUCTURAL].sort()).toEqual(['.claude/settings.json', '.mcp.json', 'tsconfig.json']);
   });
 });
 
@@ -715,5 +715,131 @@ describe('preset merge kinds', () => {
       expect(envOf(m.after)).toEqual({ DO_NOT_TRACK: '1', B_OFF: 'x' });
       expect(m.dropped.filter((b) => b.startsWith('{"set"')).every((b) => b.includes('"sandbox"'))).toBe(true);
     }
+  });
+});
+
+describe('mergeEslintHarnessRules', () => {
+  const IMPORT = "// harness:rules\nimport harnessRules from './.harness/eslint/harness.config.mjs';\n// harness:rules\n";
+  it('adds the import after the last import and the spread at the end of the array, both marked', () => {
+    const src = "import js from '@eslint/js';\n\nexport default [\n  js.configs.recommended,\n  { ignores: ['.harness/'] },\n];\n";
+    const r = mergeEslintHarnessRules(src)!;
+    expect(r.after).toBe(
+      "import js from '@eslint/js';\n" + IMPORT + "\nexport default [\n  js.configs.recommended,\n  { ignores: ['.harness/'] },\n  // harness:rules\n  ...harnessRules,\n  // harness:rules\n];\n",
+    );
+    expect(r.blocks).toHaveLength(2);
+    expect(removeBlocks(r.after, r.blocks)).toBe(src);
+    expect(mergeEslintHarnessRules(r.after)).toEqual({ after: r.after, blocks: [] });
+  });
+  it('no trailing comma, one-line and empty arrays, defineConfig and identifier exports, CRLF', () => {
+    for (const src of [
+      'export default [\n  { rules: {} }\n];\n',
+      'export default [{ rules: {} }];\n',
+      'export default [];\n',
+      "import { defineConfig } from 'eslint/config';\nexport default defineConfig([{ rules: {} }]);\n",
+      'const cfg = [{ rules: {} }];\nexport default cfg;\n',
+      "import a from 'a';\r\nexport default [\r\n  a,\r\n];\r\n",
+    ]) {
+      const r = mergeEslintHarnessRules(src)!;
+      expect(r, src).not.toBeNull();
+      expect(r.after).toContain('...harnessRules');
+      expect(removeBlocks(r.after, r.blocks)).toBe(src);
+    }
+    expect(mergeEslintHarnessRules('export default [\n  { rules: {} }\n];\n')!.after).toBe(`${IMPORT}export default [\n  { rules: {} },\n  // harness:rules\n  ...harnessRules,\n  // harness:rules\n];\n`);
+    expect(mergeEslintHarnessRules('export default [{ rules: {} }];\n')!.after).toBe(`${IMPORT}export default [{ rules: {} },\n// harness:rules\n...harnessRules,\n// harness:rules\n];\n`);
+  });
+  it('uses the file\'s quotes', () => {
+    expect(mergeEslintHarnessRules('import a from "a";\nexport default [a];\n')!.after).toContain('import harnessRules from "./.harness/eslint/harness.config.mjs";');
+  });
+  it('a trailing comment stays on the last element\'s line', () => {
+    const src = 'export default [\n  a, // last\n];\n';
+    const r = mergeEslintHarnessRules(src)!;
+    expect(r.after).toBe(`${IMPORT}export default [\n  a, // last\n  // harness:rules\n  ...harnessRules,\n  // harness:rules\n];\n`);
+    expect(removeBlocks(r.after, r.blocks)).toBe(src);
+    // ponytail shape: no comma before the comment would need a second insert, so it is a manual step
+    expect(mergeEslintHarnessRules('export default [\n  a // last\n];\n')).toBeNull();
+  });
+  it('appending after the closing marker, or a trailing-comma-all reformat, leaves both blocks intact', () => {
+    for (const src of ['export default [\n  a\n];\n', 'export default [\n  a,\n];\n', 'export default [a];\n']) {
+      const r = mergeEslintHarnessRules(src)!;
+      // what a person (or Prettier's trailingComma: all) does: every element line ends in a comma, and more go after the marker
+      expect(r.after, src).toMatch(/\.\.\.harnessRules,\n/);
+      expect(r.after, src).toMatch(/\ba,/);
+      const appended = r.after.replace(/(\/\/ harness:rules\n)(\s*\];)/, '$1  b,\n$2');
+      expect(appended).not.toBe(r.after);
+      expect(r.blocks.every((b) => appended.includes(b)), src).toBe(true);
+    }
+  });
+  it('a stray or half-removed marker is null, never a no-op', () => {
+    expect(mergeEslintHarnessRules("export default [{ ignores: ['// harness:rules'] }];\n")).toBeNull();
+    const done = mergeEslintHarnessRules('export default [\n  a,\n];\n')!.after;
+    expect(mergeEslintHarnessRules(done.replace("import harnessRules from './.harness/eslint/harness.config.mjs';\n", ''))).toBeNull();
+    expect(mergeEslintHarnessRules(done.replace('  ...harnessRules,\n', ''))).toBeNull();
+  });
+  it('accepts only defineConfig(...) and *.config(...) wrappers', () => {
+    expect(mergeEslintHarnessRules('export default tseslint.config([a]);\n')).not.toBeNull();
+    expect(mergeEslintHarnessRules('export default whatever([a]);\n')).toBeNull();
+    expect(mergeEslintFlatIgnores('export default whatever([a]);\n')).toBeNull();
+  });
+  it('null when the shape is not a flat-config array', () => {
+    expect(mergeEslintHarnessRules('export default makeConfig();\n')).toBeNull();
+    expect(mergeEslintHarnessRules('module.exports = [];\n')).toBeNull();
+    expect(mergeEslintHarnessRules('export default [ {{{')).toBeNull();
+  });
+});
+
+describe('mergeTsconfigOptions / removeFromTsconfig', () => {
+  const OPTS = { strict: true, noUncheckedIndexedAccess: true, noImplicitOverride: true, noFallthroughCasesInSwitch: true, noImplicitReturns: true } as const;
+  const set = (k: string) => JSON.stringify({ set: ['compilerOptions', k], value: true });
+  const F = (blocks: string[]) => ({ rel: 'tsconfig.json', kind: 'update' as const, hash: '', blocks });
+  const PLAIN = '{\n  "compilerOptions": {\n    "target": "es2022"\n  },\n  "include": ["src"]\n}\n';
+
+  it('sets each option with one set block, and removal gives back the same JSON', () => {
+    const r = mergeTsconfigOptions(PLAIN, OPTS)!;
+    expect(JSON.parse(r.after).compilerOptions).toEqual({ target: 'es2022', ...OPTS });
+    expect(r.blocks).toEqual(Object.keys(OPTS).map(set));
+    const notes: string[] = [];
+    const out = removeFromTsconfig(r.after, F(r.blocks), PLAIN, notes)!;
+    expect(JSON.parse(out.after)).toEqual(JSON.parse(PLAIN));
+    expect(notes).toEqual([]);
+  });
+
+  it('leaves a key already set to any value alone', () => {
+    const before = JSON.stringify({ compilerOptions: { strict: false, noImplicitReturns: true } }, null, 2) + '\n';
+    const r = mergeTsconfigOptions(before, OPTS)!;
+    expect(JSON.parse(r.after).compilerOptions.strict).toBe(false);
+    expect(r.blocks).toEqual(['noUncheckedIndexedAccess', 'noImplicitOverride', 'noFallthroughCasesInSwitch'].map(set));
+  });
+
+  it('creates a missing compilerOptions, recorded, and removal drops it again', () => {
+    const before = '{ "include": ["src"] }';
+    const r = mergeTsconfigOptions(before, { strict: true })!;
+    expect(r.blocks).toEqual([JSON.stringify({ set: ['compilerOptions'], value: {} }), set('strict')]);
+    expect(JSON.parse(removeFromTsconfig(r.after, F(r.blocks), before, [])!.after)).toEqual({ include: ['src'] });
+  });
+
+  it('nothing to set gives back the bytes', () => {
+    const before = '{"compilerOptions":{"strict":true}}';
+    expect(mergeTsconfigOptions(before, { strict: true })).toEqual({ after: before, blocks: [] });
+  });
+
+  it.each([
+    ['a comment', '{\n  // mine\n  "compilerOptions": {}\n}\n'],
+    ['a trailing comma', '{ "compilerOptions": { "target": "es2022", } }'],
+    ['not an object', '[]'],
+    ['a non-object compilerOptions', '{ "compilerOptions": 1 }'],
+  ])('%s gives null', (_n, before) => {
+    expect(mergeTsconfigOptions(before, OPTS)).toBeNull();
+  });
+
+  it('removal keeps an option the person changed, with a note, and the person\'s new keys', () => {
+    const r = mergeTsconfigOptions(PLAIN, OPTS)!;
+    const edited = JSON.parse(r.after);
+    edited.compilerOptions.noImplicitReturns = false;
+    edited.compilerOptions.mine = 1;
+    const notes: string[] = [];
+    const out = removeFromTsconfig(JSON.stringify(edited, null, 2) + '\n', F(r.blocks), PLAIN, notes)!;
+    expect(JSON.parse(out.after).compilerOptions).toEqual({ target: 'es2022', noImplicitReturns: false, mine: 1 });
+    expect(notes).toEqual(['`tsconfig.json`: `compilerOptions.noImplicitReturns` was changed; left as is.']);
+    expect(removeFromTsconfig('{ // x\n}', F(r.blocks), PLAIN, [])).toBeNull();
   });
 });

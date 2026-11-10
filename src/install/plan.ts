@@ -100,7 +100,7 @@ type Gate = { catalog?: Catalog; on: (id: string) => boolean; chosen: Catalog['i
 
 /** checks come from the selected own items (any kind); sandbox is not derived */
 function checksOf(chosen: Catalog['items']): HarnessConfig['checks'] {
-  const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false, prSize: false };
+  const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false, prSize: false, decisions: false };
   for (const i of chosen) if (i.source.type === 'own') for (const k of i.source.checks ?? []) checks[k] = true;
   return checks;
 }
@@ -166,7 +166,7 @@ function formatEdits(root: string, changes: Change[], notes: string[]): void {
 const firstLine = (e: unknown): string => String((e as Error).message).split('\n')[0];
 
 /** A settings file: formatted whole when created, or when it was Prettier-clean before. */
-function formatStructural(root: string, c: Change, notes: string[]): void {
+export function formatStructural(root: string, c: Change, notes: string[]): void {
   const bin = repoPrettier(root, c.rel);
   try {
     if (bin && c.kind === 'create') c.content = prettierFormat(bin, root, c.rel, c.content);
@@ -177,7 +177,7 @@ function formatStructural(root: string, c: Change, notes: string[]): void {
 }
 
 /** A JS/TS config edit: formatted only when it was Prettier-clean before and the formatted edit undoes cleanly. */
-function formatJsEdit(root: string, c: Extract<Change, { kind: 'update' }>, notes: string[]): void {
+export function formatJsEdit(root: string, c: Extract<Change, { kind: 'update' }>, notes: string[]): void {
   const bin = repoPrettier(root, c.rel);
   if (!bin) return;
   try {

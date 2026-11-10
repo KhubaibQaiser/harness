@@ -230,7 +230,18 @@ export function mergePresetSettings(before: string | null, want: SetBlock[], rec
   return { after: dump(s, before), blocks, dropped, notes };
 }
 
-export const STRUCTURAL: ReadonlySet<string> = new Set([SETTINGS, '.mcp.json']);
+export const TSCONFIG = 'tsconfig.json';
+export const STRUCTURAL: ReadonlySet<string> = new Set([SETTINGS, '.mcp.json', TSCONFIG]);
+
+/** Sets each missing `compilerOptions` key (a key the file already has, whatever its value, stays). Null when the file is not plain JSON (comments, trailing commas). */
+export function mergeTsconfigOptions(before: string, opts: Record<string, true>): { after: string; blocks: string[] } | null {
+  try {
+    const r = mergePresetSettings(before, Object.entries(opts).map(([k, value]) => ({ set: ['compilerOptions', k], value })), [], TSCONFIG);
+    return { after: r.blocks.length ? r.after : before, blocks: r.blocks };
+  } catch {
+    return null;
+  }
+}
 const MCP = '.mcp.json';
 const PINS = 'harness-pins';
 
@@ -374,6 +385,14 @@ export function removeFromMcp(current: string, f: Manifest['files'][number], ori
   return o.done();
 }
 
+/** Drops the recorded `compilerOptions` keys that still hold what harness set. Returns null when the file is not a JSON object. */
+export function removeFromTsconfig(current: string, f: Manifest['files'][number], original: string | null, notes: string[]): { after: string; empty: boolean } | null {
+  const o = openRemoval(current, f, original);
+  if (!o) return null;
+  for (const k of removeSets(o.s, f.blocks ?? []).changed) notes.push(`\`${TSCONFIG}\`: \`${k}\` was changed; left as is.`);
+  return o.done();
+}
+
 /** Drops the recorded hook groups, deny rules, set keys, plugins and marketplace. Returns null when the file is not a JSON object. */
 export function removeFromSettings(current: string, f: Manifest['files'][number], original: string | null, notes: string[]): { after: string; empty: boolean } | null {
   const o = openRemoval(current, f, original);
@@ -465,6 +484,79 @@ function appendLines(before: string | null, lines: string[]): { after: string; b
 export const mergeGitignore = (before: string | null) => appendLines(before, HARNESS_LOCAL);
 export const mergeIgnoreFile = (before: string | null, entry: '.harness/') => appendLines(before, [entry]);
 
+/** The module body and the exported flat-config array (`[...]`, `defineConfig([...])` or a named const), or null. */
+function flatArray(lf: string): { body: any[]; root: any } | null {
+  const body: any[] = (parseModule(lf).$ast as any).body;
+  const def = body.find((n) => n.type === 'ExportDefaultDeclaration');
+  if (!def) return null;
+  let root = def.declaration;
+  // defineConfig([...]) or tseslint.config([...]): wrappers that take the flat-config array as is. Any other call may read it differently.
+  const wrapper = (c: any) => c?.type === 'Identifier' ? c.name === 'defineConfig' : c?.type === 'MemberExpression' && !c.computed && c.property?.name === 'config';
+  if (root.type === 'CallExpression') root = root.arguments.length === 1 && wrapper(root.callee) ? root.arguments[0] : null;
+  if (root?.type === 'Identifier') {
+    for (const n of body) {
+      const decl = n.type === 'ExportNamedDeclaration' ? n.declaration : n;
+      const v = decl?.type === 'VariableDeclaration' && decl.declarations.find((d: any) => d.id.name === root.name);
+      if (v) { root = v.init; break; }
+    }
+  }
+  return root?.type === 'ArrayExpression' ? { body, root } : null;
+}
+
+/** Inserts each [LF offset, LF text] into `before` in its own line endings; null unless removeBlocks gives `before` back and it still parses. */
+function insertBlocks(before: string, lf: string, at: [number, string][]): { after: string; blocks: string[] } | null {
+  const eol = eolOf(before);
+  let after = before;
+  const blocks: string[] = [];
+  for (const [i, text] of [...at].sort((a, b) => b[0] - a[0])) {
+    const crlfAt = eol === '\r\n' ? i + lf.slice(0, i).split('\n').length - 1 : i;
+    const block = withEol(text, eol);
+    after = after.slice(0, crlfAt) + block + after.slice(crlfAt);
+    blocks.unshift(block);
+  }
+  if (removeBlocks(after, blocks) !== before) return null;
+  parseModule(after.replace(/\r\n/g, '\n'));
+  return { after, blocks };
+}
+
+export const HARNESS_RULES_MARK = '// harness:rules';
+const SPREAD_BLOCK = /\n[ \t]*\/\/ harness:rules\n[ \t]*\.\.\.harnessRules,?\n[ \t]*\/\/ harness:rules(\n|$)/;
+export const HARNESS_RULES_IMPORT = "import harnessRules from './.harness/eslint/harness.config.mjs';";
+
+/**
+ * Adds the harness rules import (after the last import) and `...harnessRules` (at the end of the exported array), each
+ * between `// harness:rules` lines. Null when the config is not a flat-config array (or the edit would not round-trip).
+ */
+export function mergeEslintHarnessRules(before: string): { after: string; blocks: string[] } | null {
+  try {
+    const lf = before.replace(/\r\n/g, '\n');
+    if (lf.includes(HARNESS_RULES_MARK)) {
+      // Already applied only when both marked blocks are whole; a stray or half-removed marker is a manual step.
+      const imp = [`'`, '"'].some((q) => lf.includes(`${HARNESS_RULES_MARK}\n${requote(HARNESS_RULES_IMPORT, q as "'" | '"')}\n${HARNESS_RULES_MARK}\n`));
+      return imp && SPREAD_BLOCK.test(lf) ? { after: before, blocks: [] } : null;
+    }
+    const found = flatArray(lf);
+    if (!found) return null;
+    const { body, root } = found;
+    const imp = body.filter((n) => n.type === 'ImportDeclaration').at(-1);
+    const impAt = imp ? (lf.indexOf('\n', imp.end) + 1 || lf.length) : 0;
+    const line = `${HARNESS_RULES_MARK}\n${requote(HARNESS_RULES_IMPORT, quoteOf(lf))}\n${HARNESS_RULES_MARK}\n`;
+    const last = root.elements[root.elements.length - 1];
+    let at = last ? last.end : root.start + 1;
+    const comma = last && /^\s*,/.exec(lf.slice(at));
+    if (comma) at += comma[0].length;
+    const note = /^[ \t]*\/\/[^\n]*/.exec(lf.slice(at)); // a trailing `// comment` stays on the element's line
+    if (note && last && !comma) return null; // ponytail: the comma would go before the comment, a second insert; left as a manual step
+    if (note) at += note[0].length;
+    const ind = last ? /^[ \t]*/.exec(lf.slice(lf.lastIndexOf('\n', last.start) + 1))![0] : '';
+    const multiline = lf.slice(at, root.end - 1).includes('\n');
+    const spread = `${last && !comma ? ',' : ''}\n${ind}${HARNESS_RULES_MARK}\n${ind}...harnessRules,\n${ind}${HARNESS_RULES_MARK}${multiline ? '' : '\n'}`;
+    return insertBlocks(before, lf, [[impAt, line], [at, spread]]);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Adds '.harness/' to the flat config's global ignores: an object whose only key is `ignores`, or `globalIgnores([...])`. With none, a new
  * `{ ignores: ['.harness/'] }` entry is appended to the exported array. Null when the config is not a plain array
@@ -473,19 +565,9 @@ export const mergeIgnoreFile = (before: string | null, entry: '.harness/') => ap
 export function mergeEslintFlatIgnores(before: string): { after: string; blocks: string[] } | null {
   try {
     const lf = before.replace(/\r\n/g, '\n'); // the parser's offsets are in LF text
-    const body: any[] = (parseModule(lf).$ast as any).body;
-    const def = body.find((n) => n.type === 'ExportDefaultDeclaration');
-    if (!def) return null;
-    let root = def.declaration;
-    if (root.type === 'CallExpression') root = root.arguments.length === 1 ? root.arguments[0] : null; // defineConfig([...])
-    if (root?.type === 'Identifier') {
-      for (const n of body) {
-        const decl = n.type === 'ExportNamedDeclaration' ? n.declaration : n;
-        const v = decl?.type === 'VariableDeclaration' && decl.declarations.find((d: any) => d.id.name === root.name);
-        if (v) { root = v.init; break; }
-      }
-    }
-    if (root?.type !== 'ArrayExpression') return null;
+    const found = flatArray(lf);
+    if (!found) return null;
+    const { root } = found;
     const q = quoteOf(lf);
     const entry = requote("'.harness/'", q);
     const keyName = (p: any) => (p.type === 'ObjectProperty' && !p.computed ? (p.key?.name ?? p.key?.value) : null);
@@ -510,13 +592,7 @@ export function mergeEslintFlatIgnores(before: string): { after: string; blocks:
         [at, text] = [last.end, `,\n${/^[ \t]*/.exec(lf.slice(lineStart))![0]}${obj}`];
       }
     }
-    const eol = eolOf(before);
-    const crlfAt = eol === '\r\n' ? at + lf.slice(0, at).split('\n').length - 1 : at;
-    const block = withEol(text, eol);
-    const after = before.slice(0, crlfAt) + block + before.slice(crlfAt);
-    if (removeBlocks(after, [block]) !== before) return null;
-    parseModule(after.replace(/\r\n/g, '\n'));
-    return { after, blocks: [block] };
+    return insertBlocks(before, lf, [[at, text]]);
   } catch {
     return null;
   }

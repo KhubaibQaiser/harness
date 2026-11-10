@@ -18,6 +18,7 @@ import { planChanges } from '../../src/install/plan.js';
 import { preset } from '../../src/install/preset.js';
 import { sha256 } from '../../src/install/text.js';
 import { betaSettings, makeRepo } from '../install/helpers.js';
+import { decision, syncNow, writeDecision } from '../core/decisions-helpers.js';
 import { execFileSync } from 'node:child_process';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -775,7 +776,7 @@ test('up to date inside Claude Code on the plain path still points to /harness:u
   expect(await run(['--dry-run'])).not.toContain(again);
 });
 
-// Ask once, then exempt: items the person already approved show but do not count toward the ask.
+// Ask once, then exempt: items the person already approved count on both sides, so they never ask again.
 test('update with AI flags: an approved plugin does not ask, a newly added one does', async () => {
   const root = aiInstalled(REPO, [...OWN_IDS, 'impeccable']);
   const d = mkdtempSync(join(tmpdir(), 'harness-upd-ai-'));
@@ -798,7 +799,7 @@ test('update with AI flags: an approved plugin does not ask, a newly added one d
   const added = await run([...OWN_IDS, 'impeccable', 'mobile-mcp']);
   expect(added.code).toBe(2);
   expect(added.out).toContain('Not measured before install: mobile-mcp');
-  expect(added.out).toMatch(/Approved earlier, not counted: .*impeccable/);
+  expect(added.out).toMatch(/Approved earlier: .*impeccable/);
   expect(added.out).toContain('Run again with --over-budget');
   const same = await run([...OWN_IDS, 'impeccable']);
   expect(same.code).toBe(0);
@@ -985,6 +986,38 @@ test('partial answers change only the given keys, and config.yaml comments survi
   expect(text).toContain('# my note');
 });
 
+// An older config has no checks.decisions and no decisions section.
+const olderConfig = (text: string) => '# my note\n' + text.replace(/^  decisions: true\n/m, '').replace(/# Team decisions[^\n]*\ndecisions:\n(  .*\n)+\n?/, '');
+
+test('update on the AI path adds checks.decisions and the decisions section additively, keeping comments', async () => {
+  const root = aiInstalled(REPO, OWN_IDS);
+  const c = join(root, '.harness/config.yaml');
+  writeFileSync(c, olderConfig(readFileSync(c, 'utf8')));
+  commitAll(root);
+  const old = readFileSync(c, 'utf8');
+  expect(old).not.toContain('decisions');
+  const r = await upAi(root, [...reFlags(OWN_IDS), '--yes']);
+  expect(r.code).toBe(0);
+  const after = readFileSync(c, 'utf8');
+  expect(after).toContain('# my note');
+  const y = parseYaml(after) as any;
+  expect(y.checks.decisions).toBe(true);
+  expect(y.decisions).toEqual({ max_lines: 20, expiry_days: 90, nudge: true });
+  const { decisions: _c, ...checks } = y.checks;
+  const o = parseYaml(old) as any; // the re-recommend flags set project answers, so only the sections this change owns are compared
+  expect(checks).toEqual(o.checks);
+  for (const k of ['sandbox', 'tdd', 'pr_size', 'stop', 'unattended', 'context', 'multi_file_gate']) expect(y[k]).toEqual(o[k]);
+});
+
+test('update on the plain path leaves an older config byte-identical', async () => {
+  const root = await installed();
+  const c = join(root, '.harness/config.yaml');
+  writeFileSync(c, olderConfig(readFileSync(c, 'utf8')));
+  const before = readFileSync(c, 'utf8');
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readFileSync(c, 'utf8')).toBe(before);
+});
+
 test('update gives the same budget verdict as add and sync for a hand-selected, never-installed item', async () => {
   const root = aiInstalled(REPO, OWN_IDS);
   const c = join(root, '.harness/config.yaml');
@@ -995,4 +1028,34 @@ test('update gives the same budget verdict as add and sync for a hand-selected, 
   const r = await upAi(root, [...reFlags([...OWN_IDS, 'mobile-mcp']), '--yes']);
   expect(r.code).toBe(2);
   expect(r.out).toContain('Not measured before install: mobile-mcp');
+});
+
+test('Review focus 1: update keeps a synced decision rule, its entry and its file', async () => {
+  const root = await installed();
+  writeDecision(root, decision('2026-11-03-use-zod'));
+  syncNow(root);
+  commitAll(root);
+  const rel = '.claude/rules/harness-decision-2026-11-03-use-zod.md';
+  const text = readFileSync(join(root, rel), 'utf8');
+  const entry = readManifest(root)!.files.find((f) => f.rel === rel);
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  expect(readManifest(root)!.files.find((f) => f.rel === rel)).toEqual(entry);
+  expect(readFileSync(join(root, rel), 'utf8')).toBe(text);
+});
+
+test('Important 2: a sync after update neither rewrites nor reorders the manifest', async () => {
+  const root = await installed();
+  writeDecision(root, decision('2026-11-03-use-zod'));
+  syncNow(root);
+  commitAll(root);
+  expect((await up(root, ['--yes'], { distDir: newDist() })).code).toBe(0);
+  const manifest = readFileSync(join(root, '.harness/manifest.json'), 'utf8');
+  syncNow(root);
+  expect(readFileSync(join(root, '.harness/manifest.json'), 'utf8')).toBe(manifest);
+  const order = readManifest(root)!.files.map((f) => f.rel);
+  writeDecision(root, decision('2026-11-04-no-default-exports'));
+  syncNow(root);
+  const rule = '.claude/rules/harness-decision-2026-11-04-no-default-exports.md';
+  const at = order.indexOf('.claude/rules/harness-decision-2026-11-03-use-zod.md') + 1;
+  expect(readManifest(root)!.files.map((f) => f.rel)).toEqual([...order.slice(0, at), rule, ...order.slice(at)]);
 });

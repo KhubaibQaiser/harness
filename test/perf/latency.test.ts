@@ -2,7 +2,7 @@
 // spawn of an empty script, and the median of the paired differences is what the harness costs. Runs in the `perf`
 // project (no file parallelism) as its own CI step, never inside the parallel unit run. No retries: a slow result is real.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -126,3 +126,18 @@ test('counted PostToolUse Edit in a 20-file repo with checks.prSize on: harness 
   expect(m.overhead, `counted edit overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(COUNTED_EDIT_OVERHEAD_MS);
   expect(m.total, `counted edit total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
+
+// Final review I3: links back into .claude/rules once took 22 s at 3 links and never finished at 4. Each folder is now
+// searched once, so 6 self-links and a loop through a parent finish in about a plain run's time.
+test.skipIf(process.platform === 'win32')('harness context with symlink loops under .claude/rules stays fast', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'h-lat-loop-'));
+  mkdirSync(join(repo, '.claude/rules/sub'), { recursive: true });
+  writeFileSync(join(repo, '.claude/rules/a.md'), 'A\n');
+  for (let i = 1; i <= 6; i++) symlinkSync('.', join(repo, `.claude/rules/l${i}`), 'dir');
+  symlinkSync('..', join(repo, '.claude/rules/sub/up'), 'dir');
+  const t = performance.now();
+  const r = spawnSync(process.execPath, [join(process.cwd(), 'dist/cli.mjs'), 'context', '--offline'], { cwd: repo, encoding: 'utf8', timeout: 10_000 });
+  const ms = performance.now() - t;
+  expect(r.stdout).toContain('.claude/rules/l1: already searched (symlink)');
+  expect(ms, `context with loops took ${ms.toFixed(0)} ms`).toBeLessThan(CEILING_MS * 2);
+}, 30000);

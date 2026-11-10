@@ -6,6 +6,7 @@ import * as nodePath from 'node:path';
 
 type PlatformPath = typeof nodePath;
 import { defaultExec } from '../core/exec.js';
+import { childEnv } from './count-api.js';
 import { MAX_FILE_BYTES, fenceAfter, lf, stripComments } from './text.js';
 
 export const MAX_HOPS = 4;
@@ -37,7 +38,7 @@ export const realIO: RepoIO = {
     try { const st = statSync(abs); return st.isFile() ? st.size : null; } catch { return null; }
   },
   lsFiles(root) {
-    const r = defaultExec('git', ['-C', root, 'ls-files', '-z'], { timeoutMs: LS_FILES_MS });
+    const r = defaultExec('git', ['-C', root, 'ls-files', '-z'], { timeoutMs: LS_FILES_MS, env: childEnv() });
     return r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null;
   },
   real(abs) {
@@ -127,7 +128,7 @@ export function expandImports(root: string, start: { path: string; text: string 
       const real = realOf(rel);
       if (real !== null && seenReal.has(real)) continue;
       if (real !== null) seenReal.add(real);
-      if (skip(rel)) { skipped.push({ path: rel, by: cur.path, reason: 'ignored' }); continue; }
+      if (skip(rel) || (real !== null && skip(relPosix(nodePath, realRoot, real)))) { skipped.push({ path: rel, by: cur.path, reason: 'ignored' }); continue; }
       const got = load(abs, io);
       if (!('text' in got)) { if (got.reason !== 'missing') skipped.push({ path: rel, by: cur.path, reason: got.reason }); continue; }
       if (files.length >= MAX_IMPORTED) { skipped.push({ path: rel, by: cur.path, reason: 'cap' }); capped = true; break; }

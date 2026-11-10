@@ -108,6 +108,7 @@ function tscErrors(root: string, bin: string, exec: Exec, project: string, timeo
 function runTs({ root, p, exec, timeoutMs, dir }: Ctx): Counts['ts'] {
   const options = tsOptions(p);
   const byOption: Record<string, number | null> = Object.fromEntries(options.map((o) => [o, null]));
+  if (!options.length) return { byOption, baseline: null }; // no option to compare: the baseline run would be thrown away
   const bin = resolveBin(root, 'typescript', 'tsc');
   const baseline = bin ? tscErrors(root, bin, exec, join(root, 'tsconfig.json'), timeoutMs) : null;
   if (baseline === null || !bin) return { byOption, baseline };

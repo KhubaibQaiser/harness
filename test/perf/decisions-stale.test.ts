@@ -31,4 +31,4 @@ test('500 decisions over 3000 tracked files stay fast', () => {
   expect(note).toBeNull();
   expect(states).toHaveLength(500);
   expect(ms, `staleness took ${ms.toFixed(0)} ms`).toBeLessThan(CEILING_MS);
-});
+}, 120_000); // the timed part is only staleness(); setting up 3000 files and two commits is slow on Windows runners

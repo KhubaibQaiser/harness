@@ -26,7 +26,7 @@ export interface Staleness {
 
 export const isStale = (s: Staleness): boolean => s.dead.length > 0 || s.changed.length > 0;
 
-const gitIn = (root: string): Git => (args, input) => {
+export const gitIn = (root: string): Git => (args, input) => {
   const r = spawnSync('git', args, { cwd: root, ...(input === undefined ? {} : { input }), encoding: 'utf8', timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, env: childEnv() });
   if (r.error) return { ok: false, out: '', reason: (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'timeout' : `spawn: ${r.error.message}` };
   if (r.status === 0) return { ok: true, out: r.stdout };

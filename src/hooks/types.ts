@@ -22,6 +22,7 @@ export interface HookInput {
   prompt?: string;
   source?: string;
   file_path?: string;
+  last_assistant_message?: string;
 }
 
 export type Decision =

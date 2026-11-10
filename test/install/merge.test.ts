@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, describe, expect, it, test } from 'vitest';
 import { BETA_GROUPS, betaSettings } from './helpers.js';
-import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeEslintHarnessRules, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, STRUCTURAL } from '../../src/install/merge.js';
+import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeEslintHarnessRules, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig, mergeTsconfigOptions, STRUCTURAL } from '../../src/install/merge.js';
 import { TELEMETRY_ENV, type LoadedPreset } from '../../src/catalog/presets.js';
 import { guardedView } from '../../src/core/harness-files.js';
 
@@ -598,8 +598,8 @@ describe('mergeMcp', () => {
     expect(mergeMcp(text, [PW], first.blocks).notes).toEqual(['`.mcp.json`: server "playwright" was edited; left as is.']);
   });
 
-  it('STRUCTURAL names the two structural files', () => {
-    expect([...STRUCTURAL].sort()).toEqual(['.claude/settings.json', '.mcp.json']);
+  it('STRUCTURAL names the three structural files', () => {
+    expect([...STRUCTURAL].sort()).toEqual(['.claude/settings.json', '.mcp.json', 'tsconfig.json']);
   });
 });
 
@@ -784,5 +784,62 @@ describe('mergeEslintHarnessRules', () => {
     expect(mergeEslintHarnessRules('export default makeConfig();\n')).toBeNull();
     expect(mergeEslintHarnessRules('module.exports = [];\n')).toBeNull();
     expect(mergeEslintHarnessRules('export default [ {{{')).toBeNull();
+  });
+});
+
+describe('mergeTsconfigOptions / removeFromTsconfig', () => {
+  const OPTS = { strict: true, noUncheckedIndexedAccess: true, noImplicitOverride: true, noFallthroughCasesInSwitch: true, noImplicitReturns: true } as const;
+  const set = (k: string) => JSON.stringify({ set: ['compilerOptions', k], value: true });
+  const F = (blocks: string[]) => ({ rel: 'tsconfig.json', kind: 'update' as const, hash: '', blocks });
+  const PLAIN = '{\n  "compilerOptions": {\n    "target": "es2022"\n  },\n  "include": ["src"]\n}\n';
+
+  it('sets each option with one set block, and removal gives back the same JSON', () => {
+    const r = mergeTsconfigOptions(PLAIN, OPTS)!;
+    expect(JSON.parse(r.after).compilerOptions).toEqual({ target: 'es2022', ...OPTS });
+    expect(r.blocks).toEqual(Object.keys(OPTS).map(set));
+    const notes: string[] = [];
+    const out = removeFromTsconfig(r.after, F(r.blocks), PLAIN, notes)!;
+    expect(JSON.parse(out.after)).toEqual(JSON.parse(PLAIN));
+    expect(notes).toEqual([]);
+  });
+
+  it('leaves a key already set to any value alone', () => {
+    const before = JSON.stringify({ compilerOptions: { strict: false, noImplicitReturns: true } }, null, 2) + '\n';
+    const r = mergeTsconfigOptions(before, OPTS)!;
+    expect(JSON.parse(r.after).compilerOptions.strict).toBe(false);
+    expect(r.blocks).toEqual(['noUncheckedIndexedAccess', 'noImplicitOverride', 'noFallthroughCasesInSwitch'].map(set));
+  });
+
+  it('creates a missing compilerOptions, recorded, and removal drops it again', () => {
+    const before = '{ "include": ["src"] }';
+    const r = mergeTsconfigOptions(before, { strict: true })!;
+    expect(r.blocks).toEqual([JSON.stringify({ set: ['compilerOptions'], value: {} }), set('strict')]);
+    expect(JSON.parse(removeFromTsconfig(r.after, F(r.blocks), before, [])!.after)).toEqual({ include: ['src'] });
+  });
+
+  it('nothing to set gives back the bytes', () => {
+    const before = '{"compilerOptions":{"strict":true}}';
+    expect(mergeTsconfigOptions(before, { strict: true })).toEqual({ after: before, blocks: [] });
+  });
+
+  it.each([
+    ['a comment', '{\n  // mine\n  "compilerOptions": {}\n}\n'],
+    ['a trailing comma', '{ "compilerOptions": { "target": "es2022", } }'],
+    ['not an object', '[]'],
+    ['a non-object compilerOptions', '{ "compilerOptions": 1 }'],
+  ])('%s gives null', (_n, before) => {
+    expect(mergeTsconfigOptions(before, OPTS)).toBeNull();
+  });
+
+  it('removal keeps an option the person changed, with a note, and the person\'s new keys', () => {
+    const r = mergeTsconfigOptions(PLAIN, OPTS)!;
+    const edited = JSON.parse(r.after);
+    edited.compilerOptions.noImplicitReturns = false;
+    edited.compilerOptions.mine = 1;
+    const notes: string[] = [];
+    const out = removeFromTsconfig(JSON.stringify(edited, null, 2) + '\n', F(r.blocks), PLAIN, notes)!;
+    expect(JSON.parse(out.after).compilerOptions).toEqual({ target: 'es2022', noImplicitReturns: false, mine: 1 });
+    expect(notes).toEqual(['`tsconfig.json`: `compilerOptions.noImplicitReturns` was changed; left as is.']);
+    expect(removeFromTsconfig('{ // x\n}', F(r.blocks), PLAIN, [])).toBeNull();
   });
 });

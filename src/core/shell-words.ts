@@ -5,29 +5,82 @@
 
 type Piece = { text: string; sep: string };
 
+/** Characters of command text one guard or protect run may split into pieces. Every reading at every nesting level
+ *  is split here, so this bounds the whole run's work (re-review 21, P1b): 100 KB read 40 times over. The most a plain
+ *  input took when measured was 2.9 M (a 99 KB shell body); four nested shell bodies of 90 KB take 16 to 20 M. */
+export const WORK_BUDGET_CHARS = 4_000_000;
+/** Thrown when a run spends WORK_BUDGET_CHARS: the check cannot read the command in time, so the hook denies. */
+export class WorkBudget extends Error {}
+export const WORK_BUDGET_WHY = 'the command is too large or too deeply nested for harness to read before the hook times out, so it is denied; split it into smaller commands';
+let work = -1; // characters charged in the open run, or -1 outside one
+/** Runs `fn` as one run with a fresh budget; a run inside a run shares the outer one. */
+export function withWorkBudget<T>(fn: () => T): T {
+  if (work >= 0) return fn();
+  work = 0;
+  try {
+    return fn();
+  } finally {
+    work = -1;
+  }
+}
+/** The characters charged so far in the open run (for tests). */
+export const workSpent = (): number => work;
+/** Charges `n` characters of work to the open run (a no-op outside one); past the budget it throws WorkBudget. */
+const charge = (n: number): void => { if (work >= 0 && (work += n) > WORK_BUDGET_CHARS) throw new WorkBudget(WORK_BUDGET_WHY); };
+/** Freezes arrays and plain objects, each level. Getters are not called: stdinPrograms builds a body only when read. */
+function deepFreeze<T>(v: T): T {
+  if (v !== null && typeof v === 'object' && !Object.isFrozen(v) && (Array.isArray(v) || Object.getPrototypeOf(v) === Object.prototype)) {
+    Object.freeze(v);
+    if (Array.isArray(v)) for (const x of v) deepFreeze(x);
+    else for (const d of Object.values(Object.getOwnPropertyDescriptors(v))) if ('value' in d) deepFreeze(d.value);
+  }
+  return v;
+}
+/**
+ * `fn` (pure, on one string) with its last few results kept, one set per `variant()` value (module state the result
+ * depends on). A repeat returns the kept result and charges the work the first call did, so a run spends and stops on
+ * the budget exactly where it did without the cache (round 28: one decision asks the same question of the same text
+ * several times). A result computed outside a run has no known cost and is computed again inside one. Results are
+ * shared, so they are frozen at every level: a caller that writes to one throws (ESM is strict mode).
+ */
+export function remember<R>(fn: (a: string) => R, variant: () => number = () => 0, size = 4): (a: string) => R {
+  const sets: Map<string, { r: R; cost: number }>[] = [];
+  return (a) => {
+    const kept = (sets[variant()] ??= new Map());
+    const hit = kept.get(a);
+    if (hit && (hit.cost >= 0 || work < 0)) { if (hit.cost > 0) charge(hit.cost); return hit.r; }
+    const w0 = work, r = deepFreeze(fn(a));
+    kept.delete(a); // a recomputed key replaces itself instead of evicting another entry
+    if (kept.size >= size) kept.delete(kept.keys().next().value!);
+    kept.set(a, { r, cost: w0 >= 0 && work >= w0 ? work - w0 : -1 });
+    return r;
+  };
+}
+
 /** The command split at ; & | && || newlines, parentheses and backticks outside quotes, with the separator after each. */
 export function pieces(cmd: string): Piece[] {
+  charge(cmd.length);
   const out: Piece[] = [];
-  let cur = '';
+  let from = 0; // the piece so far is cmd.slice(from, i): offsets, not a string built a char at a time (re-review 22b, F4)
   let quote = ''; // ', ", or $ for $'…'
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd[i];
     if (quote) {
-      cur += c;
-      if (c === '\\' && (quote === '"' || quote === '$') && i + 1 < cmd.length) cur += cmd[++i];
+      if (c === '\\' && (quote === '"' || quote === '$') && i + 1 < cmd.length) i++;
       else if (c === (quote === '$' ? "'" : quote)) quote = '';
-    } else if (c === '\\' && i + 1 < cmd.length) cur += c + cmd[++i];
-    else if (c === '$' && cmd[i + 1] === "'") (quote = '$'), (cur += c + cmd[++i]);
-    else if (c === '"' || c === "'") (quote = c), (cur += c);
+    } else if (c === '\\' && i + 1 < cmd.length) i++;
+    else if (c === '$' && cmd[i + 1] === "'") (quote = '$'), i++;
+    else if (c === '"' || c === "'") quote = c;
     else if (/[;&|\n()`]/.test(c)) {
       // 2>&1, >&2 and &> are redirections, not separators.
-      if (c === '&' && (/[<>]$/.test(cur) || cmd[i + 1] === '>')) { cur += c; continue; }
+      if (c === '&' && ((i > from && (cmd[i - 1] === '>' || cmd[i - 1] === '<')) || cmd[i + 1] === '>')) continue;
+      const text = cmd.slice(from, i);
       const sep = (c === '|' || c === '&') && cmd[i + 1] === c ? c + cmd[++i] : c;
-      out.push({ text: cur, sep });
-      cur = '';
-    } else cur += c;
+      out.push({ text, sep });
+      from = i + 1;
+    }
   }
-  out.push({ text: cur, sep: '' });
+  out.push({ text: cmd.slice(from), sep: '' });
   return out.map((p) => ({ ...p, text: p.text.trim() })).filter((p) => p.text);
 }
 export const segments = (cmd: string): string[] => pieces(cmd).map((p) => p.text);
@@ -75,9 +128,13 @@ export function unquote(word: string): string {
 
 export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'script']);
 /** A word's command name: its last path segment, lower case, without a Windows extension or an @version (node@22). */
-export const commandName = (word: string): string =>
+const NAME_PLAIN = /^[a-z0-9_-]*$/; // a word every name rule leaves as it is
+export const commandName = (word: string): string => (NAME_PLAIN.test(word) ? word : commandNameOf(word)); // most words are plain
+const commandNameOf = (word: string): string =>
   word.replace(/["']/g, '').split(/[\\/]/).pop()!.toLowerCase().replace(/\.(exe|cmd|ps1|bat)$/, '').replace(/^([^@]+)@.*$/, '$1'); // backslashes are separators here
 
+/** GNU env -S escapes: `\_` is a space inside double quotes (a separator outside), and the C escapes. */
+const ENV_ESC: Record<string, string> = { _: ' ', n: '\n', t: '\t', r: '\r', f: '\f', v: '\v' };
 /**
  * An `env -S` string as env splits it: whitespace separates words; '…' and "…" group (backslash escapes inside "…"
  * and outside quotes); `(`, `;` and the like are ordinary characters. Returned as a command line whose words are
@@ -89,29 +146,35 @@ export function envSplit(str: string): string {
   let quote = '';
   for (let i = 0; i < str.length; i++) {
     const c = str[i];
-    if (quote === "'") { if (c === "'") quote = ''; else cur += c; continue; }
-    if (quote === '"') { if (c === '"') quote = ''; else if (c === '\\' && i + 1 < str.length) cur += str[++i]; else cur += c; continue; }
-    if (/\s/.test(c)) { if (cur !== null) out.push(cur); cur = null; continue; }
+    if (quote === "'") { if (c === "'") quote = ''; else if (c === '\\' && /['\\]/.test(str[i + 1] ?? '')) cur += str[++i]; else cur += c; continue; }
+    if (quote === '"') { if (c === '"') quote = ''; else if (c === '\\' && i + 1 < str.length) cur += ENV_ESC[str[++i]] ?? str[i]; else cur += c; continue; }
+    if (/\s/.test(c) || (c === '\\' && str[i + 1] === '_')) { // an unquoted \_ separates words, as a space does
+      if (c === '\\') i++;
+      if (cur !== null) out.push(cur);
+      cur = null;
+      continue;
+    }
     cur ??= '';
     if (c === "'" || c === '"') quote = c;
-    else if (c === '\\' && i + 1 < str.length) cur += str[++i];
+    else if (c === '\\' && i + 1 < str.length) cur += ENV_ESC[str[++i]] ?? str[i];
     else cur += c;
   }
   if (cur !== null) out.push(cur);
   return out.map((w) => `'${w.replace(/'/g, "'\\''")}'`).join(' ');
 }
 
-// Shell options whose value is the next word: bash -o pipefail, -O extglob, +o history.
-const SHELL_VALUE = /^[-+][oO]$/;
+// Shell options whose value is the next word: bash -o pipefail, -O extglob, +o history, --rcfile F, --init-file F.
+const SHELL_VALUE = /^(?:[-+][oO]|--rcfile|--init-file)$/;
 /** The commands that `sh -c`, `bash -c`, `script -c` (and the like) and `env -S` run, unquoted, wherever they appear. */
-export function cPayloads(cmd: string): string[] {
+export const cPayloads = remember(cPayloadsOf);
+function cPayloadsOf(cmd: string): string[] {
   const out: string[] = [];
   for (const seg of segments(cmd)) {
     const ws = words(seg);
     for (let i = 0; i < ws.length; i++) {
       const name = commandName(ws[i]);
       if (name === 'env') {
-        for (let j = i + 1; j < ws.length && ws[j].startsWith('-'); j++) {
+        for (let j = i + 1; j < ws.length && unquote(ws[j]).startsWith('-'); j++) { // env "-S" is still -S
           const w = unquote(ws[j]);
           // GNU env's options whose value is the next word: -u/--unset NAME, -C/--chdir DIR, -a/--argv0 ARG (also at
           // the end of a cluster, -iu NAME). The signal options take their value attached (--block-signal=SIG).
@@ -124,11 +187,13 @@ export function cPayloads(cmd: string): string[] {
         }
       }
       if (!SHELLS.has(name)) continue;
-      let c = false;
+      // A shell's payload is its first non-option word after -c (sh -c -x CMD, bash -c -o pipefail CMD); script's -c
+      // takes the next word, whatever it is.
+      let c = false, ended = false;
       for (let j = i + 1; j < ws.length; j++) {
-        const w = ws[j];
-        if (c && w === '--') continue; // bash -c -- CMD
-        if (c) { out.push(unquote(w)); break; }
+        const w = unquote(ws[j]); // a quoted or escaped option is still an option: bash "-c" -m CMD, sh -c \\-x CMD
+        if (c && !ended && (w === '--' || w === '-')) { ended = true; continue; } // bash -c -- CMD
+        if (c && (ended || name === 'script' || !/^[-+]/.test(w))) { out.push(w); break; }
         if (SHELL_VALUE.test(w)) { j++; continue; }
         if (!/^[-+]/.test(w)) break;
         if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(w)) c = true;
@@ -143,8 +208,9 @@ export function cPayloads(cmd: string): string[] {
  * or a here-document body. Only when the command reads its program from stdin (no script file, no -c/-e). `start`
  * finds where the command runs in a list of words (the caller's walk, stopping at shells and interpreters).
  */
-export function stdinPrograms(cmd: string, start: (ws: string[]) => number): { name: string; text: string }[] {
-  const out: { name: string; text: string }[] = [];
+/** `lines`, on a heredoc's program: the operator's line and the end line (lines.length when there is none). */
+export function stdinPrograms(cmd: string, start: (ws: string[]) => number): { name: string; text: string; lines?: [number, number] }[] {
+  const out: { name: string; text: string; lines?: [number, number] }[] = [];
   // Reads its program from stdin: only flags follow (bash -s, node -), none of them -c/-e/-p.
   const reads = (ws: string[], k: number) =>
     k < ws.length && ws.slice(k + 1).every((w) => w === '-' || /^\d*<<?-?/.test(w) || (/^-[a-zA-Z]*$/.test(w) && !/^-[a-zA-Z]*[cep]/.test(w)));
@@ -169,14 +235,24 @@ export function stdinPrograms(cmd: string, start: (ws: string[]) => number): { n
   }
   // cmd <<'EOF' … EOF (the body is not split into commands by the reader above)
   const lines = cmd.split('\n');
+  // Where each possible end word stands, so finding a body's end is one step, not a search to the end (re-review 20, P1).
+  let ends: Map<string, { at: number[]; next: number }> | undefined;
   for (let i = 0; i < lines.length; i++) {
     const m = /<<-?\s*(['"]?)([A-Za-z_]\w*)\1/.exec(lines[i]);
     if (!m || /<<</.test(lines[i])) continue;
     const before = words(lines[i].slice(0, m.index));
     const k = start(before.map((w) => w.replace(/["']/g, '')));
     if (!reads(before, k)) continue;
-    const end = lines.findIndex((l, j) => j > i && l.trim() === m[2]);
-    out.push({ name: commandName(before[k] ?? ''), text: lines.slice(i + 1, end < 0 ? lines.length : end).join('\n') });
+    if (!ends) {
+      ends = new Map();
+      lines.forEach((l, j) => { const t = l.trim(); if (/^[A-Za-z_]\w*$/.test(t)) (ends!.get(t) ?? ends!.set(t, { at: [], next: 0 }).get(t)!).at.push(j); });
+    }
+    const e = ends.get(m[2]);
+    while (e && e.next < e.at.length && e.at[e.next] <= i) e.next++; // i only grows, so each list is walked once
+    const end = e?.at[e.next] ?? lines.length;
+    // The body is built only when read: callers keep shell and interpreter programs and drop the rest.
+    let text: string | undefined;
+    out.push({ name: commandName(before[k] ?? ''), get text() { return (text ??= lines.slice(i + 1, end).join('\n')); }, lines: [i, end] });
   }
   return out;
 }

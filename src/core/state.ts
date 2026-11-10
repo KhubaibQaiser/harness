@@ -26,6 +26,7 @@ export interface SessionState {
   pendingNotice?: string; // a blocked ConfigChange, shown at the next prompt
   decisionHits?: { pattern: string; excerpt: string }[]; // team-decision signals from prompts, at most 3
   decisionNudged?: true; // the team-decision nudge was shown this session
+  decisionsWarned?: string[]; // team decisions the Stop warning already named this session
   rememberAdded?: true; // a harness remember add ran this session
 }
 

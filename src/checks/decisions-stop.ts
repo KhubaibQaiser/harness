@@ -4,6 +4,7 @@ import { appendEvent } from '../core/events.js';
 import { redactSecrets } from '../core/secrets.js';
 import type { Check, Ctx } from '../hooks/check.js';
 import type { Decision } from '../hooks/types.js';
+import { decisionWarnings } from './decisions-warn.js';
 import { readTranscript } from './multi-file.js';
 
 type Signals = readonly [id: string, re: RegExp][];
@@ -97,7 +98,11 @@ export const decisionSignals: Check = {
 
 /** The Stop notes for team decisions. Called only on the gate's allow path, so a note it returns is shown. */
 export function decisionNotes(ctx: Ctx, changed: string[]): string[] {
-  void changed; // Task 13: warnings for decisions linked to changed files
+  const warnings = decisionWarnings(ctx, changed);
+  return [...warnings, ...nudge(ctx)];
+}
+
+function nudge(ctx: Ctx): string[] {
   const { config, state } = ctx;
   if (ctx.unattended || !config.decisions.nudge || state.decisionNudged || state.rememberAdded) return [];
   const hit = state.decisionHits?.[0];

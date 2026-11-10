@@ -8,6 +8,7 @@ import { readEvents } from '../../../src/core/events.js';
 import { readTiming } from '../../../src/core/timing.js';
 import { readState, writeState } from '../../../src/core/state.js';
 import { decisionSignals } from '../../../src/checks/decisions-stop.js';
+import { decision, writeDecision } from '../../core/decisions-helpers.js';
 import { type Ctx, detectBaseHead, dispatch, registry } from '../../../src/hooks/dispatch.js';
 
 // Existing tests fake the exec; pretend every binary is on PATH (found as itself: on Windows the gate execs the found path).
@@ -495,4 +496,13 @@ test('nudge: the gave-up allow shows it too', async () => {
   s.ctx.state = { ...s.ctx.state, ...HIT };
   for (let n = 1; n <= 3; n++) expect(await runStop(s.ctx, s.exec(SRC, 'test'))).toMatchObject({ kind: 'block' });
   expect(text(await runStop(s.ctx, s.exec(SRC, 'test')))).toMatch(NUDGE);
+});
+
+test('a team-decision warning is a note: the gate allows with context, never blocks, and stopAttempts is untouched', async () => {
+  const s = setup({ attempts: 1 });
+  writeDecision(s.root, decision('2026-11-01-w', { verified_on: new Date().toISOString().slice(0, 10), paths: ['src/**'] }));
+  const d = await runStop(s.ctx, s.exec(SRC));
+  expect(d).toMatchObject({ kind: 'context', check: 'stop' });
+  expect((d as { text: string }).text).toContain('team decision `2026-11-01-w`');
+  expect(s.ctx.state.stopAttempts).toBe(0); // the pass resets it, as for any allow
 });

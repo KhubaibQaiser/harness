@@ -9,7 +9,8 @@ import type { CatalogItem } from './schema.js';
 export const measurable = (i: CatalogItem): boolean => (i.kind === 'plugin' || i.kind === 'external-skill') && (i.source.type === 'github' || i.source.type === 'git-subdir');
 
 /** Tokens the item adds to context at its pinned commit, by the same count `harness vet` makes. */
-export function measureItemContext(item: CatalogItem, exec: ExecBytes): { tokens: number } | { error: string } {
+/** `limit`: the archive is past vet's size limits, a lasting property of the pin rather than a failed check. */
+export function measureItemContext(item: CatalogItem, exec: ExecBytes): { tokens: number } | { error: string; limit?: true } {
   const s = item.source;
   if (s.type !== 'github' && s.type !== 'git-subdir') return { error: `${item.id}: source has no pinned commit` };
   const path = s.type === 'git-subdir' ? s.path : '';

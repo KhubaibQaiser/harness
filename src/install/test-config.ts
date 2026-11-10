@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { refuseSymlink } from './apply.js';
 import { join, relative, resolve, sep } from 'node:path';
 import { parseModule } from 'magicast';
 import type { PackageFacts } from './detect.js';
@@ -119,6 +120,7 @@ function vitestChange(pkg: PackageFacts, root: string, path: string): TestConfig
   let before: string;
   let lf = '';
   let ins: Ins[] | null = null;
+  refuseSymlink(root, rel!);
   try {
     before = readFileSync(join(root, rel!), 'utf8');
     lf = before.replace(/\r\n/g, '\n');
@@ -205,6 +207,7 @@ function jestConfigLines(pkg: PackageFacts, root: string, pkgJson: Record<string
   if (!pkg.testConfig) return out;
   const cfgRel = pkg.dir === '.' ? pkg.testConfig : `${pkg.dir}/${pkg.testConfig}`;
   let lf: string;
+  refuseSymlink(root, cfgRel);
   try {
     lf = readFileSync(join(root, pkg.dir, pkg.testConfig), 'utf8').replace(/\r\n/g, '\n');
   } catch {
@@ -246,6 +249,7 @@ export function jestCoverageUnreadable(root: string, dir: string, pkgJson: Recor
   if (!testConfig) return null;
   const cfgRel = dir === '.' ? testConfig : `${dir}/${testConfig}`;
   let lf: string;
+  refuseSymlink(root, cfgRel);
   try {
     lf = readFileSync(join(root, dir, testConfig), 'utf8').replace(/\r\n/g, '\n');
   } catch {
@@ -295,6 +299,7 @@ function jestChange(pkg: PackageFacts, root: string, path: string): TestConfigRe
   if (!/^jest(\s+[\w=.:,/@-]+)*$/.test(orig) || !/^[\w./@-]+$/.test(path)) return manualFor();
   let before: string;
   let pkgJson: Record<string, any>;
+  refuseSymlink(root, rel);
   try {
     before = readFileSync(join(root, rel), 'utf8');
     pkgJson = JSON.parse(before);
@@ -313,6 +318,7 @@ function jestChange(pkg: PackageFacts, root: string, path: string): TestConfigRe
   if (pkgJson.jest?.preset !== undefined) return inConfig(`${rel} "jest"`);
   if (pkg.testConfig) {
     let cfgText: string;
+    refuseSymlink(root, pkg.dir === '.' ? pkg.testConfig : `${pkg.dir}/${pkg.testConfig}`);
     try { cfgText = readFileSync(join(root, pkg.dir, pkg.testConfig), 'utf8').replace(/\r\n/g, '\n'); } catch { return manualFor(); }
     if (/\brootDir\b/.test(cfgText)) return manualFor();
     if (!ownJestConfig(jestConfigObject(cfgText))) return inConfig(pkg.dir === '.' ? pkg.testConfig : `${pkg.dir}/${pkg.testConfig}`);
@@ -341,6 +347,7 @@ export function hasResultsOutput(pkg: PackageFacts, root: string, resultsDir: st
   if (pkg.test === 'jest' && oldJestFlags(path).some((o) => pkg.scripts.test?.endsWith(o))) return false; // fails on a fresh clone
   const file = pkg.test === 'vitest' ? pkg.testConfig : pkg.test === 'jest' ? 'package.json' : undefined;
   if (!file) return false;
+  refuseSymlink(root, pkg.dir === '.' ? file : `${pkg.dir}/${file}`);
   try {
     return readFileSync(join(root, pkg.dir, file), 'utf8').includes(path);
   } catch {
@@ -363,6 +370,7 @@ export function resultsRename(pkg: PackageFacts, root: string, resultsDir: strin
     if (!file) continue;
     const rel = pkg.dir === '.' ? file : `${pkg.dir}/${file}`;
     let before: string;
+    refuseSymlink(root, rel);
     try { before = readFileSync(join(root, rel), 'utf8'); } catch { continue; }
     const hits = [...before.matchAll(re)];
     if (hits.length !== 1) continue;

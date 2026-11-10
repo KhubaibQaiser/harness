@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { budgetGate } from '../../src/cli/install-selection.js';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -7,6 +8,7 @@ import { parseDocument } from 'yaml';
 import { items } from '../../src/cli/items.js';
 import { doctor } from '../../src/cli/doctor.js';
 import { status } from '../../src/cli/status.js';
+import { itemContext } from '../../src/budget/measure.js';
 import { sync } from '../../src/cli/sync.js';
 import { uninstall } from '../../src/cli/uninstall.js';
 import type { Prompt } from '../../src/cli/prompt.js';
@@ -143,9 +145,62 @@ test('add and sync count the same tokens for the same repo state', async () => {
   const line = (o: string) => o.split('\n').filter((l) => /Approved earlier|context/i.test(l));
   const s = await syn(root, ['--dry-run']);
   const a = await add(root, 'add', ['staff-reviewer', '--dry-run']);
-  expect(s.out).toMatch(/Approved earlier, not counted: .*agents-md/);
-  expect(a.out).toMatch(/Approved earlier, not counted: .*agents-md/);
+  expect(s.out).toMatch(/Approved earlier: .*agents-md/);
+  expect(a.out).toMatch(/Approved earlier: .*agents-md/);
   expect(line(s.out).find((l) => l.startsWith('Approved'))).toBe(line(a.out).find((l) => l.startsWith('Approved')));
+});
+
+// Final review I2: approved items count in both before and after, so the ask sees the real total and still never re-asks them.
+test('installed items push the repo near the budget: a small add asks, and its total is status plus the item', async () => {
+  const root = installed();
+  const st = async () => { let out = ''; await status([], { env: CLAUDE, root, out: (s) => (out += s + '\n') }); return Number(/Context: ~([\d,]+) of/.exec(out)![1].replace(/,/g, '')); };
+  const total = await st();
+  const p = join(root, CONFIG);
+  const doc = parseDocument(readFileSync(p, 'utf8'));
+  doc.setIn(['context', 'budget_tokens'], total + 5); // the item adds more than 5
+  writeFileSync(p, doc.toString());
+  commitAll(root);
+  const a = await add(root, 'add', ['staff-reviewer', '--yes']);
+  expect(a.code, a.out).toBe(2);
+  expect(a.out).toContain('Over budget: confirm before installing.');
+  expect(a.out).toMatch(/Approved earlier: .*agents-md\./);
+  const sr = itemContext(loadCatalog().catalog.items.find((i) => i.id === 'staff-reviewer')!, { templates: templatesDir }).tokens!;
+  expect(Number(/Always-loaded context: ~([\d,]+) tokens/.exec(a.out)![1].replace(/,/g, ''))).toBe((await st()) + sr);
+});
+
+// Re-review N1: adding agents-md makes CLAUDE.md import AGENTS.md, so the repo's own AGENTS.md text starts loading.
+test('add agents-md asks when the AGENTS.md text its new import makes load takes the total past the budget', async () => {
+  const root = installed(OWN.filter((id) => id !== 'agents-md'), { ...REPO, 'CLAUDE.md': '# Team\n', 'AGENTS.md': '# Mine\n' + 'x'.repeat(8000) + '\n' });
+  const a = await add(root, 'add', ['agents-md', '--yes']);
+  expect(a.code, a.out).toBe(2);
+  expect(a.out).toContain('Over budget: confirm before installing.');
+  expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# Team\n');
+});
+
+// Fix round 3: a CLAUDE.md that already imports AGENTS.md by hand gets no new line, so the ask counts no second one.
+test('add agents-md with a hand-written @AGENTS.md line: the ask total equals status afterwards', async () => {
+  const root = installed(OWN.filter((id) => id !== 'agents-md'), { ...REPO, 'CLAUDE.md': '# Team\n@AGENTS.md\n' });
+  const d = await add(root, 'add', ['agents-md', '--dry-run']);
+  const preview = Number(/Always-loaded context: ~([\d,]+) tokens/.exec(d.out)![1].replace(/,/g, ''));
+  expect((await add(root, 'add', ['agents-md', '--yes'])).code).toBe(0);
+  expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# Team\n@AGENTS.md\n');
+  let out = '';
+  await status([], { env: CLAUDE, root, out: (s) => (out += s + '\n') });
+  expect(preview, d.out + out).toBe(Number(/Context: ~([\d,]+) of/.exec(out)![1].replace(/,/g, '')));
+});
+
+// Fix round 4: the gate never overlays a planned AGENTS.md that is a link, so its planned text is not counted as the file's.
+test.skipIf(process.platform === 'win32')('the budget gate ignores a planned change to a symlinked AGENTS.md', async () => {
+  const dot = '.' + 'env';
+  const root = installed(OWN.filter((id) => id !== 'agents-md'));
+  writeFileSync(join(root, dot), 'API_TOKEN=fake-value-not-a-secret');
+  rmSync(join(root, 'AGENTS.md'));
+  symlinkSync(dot, join(root, 'AGENTS.md'));
+  const lines: string[] = [];
+  const stop = await budgetGate({ cat: loadCatalog().catalog, before: [], after: [], exempt: [], changes: [{ kind: 'update', rel: 'AGENTS.md', before: '', after: 'x'.repeat(40000), blocks: [] }], budget: 2000, templatesDir, root, env: {}, out: (l) => lines.push(l), f: { yes: true, dryRun: false, overBudget: false } });
+  expect(stop).toBeNull();
+  expect(lines.join('\n')).not.toContain('fake-value');
+  expect(Number(/~([\d,]+) tokens/.exec(lines[0])![1].replace(/,/g, ''))).toBeLessThan(2000);
 });
 
 // M1

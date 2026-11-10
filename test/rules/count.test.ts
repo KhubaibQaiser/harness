@@ -85,6 +85,13 @@ describe('countViolations', () => {
     expect(c.eslint.error).toBe('eslint output was not valid JSON');
   });
 
+  it('runs no tsc at all when there are no ts options', async () => {
+    const f = fake({ eslint: [{ status: 0, stdout: '[]' }] });
+    const c = await countViolations(root, { ...proposal(), ts: {} }, f.exec);
+    expect(f.calls.filter((x) => !x[0]!.endsWith('eslint.js'))).toEqual([]);
+    expect(c.ts).toEqual({ byOption: {}, baseline: null });
+  });
+
   it('gives the ts delta over the baseline', async () => {
     const f = fake({ tsc: (a) => ({ status: 2, stdout: tscOut(a.some((x) => x.includes('tsconfig.noUnchecked')) ? 10 : 3) }) });
     const c = await countViolations(root, proposal(), f.exec);

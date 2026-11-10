@@ -284,3 +284,27 @@ test('config.ts imports no presets or load code (the hook bundle reads it)', () 
   const imports = readFileSync('src/core/config.ts', 'utf8').split('\n').filter((l) => /^import /.test(l));
   expect(imports.filter((l) => /presets|load/.test(l))).toEqual([]);
 });
+
+const withDecisions = (body: string) => dirWith('.harness/config.yaml', `decisions:\n${body}\n`);
+
+test('decisions defaults, and no section loads clean', () => {
+  expect(defaults().checks.decisions).toBe(true);
+  expect(defaults().decisions).toEqual({ max_lines: 20, expiry_days: 90, nudge: true });
+  const r = loadConfig(dirWith('.harness/config.yaml', 'version: 1\n'));
+  expect(r.warnings).toEqual([]);
+  expect(r.config.decisions).toEqual(defaults().decisions);
+});
+
+test.each([
+  ['  max_lines: 4', '"decisions.max_lines" must be an integer from 5 to 200'],
+  ['  max_lines: 201', '"decisions.max_lines" must be an integer from 5 to 200'],
+  ['  expiry_days: 6', '"decisions.expiry_days" must be an integer from 7 to 365'],
+  ['  expiry_days: 366', '"decisions.expiry_days" must be an integer from 7 to 365'],
+  ["  nudge: 'yes'", '"decisions.nudge" must be a boolean'],
+])('decisions invalid value %s', (yaml, msg) => {
+  expect(loadConfig(withDecisions(yaml)).errors).toEqual([msg]);
+});
+
+test.each(['  max_lines: 5', '  max_lines: 200', '  expiry_days: 7', '  expiry_days: 365'])('decisions boundary %s passes', (yaml) => {
+  expect(loadConfig(withDecisions(yaml)).errors).toEqual([]);
+});

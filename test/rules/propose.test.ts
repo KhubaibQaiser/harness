@@ -87,6 +87,21 @@ describe('propose', () => {
     expect(propose(web, pkgs, ALL_PLUGINS).ts).toEqual(TS_OPTIONS);
   });
 
+  it('lists only the no-lint rows of the detected stacks', () => {
+    const rows = (st: Stack[]) => propose(new Set(st), pkgs, ALL_PLUGINS).noLint.map((n) => n.antiPattern);
+    expect(rows(['ts'])).toEqual(['log-only catch', 'mutating shared state', 'magic strings']);
+    expect(rows(['ts', 'react', 'next'])).toContain('layout shift');
+    expect(rows(['ts', 'react', 'next'])).not.toContain('inline renderItem');
+    expect(rows(['ts', 'react', 'rn'])).toContain('inline renderItem');
+    expect(rows(['ts', 'react', 'rn'])).not.toContain('layout shift');
+  });
+
+  it('leaves plugins out when no plugin is installed', () => {
+    const { configText } = propose(new Set<Stack>(['ts']), pkgs, new Set());
+    expect(configText).not.toContain('plugins');
+    expect(run(configText, {})[0]).toEqual({ files: ['**/*.{ts,tsx,mts,cts}'] });
+  });
+
   const run = (text: string, plugins: Record<string, unknown>) => {
     // Evaluate the emitted config with fake plugin modules; returns the flat config array.
     const names = [...text.matchAll(/^import (\w+) from '([^']+)';$/gm)];

@@ -12,6 +12,21 @@ export type Change =
   | { kind: 'update'; rel: string; before: string; after: string; blocks: string[]; replace?: Hunk[]; formatted?: true; unformatted?: true; rename?: { from: string; to: string }; dropped?: string[]; item?: string; /** Harness wrote the whole file (the AI-path config): record its new hash. */ rewrite?: true; /** The backup this change restored: the file is the person's again, so its entry and backup go. */ restored?: string }
   | { kind: 'delete'; rel: string; before: string };
 
+/** True when `rel`, or any folder on the way to it, is a symlink. */
+export function linkedPath(root: string, rel: string, fs: Pick<typeof nodeFs, 'lstatSync'> = nodeFs): boolean {
+  let p = root;
+  for (const part of rel.split('/')) {
+    p = join(p, part);
+    if (fs.lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink()) return true;
+  }
+  return false;
+}
+
+/** The one refusal for a link: apply never writes through one, and the plan never reads through one (dry runs too). */
+export function refuseSymlink(root: string, rel: string, fs: Pick<typeof nodeFs, 'lstatSync'> = nodeFs): void {
+  if (linkedPath(root, rel, fs)) throw new ApplyError(`refusing symlink: ${rel}`);
+}
+
 export type FsLike = Pick<
   typeof nodeFs,
   'readFileSync' | 'writeFileSync' | 'renameSync' | 'unlinkSync' | 'mkdirSync' | 'rmSync' | 'lstatSync' | 'existsSync' | 'copyFileSync' | 'chmodSync' | 'rmdirSync'
@@ -55,11 +70,7 @@ export function applyChanges(
     const r = relative(resolve(root), resolve(root, rel));
     if (isAbsolute(rel) || r === '' || r === '..' || r.startsWith('..' + sep) || isAbsolute(r))
       throw new ApplyError(`refusing path outside the repo: ${rel}`);
-    let p = root;
-    for (const part of rel.split('/')) {
-      p = join(p, part);
-      if (fs.lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink()) throw new ApplyError(`refusing symlink: ${rel}`);
-    }
+    refuseSymlink(root, rel, fs);
   };
   for (const c of changes) {
     const base = c.rel.split('/').pop()!;

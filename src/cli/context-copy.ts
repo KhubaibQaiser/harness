@@ -21,7 +21,7 @@ const OWNER_ORDER = ['repo', 'harness', 'preset', 'catalog'];
 
 const ownerWord = (o: Owner): string => o.split(':')[0];
 const num = (n: number, approx: boolean): string => (approx ? '~' : '') + n.toLocaleString('en-US');
-const right = (left: string, n: string): string => left + ' '.repeat(Math.max(1, REPORT_WIDTH - left.length - n.length)) + n;
+const right = (width: number) => (left: string, n: string): string => left + ' '.repeat(Math.max(1, width - left.length - n.length)) + n;
 const kept = (e: SourceEntry): boolean => e.note === CATALOG_ESTIMATE || e.note === ESTIMATE_NOTE;
 const labelOf = (e: SourceEntry): string => e.label + (e.note ? ` (${e.note})` : '');
 
@@ -52,17 +52,21 @@ export function reportText(s: ContextSet, recs: Rec[], fallback: string | null, 
   const rank = (e: SourceEntry) => OWNER_ORDER.indexOf(ownerWord(e.owner));
   const always = [...s.always].sort((a, b) => rank(a) - rank(b));
   const onDemand = s.onDemand.reduce((n, e) => n + e.tokens, 0);
+  const alwaysRows = always.map((e): [string, string] => [`  ${ownerWord(e.owner).padEnd(OWNER_WIDTH)}${labelOf(e)}`, tok(e)]);
+  const onDemandRows = s.onDemand.map((e): [string, string] => [`  ${labelOf(e)}`, tok(e)]);
+  // A label wider than REPORT_WIDTH widens the whole table, so the token column stays aligned.
+  const row = right(Math.max(REPORT_WIDTH, ...[...alwaysRows, ...onDemandRows].map(([l, n]) => l.length + 1 + n.length)));
   return [
     header(s, hint),
     ...(fallback ? [`Couldn't use the token-counting API (${fallback}); counts are best estimates.`] : []),
     '',
-    right('Always loaded', 'tokens'),
-    ...always.map((e) => right(`  ${ownerWord(e.owner).padEnd(OWNER_WIDTH)}${labelOf(e)}`, tok(e))),
-    right('  Total', num(s.total, !exact)),
+    row('Always loaded', 'tokens'),
+    ...alwaysRows.map(([l, n]) => row(l, n)),
+    row('  Total', num(s.total, !exact)),
     ...s.unmeasured.filter((u) => !u.startsWith('mcp: ')).map(unmeasuredLine),
     '',
     `${ON_DEMAND}   ${num(onDemand, !exact)}`,
-    ...s.onDemand.map((e) => right(`  ${labelOf(e)}`, tok(e))),
+    ...onDemandRows.map(([l, n]) => row(l, n)),
     `  after compaction: state card, at most ~${STATE_CARD_MAX_TOKENS}`,
     '',
     closing(s),

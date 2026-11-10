@@ -116,9 +116,9 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   }
   for (const f of gone) out(`  forget ${f.rel} (${f.item} is not selected)`);
   if (merged.length) out(`You edited these files; sync changes only the harness parts: ${list(merged)}.`);
-  // Installed items are approved: they show, but only a selected item that was never installed counts.
+  // Installed items are approved: they count on both sides, so only a selected item that was never installed can ask.
   const approved = approvedIds(config, man, cat);
-  const stop = await budgetGate({ cat, before: approved, after: have, exempt: approved, extra: recordedExtra(root, config), extraBefore: recordedExtra(root, config), budget: config.context.budget_tokens, templatesDir: cli.templatesDir, root, env: cli.env, out, f: { yes, dryRun, overBudget } });
+  const stop = await budgetGate({ cat, before: approved, after: have, exempt: approved, extra: recordedExtra(root, config), extraBefore: recordedExtra(root, config), changes, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, root, env: cli.env, out, f: { yes, dryRun, overBudget } });
   if (stop !== null) return stop;
   if (dryRun) {
     if (missing.length) out(`Plugins not installed: ${missing.join(', ')}. ${installFlag ? 'Would install them.' : 'Run with --install-plugins to install them.'}`);

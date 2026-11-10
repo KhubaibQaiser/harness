@@ -6,10 +6,10 @@ import { basename, join } from 'node:path';
 import { loadCatalog, type LoadedCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
 import type { HarnessConfig } from '../core/config.js';
-import { readManifest } from '../install/manifest.js';
+import { ManifestError, readManifest, type Manifest } from '../install/manifest.js';
 import { selectedIds } from '../install/plan.js';
 import { realIO, type RepoIO } from './imports.js';
-import { measureSelectionSync } from './measure.js';
+import { alwaysLoadedText, measureSelectionSync } from './measure.js';
 import { ownersFrom, type Owner } from './owners.js';
 import { measureRepo, type SourceEntry } from './sources.js';
 
@@ -25,29 +25,39 @@ export interface ContextSet {
 
 export const repoOnly = (s: { always: SourceEntry[] }): SourceEntry[] => s.always.filter((e) => e.owner === 'repo');
 
-/** `skills harness:a, b` plus the agents plugin.json registers. */
+/** `skills harness:a, harness:b` for the skills that load a listing (not disable-model-invocation), plus the agents plugin.json registers. */
 function pluginLabel(plugin: string): string {
   const skills = join(plugin, 'skills');
   let agents: string[] = [];
   try {
     agents = (JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')) as { agents?: string[] }).agents ?? [];
   } catch { /* no readable manifest: skills only */ }
-  const names = existsSync(skills) ? readdirSync(skills) : [];
-  return `skills harness:${names.join(', ')}${agents.length ? ` + agents ${agents.map((a) => basename(a, '.md')).join(', ')}` : ''}`;
+  const listedSkill = (d: string): boolean => {
+    try { return alwaysLoadedText('skill', readFileSync(join(skills, d, 'SKILL.md'), 'utf8')) !== ''; } catch { return true; } // unreadable: keep the name, the row says what it can
+  };
+  const names = (existsSync(skills) ? readdirSync(skills) : []).filter(listedSkill);
+  return `skills ${names.map((n) => `harness:${n}`).join(', ')}${agents.length ? ` + agents ${agents.map((a) => basename(a, '.md')).join(', ')}` : ''}`;
 }
 
-/** `catalog`: one already loaded (status shares its load). `catalogDir`: for tests. The bundled catalog by default. */
-export function contextSet(root: string, config: HarnessConfig, dirs: { templates: string; plugin: string }, io: RepoIO = realIO, o: { catalog?: LoadedCatalog; catalogDir?: string } = {}): ContextSet {
+/** `catalog`: one already loaded (status shares its load). `catalogDir`: for tests. The bundled catalog by default. `manifestNote`: a manifest that can't be read is a note, not a throw (harness context). */
+export function contextSet(root: string, config: HarnessConfig, dirs: { templates: string; plugin: string }, io: RepoIO = realIO, o: { catalog?: LoadedCatalog; catalogDir?: string; manifestNote?: boolean } = {}): ContextSet {
   const loaded = o.catalog ?? loadCatalog(o.catalogDir);
   const cat: Catalog | null = loaded.errors.length ? null : loaded.catalog;
   // Without the catalog own items can't be told from picks; harness wrote every manifest file, so it owns them.
-  const owners = ownersFrom(readManifest(root), cat);
+  let manifest: Manifest | null = null;
+  let manifestNote: string | null = null;
+  try { manifest = readManifest(root); } catch (e) {
+    if (!(e instanceof ManifestError) || !o.manifestNote) throw e;
+    manifestNote = `${e.message} Until then harness's own files count as the repo's.`; // reported, never a crash (spec §5 has no exit code for it)
+  }
+  const owners = ownersFrom(manifest, cat);
   if (!cat) for (const [k, v] of owners) if (v.startsWith('catalog:')) owners.set(k, 'harness');
   const repo = measureRepo(root, { owners, preset: config.preset?.id ?? null }, io);
   const always = [...repo.always];
   const unmeasured = [...repo.unmeasured];
   const notes = [...repo.notes];
   if (!cat) notes.push(BAD_CATALOG);
+  if (manifestNote) notes.push(manifestNote);
 
   const byId = new Map((cat?.items ?? []).map((i) => [i.id, i]));
   const picks = selectedIds(config).filter((id) => PICK_KINDS.has(byId.get(id)?.kind ?? ''));

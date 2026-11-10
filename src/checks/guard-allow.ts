@@ -2,7 +2,7 @@
 // stdin heredoc, is data only when every simple command on the line is a known-safe one, with safe options, no
 // assignment prefix, and no command substitution anywhere: a list of what can run the text again can never be complete,
 // so anything off the list makes the message code.
-import { pieces, unquote, words } from '../core/shell-words.js';
+import { pieces, remember, unquote, words } from '../core/shell-words.js';
 import { BARE_REDIRECT, REDIRECT_WORD, SHELLS } from './guard-reruns.js';
 
 /** Commands a message may share a line with: they run no text they are given and write no files. `test`/`[`/`[[`/
@@ -246,7 +246,8 @@ export function writesGitOutputToSensitivePath(cmd: string): boolean {
 /** The files git output could reach on this line: every redirect target plus every `tee` argument, but only when the
  *  line runs a git-output command (`log`, `show`, `rev-parse`, `cat-file`). Over-approximate on purpose — a git-output
  *  line that writes any file is the always-block shape, grouped or piped. */
-function gitOutputTargets(cmd: string): string[] {
+const gitOutputTargets = remember(gitOutputTargetsOf); // both always-block tests ask it of the same three readings
+function gitOutputTargetsOf(cmd: string): string[] {
   const ps = pieces(cmd);
   const hasGitOutput = ps.some((p) => {
     const ws = words(p.text).map(unquote), k = commandWord(ws);

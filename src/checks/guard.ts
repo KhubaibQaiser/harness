@@ -3,10 +3,10 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
-import { cPayloads, SHELLS, stdinPrograms, withWorkBudget } from '../core/shell-words.js';
+import { cPayloads, remember, SHELLS, stdinPrograms, withWorkBudget } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
-import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, joinVariant, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
 import { type Quoted, Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
 import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
@@ -43,7 +43,8 @@ const takesValue = (wrapper: string, t: string): boolean => {
   return i === t.length - 2;
 };
 /** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
-export const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
+export const runnerName = (t: string): string => (/^[a-z0-9_-]*$/.test(t) ? t : runnerNameOf(t)); // most words are plain
+const runnerNameOf = (t: string): string => t.slice(Math.max(t.lastIndexOf('/'), t.lastIndexOf('\\')) + 1).toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
@@ -169,7 +170,10 @@ function scriptsOf(root: string): Record<string, string> {
  * quoted, where its body ends) come only from the lexer (lexText), and only text canonicalText accepts in full has any
  * body taken out. There is no second quote reader to disagree with it (re-review 22b, F1, F3, F5).
  */
-export function withoutHeredocBodies(cmd: string): string {
+export const withoutHeredocBodies = remember(withoutBodies, () => joinVariant());
+/** What stdin feeds each command, read with the guard's command start (shells stop it); kept for the decision's repeats. */
+const shellPrograms = remember((c: string) => stdinPrograms(c, (ws) => commandStart(ws, (n) => SHELLS.has(n))));
+function withoutBodies(cmd: string): string {
   const lx = lexText(cmd);
   if (!lx?.heredocs.length || lx.heredocs.some((h) => h.to < 0)) return cmd; // no end line: nothing is hidden
   const tests = commandTests(new Scan(cmd), wholeFlags(cmd, commandSkeleton(cmd)));
@@ -209,7 +213,7 @@ function walkJoined<T>(command: string, w: Where, visit: Visit<T>, hooks: WalkHo
     // A -c payload, or a program fed to a shell on stdin (echo … | bash, <<<, a here-document), is a command line of
     // its own: judge it with all the readings (a spaced path inside it is one word).
     (depth < 3
-      ? [...cPayloads(command), ...stdinPrograms(whole, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
+      ? [...cPayloads(command), ...shellPrograms(whole).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
           .reduce<T | null>((hit, p) => hit ?? walkCommands(p, w, visit, hooks, depth + 1), null)
       : null)
   );
@@ -383,7 +387,7 @@ function shortNameOfProtected(seg: string): boolean {
 }
 
 const sensitivePath = (p: string): boolean => {
-  if (!p) return false;
+  if (!p || !/[.~]|id_/i.test(p)) return false; // every rule below needs a dot, a `~` or id_ (round 28: most words have none)
   // Backslashes as separators: Windows paths (C:\proj\...) must match the same rules. Lowercase: macOS and Windows file
   // systems ignore case. A leading `host:` (scp) or `C:` (Win32 drive-relative) hides the real path, so the part after
   // it is checked too.
@@ -733,7 +737,7 @@ export function shellNesting(c: string): number {
   let most = 0;
   for (const t of new Set([c, c.replace(JOIN, '$1')])) {
     const opens = new Array<number>(t.split('\n').length + 1).fill(0);
-    for (const p of stdinPrograms(t, (ws) => commandStart(ws, (n) => SHELLS.has(n)))) {
+    for (const p of shellPrograms(t)) {
       if (!SHELLS.has(p.name) || !p.lines) continue;
       opens[p.lines[0]]++;
       opens[p.lines[1]]--;
@@ -821,7 +825,7 @@ function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
   // text rule (sh -c 'git push -f'): judge it too.
   const inner = [
     ...cPayloads(command),
-    ...stdinPrograms(command, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text),
+    ...shellPrograms(command).filter((p) => SHELLS.has(p.name)).map((p) => p.text),
     ...[...command.matchAll(/(?<![\w-])eval\s+([^;&|\n]*)/g)].map((m) => m[1].replace(/['"\\]/g, '')),
   ];
   for (const p of inner) {

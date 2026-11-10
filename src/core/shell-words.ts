@@ -25,10 +25,31 @@ export function withWorkBudget<T>(fn: () => T): T {
 }
 /** The characters charged so far in the open run (for tests). */
 export const workSpent = (): number => work;
+/** Charges `n` characters of work to the open run (a no-op outside one); past the budget it throws WorkBudget. */
+const charge = (n: number): void => { if (work >= 0 && (work += n) > WORK_BUDGET_CHARS) throw new WorkBudget(WORK_BUDGET_WHY); };
+/**
+ * `fn` (pure, on one string) with its last few results kept, one set per `variant()` value (module state the result
+ * depends on). A repeat returns the kept result and charges the work the first call did, so a run spends and stops on
+ * the budget exactly where it did without the cache (round 28: one decision asks the same question of the same text
+ * several times). A result computed outside a run has no known cost and is computed again inside one. Results are
+ * shared: callers must not mutate them.
+ */
+export function remember<R>(fn: (a: string) => R, variant: () => number = () => 0, size = 4): (a: string) => R {
+  const sets: Map<string, { r: R; cost: number }>[] = [];
+  return (a) => {
+    const kept = (sets[variant()] ??= new Map());
+    const hit = kept.get(a);
+    if (hit && (hit.cost >= 0 || work < 0)) { if (hit.cost > 0) charge(hit.cost); return hit.r; }
+    const w0 = work, r = fn(a);
+    if (kept.size >= size) kept.delete(kept.keys().next().value!);
+    kept.set(a, { r, cost: w0 >= 0 && work >= w0 ? work - w0 : -1 });
+    return r;
+  };
+}
 
 /** The command split at ; & | && || newlines, parentheses and backticks outside quotes, with the separator after each. */
 export function pieces(cmd: string): Piece[] {
-  if (work >= 0 && (work += cmd.length) > WORK_BUDGET_CHARS) throw new WorkBudget(WORK_BUDGET_WHY);
+  charge(cmd.length);
   const out: Piece[] = [];
   let from = 0; // the piece so far is cmd.slice(from, i): offsets, not a string built a char at a time (re-review 22b, F4)
   let quote = ''; // ', ", or $ for $'…'
@@ -97,7 +118,8 @@ export function unquote(word: string): string {
 
 export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'script']);
 /** A word's command name: its last path segment, lower case, without a Windows extension or an @version (node@22). */
-export const commandName = (word: string): string =>
+export const commandName = (word: string): string => (/^[a-z0-9_-]*$/.test(word) ? word : commandNameOf(word)); // most words are plain
+const commandNameOf = (word: string): string =>
   word.replace(/["']/g, '').split(/[\\/]/).pop()!.toLowerCase().replace(/\.(exe|cmd|ps1|bat)$/, '').replace(/^([^@]+)@.*$/, '$1'); // backslashes are separators here
 
 /** GNU env -S escapes: `\_` is a space inside double quotes (a separator outside), and the C escapes. */
@@ -133,7 +155,8 @@ export function envSplit(str: string): string {
 // Shell options whose value is the next word: bash -o pipefail, -O extglob, +o history, --rcfile F, --init-file F.
 const SHELL_VALUE = /^(?:[-+][oO]|--rcfile|--init-file)$/;
 /** The commands that `sh -c`, `bash -c`, `script -c` (and the like) and `env -S` run, unquoted, wherever they appear. */
-export function cPayloads(cmd: string): string[] {
+export const cPayloads = remember(cPayloadsOf);
+function cPayloadsOf(cmd: string): string[] {
   const out: string[] = [];
   for (const seg of segments(cmd)) {
     const ws = words(seg);

@@ -3,6 +3,7 @@
 import picomatch from 'picomatch';
 import { commandStart, lexText, quoteFree, SEGMENTS, SPANS_LINES } from './guard.js';
 import { Groups, quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
+import { remember } from '../core/shell-words.js';
 import { commandTests, EDITOR_SET, type Skel, wholeFlags } from './guard-sinks.js';
 import { onlySafeCommands } from './guard-allow.js';
 import { LAST_ARG } from './guard-reruns.js';
@@ -43,6 +44,8 @@ class Budget {
 
 /** Whether `\` CR LF is a line continuation. The base reading says yes; bash and zsh say no. Set only by eachJoin. */
 let crJoins = true;
+/** Which join rule is in force, for caches of results that depend on it. */
+export const joinVariant = (): number => +crJoins;
 /** Every backslash-newline joined, `\` CR LF too unless eachJoin is reading it the shell's way. Only after an odd run
  *  of backslashes (JOIN): `\\<newline>` is an escaped backslash and a line end. */
 export const joinAll = (t: string): string => t.replace(crJoins ? JOIN : /(?<!\\)((?:\\\\)*)\\\n/g, '$1');
@@ -197,7 +200,7 @@ const spaced = (c: string) => (q: Quoted) => /\s/.test(c.slice(q.start, q.end));
 /** The glob readings' start: data out, and every quoted span with whitespace in it is data (a commit message's `* one`
  *  bullet, a JSDoc ` * ` line, a regex's `(a|b)`). -c payloads and eval's words are read on their own by the guard.
  *  A quoted single word stays: `'g?t' push` is read as a glob. */
-const words = (c: string): string => withoutData(c, spaced);
+const words = remember((c: string): string => withoutData(c, spaced), joinVariant);
 /** A message value: `-m`, `-am`, `--message`, `--body`, `--title` or `--notes` right before the quoted span. */
 const MESSAGE_FLAG = /(?:^|\s)(?:-[a-zA-Z]*m|--message|--body|--title|--notes)(?:=|[ \t]+)$/;
 const before = (c: string, q: Quoted) => c.slice(Math.max(0, q.start - 16), q.start);
@@ -220,7 +223,7 @@ const messages: Blank = Object.assign((c: string, tests: Tests, sk: Skel) => {
     return (q: Quoted) => msg(q) && (!safe || edited(tests, q));
   },
 });
-export const textRulesView = (c: string): string => withoutData(c, messages);
+export const textRulesView = remember((c: string): string => withoutData(c, messages), joinVariant);
 
 /** The offsets of each segment's command word, as commandStart reads it. Alternation groups are masked first, so their
  *  `(`, `|` and `)` split nothing. */
@@ -271,6 +274,16 @@ function alternations(c: string, out: string[], b: Budget): boolean {
 
 /** Readings of one segment: its command-position glob word (g?t, gi[t], *it, /usr/bin/g?t, dist/cl?.mjs) as each ruled
  *  name it can match, its directory kept, then again for the word that becomes the command (s?do g?t). True when capped. */
+const ruled = new Map<string, string[]>(); // glob word -> the ruled names it matches (round 28: `* a; ` 3000 times)
+function ruledMatches(base: string): string[] {
+  let hit = ruled.get(base);
+  if (!hit) {
+    const m = picomatch(base, { nocase: true }); // macOS and Windows file systems ignore case
+    if (ruled.size >= 256) ruled.clear();
+    ruled.set(base, (hit = RULED.filter((x) => m(x))));
+  }
+  return hit;
+}
 function segmentReadings(seg: string, out: string[]): boolean {
   const ws = seg.split(/([ \t]+)/); // a capturing split: words at even indices, the spaces between them at odd ones
   const at = ws.flatMap((w, i) => (i % 2 === 0 && w ? [i] : []));
@@ -280,8 +293,7 @@ function segmentReadings(seg: string, out: string[]): boolean {
   // ponytail: quotes are dropped, so a quoted 'g?t' (literal to the shell) is read as a glob too; stricter, never looser.
   const base = last.replace(/['"]/g, '').replace(/\[!/g, '[^'); // picomatch reads only [^x] as a negated class
   if (!GLOB.test(base)) return false;
-  const m = picomatch(base, { nocase: true }); // macOS and Windows file systems ignore case
-  for (const n of RULED.filter((x) => m(x))) {
+  for (const n of ruledMatches(base)) {
     const t = [...ws.slice(0, j), tok.slice(0, tok.length - last.length) + n, ...ws.slice(j + 1)].join('');
     if (out.length >= MAX_SEGMENT_READINGS || out.length * t.length > MAX_READING_CHARS) return true;
     out.push(t);
@@ -307,10 +319,13 @@ export function globReadings(command: string): GlobReadings {
     if (capped) break;
     if (!GLOB.test(a)) continue;
     const parts = a.split((segmentSplit ??= new RegExp(`(${SEGMENTS.source})`))); // separators at odd indices
+    const seen = new Map<string, { out: string[]; capped: boolean }>(); // a segment's readings depend on its text alone
     const per = parts.map((p, i) => {
-      const out: string[] = [];
-      if (i % 2 === 0 && segmentReadings(p, out)) capped = true;
-      return out;
+      if (i % 2) return [];
+      let r = seen.get(p);
+      if (!r) { const out: string[] = []; seen.set(p, (r = { out, capped: segmentReadings(p, out) })); }
+      if (r.capped) capped = true;
+      return r.out;
     });
     const product = per.reduce((n, v) => n * (v.length + 1), 1) - 1;
     if (product <= MAX_COMBINED && b.fits(product, a.length)) {

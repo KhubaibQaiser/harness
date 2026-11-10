@@ -1,6 +1,7 @@
 // The guard's command decision as main had it at 9b1e516, kept whole: guard.ts decides with it, too, whenever the
 // command text is not in the canonical form its data exemption needs (guard.ts canonicalText), so an odd spelling is
-// never read looser than this. Changed from 9b1e516 only in JOIN and in dropping the Check object.
+// never read looser than this. Changed from 9b1e516 only in JOIN, in dropping the Check object, and (round 28) in two
+// fast paths that return what the slow path would: runnerName on a plain word, sensitivePath on a word with no `.`, `~` or id_.
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
@@ -43,7 +44,8 @@ const takesValue = (wrapper: string, t: string): boolean => {
   return i === t.length - 2;
 };
 /** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
-export const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
+export const runnerName = (t: string): string => (/^[a-z0-9_-]*$/.test(t) ? t : runnerNameOf(t)); // most words are plain (round 28)
+const runnerNameOf = (t: string): string => t.slice(Math.max(t.lastIndexOf('/'), t.lastIndexOf('\\')) + 1).toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
@@ -399,7 +401,7 @@ function shortNameOfProtected(seg: string): boolean {
 }
 
 const sensitivePath = (p: string): boolean => {
-  if (!p) return false;
+  if (!p || !/[.~]|id_/i.test(p)) return false; // every rule below needs a dot, a `~` or id_ (round 28: most words have none)
   // Backslashes as separators: Windows paths (C:\proj\...) must match the same rules. Lowercase: macOS and Windows file
   // systems ignore case. A leading `host:` (scp) or `C:` (Win32 drive-relative) hides the real path, so the part after
   // it is checked too.

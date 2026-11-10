@@ -135,7 +135,7 @@ export function globProblem(glob: string): string | null {
 }
 
 /** A name from the file safe to print: control and format characters become `?`. */
-const shown = (s: string): string => s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '?');
+export const shown = (s: string): string => s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '?');
 
 const isRealDate = (s: string): boolean => {
   const d = new Date(`${s}T00:00:00Z`);

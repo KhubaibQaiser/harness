@@ -2,7 +2,7 @@
 // spawn of an empty script, and the median of the paired differences is what the harness costs. Runs in the `perf`
 // project (no file parallelism) as its own CI step, never inside the parallel unit run. No retries: a slow result is real.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -151,6 +151,28 @@ test('attended Stop with a 50 MB transcript and no stored hit: harness overhead 
   expect(ctl.stdout).toContain('team decision');
   expect(m.overhead, `stop overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
   expect(m.total, `stop total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
+}, 120000);
+
+// Team-decision warning: 500 decisions all linked to the changed file. The Stop names at most 10 and stays inside the ceilings.
+test('attended Stop with 500 team decisions covering the changed file: harness overhead over a bare node spawn', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'h-lat-warn-'));
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  mkdirSync(join(repo, 'docs/decisions'), { recursive: true });
+  mkdirSync(join(repo, 'src'));
+  writeFileSync(join(repo, 'src/a.ts'), 'x\n'); // untracked: the session's changed file
+  const today = new Date().toISOString().slice(0, 10);
+  for (let i = 0; i < 500; i++) {
+    const id = `2026-11-01-d${String(i).padStart(3, '0')}`;
+    writeFileSync(join(repo, `docs/decisions/${id}.md`), `---\nschema: harness-decision/1\nid: ${id}\ntitle: Decision ${i}\nstatus: active\npaths:\n  - "src/**"\nverified_at: ${'a'.repeat(40)}\nverified_on: ${today}\n---\n**Rule:** Do it.\n`);
+  }
+  const input = JSON.stringify({ hook_event_name: 'Stop', session_id: 'lat', cwd: repo });
+  const m = measure(input, (r) => {
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('team decision `2026-11-01-d000`');
+    rmSync(join(repo, '.harness/state/lat.json'), { force: true }); // every run is the session's first warning
+  }, true);
+  expect(m.overhead, `warning overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS * 3);
+  expect(m.total, `warning total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 120000);
 
 // Final review I3: links back into .claude/rules once took 22 s at 3 links and never finished at 4. Each folder is now

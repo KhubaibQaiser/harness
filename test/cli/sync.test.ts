@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -14,6 +14,7 @@ import { detect } from '../../src/install/detect.js';
 import { planChanges } from '../../src/install/plan.js';
 import { preset } from '../../src/install/preset.js';
 import { makeRepo } from '../install/helpers.js';
+import { decision, writeDecision } from '../core/decisions-helpers.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const templatesDir = join(pkgDir, 'templates');
@@ -318,4 +319,46 @@ test('the preview reports uncommitted files and still exits 0', async () => {
   const r = await run(root, ['--dry-run']);
   expect(r.code, r.out).toBe(0);
   expect(r.out).toContain('Commit or stash these files first');
+});
+
+// Team decisions (spec §4.3): M3's sync also runs the decision sync. Confirmed today, so the real clock keeps it live.
+const DEC = '2026-11-03-use-zod';
+const RULE = `.claude/rules/harness-decision-${DEC}.md`;
+const withDecision = () => {
+  const root = installed();
+  writeDecision(root, decision(DEC, { verified_on: new Date().toISOString().slice(0, 10) }));
+  commitAll(root);
+  return root;
+};
+
+test('sync writes an out-of-sync decision rule and records it in the manifest', async () => {
+  const root = withDecision();
+  const r = await run(root, ['--yes']);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain(`Wrote ${RULE}`);
+  expect(existsSync(join(root, RULE))).toBe(true);
+  expect(readManifest(root)!.files.some((f) => f.rel === RULE)).toBe(true);
+  expect((await run(root, ['--yes'])).out).toContain('Nothing to sync.');
+});
+
+test('sync --dry-run lists the decision rule and writes nothing', async () => {
+  const root = withDecision();
+  const before = tree(root);
+  const r = await run(root, ['--dry-run']);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain(`create ${RULE}`);
+  expect(r.out).toContain('Dry run: nothing was written.');
+  expect(tree(root)).toEqual(before);
+});
+
+test("a foreign decision rule stops sync with the §4.3 line", async () => {
+  const root = withDecision();
+  mkdirSync(join(root, '.claude/rules'), { recursive: true });
+  writeFileSync(join(root, RULE), 'mine\n');
+  commitAll(root);
+  const before = tree(root);
+  const r = await run(root, ['--yes']);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`harness remember: ${RULE} is not harness's; rename it`);
+  expect(tree(root)).toEqual(before);
 });

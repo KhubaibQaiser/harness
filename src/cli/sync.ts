@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Catalog } from '../catalog/schema.js';
+import { foreignLine, manifestWork, planSync, readDecisions, withRules } from '../core/decisions.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { ApplyError, type Change, type FsLike, applyChanges, removeEmptyDirs } from '../install/apply.js';
@@ -69,6 +70,15 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   const gone = man.files.filter((f) => f.item && !have.includes(f.item) && !existsSync(join(root, f.rel)) && !changes.some((c) => c.rel === f.rel));
   // A file with no change still loses its dropped blocks.
   const stale = pruneStale(man, changes, planned.dropped);
+  // Team decisions (spec §4.3): the rules docs/decisions/ wants join the same transaction.
+  const today = new Date().toISOString().slice(0, 10);
+  const decided = readDecisions(root, today);
+  for (const e of decided.errors) out(`Note: ${e}`);
+  const rules = planSync(root, decided, config.decisions, today);
+  const foreign = foreignLine(rules);
+  if (foreign) return out(foreign), 1;
+  changes.push(...rules.changes);
+  const ruleFix = manifestWork(rules) > 0;
 
   const wanted = pinnedPlugins(cat.items.filter((i) => have.includes(i.id))).map((p) => `${p.name}@harness-pins`);
   let present: string[] = [];
@@ -97,7 +107,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   for (const r of kept) out(`Kept \`${r}\`: you edited it. Name it in --take to replace it with harness's version.`);
   for (const n of planned.notes) out(`Note: ${n}`);
   if (planned.manual.length) out('Do these by hand:\n' + planned.manual.map((l) => `  ${l}`).join('\n'));
-  if (!changes.length && !gone.length && !stale) {
+  if (!changes.length && !gone.length && !stale && !ruleFix) {
     if (dryRun) return out(missing.length ? `Plugins not installed: ${missing.join(', ')}. Run with --install-plugins to install them. Dry run: nothing was written.` : 'Nothing to sync. Dry run: nothing was written.'), 0;
     if (!missing.length) {
       if (record) { const r = recordInstall(); if (r !== null) return r; }
@@ -109,12 +119,13 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   const dirtyLine = `Commit or stash these files first, so the change can be undone cleanly: ${touched.join(', ')}.`;
   if (touched.length && !dryRun) return out(dirtyLine), 1;
   if (touched.length) out(dirtyLine); // a preview still says so, and exits 0
-  if (changes.length || gone.length) out('Plan:');
+  if (changes.length || gone.length || ruleFix) out('Plan:');
   for (const c of changes) {
     out(`  ${c.kind} ${c.rel}`);
     if (c.kind === 'update') out(unifiedDiff(c.before, c.after, c.rel).trimEnd());
   }
   for (const f of gone) out(`  forget ${f.rel} (${f.item} is not selected)`);
+  if (ruleFix) out(`  update ${MANIFEST_REL} (team decision rules)`);
   if (merged.length) out(`You edited these files; sync changes only the harness parts: ${list(merged)}.`);
   // Installed items are approved: they count on both sides, so only a selected item that was never installed can ask.
   const approved = approvedIds(config, man, cat);
@@ -128,7 +139,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
 
   const at = new Date();
   let files = mergeManifestFiles(man, changes, `.harness/backup/${at.toISOString().replace(/:/g, '-')}`);
-  files = files.filter((f) => !gone.some((g) => g.rel === f.rel));
+  files = withRules(root, man, files.filter((f) => !gone.some((g) => g.rel === f.rel)), rules).files;
   try {
     applyChanges(root, changes, man.version, () => at, cli.fs, { manifest: { ...man, files }, manifestBefore: rawOf(man) });
   } catch (e) {
@@ -139,7 +150,10 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   // The original is back in place. The path comes from the manifest; delete only inside .harness/backup/.
   dropRestoredBackups(root, changes);
   stampHarnessFiles(root); // change detection: these writes are harness's own
-  for (const c of changes) out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
+  for (const c of changes) {
+    if (rules.changes.includes(c)) out(`${c.kind === 'delete' ? 'Removed' : 'Wrote'} ${c.rel}`); // remember sync's copy (spec §5)
+    else out(`${c.kind === 'create' ? 'Created' : c.kind === 'delete' ? 'Removed' : 'Updated'} \`${c.rel}\``);
+  }
   let code = 0;
   if (installFlag && missing.length) code = installSelected({ root, chosen: have, cat, exec: cli.exec ?? defaultExec, out, applied: true, have: present });
   else if (record) code = recordInstall() ?? 0;

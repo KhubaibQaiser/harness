@@ -1,9 +1,9 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { afterAll, beforeAll, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { init } from '../../src/cli/init.js';
 import type { Prompt } from '../../src/cli/prompt.js';
 import { oldNodeHint, rules } from '../../src/cli/rules.js';
@@ -317,4 +317,89 @@ test('a two-hunk Prettier-formatted config with an edit in the spread is kept wh
   expect(r.out).toContain("import harnessRules from './.harness/eslint/harness.config.mjs';");
   const loaded = (await import(`${pathToFileURL(cfg).href}?t=${Date.now()}`)) as { default: unknown[] };
   expect(Array.isArray(loaded.default)).toBe(true);
+});
+
+describe('TS options', () => {
+  const TSCONFIG = '{\n  "compilerOptions": {\n    "target": "es2022"\n  },\n  "include": ["app"]\n}\n';
+  const ERRORS: Record<string, number> = { noUncheckedIndexedAccess: 4, noImplicitReturns: 2 }; // baseline 1
+  /** A fake tsc next to the fake eslint, answered per project file; `seen` gets each project tsc was run on. */
+  const withTsc = (root: string, seen: string[] = []): Exec => {
+    const dir = join(root, 'node_modules', 'typescript');
+    mkdirSync(join(dir, 'bin'), { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'typescript', version: '5.0.0', bin: { tsc: 'bin/tsc' } }));
+    writeFileSync(join(dir, 'bin', 'tsc'), '');
+    return (_c, a) => {
+      if (a[0]?.endsWith('eslint.js')) return { status: 0, stdout: '[]' };
+      const project = a[a.indexOf('-p') + 1] ?? '';
+      seen.push(project);
+      const o = /tsconfig\.(\w+)\.json$/.exec(project)?.[1];
+      return { status: 2, stdout: 'a.ts(1,1): error TS2322: x\n'.repeat(o ? (ERRORS[o] ?? 1) : 1) };
+    };
+  };
+  const tsOpt = (k: string) => `    "${k}": true`;
+
+  test('the preview shows per-option counts; --apply sets the five options; uninstall restores tsconfig byte-identically', async () => {
+    const { root, original } = await installed({ 'eslint.config.mjs': ESLINT_CFG, 'tsconfig.json': TSCONFIG });
+    const exec = withTsc(root);
+    const preview = await run(root, [], prompt(), exec);
+    const lines = preview.out.split('\n');
+    expect(lines.indexOf('  tsconfig noUncheckedIndexedAccess: 3')).toBeGreaterThan(-1);
+    expect(lines.indexOf('  tsconfig noUncheckedIndexedAccess: 3')).toBeLessThan(lines.indexOf('  tsconfig noImplicitReturns: 1'));
+    expect(preview.out).toContain(STOP_LINE(4));
+    expect(preview.out).toMatch(/Safe to add now \(0 violations\):[^\n]*\n[^\n]*tsconfig noImplicitOverride/);
+    expect(preview.out).toContain('+++ b/tsconfig.json');
+    expect(snapshot(root)).toBe('');
+
+    expect((await run(root, ['--apply'], prompt('yes'), exec)).code).toBe(0);
+    const after = JSON.parse(readFileSync(join(root, 'tsconfig.json'), 'utf8')) as { compilerOptions: Record<string, unknown> };
+    expect(after.compilerOptions).toEqual({ target: 'es2022', strict: true, noUncheckedIndexedAccess: true, noImplicitOverride: true, noFallthroughCasesInSwitch: true, noImplicitReturns: true });
+    const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8')) as { files: { rel: string; blocks?: string[] }[] };
+    expect(m.files.find((f) => f.rel === 'tsconfig.json')?.blocks).toHaveLength(5);
+
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'rules');
+    expect((await unOut(root)).code).toBe(0);
+    expect(readFileSync(join(root, 'tsconfig.json'), 'utf8')).toBe(original['tsconfig.json']);
+  });
+
+  test('an existing strict: false stays, is listed, and is not counted', async () => {
+    const cfg = '{\n  "compilerOptions": {\n    "strict": false\n  }\n}\n';
+    const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG, 'tsconfig.json': cfg });
+    const seen: string[] = [];
+    const r = await run(root, ['--apply'], prompt('yes'), withTsc(root, seen));
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('Left as is, already set in `tsconfig.json`: strict (false)');
+    expect(seen.some((s) => s.endsWith('tsconfig.strict.json'))).toBe(false);
+    const after = JSON.parse(readFileSync(join(root, 'tsconfig.json'), 'utf8')) as { compilerOptions: Record<string, unknown> };
+    expect(after.compilerOptions.strict).toBe(false);
+    expect(after.compilerOptions.noImplicitReturns).toBe(true);
+  });
+
+  test('a tsconfig with comments gets the lines as a manual step and is not written', async () => {
+    const cfg = '{\n  // mine\n  "compilerOptions": {}\n}\n';
+    const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG, 'tsconfig.json': cfg });
+    const r = await run(root, ['--apply'], prompt('yes'), withTsc(root));
+    expect(r.code).toBe(0); // the ESLint part still applies
+    expect(r.out).toMatch(/can't edit `tsconfig\.json` safely/);
+    expect(r.out).toContain(tsOpt('noUncheckedIndexedAccess'));
+    expect(r.out).toContain('  tsconfig noUncheckedIndexedAccess: 3'); // tsc reads comments, so the counts still show
+    expect(r.out).not.toContain('+++ b/tsconfig.json');
+    expect(readFileSync(join(root, 'tsconfig.json'), 'utf8')).toBe(cfg);
+  });
+
+  test('a symlinked tsconfig is never read or written', async () => {
+    const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG });
+    const outside = join(mkdtempSync(join(tmpdir(), 'rules-link-')), 'tsconfig.json');
+    writeFileSync(outside, TSCONFIG);
+    symlinkSync(outside, join(root, 'tsconfig.json'));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'link');
+    const seen: string[] = [];
+    const r = await run(root, ['--apply'], prompt('yes'), withTsc(root, seen));
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/`tsconfig\.json` is a symlink/);
+    expect(r.out).not.toContain('+++ b/tsconfig.json');
+    expect(seen).toEqual([]);
+    expect(readFileSync(outside, 'utf8')).toBe(TSCONFIG);
+  });
 });

@@ -166,7 +166,7 @@ function formatEdits(root: string, changes: Change[], notes: string[]): void {
 const firstLine = (e: unknown): string => String((e as Error).message).split('\n')[0];
 
 /** A settings file: formatted whole when created, or when it was Prettier-clean before. */
-function formatStructural(root: string, c: Change, notes: string[]): void {
+export function formatStructural(root: string, c: Change, notes: string[]): void {
   const bin = repoPrettier(root, c.rel);
   try {
     if (bin && c.kind === 'create') c.content = prettierFormat(bin, root, c.rel, c.content);

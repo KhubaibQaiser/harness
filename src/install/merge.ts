@@ -230,7 +230,18 @@ export function mergePresetSettings(before: string | null, want: SetBlock[], rec
   return { after: dump(s, before), blocks, dropped, notes };
 }
 
-export const STRUCTURAL: ReadonlySet<string> = new Set([SETTINGS, '.mcp.json']);
+export const TSCONFIG = 'tsconfig.json';
+export const STRUCTURAL: ReadonlySet<string> = new Set([SETTINGS, '.mcp.json', TSCONFIG]);
+
+/** Sets each missing `compilerOptions` key (a key the file already has, whatever its value, stays). Null when the file is not plain JSON (comments, trailing commas). */
+export function mergeTsconfigOptions(before: string, opts: Record<string, true>): { after: string; blocks: string[] } | null {
+  try {
+    const r = mergePresetSettings(before, Object.entries(opts).map(([k, value]) => ({ set: ['compilerOptions', k], value })), [], TSCONFIG);
+    return { after: r.blocks.length ? r.after : before, blocks: r.blocks };
+  } catch {
+    return null;
+  }
+}
 const MCP = '.mcp.json';
 const PINS = 'harness-pins';
 
@@ -371,6 +382,14 @@ export function removeFromMcp(current: string, f: Manifest['files'][number], ori
     else notes.push(`\`${MCP}\`: server "${blk.mcp}" was not found or was changed; left as is.`);
   }
   if (isObj(s.mcpServers) && !Object.keys(s.mcpServers).length && gone('mcpServers')) delete s.mcpServers;
+  return o.done();
+}
+
+/** Drops the recorded `compilerOptions` keys that still hold what harness set. Returns null when the file is not a JSON object. */
+export function removeFromTsconfig(current: string, f: Manifest['files'][number], original: string | null, notes: string[]): { after: string; empty: boolean } | null {
+  const o = openRemoval(current, f, original);
+  if (!o) return null;
+  for (const k of removeSets(o.s, f.blocks ?? []).changed) notes.push(`\`${TSCONFIG}\`: \`${k}\` was changed; left as is.`);
   return o.done();
 }
 

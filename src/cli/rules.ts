@@ -1,18 +1,18 @@
-// `harness rules [--apply]`: the stack's ESLint rules with today's violation counts, then on a typed yes writes them (spec 5.2).
-// Harness writes its own `.harness/eslint/harness.config.mjs` and adds one import and one spread to the repo's flat config,
-// both recorded in the manifest so uninstall takes them out. It never creates an ESLint config the repo didn't have.
+// `harness rules [--apply]`: the stack's ESLint rules and TS options with today's violation counts, then on a typed yes writes them (spec 5.2).
+// Harness writes its own `.harness/eslint/harness.config.mjs`, adds one import and one spread to the repo's flat config, and sets the
+// missing `compilerOptions` in `tsconfig.json`, all recorded in the manifest so uninstall takes them out. It never creates a config the repo didn't have.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { defaultExec, type Exec } from '../core/exec.js';
-import { ApplyError, applyChanges, type Change } from '../install/apply.js';
+import { ApplyError, applyChanges, linkedPath, type Change } from '../install/apply.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { dirtyTouched } from '../install/finish.js';
 import { mergeManifestFiles, rawOf } from '../install/manifest.js';
 import { matchesHash } from '../install/text.js';
-import { HARNESS_RULES_IMPORT, mergeEslintHarnessRules } from '../install/merge.js';
-import { ESLINT, formatJsEdit } from '../install/plan.js';
+import { HARNESS_RULES_IMPORT, TSCONFIG, mergeEslintHarnessRules, mergeTsconfigOptions } from '../install/merge.js';
+import { ESLINT, formatJsEdit, formatStructural } from '../install/plan.js';
 import { countViolations, type Counts } from '../rules/count.js';
 import { propose, type Proposal } from '../rules/propose.js';
 import type { Stack } from '../rules/table.js';
@@ -57,24 +57,33 @@ export function oldNodeHint(cfg: string | undefined, node: string): string | nul
   return cfg?.endsWith('.ts') && old ? `Counting loads ${cfg} through Node, which needs Node ${TS_CONFIG_NODE.join('.')} or later (this is Node ${node}).` : null;
 }
 
-function printCounts(c: Counts['eslint'], p: Proposal, cfg: string | undefined, out: (s: string) => void): void {
-  if (c.error) {
-    out(`Violation counts unknown (${c.error}). The effect on the stop gate is unknown.`);
+/** ESLint rule counts and TS option counts (`tsconfig <option>`) together, highest first; an unknown count is never shown as 0. */
+function printCounts(c: Counts, p: Proposal, ts: string[], cfg: string | undefined, out: (s: string) => void): void {
+  const unknown = ts.filter((o) => typeof c.ts.byOption[o] !== 'number');
+  if (c.eslint.error) {
+    out(`Violation counts unknown (${c.eslint.error}). The effect on the stop gate is unknown.`);
     const hint = oldNodeHint(cfg, process.versions.node);
     if (hint) out(hint);
-    return;
   }
-  const rows = Object.entries(c.byRule).sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1));
+  if (unknown.length) out(`Type error counts unknown for ${unknown.join(', ')} (tsc could not run). The effect on the stop gate is unknown.`);
+  const tsRows = ts.filter((o) => !unknown.includes(o)).map((o): [string, number] => [`tsconfig ${o}`, c.ts.byOption[o]!]);
+  const rows = [...(c.eslint.error ? [] : Object.entries(c.eslint.byRule)), ...tsRows].filter(([, n]) => n > 0).sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1));
   const total = rows.reduce((n, [, k]) => n + k, 0);
   if (rows.length) {
-    out('Violations today, by rule (highest first):');
+    out('Violations today, by rule and TS option (highest first):');
     for (const [id, n] of rows) out(`  ${id}: ${n}`);
     out(`Total: ${total}`);
-    out(`The stop gate's lint and typecheck steps will fail until these ${total} violations are fixed. CI fails too if it runs them.`);
-  } else out('No violations today: the stop gate is not affected.');
-  const flagged = (id: string) => rows.some(([k]) => k === id || k.startsWith(`${id}/`)) || c.dropped.some((d) => d.rule === id);
-  const safe = p.rules.map((r) => r.id).filter((id) => !flagged(id));
+    if (!c.eslint.error && !unknown.length) out(`The stop gate's lint and typecheck steps will fail until these ${total} violations are fixed. CI fails too if it runs them.`);
+  } else if (!c.eslint.error && !unknown.length) out('No violations today: the stop gate is not affected.');
+  const flagged = (id: string) => rows.some(([k]) => k === id || k.startsWith(`${id}/`)) || c.eslint.dropped.some((d) => d.rule === id);
+  const safe = [...(c.eslint.error ? [] : p.rules.map((r) => r.id)), ...tsRows.map(([k]) => k)].filter((id) => !flagged(id));
   if (safe.length) out(`Safe to add now (0 violations):\n  ${safe.join(', ')}`);
+}
+
+/** The TS options as lines to add by hand, when harness can't edit `tsconfig.json`. */
+function tsManual(why: string, opts: string[], out: (s: string) => void): void {
+  out(`${why} Add these under "compilerOptions" by hand:`);
+  for (const o of opts) out(`    "${o}": true,`);
 }
 
 function printGaps(p: Proposal, dropped: Counts['eslint']['dropped'], out: (s: string) => void): void {
@@ -120,6 +129,12 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
   if (apply && !merged) return refuse(root, cfg, p, out);
   // An eslint.config.ts imports the .mjs, so a strict typecheck needs its declaration.
   const own = [FILE, ...(cfg?.endsWith('.ts') ? [DTS] : [])];
+  // The TS options: only the keys tsconfig.json does not set yet. Never through a symlink, and never a tsconfig the repo didn't have.
+  const tsLinked = linkedPath(root, TSCONFIG);
+  const tsBefore = !tsLinked && existsSync(join(root, TSCONFIG)) ? readFileSync(join(root, TSCONFIG), 'utf8') : null;
+  const tsMerged = tsBefore === null ? null : mergeTsconfigOptions(tsBefore, p.ts);
+  const tsSet = (tsMerged?.blocks ?? []).map((b) => JSON.parse(b) as { set: string[] }).filter((b) => b.set.length === 2).map((b) => b.set[1]!);
+  const tsCount = tsMerged ? tsSet : tsBefore === null ? [] : Object.keys(p.ts); // tsc reads a commented tsconfig, so those counts still show
   const read = (rel: string) => (existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null);
   if (apply) { // the cheap refusals, before the slow ESLint runs
     for (const rel of own) {
@@ -128,13 +143,21 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
       if (old !== null && !(rec && matchesHash(old, rec.hash))) // never overwrite a file harness did not write, or one edited since
         return out(`\`${rel}\` exists, but harness did not write it or it was edited since. Move or delete it, then run harness rules --apply again. ${NOT_APPLIED}`), 1;
     }
-    const dirty = dirtyTouched(root, [...own, ...(merged?.blocks.length ? [cfg!] : [])].map((rel) => ({ rel })));
+    const dirty = dirtyTouched(root, [...own, ...(merged?.blocks.length ? [cfg!] : []), ...(tsSet.length ? [TSCONFIG] : [])].map((rel) => ({ rel })));
     if (dirty.length) return out(`Commit or stash these files first, so the change can be undone cleanly: ${dirty.join(', ')}. ${NOT_APPLIED}`), 1;
   }
 
-  const counts = await countViolations(root, { ...p, ts: {} }, cli.exec ?? defaultExec); // only the ESLint part is applied
-  printCounts(counts.eslint, p, cfg, out);
+  const counts = await countViolations(root, { ...p, ts: Object.fromEntries(tsCount.map((o) => [o, true as const])) }, cli.exec ?? defaultExec);
+  printCounts(counts, p, tsCount, cfg, out);
   printGaps(p, counts.eslint.dropped, out);
+  if (tsLinked) tsManual(`\`${TSCONFIG}\` is a symlink, and harness never reads or writes through one.`, Object.keys(p.ts), out);
+  else if (tsBefore !== null && !tsMerged) tsManual(`Harness can't edit \`${TSCONFIG}\` safely: it has comments or trailing commas.`, Object.keys(p.ts), out);
+  else if (tsMerged) {
+    const recorded = m.files.find((f) => f.rel === TSCONFIG)?.blocks ?? [];
+    const opts = (JSON.parse(tsBefore!) as { compilerOptions?: Record<string, unknown> }).compilerOptions ?? {};
+    const kept = Object.keys(p.ts).filter((o) => !tsSet.includes(o) && !recorded.includes(JSON.stringify({ set: ['compilerOptions', o], value: true })));
+    if (kept.length) out(`Left as is, already set in \`${TSCONFIG}\`: ${kept.map((o) => `${o} (${JSON.stringify(opts[o])})`).join(', ')}`);
+  }
 
   const texts: Record<string, string> = { [FILE]: fileText(p, counts.eslint.dropped.map((d) => d.rule)), [DTS]: DTS_TEXT };
   const changes: Change[] = [];
@@ -150,11 +173,18 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
     notes.forEach((n) => out(`Note: ${n}`));
     changes.push(c);
   }
+  if (tsMerged?.blocks.length) {
+    const c: Change = { kind: 'update', rel: TSCONFIG, before: tsBefore!, after: tsMerged.after, blocks: tsMerged.blocks };
+    const notes: string[] = [];
+    formatStructural(root, c, notes); // as install does for settings: only when the file was Prettier-clean
+    notes.forEach((n) => out(`Note: ${n}`));
+    changes.push(c);
+  }
   for (const c of changes) out(unifiedDiff(c.kind === 'update' ? c.before : '', c.kind === 'update' ? c.after : c.kind === 'create' ? c.content : '', c.rel).trimEnd());
   if (!apply) return out(merged ? 'Run harness rules --apply to write this.' : 'harness rules --apply needs a flat ESLint config it can edit.'), 0;
   if (!changes.length) return out('Nothing to change.'), 0;
 
-  const answer = await cli.prompt.edit('Type yes to apply these ESLint rules', '').catch(() => ''); // closed input is a No
+  const answer = await cli.prompt.edit(`Type yes to apply these ESLint rules${tsSet.length ? ' and TS options' : ''}`, '').catch(() => ''); // closed input is a No
   if (answer.trim() !== 'yes') return out(NOT_APPLIED), 1;
   const at = new Date();
   const files = mergeManifestFiles(m, changes, `.harness/backup/${at.toISOString().replace(/:/g, '-')}`);

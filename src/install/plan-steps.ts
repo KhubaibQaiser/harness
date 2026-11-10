@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { HarnessConfig } from '../core/config.js';
 import type { LoadedPreset } from '../catalog/presets.js';
-import type { Change } from './apply.js';
+import { refuseSymlink, type Change } from './apply.js';
 import type { Facts } from './detect.js';
 import { factsJson } from './facts.js';
 import { finalizeReport } from '../ai/report.js';
@@ -36,7 +36,10 @@ export interface Plan {
 export function newPlan(root: string, recordedFiles?: Manifest['files']): Plan {
   const changes: Change[] = [];
   const notes: string[] = [];
-  const read = (rel: string): string | null => (existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null);
+  const read = (rel: string): string | null => {
+    refuseSymlink(root, rel); // before reading, as apply refuses the write: a link's target (a dotenv file, say) never reaches a diff
+    return existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null;
+  };
   const put = (rel: string, after: string, { blocks = [], mode, item }: PutOpts = {}) => {
     const before = read(rel);
     const it = item ? { item } : {};

@@ -31,7 +31,7 @@ export interface Selected {
 
 export interface HarnessConfig {
   version: 1;
-  checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop' | 'prSize', boolean>;
+  checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop' | 'prSize' | 'decisions', boolean>;
   sandbox: SandboxMode;
   /** 0 means no catalog. */
   catalog_version: number;
@@ -56,6 +56,7 @@ export interface HarnessConfig {
   tdd: { paths: string[]; exempt: string[]; diff_coverage: number; coverage_skip: string[]; test_lock: boolean; results_dir: string };
   multi_file_gate: { generated: string[] };
   pr_size: { target_lines: number; max_lines: number; max_files: number; exclude: string[] };
+  decisions: { max_lines: number; expiry_days: number; nudge: boolean };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
   stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
   /** Absent until init records a chosen preset. */
@@ -73,7 +74,7 @@ export const PR_SIZE_EXCLUDE: string[] = [
 
 export const defaults = (): HarnessConfig => ({
   version: 1,
-  checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true, prSize: true },
+  checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true, prSize: true, decisions: true },
   sandbox: 'unattended',
   catalog_version: 0,
   project: { type: '', domain: '', compliance: [], data_handling: '', team_size: 0, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [], scope_paths: [] },
@@ -84,6 +85,7 @@ export const defaults = (): HarnessConfig => ({
   tdd: { paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: DEFAULT_RESULTS_DIR },
   multi_file_gate: { generated: [] },
   pr_size: { target_lines: 200, max_lines: 400, max_files: 20, exclude: [...PR_SIZE_EXCLUDE] },
+  decisions: { max_lines: 20, expiry_days: 90, nudge: true },
   unattended: { multi_file_gate: 'block', require_reason: false },
   stop: {
     steps: ['format:check', 'lint', 'typecheck', 'test'],
@@ -207,6 +209,8 @@ const RULES: Record<string, Rule> = {
   'pr_size.target_lines': num(1, 100000, true),
   'pr_size.max_lines': num(1, 100000, true),
   'pr_size.max_files': num(1, 10000, true),
+  'decisions.max_lines': num(5, 200, true),
+  'decisions.expiry_days': num(7, 365, true),
   apps: listOf('app mappings', appRule),
   items: listOf('item mappings', itemRule),
 };

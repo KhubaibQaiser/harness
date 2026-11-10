@@ -39,7 +39,7 @@ export type InitEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: 
 
 export const AI_USAGE = '[--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]';
 const USAGE = `Usage: /harness:init [--yes] [--dry-run] [--config <file>] ${AI_USAGE}`;
-const GATES: Record<string, string> = { guard: 'guard', protect: 'protect', depVerify: 'dep-verify', multiFile: 'multi-file', tdd: 'TDD', stop: 'stop', prSize: 'PR size' };
+const GATES: Record<string, string> = { guard: 'guard', protect: 'protect', depVerify: 'dep-verify', multiFile: 'multi-file', tdd: 'TDD', stop: 'stop', prSize: 'PR size', decisions: 'team decisions' };
 const NODE_MIN_MAJOR = 22, NODE_MIN_MINOR = 11;
 
 const at = (o: any, path: string): unknown => path.split('.').reduce((v, k) => v?.[k], o);
@@ -188,7 +188,7 @@ async function showPlan({ cli, f, p, root }: Run, { plan, touched }: Built, conf
   if (sel?.preset) for (const l of previewLines(sel.preset, sel.ids)) out(l);
   if (sel) {
     const extra = sel.preset ? presetContext(sel.preset, sel.presetItems) : [];
-    const stop = await budgetGate({ cat: sel.catalog, before: [], after: sel.ids, exempt: approvedIds(config, null, sel.catalog), extra, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, root, env: cli.env, out, f: { ...f.opts, overBudget: f.ai.overBudget } });
+    const stop = await budgetGate({ cat: sel.catalog, before: [], after: sel.ids, exempt: approvedIds(config, null, sel.catalog), extra, changes: plan.changes, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, root, env: cli.env, out, f: { ...f.opts, overBudget: f.ai.overBudget } });
     if (stop !== null) return stop;
   }
   if (f.opts.dryRun) {

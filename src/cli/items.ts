@@ -178,7 +178,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   if (cmd === 'add') {
     // Items harness installed are approved: they show, but only the new ones count (a hand-selected one never installed does too).
     const approved = approvedIds(config, m, cat);
-    const stop = await budgetGate({ cat, before: approved, after, exempt: approved, extra: recordedExtra(root, config), extraBefore: recordedExtra(root, config), budget: config.context.budget_tokens, templatesDir: cli.templatesDir, root, env: cli.env, out, f: { yes, dryRun, overBudget: args.includes('--over-budget') } });
+    const stop = await budgetGate({ cat, before: approved, after, exempt: approved, extra: recordedExtra(root, config), extraBefore: recordedExtra(root, config), changes, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, root, env: cli.env, out, f: { yes, dryRun, overBudget: args.includes('--over-budget') } });
     if (stop !== null) return stop;
   }
   if (dryRun) return out('Dry run: nothing was written.'), 0;

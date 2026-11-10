@@ -1,7 +1,7 @@
 // Reading helpers shared by sources.ts (always loaded) and on-demand.ts. Every repo read goes through here: real path
 // inside the repo, the ignore skip, size before read. Repo text is untrusted.
 import * as nodePath from 'node:path';
-import { inside, loadRaw, type RepoIO } from './imports.js';
+import { inside, loadRaw, relPosix, type RepoIO } from './imports.js';
 import { estimateTokens, type ContextEntry } from './measure.js';
 import type { Owner } from './owners.js';
 import { CUT_CHARS } from './text.js';
@@ -42,6 +42,9 @@ export function entryOf({ rel, label, owner }: Where, text: string, note?: strin
 
 export const miss = (c: Ctx, rel: string, why: string): null => { c.out.unmeasured.push(`${rel}: ${why}`); return null; };
 
+/** The skip by name and by real path, so a link with an innocent name to a skipped file is skipped too. */
+const skipped = (c: Ctx, rel: string, real: string): boolean => c.skip(rel) || c.skip(relPosix(nodePath, c.realRoot, real));
+
 /** What is at `rel`, checking the real path before any stat, so a link out of the repo is never even sized. */
 export function kindOf(c: Ctx, rel: string): 'missing' | 'outside' | 'file' | 'other' {
   const abs = absIn(nodePath, c.root, rel);
@@ -58,7 +61,7 @@ export function readIn(c: Ctx, rel: string, seen: Set<string> | null): string | 
   const real = c.io.real(abs);
   if (real === null) return null; // missing, or a broken link: Claude Code loads nothing either
   if (!inside(c.realRoot, real)) return miss(c, rel, OUTSIDE);
-  if (c.skip(rel)) return miss(c, rel, 'ignored');
+  if (skipped(c, rel, real)) return miss(c, rel, 'ignored');
   if (seen?.has(real)) return null; // the same file reached twice (a symlink): counted once
   seen?.add(real);
   const got = loadRaw(abs, c.io);
@@ -73,16 +76,38 @@ function listIn(c: Ctx, rel: string): string[] {
   const real = c.io.real(abs);
   if (real === null) return [];
   if (!inside(c.realRoot, real)) { miss(c, rel, OUTSIDE); return []; }
-  if (c.skip(rel)) { miss(c, rel, 'ignored'); return []; }
+  if (skipped(c, rel, real)) { miss(c, rel, 'ignored'); return []; }
   return [...(c.io.list(abs) ?? [])].sort();
 }
-export function ruleFiles(c: Ctx, dir: string, depth: number): string[] {
+/** Real paths of the folders under `abs` reached without a symlink: the folders a link can only repeat. */
+function linkFree(c: Ctx, abs: string, real: string, depth: number, out = new Set<string>()): Set<string> {
+  out.add(real);
+  if (depth >= MAX_RULE_DEPTH) return out;
+  for (const name of c.io.list(abs) ?? []) {
+    const a = nodePath.join(abs, name);
+    // Real path first: a link out of the repo is never stat'ed.
+    if (c.io.real(a) === nodePath.join(real, name) && c.io.size(a) === null) linkFree(c, a, nodePath.join(real, name), depth + 1, out);
+  }
+  return out;
+}
+
+/**
+ * `walked`: real paths of folders already searched, so a link back to one (a loop) is skipped, not fanned out. A link to a
+ * folder the walk also reaches without links is skipped whatever the sort order, so files keep their real path.
+ */
+export function ruleFiles(c: Ctx, dir: string, depth: number, walked = new Set<string>(), plain?: Set<string>): string[] {
   if (depth > MAX_RULE_DEPTH) return [];
+  const abs = absIn(nodePath, c.root, dir);
+  const real = c.io.real(abs);
+  const tree = plain ?? (real !== null ? linkFree(c, abs, real, depth) : new Set<string>());
+  const link = real !== null && depth > 0 && real !== nodePath.join(c.io.real(nodePath.dirname(abs)) ?? '', nodePath.basename(abs));
+  if (real !== null && (walked.has(real) || (link && tree.has(real)))) return miss(c, dir, 'already searched (symlink)') ?? [];
+  if (real !== null) walked.add(real);
   return listIn(c, dir).flatMap((name) => {
     const rel = `${dir}/${name}`;
     const kind = kindOf(c, rel);
     if (kind === 'file' || (kind === 'outside' && name.endsWith('.md'))) return name.endsWith('.md') ? [rel] : []; // readIn reports an outside one
-    return kind === 'missing' ? [] : ruleFiles(c, rel, depth + 1);
+    return kind === 'missing' ? [] : ruleFiles(c, rel, depth + 1, walked, tree);
   });
 }
 
@@ -95,8 +120,12 @@ export function listed(c: Ctx): Listed[] {
   return [...skills, ...md('.claude/commands', 'skill', 'command'), ...md('.claude/agents', 'agent', 'agent')];
 }
 
+/** Any name starting with `.env`, in any folder (spec §3's `.env*`: never read). */
+const DOTENV = /(?:^|\/)\.env[^/]*$/i;
+
+/** Every reader passes `c.skip`, so the dotenv rule here covers imports, rules, skills and the JSON files alike. */
 export function newCtx(root: string, io: RepoIO, owners: Map<string, Owner>, skip: (rel: string) => boolean, preset: Ctx['preset'] = { id: null, recorded: false }): Ctx {
-  return { root, realRoot: io.real(root) ?? root, io, skip, owners, out: { always: [], onDemand: [], unmeasured: [], notes: [] }, preset, seenText: new Set(), json: new Map() };
+  return { root, realRoot: io.real(root) ?? root, io, skip: (rel) => DOTENV.test(rel) || skip(rel), owners, out: { always: [], onDemand: [], unmeasured: [], notes: [] }, preset, seenText: new Set(), json: new Map() };
 }
 
 /** The JSON object at `rel`, read once: null when absent, over size, not an object or not valid (one note; never throws). */
@@ -106,11 +135,13 @@ export function jsonObject(c: Ctx, rel: string): Record<string, unknown> | null 
   let v: Record<string, unknown> | null = null;
   if (raw === OVERSIZE) miss(c, rel, 'oversize');
   else if (raw !== null) {
+    let why = 'not valid JSON';
     try {
       const x: unknown = JSON.parse(raw);
       if (x && typeof x === 'object' && !Array.isArray(x)) v = x as Record<string, unknown>;
+      else why = 'not a JSON object';
     } catch { /* falls through to the note */ }
-    if (v === null) c.out.notes.push(`${rel}: not valid JSON, not read`);
+    if (v === null) c.out.notes.push(`${rel}: ${why}, not read`);
   }
   c.json.set(rel, v);
   return v;

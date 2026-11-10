@@ -35,7 +35,7 @@ async function repo(): Promise<string> {
 test('check: a clean repo exits 0 with the summary', async () => {
   const root = await repo();
   expect(await go(root, ['check'])).toEqual({ code: 0, out: 'ok decisions: 1 active, rules in sync\n1 decisions: 0 errors, 0 stale, 0 expired, 0 oversized, rules in sync' });
-  expect(decisionLines(root, defaults(), TODAY).summary).toEqual({ n: 1, errors: 0, stale: 0, expired: 0, oversized: 0, inSync: true });
+  expect(decisionLines(root, defaults(), TODAY).summary).toEqual({ n: 1, errors: 0, stale: 0, expired: 0, oversized: 0, inSync: true, active: 1, invalid: 0, unreadable: null, unchecked: false });
 });
 
 test('check: no decisions', async () => {

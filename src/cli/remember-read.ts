@@ -12,8 +12,15 @@ const files = (n: number): string => `${n} linked file${n === 1 ? '' : 's'}`;
 // One count per file: an error line is `<rel>: <problem>`, and a file can have several.
 const invalidFiles = (errors: string[]): number => new Set(errors.map((e) => e.slice(0, e.indexOf(': ')))).size;
 
-export type DecisionLine = { level: 'ok' | 'fix' | 'note'; text: string };
-export interface DecisionSummary { n: number; errors: number; stale: number; expired: number; oversized: number; inSync: boolean }
+/** `text` is `what`, then `: next` when there is advice; doctor prints `what` and `next` through its own printers. */
+export type DecisionLine = { level: 'ok' | 'fix' | 'note'; text: string; what: string; next?: string };
+export interface DecisionSummary {
+  n: number; errors: number; stale: number; expired: number; oversized: number; inSync: boolean;
+  /** For `status`: active decisions, invalid files, the unreadable-rules message, and whether git failed. */
+  active: number; invalid: number; unreadable: string | null; unchecked: boolean;
+}
+const row = (level: DecisionLine['level'], what: string, next?: string): DecisionLine =>
+  ({ level, what, text: next === undefined ? what : `${what}: ${next}`, ...(next === undefined ? {} : { next }) });
 
 /** Staleness of the active decisions, by id; `note` when git failed. */
 function staleOf(root: string, cfg: HarnessConfig, today: string, ds: TeamDecision[], git?: Git) {
@@ -40,14 +47,14 @@ export function list(root: string, cfg: HarnessConfig, today: string, git?: Git)
 }
 
 function stateLines(d: TeamDecision, s: Staleness, cfg: HarnessConfig): DecisionLine[] {
-  const note = (text: string): DecisionLine => ({ level: 'note', text });
-  const out = s.dead.map((g) => note(`decision ${d.id} is stale: ${shown(g)} matches no tracked file: fix its paths by hand, or run ${CMD} retire ${d.id}`));
+  const note = (what: string, next?: string): DecisionLine => row('note', what, next);
+  const out = s.dead.map((g) => note(`decision ${d.id} is stale: ${shown(g)} matches no tracked file`, `fix its paths by hand, or run ${CMD} retire ${d.id}`));
   if (s.changed.length) {
     const first = s.changed.slice(0, SHOWN_FILES).map(shown).join(', ') + (s.changed.length > SHOWN_FILES ? '…' : '');
-    out.push(note(`decision ${d.id} is stale: ${files(s.changed.length)} changed since ${sha7(s.ref)} (${first}): check it still holds, then run ${CMD} confirm ${d.id}`));
+    out.push(note(`decision ${d.id} is stale: ${files(s.changed.length)} changed since ${sha7(s.ref)} (${first})`, `check it still holds, then run ${CMD} confirm ${d.id}`));
   }
-  if (s.expired) out.push(note(`decision ${d.id} expired: last confirmed ${d.verified_on}, over ${cfg.decisions.expiry_days} days ago, so its rule no longer loads after the next sync: run ${CMD} confirm ${d.id} or ${CMD} retire ${d.id}`));
-  if (s.oversized) out.push(note(`decision ${d.id} is oversized: its rule is ${s.oversized.lines} lines, cap ${cfg.decisions.max_lines}, so it is cut: shorten it by hand, then run ${CMD} sync`));
+  if (s.expired) out.push(note(`decision ${d.id} expired: last confirmed ${d.verified_on}, over ${cfg.decisions.expiry_days} days ago, so its rule no longer loads after the next sync`, `run ${CMD} confirm ${d.id} or ${CMD} retire ${d.id}`));
+  if (s.oversized) out.push(note(`decision ${d.id} is oversized: its rule is ${s.oversized.lines} lines, cap ${cfg.decisions.max_lines}, so it is cut`, `shorten it by hand, then run ${CMD} sync`));
   if (s.fallback) out.push(note(`decision ${d.id}: verified_at ${sha7(d.verified_at)} is not in this clone; compared from the decision file's last commit`));
   return out;
 }
@@ -55,25 +62,30 @@ function stateLines(d: TeamDecision, s: Staleness, cfg: HarnessConfig): Decision
 /** §9's doctor lines and the counts `check` prints. Read-only: local git only, and it never throws on a git failure. */
 export function decisionLines(root: string, cfg: HarnessConfig, today: string, git?: Git): { lines: DecisionLine[]; summary: DecisionSummary } {
   const set = readDecisions(root, today);
-  const fix = (text: string): DecisionLine => ({ level: 'fix', text });
-  const lines = set.errors.map((e) => fix(`${shown(e)}: correct it by hand, then run ${CMD} sync`));
+  const fix = (what: string, next: string): DecisionLine => row('fix', what, next);
+  const lines = set.errors.map((e) => fix(shown(e), `correct it by hand, then run ${CMD} sync`));
   let plan: SyncPlan | null = null;
+  let unreadable: string | null = null;
   try {
     plan = planSync(root, set, cfg.decisions, today);
   } catch (e) { // e.g. a rule file that is a symlink: report it, never crash
-    lines.push(fix(`${shown((e as Error).message)}: replace it with a real file or rename it`));
+    unreadable = shown((e as Error).message);
+    lines.push(fix(unreadable, 'replace it with a real file or rename it'));
   }
-  if (plan && outOfSync(plan)) lines.push(fix(`decision rules are out of sync with ${DECISIONS_DIR}/: run ${CMD} sync`));
-  for (const f of plan?.foreign ?? []) lines.push(fix(`${shown(f)} is named like a harness decision rule but isn't harness's: rename it`));
+  if (plan && outOfSync(plan)) lines.push(fix(`decision rules are out of sync with ${DECISIONS_DIR}/`, `run ${CMD} sync`));
+  for (const f of plan?.foreign ?? []) lines.push(fix(`${shown(f)} is named like a harness decision rule but isn't harness's`, 'rename it'));
   const inSync = plan !== null && !outOfSync(plan) && plan.foreign.length === 0;
   const { active, states, note } = staleOf(root, cfg, today, set.decisions, git);
-  lines.push({ level: 'ok', text: set.decisions.length ? `decisions: ${active.length} active, rules ${inSync ? 'in sync' : 'out of sync'}` : 'no team decisions yet' });
-  if (note) lines.push({ level: 'note', text: shown(note) });
+  const rules = plan === null ? 'not checked' : inSync ? 'in sync' : 'out of sync';
+  lines.push(row('ok', set.decisions.length ? `decisions: ${active.length} active, rules ${rules}` : 'no team decisions yet'));
+  if (note) lines.push(row('note', shown(note)));
   active.forEach((d, i) => lines.push(...stateLines(d, states[i]!, cfg)));
   const count = (f: (s: Staleness) => boolean) => states.filter(f).length;
+  const invalid = invalidFiles(set.errors);
   const summary = {
-    n: set.decisions.length, errors: invalidFiles(set.errors) + (plan ? plan.foreign.length : 1),
+    n: set.decisions.length, errors: invalid + (plan ? plan.foreign.length : 1),
     stale: count(isStale), expired: count((s) => s.expired), oversized: count((s) => s.oversized !== null), inSync,
+    active: active.length, invalid, unreadable, unchecked: note !== null,
   };
   return { lines, summary };
 }

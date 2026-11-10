@@ -39,11 +39,10 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // Control characters, and invisible format characters (bidi, zero-width, BOM) that can hide text from a PR reviewer.
 const CONTROL = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
 const BODY_CONTROL = /(?![\n\t])[\p{Cc}\p{Cf}\u2028\u2029]/u;
-// Only for frontmatter YAML can't read: a plain or quoted `schema` key at the top level.
-const SCHEMA_LINE = /^(["']?)schema\1:[ \t]*(["']?)harness-decision\/1\2[ \t]*(?:#.*)?$/;
 const FRONT = /^---\n([\s\S]*?)\n---[ \t]*(?:\n|$)/;
-// No common prefix, one dotted name: a glob that matches all three would load for (nearly) every file.
-const PROBES = ['zq9', '.zq9/zq9', 'zq9/zq9/zq9.zq9'];
+// Unrelated names at several depths, dotted and not: a glob that matches PROBE_LIMIT of them loads for nearly every file.
+const PROBES = ['zq9', '.zq9/zq9', 'zq9/zq9/zq9.zq9', 'a1/b2', 'c3', 'd4/e5/f6.g7', 'h8.i9', '.j0'];
+const PROBE_LIMIT = 4;
 
 function frontOf(text: string): { yaml: string; body: string } | null {
   const t = lf(text).replace(/^\uFEFF/, '');
@@ -53,7 +52,7 @@ function frontOf(text: string): { yaml: string; body: string } | null {
 
 /** The frontmatter mapping, or null when the YAML has any error or warning. Silent: a warning would print the file's text. */
 function yamlOf(src: string): Record<string, unknown> | null {
-  const doc = parseDocument(src, { logLevel: 'silent', uniqueKeys: true });
+  const doc = parseDocument(src, { uniqueKeys: true }); // parseDocument only collects warnings; parse() is what prints them
   if (doc.errors.length || doc.warnings.length) return null;
   try {
     const y: unknown = doc.toJS({ maxAliasCount: 100 });
@@ -63,22 +62,59 @@ function yamlOf(src: string): Record<string, unknown> | null {
   }
 }
 
-/** True when the frontmatter's `schema` is `harness-decision/1`. Broken or oversized YAML falls back to a line scan, so it is still reported. */
+/**
+ * True when the frontmatter's `schema` is `harness-decision/1`. When the YAML is broken or oversized, any mention of
+ * `schema` (any case) makes it a broken decision, so it is reported rather than silently ignored.
+ */
 export function isDecisionText(text: string): boolean {
   const f = frontOf(text);
   if (!f) return false;
   const data = f.yaml.length <= MAX_DECISION_BYTES ? yamlOf(f.yaml) : null;
-  if (data) return data.schema === SCHEMA;
-  return f.yaml.split('\n').some((l) => SCHEMA_LINE.test(l));
+  return data ? data.schema === SCHEMA : /schema/i.test(f.yaml);
 }
 
 function coversRepo(glob: string): boolean {
   try {
     const m = picomatch(glob, { dot: true }); // the options `matches` in src/core/paths.ts uses
-    return PROBES.every((p) => m(p));
+    return PROBES.filter((p) => m(p)).length >= PROBE_LIMIT;
   } catch {
     return true; // a glob picomatch can't compile is refused too
   }
+}
+
+// `{a,b}`: non-empty alternatives of literal text and `?` only (no `*`, classes, nesting, `.` or `..`).
+function braceProblem(inner: string): string | null {
+  const bad = inner.split(',').some((a) => a === '' || a === '.' || a === '..' || /[*[\]{}]/.test(a));
+  return bad ? 'must use { } only with non-empty plain alternatives' : null;
+}
+
+// One `/` segment under the allowlist: literals, `*`, `?`, `[...]`, a plain `{a,b}`; `**` only as the whole segment.
+function segmentProblem(seg: string): string | null {
+  if (seg === '') return 'must not hold an empty segment';
+  if (seg === '**') return null;
+  if (seg.includes('**')) return 'must use ** only as a whole segment';
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === ']' || c === '}') return 'must close every [ ] and { }';
+    if (c !== '[' && c !== '{') continue;
+    const end = seg.indexOf(c === '[' ? ']' : '}', i + 1);
+    const inner = end < 0 ? '' : seg.slice(i + 1, end);
+    if (end < 0 || inner === '' || inner.includes(c)) return 'must close every [ ] and { }';
+    const p = c === '{' ? braceProblem(inner) : null;
+    if (p) return p;
+    i = end;
+  }
+  return null;
+}
+
+/** The allowlist grammar; extglobs and regex groups never get through, whatever they would match. */
+function grammarProblem(glob: string): string | null {
+  if (/[()|]/.test(glob)) return 'must not use extglob or regex groups: ( ) |';
+  for (const seg of glob.split('/')) {
+    const p = segmentProblem(seg);
+    if (p) return p;
+  }
+  return null;
 }
 
 /** Why a `paths` glob is refused (§3.2, O1), or null. */
@@ -91,6 +127,8 @@ export function globProblem(glob: string): string | null {
   if (glob.startsWith('./')) return 'must not start with ./';
   if (glob.split('/').includes('..')) return 'must not hold a .. segment';
   if (glob.startsWith('!')) return 'must not start with ! (a negation matches nearly everything)';
+  const g = grammarProblem(glob);
+  if (g) return g;
   // `*`, `**`, `**/*` and their spellings (`**/**`, `*/**`): repo-wide rules belong in AGENTS.md or CLAUDE.md.
   if (/^[*/]+$/.test(glob) || coversRepo(glob)) return 'must not match the whole repo (put repo-wide rules in AGENTS.md or CLAUDE.md)';
   return null;

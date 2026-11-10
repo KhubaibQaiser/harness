@@ -54,6 +54,18 @@ describe('parseDecision', () => {
       expect(parseDecision(REL, t, TODAY).errors).toEqual([]);
     }
   });
+  test('broken or oversized frontmatter that mentions schema in any spelling is reported, not ignored', () => {
+    for (const line of ['schema: >-\n  harness-decision/1', 'schema: !!str harness-decision/1', '? schema\n: harness-decision/1', 'schema : harness-decision/1', '  schema: harness-decision/1', '{schema: harness-decision/1}', 'Schema: harness-decision/1', 'x: "SCHEMA"']) {
+      const t = `---\n${line}\ntitle: [unclosed\n---\nbody\n`;
+      expect(isDecisionText(t), line).toBe(true);
+      expect(parseDecision(REL, t, TODAY).errors, line).toEqual([`${REL}: frontmatter must be valid YAML`]);
+    }
+    const big = `---\nschema: harness-decision/1\nnotes: ${'x'.repeat(40 * 1024)}\n---\nbody\n`;
+    expect(parseDecision(REL, big, TODAY).errors).toEqual([`${REL}: file must be at most 32768 bytes`]);
+  });
+  test('broken frontmatter with no schema mention is not a decision', () => {
+    expect(parseDecision(`${DECISIONS_DIR}/0002-adr.md`, '---\ntitle: [unclosed\n---\nbody\n', TODAY)).toEqual({ decision: null, errors: [] });
+  });
   test('a huge non-decision file is still ignored', () => {
     const adr = `---\ntitle: ADR\nnotes: ${'x'.repeat(64 * 1024)}\n---\nbody\n`;
     expect(parseDecision(`${DECISIONS_DIR}/0001-adr.md`, adr, TODAY)).toEqual({ decision: null, errors: [] });
@@ -171,7 +183,7 @@ describe('parseDecision', () => {
 
 describe('globProblem', () => {
   test('ordinary globs pass', () => {
-    for (const g of ['src/env/**', 'src/config.ts', '.github/*.yml', 'src/**/*.ts', 'src/**/*.{ts,tsx}', 'docs/a b.md', '**/*.ts']) expect(globProblem(g)).toBeNull();
+    for (const g of ['src/env/**', 'src/config.ts', '.github/*.yml', 'src/**/*.ts', 'src/**/*.{ts,tsx}', 'docs/a b.md', '**/*.ts', '**/*.{ts,tsx}', 'docs/**', '**/*.md', '**/*.test.ts', 'src/[ab]/*.ts', 'src/file?.ts', 'src/a!b@c+d.ts']) expect(globProblem(g), g).toBeNull();
   });
   test('forbidden forms', () => {
     for (const g of ['/a', './a', 'a/../b', 'a\\b', '*', '**', '**/*', '**/**', 'C:/x', 'c:x', 'a\u0000b', 'a\u009bb', '', 'x'.repeat(201)]) expect(globProblem(g)).not.toBeNull();
@@ -179,6 +191,16 @@ describe('globProblem', () => {
   test('brace, extglob and negation forms that cover the repo are refused', () => {
     for (const g of ['{**,x}', '{,**}', '**/{*,}', '**/*{,}', '{*,*/**}', '*{,/**}', '@(**)', '?(**)', '**/!(x)', '!src/x']) expect(globProblem(g), g).not.toBeNull();
   });
+  test('negated-name and other grammar-breaking forms are refused', () => {
+    const forms = [
+      '**/!(zq9)', '**/!(zq9)/**', '**/!(zq9|.zq9)', '**/!(zq9.zq9)', '**/!(*.zq9)', '**/!(zq9)*', '**/!(*q9)', '{**,!(zq9)}',
+      '@(!(zq9))', '**/!(zq9)/!(zq9)', '+(a)', '*(a)', 'src/(a|b)', 'src/a|b',
+      'src/**.ts', 'src/a**', '{a,}/b', '{a,*}/b', '{a,{b,c}}', '{..,x}/y', 'src/{a', 'src/a}', 'src/[a', 'src/a]', 'src/[]', 'src//a', 'src/',
+    ];
+    for (const g of forms) expect(globProblem(g), g).not.toBeNull();
+  });
+  test('the probe backstop refuses globs that match 4 or more of 8 probes', () => expect(globProblem('**/*.*')).toMatch(/whole repo/));
+  test('a leading ! is refused by its own rule, even when it matches few probes', () => expect(globProblem('!x/y')).toBe('must not start with ! (a negation matches nearly everything)'));
   test('invisible format characters are refused', () => {
     for (const g of ['src/\u200b**', 'src/\u202e**', 'src/\u2066a', 'src/\ufeffa', 'src/\u2060a']) expect(globProblem(g)).toBe('must not hold control or invisible format characters');
   });

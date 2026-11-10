@@ -241,11 +241,11 @@ async function reviewPlan(r: Run, changes: Change[], planned: Planned): Promise<
   if (touched.length && !dryRun) return out(`Commit or stash these files first, so the update can be undone cleanly: ${touched.join(', ')}.`), 1;
   printPlan(r, changes, planned);
   if (r.sel) {
-    // Ask once, then exempt: what the person approved before shows but does not count.
+    // Ask once, then exempt: what the person approved before counts on both sides, so it never asks again.
     const had = approvedIds(r.base, r.m, r.sel.catalog);
     const { preset, presetItems } = r.sel;
     if (preset) for (const l of previewLines(preset, r.sel.ids)) out(l);
-    const stop = await budgetGate({ cat: r.sel.catalog, before: had, after: r.sel.ids, exempt: had, extraBefore: recordedExtra(r.root, r.base), extra: preset ? presetContext(preset, presetItems) : [], budget: r.config.context.budget_tokens, templatesDir: r.cli.templatesDir, root: r.root, env: r.cli.env, out, f: { yes, dryRun, overBudget: r.flags.ai.overBudget } });
+    const stop = await budgetGate({ cat: r.sel.catalog, before: had, after: r.sel.ids, exempt: had, extraBefore: recordedExtra(r.root, r.base), extra: preset ? presetContext(preset, presetItems) : [], changes, budget: r.config.context.budget_tokens, templatesDir: r.cli.templatesDir, root: r.root, env: r.cli.env, out, f: { yes, dryRun, overBudget: r.flags.ai.overBudget } });
     if (stop !== null) return stop;
   }
   const list = (rels: string[]) => rels.map((rel) => `\`${rel}\``).join(', ');

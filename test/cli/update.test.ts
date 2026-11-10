@@ -775,7 +775,7 @@ test('up to date inside Claude Code on the plain path still points to /harness:u
   expect(await run(['--dry-run'])).not.toContain(again);
 });
 
-// Ask once, then exempt: items the person already approved show but do not count toward the ask.
+// Ask once, then exempt: items the person already approved count on both sides, so they never ask again.
 test('update with AI flags: an approved plugin does not ask, a newly added one does', async () => {
   const root = aiInstalled(REPO, [...OWN_IDS, 'impeccable']);
   const d = mkdtempSync(join(tmpdir(), 'harness-upd-ai-'));
@@ -798,7 +798,7 @@ test('update with AI flags: an approved plugin does not ask, a newly added one d
   const added = await run([...OWN_IDS, 'impeccable', 'mobile-mcp']);
   expect(added.code).toBe(2);
   expect(added.out).toContain('Not measured before install: mobile-mcp');
-  expect(added.out).toMatch(/Approved earlier, not counted: .*impeccable/);
+  expect(added.out).toMatch(/Approved earlier: .*impeccable/);
   expect(added.out).toContain('Run again with --over-budget');
   const same = await run([...OWN_IDS, 'impeccable']);
   expect(same.code).toBe(0);

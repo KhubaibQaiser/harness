@@ -138,24 +138,26 @@ export const LINT_RULES: LintRule[] = [
   core('no-restricted-globals', 'web-only APIs in shared code', ['error', 'window', 'document', 'localStorage'], { stacks: ['rn'], files: 'rn' }),
 ];
 
-export const NO_LINT: { antiPattern: string; note?: string }[] = [
+const REACT: Stack[] = ['react', 'next', 'rn'];
+/** Anti-patterns with no lint rule; `stacks` limits a row to those stacks (none: every repo). */
+export const NO_LINT: { antiPattern: string; note?: string; stacks?: Stack[] }[] = [
   { antiPattern: 'log-only catch' },
   { antiPattern: 'mutating shared state' },
   { antiPattern: 'magic strings' },
-  { antiPattern: 'fetching in effects; effect chains' },
-  { antiPattern: 'prop drilling, oversized props, boolean prop soup' },
-  { antiPattern: 'state for computable values' },
-  { antiPattern: 'server data in Zustand' },
-  { antiPattern: '"use client" high in the tree; client components only to fetch' },
-  { antiPattern: 'server-only code or secrets in client bundles', note: 'the server-only package fails the build; it is a dependency, not lint' },
-  { antiPattern: 'client-effect fetching the server could do; missing Suspense' },
-  { antiPattern: 'cache and revalidate mistakes; route handlers where server actions fit' },
-  { antiPattern: 'layout shift' },
-  { antiPattern: 'inline renderItem', note: 'react/jsx-no-bind cannot target one prop and is noisy on all' },
-  { antiPattern: 'ScrollView or map for long lists' },
-  { antiPattern: 'heavy JS during gestures' },
-  { antiPattern: 'hand-edited ios/ or android/, ejecting' },
-  { antiPattern: 'Expo Go-only assumptions; font scaling' },
+  { antiPattern: 'fetching in effects; effect chains', stacks: REACT },
+  { antiPattern: 'prop drilling, oversized props, boolean prop soup', stacks: REACT },
+  { antiPattern: 'state for computable values', stacks: REACT },
+  { antiPattern: 'server data in Zustand', stacks: REACT },
+  { antiPattern: '"use client" high in the tree; client components only to fetch', stacks: ['next'] },
+  { antiPattern: 'server-only code or secrets in client bundles', note: 'the server-only package fails the build; it is a dependency, not lint', stacks: ['next'] },
+  { antiPattern: 'client-effect fetching the server could do; missing Suspense', stacks: ['next'] },
+  { antiPattern: 'cache and revalidate mistakes; route handlers where server actions fit', stacks: ['next'] },
+  { antiPattern: 'layout shift', stacks: ['next'] },
+  { antiPattern: 'inline renderItem', note: 'react/jsx-no-bind cannot target one prop and is noisy on all', stacks: ['rn'] },
+  { antiPattern: 'ScrollView or map for long lists', stacks: ['rn'] },
+  { antiPattern: 'heavy JS during gestures', stacks: ['rn'] },
+  { antiPattern: 'hand-edited ios/ or android/, ejecting', stacks: ['rn'] },
+  { antiPattern: 'Expo Go-only assumptions; font scaling', stacks: ['rn'] },
 ];
 
 export const TS_OPTIONS: Record<string, true> = {

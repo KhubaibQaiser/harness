@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,12 +54,12 @@ const ANSWERS = {
 const OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', 'review-rubric', 'agents-md'];
 const dir = mkdtempSync(join(tmpdir(), 'harness-pi-'));
 let n = 0;
-const aiArgs = (ids: string[]): string[] => {
+const aiArgs = (ids: string[], answers: object = ANSWERS): string[] => {
   const d = join(dir, `r${n++}`);
   mkdirSync(d);
   const f = (name: string, text: string) => (writeFileSync(join(d, name), text), join(d, name));
   const picks = { catalog_version: 1, findings: [], items: OWN.map((id) => ({ id, include: 'recommended', reason: 'r', addresses: [] })) };
-  return ['--answers', f('answers.json', JSON.stringify(ANSWERS)), '--product', f('product.md', PRODUCT), '--picks', f('picks.json', JSON.stringify(picks)), '--report', f('report.md', SECTIONS), '--choose', ids.join(','), '--yes'];
+  return ['--answers', f('answers.json', JSON.stringify(answers)), '--product', f('product.md', PRODUCT), '--picks', f('picks.json', JSON.stringify(picks)), '--report', f('report.md', SECTIONS), '--choose', ids.join(','), '--yes'];
 };
 const fake: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
 const git = (root: string, ...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8' });
@@ -197,11 +197,50 @@ test('the init budget total includes the preset core and skills, and status prin
   expect(d.out).toContain('Not measured before install:');
   expect(d.out).toMatch(/Not measured before install: .*impeccable/);
   const bare = await run(repo(), dry([...OWN]));
-  expect(all - total(bare.out)).toBe(presetSum(['core-rules', 'engineering-principles', 'frontend-react']));
+  // The answers name the preset in both runs, so both install its core block: the difference is the other preset items.
+  expect(all - total(bare.out)).toBe(presetSum(['engineering-principles', 'frontend-react']));
   expect((await run(root, [...aiArgs([...OWN, ...WEB]), '--over-budget'])).code).toBe(0);
   let out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') });
   expect(statusTotal(out)).toBe(h);
+});
+
+// Re-review N1 and M9: init's preview total (not only harness's share) equals status after the install, with and
+// without the preset and an existing AGENTS.md, and when CLAUDE.md doesn't import AGENTS.md until harness adds the line.
+const statusAll = (out: string) => Number(/^Context: ~([\d,]+) of/m.exec(out)![1].replace(/,/g, ''));
+const withFiles = (files: Record<string, string | null>) => {
+  const root = repo();
+  for (const [rel, text] of Object.entries(files)) {
+    if (text === null) rmSync(join(root, rel));
+    else writeFileSync(join(root, rel), text);
+  }
+  git(root, 'add', '-A');
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x');
+  return root;
+};
+test.each([
+  ['an AGENTS.md of its own', {}],
+  ['no AGENTS.md', { 'AGENTS.md': null }],
+  ['a CLAUDE.md that does not import AGENTS.md', { 'CLAUDE.md': '# Team\n', 'AGENTS.md': '# Mine\n' + 'agent text '.repeat(40) + '\n' }],
+])('init preview total equals status after install (%s), with the preset, its core alone, and none', async (_name, files) => {
+  const noPreset = { ...ANSWERS, preset: undefined };
+  for (const [ids, answers] of [[[...OWN, ...PRESET_IDS], ANSWERS], [[...OWN], ANSWERS], [[...OWN], noPreset]] as const) { // OWN with ANSWERS: the preset core alone
+    const root = withFiles(files);
+    const d = await run(root, aiArgs([...ids], answers).map((a) => (a === '--yes' ? '--dry-run' : a)));
+    const r = await run(root, [...aiArgs([...ids], answers), '--over-budget']);
+    expect(r.code, r.out).toBe(0);
+    let out = '';
+    status([], { root, env: {}, out: (s) => (out += s + '\n') });
+    expect(total(d.out), `${ids.length} ids\n${d.out}\n${out}`).toBe(statusAll(out));
+  }
+});
+
+test('init asks when the AGENTS.md its new @AGENTS.md line makes load takes the total past the budget', async () => {
+  const root = withFiles({ 'CLAUDE.md': '# Team\n', 'AGENTS.md': '# Mine\n' + 'x'.repeat(8000) + '\n' });
+  const r = await run(root, aiArgs([...OWN]));
+  expect(r.code, r.out).toBe(2);
+  expect(r.out).toContain('Over budget: confirm before installing.');
+  expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# Team\n'); // nothing written
 });
 
 // ---- update, add, explain and sync count the preset like init and status ----
@@ -272,6 +311,64 @@ test('sync counts the preset', async () => {
   };
   const [sa, sbOut] = [await go(a.root), await go(b.root)];
   expect(total(sa) - total(sbOut), sa).toBe(presetSum(PRESET_IDS));
+});
+
+// Fix round 4 (N2): a symlinked AGENTS.md or CLAUDE.md is refused before the plan reads it, as apply refuses it, so a
+// link to a dotenv file never reaches a plan diff. Dry runs too. The dotenv name is built at runtime.
+const DOT = '.' + 'env';
+const SECRET = 'API_TOKEN=fake-value-not-a-secret';
+const linkTo = (root: string, rel: string, target: string) => {
+  rmSync(join(root, rel), { force: true });
+  symlinkSync(target, join(root, rel));
+  sh(root, 'add', '-A');
+  sh(root, 'commit', '-qm', 'link');
+};
+const capture = async (f: (out: (s: string) => void) => Promise<number>) => { let out = ''; const code = await f((s) => (out += s + '\n')); return { code, out }; };
+
+test.skipIf(process.platform === 'win32')('init, update --answers, sync and add refuse a symlinked AGENTS.md and never print what it points to', async () => {
+  const fresh = repo();
+  writeFileSync(join(fresh, DOT), SECRET);
+  linkTo(fresh, 'AGENTS.md', DOT);
+  const t = await twin(false);
+  writeFileSync(join(t.root, DOT), SECRET);
+  linkTo(t.root, 'AGENTS.md', DOT);
+  for (const mode of ['--dry-run', '--yes']) {
+    const runs = [
+      await capture(async (out) => init(aiArgs([...OWN]).map((a) => (a === '--yes' ? mode : a)), { ...base, root: fresh, env, claudeVersion: () => null, out, prompt: fake })),
+      await capture(async (out) => update(t.args.map((a) => (a === '--yes' || a === '--over-budget' ? mode : a)), { ...TD, root: t.root, out })),
+      await capture(async (out) => sync([mode], { ...TD, root: t.root, out })),
+      await capture(async (out) => items('add', ['ponytail', mode], { ...TD, root: t.root, out })),
+    ];
+    for (const r of runs) {
+      expect(r.out).not.toContain(SECRET);
+      expect(r.code, r.out).toBe(1);
+      expect(r.out).toContain('refusing symlink: AGENTS.md');
+    }
+  }
+});
+
+// N3: a CLAUDE.md that links to AGENTS.md is refused too, so nothing counts AGENTS.md twice.
+test.skipIf(process.platform === 'win32')('init refuses a CLAUDE.md that links to AGENTS.md', async () => {
+  const root = repo();
+  linkTo(root, 'CLAUDE.md', 'AGENTS.md');
+  for (const mode of ['--dry-run', '--yes']) {
+    const r = await run(root, aiArgs([...OWN]).map((a) => (a === '--yes' ? mode : a)));
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain('refusing symlink: CLAUDE.md');
+    expect(r.out).not.toMatch(/Always-loaded context/);
+  }
+});
+
+// Fix round 5: every repo file the plan reads is refused when it is a link (or under one), before it is read.
+// The test-config reads are covered in test/install/test-config.test.ts.
+test.skipIf(process.platform === 'win32').each(['.gitignore'])('a dry run with %s linked to a dotenv file prints no value and exits 1', async (rel) => {
+  const root = repo();
+  writeFileSync(join(root, DOT), SECRET);
+  linkTo(root, rel, DOT);
+  const r = await run(root, aiArgs([...OWN]).map((a) => (a === '--yes' ? '--dry-run' : a)));
+  expect(r.out).not.toContain(SECRET);
+  expect(r.code, r.out).toBe(1);
+  expect(r.out).toContain(`refusing symlink: ${rel}`);
 });
 
 test('init with a preset whose skill writes outside .claude/skills/<name>/ writes nothing', async () => {

@@ -177,7 +177,7 @@ function formatStructural(root: string, c: Change, notes: string[]): void {
 }
 
 /** A JS/TS config edit: formatted only when it was Prettier-clean before and the formatted edit undoes cleanly. */
-function formatJsEdit(root: string, c: Extract<Change, { kind: 'update' }>, notes: string[]): void {
+export function formatJsEdit(root: string, c: Extract<Change, { kind: 'update' }>, notes: string[]): void {
   const bin = repoPrettier(root, c.rel);
   if (!bin) return;
   try {

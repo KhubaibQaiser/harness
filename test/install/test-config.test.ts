@@ -1,4 +1,6 @@
 import { parseModule } from 'magicast';
+import { symlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PackageFacts } from '../../src/install/detect.js';
 import { removeBlocks } from '../../src/install/merge.js';
@@ -324,5 +326,24 @@ describe('resultsRename: whole paths only, and the Jest config', () => {
     const root = makeRepo({ 'package.json': '{ "name": "demo" }\n', 'jest.config.js': cfg }, { git: false });
     const c = resultsRename(jest('jest', { testConfig: 'jest.config.js' }), root, RD, '.harness/state/test-results');
     expect(c).toMatchObject({ rel: 'jest.config.js', after: cfg.replace('state/test-results', 'results') });
+  });
+});
+
+// Fix round 5: the plan never reads a test config or package.json through a link; it refuses as apply does.
+describe.skipIf(process.platform === 'win32')('testConfigChange refuses a linked file before reading it', () => {
+  const dot = '.' + 'env';
+  const linked = (rel: string) => {
+    const root = makeRepo({ [dot]: 'API_TOKEN=fake-value-not-a-secret' }, { git: false });
+    symlinkSync(dot, join(root, rel));
+    return root;
+  };
+  it('a Vitest config', () => {
+    expect(() => testConfigChange(vt(), linked('vitest.config.ts'), RD)).toThrow('refusing symlink: vitest.config.ts');
+  });
+  it('package.json for Jest', () => {
+    expect(() => testConfigChange(jest('jest'), linked('package.json'), RD)).toThrow('refusing symlink: package.json');
+  });
+  it('the results rename', () => {
+    expect(() => resultsRename(vt(), linked('vitest.config.ts'), RD, '.harness/state/test-results')).toThrow('refusing symlink: vitest.config.ts');
   });
 });

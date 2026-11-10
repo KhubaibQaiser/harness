@@ -402,12 +402,13 @@ decisions:
 - Merging `product.md` into decisions (D11).
 - Model-based capture or summarising; semantic search over decisions.
 - A CI workflow or GitHub Action (`harness remember check` is ready for one).
-- A `/harness:remember` skill. The AGENTS.md line and `--help` tell the agent how to call the CLI.
 - Personal-data detection; non-English nudge signals; decisions shared across repos; Cursor and OpenCode.
 
 ## 14. Decisions after review (owner, 2026-11-03)
 
 The owner ruled on every point the first draft raised. None is open.
+
+**Later ruling (owner, 2026-11-10):** C-R6. A model-invocable `/harness:remember` skill runs the bundled CLI, so a plugin-only install can save decisions too. The AGENTS.md pointer names it. It costs about 30 always-loaded tokens. This replaces the §13 line that ruled the skill out.
 
 | # | Point raised | Ruling |
 |---|---|---|

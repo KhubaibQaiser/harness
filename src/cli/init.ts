@@ -188,7 +188,7 @@ async function showPlan({ cli, f, p, root }: Run, { plan, touched }: Built, conf
   if (sel?.preset) for (const l of previewLines(sel.preset, sel.ids)) out(l);
   if (sel) {
     const extra = sel.preset ? presetContext(sel.preset, sel.presetItems) : [];
-    const stop = await budgetGate({ cat: sel.catalog, before: [], after: sel.ids, exempt: approvedIds(config, null, sel.catalog), extra, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, root, env: cli.env, out, f: { ...f.opts, overBudget: f.ai.overBudget } });
+    const stop = await budgetGate({ cat: sel.catalog, before: [], after: sel.ids, exempt: approvedIds(config, null, sel.catalog), extra, changes: plan.changes, budget: config.context.budget_tokens, templatesDir: cli.templatesDir, root, env: cli.env, out, f: { ...f.opts, overBudget: f.ai.overBudget } });
     if (stop !== null) return stop;
   }
   if (f.opts.dryRun) {

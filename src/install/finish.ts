@@ -20,7 +20,7 @@ export function pruneStale(m: Manifest, changes: Change[], dropped: string[]): n
 }
 
 /** The files `changes` would write that have uncommitted changes. */
-export function dirtyTouched(root: string, changes: Change[]): string[] {
+export function dirtyTouched(root: string, changes: { rel: string }[]): string[] {
   const dirty = dirtyPaths(root);
   return changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
 }

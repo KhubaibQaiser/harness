@@ -35,7 +35,8 @@ test('the plugin row is in always, owned by harness', () => {
   const p = contextSet(installed(), cfg(), dirs).always.find((e) => e.id === 'harness-plugin');
   expect(p).toMatchObject({ owner: 'harness', load: 'always', chars: 0, path: 'plugin:harness' });
   expect(p!.note).toBeUndefined(); // measured from harness's own files, not a catalog record
-  expect(p!.label).toMatch(/^skills harness:/);
+  // Only the skills that load a listing (doctor, status); the slash-only ones (disable-model-invocation) cost nothing.
+  expect(p!.label).toBe('skills harness:doctor, harness:status + agents staff-reviewer');
   expect(p!.tokens).toBeGreaterThan(0);
 });
 

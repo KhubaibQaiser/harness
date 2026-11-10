@@ -8,6 +8,7 @@ import { revertHunks } from '../install/diff.js';
 import { prettierFormat, repoPrettier } from '../install/format.js';
 import { matchesHash, eolOf, withEol } from '../install/text.js';
 import { MANIFEST_REL, ManifestError, REPO_STATE, backupText, readManifest, type Manifest, type StatePaths } from '../install/manifest.js';
+import { ESLINT } from '../install/plan.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall } from './preamble.js';
@@ -26,6 +27,9 @@ const read = (p: string): string | null => {
     return null;
   }
 };
+
+const JS = /\.[cm]?[jt]s$/;
+const HARNESS_ESLINT = ['.harness/eslint/harness.config.mjs', '.harness/eslint/harness.config.d.mts'];
 
 const sameJson = (a: string, b: string): boolean => { try { return isDeepStrictEqual(JSON.parse(a), JSON.parse(b)); } catch { return false; } };
 
@@ -58,10 +62,11 @@ function pruneExcept(dir: string, keep: string[]): void {
 }
 
 /** What uninstall writes for each file `m` records: deletes and restores, the edited files it keeps, and notes. Backups are read through `sp`. */
-export function removalChanges(root: string, m: Manifest, force: boolean, sp: StatePaths = REPO_STATE): { changes: Change[]; kept: string[]; notes: string[] } {
+export function removalChanges(root: string, m: Manifest, force: boolean, sp: StatePaths = REPO_STATE): { changes: Change[]; kept: string[]; notes: string[]; /** harness ESLint files kept because a config still imports them */ imported: string[] } {
   const changes: Change[] = [];
   const kept: string[] = [];
   const notes: string[] = [];
+  const keptWhole: string[] = []; // the texts of JS files kept whole
   for (const f of m.files) {
     const cur = read(join(root, f.rel));
     if (cur === null) {
@@ -90,17 +95,31 @@ export function removalChanges(root: string, m: Manifest, force: boolean, sp: St
     else if (f.kind === 'update' && matchesHash(cur, f.hash) && backup !== null) changes.push({ kind: 'update', rel: f.rel, before: cur, after: backup, blocks: [] });
     else if (f.kind === 'create' || f.kind === 'update') {
       // A merged file the user edited: remove only harness's blocks and keep the rest.
+      // In a JS/TS file the blocks depend on each other (an import and its use), so one missing block keeps them all.
+      const whole = JS.test(f.rel);
+      const keepAll = (lines: string[]) => {
+        notes.push(`\`${f.rel}\`: a change harness made was not found or was edited, so none of harness's lines were removed. Remove these by hand:\n${lines.map((l) => `  ${l}`).join('\n')}`);
+        keptWhole.push(cur);
+      };
       let after = cur;
       for (const b of f.blocks ?? []) {
         const next = removeBlocks(after, [b]);
-        if (next === after) notes.push(`\`${f.rel}\`: a block harness added was not found; left as is.`);
-        after = next;
+        if (next !== after) after = next;
+        else if (!whole) notes.push(`\`${f.rel}\`: a block harness added was not found; left as is.`);
+        else {
+          keepAll((f.blocks ?? []).flatMap((x) => x.split(/\r?\n/)).map((l) => l.trim()).filter((l) => l && l !== ','));
+          after = cur;
+          break;
+        }
       }
-      // A config the repo's Prettier formatted at install: undo the formatted hunks, then format again, as install did.
-      for (const h of [...(f.replace ?? [])].reverse()) {
-        const next = revertHunks(after, [h]);
-        if (next === null) notes.push(`\`${f.rel}\`: a change harness made was not found; left as is.`);
-        else after = next;
+      // A config the repo's Prettier formatted at install: undo the formatted hunks together, then format again, as install did.
+      if (f.replace?.length && !keptWhole.includes(cur)) {
+        const next = revertHunks(after, f.replace);
+        if (next !== null) after = next;
+        else if (whole) {
+          keepAll(f.replace.flatMap((h) => { const to = new Set(h.to.split('\n')); return h.from.split('\n').filter((l) => l.trim() && !to.has(l)).map((l) => l.trim()); }));
+          after = cur;
+        } else notes.push(`\`${f.rel}\`: a change harness made was not found; left as is.`);
       }
       const bin = f.formatted && after !== cur ? repoPrettier(root, f.rel) : null;
       if (bin) {
@@ -116,7 +135,14 @@ export function removalChanges(root: string, m: Manifest, force: boolean, sp: St
     }
   }
 
-  return { changes, kept, notes };
+  // An ESLint config that still imports harness's ESLint files (from its text after this uninstall, not the manifest,
+  // so a later install's uninstall agrees): keep them too, so the person's lint keeps loading.
+  const textAfter = (rel: string) => { const c = changes.find((x) => x.rel === rel); return c ? (c.kind === 'update' ? c.after : null) : read(join(root, rel)); };
+  const imported = ESLINT.some((rel) => textAfter(rel)?.includes('.harness/eslint/'))
+    ? HARNESS_ESLINT.filter((rel) => existsSync(join(root, rel)))
+    : [];
+  for (const rel of imported) { const i = changes.findIndex((c) => c.rel === rel); if (i >= 0) changes.splice(i, 1); }
+  return { changes, kept, notes, imported };
 }
 
 export async function uninstall(args: string[], cli: UninstallEnv): Promise<number> {
@@ -132,13 +158,15 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   if (typeof opened === 'number') return opened;
   const { root, m } = opened;
 
-  const { changes, kept, notes } = removalChanges(root, m, force);
+  const { changes, kept, notes, imported } = removalChanges(root, m, force);
+  const importedWhy = `${list(imported)} kept because your edited eslint config still imports them. Delete them after you remove its harness lines.`;
 
   if (dryRun) {
     for (const c of changes) out(`Would ${c.kind === 'delete' ? 'remove' : 'restore'} \`${c.rel}\``);
     for (const n of notes) out(`Note: ${n}`);
     if (kept.length) out(`Would keep ${list(kept)} because you edited them (--force removes them too).`);
-    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length ? ', except the edited files above' : ''}${existsSync(join(root, '.harness', 'presets')) ? ' (`.harness/presets/` stays: it holds your committed presets)' : ''}.`);
+    if (imported.length) out(`Would keep ${importedWhy}`);
+    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length || imported.length ? ', except the kept files above' : ''}${existsSync(join(root, '.harness', 'presets')) ? ' (`.harness/presets/` stays: it holds your committed presets)' : ''}.`);
     return out('Dry run: nothing was written.'), 0;
   }
 
@@ -166,15 +194,16 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     // .harness/presets/ is the person's own committed source, not something harness wrote: it stays.
     const presets = join(root, '.harness', 'presets');
     const keepPresets = existsSync(presets);
-    pruneExcept(join(root, '.harness'), [...kept.map((k) => join(root, k)), presets]);
-    const edited = kept.some((k) => k.startsWith('.harness/'));
-    out(`Removed \`.harness/\`${edited ? ' except the edited files' : ''}${keepPresets ? `${edited ? ' and' : ' except'} \`.harness/presets/\`, your committed presets` : ''}.`);
+    pruneExcept(join(root, '.harness'), [...kept, ...imported].map((k) => join(root, k)).concat(presets));
+    const edited = [...kept, ...imported].some((k) => k.startsWith('.harness/'));
+    out(`Removed \`.harness/\`${edited ? ' except the kept files' : ''}${keepPresets ? `${edited ? ' and' : ' except'} \`.harness/presets/\`, your committed presets` : ''}.`);
   } else {
     // Keep the logs but mark harness as uninstalled so init can run again.
     rmSync(join(root, MANIFEST_REL), { force: true });
     out('Kept `.harness/` (manifest removed).');
     stampHarnessFiles(root); // change detection: these writes are harness's own
   }
+  if (imported.length) out(`Kept ${importedWhy}`);
   if (kept.length) out(`Kept ${list(kept)} because you edited them. Harness no longer tracks them: delete them if you do not need them, or run /harness:init to install again.`);
   out('Restart any Claude Code session open in this repo: its hooks still point at the removed dispatcher and block every call.');
   return 0;

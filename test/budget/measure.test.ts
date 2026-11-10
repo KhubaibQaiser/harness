@@ -37,9 +37,16 @@ test('skills count only name and description', () => {
 test('agents-md counts the block and the import', () => {
   const block = readFileSync(join(templates, 'agents-block.md'), 'utf8');
   const e = itemContext(item('agents-md', 'rule', { type: 'own', merge: ['agents-md'] }), dirs);
-  const text = stripComments(block) + '@AGENTS.md\n'; // spec 3.4: the markers count 0, as contextSet counts them
   expect(block).toContain('<!--');
-  expect(e).toEqual({ id: 'agents-md', tokens: estimateTokens(text), text });
+  const cut = stripComments(block.slice(0, block.lastIndexOf('<!-- harness:end -->') + '<!-- harness:end -->'.length)); // as the installed row cuts it
+  expect(e).toEqual({ id: 'agents-md', tokens: estimateTokens(cut) + estimateTokens('@AGENTS.md\n'), text: cut + '@AGENTS.md\n' });
+});
+
+// M9: installed, the block and the line are two rows, each rounded; the preview rounds them the same way.
+test('agents-md rounds the block and the import line apart, as the installed rows do', () => {
+  const t = mkdtempSync(join(tmpdir(), 'tpl-'));
+  writeFileSync(join(t, 'agents-block.md'), 'x'.repeat(5)); // 5 + 11 chars: one rounding gives 4, two give 2 + 3
+  expect(itemContext(item('agents-md', 'rule', { type: 'own', merge: ['agents-md'] }), { templates: t }).tokens).toBe(5);
 });
 
 test('own skill counts its template frontmatter; hooks, settings and ci are 0', () => {
@@ -70,12 +77,13 @@ test('harness-plugin also counts the agents plugin.json registers', async () => 
   expect(agent).toBeGreaterThan(0);
 });
 
-test('approved items are exempt', async () => {
+test('approved items count in the total but are never unmeasured', async () => {
   const c = cat(rubric, item('p', 'plugin', gh));
-  const base = await measureSelection([], c, dirs);
+  const plain = await measureSelection(['review-rubric', 'p'], c, dirs);
   const r = await measureSelection(['review-rubric', 'p'], c, dirs, { exempt: ['review-rubric', 'p', 'harness-plugin'] });
   expect(r.entries.find((e) => e.id === 'review-rubric')).toMatchObject({ exempt: true });
-  expect(r.tokens).toBe(base.tokens);
+  expect(r.tokens).toBe(plain.tokens);
+  expect(plain.unmeasured).toEqual(['p']);
   expect(r.unmeasured).toEqual([]);
   expect(r.entries.find((e) => e.id === 'harness-plugin')?.exempt).toBeUndefined();
 });
@@ -115,8 +123,8 @@ test('budgetLines say estimate and name the unmeasured ids', () => {
 test('budgetLines lists approved ids', () => {
   const after: ContextMeasure = { ...m(5), entries: [{ id: 'x', tokens: 9, exempt: true }, { id: 'y', tokens: 3 }, { id: 'z', tokens: null, exempt: true }] };
   expect(budgetLines(budgetVerdict(m(5), after, 2000))).toEqual([
-    'Always-loaded context: ~5 tokens (estimate), budget 2,000; harness and its picks ~3.',
-    'Approved earlier, not counted: x, z.',
+    'Always-loaded context: ~5 tokens (estimate), budget 2,000; harness and its picks ~12.',
+    'Approved earlier: x, z.',
   ]);
 });
 
@@ -221,9 +229,9 @@ test('a recorded plugin number survives an API count and keeps the result an est
   expect(r.method).toBe('estimate');
 });
 
-test('budgetLines: harness and its picks sums the non-exempt entries that are not the repo', () => {
-  const after: ContextMeasure = { ...m(19), entries: [{ id: 'a', tokens: 7 }, { id: 'r', tokens: 12, owner: 'repo' }, { id: 'x', tokens: 9, exempt: true }, { id: 'n', tokens: null }] };
-  expect(budgetLines(budgetVerdict(m(19), after, 2000))[0]).toBe('Always-loaded context: ~19 tokens (estimate), budget 2,000; harness and its picks ~7.');
+test('budgetLines: harness and its picks sums the entries that are not the repo, approved ones included', () => {
+  const after: ContextMeasure = { ...m(28), entries: [{ id: 'a', tokens: 7 }, { id: 'r', tokens: 12, owner: 'repo' }, { id: 'x', tokens: 9, exempt: true }, { id: 'n', tokens: null }] };
+  expect(budgetLines(budgetVerdict(m(28), after, 2000))[0]).toBe('Always-loaded context: ~28 tokens (estimate), budget 2,000; harness and its picks ~16.');
 });
 
 // ---- budgetGate counts the repo's own context (spec 8, Q6) ----

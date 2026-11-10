@@ -21,7 +21,7 @@ const SECTIONS: Record<keyof HarnessConfig, string> = {
   apps: 'Runnable apps in the repo: how to start them and what login (credential names only, never values) they need.',
   items: 'Catalog items chosen for this project.',
   git: 'Git settings.',
-  context: 'Always-loaded context budget. harness context measures it; init, update, add and sync ask before going over.',
+  context: 'Always-loaded context budget, your repo\'s own files included. harness context measures it; init, update, add and sync ask before going over.',
   tdd: 'Red-first TDD enforcement (needs checks.tdd).',
   multi_file_gate: 'Multi-file edit gate (needs checks.multiFile).',
   pr_size: 'Pull request size (needs checks.prSize). Asks above max_lines or max_files; the pr-ship skill aims for target_lines.',

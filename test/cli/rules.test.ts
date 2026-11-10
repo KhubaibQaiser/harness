@@ -412,6 +412,18 @@ describe('TS options', () => {
     expect(seen.some((s) => s.endsWith('tsconfig.strict.json'))).toBe(false);
   });
 
+  test('with no ESLint config and a commented tsconfig, --apply prints both manual steps and writes nothing', async () => {
+    const cfg = '{\n  // mine\n  "compilerOptions": {}\n}\n';
+    const { root } = await installed({ 'tsconfig.json': cfg });
+    const before = snapshot(root);
+    const r = await run(root, ['--apply'], prompt('yes'), withTsc(root));
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('This repo has no ESLint config');
+    expect(r.out).toMatch(/can't edit `tsconfig\.json` safely/);
+    expect(r.out).toContain(tsOpt('noImplicitReturns'));
+    expect(snapshot(root)).toBe(before);
+  });
+
   test('the count header names TS options only when there is a tsconfig', async () => {
     const { root } = await installed({ 'eslint.config.mjs': ESLINT_CFG });
     const r = await run(root, [], prompt(), execWith({ status: 1, stdout: report(['max-depth']) }));

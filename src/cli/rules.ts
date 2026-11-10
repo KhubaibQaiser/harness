@@ -137,7 +137,13 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
   const tsCount = tsMerged ? tsSet : tsBefore === null ? [] : tsManualOpts;
   // The ESLint and TS edits are independent: with no flat config to edit, the TS options still apply.
   if (apply && !merged) refuse(root, cfg, p, out, tsSet.length ? 'The ESLint part is skipped; the TS options below still apply.' : undefined);
-  if (apply && !merged && !tsSet.length) return 1;
+  const printTsManual = () => {
+    if (tsLinked) tsManual(`\`${TSCONFIG}\` is a symlink, and harness never reads or writes through one.`, tsManualOpts, out);
+    else if (tsBefore !== null && !tsMerged && tsManualOpts.length) tsManual(`Harness can't edit \`${TSCONFIG}\` safely: it has comments or trailing commas.`, tsManualOpts, out);
+    else return false;
+    return true;
+  };
+  if (apply && !merged && !tsSet.length) return printTsManual(), 1;
   // An eslint.config.ts imports the .mjs, so a strict typecheck needs its declaration.
   const own = merged ? [FILE, ...(cfg?.endsWith('.ts') ? [DTS] : [])] : [];
   const read = (rel: string) => (existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null);
@@ -155,9 +161,7 @@ export async function rules(args: string[], cli: CliEnv & { prompt: Prompt; exec
   const counts = await countViolations(root, { ...p, ts: Object.fromEntries(tsCount.map((o) => [o, true as const])) }, cli.exec ?? defaultExec);
   printCounts(counts, p, tsCount, cfg, out);
   printGaps(p, counts.eslint.dropped, out);
-  if (tsLinked) tsManual(`\`${TSCONFIG}\` is a symlink, and harness never reads or writes through one.`, tsManualOpts, out);
-  else if (tsBefore !== null && !tsMerged && tsManualOpts.length) tsManual(`Harness can't edit \`${TSCONFIG}\` safely: it has comments or trailing commas.`, tsManualOpts, out);
-  else if (tsMerged) {
+  if (!printTsManual() && tsMerged) {
     const recorded = m.files.find((f) => f.rel === TSCONFIG)?.blocks ?? [];
     const opts = (JSON.parse(tsBefore!) as { compilerOptions?: Record<string, unknown> }).compilerOptions ?? {};
     const kept = Object.keys(p.ts).filter((o) => !tsSet.includes(o) && !recorded.includes(JSON.stringify({ set: ['compilerOptions', o], value: true })));

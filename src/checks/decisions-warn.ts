@@ -23,7 +23,7 @@ export function decisionWarnings(ctx: Ctx, changed: string[], git?: Git): string
       const s = states[i]!;
       const extra = [
         s.expired ? `It is expired (last confirmed ${d.verified_on}).` : '',
-        s.dead[0] ? `Its path ${shown(s.dead[0])} no longer matches any file.` : '',
+        ...s.dead.map((g) => `Its path ${shown(g)} no longer matches any file.`),
       ].filter(Boolean);
       return [`Harness: you changed code covered by team decision \`${d.id}\` ("${shown(d.title)}"). If it still holds, ask the person to run \`harness remember confirm ${d.id}\`; if not, \`harness remember retire ${d.id}\`.`, ...extra].join(' ');
     });

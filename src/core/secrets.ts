@@ -15,9 +15,10 @@ export const SECRET_PATTERNS: readonly [kind: string, re: RegExp][] = [
   ['Anthropic or OpenAI key', /\bsk-ant-[A-Za-z0-9_-]{20,}/g],
   ['Anthropic or OpenAI key', /\bsk-[A-Za-z0-9]{32,}\b/g],
   ['JWT', /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
-  // The lookbehind keeps the scheme scan linear (a bare run of letters would
-  // otherwise rescan from every start); matches are the same as the plain pattern.
-  ['URL with credentials', /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/gi],
+  // Spec: [a-z][a-z0-9+.-]*://... A bare scheme scan is quadratic on a long run of letters. The lookbehind plus the
+  // leading [0-9+.-]* start the match at the run start, so it is linear and still catches `2https://` or `-https://`.
+  // Same hit count as the spec pattern; the span may start a few characters earlier, so a redaction can cover slightly more.
+  ['URL with credentials', /(?<![a-z0-9+.-])[0-9+.-]*[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/gi],
   ['assignment', /(api[_-]?key|secret|token|passw(or)?d)\s*[:=]\s*['"]?[^\s'"]{8,}/gi],
 ];
 

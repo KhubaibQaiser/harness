@@ -43,7 +43,8 @@ const takesValue = (wrapper: string, t: string): boolean => {
   return i === t.length - 2;
 };
 /** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
-export const runnerName = (t: string): string => (/^[a-z0-9_-]*$/.test(t) ? t : runnerNameOf(t)); // most words are plain
+const NAME_PLAIN = /^[a-z0-9_-]*$/; // a word every name rule leaves as it is
+export const runnerName = (t: string): string => (NAME_PLAIN.test(t) ? t : runnerNameOf(t)); // most words are plain
 const runnerNameOf = (t: string): string => t.slice(Math.max(t.lastIndexOf('/'), t.lastIndexOf('\\')) + 1).toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {

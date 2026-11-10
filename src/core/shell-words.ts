@@ -118,7 +118,8 @@ export function unquote(word: string): string {
 
 export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'script']);
 /** A word's command name: its last path segment, lower case, without a Windows extension or an @version (node@22). */
-export const commandName = (word: string): string => (/^[a-z0-9_-]*$/.test(word) ? word : commandNameOf(word)); // most words are plain
+const NAME_PLAIN = /^[a-z0-9_-]*$/; // a word every name rule leaves as it is
+export const commandName = (word: string): string => (NAME_PLAIN.test(word) ? word : commandNameOf(word)); // most words are plain
 const commandNameOf = (word: string): string =>
   word.replace(/["']/g, '').split(/[\\/]/).pop()!.toLowerCase().replace(/\.(exe|cmd|ps1|bat)$/, '').replace(/^([^@]+)@.*$/, '$1'); // backslashes are separators here
 

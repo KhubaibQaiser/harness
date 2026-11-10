@@ -1,12 +1,13 @@
 // The guard's command decision as main had it at 9b1e516, kept whole: guard.ts decides with it, too, whenever the
 // command text is not in the canonical form its data exemption needs (guard.ts canonicalText), so an odd spelling is
-// never read looser than this. Changed from 9b1e516 only in JOIN, in dropping the Check object, and (round 28) in two
-// fast paths that return what the slow path would: runnerName on a plain word, sensitivePath on a word with no `.`, `~` or id_.
+// never read looser than this. Changed from 9b1e516 only in JOIN, in dropping the Check object, and (round 28) in speed alone: two fast
+// paths that return what the slow path would (runnerName on a plain word, sensitivePath on a word with no `.`, `~` or
+// id_), and withoutHeredocBodies and the stdin programs kept per text (remember charges the work budget the same).
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
-import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
+import { cPayloads, remember, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
@@ -44,7 +45,8 @@ const takesValue = (wrapper: string, t: string): boolean => {
   return i === t.length - 2;
 };
 /** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
-export const runnerName = (t: string): string => (/^[a-z0-9_-]*$/.test(t) ? t : runnerNameOf(t)); // most words are plain (round 28)
+const NAME_PLAIN = /^[a-z0-9_-]*$/; // a word every name rule leaves as it is
+export const runnerName = (t: string): string => (NAME_PLAIN.test(t) ? t : runnerNameOf(t)); // most words are plain (round 28)
 const runnerNameOf = (t: string): string => t.slice(Math.max(t.lastIndexOf('/'), t.lastIndexOf('\\')) + 1).toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
@@ -161,7 +163,10 @@ function scriptsOf(root: string): Record<string, string> {
  * out (`<<E"O"F` is EOF); `<<-` ignores leading tabs on the end line, `<<` wants the line exactly. If anything is odd (a
  * delimiter with an expansion, a body with no end line) the command is returned whole, so nothing is hidden from the parser.
  */
-export function withoutHeredocBodies(cmd: string): string {
+export const withoutHeredocBodies = remember(withoutBodies);
+/** What stdin feeds each command, read with this file's command start; kept for the decision's repeats (round 28). */
+const shellPrograms = remember((c: string) => stdinPrograms(c, (ws) => commandStart(ws, (n) => SHELLS.has(n))));
+function withoutBodies(cmd: string): string {
   if (!cmd.includes('<<')) return cmd;
   const lines = cmd.split('\n');
   const out: string[] = [];
@@ -228,7 +233,7 @@ export function walkCommands<T>(command: string, w: Where, visit: Visit<T>, hook
     // A -c payload, or a program fed to a shell on stdin (echo … | bash, <<<, a here-document), is a command line of
     // its own: judge it with all the readings (a spaced path inside it is one word).
     (depth < 3
-      ? [...cPayloads(command), ...stdinPrograms(whole, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
+      ? [...cPayloads(command), ...shellPrograms(whole).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
           .reduce<T | null>((hit, p) => hit ?? walkCommands(p, w, visit, hooks, depth + 1), null)
       : null)
   );
@@ -664,7 +669,7 @@ function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
   // text rule (sh -c 'git push -f'): judge it too.
   const inner = [
     ...cPayloads(command),
-    ...stdinPrograms(command, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text),
+    ...shellPrograms(command).filter((p) => SHELLS.has(p.name)).map((p) => p.text),
     ...[...command.matchAll(/(?<![\w-])eval\s+([^;&|\n]*)/g)].map((m) => m[1].replace(/['"\\]/g, '')),
   ];
   for (const p of inner) {

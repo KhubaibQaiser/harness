@@ -7,7 +7,7 @@ import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
-import { balanced, commandName, cPayloads, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
+import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
@@ -19,8 +19,9 @@ const H_INLINE = `${INLINE_WHY} harness files or Claude settings is denied: it m
 // Owner rule: nobody edits node_modules directly. Installs still go through the guard's install gate.
 const inNodeModules = (root: string, p: string): boolean => !!toRepoPath(root, p)?.toLowerCase().split('/').includes('node_modules');
 
-const segTokens = (cmd: string): string[][] =>
-  cmd.split(/[;&|\n]+/).map((seg) => [...(seg.match(/'[^']*'|"[^"]*"|\S+/g) ?? [])].map((t) => t.replace(/^['"]|['"]$/g, '')));
+// Kept per text (round 28): expand and each target reader ask it of the same commands. Callers must not mutate it.
+const segTokens = remember((cmd: string): string[][] =>
+  cmd.split(/[;&|\n]+/).map((seg) => [...(seg.match(/'[^']*'|"[^"]*"|\S+/g) ?? [])].map((t) => t.replace(/^['"]|['"]$/g, ''))));
 
 // The command plus the strings of any bash|sh|zsh -c inside it, recursively.
 function expand(cmd: string): string[] {
@@ -205,8 +206,8 @@ function inlineCode(cmd: string, depth = 0): string[] {
   }
   return out;
 }
-const stdinProgramsOf = (cmd: string) =>
-  stdinPrograms(cmd, (ws) => commandStart(ws, (n) => SHELLS.has(n) || Object.hasOwn(INTERPRETERS, n))).filter((p) => SHELLS.has(p.name) || Object.hasOwn(INTERPRETERS, p.name));
+const stdinProgramsOf = remember((cmd: string) =>
+  stdinPrograms(cmd, (ws) => commandStart(ws, (n) => SHELLS.has(n) || Object.hasOwn(INTERPRETERS, n))).filter((p) => SHELLS.has(p.name) || Object.hasOwn(INTERPRETERS, p.name)));
 // A protected name as a path segment (not node_modules.txt or my_node_modules).
 const NM_SEG = /(^|[\\/'"`\s(,=:])node_modules([\\/'"`\s),;:]|$)/i;
 const H_SEG = /(^|[\\/'"`\s(,=:])(\.harness|\.claude[\\/]settings[^\\/'"`\s),;:]*)([\\/'"`\s),;:]|$)/i;

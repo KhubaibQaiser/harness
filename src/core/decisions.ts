@@ -48,11 +48,11 @@ export function readDecisions(root: string, today: string): DecisionSet {
     const { decision, errors } = parseDecision(rel, c.text, today);
     if (errors.length) set.errors.push(...errors);
     else if (!decision) set.others.push(rel);
-    else if (seen.has(decision.id)) set.errors.push(`${rel}: id must be unique in ${DECISIONS_DIR}/`);
+    else if (seen.has(decision.id)) set.errors.push(`${shown(rel)}: id must be unique in ${DECISIONS_DIR}/`);
     else { seen.add(decision.id); set.decisions.push(decision); }
   }
   const dangling = set.decisions.filter((d) => d.superseded_by !== undefined && !seen.has(d.superseded_by));
-  set.errors.push(...dangling.map((d) => `${d.rel}: superseded_by must name a decision in ${DECISIONS_DIR}/`));
+  set.errors.push(...dangling.map((d) => `${shown(d.rel)}: superseded_by must name a decision in ${DECISIONS_DIR}/`));
   set.decisions = set.decisions.filter((d) => !dangling.includes(d));
   return set;
 }

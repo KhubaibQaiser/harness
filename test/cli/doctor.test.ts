@@ -723,3 +723,16 @@ test('doctor context line does not throw without .git', async () => {
   rmSync(join(root, '.git'), { recursive: true, force: true });
   expect(run(root, { path: bin('npm') }).out).toMatch(/^ok always-loaded context ~/m);
 });
+
+test('an invalid decision makes doctor exit 1', async () => {
+  const root = await installed();
+  mkdirSync(join(root, 'docs/decisions'), { recursive: true });
+  writeFileSync(join(root, 'docs/decisions/2026-11-03-bad.md'), '---\nschema: harness-decision/1\nid: 2026-11-03-bad\n---\n');
+  const r = run(root);
+  expect(r.out).toMatch(/^fix docs\/decisions\/2026-11-03-bad\.md: /m);
+  expect(r.code).toBe(1);
+});
+
+test('no decisions folder: doctor prints the ok line', async () => {
+  expect(run(await installed()).out).toContain('ok no team decisions yet');
+});

@@ -5,17 +5,14 @@ import { applyChanges, linkedPath, refuseSymlink, type Change, type FsLike } fro
 import { mergeManifestFiles, rawOf, readManifest, type Manifest } from '../install/manifest.js';
 import { hashText, matchesHash } from '../install/text.js';
 import type { HarnessConfig } from './config.js';
-import { DECISIONS_DIR, MAX_DECISION_BYTES, isDecisionText, parseDecision, type TeamDecision } from './decision-file.js';
+import { DECISIONS_DIR, MAX_DECISION_BYTES, isDecisionText, parseDecision, shown, type TeamDecision } from './decision-file.js';
 import { RULE_GLOB, renderRule, ruleRel } from './decision-rule.js';
 import { stampHarnessFiles } from './harness-files.js';
 
 export interface DecisionSet { decisions: TeamDecision[]; errors: string[]; others: string[] }
 
 const RULES_DIR = '.claude/rules';
-// ponytail: a plain string: usage.test.ts flags this command name in a template until Task 6 adds the command.
-const PREFIX = 'harness remember:';
 const DAY_MS = 86_400_000;
-const shown = (s: string): string => s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '?'); // as decision-file.ts prints names
 
 const files = (root: string, dir: string): string[] => {
   try {
@@ -44,7 +41,7 @@ export function readDecisions(root: string, today: string): DecisionSet {
   const seen = new Set<string>();
   for (const name of files(root, DECISIONS_DIR)) {
     const rel = `${DECISIONS_DIR}/${name}`;
-    if (linkedPath(root, rel)) { set.errors.push(`${rel}: file must not be a symlink`); continue; }
+    if (linkedPath(root, rel)) { set.errors.push(`${shown(rel)}: file must not be a symlink`); continue; }
     if (!name.endsWith('.md')) { set.others.push(rel); continue; }
     const c = capped(join(root, rel));
     if (c.text === null) { (c.decision ? set.errors : set.others).push(c.decision ? `${shown(rel)}: file must be at most ${MAX_DECISION_BYTES} bytes` : rel); continue; }
@@ -121,9 +118,9 @@ function placeRules(files: Manifest['files'], firstRule: number): Manifest['file
 
 /** One transaction: the decision writes, the rule changes and the manifest; then the CLI snapshot, so change detection skips it. */
 export function commitDecisions(root: string, decisionChanges: Change[], plan: SyncPlan, o: { now: () => Date; fs?: FsLike }): void {
-  if (plan.foreign.length) throw new Error(`${PREFIX} ${plan.foreign[0]} is not harness's; rename it`);
+  if (plan.foreign.length) throw new Error(`harness remember: ${shown(plan.foreign[0]!)} is not harness's; rename it`);
   const m = readManifest(root);
-  if (!m) throw new Error(`${PREFIX} .harness/manifest.json is missing`);
+  if (!m) throw new Error('harness remember: .harness/manifest.json is missing');
   const hashOf = (rel: string) => hashText(readFileSync(join(root, rel), 'utf8'));
   // Filtered against this read of the manifest: another command may have recorded the file since the plan.
   const adopted = plan.adopt.filter((rel) => !m.files.some((f) => f.rel === rel)).map((rel) => ({ rel, kind: 'create' as const, hash: hashOf(rel) }));

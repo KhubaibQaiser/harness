@@ -34,7 +34,7 @@ type Rec = { at: number; prompt: boolean; texts: string[] };
 
 // The transcript's user prompts and assistant text, or undefined when unreadable.
 // ponytail: the transcript JSONL format is not a documented stable API; unknown shapes are skipped and an unreadable file fails open.
-function readTranscript(path: unknown): Rec[] | undefined {
+export function readTranscript(path: unknown): Rec[] | undefined {
   if (typeof path !== 'string' || !path) return undefined;
   let raw: string;
   try {

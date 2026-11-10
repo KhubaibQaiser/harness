@@ -52,6 +52,8 @@ Asks you once per turn before the agent edits a second source file. Your yes cov
 
 Before the agent may stop, harness runs the steps in `stop.steps`: script names run with your package manager, or `{ name, run }` commands for any language. In a JS/TS repo with TDD on, it then checks that changed lines (against `stop.base_ref`) have at least `tdd.diff_coverage` percent coverage. A failing step blocks the stop and shows the end of its output, up to `stop.max_attempts` times.
 
+- **Team-decision nudge.** When you state a standing rule in a prompt ("from now on…", "we decided…") or the agent says it will remember one, a passing Stop shows a note, once per session, suggesting `harness remember add`. It's a plain-text match with no model call, and it never blocks. A blocked Stop holds it until the next passing one. It doesn't show after a `harness remember add`, with `decisions.nudge: false`, `checks.decisions: false` or `checks.stop: false`, or in an unattended run, which logs a `decision-candidate` event instead.
+
 ## Review agent (experimental)
 
 Experimental: it has not had live review runs yet. `init` also adds a `staff-reviewer` agent (`.claude/agents/staff-reviewer.md`) and its `review-rubric` skill (`.claude/skills/review-rubric/SKILL.md`). The agent reviews a diff you give it in a fresh context and reports findings. It cannot edit files. With `Mode: vet` (used by `/harness:vet`) it reads only the files a scan flagged and replies with one JSON review; it can add context to a scan but never lower a finding's severity.

@@ -1,13 +1,15 @@
 import { execFileSync } from 'node:child_process';
+import * as nodeFs from 'node:fs';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import type { Prompt } from '../../src/cli/prompt.js';
-import { remember } from '../../src/cli/remember.js';
+import { remember, type RememberEnv } from '../../src/cli/remember.js';
 import { list } from '../../src/cli/remember-read.js';
 import { defaults } from '../../src/core/config.js';
 import { parseDecision } from '../../src/core/decision-file.js';
 import { readEvents } from '../../src/core/events.js';
+import type { Git } from '../../src/core/decisions-stale.js';
 import { TODAY, decision, installedRepo, syncNow, writeDecision } from '../core/decisions-helpers.js';
 
 const ID = `${TODAY}-validate-env-with-zod`;
@@ -107,7 +109,6 @@ test('add: field limits', async () => {
   expect((await add({ '--rule': 'x'.repeat(300) })).code).toBe(0);
   expect((await add({ '--why': 'x'.repeat(501) })).out).toBe('harness remember: --why must be one line of 0 to 500 characters');
   expect((await add({ '--why': 'a\nb' })).code).toBe(1);
-  expect((await add({}, Array(11).fill('src/env/**'))).out).toBe('harness remember: give 1 to 10 --path globs');
   expect((await add({}, ['**'])).out).toBe('harness remember: --path ** must not match the whole repo (put repo-wide rules in AGENTS.md or CLAUDE.md)');
   expect((await go(root, ['add', '--title', 'T', '--rule', 'R'])).code).toBe(2); // no --path
   expect((await go(root, ['add', '--title', 'T', '--rule', 'R', '--path', 'src/env/**', '--bogus'])).code).toBe(2);
@@ -173,4 +174,86 @@ test('list: one sorted line per decision', async () => {
   ]);
   expect((await go(root, ['list'])).out.split('\n')).toHaveLength(2);
   expect((await go(root, ['nope'])).code).toBe(2);
+});
+
+// Fix round 1 (review 2026-11-10).
+async function goWith(root: string, args: string[], extra: Partial<RememberEnv>) {
+  const lines: string[] = [];
+  const code = await remember(args, { root, env: {}, out: (s) => lines.push(s), prompt: fake(), now: () => new Date(`${TODAY}T12:00:00Z`), ...extra });
+  return { code, out: lines.join('\n') };
+}
+
+test('no terminal without --yes: exit 2, the remember no-terminal line, nothing written', async () => {
+  const root = await repo();
+  const r = await go(root, ADD.filter((a) => a !== '--yes'), { tty: false });
+  expect(r).toEqual({ code: 2, out: 'No terminal to answer prompts. Run with --yes, or use --dry-run to preview.' });
+  expect(existsSync(join(root, 'docs/decisions'))).toBe(false);
+});
+
+test('sync: manifest-only work is listed in --dry-run and in the prompt', async () => {
+  const root = await repo();
+  await go(root, ADD);
+  const mp = join(root, '.harness/manifest.json');
+  const m = JSON.parse(readFileSync(mp, 'utf8'));
+  m.files = m.files.filter((f: { rel: string }) => f.rel !== RULE);
+  writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+  expect(await go(root, ['sync', '--dry-run'])).toEqual({ code: 0, out: 'Would update .harness/manifest.json' });
+  const p = fake(false);
+  expect((await go(root, ['sync'], { tty: true, prompt: p })).out).toContain('Will update .harness/manifest.json');
+  expect(p.asked).toEqual(['Write these files? [y/N]']);
+  expect((await go(root, ['sync', '--yes'])).out).toBe('Updated .harness/manifest.json');
+});
+
+test('add: --path given 11 times', async () => {
+  const root = await repo();
+  const r = await go(root, ['add', '--title', 'T', '--rule', 'R', ...Array(11).fill(['--path', 'src/env/**']).flat(), '--yes']);
+  expect(r).toEqual({ code: 1, out: 'harness remember: --path must be given 1 to 10 times' });
+});
+
+test('add: git is injected; a failed ls-files is a refusal', async () => {
+  const root = await repo();
+  const calls: string[][] = [];
+  const git: Git = (args) => {
+    calls.push(args);
+    return args.includes('rev-parse') ? { ok: true, out: `${'a'.repeat(40)}\n` } : { ok: false, out: '', reason: 'timeout' };
+  };
+  const r = await goWith(root, ADD, { git });
+  expect(r).toEqual({ code: 1, out: "harness remember: couldn't list tracked files (timeout)." });
+  expect(calls.map((c) => c.at(-1))).toEqual(['HEAD', '-z']);
+  expect(events(root).at(-1)).toMatchObject({ decision: 'refused', reason: 'git' });
+});
+
+test('add: --supersedes refuses a decision that is not active and keeps its link', async () => {
+  const root = await repo();
+  const OLD = '2026-11-03-old-env';
+  writeDecision(root, decision('2026-11-02-newer'));
+  writeDecision(root, decision(OLD, { status: 'superseded', superseded_by: '2026-11-02-newer' }));
+  const before = readFileSync(join(root, `docs/decisions/${OLD}.md`), 'utf8');
+  const r = await go(root, [...ADD, '--supersedes', OLD]);
+  expect(r).toEqual({ code: 1, out: `harness remember: ${OLD} is superseded, not active. Only an active decision can be superseded.` });
+  expect(readFileSync(join(root, `docs/decisions/${OLD}.md`), 'utf8')).toBe(before);
+  expect(existsSync(join(root, DEC))).toBe(false);
+});
+
+test('add: a failed write is a logged refusal and is rolled back', async () => {
+  const root = await repo();
+  const fs = { ...nodeFs, writeFileSync: ((p: string, ...a: unknown[]) => {
+    if (String(p).includes('harness-decision-')) throw new Error('disk full');
+    return (nodeFs.writeFileSync as (...x: unknown[]) => void)(p, ...a);
+  }) as typeof nodeFs.writeFileSync };
+  const r = await goWith(root, ADD, { fs });
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('rolled back');
+  expect(existsSync(join(root, DEC))).toBe(false);
+  expect(events(root).at(-1)).toMatchObject({ decision: 'refused', reason: 'apply' });
+});
+
+test('list: says how many decisions are invalid', async () => {
+  const root = await repo();
+  writeDecision(root, decision('2026-11-03-a'));
+  writeFileSync(join(root, 'docs/decisions/2026-11-04-bad.md'), '---\nschema: harness-decision/1\nid: nope\n---\n');
+  expect(list(root, defaults(), TODAY)).toEqual([
+    '2026-11-03-a  active   confirmed 2026-11-03  src/env/**',
+    '1 invalid; run harness remember sync to see why',
+  ]);
 });

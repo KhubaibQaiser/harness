@@ -3,24 +3,24 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import picomatch from 'picomatch';
-import type { Change, FsLike } from '../install/apply.js';
+import { ApplyError, type Change, type FsLike } from '../install/apply.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import type { HarnessConfig } from '../core/config.js';
 import { DECISIONS_DIR, MAX_PATHS, MAX_TITLE_CHARS, addBody, globProblem, parseDecision, serializeDecision, shown, slugId, type TeamDecision } from '../core/decision-file.js';
 import { renderRule, ruleRel } from '../core/decision-rule.js';
 import { commitDecisions, planSync, readDecisions, type DecisionSet, type SyncPlan } from '../core/decisions.js';
-import { gitIn } from '../core/decisions-stale.js';
+import { gitIn, type Git } from '../core/decisions-stale.js';
 import { appendEvent } from '../core/events.js';
 import { gitRoot } from '../core/repo-root.js';
 import { scanSecrets } from '../core/secrets.js';
 import { unattendedEnv } from '../core/unattended.js';
 import { insideClaude } from './claude-only.js';
-import { NO_TTY, type Prompt } from './prompt.js';
+import type { Prompt } from './prompt.js';
 import { openInstall, readConfig } from './preamble.js';
 import { list } from './remember-read.js';
 import type { CliEnv } from './index.js';
 
-export type RememberEnv = CliEnv & { prompt: Prompt; now?: () => Date; fs?: FsLike };
+export type RememberEnv = CliEnv & { prompt: Prompt; now?: () => Date; fs?: FsLike; /** Default: git in the repo root; tests pass a fake. */ git?: Git };
 
 export const REMEMBER_USAGE = [
   'harness remember add --title <text> --rule <text> [--why <text>] --path <glob> [--path <glob>…] [--supersedes <id>] [--quoted] [--dry-run] [--yes]',
@@ -33,6 +33,7 @@ export const REMEMBER_USAGE = [
 const UNATTENDED = 'harness remember does not write in unattended runs (CI, cloud or no-prompt sessions). A person can save it later.';
 const GUARD_OFF = "harness remember won't write from inside Claude Code while checks.guard is off, because nobody would be asked. Run it in your own terminal.";
 const NOT_INSTALLED = 'Harness is not installed here (no .harness/manifest.json). Run /harness:init first.';
+const NO_TTY = 'No terminal to answer prompts. Run with --yes, or use --dry-run to preview.';
 const NOT_COMMITTED = 'Nothing is committed. Open a PR so the team reviews it.';
 const MAX_RULE_CHARS = 300;
 const MAX_WHY_CHARS = 500;
@@ -40,7 +41,7 @@ const SHA = /^[0-9a-f]{40}$/;
 const CONTROL = /[\p{Cc}\p{Cf}\u2028\u2029]/u; // newlines included: every field is one line
 const SAFE = ['-c', 'core.fsmonitor=false'];
 
-interface Ctx { root: string; cfg: HarnessConfig; today: string; now: () => Date }
+interface Ctx { root: string; cfg: HarnessConfig; today: string; now: () => Date; git: Git }
 interface Flags { values: Map<string, string[]>; switches: Set<string>; rest: string[] }
 
 const usage = (cli: RememberEnv): number => (cli.out(`Usage: ${REMEMBER_USAGE.join('\n       ')}`), 2);
@@ -84,7 +85,7 @@ function open(cli: RememberEnv, write: boolean): Ctx | number {
   const gate = write ? writeGate(cli, cfg) : null;
   if (gate) return refuse(cli, o.root, gate === UNATTENDED ? 'unattended' : 'guard-off', gate);
   const now = cli.now ?? (() => new Date());
-  return { root: o.root, cfg, today: now().toISOString().slice(0, 10), now };
+  return { root: o.root, cfg, today: now().toISOString().slice(0, 10), now, git: cli.git ?? gitIn(o.root) };
 }
 
 const secretIn = (fields: [string, string][]): string | null => {
@@ -101,7 +102,7 @@ function fieldProblem(title: string, rule: string, why: string, paths: string[])
   if (!fitsLine(title, 1, MAX_TITLE_CHARS)) return `--title must be one line of 1 to ${MAX_TITLE_CHARS} characters`;
   if (!fitsLine(rule, 1, MAX_RULE_CHARS)) return `--rule must be one line of 1 to ${MAX_RULE_CHARS} characters`;
   if (!fitsLine(why, 0, MAX_WHY_CHARS)) return `--why must be one line of 0 to ${MAX_WHY_CHARS} characters`;
-  if (paths.length > MAX_PATHS) return `give 1 to ${MAX_PATHS} --path globs`;
+  if (paths.length > MAX_PATHS) return `--path must be given 1 to ${MAX_PATHS} times`;
   for (const p of paths) {
     const problem = globProblem(p);
     if (problem) return `--path ${shown(p)} ${problem}`;
@@ -110,8 +111,7 @@ function fieldProblem(title: string, rule: string, why: string, paths: string[])
 }
 
 /** HEAD and the paths that match no tracked file, or a refusal. */
-function fromGit(root: string, paths: string[]): { head: string; dead: string[] } | string {
-  const git = gitIn(root);
+function fromGit(git: Git, paths: string[]): { head: string; dead: string[] } | string {
   const head = git([...SAFE, 'rev-parse', 'HEAD']);
   const sha = head.out.trim();
   if (!head.ok || !SHA.test(sha)) return 'harness remember: no commit to record as verified_at. Commit once, then run it again.';
@@ -121,20 +121,28 @@ function fromGit(root: string, paths: string[]): { head: string; dead: string[] 
   return { head: sha, dead: paths.filter((p) => { const m = picomatch(p, { dot: true }); return !files.some((f) => m(f)); }) };
 }
 
-const fileLines = (changes: Change[], verb: [string, string]): string[] =>
-  changes.map((c) => `${c.kind === 'delete' ? verb[1] : verb[0]} ${shown(c.rel)}`);
+/** `verb`: write, remove, update. A manifest-only fix (adopt, rehash, drop) gets its own line, so a yes is never blind. */
+const fileLines = (changes: Change[], plan: SyncPlan, verb: [string, string, string]): string[] => [
+  ...changes.map((c) => `${c.kind === 'delete' ? verb[1] : verb[0]} ${shown(c.rel)}`),
+  ...(changes.length === 0 && plan.adopt.length + plan.rehash.length + plan.stale.length > 0 ? [`${verb[2]} ${MANIFEST_REL}`] : []),
+];
 
 /** Steps 4 and 5: dry run, the prompt, then one transaction. Returns the exit code when it stops, or null once written. */
 async function commit(cli: RememberEnv, ctx: Ctx, flags: Flags, decisionChanges: Change[], plan: SyncPlan): Promise<number | null> {
   const all = [...decisionChanges, ...plan.changes];
   if (plan.foreign.length) return refuse(cli, ctx.root, 'foreign', `harness remember: ${shown(plan.foreign[0]!)} is not harness's; rename it`);
-  if (flags.switches.has('--dry-run')) return fileLines(all, ['Would write', 'Would remove']).forEach((l) => cli.out(l)), 0;
+  if (flags.switches.has('--dry-run')) return fileLines(all, plan, ['Would write', 'Would remove', 'Would update']).forEach((l) => cli.out(l)), 0;
   if (!flags.switches.has('--yes')) {
     if (cli.tty === false) return cli.out(NO_TTY), 2;
-    fileLines(all, ['Will write', 'Will remove']).forEach((l) => cli.out(l));
+    fileLines(all, plan, ['Will write', 'Will remove', 'Will update']).forEach((l) => cli.out(l));
     if (!(await cli.prompt.confirm('Write these files? [y/N]'))) return refuse(cli, ctx.root, 'declined', 'Nothing written.');
   }
-  commitDecisions(ctx.root, decisionChanges, plan, { now: ctx.now, ...(cli.fs ? { fs: cli.fs } : {}) });
+  try {
+    commitDecisions(ctx.root, decisionChanges, plan, { now: ctx.now, ...(cli.fs ? { fs: cli.fs } : {}) });
+  } catch (e) {
+    if (!(e instanceof ApplyError)) throw e;
+    return refuse(cli, ctx.root, 'apply', shown(e.message)); // applyChanges already rolled back
+  }
   return null;
 }
 
@@ -150,6 +158,7 @@ function build(ctx: Ctx, set: DecisionSet, f: { title: string; rule: string; why
   if (f.supersedes !== undefined) {
     const old = set.decisions.find((x) => x.id === f.supersedes);
     if (!old) return { error: `harness remember: no decision ${shown(f.supersedes)} in ${DECISIONS_DIR}/.` };
+    if (old.status !== 'active') return { error: `harness remember: ${old.id} is ${old.status}, not active. Only an active decision can be superseded.` };
     const next: TeamDecision = { ...old, status: 'superseded', superseded_by: id };
     changes.push({ kind: 'update', rel: old.rel, before: readFileSync(join(ctx.root, old.rel), 'utf8'), after: serializeDecision(next), blocks: [], rewrite: true });
     decisions = decisions.map((x) => (x === old ? next : x));
@@ -171,7 +180,7 @@ async function add(args: string[], cli: RememberEnv): Promise<number> {
   if (secret) return no('secret', secret);
   const bad = fieldProblem(title, rule, why, paths);
   if (bad) return no('invalid', `harness remember: ${bad}`);
-  const g = fromGit(ctx.root, paths);
+  const g = fromGit(ctx.git, paths);
   if (typeof g === 'string') return no('git', g);
   if (g.dead.length) return no('dead-path', `harness remember: ${shown(g.dead[0]!)} matches no tracked file. Fix the path, or retire the decision.`);
   const b = build(ctx, readDecisions(ctx.root, ctx.today), { title, rule, why, paths, head: g.head, ...(supersedes !== undefined ? { supersedes } : {}) });
@@ -184,7 +193,7 @@ async function add(args: string[], cli: RememberEnv): Promise<number> {
   const plan = planSync(ctx.root, b.set, ctx.cfg.decisions, ctx.today);
   const stop = await commit(cli, ctx, f, b.changes, plan);
   if (stop !== null) return stop;
-  for (const l of fileLines([...b.changes, ...plan.changes], ['Wrote', 'Removed'])) cli.out(l === `Wrote ${ruleRel(b.d.id)}` ? `${l} (loads when ${paths.map(shown).join(', ')} are touched)` : l);
+  for (const l of fileLines([...b.changes, ...plan.changes], plan, ['Wrote', 'Removed', 'Updated'])) cli.out(l === `Wrote ${ruleRel(b.d.id)}` ? `${l} (loads when ${paths.map(shown).join(', ')} are touched)` : l);
   cli.out(NOT_COMMITTED);
   log(ctx.root, 'added');
   return 0;
@@ -203,8 +212,7 @@ async function syncCmd(args: string[], cli: RememberEnv): Promise<number> {
   if (plan.changes.length + plan.adopt.length + plan.rehash.length + plan.stale.length === 0 && !plan.foreign.length) return cli.out(inSync), code;
   const stop = await commit(cli, ctx, f, [], plan);
   if (stop !== null) return stop;
-  const lines = fileLines(plan.changes, ['Wrote', 'Removed']);
-  cli.out(lines.length ? lines.join('\n') : inSync);
+  fileLines(plan.changes, plan, ['Wrote', 'Removed', 'Updated']).forEach((l) => cli.out(l));
   log(ctx.root, 'synced');
   return code;
 }

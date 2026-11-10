@@ -41,7 +41,7 @@ export function readDecisions(root: string, today: string): DecisionSet {
   const seen = new Set<string>();
   for (const name of files(root, DECISIONS_DIR)) {
     const rel = `${DECISIONS_DIR}/${name}`;
-    if (linkedPath(root, rel)) { set.errors.push(`${rel}: file must not be a symlink`); continue; }
+    if (linkedPath(root, rel)) { set.errors.push(`${shown(rel)}: file must not be a symlink`); continue; }
     if (!name.endsWith('.md')) { set.others.push(rel); continue; }
     const c = capped(join(root, rel));
     if (c.text === null) { (c.decision ? set.errors : set.others).push(c.decision ? `${shown(rel)}: file must be at most ${MAX_DECISION_BYTES} bytes` : rel); continue; }

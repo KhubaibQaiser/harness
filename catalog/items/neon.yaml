@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "neondatabase/agent-skills", "path": "plu
 license: Apache-2.0
 min_claude_code: 2.1.314
 applies_when: {"any_dep": ["@neondatabase/serverless"]}
-cost: {"context": "low", "setup": "medium"}
+cost: {"context": "low", "setup": "medium", "context_tokens": 1493}
 stance: optional
 why: "Manage your Neon backend with the Neon agent skills and the Neon MCP Server: Lakebase Postgres, branching, Object Storage, Functions, and the AI Gateway"
 evidence:

@@ -44,7 +44,7 @@ const pick = (id: string, file: string) => readFileSync(join(__dirname, '../../c
 const catDir = (items: Record<string, string>) => makeRepo({ 'catalog.yaml': 'version: 1\n', ...Object.fromEntries(Object.entries(items).map(([id, y]) => [`items/${id}.yaml`, y])) }, { git: false });
 
 test('a plugin pick with no number is unmeasured, and not in always', () => {
-  const s = contextSet(installed(), cfg('p1'), dirs, undefined, { catalogDir: catDir({ p1: pick('p1', 'auth0.yaml') }) });
+  const s = contextSet(installed(), cfg('p1'), dirs, undefined, { catalogDir: catDir({ p1: pick('p1', 'auth0.yaml').replace(/, ?"context_tokens": ?\d+/, '') }) });
   expect(s.unmeasured).toContain('plugin: p1');
   expect(s.always.some((e) => e.owner === 'catalog:p1')).toBe(false);
 });

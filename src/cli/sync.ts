@@ -20,7 +20,7 @@ import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall, readCatalog, readConfig } from './preamble.js';
 import type { CliEnv } from './index.js';
 
-export type SyncEnv = CliEnv & { prompt: Prompt; version?: string; templatesDir: string; distDir: string; fs?: FsLike; exec?: Exec; catalog?: Catalog };
+export type SyncEnv = CliEnv & { prompt: Prompt; version?: string; templatesDir: string; distDir: string; fs?: FsLike; exec?: Exec; catalog?: Catalog; /** Default: the real clock; tests pin it. */ now?: () => Date };
 
 const USAGE = 'Usage: /harness:sync [--dry-run|--yes] [--take <file,...>] [--install-plugins] [--over-budget]';
 const list = (rels: string[]) => rels.map((r) => `\`${r}\``).join(', ');
@@ -71,7 +71,8 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   // A file with no change still loses its dropped blocks.
   const stale = pruneStale(man, changes, planned.dropped);
   // Team decisions (spec §4.3): the rules docs/decisions/ wants join the same transaction.
-  const today = new Date().toISOString().slice(0, 10);
+  const now = cli.now ?? (() => new Date());
+  const today = now().toISOString().slice(0, 10);
   const decided = readDecisions(root, today);
   for (const e of decided.errors) out(`Note: ${e}`);
   const rules = planSync(root, decided, config.decisions, today);
@@ -137,7 +138,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   }
   if (!yes && !(await cli.prompt.confirm('Apply these changes? (y/N)'))) return out('Cancelled. Nothing was written.'), 0;
 
-  const at = new Date();
+  const at = now();
   let files = mergeManifestFiles(man, changes, `.harness/backup/${at.toISOString().replace(/:/g, '-')}`);
   files = withRules(root, man, files.filter((f) => !gone.some((g) => g.rel === f.rel)), rules).files;
   try {

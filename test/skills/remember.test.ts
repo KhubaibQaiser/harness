@@ -17,7 +17,7 @@ test('remember skill: runs only remember subcommands, writes with --yes, never w
   expect(runs.length).toBeGreaterThan(0);
   for (const [cmd, sub] of runs) {
     expect(cmd).toBe('remember');
-    expect(['add', 'list', 'confirm', 'retire', 'check', 'sync']).toContain(sub);
+    expect(['add', 'list', 'confirm', 'retire', 'check']).toContain(sub);
   }
   for (const s of ['add', 'list', 'confirm', 'retire', 'check']) expect(t, s).toContain(`${CLI}remember ${s}`);
   expect(t).toContain('--yes');

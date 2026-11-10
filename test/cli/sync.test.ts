@@ -321,30 +321,49 @@ test('the preview reports uncommitted files and still exits 0', async () => {
   expect(r.out).toContain('Commit or stash these files first');
 });
 
-// Team decisions (spec §4.3): M3's sync also runs the decision sync. Confirmed today, so the real clock keeps it live.
+// Team decisions (spec §4.3): M3's sync also runs the decision sync, on an injected clock.
 const DEC = '2026-11-03-use-zod';
 const RULE = `.claude/rules/harness-decision-${DEC}.md`;
+const DAY = '2026-11-03';
+const at = (day: string) => () => new Date(`${day}T12:00:00Z`);
+const runAt = async (root: string, args: string[], day = DAY) => {
+  let out = '';
+  const code = await sync(args, { env: CLAUDE, root, out: (s) => (out += s + '\n'), prompt: yes, templatesDir, distDir: join(pkgDir, 'dist'), now: at(day) });
+  return { code, out };
+};
 const withDecision = () => {
   const root = installed();
-  writeDecision(root, decision(DEC, { verified_on: new Date().toISOString().slice(0, 10) }));
+  writeDecision(root, decision(DEC, { verified_on: DAY }));
   commitAll(root);
   return root;
 };
 
 test('sync writes an out-of-sync decision rule and records it in the manifest', async () => {
   const root = withDecision();
-  const r = await run(root, ['--yes']);
+  const r = await runAt(root, ['--yes']);
   expect(r.code, r.out).toBe(0);
   expect(r.out).toContain(`Wrote ${RULE}`);
   expect(existsSync(join(root, RULE))).toBe(true);
   expect(readManifest(root)!.files.some((f) => f.rel === RULE)).toBe(true);
-  expect((await run(root, ['--yes'])).out).toContain('Nothing to sync.');
+  expect((await runAt(root, ['--yes'])).out).toContain('Nothing to sync.');
+});
+
+test('sync removes the rule of a decision past decisions.expiry_days, and its manifest entry', async () => {
+  const root = withDecision();
+  expect((await runAt(root, ['--yes'])).code).toBe(0);
+  commitAll(root);
+  const r = await runAt(root, ['--yes'], '2027-02-02'); // 91 days after verified_on; the default expiry is 90
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).toContain(`Removed ${RULE}`);
+  expect(existsSync(join(root, RULE))).toBe(false);
+  expect(readManifest(root)!.files.some((f) => f.rel === RULE)).toBe(false);
+  expect(existsSync(join(root, `docs/decisions/${DEC}.md`))).toBe(true);
 });
 
 test('sync --dry-run lists the decision rule and writes nothing', async () => {
   const root = withDecision();
   const before = tree(root);
-  const r = await run(root, ['--dry-run']);
+  const r = await runAt(root, ['--dry-run']);
   expect(r.code, r.out).toBe(0);
   expect(r.out).toContain(`create ${RULE}`);
   expect(r.out).toContain('Dry run: nothing was written.');
@@ -357,7 +376,7 @@ test("a foreign decision rule stops sync with the §4.3 line", async () => {
   writeFileSync(join(root, RULE), 'mine\n');
   commitAll(root);
   const before = tree(root);
-  const r = await run(root, ['--yes']);
+  const r = await runAt(root, ['--yes']);
   expect(r.code).toBe(1);
   expect(r.out).toContain(`harness remember: ${RULE} is not harness's; rename it`);
   expect(tree(root)).toEqual(before);

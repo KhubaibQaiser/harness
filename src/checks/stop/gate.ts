@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { appendEvent } from '../../core/events.js';
 import { appendTiming } from '../../core/timing.js';
+import { decisionNotes } from '../decisions-stop.js';
 import type { Check, Ctx } from '../../hooks/dispatch.js';
 import type { Decision } from '../../hooks/types.js';
 import { coverageGate } from './coverage-gate.js';
@@ -129,11 +130,6 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     } else log('stop-diff-failed', ok(git) ? undefined : 'git status failed');
     changed.push('(unknown)'); // fail closed: treat as code changed
   }
-  if (changed.every((f) => DOCS_ONLY.test(f))) {
-    setAttempts(0);
-    return allow;
-  }
-
   const scripts = scriptsOf(root);
   const stepsStart = now(); // the step budget starts after the git calls
   // Every failure path shares one attempt counter: block, or give up and allow once max is exceeded.
@@ -142,7 +138,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     if (attempts > max) {
       setAttempts(0);
       log('stop-gave-up');
-      return allow;
+      return done(allow);
     }
     setAttempts(attempts);
     return { kind: 'block', reason: reason.replace('{n}', `${attempts} of ${max}`), check: 'stop' };
@@ -155,17 +151,24 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   const done = (d: Decision): Decision => {
     const seen = ctx.state.stopToolMissing ?? [];
     const fresh = missing.filter((m) => !seen.includes(m.label));
-    if (d.kind !== 'allow' || !fresh.length) return d;
+    if (d.kind !== 'allow') return d;
+    const notes = config.checks.decisions ? decisionNotes(ctx, changed) : [];
     for (const m of fresh) log('stop-tool-missing', `${m.label}: ${m.cmd}`);
-    ctx.save({ ...ctx.state, stopToolMissing: [...seen, ...fresh.map((m) => m.label)] });
+    if (fresh.length) ctx.save({ ...ctx.state, stopToolMissing: [...seen, ...fresh.map((m) => m.label)] });
     const cmds = [...new Set(fresh.map((m) => m.cmd))];
     const text = cmds.map((cmd) => {
       const labels = fresh.filter((m) => m.cmd === cmd).map((m) => `\`${m.label}\``);
       const who = ran === 0 && cmds.length === 1 && labels.length === resolved ? 'Every Stop step was' : `Stop step${labels.length > 1 ? 's' : ''} ${labels.join(', ')} ${labels.length > 1 ? 'were' : 'was'}`;
       return `${who} skipped: \`${cmd}\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). Install it there, or edit stop.steps in \`.harness/config.yaml\`.`;
     });
-    return { kind: 'context', text: text.join('\n'), check: 'stop' };
+    const all = [...text, ...notes];
+    return all.length ? { kind: 'context', text: all.join('\n'), check: 'stop' } : d;
   };
+  // Docs-only goes through done(), so the team-decision nudge still shows (spec §8).
+  if (changed.every((f) => DOCS_ONLY.test(f))) {
+    setAttempts(0);
+    return done(allow);
+  }
   for (const step of steps) {
     const rs = resolveStep(step, pm, scripts);
     if (!rs) continue;
@@ -205,7 +208,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       if (attempts > max) {
         setAttempts(0);
         log('stop-gave-up');
-        return allow;
+        return done(allow);
       }
       setAttempts(attempts);
     }

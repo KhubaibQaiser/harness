@@ -32,15 +32,24 @@ const charge = (n: number): void => { if (work >= 0 && (work += n) > WORK_BUDGET
  * depends on). A repeat returns the kept result and charges the work the first call did, so a run spends and stops on
  * the budget exactly where it did without the cache (round 28: one decision asks the same question of the same text
  * several times). A result computed outside a run has no known cost and is computed again inside one. Results are
- * shared: callers must not mutate them.
+ * shared, so they are frozen at every level: a caller that writes to one throws (ESM is strict mode).
  */
+/** Freezes arrays and plain objects, each level. Getters are not called: stdinPrograms builds a body only when read. */
+function deepFreeze<T>(v: T): T {
+  if (v !== null && typeof v === 'object' && !Object.isFrozen(v) && (Array.isArray(v) || Object.getPrototypeOf(v) === Object.prototype)) {
+    Object.freeze(v);
+    if (Array.isArray(v)) for (const x of v) deepFreeze(x);
+    else for (const d of Object.values(Object.getOwnPropertyDescriptors(v))) if ('value' in d) deepFreeze(d.value);
+  }
+  return v;
+}
 export function remember<R>(fn: (a: string) => R, variant: () => number = () => 0, size = 4): (a: string) => R {
   const sets: Map<string, { r: R; cost: number }>[] = [];
   return (a) => {
     const kept = (sets[variant()] ??= new Map());
     const hit = kept.get(a);
     if (hit && (hit.cost >= 0 || work < 0)) { if (hit.cost > 0) charge(hit.cost); return hit.r; }
-    const w0 = work, r = fn(a);
+    const w0 = work, r = deepFreeze(fn(a));
     if (kept.size >= size) kept.delete(kept.keys().next().value!);
     kept.set(a, { r, cost: w0 >= 0 && work >= w0 ? work - w0 : -1 });
     return r;

@@ -2,10 +2,10 @@
 // spawn of an empty script, and the median of the paired differences is what the harness costs. Runs in the `perf`
 // project (no file parallelism) as its own CI step, never inside the parallel unit run. No retries: a slow result is real.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, onTestFinished, test } from 'vitest';
 
 const DISPATCH = join(process.cwd(), 'dist/hooks/dispatch.mjs');
 const RUNS = 21;
@@ -13,6 +13,12 @@ const OVERHEAD_MS = { win32: 450, darwin: 150 }[process.platform as string] ?? 1
 // A counted edit runs about 7 git calls on purpose (spec §14.2), so it gets its own ceiling. Hosted runners measured macOS 154–166 ms and Windows 490 ms (Nov 2026); about 2x headroom.
 const COUNTED_EDIT_OVERHEAD_MS = { win32: 1000, darwin: 300 }[process.platform as string] ?? 200;
 const CEILING_MS = 1000; // gross-regression guard on the whole spawn
+// An attended Stop reads git state and the transcript tail, so it gets its own ceilings. macOS hosted runners measured
+// 186 ms (50 MB transcript) and 495 ms (500 decisions) on main 86833e8 (Nov 2026), over the old 150 / 450; about 1.35x headroom.
+const STOP_OVERHEAD_MS = { win32: 450, darwin: 250 }[process.platform as string] ?? 100;
+const WARN_OVERHEAD_MS = { win32: 1350, darwin: 650 }[process.platform as string] ?? 300;
+// Each median is printed so the next calibration reads measured numbers from the CI log.
+const report = (name: string, m: { overhead: number; total: number }) => writeSync(2, `[perf] ${name} ${process.platform}: overhead ${m.overhead.toFixed(1)} ms, total ${m.total.toFixed(1)} ms\n`); // straight to stderr: the reporter hides a passing test's console
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 
@@ -135,6 +141,7 @@ test('counted PostToolUse Edit in a 20-file repo with checks.prSize on: harness 
 // last 1 MiB for the A signals. A 50 MB transcript must stay inside the plain ceilings.
 test('attended Stop with a 50 MB transcript and no stored hit: harness overhead over a bare node spawn', () => {
   const repo = mkdtempSync(join(tmpdir(), 'h-lat-stop-'));
+  onTestFinished(() => rmSync(repo, { recursive: true, force: true })); // two 50 MB transcripts
   spawnSync('git', ['init', '-q'], { cwd: repo });
   const line = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(1000) }] } }) + '\n';
   const t = join(repo, 't.jsonl');
@@ -149,8 +156,32 @@ test('attended Stop with a 50 MB transcript and no stored hit: harness overhead 
   writeFileSync(hit, readFileSync(t, 'utf8') + JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: "I'll remember that." }] } }) + '\n');
   const ctl = spawnSync(process.execPath, [DISPATCH], { input: input('ctl', hit), encoding: 'utf8', env: { ...attendedEnv(process.env), HOME: repo, USERPROFILE: repo } });
   expect(ctl.stdout).toContain('team decision');
-  expect(m.overhead, `stop overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  report('stop-50mb', m);
+  expect(m.overhead, `stop overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(STOP_OVERHEAD_MS);
   expect(m.total, `stop total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
+}, 120000);
+
+// Team-decision warning: 500 decisions all linked to the changed file. The Stop names at most 10 and stays inside the ceilings.
+test('attended Stop with 500 team decisions covering the changed file: harness overhead over a bare node spawn', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'h-lat-warn-'));
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  mkdirSync(join(repo, 'docs/decisions'), { recursive: true });
+  mkdirSync(join(repo, 'src'));
+  writeFileSync(join(repo, 'src/a.ts'), 'x\n'); // untracked: the session's changed file
+  const today = new Date().toISOString().slice(0, 10);
+  for (let i = 0; i < 500; i++) {
+    const id = `2026-11-01-d${String(i).padStart(3, '0')}`;
+    writeFileSync(join(repo, `docs/decisions/${id}.md`), `---\nschema: harness-decision/1\nid: ${id}\ntitle: Decision ${i}\nstatus: active\npaths:\n  - "src/**"\nverified_at: ${'a'.repeat(40)}\nverified_on: ${today}\n---\n**Rule:** Do it.\n`);
+  }
+  const input = JSON.stringify({ hook_event_name: 'Stop', session_id: 'lat', cwd: repo });
+  const m = measure(input, (r) => {
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('team decision `2026-11-01-d000`');
+    rmSync(join(repo, '.harness/state/lat.json'), { force: true }); // every run is the session's first warning
+  }, true);
+  report('stop-500-decisions', m);
+  expect(m.overhead, `warning overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(WARN_OVERHEAD_MS);
+  expect(m.total, `warning total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 120000);
 
 // Final review I3: links back into .claude/rules once took 22 s at 3 links and never finished at 4. Each folder is now

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { retryTransient, writeAtomic } from './atomic.js';
+import { RULE_GLOB } from './decision-rule.js';
 import { userSettingsPath } from './settings-layers.js';
 
 // Change detection, the backstop behind the path checks (owner decision 2026-11-03): when a route the path checks
@@ -113,11 +114,21 @@ export function settingsFingerprint(text: string, deny: Set<string> | null): str
 }
 
 const EMPTY_SETTINGS = settingsFingerprint('{}', null);
-/** Fingerprints of config.yaml, manifest.json, every file under .harness/hooks, and the Claude settings that exist. */
+// The generated decision rules the manifest lists. A plain read: manifest.ts imports this file (drift 12).
+function ruleFiles(root: string): string[] {
+  try {
+    const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
+    return (m.files as { rel: unknown }[]).map((f) => f.rel).filter((r): r is string => typeof r === 'string' && RULE_GLOB.test(r));
+  } catch {
+    return [];
+  }
+}
+
+/** Fingerprints of config.yaml, manifest.json, every file under .harness/hooks, the Claude settings and the manifest's decision rules that exist. */
 export function snapshotHarnessFiles(root: string): Snapshot {
   const out: Snapshot = {};
   const deny = harnessDenyRules(root);
-  for (const rel of [...FIXED, ...hooksFiles(root)].sort()) {
+  for (const rel of [...new Set([...FIXED, ...hooksFiles(root), ...ruleFiles(root)])].sort()) {
     if (!existsSync(join(root, rel))) continue;
     try {
       const text = retryTransient(() => readFileSync(join(root, rel), 'utf8'));

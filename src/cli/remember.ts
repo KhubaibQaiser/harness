@@ -1,4 +1,4 @@
-// `harness remember` (team-decisions spec §5): add, sync and list. Field text is untrusted: secret-scanned before
+// `harness remember` (team-decisions spec §5): add, confirm, retire, sync, list and check. Field text is untrusted: secret-scanned before
 // anything echoes it, printed through `shown`, and never logged.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -18,7 +18,7 @@ import { unattendedEnv } from '../core/unattended.js';
 import { insideClaude } from './claude-only.js';
 import type { Prompt } from './prompt.js';
 import { openInstall, readConfig } from './preamble.js';
-import { list } from './remember-read.js';
+import { check, list } from './remember-read.js';
 import type { CliEnv } from './index.js';
 
 export type RememberEnv = CliEnv & { prompt: Prompt; now?: () => Date; fs?: FsLike; /** Default: git in the repo root; tests pass a fake. */ git?: Git };
@@ -41,6 +41,7 @@ const MAX_WHY_CHARS = 500;
 const SHA = /^[0-9a-f]{40}$/;
 const CONTROL = /[\p{Cc}\p{Cf}\u2028\u2029]/u; // newlines included: every field is one line
 const SAFE = ['-c', 'core.fsmonitor=false'];
+const DAY_MS = 86_400_000;
 
 interface Ctx { root: string; cfg: HarnessConfig; today: string; now: () => Date; git: Git }
 
@@ -93,6 +94,20 @@ function fieldProblem(title: string, rule: string, why: string, paths: string[])
   return null;
 }
 
+const deadPath = (glob: string) => `harness remember: ${shown(glob)} matches no tracked file. Fix the path, or retire the decision.`;
+/** No such decision, or its file exists but failed validation (its errors start with its path). */
+const unknownId = (set: DecisionSet, id: string) => set.errors.some((e) => e.startsWith(`${DECISIONS_DIR}/${shown(id)}.md: `))
+  ? `harness remember: ${shown(id)} is invalid; run harness remember sync to see why`
+  : `harness remember: no decision ${shown(id)} in ${DECISIONS_DIR}/.`;
+const OTHER_DRIFT = 'Other decisions are out of sync; run harness remember sync.';
+const planSize = (p: SyncPlan) => p.changes.length + p.foreign.length + p.adopt.length + p.rehash.length + p.stale.length;
+/** The plan cut down to one rule file: confirm and retire never apply other decisions' drift. */
+const onlyRule = (p: SyncPlan, rel: string): SyncPlan => {
+  const mine = (r: string) => r === rel;
+  return { ...p, changes: p.changes.filter((c) => mine(c.rel)), foreign: p.foreign.filter(mine), adopt: p.adopt.filter(mine), rehash: p.rehash.filter(mine), stale: p.stale.filter(mine) };
+};
+const notActive = (d: TeamDecision, verb: string) => `harness remember: ${d.id} is ${d.status}, not active. Only an active decision can be ${verb}.`;
+
 /** HEAD and the paths that match no tracked file, or a refusal. */
 function fromGit(git: Git, paths: string[]): { head: string; dead: string[] } | string {
   const head = git([...SAFE, 'rev-parse', 'HEAD']);
@@ -140,8 +155,8 @@ function build(ctx: Ctx, set: DecisionSet, f: { title: string; rule: string; why
   let decisions = [...set.decisions, d];
   if (f.supersedes !== undefined) {
     const old = set.decisions.find((x) => x.id === f.supersedes);
-    if (!old) return { error: `harness remember: no decision ${shown(f.supersedes)} in ${DECISIONS_DIR}/.` };
-    if (old.status !== 'active') return { error: `harness remember: ${old.id} is ${old.status}, not active. Only an active decision can be superseded.` };
+    if (!old) return { error: unknownId(set, f.supersedes) };
+    if (old.status !== 'active') return { error: notActive(old, 'superseded') };
     const next: TeamDecision = { ...old, status: 'superseded', superseded_by: id };
     changes.push({ kind: 'update', rel: old.rel, before: readFileSync(join(ctx.root, old.rel), 'utf8'), after: serializeDecision(next), blocks: [], rewrite: true });
     decisions = decisions.map((x) => (x === old ? next : x));
@@ -163,7 +178,7 @@ async function add(args: string[], cli: RememberEnv): Promise<number> {
   if (bad) return no('invalid', `harness remember: ${bad}`);
   const g = fromGit(ctx.git, paths);
   if (typeof g === 'string') return no('git', g);
-  if (g.dead.length) return no('dead-path', `harness remember: ${shown(g.dead[0]!)} matches no tracked file. Fix the path, or retire the decision.`);
+  if (g.dead.length) return no('dead-path', deadPath(g.dead[0]!));
   const b = build(ctx, readDecisions(ctx.root, ctx.today), { title, rule, why, paths, head: g.head, ...(supersedes !== undefined ? { supersedes } : {}) });
   if ('error' in b) return no('invalid', b.error!);
   const cap = ctx.cfg.decisions.max_lines;
@@ -198,14 +213,65 @@ async function syncCmd(args: string[], cli: RememberEnv): Promise<number> {
   return code;
 }
 
+/** The decision `confirm` or `retire` writes, or a refusal [reason, copy]. */
+function edited(ctx: Ctx, sub: 'confirm' | 'retire', d: TeamDecision, by: string | undefined): TeamDecision | [string, string] {
+  if (d.status !== 'active') return ['not-active', notActive(d, sub === 'confirm' ? 'confirmed' : 'retired')];
+  if (sub === 'retire') return by === undefined ? { ...d, status: 'retired' } : { ...d, status: 'superseded', superseded_by: by };
+  const g = fromGit(ctx.git, d.paths);
+  if (typeof g === 'string') return ['git', g];
+  if (g.dead.length) return ['dead-path', deadPath(g.dead[0]!)];
+  return { ...d, verified_at: g.head, verified_on: ctx.today };
+}
+
+async function rewrite(sub: 'confirm' | 'retire', args: string[], cli: RememberEnv): Promise<number> {
+  const f = parse(args, sub === 'retire' ? ['--by'] : [], ['--dry-run', '--yes']);
+  if (!f || f.rest.length !== 1 || (f.values.get('--by')?.length ?? 0) > 1) return usage(cli);
+  const ctx = open(cli, !f.switches.has('--dry-run'));
+  if (typeof ctx === 'number') return ctx;
+  const no = (reason: string, msg: string) => refuse(cli, ctx.root, reason, msg);
+  const [id, by] = [f.rest[0]!, f.values.get('--by')?.[0]];
+  const secret = secretIn([['<id>', id], ['--by', by ?? '']]);
+  if (secret) return no('secret', secret);
+  const set = readDecisions(ctx.root, ctx.today);
+  const find = (x: string) => set.decisions.find((d) => d.id === x);
+  const unknown = [id, by].find((x) => x !== undefined && !find(x));
+  if (unknown !== undefined) return no('unknown-id', unknownId(set, unknown));
+  if (by === id) return no('invalid', 'harness remember: --by must name another decision.');
+  const byD = by === undefined ? undefined : find(by)!;
+  if (byD && byD.status !== 'active') return no('not-active', `harness remember: ${byD.id} is ${byD.status}, not active. Only an active decision can supersede another.`);
+  const d = find(id)!;
+  const next = edited(ctx, sub, d, by);
+  if (Array.isArray(next)) return no(...next);
+  const text = serializeDecision(next);
+  const fileSecret = secretIn([['the decision file', text]]);
+  if (fileSecret) return no('secret', fileSecret);
+  const full = planSync(ctx.root, { ...set, decisions: set.decisions.map((x) => (x === d ? next : x)) }, ctx.cfg.decisions, ctx.today);
+  const plan = onlyRule(full, ruleRel(d.id));
+  const change: Change = { kind: 'update', rel: d.rel, before: readFileSync(join(ctx.root, d.rel), 'utf8'), after: text, blocks: [], rewrite: true };
+  const stop = await commit(cli, ctx, f, [change], plan);
+  if (stop !== null) return stop;
+  if (sub === 'confirm') {
+    const expires = new Date(Date.parse(`${ctx.today}T00:00:00Z`) + ctx.cfg.decisions.expiry_days * DAY_MS).toISOString().slice(0, 10);
+    cli.out(`Confirmed ${id} at ${next.verified_at.slice(0, 7)} on ${ctx.today}. It expires on ${expires} unless confirmed again.`);
+  } else {
+    const removed = plan.changes.some((c) => c.kind === 'delete') ? ' Removed its rule.' : '';
+    cli.out(`Retired ${id}${by === undefined ? '' : ` (superseded by ${by})`}.${removed} The decision file stays as a record.`);
+  }
+  if (set.errors.length || planSize(full) > planSize(plan)) cli.out(OTHER_DRIFT);
+  log(ctx.root, sub === 'confirm' ? 'confirmed' : 'retired');
+  return 0;
+}
+
 export async function remember(args: string[], cli: RememberEnv): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === 'add') return add(rest, cli);
   if (sub === 'sync') return syncCmd(rest, cli);
-  if (sub !== 'list' || rest.length) return usage(cli);
+  if (sub === 'confirm' || sub === 'retire') return rewrite(sub, rest, cli);
+  if ((sub !== 'list' && sub !== 'check') || rest.length) return usage(cli);
   const ctx = open(cli, false);
   if (typeof ctx === 'number') return ctx;
-  const lines = list(ctx.root, ctx.cfg, ctx.today);
+  if (sub === 'check') return check(ctx.root, ctx.cfg, ctx.today, cli.out, ctx.git);
+  const lines = list(ctx.root, ctx.cfg, ctx.today, ctx.git);
   cli.out(lines.length ? lines.join('\n') : `No team decisions in ${DECISIONS_DIR}/.`);
   return 0;
 }

@@ -116,20 +116,29 @@ function placeRules(files: Manifest['files'], firstRule: number): Manifest['file
   return [...rest.slice(0, at), ...rules, ...rest.slice(at)];
 }
 
-/** One transaction: the decision writes, the rule changes and the manifest; then the CLI snapshot, so change detection skips it. */
-export function commitDecisions(root: string, decisionChanges: Change[], plan: SyncPlan, o: { now: () => Date; fs?: FsLike }): void {
-  if (plan.foreign.length) throw new Error(`harness remember: ${shown(plan.foreign[0]!)} is not harness's; rename it`);
-  const m = readManifest(root);
-  if (!m) throw new Error('harness remember: .harness/manifest.json is missing');
+/** The §4.3 stop line for the first foreign rule, or null. */
+export const foreignLine = (plan: SyncPlan): string | null => (plan.foreign.length ? `harness remember: ${shown(plan.foreign[0]!)} is not harness's; rename it` : null);
+
+/** Manifest-only work: rules to adopt, rehash or forget. */
+export const manifestWork = (plan: SyncPlan): number => plan.adopt.length + plan.rehash.length + plan.stale.length;
+
+/** `merged` (from `mergeManifestFiles` over the plan's changes) with the plan's adopt, rehash and stale applied, rules sorted in place. */
+export function withRules(root: string, m: Manifest, merged: Manifest['files'], plan: SyncPlan): { files: Manifest['files']; adopted: number } {
   const hashOf = (rel: string) => hashText(readFileSync(join(root, rel), 'utf8'));
   // Filtered against this read of the manifest: another command may have recorded the file since the plan.
   const adopted = plan.adopt.filter((rel) => !m.files.some((f) => f.rel === rel)).map((rel) => ({ rel, kind: 'create' as const, hash: hashOf(rel) }));
-  const work = decisionChanges.length + plan.changes.length + adopted.length + plan.stale.length + plan.rehash.length;
-  if (work > 0) {
-    const merged = mergeManifestFiles(m, plan.changes)
-      .filter((f) => !plan.stale.includes(f.rel))
-      .map((f) => (plan.rehash.includes(f.rel) ? { ...f, hash: hashOf(f.rel) } : f));
-    const files = placeRules([...merged, ...adopted], m.files.findIndex((f) => RULE_GLOB.test(f.rel)));
+  const files = merged.filter((f) => !plan.stale.includes(f.rel)).map((f) => (plan.rehash.includes(f.rel) ? { ...f, hash: hashOf(f.rel) } : f));
+  return { files: placeRules([...files, ...adopted], m.files.findIndex((f) => RULE_GLOB.test(f.rel))), adopted: adopted.length };
+}
+
+/** One transaction: the decision writes, the rule changes and the manifest; then the CLI snapshot, so change detection skips it. */
+export function commitDecisions(root: string, decisionChanges: Change[], plan: SyncPlan, o: { now: () => Date; fs?: FsLike }): void {
+  const foreign = foreignLine(plan);
+  if (foreign) throw new Error(foreign);
+  const m = readManifest(root);
+  if (!m) throw new Error('harness remember: .harness/manifest.json is missing');
+  const { files, adopted } = withRules(root, m, mergeManifestFiles(m, plan.changes), plan);
+  if (decisionChanges.length + plan.changes.length + adopted + plan.stale.length + plan.rehash.length > 0) {
     applyChanges(root, [...decisionChanges, ...plan.changes], m.version, o.now, o.fs, { manifest: { ...m, files }, manifestBefore: rawOf(m) });
   }
   stampHarnessFiles(root);

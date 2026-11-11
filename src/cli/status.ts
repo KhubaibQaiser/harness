@@ -66,7 +66,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   const blocked = lastConfigChangeBlocked(root);
   if (blocked) lines.push(`Last blocked settings change: ${blocked.ts} (${blocked.reason})`);
   const changed = lastHarnessFilesChange(root);
-  if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json`);
+  if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json .claude/rules docs/decisions`);
   if (config.items.length) lines.push(...itemLines(config, lc, deps.pluginList ?? pluginList));
   const pr = config.preset;
   if (pr) lines.push(`Preset: ${pr.id}`, ...m.files.filter((f) => f.item === `${PRESET_ITEM}${pr.id}`).map((f) => `  ${f.rel}`));

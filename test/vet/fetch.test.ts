@@ -40,9 +40,9 @@ describe('fetchTarball', () => {
   });
   it('stops on a too-big archive, too many files, and corrupt data, writing nothing', () => {
     const before = readdirSync(tmpdir()).filter((n) => n.startsWith('harness-vet-')).length;
-    expect(fetchTarball(r, () => ({ status: 1, stdout: Buffer.alloc(0), tooBig: true }))).toEqual({ error: 'o/r@aaaaaaa: the archive is over 25 MB; vet stops.' });
+    expect(fetchTarball(r, () => ({ status: 1, stdout: Buffer.alloc(0), tooBig: true }))).toEqual({ error: 'o/r@aaaaaaa: the archive is over 25 MB; vet stops.', limit: true });
     const many = Array.from({ length: 5001 }, (_, i) => ({ name: `f${i}`, body: '' }));
-    expect(fetchTarball(r, ok(many))).toEqual({ error: 'o/r@aaaaaaa: the archive has over 5000 files; vet stops.' });
+    expect(fetchTarball(r, ok(many))).toEqual({ error: 'o/r@aaaaaaa: the archive has over 5000 files; vet stops.', limit: true });
     expect(fetchTarball(r, () => ({ status: 0, stdout: Buffer.from('nope') }))).toEqual({ error: 'o/r@aaaaaaa: archive is corrupt; vet stops.' });
     expect(readdirSync(tmpdir()).filter((n) => n.startsWith('harness-vet-')).length).toBe(before);
   });

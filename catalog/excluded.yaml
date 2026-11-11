@@ -45,7 +45,7 @@
 - id: spec-kit
   reason: installed with the specify CLI (uv tool install specify-cli); the repo has no Claude Code plugin manifest or skills directory for the catalog to pin
 - id: remember
-  reason: no license; LICENSE is a custom "Community License" with no-commercial-redistribution and no-competing-use clauses, not an SPDX license
+  reason: no license; LICENSE is a custom "Community License" with no-commercial-redistribution and no-competing-use clauses, not an SPDX license; it also overlaps Claude Code's auto memory and harness team decisions (harness remember)
 - id: wshobson-agents
   reason: the repo is a marketplace of 94 plugins, not one plugin; there is no single source to pin
 - id: graphify

@@ -46,6 +46,7 @@ export function catalog(args: string[], { out }: CliEnv, deps: { dir?: string; e
     for (const it of c.items.filter((i) => measurable(i) && (!only || only.includes(i.id)))) {
       const m = measureItemContext(it, deps.execBytes ?? defaultExecBytes);
       const sha = (it.source as { sha: string }).sha.slice(0, 7);
+      if ('error' in m && m.limit) { notMeasured.push(`${it.id} (too large for vet to measure)`); continue; }
       if ('error' in m) { problems.push(`${it.id}: could not verify cost.context_tokens: ${m.error}`); continue; }
       const rec = it.cost.context_tokens;
       if (write) {

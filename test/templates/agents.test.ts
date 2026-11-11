@@ -73,6 +73,10 @@ test('agents-block: markers once, ordered, under 40 lines', () => {
   expect(s.split(b)).toHaveLength(2);
   expect(s.indexOf(a)).toBeLessThan(s.indexOf(b));
   expect(s.trimEnd().split('\n').length).toBeLessThan(40);
+  for (const t of [
+    '- Team decisions live in `docs/decisions/` and load as `.claude/rules/harness-decision-*.md` when you touch their paths. Change them only with `/harness:remember` (`harness remember --help`); personal preferences go in Claude Code\'s auto memory.',
+    '- Never edit `.harness/`, `.claude/settings*.json`, `.claude/rules/harness-decision-*.md` or harness decisions in `docs/decisions/`.',
+  ]) expect(s).toContain(t);
   for (const t of ['Write a failing test first', 'see it fail', 'Never edit `.harness/`', '`harness tdd off`', 'Installs are denied by default', 'In unattended runs', '<file> because <reason>']) expect(s).toContain(t);
 });
 

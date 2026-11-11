@@ -3,7 +3,7 @@ kind: plugin
 title: "Web quality skills"
 source: {"type":"github","repo":"addyosmani/web-quality-skills","plugin":"web-quality-skills","sha":"afa8da942115f2961fdbfa80807ea0b232ff6c00"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "2.0.0"
 applies_when: {"project_types":["web","landing"]}
 cost: {"context":"low","setup":"low","context_tokens":387}

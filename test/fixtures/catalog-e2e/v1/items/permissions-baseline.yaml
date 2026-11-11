@@ -5,7 +5,7 @@ source:
   type: own
   checks: [protect]
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when:
   always: true
 cost:

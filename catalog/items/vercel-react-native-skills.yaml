@@ -3,7 +3,7 @@ kind: external-skill
 title: "Vercel React Native skills"
 source: {"type":"git-subdir","repo":"vercel-labs/agent-skills","path":"skills/react-native-skills","plugin":"react-native-skills","sha":"1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"frameworks":["react-native","expo"]}
 cost: {"context":"low","setup":"low","context_tokens":86}
 stance: optional

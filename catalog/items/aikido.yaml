@@ -3,7 +3,7 @@ kind: plugin
 title: "Aikido Security"
 source: {"type": "github", "repo": "AikidoSec/aikido-claude-plugin", "plugin": "aikido", "sha": "8fdc995a44102a30ad54164e0bdd249d158c725c"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "1.2.11"
 applies_when: {"always": true}
 cost: {"context": "low", "setup": "medium", "context_tokens": 378}

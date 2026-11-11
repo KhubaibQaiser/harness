@@ -3,7 +3,7 @@ kind: plugin
 title: "Frontend design"
 source: {"type":"git-subdir","repo":"anthropics/claude-plugins-official","path":"plugins/frontend-design","plugin":"frontend-design","sha":"a2e251d9b97b909bf728b3e84fc8d17e6aba0063"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"project_types":["web","landing"]}
 cost: {"context":"low","setup":"none","context_tokens":60}
 stance: default

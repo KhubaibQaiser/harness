@@ -3,7 +3,7 @@ kind: external-skill
 title: "Web design guidelines"
 source: {"type":"git-subdir","repo":"vercel-labs/agent-skills","path":"skills/web-design-guidelines","plugin":"web-design-guidelines","sha":"1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"project_types":["web","landing"]}
 cost: {"context":"low","setup":"low","context_tokens":57}
 stance: optional

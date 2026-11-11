@@ -3,7 +3,7 @@ kind: mcp
 title: "shadcn MCP server"
 source: {"type":"npm","package":"shadcn","version":"4.23.0"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"any_dep":["shadcn"]}
 cost: {"context":"low","setup":"low"}
 stance: optional

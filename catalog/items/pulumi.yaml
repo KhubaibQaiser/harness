@@ -3,7 +3,7 @@ kind: plugin
 title: "Pulumi agent skills"
 source: {"type": "github", "repo": "pulumi/agent-skills", "plugin": "pulumi", "sha": "82f222a529a499e8005a820000148cc5e28c934c"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "2.0.8"
 applies_when: {"any_dep": ["@pulumi/pulumi"]}
 cost: {"context": "low", "setup": "low", "context_tokens": 0}

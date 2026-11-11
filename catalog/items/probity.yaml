@@ -3,7 +3,7 @@ kind: plugin
 title: "Probity (TDD enforcement)"
 source: {"type": "github", "repo": "nizos/probity", "plugin": "probity", "sha": "eeac4214246a4e4875c7803058b4d00ee6642c3e"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "1.10.1"
 applies_when: {"always": true}
 conflicts_with: ["tdd-gate", "tdd-guard"]

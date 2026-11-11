@@ -3,7 +3,7 @@ kind: plugin
 title: "Emil Kowalski skills"
 source: {"type":"github","repo":"emilkowalski/skills","plugin":"emilkowalski-skills","sha":"f1090bec277140d02ed202440185ad9d02ac1490"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "f1090bec2771"
 applies_when: {"project_types":["web","landing"]}
 cost: {"context":"low","setup":"low","context_tokens":1709}

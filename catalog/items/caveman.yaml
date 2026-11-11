@@ -3,7 +3,7 @@ kind: plugin
 title: "Caveman"
 source: {"type":"github","repo":"JuliusBrussee/caveman","plugin":"caveman","sha":"2e068f735253cce28256744804785f01887d9646"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "4.0.1"
 applies_when: {"always":true}
 cost: {"context":"medium","setup":"low","context_tokens":1343}

@@ -7,7 +7,7 @@ min_claude_code: 2.1.314
 plugin_version: "1.10.1"
 applies_when: {"always": true}
 conflicts_with: ["tdd-gate", "tdd-guard"]
-cost: {"context": "low", "setup": "medium"}
+cost: {"context": "low", "setup": "medium", "context_tokens": 0}
 stance: optional
 side_effects: ["installs-hook"]
 why: "TDD enforcement and guardrails for Claude Code, Codex, and GitHub Copilot CLI."

@@ -198,7 +198,7 @@ test('status says so when claude is not found, and skips item lines for a legacy
   const legacy = await go({ 'package.json': '{"name":"a"}\n', 'package-lock.json': '{}\n' }).then((r) => r.out).finally(() => { globalThis.fetch = real; });
   expect(legacy).not.toMatch(/^(Catalog|Items:|Plugins not installed|Always-loaded)/m);
   // Context sits right before Enforcement (after the gate lines), also for a legacy install, and needs no network.
-  expect(legacy).toMatch(/^Context: ~[\d,]+ of [\d,]+ tokens always loaded[^\n]*\nEnforcement:/m);
+  expect(legacy).toMatch(/^Context: ~[\d,]+ of [\d,]+ tokens always loaded[^\n]*\nDecisions: none\nEnforcement:/m);
   expect(legacy).toContain(' Run harness context for details.\n');
 });
 
@@ -215,4 +215,9 @@ test('status lists the preset files under the preset id', () => {
   let out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') }, { pluginList: () => [] });
   expect(out).toContain('Preset: stacks\n  .claude/skills/frontend-react/SKILL.md\n');
+});
+
+test('status prints the Decisions line right after Context:', async () => {
+  const r = await go({ 'pyproject.toml': '[tool.pytest]\n', 'tests/test_a.py': 'def test_a(): pass\n' });
+  expect(r.out).toMatch(/^Context: [^\n]*\nDecisions: none\nEnforcement:/m);
 });

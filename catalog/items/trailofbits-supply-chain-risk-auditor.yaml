@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "trailofbits/skills", "path": "plugins/su
 license: CC-BY-SA-4.0
 min_claude_code: 2.1.314
 applies_when: {"always": true}
-cost: {"context": "low", "setup": "medium"}
+cost: {"context": "low", "setup": "medium", "context_tokens": 103}
 stance: optional
 why: "Audit a project's npm, PyPI, and Go dependencies for supply-chain risk: version-matched advisories for direct dependencies and the full lockfile tree, abandoned upstreams, npm publisher concentration, and install scripts"
 evidence:

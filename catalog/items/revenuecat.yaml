@@ -5,7 +5,7 @@ source: {"type":"git-subdir","repo":"RevenueCat/ai-toolkit","path":"revenuecat",
 license: MIT
 min_claude_code: 2.1.314
 applies_when: {"any_dep":["react-native-purchases"]}
-cost: {"context":"low","setup":"medium"}
+cost: {"context":"low","setup":"medium","context_tokens":2042}
 stance: optional
 why: "Set up RevenueCat, integrate it, and access data."
 evidence:

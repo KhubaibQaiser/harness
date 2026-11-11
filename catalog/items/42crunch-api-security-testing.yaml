@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "42Crunch-AI/claude-plugins", "path": "pl
 license: Apache-2.0
 min_claude_code: 2.1.314
 applies_when: {"project_types": ["api"]}
-cost: {"context": "low", "setup": "medium"}
+cost: {"context": "low", "setup": "medium", "context_tokens": 695}
 stance: optional
 side_effects: ["downloads-binary"]
 why: "Catch API security issues during development: audit, scan, remediate, validate with AI guardrails in Claude Code."

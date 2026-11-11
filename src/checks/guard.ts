@@ -3,9 +3,14 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
-import { cPayloads, SHELLS, stdinPrograms } from '../core/shell-words.js';
+import { cPayloads, remember, SHELLS, stdinPrograms, withWorkBudget } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
+import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, joinVariant, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { type Quoted, Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
+import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
+import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
+import { decideCommand as decideBase, JOIN } from './guard-base.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 
@@ -38,7 +43,9 @@ const takesValue = (wrapper: string, t: string): boolean => {
   return i === t.length - 2;
 };
 /** `C:/nodejs/npx.cmd` -> `npx`: a runner by its last path segment, without a Windows extension, in lower case. */
-export const runnerName = (t: string): string => t.split(/[\\/]/).pop()!.toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
+const NAME_PLAIN = /^[a-z0-9_-]*$/; // a word every name rule leaves as it is
+export const runnerName = (t: string): string => (NAME_PLAIN.test(t) ? t : runnerNameOf(t)); // most words are plain
+const runnerNameOf = (t: string): string => t.slice(Math.max(t.lastIndexOf('/'), t.lastIndexOf('\\')) + 1).toLowerCase().replace(/^=/, '').replace(/\.(cmd|ps1|bat|exe)$/, '');
 // Flags of a wrapper whose value is the next word, so that word is not the command.
 const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
   timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
@@ -93,9 +100,9 @@ const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
 // The shell can turn such a word into any subcommand or flag, so no preview test passes it; `next` is the separator after
 // the segment (the split eats `$(`, a backtick and the `(` of `<(`/`>(`, so `context $(echo apply)` reaches here as `context`).
-const EXPANDS = /[$`{}*?[\]]|^~/;
+const PREVIEW_EXPANDS = /[$`{}*?[\]]|^~/;
 const passes = (name: string, args: string[], next?: string): boolean =>
-  !/^(\$\(|`|\()$/.test(next ?? '') && !args.some((t) => EXPANDS.test(t)) && PERSON_ONLY[name].allowed(args);
+  !/^(\$\(|`|\()$/.test(next ?? '') && !args.some((t) => PREVIEW_EXPANDS.test(t)) && PERSON_ONLY[name].allowed(args);
 const ANY_WHY = 'Only a person can change or remove the harness gates: run the harness command in your own terminal.';
 type Hit = { kind: 'deny' | 'ask'; reason: string };
 export type Where = { root: string; env: NodeJS.ProcessEnv };
@@ -129,8 +136,9 @@ export function commandStart(toks: string[], stop: (name: string) => boolean = (
     const t = toks[k];
     if (stop(runnerName(t))) break;
     if (t === 'find') {
-      const e = toks.findIndex((x, i) => i > k && /^-(exec|execdir|ok|okdir)$/.test(x));
-      if (e < 0) break;
+      let e = k + 1; // from k, not from 0: many `find` words stay linear (re-review 22b, F4)
+      while (e < toks.length && !/^-(exec|execdir|ok|okdir)$/.test(toks[e])) e++;
+      if (e >= toks.length) break;
       [k, wrapper] = [e + 1, ''];
     } else if (RESERVED.has(t)) k++; // `{ harness …; }`, `! harness …`, `then harness …`
     else if (RUNNERS.has(runnerName(t))) [k, wrapper, scriptFile] = [k + 1, runnerName(t), runnerName(t) === 'script'];
@@ -158,49 +166,21 @@ function scriptsOf(root: string): Record<string, string> {
 }
 
 /**
- * The command with each here-document body removed. `<<` counts only outside quotes; the delimiter has its quotes taken
- * out (`<<E"O"F` is EOF); `<<-` ignores leading tabs on the end line, `<<` wants the line exactly. If anything is odd (a
- * delimiter with an expansion, a body with no end line) the command is returned whole, so nothing is hidden from the parser.
+ * The command with each data here-document body removed (sinkTest: a body is code unless it goes to a data sink, and a
+ * code body stays as command lines). Round 25: the heredocs (where each operator is, its delimiter, whether it is
+ * quoted, where its body ends) come only from the lexer (lexText), and only text canonicalText accepts in full has any
+ * body taken out. There is no second quote reader to disagree with it (re-review 22b, F1, F3, F5).
  */
-export function withoutHeredocBodies(cmd: string): string {
-  if (!cmd.includes('<<')) return cmd;
-  const lines = cmd.split('\n');
-  const out: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    out.push(line);
-    const ends: { word: string; dash: boolean }[] = [];
-    let quote = '';
-    for (let c = 0; c < line.length; c++) {
-      const ch = line[c];
-      if (quote) { if (ch === quote) quote = ''; continue; }
-      if (ch === '"' || ch === "'") quote = ch;
-      else if (ch === '\\') c++;
-      else if (ch === '<' && line[c + 1] === '<' && line[c + 2] !== '<') {
-        let d = c + 2;
-        const dash = line[d] === '-';
-        if (dash) d++;
-        while (line[d] === ' ' || line[d] === '\t') d++;
-        let word = '';
-        let q = '';
-        for (; d < line.length; d++) {
-          const x = line[d];
-          if (q) { if (x === q) q = ''; else word += x; } else if (x === '"' || x === "'") q = x;
-          else if (/[\s;|&<>()]/.test(x)) break;
-          else word += x;
-        }
-        if (q || !/^\w+$/.test(word)) return cmd;
-        ends.push({ word, dash });
-        c = d - 1;
-      }
-    }
-    for (const e of ends) {
-      let found = false;
-      while (++i < lines.length) if ((e.dash ? lines[i].replace(/^\t+/, '') : lines[i]) === e.word) { found = true; break; }
-      if (!found) return cmd;
-    }
-  }
-  return out.join('\n');
+export const withoutHeredocBodies = remember(withoutBodies, () => joinVariant());
+/** What stdin feeds each command, read with the guard's command start (shells stop it); kept for the decision's repeats. */
+const shellPrograms = remember((c: string) => stdinPrograms(c, (ws) => commandStart(ws, (n) => SHELLS.has(n))));
+function withoutBodies(cmd: string): string {
+  const lx = lexText(cmd);
+  if (!lx?.heredocs.length || lx.heredocs.some((h) => h.to < 0)) return cmd; // no end line: nothing is hidden
+  const tests = commandTests(new Scan(cmd), wholeFlags(cmd, commandSkeleton(cmd)));
+  let out = '', at = 0;
+  for (const h of lx.heredocs) if (tests.sink(h.lineStart, h.at)) [out, at] = [out + cmd.slice(at, h.from), h.to];
+  return out + cmd.slice(at);
 }
 
 /** One command segment of one reading: `k = commandStart(toks)`, `prev`/`next` the separators around it, `words` all the words of the reading. */
@@ -212,9 +192,14 @@ export type Visit<T> = (seg: Seg) => T | null;
  *  is not walked and the walk goes on. */
 export interface WalkHooks<T> { whole?: (words: string[]) => T | null; script?: (body: string) => T | null; tooDeep?: T }
 
-/** Walks every command segment of `command` the way the shell could read it; the first non-null result wins. */
+/** Walks every command segment of `command` the way the shell could read it, under every line-continuation reading
+ *  (eachJoin); the first non-null result wins. A nested body is read once, joined as its shell joins it: readings at
+ *  every level multiply (re-review 19, N8). */
 export function walkCommands<T>(command: string, w: Where, visit: Visit<T>, hooks: WalkHooks<T> = {}, depth = 0): T | null {
-  command = command.replace(/\\\r?\n/g, '');
+  if (depth > 0) return walkJoined(joinLines(command), w, visit, hooks, depth);
+  return eachJoin(command, (t) => walkJoined(t, w, visit, hooks, depth), (r) => r !== null).find((r) => r !== null) ?? null;
+}
+function walkJoined<T>(command: string, w: Where, visit: Visit<T>, hooks: WalkHooks<T>, depth: number): T | null {
   const whole = command;
   command = withoutHeredocBodies(command); // a body is data for its command; a shell reading it is handled below, from `whole`
   // A backslash is an escape in a POSIX shell (harn\\ess -> harness) and a path separator on Windows
@@ -229,7 +214,7 @@ export function walkCommands<T>(command: string, w: Where, visit: Visit<T>, hook
     // A -c payload, or a program fed to a shell on stdin (echo … | bash, <<<, a here-document), is a command line of
     // its own: judge it with all the readings (a spaced path inside it is one word).
     (depth < 3
-      ? [...cPayloads(command), ...stdinPrograms(whole, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
+      ? [...cPayloads(command), ...shellPrograms(whole).filter((p) => SHELLS.has(p.name)).map((p) => p.text)]
           .reduce<T | null>((hit, p) => hit ?? walkCommands(p, w, visit, hooks, depth + 1), null)
       : null)
   );
@@ -343,7 +328,7 @@ function personOnlyVisit(w: Where): Visit<Hit> {
 const CLI_RE = /cli\.[m*?[]|c[*?]\S*\.m/i;
 const CHANGE = /(?<![\w-])(init|update|add|remove|sync|uninstall|push|pr|apply)(?![\w-])/i;
 const TDD_OFF = /(?<![\w-])tdd\W+off(?![\w-])/i;
-const NORM = (t: string): string => t.replace(/\\\r?\n/g, '').replace(/['"\\]/g, '');
+const NORM = (t: string): string => joinAll(t).replace(/['"\\]/g, '');
 // `harness` counts as a command word (or a bare word), never as part of a directory in a path: `cd /x/harness && git push` is a push.
 function names(text: string): boolean {
   if (CLI_RE.test(text)) return true;
@@ -355,7 +340,7 @@ function names(text: string): boolean {
   return false;
 }
 const UNCLEAN = /[{}*?[#<>]|[^\S \t]/;
-const SEGMENTS = /&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`]/;
+export const SEGMENTS = /&&|\|\||\$\(|(?<![<>])&(?!>)|[;|\n()`]/;
 function previewOnly(text: string, depth = 0): boolean {
   text = text.split('${CLAUDE_PLUGIN_ROOT}').join('PLUGIN_ROOT'); // the one expansion the skills use
   if (UNCLEAN.test(text)) return false;
@@ -378,7 +363,7 @@ function previewOnly(text: string, depth = 0): boolean {
 const VET_TARGET = /((?:harness|cli\.mjs)["']?[ \t]+vet[ \t]+)[\w.@:/#-]+(?=[\s>]|$)/gi;
 const FUNC_DEF = /\bfunction\b|\(\s*\)\s*\{/;
 function backstop(raw: string): Hit | null {
-  raw = raw.replace(/\\\r?\n/g, '');
+  raw = joinAll(raw);
   const norm = NORM(raw); // `in''it` and `in\it` are init
   if (!names(norm)) return null;
   // Only words: a real `harness tdd off` the parser saw was denied before this. Prose, echo, grep, a commit message or a forwarding function asks.
@@ -403,7 +388,7 @@ function shortNameOfProtected(seg: string): boolean {
 }
 
 const sensitivePath = (p: string): boolean => {
-  if (!p) return false;
+  if (!p || !/[.~]|id_/i.test(p)) return false; // every rule below needs a dot, a `~` or id_ (round 28: most words have none)
   // Backslashes as separators: Windows paths (C:\proj\...) must match the same rules. Lowercase: macOS and Windows file
   // systems ignore case. A leading `host:` (scp) or `C:` (Win32 drive-relative) hides the real path, so the part after
   // it is checked too.
@@ -429,35 +414,39 @@ function sensitiveForm(form: string): boolean {
 }
 
 const DENY: [RegExp, string][] = [
-  [/\bgit\s+push\b[^;&|\n]*(\s--force(?!-with-lease)(\s|=|$)|\s-f(\s|$))/, 'force push (use --force-with-lease, and only on your own branch)'],
-  [/\b(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/, 'piping a download straight into a shell'],
-  [/\bchmod\b[^;&|\n]*\b0?777\b/, 'chmod 777'],
-  [/\bdd\b[^;&|\n]*\bof=\/dev\//, 'writing to a block device'],
+  [/\bgit\s+push\b(?:(?!\bgit\s+push\b)[^;&|\n])*(\s--force(?!-with-lease)(?=[\s=;&|)}`]|$)|\s-f(?=[\s;&|)}`]|$))/, 'force push (use --force-with-lease, and only on your own branch)'],
+  [/\b(curl|wget)\b(?:(?!\b(?:curl|wget)\b)[^|\n])*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/, 'piping a download straight into a shell'],
+  [/\bchmod\b(?:(?!\bchmod\b)[^;&|\n])*\b0?777\b/, 'chmod 777'],
+  [/\bdd\b(?:(?!\bdd\b)[^;&|\n])*\bof=\/dev\//, 'writing to a block device'],
 ];
 
 const ASK: [RegExp, string][] = [
   [/\bgit\s+reset\s+--hard\b/, 'git reset --hard discards local changes'],
   [/\bgit\s+clean\s+-[a-zA-Z]*f/, 'git clean deletes untracked files'],
-  [/\bgit\s+(?:(?:-[Cc]\s+\S+|--\S+)\s+)*(checkout|restore)\s+(--\s+)?\.(\s|$)/, 'discarding all working-tree changes'],
+  [/\bgit\s+(?:(?:-[Cc]\s+\S+|--\S+)\s+)*(checkout|restore)\s+(--\s+)?\.(?=[\s;&|)}`]|$)/, 'discarding all working-tree changes'],
   [/\bgit\s+branch\s+-D\b/, 'force-deleting a branch'],
   [/(^|[;&|]\s*)sudo\b/, 'sudo'],
   [/\b(npm|pnpm|yarn)\s+(publish|unpublish)\b/, 'publishing a package'],
   [/\bcdk\s+(destroy|deploy)\b/, 'CDK deploy or destroy'],
   [/\bterraform\s+(destroy|apply)\b/, 'Terraform apply or destroy'],
-  [/\baws\b[^;&|\n]*\b(delete|terminate|remove|rb)\b/, 'destructive AWS CLI call'],
-  [/\baws\s+s3\s+rm\b[^;&|\n]*--recursive/, 'recursive S3 delete'],
+  [/\baws\b(?:(?!\baws\b)[^;&|\n])*\b(delete|terminate|remove|rb)\b/, 'destructive AWS CLI call'],
+  [/\baws\s+s3\s+rm\b(?:(?!\baws\s+s3\s+rm\b)[^;&|\n])*--recursive/, 'recursive S3 delete'],
   [/\bkubectl\s+delete\b/, 'kubectl delete'],
   [/\bdocker\s+(system|volume|image)\s+prune\b/, 'docker prune'],
   [/\bgh\s+(repo|release)\s+delete\b/, 'deleting a GitHub repo or release'],
-  [/\bvercel\b[^;&|\n]*--prod\b/, 'production deploy'],
+  [/\bvercel\b(?:(?!\bvercel\b)[^;&|\n])*--prod\b/, 'production deploy'],
   [/\bdrop\s+(table|database|schema)\b/i, 'SQL DROP'],
 ];
 
+/** A subshell or substitution closing right after a word: `(rm -rf /)`, `(git push origin main)`. Not `}`: it ends a brace word. */
+const CLOSERS = /[)`]+$/;
 export const rmTargets = (cmd: string): { recursive: boolean; targets: string[] }[] =>
   [...cmd.matchAll(/(?:^|[;&|(]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => {
     const toks = m[1].trim().split(/\s+/).filter(Boolean);
     const flags = toks.filter((t) => t.startsWith('-')).join('');
-    return { recursive: /-[a-zA-Z]*[rR]|--recursive/.test(flags), targets: toks.filter((t) => !t.startsWith('-')).map(unquote) };
+    // A closer ends a group opened before rm, as in `(rm -rf /)`; one in rm's own words (-$(cat tmp)) is part of a target.
+    const closesOuter = !/[(`]/.test(m[1]) && /[(`]/.test(cmd.slice(0, m.index + m[0].length - m[1].length));
+    return { recursive: /-[a-zA-Z]*[rR]|--recursive/.test(flags), targets: toks.filter((t) => !t.startsWith('-')).map((t) => unquote(closesOuter ? t.replace(CLOSERS, '') : t)) };
   });
 
 const checkRm = (cmd: string): Verdict | undefined => {
@@ -472,7 +461,7 @@ const checkRm = (cmd: string): Verdict | undefined => {
 
 const checkPushToMain = (cmd: string): Verdict | undefined => {
   for (const m of cmd.matchAll(/\bgit\s+push\b([^;&|\n]*)/g)) {
-    const refs = m[1].trim().split(/\s+/).filter((t) => t && !t.startsWith('-')).flatMap((t) => t.split(':'));
+    const refs = m[1].trim().split(/\s+/).filter((t) => t && !t.startsWith('-')).flatMap((t) => t.replace(CLOSERS, '').split(':'));
     if (refs.some((r) => /^(refs\/heads\/)?(main|master)$/.test(r))) return ['deny', 'pushing to main or master (open a pull request from a branch instead)'];
   }
   return undefined;
@@ -546,7 +535,7 @@ export function fileWriteTargets(cmd: string): string[] {
     toks.splice(0, k); // look past sudo, env, VAR=value and xargs, with their flags
     const name = toks[0];
     for (const m of seg.matchAll(/\d*>>?\s*([^\s;&|>]+)/g)) {
-      const t = m[1].replace(/^['"]+/, '').replace(/['"}]+$/, '');
+      const t = m[1].replace(/^['"]+/, '').replace(/['"`)}]+$/, ''); // `)`, a backtick or quote ends a substitution ("$(… > f)")
       if (!t.startsWith('&') && t !== '/dev/null') out.push(t);
     }
     const c = toks.findIndex((t) => /^-[a-z]*c$/.test(t));
@@ -603,6 +592,12 @@ export function decidePaths(paths: string[]): Decision {
   return { kind: 'allow' };
 }
 
+/** `$IFS` and `${IFS…}` made spaces. A `${IFS` with no `}` after it matches nothing, so the braced form is only tried
+ *  up to the last `}`: otherwise each such `${IFS` scans to the end (quadratic; re-review 22b, F4). */
+const ifsSpaces = (c: string): string => {
+  const k = c.lastIndexOf('}') + 1;
+  return c.slice(0, k).replace(/\$(?:IFS(?!\w)|\{IFS(?!\w)[^}]*\})/g, ' ') + c.slice(k).replace(/\$IFS(?!\w)/g, ' ');
+};
 /**
  * The command as the shell splits it when it uses $IFS: `$IFS` and every `${IFS…}` (`${IFS:0:1}`, `${IFS%?}`,
  * `${IFS[0]}`) become a space (a word separator, or nothing, with the default IFS), and `$1`-`$9`, `$@`, `$*` become
@@ -611,7 +606,7 @@ export function decidePaths(paths: string[]): Decision {
  */
 export function ifsReading(command: string): string | null {
   if (!/\$\{?IFS(?!\w)/.test(command)) return null;
-  return command.replace(/\$(?:IFS(?!\w)|\{IFS(?!\w)[^}]*\})/g, ' ').replace(/\$(?:[1-9@*]|\{[1-9@*]\})/g, '');
+  return ifsSpaces(command).replace(/\$(?:[1-9@*]|\{[1-9@*]\})/g, '');
 }
 
 // Shell constructs that build words the guard cannot read: ${!x}, zsh ${(s:_:)x} ${=x}, ${x//a/b} ${x%a} ${x#a} ${x:…}
@@ -619,7 +614,7 @@ export function ifsReading(command: string): string | null {
 // expansion in command position.
 /** A protected harness path named in the text: `.harness`, `.harness/…`, `.claude/settings*.json`. */
 export const PROTECTED_TEXT = /\.harness(?![\w.-])|\.claude(?![\w./-])|\.claude[\\/]settings/i;
-const BUILDS = /\$\{[!(=~^]|\$\{(?!IFS\W)[^}]*?[/%#:,^@]|\$['"]|(?<!\w)IFS=/; // , ^ @: bash ${x,,} ${x^^} ${x@E}
+const BUILDS = /\$\{[!(=~^]|\$\{(?!IFS\W)(?:[^}$]|\$(?!\{))*?[/%#:,^@]|\$['"]|(?<!\w)IFS=/; // , ^ @: bash ${x,,} ${x^^} ${x@E}. A scan stops at the next `${`, which is its own start: linear (re-review 22b, F4)
 /** True when the command builds words at run time and names harness or its CLI as a word (never a directory in a path:
  *  `cd /x/harness && …` does not count) or a protected path: the guard asks. ${CLAUDE_PLUGIN_ROOT…} is the skills' own form. */
 export function buildsGuardedWords(command: string, w: Where): boolean {
@@ -630,15 +625,186 @@ export function buildsGuardedWords(command: string, w: Where): boolean {
 }
 const BUILDS_WHY = 'the command builds words at run time (a variable in command position, ${!…}, ${…/…}, $\'…\', IFS=, or eval) and names harness or a protected path, so the guard cannot read what it runs';
 
-export function decideCommand(command: string, ctx: GuardCtx): Decision {
-  command = command.replace(/\\\r?\n/g, ''); // a backslash-newline joins the lines for the shell
-  const d = decideRead(command, ctx);
+/** The text the data exemption trusts: no backslash before a newline (in a body too: `EO\` + `F` can be the end
+ *  line), no whitespace but space, tab and newline, no `$'`, and every line outside a heredoc body accepted by lexLine,
+ *  with heredocs nested at most MAX_NESTING deep. A body is lexed too when it holds a `<<` (a shell may read it, and its
+ *  own bodies are exempt there). A body under an unquoted delimiter is data only when no line of it holds a backtick,
+ *  `$(`, `${` or `$[` (the shell expands those as it feeds the body; `$NAME` is fine). Other text is decided as strictly
+ *  as main decides it (round 22). Round 24: an allowlist, so nothing the lexer does not know can move where a body
+ *  starts. Text with no `<<` has no body to find, so it needs no lexing. */
+export const canonicalText = (c: string): boolean => (c.includes('<<') ? lexText(c) !== null : !ODD.test(c));
+const ODD = /\\\n|[^\S \t\n]|\$'/;
+const MAX_NESTING = 2;
+/** After a heredoc operator, a substitution, process substitution (`<(`, `>(`, zsh `=(`) or `((` the shell reads across
+ *  lines before the body. layout uses it on text that is not canonical, where main's decision is the floor anyway. */
+export const SPANS_LINES = /`|\$[({[]|\(\(|[<>=]\(/;
+/** What an unquoted delimiter's body expands and runs: a backtick, `$(`, `$((`, `${`, `$[`. */
+export const EXPANDS = /`|\$[({[]/;
+const HEREDOC_WORD = /-?[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|([A-Za-z_]\w*))(?=[ \t;|&<>]|$)/y;
+/** One token of a canonical line: blanks; an operator or redirection (`&&`, `||`, `;`, `&`, `|`, `>`, `>>`, `<`, `&>`,
+ *  `&>>`, `>&`, and the here-string `<<<`; a digit before one is a word); a quoted string with no opener inside (`\"` escapes in "…", `$NAME` and
+ *  `$1` allowed); an escape; `$NAME` or `$1`; or plain word characters. `<<` and `<<-` are read before this. Anything
+ *  else (`$(`, `${`, `$[`, `$'`, `$"`, a backtick, `(`, `)`, `{`, `}`, `#`) matches nothing, so the line is refused. */
+const LEX = /([ \t]+)|(&&|\|\||&>>?|>>|>&|[;&|<>])|('[^']*'|"(?:[^"\\$`]|\\.|\$(?=\w))*"|\\.|\$(?:[A-Za-z_]\w*|\d))|([^\s'"\\$`;&|<>(){}#]+)/y;
+/** Plain words that open a compound command (bash and zsh), and `[[`. */
+const OPENS = /^(?:if|case|for|select|while|until|function|coproc|repeat|foreach|\[\[)$/;
+/** A heredoc operator on a line: its column, delimiter, `<<-`, and whether the delimiter is quoted. */
+type Op = { at: number; word: string; dash: boolean; literal: boolean };
+/** The heredocs one line outside a body opens and its quoted spans ([start, end) columns), or null when the line is not
+ *  in the canonical grammar. It must end neutral: an open quote or a trailing backslash matches no token. */
+export function lexLine(line: string): { ends: Op[]; quotes: [number, number][] } | null {
+  if (/[^\S \t]/.test(line)) return null; // CR and other whitespace
+  const ends: Op[] = [], quotes: [number, number][] = [];
+  let i = 0, piece = false, keyword = false;
+  while (i < line.length) {
+    let isPiece = false, plain: string | undefined;
+    if (line.startsWith('<<<', i) && line[i + 3] !== '<') i += 3; // a here-string: a redirection, its word is lexed next
+    else if (line.startsWith('<<', i)) {
+      HEREDOC_WORD.lastIndex = i + 2;
+      const w = HEREDOC_WORD.exec(line);
+      if (!w) return null; // `<<\EOF`, `<<$X`, `<<E"O"F`
+      ends.push({ at: i, word: w[1] ?? w[2] ?? w[3], dash: line[i + 2] === '-', literal: w[3] === undefined });
+      i = HEREDOC_WORD.lastIndex;
+    } else {
+      LEX.lastIndex = i;
+      const m = LEX.exec(line);
+      if (!m) return null;
+      isPiece = m[3] !== undefined || m[4] !== undefined;
+      if (m[3] && /^['"]/.test(m[3])) quotes.push([i, LEX.lastIndex]);
+      plain = m[4];
+      i = LEX.lastIndex;
+    }
+    if (keyword && !isPiece) return null; // a whole plain word that opens a compound command
+    keyword = plain !== undefined && !piece && OPENS.test(plain);
+    piece = isPiece;
+  }
+  return keyword ? null : { ends, quotes };
+}
+type Found = { quotes: [number, number, number][]; heredocs: (Op & { line: number; first: number; last: number })[] };
+/** Every line from `from` that is not body text passes lexLine; each body runs to its end line, or to the end as the
+ *  shell reads a body with none. Linear: a line is lexed once per level, and past MAX_NESTING levels the answer is no.
+ *  `found` collects the top level's quotes and heredocs (line indexes; `last` is the end line, -1 for none). */
+function canonicalLines(lines: string[], from: number, level: number, to = lines.length, found?: Found): boolean {
+  for (let i = from; i < to; i++) {
+    const lx = lexLine(lines[i]);
+    if (!lx) return false;
+    if (lx.ends.length && level >= MAX_NESTING) return false;
+    for (const [s, e] of lx.quotes) found?.quotes.push([i, s, e]);
+    let start = i + 1;
+    for (const e of lx.ends) {
+      let end = start, nested = false, expands = false;
+      for (; end < to && (e.dash ? lines[end].replace(/^\t+/, '') : lines[end]) !== e.word; end++) {
+        nested ||= lines[end].includes('<<');
+        expands ||= !e.literal && EXPANDS.test(lines[end]);
+      }
+      if (expands || (nested && !canonicalLines(lines, start, level + 1, end))) return false;
+      found?.heredocs.push({ ...e, line: i, first: start, last: end < to ? end : -1 });
+      start = end + 1;
+    }
+    i = start - 1;
+  }
+  return true;
+}
+/** A top-level heredoc of canonical text, as offsets into it: the operator at `at` on the line starting at `lineStart`;
+ *  its body and end line are [from, to), `to` -1 when it has no end line. */
+export type LexedHeredoc = { lineStart: number; at: number; word: string; dash: boolean; literal: boolean; from: number; to: number };
+let lexed: { c: string; r: { quotes: Quoted[]; heredocs: LexedHeredoc[] } | null } | undefined; // layout asks again for the same text
+/** The quoted spans and heredocs of text with a `<<` that canonicalText accepts, as the lexer reads them; null for any
+ *  other text. The guard's body layout (guard-readings) and withoutHeredocBodies both take their heredocs from here. */
+export function lexText(c: string): { quotes: Quoted[]; heredocs: LexedHeredoc[] } | null {
+  if (!c.includes('<<') || ODD.test(c)) return null;
+  if (lexed?.c === c) return lexed.r;
+  const lines = c.split('\n'), found: Found = { quotes: [], heredocs: [] };
+  let r = null;
+  if (canonicalLines(lines, 0, 0, lines.length, found)) {
+    const starts = [0];
+    for (const l of lines) starts.push(starts[starts.length - 1] + l.length + 1);
+    r = {
+      quotes: found.quotes.map(([l, s, e]) => ({ start: starts[l] + s, end: starts[l] + e, subs: [], line: starts[l] })),
+      heredocs: found.heredocs.map((h) => ({ lineStart: starts[h.line], at: starts[h.line] + h.at, word: h.word, dash: h.dash, literal: h.literal,
+        from: starts[h.first], to: h.last < 0 ? -1 : Math.min(starts[h.last + 1], c.length) })),
+    };
+  }
+  lexed = { c, r };
+  return r;
+}
+/** The stricter of two decisions: deny, then ask, then allow. */
+const strictest = (a: Decision, b: Decision): Decision => (a.kind === 'deny' ? a : b.kind === 'deny' ? b : a.kind === 'ask' ? a : b);
+
+/** How deep shells fed a heredoc nest (`bash <<'A'` holding `bash <<'B'` …), as the readers below find them, in the
+ *  text as written and joined. Each level is read again inside the one around it, so the cost climbs with depth. */
+export const MAX_SHELL_NESTING = 4;
+export function shellNesting(c: string): number {
+  let most = 0;
+  for (const t of new Set([c, c.replace(JOIN, '$1')])) {
+    const opens = new Array<number>(t.split('\n').length + 1).fill(0);
+    for (const p of shellPrograms(t)) {
+      if (!SHELLS.has(p.name) || !p.lines) continue;
+      opens[p.lines[0]]++;
+      opens[p.lines[1]]--;
+    }
+    let depth = 0;
+    for (const n of opens) most = Math.max(most, (depth += n));
+  }
+  return most;
+}
+export const NESTING_WHY = `shells fed a heredoc nest more than ${MAX_SHELL_NESTING} deep, deeper than the guard reads`;
+
+/** The guard's decision on one Bash command, within one work budget shared with main's reading (re-review 21, P1b):
+ *  past it, WorkBudget is thrown and the dispatcher denies. */
+export const decideCommand = (command: string, ctx: GuardCtx): Decision => withWorkBudget(() => decideBudgeted(command, ctx));
+function decideBudgeted(command: string, ctx: GuardCtx): Decision {
+  if (shellNesting(command) > MAX_SHELL_NESTING) return deny(NESTING_WHY); // fail closed, and fast (re-review 19, N8)
+  if (canonicalText(command)) return decideNew(command, ctx); // no backslash-newline, so one reading is all of them
+  // Odd text gets no data exemption: main's decision path reads it, and the stricter of that and this PR's rules, read
+  // with every continuation joined as main joins them, wins. So it is never looser than main, nor than this PR's rules.
+  const base = decideBase(command, ctx);
+  return base.kind === 'deny' ? base : strictest(base, decideNew(joinAll(command), ctx));
+}
+function decideNew(joined: string, ctx: GuardCtx): Decision {
+  try {
+    return decideJoined(joined, ctx);
+  } catch (e) {
+    if (e instanceof ScanBudget) return toDecision(['ask', SCAN_BUDGET_WHY]);
+    throw e;
+  }
+}
+function decideJoined(joined: string, ctx: GuardCtx): Decision {
+  const bodiless = commandSkeleton(joined).bodiless;
+  // Read three ways and block if any sees the write: the heredoc-stripped reading, the raw line (a `# <<EOF` comment
+  // can make the skeleton hide commands as a heredoc body), and the line with quotes and backslashes removed (a lone
+  // `'` in a comment desyncs quote tracking otherwise, and `'%B\'>` must not leave an escaped `\>`). Re-review 16, P3/P4.
+  const reads = [bodiless, joined, joined.replace(/[\\'"`]/g, '')];
+  if (reads.some(writesGitOutputAndRunsFile)) return toDecision(['deny', GIT_OUTPUT_RUN_WHY]);
+  if (reads.some(writesGitOutputToSensitivePath)) return toDecision(['deny', GIT_OUTPUT_CONFIG_WHY]);
+  return decideAll(joined, ctx, 0);
+}
+/** Every reading of a command line, the stricter verdict winning: as written, the $IFS one, and command-position globs as ruled names. */
+function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
+  const d = decideRead(command, ctx, depth);
   if (d.kind === 'deny') return d;
   const ifs = ifsReading(command);
-  const r = ifs === null ? d : decideRead(ifs, ctx);
-  if (r.kind === 'deny') return r;
-  return [d, r].find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
+  const own = ifs === null ? [command] : [command, ifs];
+  const globs = own.map(globReadings);
+  const rs = [d];
+  for (const t of [...own.slice(1), ...globs.flatMap((g) => g.texts)]) {
+    const r = decideRead(t, ctx, depth);
+    if (r.kind === 'deny') return r;
+    rs.push(r);
+  }
+  if (globs.some((g) => g.capped)) rs.push(toDecision(['ask', GLOB_CAP_WHY]));
+  // git runs its editor or pager on the message, so a message built by $(…) or a heredoc may run: ask at least.
+  if (EDITOR_SET.test(command) && /\bgit\b/.test(command) && /\$\(|`|<</.test(command)) rs.push(toDecision(['ask', EDITOR_WHY]));
+  // A substitution glued inside a word prints what the guard cannot know: read without it, a ruled reading asks.
+  const spliced = splicedReading(command);
+  if (spliced !== null && decideRead(spliced, ctx, depth).kind !== 'allow') rs.push(toDecision(['ask', SPLICE_WHY]));
+  return rs.find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
 }
+const GIT_OUTPUT_RUN_WHY = 'the command writes git output (log, show, rev-parse or cat-file) to a file and runs a file, so an earlier commit message could become the script';
+const GIT_OUTPUT_CONFIG_WHY = 'the command writes git output (log, show, rev-parse or cat-file) into .git/, a gitconfig or a hook, so an earlier commit message could become git config or a hook';
+const EDITOR_WHY = 'the command sets an editor or pager for git (GIT_EDITOR, EDITOR, core.editor, …) and builds its message at run time, and git may run that program on the message';
+const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
+const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 
 const ANSI_C: Record<string, string> = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v' };
 /** The body of a bash `$'…'` string, decoded: \xHH, \NNN, \uHHHH, \UHHHHHHHH, \n and the other letters. */
@@ -660,11 +826,11 @@ function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
   // text rule (sh -c 'git push -f'): judge it too.
   const inner = [
     ...cPayloads(command),
-    ...stdinPrograms(command, (ws) => commandStart(ws, (n) => SHELLS.has(n))).filter((p) => SHELLS.has(p.name)).map((p) => p.text),
+    ...shellPrograms(command).filter((p) => SHELLS.has(p.name)).map((p) => p.text),
     ...[...command.matchAll(/(?<![\w-])eval\s+([^;&|\n]*)/g)].map((m) => m[1].replace(/['"\\]/g, '')),
   ];
   for (const p of inner) {
-    const r = decideRead(p, ctx, depth + 1);
+    const r = decideAll(joinLines(p), ctx, depth + 1); // a shell fed a quoted-delimiter body joins its lines itself
     if (r.kind === 'deny') return r;
     if (r.kind === 'ask' && own.kind === 'allow') own = r;
   }
@@ -674,6 +840,11 @@ function decideRead(command: string, ctx: GuardCtx, depth = 0): Decision {
 function decideCore(command: string, ctx: GuardCtx): Decision {
   if (!command) return { kind: 'allow' };
   const unq = quoteFree(command); // `"git" push`, `g\it push`, `git $'push'`: quotes and escapes hide no text rule
+  // The text rules read the command without its data: heredoc bodies nobody runs and quoted -m/--body messages.
+  const view = textRulesView(command);
+  const vUnq = view === command ? unq : quoteFree(view);
+  const git = gitPlain(view);
+  const texts = [view, vUnq, git];
   const tokens = `${command} ${unq}`.split(/[\s'"`=<>|;&()]+/).filter(Boolean);
   if (!/\.gitignore\b/.test(command) && tokens.some(sensitivePath)) return deny('touching a secrets file (.env, SSH or AWS keys, PEM, Terraform state)');
   const personOnly = personOnlyInvocation(command, ctx);
@@ -686,15 +857,15 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   for (const { targets } of rmTargets(command)) {
     if (targets.some((t) => { const rel = inTdd(t); return rel !== null && isTestFile(rel); })) return deny('deleting a test file in a TDD path');
   }
-  const early = checkRm(command) ?? checkPushToMain(command) ?? checkPushToMain(unq);
+  const early = checkRm(view) ?? checkPushToMain(view) ?? checkPushToMain(vUnq) ?? checkPushToMain(git);
   if (early) return toDecision(early);
-  for (const [re, why] of DENY) if (re.test(command) || re.test(unq)) return deny(why);
+  for (const [re, why] of DENY) if (texts.some((t) => re.test(t))) return deny(why);
   if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {
     return { kind: 'ask', reason: msg('ask', 'shell write into a TDD path; use the Edit or Write tool so the TDD gates see it'), check: 'guard' };
   }
   const install = checkInstall(command, ctx);
   if (install) return install;
-  for (const [re, why] of ASK) if (re.test(command) || re.test(unq)) return toDecision(['ask', why]);
+  for (const [re, why] of ASK) if (texts.some((t) => re.test(t))) return toDecision(['ask', why]);
   return { kind: 'allow' };
 }
 

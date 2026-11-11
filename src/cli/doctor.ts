@@ -17,6 +17,7 @@ import { JEST_REPORTER, hasResultsOutput, resultsRename, testConfigChange } from
 import { coverageHint, noConfigFile, noCoverage, offCause, srcGlob } from '../install/preset.js';
 import { findOnPath, resolveStep, syncCommand } from '../checks/stop/runner.js';
 import { contextChecks } from './doctor-context.js';
+import { decisionChecks } from './doctor-decisions.js';
 import { branchProtection, type Gh } from './doctor-protection.js';
 import type { CliEnv } from './index.js';
 import { dirtyPaths } from '../install/git-status.js';
@@ -241,6 +242,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   else note(prot.detail);
   if (config.items.length) itemChecks(root, config, manifest, deps.pluginList ?? pluginList, { ok, fix, note });
   contextChecks(root, config, { ok, fix, note });
+  decisionChecks(root, config, { ok, fix, note });
   if (bad) out(`${bad} problem${bad === 1 ? '' : 's'} found.`);
   return bad ? 1 : 0;
 }

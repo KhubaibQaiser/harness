@@ -6,7 +6,7 @@ license: MIT
 min_claude_code: 2.1.314
 plugin_version: "5.3.3"
 applies_when: {"always":true}
-cost: {"context":"medium","setup":"low"}
+cost: {"context":"medium","setup":"low","context_tokens":448}
 stance: optional
 side_effects: ["installs-hook"]
 why: "Lazy senior dev mode that forces the simplest, shortest solution that actually works: YAGNI, stdlib first, no unrequested abstractions."

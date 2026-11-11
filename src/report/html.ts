@@ -4,7 +4,7 @@ import { CSS, MIN_N, NO_RELEVANT, USAGE_HEAD, chart, n, rate, section, sum, tabl
 import { evalsSection, type EvalSummary } from './evals.js';
 import { enforcedLine, type RuleRow } from './rules.js';
 import { rulesSection } from './html-rules.js';
-import { gatesSection, tokensSection } from './html-tokens-gates.js';
+import { gatesSection, MS_NOTE, tokensSection } from './html-tokens-gates.js';
 import { SKILL_NOTES, type SkillRow } from './metrics/skills.js';
 import type { GatesResult } from './metrics/gates.js';
 import type { UsageResult } from './metrics/usage.js';
@@ -40,18 +40,18 @@ function header(m: ReportMeta): string {
   ].join(''));
 }
 
-const tile = (k: string, v: string): string => `<div class="tile"><span class="mute">${h(k)}</span><b>${h(v)}</b></div>`;
+const tile = (k: string, v: string, note?: string): string => `<div class="tile"><span class="mute">${h(k)}</span><b>${h(v)}</b>${note ? `<span class="mute">${h(note)}</span>` : ''}</div>`;
 function summary(d: ReportData): string {
   const rel = d.skills.reduce((a, s) => a + s.relevantIn, 0), hit = d.skills.reduce((a, s) => a + s.invokedRelevant, 0);
   const l = d.usage.loads, t = d.usage.total;
-  const p95 = Math.max(0, ...d.gates.latency.map((x) => x.p95));
+  const timed = d.gates.latency.filter((x) => x.source === 'timing' && x.n > 0); // hook calls harness timed itself; transcript rows measure something else
   return section('summary', 'Summary', `<div class="tiles">${[
     tile('Skills invoked when relevant', rate(hit, rel, NO_RELEVANT)),
     tile('Rules enforced', d.rules === undefined ? 'not computed' : enforcedLine(d.rules)),
     tile('Rules loaded', `AGENTS.md in ${l.agentsMd} of ${l.sessions}, CLAUDE.md in ${l.claudeMd} of ${l.sessions} sessions`),
     tile('Tokens', USAGE_HEAD.map((c, i) => `${c.toLowerCase()} ${usageCells(t)[i]}`).join(', ')),
     tile('Probable false blocks', n(d.gates.falseBlocks.length)),
-    tile('Harness hook p95', d.gates.latency.length === 0 ? 'n/a' : `${p95} ms`),
+    tile('Harness hook p95', timed.length === 0 ? 'unknown (no timing log)' : `${Math.max(...timed.map((x) => x.p95))} ms`, `Measured ${MS_NOTE}.`),
   ].join('')}</div>`);
 }
 

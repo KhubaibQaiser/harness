@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, onTestFinished, test, vi } from 'vitest';
 import { readEvents } from '../../src/core/events.js';
+import { readTiming } from '../../src/core/timing.js';
+import { guard } from '../../src/checks/guard.js';
 import { isSafeSessionId, readState, statePath } from '../../src/core/state.js';
 import { readHookEnv } from '../../src/core/hook-env.js';
 import { type Check, dispatch, registry, runHook } from '../../src/hooks/dispatch.js';
@@ -433,4 +435,70 @@ test('harness remember: unattended, the ask is denied and one redacted decision-
   expect(ev.filter((e) => e.decision === 'deny').map((e) => e.reason)).toEqual([`remember add ${id}`, 'remember: secret (GitHub token)']);
   expect(JSON.stringify(ev)).not.toContain(token);
   expect(JSON.stringify(ev)).not.toContain('Readers skim');
+});
+
+const fresh = () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-t-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  return r;
+};
+const secretCat = 'cat .env';
+test('an allowed Read writes one timing line', async () => {
+  const r = fresh();
+  expect(await dispatch(pre({ cwd: r, tool_name: 'Read', tool_input: { file_path: join(r, 'a.ts') } }), [], {})).toBe('');
+  const t = readTiming(r);
+  expect(t).toHaveLength(1);
+  expect(t[0]).toMatchObject({ session: 's', event: 'PreToolUse', tool: 'Read', outcome: 'allow' });
+  expect(t[0]!.ms).toBeGreaterThanOrEqual(0);
+});
+test('a guard deny logs the event with use and ms, and one deny timing line without tool_input text', async () => {
+  const r = fresh();
+  const res = await dispatch(pre({ cwd: r, tool_name: 'Bash', tool_use_id: 'toolu_01abc', tool_input: { command: secretCat } }), [guard], {});
+  expect(decisionOf(res)).toBe('deny');
+  const ev = readEvents(r).filter((e) => e.decision === 'deny');
+  expect(ev).toHaveLength(1);
+  expect(ev[0]).toMatchObject({ check: 'guard', use: 'toolu_01abc' });
+  expect(typeof ev[0]!.ms).toBe('number');
+  expect(readTiming(r)).toEqual([expect.objectContaining({ event: 'PreToolUse', tool: 'Bash', outcome: 'deny' })]);
+  expect(readFileSync(join(r, '.harness/logs/timing.jsonl'), 'utf8')).not.toContain('cat');
+});
+test('a non-string tool_use_id is not logged', async () => {
+  const r = fresh();
+  await dispatch(pre({ cwd: r, tool_name: 'Bash', tool_use_id: 7, tool_input: { command: secretCat } }), [guard], {});
+  expect(readEvents(r).find((e) => e.decision === 'deny')!.use).toBeUndefined();
+});
+test('a Stop block from harness-files writes a timing line', async () => {
+  const r = fresh();
+  mkdirSync(join(r, '.harness/hooks'));
+  writeFileSync(join(r, '.harness/hooks/dispatch.mjs'), '// v1\n');
+  await dispatch(pre({ cwd: r, tool_name: 'Read' }), [], {});
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: false\n');
+  expect(decisionOf(await dispatch(JSON.stringify({ hook_event_name: 'Stop', session_id: 's', cwd: r }), [], {}))).toBe('block');
+  const last = readTiming(r).at(-1)!;
+  expect(last).toMatchObject({ event: 'Stop', outcome: 'block' });
+  expect(last.tool).toBeUndefined();
+});
+test('ask and context outputs are timed with their own outcome', async () => {
+  const r = fresh();
+  const ctxCheck = mk('ctx', { kind: 'context', text: 'note', check: 'ctx' }, ['PostToolUse']);
+  expect(decisionOf(await dispatch(pre({ cwd: r, tool_name: 'Bash' }), [askAll], {}))).toBe('ask');
+  expect(out(await dispatch(pre({ cwd: r, hook_event_name: 'PostToolUse', tool_name: 'Bash' }), [ctxCheck], {})).hookSpecificOutput?.additionalContext).toBe('note');
+  expect(readTiming(r).map((t) => [t.event, t.outcome])).toEqual([['PreToolUse', 'ask'], ['PostToolUse', 'context']]);
+});
+test('the config-invalid gate return writes a timing line', async () => {
+  const r = fresh();
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks: [');
+  vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  onTestFinished(() => void vi.restoreAllMocks());
+  expect(decisionOf(await dispatch(pre({ cwd: r, tool_input: { file_path: join(r, 'src/a.ts') } }), [], {}))).toBe('deny');
+  expect(readTiming(r)).toEqual([expect.objectContaining({ event: 'PreToolUse', tool: 'Edit', outcome: 'deny' })]);
+});
+test('a throwing timing writer leaves the decision unchanged', async () => {
+  const r = fresh();
+  const timing = () => { throw new Error('disk full'); };
+  vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  onTestFinished(() => void vi.restoreAllMocks());
+  expect(decisionOf(await dispatch(pre({ cwd: r, tool_name: 'Bash', tool_input: { command: secretCat } }), [guard], {}, { timing }))).toBe('deny');
+  expect(await dispatch(pre({ cwd: r, tool_name: 'Read' }), [], {}, { timing })).toBe('');
 });

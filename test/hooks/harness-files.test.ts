@@ -45,7 +45,7 @@ test('a harness file changed mid-session: Stop blocks once naming it, logs it, a
   const out = parsed(await hook(root, 'Stop'));
   expect(out.decision).toBe('block');
   expect(out.reason).toContain('`.harness/config.yaml`');
-  expect(out.reason).toContain('git diff -- .harness .claude/settings.json');
+  expect(out.reason).toContain('git diff -- .harness .claude/settings.json .claude/rules docs/decisions');
   expect(readEvents(root).filter((e) => e.decision === 'harness-files-changed').map((e) => e.reason)).toEqual(['.harness/config.yaml']);
   expect(await hook(root, 'Stop')).toBe(''); // re-snapshotted: blocked once per change set
   writeFileSync(join(root, '.harness/hooks/dispatch.mjs'), '// tampered\n');

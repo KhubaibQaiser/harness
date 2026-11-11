@@ -84,6 +84,22 @@ test('a broken decision (frontmatter mentions schema) is protected; a plain ADR 
   expect(edit('docs/decisions/0001-adr.md').kind).toBe('allow');
 });
 
+test.each(['rm -rf docs/*', 'rm docs/decisions/*.md', 'rm -rf .claude/rules/*', 'rm -f docs/decisions/2026-*', 'rm -rf .claude/rules/harness-decision-?*'])('glob removal %s is denied', (c) => {
+  expect(bash(c)).toEqual({ kind: 'deny', reason: REASON, check: 'protect' });
+  expect(bash(c, false).kind).toBe('allow');
+});
+
+test('rm -rf .claude/* stays denied, on or off: it also matches the settings files', () => {
+  expect(bash('rm -rf .claude/*').kind).toBe('deny');
+  expect(bash('rm -rf .claude/*', false).kind).toBe('deny');
+  expect(decisionsDeny(ROOT, cfg(), [], ['.claude/*'])).toMatchObject({ kind: 'deny', reason: REASON });
+});
+
+test('plain globs elsewhere stay allowed', () => {
+  for (const c of ['rm -rf dist/*', 'rm docs/plans/*.md', 'rm -rf docs/plans/*', 'rm docs/decisions/READ*', 'rm -rf .claude/rules/mine-*'])
+    expect(bash(c).kind, c).toBe('allow');
+});
+
 test('the settings fragment gains no deny rule for decisions (C9)', () => {
   const deny: string[] = settingsFragment().permissions.deny;
   expect(deny.filter((d) => /decision|rules/.test(d))).toEqual([]);

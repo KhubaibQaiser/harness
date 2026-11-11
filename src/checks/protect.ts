@@ -5,7 +5,7 @@ import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
-import { codeNames, decisionsDeny } from './decisions-protect.js';
+import { codeNames, decisionsDeny, globHits } from './decisions-protect.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
@@ -324,10 +324,7 @@ function globNamesProtected(ws: string[]): boolean {
     return w.split(/[\\/]/).some((c) => /[*?[]/.test(c) && ['.harness', '.claude'].some((n) => m(c)(n))) || PROTECTED_CONCRETE.some((p) => m(w.replace(/^\.\//, ''))(p));
   });
 }
-const isProtectedGlob = (root: string, t: string): boolean => {
-  const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
-  return !!rel && PROTECTED_CONCRETE.some((c) => picomatch(rel, { dot: true })(c));
-};
+const isProtectedGlob = (root: string, t: string): boolean => globHits(root, t, PROTECTED_CONCRETE);
 // Whole-tree pathspecs restore .harness and .claude too: ".", ":/", the root, or any ancestor of it.
 // `path` is a test seam for Windows (backslashes, `..`, drive letters, case-insensitive compare).
 export const isWholeTree = (root: string, t: string, path: typeof nodePath = nodePath): boolean => {

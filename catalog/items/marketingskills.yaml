@@ -3,7 +3,7 @@ kind: plugin
 title: "Marketing skills"
 source: {"type": "github", "repo": "coreyhaines31/marketingskills", "plugin": "marketing-skills", "sha": "88c79f6528a9347420e57ceb1fff9a60de651768"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "2.14.0"
 applies_when: {"project_types": ["landing"]}
 cost: {"context": "low", "setup": "low", "context_tokens": 10946}

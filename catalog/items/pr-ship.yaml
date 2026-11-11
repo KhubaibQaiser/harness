@@ -8,7 +8,7 @@ source:
     - from: skills/pr-ship/SKILL.md
       to: .claude/skills/pr-ship/SKILL.md
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when:
   always: true
 cost:

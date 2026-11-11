@@ -17,11 +17,12 @@ import { stopGate } from '../checks/stop/gate.js';
 import { testLock } from '../checks/tdd/test-lock.js';
 import { type SessionState, isSafeSessionId, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
+import { appendTiming, type TimingLine } from '../core/timing.js';
 import { managedSettingsPath } from '../core/settings-layers.js';
 import { detectHarnessFileChanges, seedBaselines } from './change-detection.js';
 import type { Check, Ctx } from './check.js';
 import { configInvalidGate } from './config-gate.js';
-import { eventLog } from './event-log.js';
+import { eventLog, warn } from './event-log.js';
 import { capMessage, emit, MAX_CONTEXT, parseInput } from './io.js';
 import { mergeContext, winner } from './notice.js';
 import { runAfterAllow, runChecks } from './run-checks.js';
@@ -39,7 +40,15 @@ const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 const CURSOR_KEYS = ['conversation_id', 'generation_id', 'model_id', 'workspace_roots'];
 
-export type DispatchOpts = { home?: string; platform?: NodeJS.Platform; managed?: string };
+export type DispatchOpts = { home?: string; platform?: NodeJS.Platform; managed?: string; timing?: typeof appendTiming };
+
+/** The decision kind a hook's output carries; empty output is an allow. */
+function outcomeOf(out: string): TimingLine['outcome'] {
+  if (!out) return 'allow';
+  const o = JSON.parse(out) as { decision?: string; hookSpecificOutput?: { permissionDecision?: string } };
+  const d = o.decision ?? o.hookSpecificOutput?.permissionDecision;
+  return d === 'block' || d === 'deny' || d === 'ask' ? d : 'context';
+}
 
 export async function dispatch(raw: string, checks: Check[], env: NodeJS.ProcessEnv, opts: DispatchOpts = {}): Promise<string> {
   const input = parseInput(raw);
@@ -66,20 +75,29 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
       ctx.state = s;
     },
   } as Ctx;
-  const log = eventLog(root, input.session_id);
+  const log = eventLog(root, input.session_id, input.tool_use_id, PROCESS_START);
+  // Every return records one timing line; a failed write never changes the decision.
+  const done = (out: string): string => {
+    try {
+      (opts.timing ?? appendTiming)(root, { ts: new Date().toISOString(), session: input.session_id, event, ...(input.tool_name ? { tool: input.tool_name } : {}), outcome: outcomeOf(out), ms: Date.now() - PROCESS_START });
+    } catch (e) {
+      warn('timing log', e);
+    }
+    return out;
+  };
 
   let notice = '';
   let pending = ''; // a blocked ConfigChange, shown at this prompt with the change-detection notice
   if (state && !fallback) {
     pending = seedBaselines(ctx, event, checks);
     const found = detectHarnessFileChanges(ctx, event, log);
-    if (found.out !== undefined) return found.out;
+    if (found.out !== undefined) return done(found.out);
     notice = found.notice;
   }
 
   if (configErrors.length && !degraded) {
     const out = configInvalidGate(ctx, event, configErrors, log);
-    if (out !== undefined) return out;
+    if (out !== undefined) return done(out);
   }
 
   const decisions = await runChecks(ctx, checks, degraded, log);
@@ -87,7 +105,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
 
   const out = mergeContext(event, decisions, winner(decisions));
   const all = [pending, notice].filter(Boolean).join('\n');
-  return all ? withNotice(event, out, all) : out;
+  return done(all ? withNotice(event, out, all) : out);
 }
 
 /** Adds a notice the person sees (systemMessage) and the model gets (additionalContext) to a hook's JSON output. */

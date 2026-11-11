@@ -108,8 +108,13 @@ export function gatesAcc(events: HarnessEvent[], timing: TimingLine[], sinceMs: 
     if (!t || typeof t.event !== 'string' || typeof t.outcome !== 'string' || typeof t.ms !== 'number' || !Number.isFinite(t.ms) || t.ms < 0) { notes.badTiming++; continue; }
     if (Number.isNaN(ms)) { notes.noTime++; continue; }
     if (ms < sinceMs) continue;
+    // A step line times one Stop step, not a whole hook call: it feeds stopSteps, and only its timeout reaches the latency rows.
+    if (t.event === 'Stop' && typeof t.step === 'string') {
+      const s = step(t.step); s.runs++; if (s.ms.length < MAX_SAMPLES) s.ms.push(t.ms); else notes.samplesCut++;
+      if (t.outcome === 'timeout') sample('timing', t.event, t.outcome, null, true);
+      continue;
+    }
     sample('timing', t.event, t.outcome, t.ms, t.outcome === 'timeout');
-    if (t.event === 'Stop' && typeof t.step === 'string') { const s = step(t.step); s.runs++; if (s.ms.length < MAX_SAMPLES) s.ms.push(t.ms); else notes.samplesCut++; }
   }
 
   // Per-session transcript state.

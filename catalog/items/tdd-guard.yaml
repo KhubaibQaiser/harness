@@ -3,7 +3,7 @@ kind: plugin
 title: "TDD Guard"
 source: {"type": "git-subdir", "repo": "nizos/tdd-guard", "path": "plugin", "plugin": "tdd-guard", "sha": "ffb7026c8f7e335e2914461fce9ec3f897a87125"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"always": true}
 cost: {"context": "low", "setup": "medium", "context_tokens": 0}
 stance: discouraged

@@ -3,7 +3,7 @@ kind: plugin
 title: "Modern web guidance"
 source: {"type":"github","repo":"GoogleChrome/modern-web-guidance","plugin":"modern-web-guidance","sha":"341268561baaff256927c931ec8215dbd30e3cee"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "0.0.197"
 applies_when: {"project_types":["web","landing"]}
 cost: {"context":"low","setup":"low","context_tokens":448}

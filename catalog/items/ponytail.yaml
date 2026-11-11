@@ -3,7 +3,7 @@ kind: plugin
 title: "Ponytail"
 source: {"type":"github","repo":"DietrichGebert/ponytail","plugin":"ponytail","sha":"96608e078b2d5ea607c5c3b8b5a54d1c1fba6846"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "5.3.3"
 applies_when: {"always":true}
 cost: {"context":"medium","setup":"low","context_tokens":448}

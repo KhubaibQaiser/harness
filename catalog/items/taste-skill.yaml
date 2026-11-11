@@ -3,7 +3,7 @@ kind: plugin
 title: "Taste skill"
 source: {"type":"github","repo":"Leonxlnx/taste-skill","plugin":"taste-skill","sha":"12af471f627f866411b4bd785b19646d3672784c"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "2.1.5"
 applies_when: {"project_types":["web","landing"]}
 conflicts_with: ["impeccable", "superdesign", "ui-ux-pro-max"]

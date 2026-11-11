@@ -3,7 +3,7 @@ kind: plugin
 title: "Expo skills"
 source: {"type":"git-subdir","repo":"expo/skills","path":"plugins/expo","plugin":"expo","sha":"a9e5bd3fa00b4e61f632e43f85da73aee1942582"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"frameworks":["expo"]}
 cost: {"context":"low","setup":"low","context_tokens":2869}
 stance: optional

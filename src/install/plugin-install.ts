@@ -2,8 +2,10 @@ import { esc } from '../core/config.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 
 const PINS = 'harness-pins';
-// ponytail: wording guessed; Task 27 live-checks the real messages. Matches the marketplace being unknown, never the id alone.
-const NO_MARKET = /marketplace\b.*harness-pins.*(not found|unknown|not registered)|harness-pins.*marketplace.*(not found|unknown|not registered)/i;
+// Matches the marketplace being unknown, never the id alone. Claude Code 2.1.322 (live check A1, 2026-11-12) says
+// `Plugin "x" not found in marketplace "harness-pins"` when no trusted session has registered the project's marketplace yet,
+// and its "marketplace update" hint fails too. Every harness id comes from harness-pins, so that wording means "not registered".
+const NO_MARKET = /marketplace\b.*harness-pins.*(not found|unknown|not registered)|harness-pins.*marketplace.*(not found|unknown|not registered)|not found in marketplace\W+harness-pins\b/i;
 const NOT_REGISTERED = `Claude Code hasn't registered \`${PINS}\` yet. Restart Claude Code in this folder (trust it if asked), then run /harness:sync.`;
 
 /** The last stdout line that parses as a JSON object (the CLI may print progress lines before it). */

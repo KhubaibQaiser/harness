@@ -12,6 +12,7 @@ import { commitDecisions, planSync, readDecisions, type DecisionSet, type SyncPl
 import { gitIn, type Git } from '../core/decisions-stale.js';
 import { appendEvent } from '../core/events.js';
 import { gitRoot } from '../core/repo-root.js';
+import { argsValid, type Flags, parseFlags, REMEMBER_SPECS } from '../core/remember-args.js';
 import { scanSecrets } from '../core/secrets.js';
 import { unattendedEnv } from '../core/unattended.js';
 import { insideClaude } from './claude-only.js';
@@ -43,7 +44,6 @@ const SAFE = ['-c', 'core.fsmonitor=false'];
 const DAY_MS = 86_400_000;
 
 interface Ctx { root: string; cfg: HarnessConfig; today: string; now: () => Date; git: Git }
-interface Flags { values: Map<string, string[]>; switches: Set<string>; rest: string[] }
 
 const usage = (cli: RememberEnv): number => (cli.out(`Usage: ${REMEMBER_USAGE.join('\n       ')}`), 2);
 const log = (root: string, decision: string, reason?: string) =>
@@ -56,23 +56,6 @@ export function writeGate(cli: RememberEnv, config: HarnessConfig): string | nul
   if (unattendedEnv(cli.env)) return UNATTENDED;
   if (insideClaude(cli.env) && !config.checks.guard) return GUARD_OFF;
   return null;
-}
-
-function parse(args: string[], valued: string[], switches: string[]): Flags | null {
-  const f: Flags = { values: new Map(), switches: new Set(), rest: [] };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
-    if (valued.includes(a)) {
-      const v = args[++i];
-      if (v === undefined) return null;
-      f.values.set(a, [...(f.values.get(a) ?? []), v]);
-    } else if (switches.includes(a)) {
-      if (f.switches.has(a)) return null;
-      f.switches.add(a);
-    } else if (a.startsWith('-')) return null;
-    else f.rest.push(a);
-  }
-  return f;
 }
 
 /** The repo, its config and today; or the exit code after printing why not. `write`: run the write gate too. */
@@ -182,10 +165,8 @@ function build(ctx: Ctx, set: DecisionSet, f: { title: string; rule: string; why
 }
 
 async function add(args: string[], cli: RememberEnv): Promise<number> {
-  const f = parse(args, ['--title', '--rule', '--why', '--path', '--supersedes'], ['--quoted', '--dry-run', '--yes']);
-  const one = (k: string) => f?.values.get(k)?.length === 1;
-  const most = (k: string) => (f?.values.get(k)?.length ?? 0) <= 1;
-  if (!f || f.rest.length || !one('--title') || !one('--rule') || !most('--why') || !most('--supersedes') || !f.values.get('--path')) return usage(cli);
+  const f = parseFlags(args, REMEMBER_SPECS.add!.valued, REMEMBER_SPECS.add!.switches);
+  if (!f || !argsValid('add', f)) return usage(cli);
   const ctx = open(cli, !f.switches.has('--dry-run'));
   if (typeof ctx === 'number') return ctx;
   const [title, rule, why, paths, supersedes] = [f.values.get('--title')![0]!, f.values.get('--rule')![0]!, f.values.get('--why')?.[0] ?? '', f.values.get('--path')!, f.values.get('--supersedes')?.[0]];
@@ -215,8 +196,8 @@ async function add(args: string[], cli: RememberEnv): Promise<number> {
 }
 
 async function syncCmd(args: string[], cli: RememberEnv): Promise<number> {
-  const f = parse(args, [], ['--dry-run', '--yes']);
-  if (!f || f.rest.length) return usage(cli);
+  const f = parseFlags(args, REMEMBER_SPECS.sync!.valued, REMEMBER_SPECS.sync!.switches);
+  if (!f || !argsValid('sync', f)) return usage(cli);
   const ctx = open(cli, !f.switches.has('--dry-run'));
   if (typeof ctx === 'number') return ctx;
   const set = readDecisions(ctx.root, ctx.today);
@@ -243,8 +224,8 @@ function edited(ctx: Ctx, sub: 'confirm' | 'retire', d: TeamDecision, by: string
 }
 
 async function rewrite(sub: 'confirm' | 'retire', args: string[], cli: RememberEnv): Promise<number> {
-  const f = parse(args, sub === 'retire' ? ['--by'] : [], ['--dry-run', '--yes']);
-  if (!f || f.rest.length !== 1 || (f.values.get('--by')?.length ?? 0) > 1) return usage(cli);
+  const f = parseFlags(args, REMEMBER_SPECS[sub]!.valued, REMEMBER_SPECS[sub]!.switches);
+  if (!f || !argsValid(sub, f)) return usage(cli);
   const ctx = open(cli, !f.switches.has('--dry-run'));
   if (typeof ctx === 'number') return ctx;
   const no = (reason: string, msg: string) => refuse(cli, ctx.root, reason, msg);

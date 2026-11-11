@@ -1396,6 +1396,8 @@ describe('preset asks: AI trailer and branch prefix', () => {
     'git switch --create wip', 'git switch --create=wip', 'git switch --force-create wip', 'git checkout --orphan wip', 'git checkout --orphan=wip',
     'git branch wip', 'git branch wip main', 'git branch -f wip main', 'git branch --track wip origin/main',
     'git worktree add -b wip ../wt', 'git worktree add -B wip ../wt main', 'git worktree add ../wt -b wip',
+    '/usr/bin/git switch -c wip', 'git switch --orphan wip', 'git switch -cwip', 'git checkout -bwip', 'git checkout -Bwip', 'git worktree add -bwip ../wt',
+    'git branch -c wip', 'git branch -C main wip', 'git branch --copy feature/a wip', 'git worktree add ../wip', 'git worktree add -f ../x/wip',
   ])('an unprefixed new branch asks: %s', (cmd) => {
     const d = decideCommand(cmd, pctx());
     expect(d.kind).toBe('ask');
@@ -1404,7 +1406,9 @@ describe('preset asks: AI trailer and branch prefix', () => {
   test('branch commands that create nothing, or a prefixed branch, never get the prefix ask', () => {
     for (const c of ['git branch', 'git branch -d wip', 'git branch -D wip', 'git branch -m wip', 'git branch -M old wip', 'git branch --list', 'git branch -a',
       'git branch -r', 'git branch --show-current', 'git branch --contains abc123', 'git branch feature/wip main', 'git switch --create=fix/y',
-      'git checkout --orphan chore/z', 'git worktree add -b feature/wip ../wt', 'git worktree add ../wt main', 'git worktree list'])
+      'git checkout --orphan chore/z', 'git worktree add -b feature/wip ../wt', 'git worktree add ../wt main', 'git worktree list',
+      'grep -rn "git branch" docs/', 'rg "git branch" src', 'echo git branch wip', 'echo git switch -c wip', 'git commit -m "fix: x\n\ntry git switch -c wip later"',
+      'git worktree add --detach ../wip', 'git worktree add -d ../wip', 'git branch -c feature/a fix/b', 'git switch -cfeature/x'])
       expect(reason(decideCommand(c, pctx())), c).not.toContain('no listed prefix'); // -D already asks on its own rule
   });
   // cmp-x runs with no config; this pins the preset asks the same way, with a preset recorded (expected verdict per command).

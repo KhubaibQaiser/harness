@@ -272,6 +272,13 @@ The subcommands are `add`, `confirm`, `retire`, `sync`, `list` and `check` (see 
 
 **`check` in CI.** `harness remember check` prints one line per problem, then `<n> decisions: <e> errors, <s> stale, <x> expired, <o> oversized, rules <in sync|out of sync>`. It exits 1 on an invalid decision file, a rule file that harness didn't write, or rules that are out of sync with `docs/decisions/`. Stale, expired and oversized decisions are notes and exit 0, so CI doesn't go red only because 90 days passed. A decision is stale when one of its globs matches no tracked file, or when its linked files changed since it was confirmed. If git fails, it prints `couldn't check decision staleness (<reason>)` instead.
 
+**`doctor` and `status`.** `harness doctor` and `harness status` report on the decisions in `docs/decisions/` and the rules generated from them. Both work offline, and `checks.decisions: false` doesn't turn them off.
+
+- `doctor` exits 1 for an invalid decision file, for rules out of sync with the decisions, and for a `harness-decision-*.md` rule file that isn't harness's. Each line says the fix.
+- `doctor` only notes a decision that is stale (a `paths` glob matches no tracked file, or linked files changed since it was confirmed), expired, or oversized (its rule is cut to `decisions.max_lines`), and a `verified_at` that is not in this clone. These never fail `doctor`.
+- If git can't answer in time, `doctor` prints `couldn't check decision staleness (<reason>)` and carries on.
+- `status` adds `Decisions: <n> active (<s> stale, <x> expired), rules <in sync|out of sync>` after the `Context:` line, or `Decisions: none`.
+
 ## Commands in full
 
 The plugin adds `/harness:init`, `/harness:doctor`, `/harness:status`, `/harness:update`, `/harness:add`, `/harness:sync`, `/harness:uninstall`, `/harness:vet`, `/harness:preset` and `/harness:remember`. In a plain terminal, `init` and `update` print `Run /harness:init inside Claude Code` and exit.
@@ -368,15 +375,6 @@ Skills, agents and the `AGENTS.md` block are loaded into every Claude Code sessi
 - **Trimming.** `/harness:context-optimize` measures, proposes trims, and applies harness's own after a yes. Your own files change only after you approve each diff.
 - **Ask once, then exempt.** Items you approved earlier count in every total, so the ask shows the same number as `status` plus the change. You're never asked about them again: an install asks only when new text takes the total past the budget, or when it adds an item that can't be measured. The ask lists them as `Approved earlier: <ids>.`
 - **After compaction.** The `SessionStart` `compact` hook re-adds the state card.
-
-## Team decisions
-
-`harness doctor` and `harness status` report on the decisions in `docs/decisions/` and the rules generated from them. Both work offline, and `checks.decisions: false` doesn't turn them off.
-
-- `doctor` exits 1 for an invalid decision file, for rules out of sync with the decisions, and for a `harness-decision-*.md` rule file that isn't harness's. Each line says the fix.
-- `doctor` only notes a decision that is stale (a `paths` glob matches no tracked file, or linked files changed since it was confirmed), expired, or oversized (its rule is cut to `decisions.max_lines`), and a `verified_at` that is not in this clone. These never fail `doctor`.
-- If git can't answer in time, `doctor` prints `couldn't check decision staleness (<reason>)` and carries on.
-- `status` adds `Decisions: <n> active (<s> stale, <x> expired), rules <in sync|out of sync>` after the `Context:` line, or `Decisions: none`.
 
 ## Plugins and MCP servers
 
@@ -569,6 +567,18 @@ More detail: [TDD setup details](#tdd-setup-details).
 - The protected-path and `node_modules` rules read the paths a shell command names, and inline code only when it is literal in the command. Not seen by them: a program that writes files itself (a script file, a build script, an install hook), code that assembles a path at run time, a command hidden in a variable or built at run time, and quoting rules other than POSIX. Change detection reports a change to harness's own files from any of these at the next prompt and Stop, after the fact, unless the same script also rewrote the fingerprints in `.harness/state/`; it doesn't cover `node_modules` or other files.
 - Team-decision protection reads paths the same way, so a decision path built at run time (`p=docs/decisions/x.md; echo > $p`) or written by a script is not caught. Change detection fingerprints only the generated `.claude/rules/harness-decision-*.md` rules the manifest lists, not `docs/decisions/`: a changed decision shows up in git and its PR.
 - `tar -x` and `unzip` with no `-C`/`-d` extract into the current folder, and team-decision protection doesn't read the archive, so one that holds `docs/decisions/` or `.claude/rules/` files can overwrite them. Change detection reports a changed generated rule; a changed decision shows up in git.
+- Team decisions: rules load when Claude Code's file tools (or a single-file `cat`/`head`) touch a linked path, by Claude Code's docs; unverified, pending the live check. An agent that changes code only through other shell commands, or only searches, may never load the decision.
+- Team decisions: there is no cap on how many rules load in one session; only each rule's size is capped (`decisions.max_lines`).
+- Team decisions: an expired decision's rule keeps loading until someone runs `harness remember sync` and commits the result. `check` and `doctor` say it expired.
+- Team decisions: quote detection is an 8-word exact match on normalised text, so a paraphrase, a translation or a shorter quote passes (see [Team decisions](#team-decisions)).
+- Team decisions: the secret scan is a fixed pattern list (private keys, AWS, GitHub, Slack, Anthropic and OpenAI keys, JWTs, URLs with a password, and `api_key=`, `token=`, `secret=` or `password=` assignments). A secret of any other shape is not caught.
+- Team decisions: the nudge signals are English regexes, and how often they fire or miss is unmeasured.
+- Team decisions: `harness remember` may not be on the PATH in cloud sessions, and `/harness:remember` doesn't load there (no repo-enabled plugins). Those runs are unattended anyway (`CLAUDE_CODE_REMOTE`), so they don't write. Committed rules should still load there; unverified.
+- Team decisions: "changed since it was confirmed" counts any change to a linked file, so a broad glob goes stale often.
+- Team decisions: two branches that each add a decision conflict in `.harness/manifest.json`. Take either side and run `harness remember sync`.
+- Team decisions: a rule that names a secrets file, such as `.env`, is denied by the secrets-file rule when the agent saves it. Save that one from your own terminal.
+- Team decisions: a `harness remember` command with `--dry-run` and a glob (a quoted `--path "src/**"`) asks as a preview instead of passing, because the guard can't read the glob as a plain word. Unattended it is denied.
+- Team decisions: under `sandbox: always`, whether `harness remember` run by the agent can write `docs/decisions/` and `.claude/rules/` is unverified, pending the live check. If it can't, run it in your own terminal.
 - The guard also asks for any Bash command whose text names `harness` or `cli.mjs` and one of `init`, `update`, `add`, `remove`, `sync`, `uninstall`, `push` or `pr`, unless it can read the whole command as a plain preview. This is a safety net for shell tricks it cannot parse (globs, comments, redirections, odd spaces). The accepted cost: a command that only mentions them, such as `git commit -m "fix harness init docs"`, asks too, and so does one that only mentions `harness tdd off` (echo, grep, a heredoc written to a file, a function that forwards its arguments). A `harness tdd off` the guard can actually see being run, even inside `{ …; }` or through a glob in the CLI path, is denied.
 - The guard does not see a command that never names `harness` or `cli.mjs`: a renamed or copied CLI file (`x.mjs`), `npx github:…` forms that omit the name, and npm `pre`/`post` scripts whose body lives in a `package.json` the agent edited. The agent can write such a file, so this is the same limit as running a script file.
 - Harness's guard is a speed bump for mistakes and prompt injection, not a security sandbox. A determined shell trick can still get past it. Claude Code's own permission rules and its sandbox are the real boundary.
@@ -650,6 +660,4 @@ CI runs the tests on macOS and Windows with Node 22, plus Linux jobs for gitleak
 
 ## Roadmap
 
-Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Shipped in 0.2.0-beta.2: the opt-in personal preset, the context budget, the usage report, PR size checks and team decisions. Coming next:
-- quote detection for team decisions;
-- memory, the PR reviewer, and TDD for other languages.
+Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Shipped in 0.2.0-beta.2: the opt-in personal preset, the context budget, the usage report, PR size checks and team decisions. On `main` since then: quote detection for team decisions. Coming next: memory, the PR reviewer, and TDD for other languages.

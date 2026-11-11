@@ -106,3 +106,28 @@ test('README documents the usage and adherence report and the eval cost', () => 
   expect(readme).toContain('| `eval ');
   expect(readme).toMatch(/costs money/);
 });
+
+test('README links the team decisions reference', () => {
+  expect(readme).toContain('docs/reference.md#team-decisions');
+});
+
+test('the reference carries every team-decisions known limit (spec section 12) and the build drifts', () => {
+  const limits = between(reference, '## Known limits', '## Development');
+  const td = readFileSync('docs/specs/2026-11-03-team-decisions-design.md', 'utf8');
+  expect(between(td, '## 12.', '## 13.').split('\n').filter((l) => l.startsWith('- '))).toHaveLength(9);
+  for (const s of [
+    'only through other shell commands, or only searches, may never load the decision',
+    'no cap on how many rules load in one session',
+    'keeps loading until someone runs `harness remember sync` and commits the result',
+    'quote detection is an 8-word exact match on normalised text',
+    'the secret scan is a fixed pattern list',
+    'the nudge signals are English regexes',
+    'a decision path built at run time', // protect is a text check (listed by Task 11)
+    '`harness remember` may not be on the PATH in cloud sessions',
+    'so a broad glob goes stale often',
+    'conflict in `.harness/manifest.json`',
+    'names a secrets file, such as `.env`',
+    '`--dry-run` and a glob',
+  ]) expect(limits, s).toContain(s);
+  expect(reference.match(/^## Team decisions$/gm)).toHaveLength(1);
+});

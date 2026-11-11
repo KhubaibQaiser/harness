@@ -27,6 +27,6 @@ export interface HookInput {
 
 export type Decision =
   | { kind: 'allow' }
-  | { kind: 'deny' | 'ask'; reason: string; check: string }
+  | { kind: 'deny' | 'ask'; reason: string; check: string; log?: string } // log: the event text when reason holds what must not be logged
   | { kind: 'block'; reason: string; check: string }
   | { kind: 'context'; text: string; check: string; notice?: string };

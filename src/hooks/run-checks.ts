@@ -4,7 +4,7 @@ import { isShell } from './edit-target.js';
 import { type Log, warn } from './event-log.js';
 import type { Decision, HookEvent } from './types.js';
 
-type AskDecision = { kind: 'ask'; reason: string; check: string };
+type AskDecision = { kind: 'ask'; reason: string; check: string; log?: string };
 
 /** One check's decision; a throw denies for a failClosed check and is skipped (null) for any other. A spent work budget
  *  (WorkBudget) always denies, with its own reason. */
@@ -31,7 +31,7 @@ function resolveAsk(d: AskDecision, event: HookEvent, unattended: boolean, log: 
     log(d.check, 'ask-ignored', d.reason);
     return null;
   }
-  return unattended ? { kind: 'deny', reason: `Unattended run: ${d.reason}`, check: d.check } : d;
+  return unattended ? { kind: 'deny', reason: `Unattended run: ${d.reason}`, check: d.check, ...(d.log ? { log: d.log } : {}) } : d;
 }
 
 /** A shell command longer than this is denied before any check reads it, so no reading of it can outrun the hook timeout. */
@@ -54,7 +54,7 @@ export async function runChecks(ctx: Ctx, checks: Check[], degraded: boolean, lo
     if (!d || d.kind === 'allow') continue;
     if (d.kind === 'ask') d = resolveAsk(d as AskDecision, event, ctx.unattended, log); // Decision types deny and ask as one member, so the kind check does not narrow it
     if (!d) continue;
-    log(d.check, d.kind, d.kind === 'context' ? d.text : d.reason, denied ? true : undefined);
+    log(d.check, d.kind, d.kind === 'context' ? d.text : (('log' in d && d.log) || d.reason), denied ? true : undefined);
     if (!denied) decisions.push(d);
     if (event === 'PreToolUse' && d.kind === 'deny') denied = true;
   }

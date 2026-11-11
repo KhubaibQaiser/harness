@@ -13,6 +13,7 @@ import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './gu
 import { decideCommand as decideBase, JOIN } from './guard-base.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
+import { REMEMBER_WHY, rememberAsk } from './remember.js';
 
 type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { startedAt?: number; lookup?: VerifyOpts['lookup'] }; // lookup: test seam
 type Verdict = ['allow'] | ['deny' | 'ask', string];
@@ -95,6 +96,7 @@ const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string
   preset: { kind: 'ask', allowed: (a) => a[0] === 'list' || a[0] === 'check' || (a[0] === 'install' && a.includes('--dry-run') && !a.includes('--yes')), why: () => 'the agent is installing a preset, which writes rules, skills and settings (global ones go to ~/.claude)' },
   context: { kind: 'ask', allowed: (a) => a[0] !== 'apply' || PREVIEW(a.slice(1)), why: () => 'the agent is changing which skills load, in .claude/settings.json' },
   report: { kind: 'ask', allowed: (a) => a.includes('--help'), why: () => "the agent is running the usage and adherence report, which reads this repo's session transcripts" },
+  remember: { kind: 'ask', allowed: (a) => ['list', 'check'].includes(a[0]) || a.includes('--dry-run') || a.includes('--help'), why: () => REMEMBER_WHY },
   eval: { kind: 'deny', allowed: (a) => a.includes('--help'), why: (run) => `Only a person can run paid evals: run ${run('eval')} in your own terminal.` },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
@@ -898,6 +900,7 @@ export const guard: Check = {
     if (isShell(tool_name)) {
       const cmd = String(tool_input.command ?? '');
       const d = decideCommand(cmd, ctx);
+      if (d.kind === 'ask' && d.reason.includes(REMEMBER_WHY)) return rememberAsk(ctx, cmd);
       // Harness does not parse PowerShell, so any mention of its own paths needs a person.
       if (tool_name === 'PowerShell' && d.kind === 'allow' && /\.harness|\.claude|\.env/i.test(cmd))
         return { kind: 'ask', reason: 'Harness does not parse PowerShell, so a PowerShell command that names .harness, .claude or .env needs your approval.', check: 'guard' };

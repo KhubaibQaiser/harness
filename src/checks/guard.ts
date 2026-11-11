@@ -876,16 +876,16 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
 }
 
 const NEW_BRANCH_FLAGS: Record<string, string[]> = {
-  checkout: ['-b', '-B', '--orphan'], switch: ['-c', '-C', '--create', '--force-create', '--orphan'], worktree: ['-b', '-B', '--orphan'],
+  checkout: ['-b', '-B', '--orphan'], switch: ['-c', '-C', '--create', '--force-create', '--orphan'], worktree: ['-b', '-B'], // worktree's --orphan is a switch
 };
 const BRANCH_CREATE_FLAGS = /^(-f|--force|-t|--track(=\S*)?|--no-track|--create-reflog)$/;
 const BRANCH_COPY = /^(-c|-C|--copy)$/;
 /** The branch a git command creates: `checkout -b|-B|--orphan`, `switch -c|-C|--create|--force-create|--orphan`,
- *  `worktree add -b|-B|--orphan` (also `--flag=name` and a stuck `-bname`), `git branch <name> [<start>]` with only
+ *  `worktree add -b|-B` (also `--flag=name`, a stuck `-bname` and a cluster `-fb name`), `git branch <name> [<start>]` with only
  *  creation flags (`-d`, `-m`, `--list`, … create nothing), `git branch -c|-C|--copy [<old>] <new>`, and `worktree add
  *  <path>` with no branch flag, `--detach` or commit-ish (git names that branch after the path). */
 function newBranch(sub: string | undefined, args: string[]): string | undefined {
-  const positional = args.filter((t) => !t.startsWith('-'));
+  const positional = args.filter((t, i) => !t.startsWith('-') && args[i - 1] !== '--reason'); // worktree's --reason takes a value
   if (sub === 'branch') {
     if (args.some((t) => BRANCH_COPY.test(t))) return args.every((t) => !t.startsWith('-') || BRANCH_COPY.test(t) || /^(-f|--force)$/.test(t)) ? positional.at(-1) : undefined;
     return args.every((t) => !t.startsWith('-') || BRANCH_CREATE_FLAGS.test(t)) ? positional[0] : undefined;
@@ -897,8 +897,8 @@ function newBranch(sub: string | undefined, args: string[]): string | undefined 
     const eq = t.indexOf('=');
     if (t.startsWith('--') && eq > 0 && flags.includes(t.slice(0, eq))) return t.slice(eq + 1);
     if (/^-[a-zA-Z]./.test(t) && flags.includes(t.slice(0, 2))) return t.slice(2);
+    if (/^-[a-zA-Z]+$/.test(t) && flags.includes(`-${t.at(-1)}`)) return args[i + 1];
   }
-  // ponytail: worktree add flags with a value (`--reason <s>`) count their value as a positional, so that form is not read.
   if (sub === 'worktree' && positional.length === 2 && !args.some((t) => /^(-d|--detach)$/.test(t))) return positional[1].replace(/\/+$/, '').split('/').pop() || undefined;
   return undefined;
 }

@@ -1398,6 +1398,8 @@ describe('preset asks: AI trailer and branch prefix', () => {
     'git worktree add -b wip ../wt', 'git worktree add -B wip ../wt main', 'git worktree add ../wt -b wip',
     '/usr/bin/git switch -c wip', 'git switch --orphan wip', 'git switch -cwip', 'git checkout -bwip', 'git checkout -Bwip', 'git worktree add -bwip ../wt',
     'git branch -c wip', 'git branch -C main wip', 'git branch --copy feature/a wip', 'git worktree add ../wip', 'git worktree add -f ../x/wip',
+    'git worktree add --orphan ../wip', 'git worktree add --reason why ../wip', 'git worktree add --reason "two words" ../wip', 'git worktree add --reason=why ../wip',
+    'git checkout -fb wip', 'git switch -fc wip', 'git worktree add -fB wip ../wt',
   ])('an unprefixed new branch asks: %s', (cmd) => {
     const d = decideCommand(cmd, pctx());
     expect(d.kind).toBe('ask');
@@ -1408,6 +1410,7 @@ describe('preset asks: AI trailer and branch prefix', () => {
       'git branch -r', 'git branch --show-current', 'git branch --contains abc123', 'git branch feature/wip main', 'git switch --create=fix/y',
       'git checkout --orphan chore/z', 'git worktree add -b feature/wip ../wt', 'git worktree add ../wt main', 'git worktree list',
       'grep -rn "git branch" docs/', 'rg "git branch" src', 'echo git branch wip', 'echo git switch -c wip', 'git commit -m "fix: x\n\ntry git switch -c wip later"',
+      'git worktree add --orphan -b feature/x ../wt', 'git worktree add --lock --reason why ../wt main', 'git checkout -fb feature/x',
       'git worktree add --detach ../wip', 'git worktree add -d ../wip', 'git branch -c feature/a fix/b', 'git switch -cfeature/x'])
       expect(reason(decideCommand(c, pctx())), c).not.toContain('no listed prefix'); // -D already asks on its own rule
   });

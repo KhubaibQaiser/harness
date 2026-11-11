@@ -224,8 +224,8 @@ function edited(ctx: Ctx, sub: 'confirm' | 'retire', d: TeamDecision, by: string
 }
 
 async function rewrite(sub: 'confirm' | 'retire', args: string[], cli: RememberEnv): Promise<number> {
-  const f = parse(args, sub === 'retire' ? ['--by'] : [], ['--dry-run', '--yes']);
-  if (!f || f.rest.length !== 1 || (f.values.get('--by')?.length ?? 0) > 1) return usage(cli);
+  const f = parseFlags(args, REMEMBER_SPECS[sub]!.valued, REMEMBER_SPECS[sub]!.switches);
+  if (!f || !argsValid(sub, f)) return usage(cli);
   const ctx = open(cli, !f.switches.has('--dry-run'));
   if (typeof ctx === 'number') return ctx;
   const no = (reason: string, msg: string) => refuse(cli, ctx.root, reason, msg);

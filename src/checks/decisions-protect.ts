@@ -94,24 +94,26 @@ const owned = (root: string, p: string): boolean => {
 type Routes = { writes: string[]; removed: string[] };
 /**
  * The words after cp, mv or install, split into the `-t DIR` / `--target-directory[=]DIR` folder and the rest. `-t` may
- * end a short cluster (`-rt DIR`) or carry its value (`-tDIR`, `-rtDIR`). rsync has no such flag (its -t is --times).
+ * end a short cluster (`-rt DIR`) or carry its value (`-tDIR`, `-rtDIR`); a value flag before it (`-S.tmp`) ends the
+ * cluster, so its value is never read as a target. rsync has no such flag (its -t is --times).
  */
 function operands(ws: string[], targets: boolean): { target?: string; args: string[] } {
   const o: { target?: string; args: string[] } = { args: [] };
   for (let j = 0; j < ws.length; j++) {
     const t = ws[j]!;
-    const k = targets && /^-[a-zA-Z]/.test(t) ? t.indexOf('t') : -1;
+    const k = targets && /^-[a-zA-Z]/.test(t) ? t.search(/[tSmog]/) : -1; // the first -t, or a value flag that ends the cluster
     if (targets && t === '--target-directory') o.target = ws[++j];
     else if (targets && t.startsWith('--target-directory=')) o.target = t.slice('--target-directory='.length);
-    else if (k > 0) o.target = k < t.length - 1 ? t.slice(k + 1) : ws[++j];
+    else if (k > 0 && t[k] === 't') o.target = k < t.length - 1 ? t.slice(k + 1) : ws[++j];
+    else if (k > 0) j += k === t.length - 1 ? 1 : 0; // -S SUFFIX, -m MODE, -o OWNER, -g GROUP: skip a separate value
     else if (!t.startsWith('-')) o.args.push(t);
   }
   return o;
 }
 
 // cp, mv, install and rsync into a directory: the files they leave there. Copying a folder's contents (`src/`, `src/.`)
-// counts as a write to the directory itself. ponytail: option values (install -m 644) count as sources (harmless);
-// a short flag that takes a value before t in a cluster (install -mt) is read as -t.
+// counts as a write to the directory itself. Short value flags (-S, -m, -o, -g) end their cluster and take their value.
+// ponytail: rsync's option values (-e ssh) count as sources (harmless).
 function copyRoutes(root: string, toks: string[], r: Routes): void {
   const i = toks.findIndex((t) => ['cp', 'mv', 'install', 'rsync'].includes(base(t)));
   if (i < 0) return;

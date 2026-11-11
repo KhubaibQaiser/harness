@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Decision } from '../hooks/types.js';
 import { syncCommand } from './stop/runner.js';
+import { SAFE_GIT } from '../core/git-safe.js';
 
 type Lookup = { exists: boolean; created?: string } | 'error';
 export interface VerifyOpts {
@@ -54,7 +55,7 @@ const stripVersion = (spec: string) => spec.replace(/(?<=.)@.*$/, '');
 
 function packageJsonPaths(root: string): string[] {
   try {
-    const out = execFileSync('git', ['ls-files', '--', '*package.json', 'package.json'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const out = execFileSync('git', [...SAFE_GIT, 'ls-files', '--', '*package.json', 'package.json'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     return out.split('\n').filter(Boolean);
   } catch {
     const found: string[] = [];

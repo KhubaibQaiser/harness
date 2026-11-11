@@ -22,7 +22,7 @@ vi.mock('../../src/core/decisions.js', async (orig) => ({
 test('a hostile title and dead globs print without control or format characters; one sentence per dead glob', () => {
   const root = mkdtempSync(join(tmpdir(), 'h-dwarn-'));
   const ctx = { input: { session_id: 's', cwd: root, hook_event_name: 'Stop' }, root, config: loadConfig(root).config, state: readState(root, 's'), unattended: false, env: {}, save(s: SessionState) { ctx.state = s; } } as Ctx;
-  const git: Git = (args) => ({ ok: true, out: args[2] === 'ls-files' ? 'src/a.ts\0' : args[2] === 'log' ? 'abc\n' : '' });
+  const git: Git = (args) => ({ ok: true, out: args[0] === 'ls-files' ? 'src/a.ts\0' : args[0] === 'log' ? 'abc\n' : '' });
   const [line] = decisionWarnings(ctx, ['src/a.ts'], git);
   expect(line).toBeDefined();
   expect(line).not.toMatch(/[\p{Cc}\p{Cf}]/u);

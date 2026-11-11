@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { retryTransient, writeAtomic } from './atomic.js';
 import { RULE_GLOB } from './decision-rule.js';
 import { userSettingsPath } from './settings-layers.js';
+import { SAFE_GIT } from './git-safe.js';
 
 // Change detection, the backstop behind the path checks (owner decision 2026-11-03): when a route the path checks
 // don't parse changed one of harness's own files, the next prompt and Stop say so. A session compares against its
@@ -148,7 +149,7 @@ export const changedFiles = (a: Snapshot, b: Snapshot): string[] =>
 
 /** HEAD's sha, or undefined (no repo, no commits). */
 export function gitHead(root: string): string | undefined {
-  const r = spawnSync('git', ['rev-parse', '--verify', '-q', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 2000 });
+  const r = spawnSync('git', [...SAFE_GIT, 'rev-parse', '--verify', '-q', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 2000 });
   return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : undefined;
 }
 

@@ -207,7 +207,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   }
 
   const changed = lastHarnessFilesChange(root);
-  if (changed) note(`harness files changed during a session at ${changed.ts}: ${changed.files.map((f) => `\`${f}\``).join(', ')}`, 'review the change with git diff -- .harness .claude/settings.json');
+  if (changed) note(`harness files changed during a session at ${changed.ts}: ${changed.files.map((f) => `\`${f}\``).join(', ')}`, 'review the change with git diff -- .harness .claude/settings.json .claude/rules docs/decisions');
   const blocked = lastConfigChangeBlocked(root);
   if (blocked) note(`harness blocked a settings change at ${blocked.ts} (${blocked.reason})`, 'review the file before the next session');
   for (const f of manifest.files.filter((f) => f.unformatted))

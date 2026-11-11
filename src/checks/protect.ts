@@ -5,7 +5,7 @@ import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
-import { codeNames, decisionsDeny, globHits } from './decisions-protect.js';
+import { codeNames, decisionRoutes, decisionsDeny, globHits } from './decisions-protect.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
@@ -372,12 +372,15 @@ export const protect: Check = {
       if (code.some((c) => H_SEG.test(c))) return { kind: 'deny', reason: H_INLINE, check: 'protect' };
       const cmds = expand(cmd);
       const mc = moveCopyTargets(cmds);
-      const removed = [...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv];
+      const rmT = cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets));
+      const removed = [...rmT, ...mc.mv];
       const git = gitRestoreTargets(cmds);
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       paths = [...new Set([...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)])]; // once each: every check of one touches the disk (re-review 22b, F4)
-      const dd = decisionsDeny(root, config, [...paths, ...codeNames(code)], removed);
+      // Decisions: the directory routes (cp into a folder, tar -C, find -delete) and git restores replace what is under them.
+      const dr = decisionRoutes(root, cmds.flatMap(segTokens)), names = codeNames(code);
+      const dd = decisionsDeny(root, config, [...paths, ...dr.writes, ...names], [...rmT, ...dr.removed, ...git, ...names]);
       if (dd) return dd;
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(cmd);

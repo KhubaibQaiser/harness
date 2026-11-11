@@ -102,6 +102,9 @@ test('status and doctor show the last change event', async () => {
   let d = '';
   doctor([], { root, env: {}, out: (l) => (d += l + '\n') }, { gh: () => ({ status: null, stdout: '' }) });
   expect(d).toMatch(/^note harness files changed during a session at .*: `\.harness\/config\.yaml`/m);
+  const HINT = 'git diff -- .harness .claude/settings.json .claude/rules docs/decisions';
+  expect(s).toContain(HINT);
+  expect(d).toContain(HINT);
 });
 
 // Round 14 D2: a change between sessions is reported at the next session's first prompt and its Stop.
@@ -169,7 +172,7 @@ test('the message names the start commit and says when HEAD moved', async () => 
   writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: false\n');
   git('commit', '-q', '-am', 'two');
   const r = parsed(await hook(root, 'Stop', {}, 'g')).reason as string;
-  expect(r).toContain(`git diff ${start.slice(0, 12)} -- .harness .claude/settings.json`);
+  expect(r).toContain(`git diff ${start.slice(0, 12)} -- .harness .claude/settings.json .claude/rules docs/decisions`);
   expect(r).toContain('git diff -- .harness .claude/settings.json');
   expect(r).toMatch(/HEAD moved since the session started .*branch switch/);
 });

@@ -109,6 +109,9 @@ const DENIED_DIR = [
   'tar -xf a.tar -C docs/decisions', 'tar -xzf a.tgz --directory=docs', 'unzip a.zip -d docs/decisions', 'unzip -o a.zip -d .claude/rules',
   'cp -t .claude/rules /tmp/harness-decision-x.md', 'cp --target-directory=docs/decisions /tmp/2026-11-12-x.md', 'cp --target-directory .claude/rules /tmp/harness-decision-x.md',
   'cp -t.claude/rules /tmp/harness-decision-x.md', 'mv -t docs/decisions /tmp/2026-11-12-x.md', 'install -t .claude/rules -m 644 /tmp/harness-decision-x.md',
+  'cp -rt .claude/rules /tmp/harness-decision-x.md', 'cp -art docs/decisions /tmp/2026-11-12-x.md', 'mv -ft docs/decisions /tmp/2026-11-12-x.md',
+  'install -Dt .claude/rules /tmp/harness-decision-x.md', 'cp -rt.claude/rules /tmp/harness-decision-x.md',
+  'rsync -t /tmp/harness-decision-x.md .claude/rules/', 'rsync -avt /tmp/harness-decision-x.md .claude/rules/', // rsync's -t is --times, not a folder
   'find docs/decisions -delete', 'find .claude/rules -exec rm {} +', "find docs -name '*.md' -delete",
   // I2: inline code that removes a decision folder
   `python3 -c "import shutil; shutil.rmtree('docs/decisions')"`, `node -e "require('fs').rmSync('.claude/rules',{recursive:true})"`,
@@ -122,6 +125,7 @@ test.each([
   'cp mine.md .claude/rules/', 'cp adr.md docs/decisions/', 'mv adr.md docs/decisions/', 'cp notes.md docs/', 'mv notes.md docs/', 'rsync -a notes.md docs/',
   'install -m 644 mine.md .claude/rules/', 'rsync -a build/ dist/', 'git checkout -- docs/plans', 'git restore docs/plans/x.md',
   'cp -t .claude/rules mine.md', 'mv -t docs/decisions adr.md', 'install -t dist /tmp/harness-decision-x.md', 'cp --target-directory=docs notes.md',
+  'cp -rt .claude/rules mine.md', 'mv -ft docs/decisions adr.md', 'cp -art docs/decisions adr.md', 'rsync -avt notes.md docs/',
   'tar -xf a.tar -C dist', 'unzip a.zip -d docs/plans', 'find docs/plans -delete', "find dist -name '*.map' -delete", "find docs -name '*.md'",
   'echo hi > docs/decisions/new*.md', // M2: a glob matching nothing makes a literal new*.md, which can't be a decision
   `node -e "require('fs').readFileSync('.claude/rules/mine.md')"`,

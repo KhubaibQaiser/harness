@@ -479,6 +479,21 @@ test('a Stop block from harness-files writes a timing line', async () => {
   expect(last).toMatchObject({ event: 'Stop', outcome: 'block' });
   expect(last.tool).toBeUndefined();
 });
+test('ask and context outputs are timed with their own outcome', async () => {
+  const r = fresh();
+  const ctxCheck = mk('ctx', { kind: 'context', text: 'note', check: 'ctx' }, ['PostToolUse']);
+  expect(decisionOf(await dispatch(pre({ cwd: r, tool_name: 'Bash' }), [askAll], {}))).toBe('ask');
+  expect(out(await dispatch(pre({ cwd: r, hook_event_name: 'PostToolUse', tool_name: 'Bash' }), [ctxCheck], {})).hookSpecificOutput?.additionalContext).toBe('note');
+  expect(readTiming(r).map((t) => [t.event, t.outcome])).toEqual([['PreToolUse', 'ask'], ['PostToolUse', 'context']]);
+});
+test('the config-invalid gate return writes a timing line', async () => {
+  const r = fresh();
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks: [');
+  vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  onTestFinished(() => void vi.restoreAllMocks());
+  expect(decisionOf(await dispatch(pre({ cwd: r, tool_input: { file_path: join(r, 'src/a.ts') } }), [], {}))).toBe('deny');
+  expect(readTiming(r)).toEqual([expect.objectContaining({ event: 'PreToolUse', tool: 'Edit', outcome: 'deny' })]);
+});
 test('a throwing timing writer leaves the decision unchanged', async () => {
   const r = fresh();
   const timing = () => { throw new Error('disk full'); };

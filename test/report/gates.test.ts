@@ -157,6 +157,15 @@ describe('latency', () => {
     expect(rows.find((x) => x.outcome === 'timeout')).toMatchObject({ n: 1, timeouts: 1 });
     expect(rows.find((x) => x.outcome === 'block')).toBeUndefined();
   });
+  it('keeps Stop step lines out of the whole-call Stop rows, but counts a step timeout', () => {
+    const t = [timing(500, { event: 'Stop' }), timing(100, { event: 'Stop', step: 'lint' }), timing(200, { event: 'Stop', step: 'lint' }), timing(9000, { event: 'Stop', step: 'test', outcome: 'timeout' })];
+    const r = run([], [], t);
+    expect(r.latency.filter((x) => x.event === 'Stop')).toEqual([
+      { source: 'timing', event: 'Stop', outcome: 'allow', n: 1, p50: 500, p95: 500, max: 500, timeouts: 0 },
+      { source: 'timing', event: 'Stop', outcome: 'timeout', n: 0, p50: 0, p95: 0, max: 0, timeouts: 1 },
+    ]);
+    expect(r.stopSteps.find((s) => s.step === 'lint')).toMatchObject({ runs: 2, p50: 100, p95: 200 });
+  });
   it('counts a transcript timeout with no duration, without a 0 ms sample', () => {
     const rows = run([], rec(0, attachment('hook_cancelled', { hookEvent: 'Stop', command: 'node .harness/hooks/dispatch.mjs', timedOut: true }))).latency;
     expect(rows).toEqual([{ source: 'transcript', event: 'Stop', n: 0, p50: 0, p95: 0, max: 0, timeouts: 1 }]);

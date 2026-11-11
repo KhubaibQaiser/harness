@@ -138,6 +138,9 @@ describe('fix round 1', () => {
     expect(svg).toContain('aria-label="My chart"');
     expect(renderReport(data())).toContain('aria-label="Hook latency p50 and p95"');
   });
+  it('says what the timing-log latency measures', () => {
+    expect(renderReport(data())).toContain('from dispatcher module start to the decision, before the stdout write; Node startup is not included');
+  });
   it('draws p50 and p95 bars, keeps the two note lists apart, and words the rules note plainly', () => {
     const html = renderReport(data());
     expect(html).toContain('PreToolUse p50');

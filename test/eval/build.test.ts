@@ -58,7 +58,7 @@ test('rules: rules and bare case per rule; only rules carries the core text', ()
     if (c.variant === 'rules') {
       expect(text).toContain('CORE-RULE-TEXT');
       expect(text).toContain('Hooks enforce these rules');
-      expect(text).not.toContain('harness:');
+      expect(text).not.toContain('<!-- harness:'); // markers stripped; the block names /harness:remember
     } else expect(text).toBeUndefined();
   }
 });

@@ -21,7 +21,8 @@ Do not weaken or delete a test to make it pass; fix the code.
 
 ### Protected paths
 
-- Never edit `.harness/` or `.claude/settings*.json`.
+- Never edit `.harness/`, `.claude/settings*.json`, `.claude/rules/harness-decision-*.md` or harness decisions in `docs/decisions/`.
+- Team decisions live in `docs/decisions/` and load as `.claude/rules/harness-decision-*.md` when you touch their paths. Change them only with `/harness:remember` (`harness remember --help`); personal preferences go in Claude Code's auto memory.
 - Only a person can pause TDD, by running `harness tdd off` in their own terminal.
 
 ### Finishing

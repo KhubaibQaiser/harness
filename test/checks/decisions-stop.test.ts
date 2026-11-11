@@ -10,7 +10,7 @@ import { readState, type SessionState } from '../../src/core/state.js';
 import { registry } from '../../src/hooks/dispatch.js';
 import type { Ctx } from '../../src/hooks/check.js';
 import type { HookInput } from '../../src/hooks/types.js';
-import { assistant, prompt } from '../fixtures/transcripts/make.js';
+import { assistant, prompt, toolResult } from '../fixtures/transcripts/make.js';
 
 type Opts = { input?: Partial<HookInput>; state?: Partial<SessionState>; yaml?: string; unattended?: boolean };
 const mk = (o: Opts = {}): Ctx => {
@@ -155,6 +155,13 @@ test('A signals fall back to the last assistant text in the transcript', () => {
   expect(stop(mk({ input: { transcript_path: join(dir, 'missing.jsonl') } }))).toEqual([]);
 });
 
+test('a transcript that ends in a tool result still falls back to the assistant text before it', () => {
+  const t = join(mkdtempSync(join(tmpdir(), 'h-dstop-tr-')), 't.jsonl');
+  const recs = [prompt('lint please'), assistant({ content: [{ type: 'text', text: 'Going forward, I will run lint first.' }] }), toolResult('t1', { content: 'lint ok' })];
+  writeFileSync(t, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  expect(stop(mk({ input: { transcript_path: t } }))[0]).toContain('(you said "Going forward, I will run lint first.")');
+});
+
 test('the fallback reads only the current turn: an earlier turn\'s text is never picked, nor logged twice', () => {
   const dir = mkdtempSync(join(tmpdir(), 'h-dstop-t-'));
   const write = (name: string, recs: Record<string, unknown>[]) => {
@@ -189,5 +196,6 @@ test('readTail returns the last bytes of a file; the transcript cap is 8 MiB', (
   expect([readTail(p, 4), readTail(p, 100)]).toEqual(['6789', '0123456789']);
   writeFileSync(p, 'ab\ncd\nef');
   expect(readTail(p, 4)).toBe('ef'); // the line the cut split is dropped
+  expect(readTail(p, 5)).toBe('cd\nef'); // a cut on a line boundary keeps that whole line
   expect(TRANSCRIPT_TAIL).toBe(8 * 1024 * 1024);
 });

@@ -39,9 +39,12 @@ export function readTail(path: string, max: number): string {
   const fd = openSync(path, 'r');
   try {
     const size = fstatSync(fd).size;
-    const buf = Buffer.alloc(Math.min(size, max));
+    const cut = size > max;
+    const buf = Buffer.alloc(cut ? max + 1 : size); // on a cut, one byte more: a newline there means no line was split
     const s = buf.toString('utf8', 0, readSync(fd, buf, 0, buf.length, size - buf.length));
-    return buf.length < size ? s.slice(s.indexOf('\n') + 1) : s; // no newline at all: one cut line, which won't parse
+    if (!cut) return s;
+    const nl = s.indexOf('\n');
+    return s.slice(nl < 0 ? 1 : nl + 1); // no newline at all: one cut line, which won't parse
   } finally {
     closeSync(fd);
   }
@@ -72,7 +75,8 @@ export function readTranscript(path: unknown, max = Infinity): Rec[] | undefined
     const at = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN;
     if (rec.type === 'user') {
       const blocks = Array.isArray(c) ? c.map(obj) : [];
-      const tool = blocks.filter((b) => b.type === 'tool_result').map((b) => b.content).flatMap((r) => (typeof r === 'string' ? [r] : Array.isArray(r) ? textsOf(r) : []));
+      // one string per tool result, its text blocks joined, so a quote may span blocks but not results
+      const tool = blocks.filter((b) => b.type === 'tool_result').map((b) => b.content).map((r) => (typeof r === 'string' ? r : Array.isArray(r) ? textsOf(r).join('\n') : '')).filter(Boolean);
       const prompt = typeof c === 'string' || blocks.some((b) => b.type !== 'tool_result');
       if (prompt || tool.length) recs.push({ at, prompt, texts: [], tool });
     } else if (rec.type === 'assistant' && Array.isArray(c)) {

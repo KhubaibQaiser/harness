@@ -7,6 +7,7 @@ import { changedLines, coveredLines, diffCoverage, formatLines } from '../../../
 import { defaultExec, runStop, type Exec } from '../../../src/checks/stop/gate.js';
 import { loadConfig, type HarnessConfig } from '../../../src/core/config.js';
 import type { Ctx } from '../../../src/hooks/dispatch.js';
+import { SAFE_DIFF, SAFE_GIT } from '../../../src/core/git-safe.js';
 
 const fx = (p: string) => readFileSync(join(__dirname, '../../fixtures', p), 'utf8');
 const cfgOf = (over: Partial<HarnessConfig['tdd']> = {}): HarnessConfig => {
@@ -144,8 +145,8 @@ test('stale coverage (mtime before the steps started) is ignored: no fresh file 
 test('base: merge-base against base_ref, every git call uses the 5000 ms timeout', async () => {
   const g = gitExec({ diff: addDiff('src/a.ts', [3]) });
   await diffCoverage(repo(istanbul()), cfgOf(), g.exec, opts);
-  expect(g.calls[0].args).toEqual(['merge-base', 'HEAD', 'origin/main']);
-  expect(g.calls[1].args).toEqual(['-c', 'core.quotePath=false', 'diff', '--relative', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', 'BASE']);
+  expect(g.calls[0].args).toEqual([...SAFE_GIT, 'merge-base', 'HEAD', 'origin/main']);
+  expect(g.calls[1].args).toEqual([...SAFE_GIT, '-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF, '--relative', '-U0', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', 'BASE']);
   expect(g.calls.some((c) => c.args.includes('ls-files') && c.args.includes('-z') && c.args.includes('--exclude-standard'))).toBe(true);
   expect(g.calls.every((c) => c.ms === 5000)).toBe(true);
 });
@@ -176,7 +177,7 @@ function gateCtx(root: string, tdd = true) {
   return { root, config, input: { session_id: 's' }, state: { startedAt: 0, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0, baseHead: undefined }, unattended: false, env: {}, save: (s: unknown) => saved.push(s) } as unknown as Ctx;
 }
 const stopWith = (root: string, g: ReturnType<typeof gitExec>, ctx = gateCtx(root)) =>
-  runStop(ctx, (c, a, ms) => (c === 'true' ? { status: 0, output: '', timedOut: false } : c === 'git' && a[0] === 'status' ? { status: 0, output: ' M src/a.ts\0', timedOut: false } : g.exec(c, a, ms)), () => FRESH * 1000, () => '/bin/true');
+  runStop(ctx, (c, a, ms) => (c === 'true' ? { status: 0, output: '', timedOut: false } : c === 'git' && a.includes('status') ? { status: 0, output: ' M src/a.ts\0', timedOut: false } : g.exec(c, a, ms)), () => FRESH * 1000, () => '/bin/true');
 
 test('gate blocks below threshold with the brief message, capped at 10 files and 20 line numbers', async () => {
   const cov = istanbul();

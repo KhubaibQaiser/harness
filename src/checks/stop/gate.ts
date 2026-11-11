@@ -9,6 +9,7 @@ import type { Check, Ctx } from '../../hooks/dispatch.js';
 import type { Decision } from '../../hooks/types.js';
 import { coverageGate } from './coverage-gate.js';
 import { findOnPath, resolveStep, winCmdLine } from './runner.js';
+import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
 export type ExecResult = { status: number | null; output: string; timedOut: boolean };
 export type Exec = (cmd: string, args: string[], timeoutMs: number) => ExecResult | Promise<ExecResult>;
@@ -110,19 +111,19 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     return res;
   };
   const ok = (r: { status: number | null; timedOut: boolean }) => r.status === 0 && !r.timedOut;
-  const git = await exec('git', ['status', '--porcelain', '-z'], GIT_MS);
+  const git = await exec('git', [...SAFE_GIT, 'status', '--porcelain', '-z'], GIT_MS);
   const changed = ok(git) ? paths(git.output, true) : [];
   let failed = !ok(git);
   const base = ctx.state.baseHead;
   if (base) {
     // The agent may have committed its work, leaving a clean tree.
-    const d = await exec('git', ['diff', '--name-only', '-z', base, 'HEAD'], GIT_MS);
+    const d = await exec('git', [...SAFE_GIT, 'diff', ...SAFE_DIFF, '--name-only', '-z', base, 'HEAD'], GIT_MS);
     if (ok(d)) changed.push(...paths(d.output, false));
     else failed = true;
   }
   if (failed) {
     // Not a repo at all: note it once per session (steps still run). A failure inside a repo is logged every Stop.
-    if (!ok(git) && !ok(await exec('git', ['rev-parse', '--is-inside-work-tree'], GIT_MS))) {
+    if (!ok(git) && !ok(await exec('git', [...SAFE_GIT, 'rev-parse', '--is-inside-work-tree'], GIT_MS))) {
       if (!ctx.state.stopNoGitLogged) {
         log('stop-no-git');
         ctx.save({ ...ctx.state, stopNoGitLogged: true });

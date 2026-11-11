@@ -7,6 +7,7 @@ import { repoRoot } from '../core/repo-root.js';
 import { isUnattended } from '../core/unattended.js';
 import { warn } from './event-log.js';
 import type { HookEvent, HookInput } from './types.js';
+import { SAFE_GIT } from '../core/git-safe.js';
 
 const NO_ROOT = '/nonexistent-harness-root'; // loadConfig/readState on it yield defaults and a fresh state without touching disk
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -15,7 +16,7 @@ const GIT_TIMEOUT_MS = 2000;
 type GitRun = (args: string[]) => { status: number | null; stdout: string };
 
 // HEAD at the session's first hook. The empty tree stands in only when the repo has no commits at all; any other failure leaves it undefined.
-export function detectBaseHead(root: string, run: GitRun = (args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: GIT_TIMEOUT_MS })): string | undefined {
+export function detectBaseHead(root: string, run: GitRun = (args) => spawnSync('git', [...SAFE_GIT, ...args], { cwd: root, encoding: 'utf8', timeout: GIT_TIMEOUT_MS })): string | undefined {
   const head = run(['rev-parse', 'HEAD']);
   if (head.status === 0 && head.stdout.trim()) return head.stdout.trim();
   const any = run(['rev-list', '-n', '1', '--all']);

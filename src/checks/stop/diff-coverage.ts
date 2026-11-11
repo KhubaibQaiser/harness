@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { HarnessConfig } from '../../core/config.js';
 import { isTestFile, matches, toRepoPath } from '../../core/paths.js';
 import type { Exec } from './gate.js';
+import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
 const GIT_MS = 5000;
 
@@ -96,14 +97,14 @@ const ok = (r: { status: number | null; timedOut: boolean }) => r.status === 0 &
 // `since` (epoch seconds) is when the stop gate's steps began; older coverage output is stale and ignored.
 export async function diffCoverage(root: string, cfg: HarnessConfig, exec: Exec, opts: { baseHead?: string; since: number }): Promise<DiffCoverage> {
   const result = (problem: DiffCoverage['problem']): DiffCoverage => ({ pct: 100, total: 0, covered: 0, uncovered: [], problem });
-  const mb = await exec('git', ['merge-base', 'HEAD', cfg.stop.base_ref], GIT_MS);
+  const mb = await exec('git', [...SAFE_GIT, 'merge-base', 'HEAD', cfg.stop.base_ref], GIT_MS);
   const base = (ok(mb) ? mb.output.split('\n')[0].trim() : '') || opts.baseHead; // output also carries stderr
   if (!base) return result('no-base');
-  const d = await exec('git', ['-c', 'core.quotePath=false', 'diff', '--relative', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', base], GIT_MS);
+  const d = await exec('git', [...SAFE_GIT, '-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF, '--relative', '-U0', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', base], GIT_MS);
   const why = (r: { status: number | null; output: string; timedOut: boolean }) => (r.timedOut ? 'timed out' : (r.output.split('\n').find((x) => x.trim()) ?? `exit ${r.status}`).trim().slice(0, 100));
   if (!ok(d)) return { ...result('diff-failed'), detail: why(d) };
   const changed = changedLines(d.output);
-  const un = await exec('git', ['-c', 'core.quotePath=false', 'ls-files', '-z', '--others', '--exclude-standard'], GIT_MS);
+  const un = await exec('git', [...SAFE_GIT, '-c', 'core.quotePath=false', 'ls-files', '-z', '--others', '--exclude-standard'], GIT_MS);
   if (!ok(un)) return { ...result('diff-failed'), detail: `untracked files: ${why(un)}` };
   for (const f of un.output.split('\0').filter((x) => x.trim())) {
     try {

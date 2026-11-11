@@ -98,8 +98,8 @@ describe('staleness', () => {
     const spy = real(r, calls);
     const ds = [dec({ verified_at: sha }), dec({ id: '2026-11-01-b', rel: 'docs/decisions/2026-11-01-b.md', verified_at: sha })];
     staleness(r, ds, { ...O, git: spy });
-    expect(calls.filter((c) => c[2] === 'ls-files')).toHaveLength(1);
-    expect(calls.filter((c) => c[2] === 'diff')).toHaveLength(1);
+    expect(calls.filter((c) => c[0] === 'ls-files')).toHaveLength(1);
+    expect(calls.filter((c) => c[0] === 'diff')).toHaveLength(1);
   });
   test('a timeout on cat-file or merge-base is a git failure, not a "no"', () => {
     for (const cmd of ['cat-file', 'merge-base']) {
@@ -128,14 +128,13 @@ describe('staleness', () => {
     expect(r.note).toBeNull();
     expect(r.states[0]).toMatchObject({ dead: [], ref: '', fallback: false });
   });
-  test('every git call disables fsmonitor; diff also disables ext-diff and textconv', () => {
+  test('the diff disables ext-diff and textconv (gitIn itself adds SAFE_GIT)', () => {
     const r = repo(); put(r, 'src/a.ts'); put(r, 'docs/decisions/2026-11-01-a.md'); const sha = commit(r, 'one');
     put(r, 'src/a.ts', 'y'); commit(r, 'two');
     const calls: string[][] = [];
     const spy = real(r, calls);
     staleness(r, [dec({ verified_at: sha })], { ...O, git: spy });
     expect(calls.length).toBeGreaterThan(3);
-    for (const c of calls) expect(c.slice(0, 2)).toEqual(['-c', 'core.fsmonitor=false']);
-    expect(calls.find((c) => c[2] === 'diff')).toEqual(expect.arrayContaining(['--no-ext-diff', '--no-textconv']));
+    expect(calls.find((c) => c[0] === 'diff')).toEqual(expect.arrayContaining(['--no-ext-diff', '--no-textconv']));
   });
 });

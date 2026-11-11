@@ -24,6 +24,7 @@ import { TESTED } from '../report/transcript.js';
 import { runSession } from '../report/turns.js';
 import { COUNTERS, windowsAcc } from '../report/windows.js';
 import type { CliEnv } from './index.js';
+import { SAFE_GIT } from '../core/git-safe.js';
 
 declare const __HARNESS_VERSION__: string;
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
@@ -71,7 +72,7 @@ export const exportKnown = (): Known => ({ ids: new Set([...loadCatalog().catalo
 
 async function collect(root: string, cli: ReportEnv, days: number, now: number): Promise<ReportData> {
   const sinceMs = now - days * DAY;
-  const git: GitRun = cli.git ?? ((a) => { const r = defaultExec('git', ['-C', root, ...a]); return { status: r.status, stdout: r.stdout }; });
+  const git: GitRun = cli.git ?? ((a) => { const r = defaultExec('git', [...SAFE_GIT, '-C', root, ...a]); return { status: r.status, stdout: r.stdout }; });
   const located = await locateSessions(root, { env: cli.env, home: cli.home ?? homedir(), sinceMs, git });
   const cat = loadCatalog().catalog.items;
   const cfg = loadConfig(root).config;

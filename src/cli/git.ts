@@ -10,6 +10,7 @@ import { dirtyPaths } from '../install/git-status.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { ownCommand, shq } from './init.js';
 import type { CliEnv } from './index.js';
+import { SAFE_GIT_USER } from '../core/git-safe.js';
 
 const USAGE = 'Usage: harness git branch [--suggest <topic>]|commit|push|pr [--title <t>]';
 const NETWORK = /could not resolve host|unable to access|network is unreachable|connection (refused|timed out|reset)|timed out|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|error connecting to/i;
@@ -115,7 +116,7 @@ export function gitStep(args: string[], { root, out, exec = defaultExec, git: si
   if (!p) return out(USAGE), 2;
   const { sub, rest, topic, title } = p;
 
-  const git: GitRun = (...a) => exec('git', ['-C', root, ...a]);
+  const git: GitRun = (...a) => exec('git', [...SAFE_GIT_USER, '-C', root, ...a]); // keeps hooks: checkout, commit and push are the person's own steps
   const m = readManifest(root);
   if (!m) return out('harness is not installed here. Run `/harness:init` first.'), 1;
   const { config } = loadConfig(root);

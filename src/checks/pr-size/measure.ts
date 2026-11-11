@@ -3,13 +3,14 @@ import { spawnSync } from 'node:child_process';
 import { esc, type HarnessConfig } from '../../core/config.js';
 import { HARNESS_LOCAL, matches } from '../../core/paths.js';
 import { addUntracked, UNTRACKED } from './untracked.js';
+import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
 export { UNTRACKED };
 
 export type Git = (args: string[], timeoutMs: number) => { status: number | null; stdout: string; error?: NodeJS.ErrnoException };
 // 64 MB: the default 1 MB buffer would fail a huge PR's numstat as ENOBUFS, and an unmeasured PR is allowed.
 export const realGit = (root: string): Git => (args, timeout) => {
-  const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  const r = spawnSync('git', [...SAFE_GIT, ...args], { cwd: root, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   return { status: r.status, stdout: r.stdout ?? '', error: r.error as NodeJS.ErrnoException | undefined };
 };
 
@@ -127,9 +128,9 @@ function badName(want: WantRef): string | null {
 
 /** The raw -z outputs (`others` is null outside a worktree measurement); a string is an error. */
 function fetchDiff(run: Run, range: string, worktree: boolean): { num: string; del: string; others: string | null } | string {
-  const q = ['-c', 'core.quotePath=false', 'diff'];
-  const num = run([...q, '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', range]);
-  const del = run([...q, '--name-status', '-z', '--diff-filter=D', '--no-ext-diff', range]);
+  const q = ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF];
+  const num = run([...q, '--numstat', '-z', '-M', range]);
+  const del = run([...q, '--name-status', '-z', '--diff-filter=D', range]);
   if (num.status !== 0 || del.status !== 0) return 'git diff failed';
   const others = worktree ? run(['ls-files', '--others', '--exclude-standard', '-z']) : null;
   if (others && others.status !== 0) return 'git ls-files failed';

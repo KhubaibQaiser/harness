@@ -40,7 +40,6 @@ const MAX_RULE_CHARS = 300;
 const MAX_WHY_CHARS = 500;
 const SHA = /^[0-9a-f]{40}$/;
 const CONTROL = /[\p{Cc}\p{Cf}\u2028\u2029]/u; // newlines included: every field is one line
-const SAFE = ['-c', 'core.fsmonitor=false'];
 const DAY_MS = 86_400_000;
 
 interface Ctx { root: string; cfg: HarnessConfig; today: string; now: () => Date; git: Git }
@@ -110,10 +109,10 @@ const notActive = (d: TeamDecision, verb: string) => `harness remember: ${d.id} 
 
 /** HEAD and the paths that match no tracked file, or a refusal. */
 function fromGit(git: Git, paths: string[]): { head: string; dead: string[] } | string {
-  const head = git([...SAFE, 'rev-parse', 'HEAD']);
+  const head = git(['rev-parse', 'HEAD']);
   const sha = head.out.trim();
   if (!head.ok || !SHA.test(sha)) return 'harness remember: no commit to record as verified_at. Commit once, then run it again.';
-  const ls = git([...SAFE, 'ls-files', '-z']);
+  const ls = git(['ls-files', '-z']);
   if (!ls.ok) return `harness remember: couldn't list tracked files (${shown(ls.reason ?? 'git failed')}).`;
   const files = ls.out.split('\0').filter(Boolean);
   return { head: sha, dead: paths.filter((p) => { const m = picomatch(p, { dot: true }); return !files.some((f) => m(f)); }) };

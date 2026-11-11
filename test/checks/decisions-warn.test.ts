@@ -21,7 +21,7 @@ const mk = (root: string, state: Partial<SessionState> = {}, unattended = false)
   return ctx;
 };
 const fake = (files = ['src/env/a.ts', 'src/other/b.ts']): Git => (args) => {
-  const cmd = args[2];
+  const cmd = args[0];
   if (cmd === 'ls-files') return { ok: true, out: files.join('\0') + '\0' };
   if (cmd === 'log') return { ok: true, out: 'abc\n' };
   return { ok: true, out: '' };

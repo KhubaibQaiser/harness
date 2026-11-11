@@ -14,7 +14,8 @@ import type { Decision } from '../../src/hooks/types.js';
 const today = () => new Date().toISOString().slice(0, 10);
 const mk = (o: { unattended?: boolean; root?: string } = {}): Ctx => {
   const root = o.root ?? mkdtempSync(join(tmpdir(), 'h-rem-'));
-  return { input: { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash' }, root, config: loadConfig(root).config, unattended: !!o.unattended, env: {} } as unknown as Ctx;
+  writeFileSync(join(root, 't.jsonl'), ''); // readable, so quote detection (§7.1) finds no quote
+  return { input: { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', transcript_path: join(root, 't.jsonl') }, root, config: loadConfig(root).config, unattended: !!o.unattended, env: {} } as unknown as Ctx;
 };
 const run = (cmd: string, ctx = mk()): Decision => guard.run({ ...ctx, input: { ...ctx.input, tool_input: { command: cmd } } }) as Decision;
 const reason = (d: Decision) => ('reason' in d ? d.reason : '');

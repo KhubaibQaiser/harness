@@ -187,5 +187,7 @@ test('readTail returns the last bytes of a file; the transcript cap is 8 MiB', (
   const p = join(mkdtempSync(join(tmpdir(), 'h-dstop-tail-')), 'f');
   writeFileSync(p, '0123456789');
   expect([readTail(p, 4), readTail(p, 100)]).toEqual(['6789', '0123456789']);
+  writeFileSync(p, 'ab\ncd\nef');
+  expect(readTail(p, 4)).toBe('ef'); // the line the cut split is dropped
   expect(TRANSCRIPT_TAIL).toBe(8 * 1024 * 1024);
 });

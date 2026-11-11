@@ -414,8 +414,9 @@ test('harness remember: unattended, the ask is denied and one redacted decision-
   const r = mkdtempSync(join(tmpdir(), 'h-dp-rem-'));
   mkdirSync(join(r, '.harness'));
   writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  writeFileSync(join(r, 't.jsonl'), ''); // readable, so quote detection (§7.1) finds no quote
   const token = `ghp_${'a1'.repeat(18)}`;
-  const bash = (command: string) => pre({ cwd: r, tool_name: 'Bash', tool_input: { command } });
+  const bash = (command: string) => pre({ cwd: r, tool_name: 'Bash', tool_input: { command }, transcript_path: join(r, 't.jsonl') });
   const id = `${new Date().toISOString().slice(0, 10)}-keep-it-short`;
   const add = 'harness remember add --title "Keep it short" --rule "Short rules" --why "Readers skim" --path src/a.ts';
   expect(decisionOf(await dispatch(bash(add), registry, {}))).toBe('ask');

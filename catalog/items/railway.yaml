@@ -3,7 +3,7 @@ kind: plugin
 title: "Railway"
 source: {"type": "git-subdir", "repo": "railwayapp/railway-skills", "path": "plugins/railway", "plugin": "railway", "sha": "a100f93e482c5153774fed74d0b3fb8f8ca63342"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"project_types": ["web", "api"]}
 cost: {"context": "low", "setup": "medium", "context_tokens": 268}
 stance: optional

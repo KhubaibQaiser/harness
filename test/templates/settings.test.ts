@@ -27,6 +27,8 @@ test('hooks: events, matchers, exec form, timeouts and onFailure (spec section 2
 test('permissions.deny is the spec section 2 list, in order', () => {
   const push = (tool: string) => [
     `${tool}(git push *--force*)`, `${tool}(git push * -f*)`, `${tool}(git push * +*)`,
+    // `git push * -f*` needs a word between push and -f, so a leading -f or +ref (live check c6, 2026-11-11) needs its own rule.
+    `${tool}(git push -f*)`, `${tool}(git push +*)`,
     `${tool}(git push * main)`, `${tool}(git push * main *)`, `${tool}(git push *:main*)`,
     `${tool}(git push * master)`, `${tool}(git push * master *)`, `${tool}(git push *:master*)`,
   ];
@@ -37,5 +39,5 @@ test('permissions.deny is the spec section 2 list, in order', () => {
     'Edit(./.claude/settings.json)', 'Edit(./.claude/settings.local.json)',
     ...push('Bash'), ...push('PowerShell'),
   ]);
-  expect(s.permissions.deny).toHaveLength(30);
+  expect(s.permissions.deny).toHaveLength(34);
 });

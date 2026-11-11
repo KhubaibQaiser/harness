@@ -3,7 +3,7 @@ kind: plugin
 title: "Trail of Bits insecure-defaults"
 source: {"type": "git-subdir", "repo": "trailofbits/skills", "path": "plugins/insecure-defaults", "plugin": "insecure-defaults", "sha": "711af095215ad4ecde5b90cd1d0124b3f1c4ca9e"}
 license: CC-BY-SA-4.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"always": true}
 cost: {"context": "low", "setup": "low", "context_tokens": 83}
 stance: optional

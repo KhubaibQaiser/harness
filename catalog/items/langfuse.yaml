@@ -3,7 +3,7 @@ kind: plugin
 title: "Langfuse skills"
 source: {"type": "github", "repo": "langfuse/skills", "plugin": "langfuse", "sha": "b86532b77f16f1e27c7cffa32bb632aa3cd9a352"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "1.10.0"
 applies_when: {"any_dep": ["@anthropic-ai/sdk", "openai", "ai", "langfuse", "@langfuse/client"]}
 cost: {"context": "low", "setup": "medium", "context_tokens": 278}

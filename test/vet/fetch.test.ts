@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -39,12 +39,20 @@ describe('fetchTarball', () => {
     expect(run([{ name: 'a', body: '1' }]).dir).not.toBe(run([{ name: 'a', body: '1' }]).dir);
   });
   it('stops on a too-big archive, too many files, and corrupt data, writing nothing', () => {
-    const before = readdirSync(tmpdir()).filter((n) => n.startsWith('harness-vet-')).length;
-    expect(fetchTarball(r, () => ({ status: 1, stdout: Buffer.alloc(0), tooBig: true }))).toEqual({ error: 'o/r@aaaaaaa: the archive is over 25 MB; vet stops.', limit: true });
-    const many = Array.from({ length: 5001 }, (_, i) => ({ name: `f${i}`, body: '' }));
-    expect(fetchTarball(r, ok(many))).toEqual({ error: 'o/r@aaaaaaa: the archive has over 5000 files; vet stops.', limit: true });
-    expect(fetchTarball(r, () => ({ status: 0, stdout: Buffer.from('nope') }))).toEqual({ error: 'o/r@aaaaaaa: archive is corrupt; vet stops.' });
-    expect(readdirSync(tmpdir()).filter((n) => n.startsWith('harness-vet-')).length).toBe(before);
+    // A private temp folder: other test files unpack harness-vet-* folders in the shared one at the same time.
+    const keys = ['TMPDIR', 'TEMP', 'TMP'], old = keys.map((k) => process.env[k]);
+    const own = mkdtempSync(join(tmpdir(), 'h-vet-limits-'));
+    for (const k of keys) process.env[k] = own;
+    try {
+      expect(fetchTarball(r, () => ({ status: 1, stdout: Buffer.alloc(0), tooBig: true }))).toEqual({ error: 'o/r@aaaaaaa: the archive is over 25 MB; vet stops.', limit: true });
+      const many = Array.from({ length: 5001 }, (_, i) => ({ name: `f${i}`, body: '' }));
+      expect(fetchTarball(r, ok(many))).toEqual({ error: 'o/r@aaaaaaa: the archive has over 5000 files; vet stops.', limit: true });
+      expect(fetchTarball(r, () => ({ status: 0, stdout: Buffer.from('nope') }))).toEqual({ error: 'o/r@aaaaaaa: archive is corrupt; vet stops.' });
+      expect(readdirSync(own)).toEqual([]);
+    } finally {
+      keys.forEach((k, i) => (old[i] === undefined ? delete process.env[k] : (process.env[k] = old[i])));
+      rmSync(own, { recursive: true, force: true });
+    }
   });
   it('skips hostile entries, reports each, and writes nothing outside dir', () => {
     const f = run([

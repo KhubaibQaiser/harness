@@ -3,7 +3,7 @@ kind: plugin
 title: "RevenueCat (in-app purchases)"
 source: {"type":"git-subdir","repo":"RevenueCat/ai-toolkit","path":"revenuecat","plugin":"revenuecat","sha":"ccfc038185ec457b2ac9077f3bbf1ba947a44dbb"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"any_dep":["react-native-purchases"]}
 cost: {"context":"low","setup":"medium","context_tokens":2042}
 stance: optional

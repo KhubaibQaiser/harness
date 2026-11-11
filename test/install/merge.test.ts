@@ -32,10 +32,10 @@ describe('mergeSettings', () => {
     expect(s.hooks.Stop).toHaveLength(2);
     expect(s.hooks.Stop[1].hooks[0].args).toEqual(ARGS);
     expect(s.hooks.SessionEnd).toHaveLength(1);
-    // blocks: 9 hook groups (AskUserQuestion has its own Pre and Post group) + deny rules not already present (29 of 30)
+    // blocks: 9 hook groups (AskUserQuestion has its own Pre and Post group) + deny rules not already present (33 of 34)
     const parsed = blocks.map((b) => JSON.parse(b));
     expect(parsed.filter((b) => b.event)).toHaveLength(9);
-    expect(parsed.filter((b) => b.deny)).toHaveLength(29);
+    expect(parsed.filter((b) => b.deny)).toHaveLength(33);
     expect(parsed.find((b) => b.event === 'Stop').group.hooks[0].args).toEqual(ARGS);
   });
 
@@ -52,11 +52,11 @@ describe('mergeSettings', () => {
     expect(again.blocks).toEqual([]);
   });
 
-  it('a fresh file gets 9 group blocks and 30 deny blocks, nothing dropped', () => {
+  it('a fresh file gets 9 group blocks and 34 deny blocks, nothing dropped', () => {
     const { after, blocks, dropped } = merge(null);
     const parsed = blocks.map((b) => JSON.parse(b));
     expect(parsed.filter((b) => b.event)).toHaveLength(9);
-    expect(parsed.filter((b) => b.deny)).toHaveLength(30);
+    expect(parsed.filter((b) => b.deny)).toHaveLength(34);
     expect(dropped).toEqual([]);
     expect(JSON.parse(after).hooks.Stop[0].hooks[0]).toEqual({ type: 'command', command: 'node', args: ARGS, timeout: 600 });
   });
@@ -82,7 +82,7 @@ describe('mergeSettings', () => {
     expect(dropped).toEqual(Object.entries(BETA_GROUPS).map(([event, group]) => JSON.stringify({ event, group })));
     const parsed = blocks.map((b) => JSON.parse(b));
     expect(parsed.filter((b) => b.event).map((b) => b.event)).toEqual(Object.entries<any[]>(frag.hooks).flatMap(([ev, gs]) => gs.map(() => ev)));
-    expect(parsed.filter((b) => b.deny)).toHaveLength(22);
+    expect(parsed.filter((b) => b.deny)).toHaveLength(26);
     expect(merge(after, [...beta.blocks.filter((b) => !dropped.includes(b)), ...blocks])).toMatchObject({ after, blocks: [], dropped: [] });
   });
 
@@ -411,7 +411,7 @@ describe('plugins, marketplace and MCP blocks', () => {
         { name: 'beta', source: { source: 'git-subdir', url: 'o/mono', path: 'plugins/beta', sha: 'b'.repeat(40) } },
       ),
     });
-    expect(s.permissions.deny).toHaveLength(30);
+    expect(s.permissions.deny).toHaveLength(34);
     expect(s.hooks.Stop[0].hooks[0].args).toEqual(ARGS);
     const parsed = r.blocks.map((b) => JSON.parse(b));
     expect(parsed.filter((b) => b.plugin)).toEqual([{ plugin: 'alpha@harness-pins', item: 'plugin-alpha' }, { plugin: 'beta@harness-pins', item: 'plugin-beta' }]);

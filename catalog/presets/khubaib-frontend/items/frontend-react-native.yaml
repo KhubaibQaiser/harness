@@ -3,7 +3,7 @@ kind: own-skill
 title: "Frontend React Native"
 source: {type: own, files: [{from: skills/frontend-react-native/SKILL.md, to: .claude/skills/frontend-react-native/SKILL.md}]}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {frameworks: [react-native, expo]}
 cost: {context: low, setup: none}
 stance: default

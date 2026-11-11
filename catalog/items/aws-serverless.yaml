@@ -3,7 +3,7 @@ kind: plugin
 title: "AWS Serverless"
 source: {"type": "git-subdir", "repo": "awslabs/agent-plugins", "path": "plugins/aws-serverless", "plugin": "aws-serverless", "sha": "097fe8ad56d8a1d5e2c81d7880adf145553cf244"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"any_dep": ["@aws-sdk/client-lambda", "serverless"]}
 cost: {"context": "low", "setup": "medium", "context_tokens": 903}
 stance: optional

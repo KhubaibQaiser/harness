@@ -260,7 +260,9 @@ export function pinnedPlugins(items: CatalogItem[]): PinnedPlugin[] {
     if ((i.kind !== 'plugin' && i.kind !== 'external-skill') || (s.type !== 'github' && s.type !== 'git-subdir')) continue;
     out.push({
       name: s.plugin, item: i.id,
-      source: s.type === 'github' ? { source: 'github', repo: s.repo, sha: s.sha } : { source: 'git-subdir', url: s.repo, path: s.path, sha: s.sha },
+      // git-subdir takes a git URL: an `owner/repo` shorthand is cloned over SSH (live check A1, Claude Code 2.1.322), which fails
+      // for anyone without a GitHub SSH key, so harness writes the HTTPS URL.
+      source: s.type === 'github' ? { source: 'github', repo: s.repo, sha: s.sha } : { source: 'git-subdir', url: `https://github.com/${s.repo}.git`, path: s.path, sha: s.sha },
       ...(i.lsp_servers ? { lspServers: i.lsp_servers } : {}),
     });
   }

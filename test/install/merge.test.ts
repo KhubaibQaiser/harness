@@ -544,8 +544,8 @@ describe('plugins, marketplace and MCP blocks', () => {
       { id: 'm', kind: 'mcp', source: { type: 'npm', package: 'p', version: '1.0.0' } } as any,
     ])).toEqual([
       { name: 'alpha', item: 'a', source: { source: 'github', repo: 'o/alpha', sha: 'a'.repeat(40) } },
-      { name: 'beta', item: 'b', source: { source: 'git-subdir', url: 'o/mono', path: 'p/b', sha: 'b'.repeat(40) }, lspServers: { x: { command: 'y' } } },
-      { name: 'xs', item: 'x', source: { source: 'git-subdir', url: 'o/mono', path: 'skills/x', sha: 'c'.repeat(40) } },
+      { name: 'beta', item: 'b', source: { source: 'git-subdir', url: 'https://github.com/o/mono.git', path: 'p/b', sha: 'b'.repeat(40) }, lspServers: { x: { command: 'y' } } },
+      { name: 'xs', item: 'x', source: { source: 'git-subdir', url: 'https://github.com/o/mono.git', path: 'skills/x', sha: 'c'.repeat(40) } },
     ]);
   });
 });

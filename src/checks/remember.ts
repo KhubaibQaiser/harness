@@ -15,7 +15,7 @@ import type { Decision } from '../hooks/types.js';
 
 export const REMEMBER_WHY = 'the agent is saving a team decision';
 export const NOT_LITERAL = 'Blocked by guard: harness remember needs its text as plain quoted words, so the person sees exactly what is written. Remove $, backticks and substitutions.';
-export const NOT_PLAIN = 'Blocked by guard: write harness remember as one plain command, with nothing before or after it. Run it without pipes, redirections or other commands.';
+export const NOT_PLAIN = 'Blocked by guard: write harness remember as one plain command, with nothing before or after it. Run it on its own from the repo folder, without a cd prefix, pipes, redirections or other commands.';
 export const REFUSED = 'Blocked by guard: harness remember would refuse these arguments (run harness remember --help), so there is nothing to approve.';
 type Result = Extract<Decision, { kind: 'deny' | 'ask' }>;
 
@@ -55,8 +55,9 @@ function invocation(command: string): string[] | 'shape' | 'literal' {
   const plugin = command.startsWith(PLUGIN_CLI);
   const ws = lex(plugin ? command.slice(PLUGIN_CLI.length) : command);
   if (typeof ws === 'string') return ws;
-  let i = plugin ? 0 : -1;
-  if (ws[0] === 'harness') i = 1;
+  let i = -1;
+  if (plugin) i = 0;
+  else if (ws[0] === 'harness') i = 1;
   else if (ws[0] === 'npx') {
     const j = ws[1] === '--no-install' ? 2 : 1;
     if (/^@khubaibqaiser\/harness(@[\w.+-]+)?$/.test(ws[j] ?? '')) i = j + 1;
@@ -122,12 +123,13 @@ const quoteHit = (): Result | null => null;
  *  every shape but one plain invocation denied. */
 export function rememberAsk(ctx: Ctx, command: string, now: Date = new Date()): Exclude<Decision, { kind: 'allow' }> {
   const today = now.toISOString().slice(0, 10);
-  const words = invocation(command.replace(/^ +| +$/g, ''));
+  const words = invocation(command.replace(/^ +/, '').replace(/[ \t\r\n]+$/, '')) // a trailing newline changes no word;
   if (words === 'shape') return deny(NOT_PLAIN, 'remember: not one plain command');
   if (words === 'literal') return deny(NOT_LITERAL, 'remember: not literal');
   const p = parseRemember(words);
   if (!p) return deny(REFUSED, 'remember: refused');
   const { sub, flags: f } = p;
+  if (f.switches.has('--dry-run')) return ask(`Confirm: the agent wants to preview harness remember ${sub} with --dry-run, which writes nothing.`, `remember ${sub} --dry-run`);
   if (ctx.unattended && sub === 'add') {
     const reason = `${redactSecrets(one(f, '--title'))} | ${redactSecrets(one(f, '--rule'))}`;
     appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'remember', decision: 'decision-candidate', reason });

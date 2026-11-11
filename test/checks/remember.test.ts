@@ -67,8 +67,31 @@ test('read-only forms are allowed', () => {
     expect(run(c), c).toEqual({ kind: 'allow' });
 });
 
-test('a dry run with a glob asks, as every preview with an expansion character does', () => {
-  expect(run('harness remember add --dry-run --title T --rule R --path "src/*"').kind).toBe('ask');
+test('a dry run with a glob asks, as every preview with an expansion character does, and says it writes nothing', () => {
+  expect(run('harness remember add --dry-run --title T --rule R --path "src/*"')).toEqual({
+    kind: 'ask',
+    check: 'guard',
+    log: 'remember add --dry-run',
+    reason: 'Confirm: the agent wants to preview harness remember add with --dry-run, which writes nothing.',
+  });
+  // A value is not the switch: this one writes, so it gets the full add ask.
+  expect(reason(run('harness remember add --title --dry-run --rule R --path "src/*"'))).toMatch(/^Confirm: the agent wants to save a team decision/);
+});
+
+test('trailing spaces and newlines are ignored', () => {
+  for (const c of [`${PLAIN}\n`, `${PLAIN} \n\n`, `  ${PLAIN}\r\n`]) expect(run(c), JSON.stringify(c)).toMatchObject({ kind: 'ask', log: `remember add ${today()}-t` });
+});
+
+test('only the invocations the CLI accepts: no second harness word after a prefix', () => {
+  for (const c of [
+    'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" harness remember add --title T --rule R --path src/a.ts',
+    'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" node dist/cli.mjs remember add --title T --rule R --path src/a.ts',
+    'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" npx @khubaibqaiser/harness remember add --title T --rule R --path src/a.ts',
+    'harness harness remember add --title T --rule R --path src/a.ts',
+  ]) {
+    expect(rememberAsk(mk(), c), c).toMatchObject({ kind: 'deny', reason: NOT_PLAIN });
+    expect(run(c).kind, c).not.toBe('ask'); // the CLI prints its usage for these: allowed or denied, never a pointless ask
+  }
 });
 
 describe('C1: --dry-run or --help as a flag value is the value, not a preview', () => {
@@ -133,7 +156,8 @@ describe('C2, C3: anything but one plain invocation is denied', () => {
   });
   test('the shape deny has its fixed reason', () => {
     expect(run(`${PLAIN} && harness remember add --title B --rule B --path src/b.ts`, ctx)).toEqual({ kind: 'deny', check: 'guard', reason: NOT_PLAIN, log: 'remember: not one plain command' });
-    expect(NOT_PLAIN).toBe('Blocked by guard: write harness remember as one plain command, with nothing before or after it. Run it without pipes, redirections or other commands.');
+    expect(NOT_PLAIN).toBe('Blocked by guard: write harness remember as one plain command, with nothing before or after it. Run it on its own from the repo folder, without a cd prefix, pipes, redirections or other commands.');
+    expect(run(`cd src && ${PLAIN}`, ctx)).toMatchObject({ kind: 'deny', reason: NOT_PLAIN });
   });
 });
 

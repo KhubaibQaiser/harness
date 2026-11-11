@@ -1392,6 +1392,32 @@ describe('preset asks: AI trailer and branch prefix', () => {
     expect(d.kind).toBe('ask');
     expect(reason(d)).toBe('Confirm: branch "wip" has no listed prefix; use one of: feature/wip, fix/wip, chore/wip');
   });
+  test.each([
+    'git switch --create wip', 'git switch --create=wip', 'git switch --force-create wip', 'git checkout --orphan wip', 'git checkout --orphan=wip',
+    'git branch wip', 'git branch wip main', 'git branch -f wip main', 'git branch --track wip origin/main',
+    'git worktree add -b wip ../wt', 'git worktree add -B wip ../wt main', 'git worktree add ../wt -b wip',
+  ])('an unprefixed new branch asks: %s', (cmd) => {
+    const d = decideCommand(cmd, pctx());
+    expect(d.kind).toBe('ask');
+    expect(reason(d)).toBe('Confirm: branch "wip" has no listed prefix; use one of: feature/wip, fix/wip, chore/wip');
+  });
+  test('branch commands that create nothing, or a prefixed branch, never get the prefix ask', () => {
+    for (const c of ['git branch', 'git branch -d wip', 'git branch -D wip', 'git branch -m wip', 'git branch -M old wip', 'git branch --list', 'git branch -a',
+      'git branch -r', 'git branch --show-current', 'git branch --contains abc123', 'git branch feature/wip main', 'git switch --create=fix/y',
+      'git checkout --orphan chore/z', 'git worktree add -b feature/wip ../wt', 'git worktree add ../wt main', 'git worktree list'])
+      expect(reason(decideCommand(c, pctx())), c).not.toContain('no listed prefix'); // -D already asks on its own rule
+  });
+  // cmp-x runs with no config; this pins the preset asks the same way, with a preset recorded (expected verdict per command).
+  test('cmp-style table with a preset', () => {
+    const table: [string, string][] = [
+      ['git commit -m "fix: x"', 'allow'], ['git commit -m "x\n\nCo-Authored-By: Claude <noreply@anthropic.com>"', 'ask'],
+      ["git -c a=b commit -F - <<'EOF'\nx\n\nGenerated with [Claude Code](https://claude.com/claude-code)\nEOF", 'ask'],
+      ['git switch -c wip', 'ask'], ['git switch --create=wip', 'ask'], ['git checkout --orphan wip', 'ask'], ['git branch wip', 'ask'],
+      ['git worktree add -b wip ../wt', 'ask'], ['git switch -c feature/x', 'allow'], ['git branch -d wip', 'allow'], ['git branch', 'allow'],
+      ['git push --force origin feature/x', 'deny'],
+    ];
+    for (const [c, want] of table) expect(decideCommand(c, pctx()).kind, c).toBe(want);
+  });
   test('with no preset, nothing fires', () => {
     for (const c of [...trailered, 'git switch -c wip', 'git checkout -b wip']) expect(decideCommand(c, ctx()).kind, c).toBe('allow');
   });

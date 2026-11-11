@@ -875,6 +875,21 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   return { kind: 'allow' };
 }
 
+const NEW_BRANCH_FLAGS: Record<string, string[]> = { checkout: ['-b', '-B', '--orphan'], switch: ['-c', '-C', '--create', '--force-create'], worktree: ['-b', '-B'] };
+const BRANCH_CREATE_FLAGS = /^(-f|--force|-t|--track(=\S*)?|--no-track|--create-reflog)$/;
+/** The branch a git command creates: `checkout -b|-B|--orphan`, `switch -c|-C|--create|--force-create` (`--flag=name`
+ *  too), `worktree add -b|-B`, or `git branch <name> [<start>]` with only creation flags (`-d`, `-m`, `--list`, … create nothing). */
+function newBranch(sub: string | undefined, args: string[]): string | undefined {
+  if (sub === 'branch') return args.every((t) => !t.startsWith('-') || BRANCH_CREATE_FLAGS.test(t)) ? args.find((t) => !t.startsWith('-')) : undefined;
+  if (sub === 'worktree' && args[0] !== 'add') return undefined;
+  const flags = Object.hasOwn(NEW_BRANCH_FLAGS, sub ?? '') ? NEW_BRANCH_FLAGS[sub!] : [];
+  for (const [i, t] of args.entries()) {
+    if (flags.includes(t)) return args[i + 1];
+    const eq = t.indexOf('=');
+    if (t.startsWith('--') && eq > 0 && flags.includes(t.slice(0, eq))) return t.slice(eq + 1);
+  }
+  return undefined;
+}
 const AI_TRAILER = /Co-Authored-By:[^\n]*(Claude|noreply@anthropic\.com)|Generated with \[?Claude Code/i;
 /** The preset's git asks for one segment: a commit while the command holds an AI trailer, a new branch without a listed prefix. */
 // ponytail: the trailer is matched on the whole command, heredoc bodies included, so `echo "Co-Authored-By: Claude"; git
@@ -884,9 +899,7 @@ function presetVisit(command: string, preset: NonNullable<NonNullable<GuardCtx['
     const [sub, ...args] = gitArgs(toks);
     if (sub === 'commit' && preset.git.no_ai_trailer && AI_TRAILER.test(command))
       return { kind: 'ask', reason: `the agent is committing with an AI trailer, which the ${preset.id} preset bans` };
-    const flags = sub === 'checkout' ? ['-b', '-B'] : sub === 'switch' ? ['-c', '-C'] : [];
-    const at = args.findIndex((t) => flags.includes(t));
-    const name = at >= 0 ? args[at + 1] : undefined;
+    const name = newBranch(sub, args);
     if (!name || preset.git.branch_prefixes.some((p) => name.startsWith(p))) return null;
     return { kind: 'ask', reason: `branch "${name}" has no listed prefix; use one of: ${suggestBranches(preset.git.branch_prefixes, name).join(', ')}` };
   };

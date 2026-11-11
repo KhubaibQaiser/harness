@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildEvalPlugin, EVAL_MODEL, type CaseInfo, type EvalKind } from '../eval/build.js';
 import { evalArgs, planLines } from '../eval/run.js';
+import { packageDir } from '../core/package-dir.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { EVALS_DIR, readEvalResults, type EvalSummary } from '../report/evals.js';
 import { insideClaude } from './claude-only.js';
@@ -12,12 +13,11 @@ import type { Prompt } from './prompt.js';
 const DEFAULT_RUNS = 3, DEFAULT_MAX_COST = 2, MAX_RUNS = 50, MIN_COST = 0.01, CENTS = 100, USD_DECIMALS = 2;
 const EXIT_FAIL = 1, EXIT_USAGE = 2, DATE_LEN = 10;
 const HOUR_MS = 3_600_000;
-const KINDS: EvalKind[] = ['skills', 'rules'];
+const KINDS: EvalKind[] = ['skills', 'rules', 'gates'];
 const RULE_TOOLS = ['Bash', 'Write', 'Edit'];
 // Passed to `claude --model` unchanged, so it allows ids like claude-opus-5[1m]; no leading dash, no spaces.
 const MODEL_RX = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,99}$/;
 const USAGE = 'Usage: harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model <id>]';
-const GATES_MSG = "Gate evals wait for the owner's P0 probe (spec 7.6): whether plugin hooks run in eval sessions is not proven yet. Nothing was run.";
 
 type Env = CliEnv & { prompt: Prompt; exec?: Exec; tmp?: string };
 interface Opts { kinds: EvalKind[]; runs: number; maxCost: number; model?: string }
@@ -37,7 +37,6 @@ function refusal(cli: Env): string | null {
 /** Flags to options, or the message and exit code to stop with. */
 function parseArgs(args: string[]): Opts | { stop: string; code: number } {
   const kindArg = flag(args, '--kind');
-  if (kindArg === 'gates') return { stop: GATES_MSG, code: EXIT_FAIL };
   const runs = Number(flag(args, '--runs') ?? DEFAULT_RUNS);
   const maxCost = Number(flag(args, '--max-cost-usd') ?? DEFAULT_MAX_COST);
   const bad = (kindArg !== undefined && !KINDS.includes(kindArg as EvalKind))
@@ -68,8 +67,9 @@ interface RunOpts { runs: number; model: string; maxCost: number; root: string; 
 
 function runOne(b: Build, o: RunOpts, exec: Exec, out: (s: string) => void): { code: number; summary: EvalSummary | null } | 'missing' {
   mkdirSync(b.out, { recursive: true });
-  const tools = b.kind === 'rules' ? RULE_TOOLS : [];
-  const r = exec('claude', evalArgs(b.dir, { ...o, out: b.out, scaffold: false, tools }), { timeoutMs: HOUR_MS });
+  // Gates allow the same tools so a hook that misses shows as the action going through, not a permission stop.
+  const tools = b.kind === 'skills' ? [] : RULE_TOOLS;
+  const r = exec('claude', evalArgs(b.dir, { ...o, out: b.out, scaffold: b.kind === 'gates', tools }), { timeoutMs: HOUR_MS });
   if (r.missing) return 'missing';
   if (!existsSync(join(b.out, 'result.json'))) return out(`${b.kind}: no result (exit ${r.status}). ${r.stderr ?? ''}`.trim()), { code: EXIT_FAIL, summary: null };
   const name = `${o.date}-${folderSafe(o.model)}-${b.kind}`;
@@ -108,7 +108,7 @@ async function runAll(builds: Build[], o: RunOpts, ceiling: number, cli: Env): P
 
 function buildAll(cli: Env, opts: Opts, model: string, base: string): Build[] {
   return opts.kinds.map((kind) => {
-    const b = buildEvalPlugin(cli.root, { kinds: [kind], tmp: join(base, kind), dispatch: '', model });
+    const b = buildEvalPlugin(cli.root, { kinds: [kind], tmp: join(base, kind), dispatch: join(packageDir('dist'), 'hooks', 'dispatch.mjs'), model });
     return { kind, dir: b.dir, out: join(base, `${kind}-out`), cases: b.cases };
   });
 }

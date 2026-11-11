@@ -56,11 +56,33 @@ test.each([[{ CLAUDECODE: '1' }, undefined], [{ CI: 'true' }, undefined], [{ CI:
   expect(h.asked).toHaveLength(0);
 });
 
-test('gates kind is a clear message, never a run', async () => {
+test('gates runs with the scaffold and the hooked plugin, after the same yes', async () => {
   const h = harness(['claude-x', 'yes']);
+  expect(await h.run(['--kind', 'gates'])).toBe(0);
+  expect(h.calls).toHaveLength(1);
+  const a = h.calls[0]!;
+  expect(a).toContain('--scaffold');
+  expect(existsSync(join(a[3]!, 'hooks/dispatch.mjs'))).toBe(true);
+  expect(readdirSync(join(h.root, '.harness/reports/evals'))).toEqual([expect.stringMatching(/-claude-x-gates$/)]);
+  expect(h.lines.join('\n')).toContain('cases: 4');
+});
+
+test('gates: no yes, no run', async () => {
+  const h = harness(['claude-x', 'no']);
   expect(await h.run(['--kind', 'gates'])).toBe(1);
   expect(h.calls).toHaveLength(0);
-  expect(h.lines.join('\n')).toMatch(/probe/);
+});
+
+test('skills and rules never get the scaffold flag', async () => {
+  const h = harness(['claude-x', 'yes']);
+  await h.run(['--kind', 'rules']);
+  expect(h.calls[0]).not.toContain('--scaffold');
+});
+
+test('no kind runs all three', async () => {
+  const h = harness(['claude-x', 'yes']);
+  await h.run([]);
+  expect(h.calls.map((c) => c[3]!.split('/').pop())).toEqual(['skills', 'rules', 'gates']);
 });
 
 test('model flag skips the question; earlier result gives an estimate', async () => {

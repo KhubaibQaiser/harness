@@ -34,11 +34,13 @@ type Rec = { at: number; prompt: boolean; texts: string[]; tool: string[] };
 
 export const TRANSCRIPT_TAIL = 8 * 1024 * 1024; // team-decisions plan: read at most the last 8 MiB of a transcript
 
-/** The last `max` bytes of a file as UTF-8, without the line the cut split. */
+/** The last `max` bytes of a file as UTF-8, without the line the cut split. Throws for anything but a regular file. */
 export function readTail(path: string, max: number): string {
   const fd = openSync(path, 'r');
   try {
-    const size = fstatSync(fd).size;
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw new Error(`${path} is not a regular file`); // Windows reads a directory as empty instead of failing
+    const size = st.size;
     const cut = size > max;
     const buf = Buffer.alloc(cut ? max + 1 : size); // on a cut, one byte more: a newline there means no line was split
     const s = buf.toString('utf8', 0, readSync(fd, buf, 0, buf.length, size - buf.length));

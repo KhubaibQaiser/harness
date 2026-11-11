@@ -12,10 +12,12 @@ import type { Ctx } from '../../src/hooks/check.js';
 import type { Decision } from '../../src/hooks/types.js';
 
 const opened: string[] = [];
+const fsMode = { windowsDirs: false }; // reading a directory returns 0 bytes instead of throwing, as on Windows
 vi.mock('node:fs', async (orig) => {
   const real = await orig<typeof import('node:fs')>();
   const spy = <F extends (...a: never[]) => unknown>(f: F) => ((...a: Parameters<F>) => (opened.push(String(a[0])), f(...a))) as unknown as F;
-  return { ...real, openSync: spy(real.openSync), readFileSync: spy(real.readFileSync) };
+  const readSync = ((fd: number, ...a: unknown[]) => (fsMode.windowsDirs && real.fstatSync(fd).isDirectory() ? 0 : (real.readSync as (...x: unknown[]) => number)(fd, ...a))) as typeof real.readSync;
+  return { ...real, openSync: spy(real.openSync), readFileSync: spy(real.readFileSync), readSync };
 });
 
 const FIX = join(import.meta.dirname, '../fixtures/transcripts');
@@ -119,6 +121,15 @@ describe('unreadable transcripts', () => {
     expect(decide(path, add(LONG))).toEqual({ kind: 'deny', check: 'guard', log: 'remember: quotes tool output', reason: denyCopy(UNREADABLE) });
   });
 
+  test('a directory counts as a quote even where reading it does not throw (Windows)', () => {
+    fsMode.windowsDirs = true;
+    try {
+      expect(decide(FIX, add(LONG))).toEqual({ kind: 'deny', check: 'guard', log: 'remember: quotes tool output', reason: denyCopy(UNREADABLE) });
+    } finally {
+      fsMode.windowsDirs = false;
+    }
+  });
+
   test('a draft with no field of 8 words needs no transcript: the plain ask', () => {
     opened.length = 0;
     const missing = join(tmpdir(), 'h-quote-none', 'x.jsonl');
@@ -199,10 +210,17 @@ describe('nothing stored', () => {
     expect(out).toContain(name === 'no-quote' ? 'Confirm:' : 'repeats');
     const after = snapshot(root);
     const ev = join(root, '.harness/logs/events.jsonl');
+    const timing = join(root, '.harness/logs/timing.jsonl'); // one line per hook call: no text, by a key whitelist
     const events = after.get(ev) ?? '';
     expect(events).toContain(name === 'no-quote' ? `remember add ${today}-team-rule` : 'remember: quotes tool output');
+    const draft = [...normalise(`Team rule ${rule}`).split(' '), 'example.test', 'database', 'migrations'].filter((w) => w.length > 3);
     for (const w of ['database', 'migrations', 'example.test', 'Team rule', 'lint config']) expect(events).not.toContain(w);
-    for (const [p, body] of after) if (p !== ev) expect([p, body]).toEqual([p, before.get(p)]);
+    for (const line of (after.get(timing) ?? '').split('\n').filter(Boolean)) {
+      const o = JSON.parse(line) as Record<string, unknown>;
+      expect(Object.keys(o).every((k) => ['ts', 'session', 'event', 'tool', 'step', 'outcome', 'ms'].includes(k)), line).toBe(true);
+      for (const v of Object.values(o)) for (const w of draft) expect(String(v).toLowerCase()).not.toContain(w);
+    }
+    for (const [p, body] of after) if (p !== ev && p !== timing) expect([p, body]).toEqual([p, before.get(p)]);
   });
 });
 

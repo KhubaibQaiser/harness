@@ -65,7 +65,7 @@ const STOP_TAIL = 1024 * 1024;
 function lastAssistant(ctx: Ctx): string {
   const { last_assistant_message: m, transcript_path: t } = ctx.input;
   if (typeof m === 'string') return m;
-  const last = readTranscript(t, STOP_TAIL)?.at(-1);
+  const last = readTranscript(t, STOP_TAIL)?.findLast((r) => r.prompt || r.texts.length); // tool output is neither
   return last && !last.prompt ? last.texts.join('\n') : '';
 }
 

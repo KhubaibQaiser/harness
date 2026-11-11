@@ -30,23 +30,31 @@ function hasName(line: string, name: string): boolean {
   return false;
 }
 
-type Rec = { at: number; prompt: boolean; texts: string[] };
+type Rec = { at: number; prompt: boolean; texts: string[]; tool: string[] };
 
 export const TRANSCRIPT_TAIL = 8 * 1024 * 1024; // team-decisions plan: read at most the last 8 MiB of a transcript
 
-/** The last `max` bytes of a file as UTF-8. A line cut at the start is dropped by the JSON-line parsers. */
+/** The last `max` bytes of a file as UTF-8, without the line the cut split. Throws for anything but a regular file. */
 export function readTail(path: string, max: number): string {
   const fd = openSync(path, 'r');
   try {
-    const size = fstatSync(fd).size;
-    const buf = Buffer.alloc(Math.min(size, max));
-    return buf.toString('utf8', 0, readSync(fd, buf, 0, buf.length, size - buf.length));
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw new Error(`${path} is not a regular file`); // Windows reads a directory as empty instead of failing
+    const size = st.size;
+    const cut = size > max;
+    const buf = Buffer.alloc(cut ? max + 1 : size); // on a cut, one byte more: a newline there means no line was split
+    const s = buf.toString('utf8', 0, readSync(fd, buf, 0, buf.length, size - buf.length));
+    if (!cut) return s;
+    const nl = s.indexOf('\n');
+    return s.slice(nl < 0 ? 1 : nl + 1); // no newline at all: one cut line, which won't parse
   } finally {
     closeSync(fd);
   }
 }
 
-// The transcript's user prompts and assistant text, or undefined when unreadable.
+const textsOf = (blocks: unknown[]): string[] => blocks.map(obj).filter((b) => b.type === 'text' && typeof b.text === 'string').map((b) => b.text as string);
+
+// The transcript's user prompts, assistant text and tool output (`tool_result` text), or undefined when unreadable.
 // ponytail: the transcript JSONL format is not a documented stable API; unknown shapes are skipped and an unreadable file fails open.
 export function readTranscript(path: unknown, max = Infinity): Rec[] | undefined {
   if (typeof path !== 'string' || !path) return undefined;
@@ -68,10 +76,14 @@ export function readTranscript(path: unknown, max = Infinity): Rec[] | undefined
     const c = obj(rec.message).content;
     const at = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN;
     if (rec.type === 'user') {
-      if (typeof c === 'string' || (Array.isArray(c) && c.some((b) => obj(b).type !== 'tool_result'))) recs.push({ at, prompt: true, texts: [] });
+      const blocks = Array.isArray(c) ? c.map(obj) : [];
+      // one string per tool result, its text blocks joined, so a quote may span blocks but not results
+      const tool = blocks.filter((b) => b.type === 'tool_result').map((b) => b.content).map((r) => (typeof r === 'string' ? r : Array.isArray(r) ? textsOf(r).join('\n') : '')).filter(Boolean);
+      const prompt = typeof c === 'string' || blocks.some((b) => b.type !== 'tool_result');
+      if (prompt || tool.length) recs.push({ at, prompt, texts: [], tool });
     } else if (rec.type === 'assistant' && Array.isArray(c)) {
-      const texts = c.map(obj).filter((b) => b.type === 'text' && typeof b.text === 'string').map((b) => b.text as string);
-      if (texts.length) recs.push({ at, prompt: false, texts });
+      const texts = textsOf(c);
+      if (texts.length) recs.push({ at, prompt: false, texts, tool: [] });
     }
   }
   return recs;

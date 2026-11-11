@@ -119,8 +119,8 @@ function filesChangedWhy(files: string[], startHead: string | undefined, head: s
   const list = files.map((f) => `\`${f}\``).join(', ');
   const short = (h: string) => h.slice(0, SHORT_SHA);
   const review = startHead
-    ? `\`git diff ${short(startHead)} -- .harness .claude/settings.json\` (everything since the session started), and \`git diff -- .harness .claude/settings.json\` for what is not committed`
-    : '`git diff -- .harness .claude/settings.json`';
+    ? `\`git diff ${short(startHead)} -- .harness .claude/settings.json .claude/rules docs/decisions\` (everything since the session started), and \`git diff -- .harness .claude/settings.json .claude/rules docs/decisions\` for what is not committed`
+    : '`git diff -- .harness .claude/settings.json .claude/rules docs/decisions`';
   const moved = startHead && head && head !== startHead ? ` HEAD moved since the session started (${short(startHead)} -> ${short(head)}): a branch switch, a pull or a commit can explain the change.` : '';
   return `Harness files changed since harness last checked them: ${list}. Tell the person now and ask them to review the change with ${review} (any command or script can change these files, not only an edit).${moved} Harness says this once per change.`;
 }

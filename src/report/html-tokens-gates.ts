@@ -29,6 +29,8 @@ export function tokensSection(u: UsageResult, always: { id: string; tokens: numb
 type Step = GatesResult['stopSteps'][number];
 const NO_LOG = 'no timing log';
 const stepRow = (s: Step) => [s.step, s.runs, s.blocks, rate(s.blocks, s.runs), s.flakes, s.p50 ?? NO_LOG, s.p95 ?? NO_LOG];
+/** What a timing-log hook call's ms measures. */
+export const MS_NOTE = 'from dispatcher module start to the decision, before the stdout write; Node startup is not included';
 const latLabel = (l: GatesResult['latency'][number]) => `${l.event}${l.outcome ? ` ${l.outcome}` : ''}`;
 
 export function gatesSection(g: GatesResult): string {
@@ -48,7 +50,7 @@ export function gatesSection(g: GatesResult): string {
     '<p class="mute">Signals are heuristics. The quote is shown only for a deny followed by a success on the same target.</p>',
     table(['Signal', 'Check', 'Session date', 'Turn', 'Match', 'Quote'], fb),
     '<h3>Hook latency (ms)</h3>',
-    '<p class="mute">Timing-log rows run from dispatcher module start to the decision, before the stdout write; Node startup is not included. Transcript rows are the duration Claude Code records.</p>',
+    `<p class="mute">Timing-log rows run ${MS_NOTE}. Transcript rows are the duration Claude Code records.</p>`,
     chart(hbars(bars, 'Hook latency p50 and p95'), ['Event', 'n', 'p50', 'p95', 'max', 'timeouts'], latRows),
     '<h3>Stop steps</h3>', table(['Step', 'Runs', 'Blocks', 'Fail rate', 'Flakes', 'p50', 'p95'], g.stopSteps.map(stepRow)),
     '<h3>Hallucination checks</h3>',

@@ -138,6 +138,20 @@ describe('fix round 1', () => {
     expect(svg).toContain('aria-label="My chart"');
     expect(renderReport(data())).toContain('aria-label="Hook latency p50 and p95"');
   });
+  it('takes the hook p95 tile from timing-log rows only, and says unknown without them', () => {
+    const base = data().gates;
+    const lat = (latency: ReportData['gates']['latency']) => {
+      const html = renderReport(data({ gates: { ...base, latency } }));
+      return html.slice(html.indexOf('Harness hook p95'), html.indexOf('</div>', html.indexOf('Harness hook p95')));
+    };
+    const tr = { source: 'transcript' as const, event: 'PreToolUse', n: 3, p50: 400, p95: 900, max: 900, timeouts: 0 };
+    const tm = { source: 'timing' as const, event: 'PreToolUse', outcome: 'allow', n: 5, p50: 10, p95: 30, max: 40, timeouts: 0 };
+    const timeoutOnly = { source: 'timing' as const, event: 'Stop', outcome: 'timeout', n: 0, p50: 0, p95: 0, max: 0, timeouts: 2 };
+    expect(lat([tr, tm])).toContain('<b>30 ms</b>');
+    expect(lat([tr, tm])).toContain('dispatcher module start to the decision, before the stdout write; Node startup is not included');
+    expect(lat([tr, timeoutOnly])).toContain('<b>unknown (no timing log)</b>');
+    expect(lat([tr])).not.toContain('900');
+  });
   it('says what the timing-log latency measures', () => {
     expect(renderReport(data())).toContain('from dispatcher module start to the decision, before the stdout write; Node startup is not included');
   });

@@ -3,7 +3,7 @@ kind: plugin
 title: "Render"
 source: {"type": "github", "repo": "render-oss/render-plugin-claude-code", "plugin": "render", "sha": "d7ecf826c5971eb7dfdb5aed79fa838a8d67ff46"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "0.3.0"
 applies_when: {"project_types": ["web", "api"]}
 cost: {"context": "low", "setup": "medium", "context_tokens": 2334}

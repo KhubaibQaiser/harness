@@ -3,7 +3,7 @@ kind: plugin
 title: "Mintlify (docs site skill and MCP)"
 source: {"type":"github","repo":"mintlify/mintlify-claude-plugin","plugin":"mintlify","sha":"acd6d2e0128c4f235d55cfb8d8c91ecbdd5df8cc"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "1.0.0"
 applies_when: {"any_dep":["mint","mintlify"]}
 cost: {"context":"low","setup":"low","context_tokens":75}

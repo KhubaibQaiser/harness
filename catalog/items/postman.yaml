@@ -3,7 +3,7 @@ kind: plugin
 title: "Postman (API lifecycle)"
 source: {"type": "github", "repo": "postmanlabs/postman-plugin", "plugin": "postman", "sha": "c6352ef5605cd46d3f817e15c601eeb9a56c08f7"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "2.0.1"
 applies_when: {"project_types": ["api"]}
 cost: {"context": "medium", "setup": "medium", "context_tokens": 1550}

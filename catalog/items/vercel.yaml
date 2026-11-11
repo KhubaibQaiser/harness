@@ -3,7 +3,7 @@ kind: plugin
 title: "Vercel"
 source: {"type": "github", "repo": "vercel/vercel-plugin", "plugin": "vercel", "sha": "882e66c2698689324c341b7bb8fd8beb92c27bf6"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "0.50.0"
 applies_when: {"any_dep": ["vercel", "@vercel/node"]}
 cost: {"context": "medium", "setup": "medium", "context_tokens": 3903}

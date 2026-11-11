@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { syncCommand } from '../checks/stop/runner.js';
 
-// onFailure (2.1.295), Monitor in Bash hooks and the sandbox glob fixes (2.1.314): spec D5.
-export const MIN_CLAUDE_CODE = '2.1.314';
+// onFailure (2.1.295). Live checks on 2026-11-12 passed on 2.1.295, 2.1.311 and 2.1.322 alike (onFailure, Monitor, the
+// sandbox, ConfigChange); 2.1.285 failed only onFailure (a broken hook let prompts and tool calls through). Was 2.1.314 (spec D5).
+export const MIN_CLAUDE_CODE = '2.1.295';
 
 // `claude` is a Node program and can take seconds to start on a busy machine; a short limit read as "not installed".
 const VERSION_TIMEOUT_MS = 15_000;

@@ -3,7 +3,7 @@ kind: plugin
 title: "UI/UX Pro Max"
 source: {"type":"github","repo":"nextlevelbuilder/ui-ux-pro-max-skill","plugin":"ui-ux-pro-max","sha":"713eef51b04efc98d6fa565323b495f7c9c89fd4"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "2.15.0"
 applies_when: {"project_types":["web","landing","mobile"]}
 conflicts_with: ["impeccable", "superdesign", "taste-skill"]

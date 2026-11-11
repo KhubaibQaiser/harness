@@ -287,13 +287,13 @@ const editSettings = (root: string, edit: (s: any) => void) => {
   writeFileSync(p, JSON.stringify(s, null, 2));
 };
 
-test('claude 2.1.313 is a fix and exit 1; 2.1.314 is ok', async () => {
+test('claude 2.1.294 is a fix and exit 1; 2.1.295 is ok', async () => {
   const root = await installed();
-  const a = run(root, { claude: '2.1.313', path: bin('npm') });
-  expect(a.out).toMatch(/^fix Claude Code 2\.1\.313 is older than 2\.1\.314: update Claude Code$/m);
+  const a = run(root, { claude: '2.1.294', path: bin('npm') });
+  expect(a.out).toMatch(/^fix Claude Code 2\.1\.294 is older than 2\.1\.295: update Claude Code$/m);
   expect(a.code).toBe(1);
-  const b = run(root, { claude: '2.1.314', path: bin('npm') });
-  expect(b.out).toMatch(/^ok Claude Code 2\.1\.314$/m);
+  const b = run(root, { claude: '2.1.295', path: bin('npm') });
+  expect(b.out).toMatch(/^ok Claude Code 2\.1\.295$/m);
   expect(b.code).toBe(0);
 });
 

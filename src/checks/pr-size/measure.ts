@@ -128,9 +128,9 @@ function badName(want: WantRef): string | null {
 
 /** The raw -z outputs (`others` is null outside a worktree measurement); a string is an error. */
 function fetchDiff(run: Run, range: string, worktree: boolean): { num: string; del: string; others: string | null } | string {
-  const q = ['-c', 'core.quotePath=false', 'diff'];
-  const num = run([...q, '--numstat', '-z', '-M', ...SAFE_DIFF, range]);
-  const del = run([...q, '--name-status', '-z', '--diff-filter=D', ...SAFE_DIFF, range]);
+  const q = ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF];
+  const num = run([...q, '--numstat', '-z', '-M', range]);
+  const del = run([...q, '--name-status', '-z', '--diff-filter=D', range]);
   if (num.status !== 0 || del.status !== 0) return 'git diff failed';
   const others = worktree ? run(['ls-files', '--others', '--exclude-standard', '-z']) : null;
   if (others && others.status !== 0) return 'git ls-files failed';

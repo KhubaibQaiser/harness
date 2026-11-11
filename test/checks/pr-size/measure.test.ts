@@ -224,8 +224,8 @@ describe('failures', () => {
     const { calls, g } = fakeGit({ status: 0, stdout: 'sha1\n' });
     measure('/x', { base: 'main', head: 'feat' }, cfg(), { git: g });
     expect(calls.slice(-2)).toEqual([
-      ['-c', 'core.quotePath=false', 'diff', '--numstat', '-z', '-M', ...SAFE_DIFF, 'sha1...sha1'],
-      ['-c', 'core.quotePath=false', 'diff', '--name-status', '-z', '--diff-filter=D', ...SAFE_DIFF, 'sha1...sha1'],
+      ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF, '--numstat', '-z', '-M', 'sha1...sha1'],
+      ['-c', 'core.quotePath=false', 'diff', ...SAFE_DIFF, '--name-status', '-z', '--diff-filter=D', 'sha1...sha1'],
     ]);
   });
 });

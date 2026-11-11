@@ -19,7 +19,6 @@ import type { Prompt } from './prompt.js';
 import { openInstall, readConfig } from './preamble.js';
 import { check, list } from './remember-read.js';
 import type { CliEnv } from './index.js';
-import { SAFE_GIT } from '../core/git-safe.js';
 
 export type RememberEnv = CliEnv & { prompt: Prompt; now?: () => Date; fs?: FsLike; /** Default: git in the repo root; tests pass a fake. */ git?: Git };
 
@@ -127,10 +126,10 @@ const notActive = (d: TeamDecision, verb: string) => `harness remember: ${d.id} 
 
 /** HEAD and the paths that match no tracked file, or a refusal. */
 function fromGit(git: Git, paths: string[]): { head: string; dead: string[] } | string {
-  const head = git([...SAFE_GIT, 'rev-parse', 'HEAD']);
+  const head = git(['rev-parse', 'HEAD']);
   const sha = head.out.trim();
   if (!head.ok || !SHA.test(sha)) return 'harness remember: no commit to record as verified_at. Commit once, then run it again.';
-  const ls = git([...SAFE_GIT, 'ls-files', '-z']);
+  const ls = git(['ls-files', '-z']);
   if (!ls.ok) return `harness remember: couldn't list tracked files (${shown(ls.reason ?? 'git failed')}).`;
   const files = ls.out.split('\0').filter(Boolean);
   return { head: sha, dead: paths.filter((p) => { const m = picomatch(p, { dot: true }); return !files.some((f) => m(f)); }) };

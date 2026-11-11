@@ -26,7 +26,7 @@ export interface Staleness {
 export const isStale = (s: Staleness): boolean => s.dead.length > 0 || s.changed.length > 0;
 
 export const gitIn = (root: string): Git => (args, input) => {
-  const r = spawnSync('git', args, { cwd: root, ...(input === undefined ? {} : { input }), encoding: 'utf8', timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, env: childEnv() }); // callers prepend SAFE_GIT (it shows in the injected Git)
+  const r = spawnSync('git', [...SAFE_GIT, ...args], { cwd: root, ...(input === undefined ? {} : { input }), encoding: 'utf8', timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, env: childEnv() });
   if (r.error) return { ok: false, out: '', reason: (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'timeout' : `spawn: ${r.error.message}` };
   if (r.status === 0) return { ok: true, out: r.stdout };
   const reason = r.status === 1 ? undefined : (r.stderr || '').trim().split('\n')[0] || `git exited ${r.status ?? 'on a signal'}`;
@@ -71,7 +71,7 @@ export function staleness(
 ): { states: Staleness[]; note: string | null } {
   const git = o.git ?? gitIn(root);
   const run = (args: string[], input?: string): string => {
-    const r = git([...SAFE_GIT, ...args], input);
+    const r = git(args, input);
     if (!r.ok) throw new GitFailure(r.reason ?? 'git failed');
     return r.out;
   };
@@ -80,7 +80,7 @@ export function staleness(
   const isAncestor = (x: string, y: string): boolean => {
     const k = `${x} ${y}`;
     if (!pairs.has(k)) {
-      const r = git([...SAFE_GIT, 'merge-base', '--is-ancestor', x, y]);
+      const r = git(['merge-base', '--is-ancestor', x, y]);
       if (!r.ok && (r.reason === 'timeout' || r.reason?.startsWith('spawn:'))) throw new GitFailure(r.reason);
       pairs.set(k, r.ok);
     }

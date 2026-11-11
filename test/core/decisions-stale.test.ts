@@ -5,7 +5,6 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import type { TeamDecision } from '../../src/core/decision-file.js';
 import { isStale, staleness, type Git } from '../../src/core/decisions-stale.js';
-import { SAFE_GIT } from '../../src/core/git-safe.js';
 
 const roots: string[] = [];
 afterEach(() => { while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true }); });
@@ -99,8 +98,8 @@ describe('staleness', () => {
     const spy = real(r, calls);
     const ds = [dec({ verified_at: sha }), dec({ id: '2026-11-01-b', rel: 'docs/decisions/2026-11-01-b.md', verified_at: sha })];
     staleness(r, ds, { ...O, git: spy });
-    expect(calls.filter((c) => c[SAFE_GIT.length] === 'ls-files')).toHaveLength(1);
-    expect(calls.filter((c) => c[SAFE_GIT.length] === 'diff')).toHaveLength(1);
+    expect(calls.filter((c) => c[0] === 'ls-files')).toHaveLength(1);
+    expect(calls.filter((c) => c[0] === 'diff')).toHaveLength(1);
   });
   test('a timeout on cat-file or merge-base is a git failure, not a "no"', () => {
     for (const cmd of ['cat-file', 'merge-base']) {
@@ -129,14 +128,13 @@ describe('staleness', () => {
     expect(r.note).toBeNull();
     expect(r.states[0]).toMatchObject({ dead: [], ref: '', fallback: false });
   });
-  test('every git call starts with SAFE_GIT; diff also disables ext-diff and textconv', () => {
+  test('the diff disables ext-diff and textconv (gitIn itself adds SAFE_GIT)', () => {
     const r = repo(); put(r, 'src/a.ts'); put(r, 'docs/decisions/2026-11-01-a.md'); const sha = commit(r, 'one');
     put(r, 'src/a.ts', 'y'); commit(r, 'two');
     const calls: string[][] = [];
     const spy = real(r, calls);
     staleness(r, [dec({ verified_at: sha })], { ...O, git: spy });
     expect(calls.length).toBeGreaterThan(3);
-    for (const c of calls) expect(c.slice(0, SAFE_GIT.length)).toEqual(SAFE_GIT);
-    expect(calls.find((c) => c[SAFE_GIT.length] === 'diff')).toEqual(expect.arrayContaining(['--no-ext-diff', '--no-textconv']));
+    expect(calls.find((c) => c[0] === 'diff')).toEqual(expect.arrayContaining(['--no-ext-diff', '--no-textconv']));
   });
 });

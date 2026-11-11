@@ -3,7 +3,7 @@ kind: external-skill
 title: "React Native best practices (Callstack)"
 source: {"type":"git-subdir","repo":"callstackincubator/agent-skills","path":"skills/react-native-best-practices","plugin":"react-native-best-practices","sha":"59e9d17446a248b21d86f078fcd0bd2d36db1ca4"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"frameworks":["react-native"]}
 cost: {"context":"low","setup":"low","context_tokens":80}
 stance: optional

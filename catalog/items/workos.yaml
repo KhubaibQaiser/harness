@@ -3,7 +3,7 @@ kind: plugin
 title: "WorkOS"
 source: {"type": "git-subdir", "repo": "workos/skills", "path": "plugins/workos", "plugin": "workos", "sha": "e25141bae047a7c837d93817347f95977598720f"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"any_dep": ["@workos-inc/node", "@workos-inc/authkit-nextjs"]}
 cost: {"context": "low", "setup": "low", "context_tokens": 314}
 stance: optional

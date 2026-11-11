@@ -3,7 +3,7 @@ kind: plugin
 title: "PostHog"
 source: {"type": "github", "repo": "PostHog/ai-plugin", "plugin": "posthog", "sha": "e0fbf5e742fb4242c4ea509b395b2e343642f0b7"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "1.1.67"
 applies_when: {"any_dep": ["posthog-js", "posthog-node", "posthog-react-native"]}
 cost: {"context": "high", "setup": "medium", "context_tokens": 22092}

@@ -20,7 +20,7 @@ test('every own item maps to an existing check, template or merge', () => {
   const checks = new Set<string>();
   for (const i of own) {
     expect(i.license).toBe('Apache-2.0');
-    expect(i.min_claude_code).toBe('2.1.314');
+    expect(i.min_claude_code).toBe('2.1.295');
     const s = i.source as Extract<typeof i.source, { type: 'own' }>;
     for (const c of s.checks ?? []) { expect(Object.keys(defaults().checks)).toContain(c); checks.add(c); }
     for (const f of s.files ?? []) expect(existsSync(join(packageDir('templates'), f.from))).toBe(true);

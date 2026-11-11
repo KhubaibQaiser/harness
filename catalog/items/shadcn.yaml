@@ -3,7 +3,7 @@ kind: external-skill
 title: "shadcn/ui skill"
 source: {"type":"git-subdir","repo":"shadcn-ui/ui","path":"skills/shadcn","plugin":"shadcn","sha":"4aaea19d9cff3e0908e12a8c1d504b8c5ec34610"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"any_dep":["shadcn"]}
 cost: {"context":"low","setup":"low"}
 stance: optional

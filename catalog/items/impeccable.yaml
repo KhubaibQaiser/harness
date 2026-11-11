@@ -3,7 +3,7 @@ kind: plugin
 title: "Impeccable"
 source: {"type":"git-subdir","repo":"pbakaus/impeccable","path":"plugin","plugin":"impeccable","sha":"9fadc41729c38fd47d7ae622b501558653f9d2e9"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"project_types":["web"]}
 conflicts_with: ["superdesign", "taste-skill", "ui-ux-pro-max"]
 cost: {"context":"medium","setup":"medium"}

@@ -3,7 +3,7 @@ kind: plugin
 title: "Superpowers"
 source: {"type":"github","repo":"obra/superpowers","plugin":"superpowers","sha":"2ce8aa15d05bd57213e6f746f953aafb7ded7a8b"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "7.0.1"
 applies_when: {"always":true}
 cost: {"context":"medium","setup":"low","context_tokens":739}

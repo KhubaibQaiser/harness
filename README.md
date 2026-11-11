@@ -18,7 +18,7 @@ In plain terms: with the sandbox on, the operating system enforces the guard. Wi
 
 ## Quick start
 
-You need Node 22.11 or newer, git, and Claude Code 2.1.314 or newer.
+You need Node 22.11 or newer, git, and Claude Code 2.1.295 or newer.
 
 1. **Install the plugin:**
    ```bash

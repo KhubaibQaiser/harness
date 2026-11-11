@@ -3,7 +3,7 @@ kind: plugin
 title: "Supabase (plugin with MCP)"
 source: {"type": "github", "repo": "supabase-community/supabase-plugin", "plugin": "supabase", "sha": "2c6d02d4565babe784103ee4d446a93ae9b24151"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "0.1.16"
 applies_when: {"any_dep": ["@supabase/supabase-js", "@supabase/ssr"]}
 cost: {"context": "low", "setup": "medium", "context_tokens": 426}

@@ -3,7 +3,7 @@ kind: plugin
 title: "StackHawk HawkScan (DAST)"
 source: {"type": "git-subdir", "repo": "stackhawk/agent-skills", "path": "plugins/hawkscan", "plugin": "hawkscan", "sha": "66cac9baa5883a1007575faf1b22855a1124834a"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"project_types": ["api"]}
 cost: {"context": "medium", "setup": "high", "context_tokens": 262}
 stance: optional

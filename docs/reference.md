@@ -62,7 +62,7 @@ Experimental: it has not had live review runs yet. `init` also adds a `staff-rev
 
 ## What `init` checks first
 
-Run `init` anywhere in a git repo: it installs at the repo root and prints that path. It refuses if the directory is not a git repo, if Node is older than 22.11, or if `.harness/manifest.json` already exists (use `update` then). It also stops if files it would change have uncommitted changes. `harness doctor` also fails when Claude Code is older than 2.1.314. It also notes (never fails) when the default branch is unprotected, or protected without a required check that matches a lint or test job in `.github/workflows`; it asks `gh`, and says "unknown" when `gh` is missing or signed out.
+Run `init` anywhere in a git repo: it installs at the repo root and prints that path. It refuses if the directory is not a git repo, if Node is older than 22.11, or if `.harness/manifest.json` already exists (use `update` then). It also stops if files it would change have uncommitted changes. `harness doctor` also fails when Claude Code is older than 2.1.295. It also notes (never fails) when the default branch is unprotected, or protected without a required check that matches a lint or test job in `.github/workflows`; it asks `gh`, and says "unknown" when `gh` is missing or signed out.
 
 ## What `init` changes in your repo
 

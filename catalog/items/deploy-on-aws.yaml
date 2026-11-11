@@ -3,7 +3,7 @@ kind: plugin
 title: "Deploy on AWS"
 source: {"type": "git-subdir", "repo": "awslabs/agent-plugins", "path": "plugins/deploy-on-aws", "plugin": "deploy-on-aws", "sha": "fbefb3764e67558fe10ac834dd85db49734aa9b6"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"any_dep": ["aws-cdk-lib", "aws-cdk"]}
 cost: {"context": "low", "setup": "medium", "context_tokens": 377}
 stance: optional

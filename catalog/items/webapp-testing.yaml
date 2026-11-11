@@ -3,7 +3,7 @@ kind: external-skill
 title: "Web app testing (Playwright, Anthropic skills)"
 source: {"type":"git-subdir","repo":"anthropics/skills","path":"skills/webapp-testing","plugin":"webapp-testing","sha":"ca45fc496a3436251f191354091d557da31c15b5"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"project_types":["web","landing"]}
 cost: {"context":"low","setup":"medium","context_tokens":60}
 stance: optional

@@ -92,16 +92,30 @@ const owned = (root: string, p: string): boolean => {
 };
 
 type Routes = { writes: string[]; removed: string[] };
+// The words after cp, mv, install or rsync, split into the `-t DIR` / `--target-directory[=]DIR` folder and the rest.
+function operands(ws: string[]): { target?: string; args: string[] } {
+  const o: { target?: string; args: string[] } = { args: [] };
+  for (let j = 0; j < ws.length; j++) {
+    const t = ws[j]!;
+    if (t === '-t' || t === '--target-directory') o.target = ws[++j];
+    else if (t.startsWith('--target-directory=')) o.target = t.slice('--target-directory='.length);
+    else if (/^-t./.test(t)) o.target = t.slice(2); // -tDIR
+    else if (!t.startsWith('-')) o.args.push(t);
+  }
+  return o;
+}
+
 // cp, mv, install and rsync into a directory: the files they leave there. Copying a folder's contents (`src/`, `src/.`)
-// counts as a write to the directory itself. ponytail: `-t DIR` is not read; option values count as sources (harmless).
+// counts as a write to the directory itself. ponytail: option values (install -m 644) count as sources (harmless);
+// a -t inside a cluster (-rt DIR) is not read.
 function copyRoutes(root: string, toks: string[], r: Routes): void {
   const i = toks.findIndex((t) => ['cp', 'mv', 'install', 'rsync'].includes(base(t)));
   if (i < 0) return;
-  const args = toks.slice(i + 1).filter((t) => !t.startsWith('-'));
-  if (args.length < 2) return;
-  const dest = args.pop()!;
+  const { target, args } = operands(toks.slice(i + 1));
+  if (target === undefined && args.length < 2) return;
+  const dest = target ?? args.pop()!;
   if (base(toks[i]) === 'mv') r.removed.push(...args);
-  if (!isDir(root, dest)) {
+  if (target === undefined && !isDir(root, dest)) {
     if (base(toks[i]) === 'mv') r.removed.push(dest);
     return;
   }

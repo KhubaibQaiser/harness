@@ -5,6 +5,7 @@ import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
+import { codeNames, decisionRoutes, decisionsDeny, globHits } from './decisions-protect.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
@@ -323,10 +324,7 @@ function globNamesProtected(ws: string[]): boolean {
     return w.split(/[\\/]/).some((c) => /[*?[]/.test(c) && ['.harness', '.claude'].some((n) => m(c)(n))) || PROTECTED_CONCRETE.some((p) => m(w.replace(/^\.\//, ''))(p));
   });
 }
-const isProtectedGlob = (root: string, t: string): boolean => {
-  const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
-  return !!rel && PROTECTED_CONCRETE.some((c) => picomatch(rel, { dot: true })(c));
-};
+const isProtectedGlob = (root: string, t: string): boolean => globHits(root, t, PROTECTED_CONCRETE);
 // Whole-tree pathspecs restore .harness and .claude too: ".", ":/", the root, or any ancestor of it.
 // `path` is a test seam for Windows (backslashes, `..`, drive letters, case-insensitive compare).
 export const isWholeTree = (root: string, t: string, path: typeof nodePath = nodePath): boolean => {
@@ -374,15 +372,21 @@ export const protect: Check = {
       if (code.some((c) => H_SEG.test(c))) return { kind: 'deny', reason: H_INLINE, check: 'protect' };
       const cmds = expand(cmd);
       const mc = moveCopyTargets(cmds);
-      const removed = [...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv];
+      const rmT = cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets));
+      const removed = [...rmT, ...mc.mv];
       const git = gitRestoreTargets(cmds);
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       paths = [...new Set([...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)])]; // once each: every check of one touches the disk (re-review 22b, F4)
+      // Decisions: the directory routes (cp into a folder, tar -C, find -delete) and git restores replace what is under them.
+      const dr = decisionRoutes(root, cmds.flatMap(segTokens)), names = codeNames(code);
+      const dd = decisionsDeny(root, config, [...paths, ...dr.writes, ...names], [...rmT, ...dr.removed, ...git, ...names]);
+      if (dd) return dd;
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(cmd);
       if (!paths.some((p) => p && isProtected(root, p))) return built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
     }
+    if (target !== null) { const dd = decisionsDeny(root, config, [target], []); if (dd) return dd; }
     return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };
   },
 };

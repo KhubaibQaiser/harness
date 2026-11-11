@@ -123,7 +123,7 @@ const QUOTE_LOG = 'remember: quotes tool output'; // the excerpt never reaches t
 const quoteIn = (ctx: Ctx, sub: string, f: Flags): string | null => {
   if (sub !== 'add') return null;
   const q = findQuote({ '--title': one(f, '--title'), '--rule': one(f, '--rule'), '--why': one(f, '--why') }, ctx.input.transcript_path);
-  return q && shown(q.excerpt);
+  return q && shown(q.excerpt).replaceAll('"', "'"); // a " inside would read as the end of the ("…") wrapper
 };
 
 /** The guard's decision on a command that runs `harness remember` and needs the person: §6.1 steps 1 to 4, with

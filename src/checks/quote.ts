@@ -6,8 +6,9 @@ export const QUOTE_WORDS = 8;
 export const UNREADABLE = "transcript unreadable, so harness can't check";
 const URL = /\bhttps?:\/\/\S*/i;
 
-/** Lowercase, NFKC, no zero-width (format) characters, every run of non-letters-or-digits one space. */
-export const normalise = (s: string): string => s.normalize('NFKC').toLowerCase().replace(/\p{Cf}/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+/** Lowercase, NFKC, no zero-width (format) characters, every run of non-letters-or-digits one space. Final sigma
+ *  folds to σ: toLowerCase picks ς from the context, which differs between a draft span and the whole text. */
+export const normalise = (s: string): string => s.normalize('NFKC').toLowerCase().replace(/ς/g, 'σ').replace(/\p{Cf}/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
 const words = (s: string): string[] => normalise(s).split(' ').filter(Boolean);
 const WORDISH = /[\p{L}\p{N}\p{M}\p{Cf}]/u;
@@ -15,7 +16,7 @@ const ALNUM = /[\p{L}\p{N}]/u;
 
 /** The draft's normalised words, each with the span of the original text it came from, so an excerpt can show the
  *  draft as written. A character is part of a word when it is one, or normalises to one (a circled letter). */
-function draftWords(text: string): { w: string; from: number; to: number }[] {
+export function draftWords(text: string): { w: string; from: number; to: number }[] {
   const out: { w: string; from: number; to: number }[] = [];
   let from = -1, i = 0;
   const flush = (to: number) => {

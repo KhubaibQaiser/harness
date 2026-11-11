@@ -409,3 +409,28 @@ test('state card: with a notice present, its own systemMessage is the only one',
   const o = JSON.parse(await dispatch(start(r, 'compact'), [...registry, notice], {}));
   expect(o.systemMessage).toBe('seen by person');
 });
+
+test('harness remember: unattended, the ask is denied and one redacted decision-candidate is logged; the log holds no field text', async () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-rem-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: true\n');
+  const token = `ghp_${'a1'.repeat(18)}`;
+  const bash = (command: string) => pre({ cwd: r, tool_name: 'Bash', tool_input: { command } });
+  const id = `${new Date().toISOString().slice(0, 10)}-keep-it-short`;
+  const add = 'harness remember add --title "Keep it short" --rule "Short rules" --why "Readers skim" --path src/a.ts';
+  expect(decisionOf(await dispatch(bash(add), registry, {}))).toBe('ask');
+  expect(readEvents(r).filter((e) => e.decision === 'ask').map((e) => e.reason)).toEqual([`remember add ${id}`]);
+
+  const un = await dispatch(bash(add), registry, { CI: 'true' });
+  expect(decisionOf(un)).toBe('deny');
+  expect(out(un).hookSpecificOutput?.permissionDecisionReason).toMatch(/^Unattended run: Confirm: the agent wants to save a team decision/);
+  expect(readEvents(r).filter((e) => e.decision === 'decision-candidate').map((e) => e.reason)).toEqual(['Keep it short | Short rules']);
+
+  const res = await dispatch(bash(add.replace('Short rules', `Short rules ${token}`)), registry, { CI: 'true' });
+  expect(decisionOf(res)).toBe('deny');
+  const ev = readEvents(r);
+  expect(ev.filter((e) => e.decision === 'decision-candidate').map((e) => e.reason)).toEqual(['Keep it short | Short rules', 'Keep it short | Short rules [redacted]']);
+  expect(ev.filter((e) => e.decision === 'deny').map((e) => e.reason)).toEqual([`remember add ${id}`, 'remember: secret (GitHub token)']);
+  expect(JSON.stringify(ev)).not.toContain(token);
+  expect(JSON.stringify(ev)).not.toContain('Readers skim');
+});

@@ -5,6 +5,7 @@ import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
+import { codeNames, decisionsDeny } from './decisions-protect.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
@@ -379,10 +380,13 @@ export const protect: Check = {
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       paths = [...new Set([...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)])]; // once each: every check of one touches the disk (re-review 22b, F4)
+      const dd = decisionsDeny(root, config, [...paths, ...codeNames(code)], removed);
+      if (dd) return dd;
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(cmd);
       if (!paths.some((p) => p && isProtected(root, p))) return built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
     }
+    if (target !== null) { const dd = decisionsDeny(root, config, [target], []); if (dd) return dd; }
     return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };
   },
 };

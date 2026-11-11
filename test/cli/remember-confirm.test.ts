@@ -152,3 +152,21 @@ for (const sub of ['confirm', 'retire']) {
     expect(read(root, A).status).toBe(sub === 'confirm' ? 'active' : 'retired');
   });
 }
+
+for (const sub of ['confirm', 'retire']) {
+  test(`${sub}: a foreign file at the decision's own rule path stops it, untouched`, async () => {
+    const root = await repo();
+    const mp = join(root, '.harness/manifest.json');
+    const m = JSON.parse(readFileSync(mp, 'utf8'));
+    m.files = m.files.filter((f: { rel: string }) => f.rel !== ruleOf(A));
+    writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+    writeFileSync(join(root, ruleOf(A)), 'mine\n');
+    const before = readFileSync(join(root, rel(A)), 'utf8');
+    const manifest = readFileSync(mp, 'utf8');
+    expect(await go(root, [sub, A, '--yes'])).toEqual({ code: 1, out: `harness remember: ${ruleOf(A)} is not harness's; rename it` });
+    expect(readFileSync(join(root, ruleOf(A)), 'utf8')).toBe('mine\n');
+    expect(readFileSync(join(root, rel(A)), 'utf8')).toBe(before);
+    expect(readFileSync(mp, 'utf8')).toBe(manifest);
+    expect(events(root).at(-1)).toMatchObject({ decision: 'refused', reason: 'foreign' });
+  });
+}

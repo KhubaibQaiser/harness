@@ -643,6 +643,6 @@ CI runs the tests on macOS and Windows with Node 22, plus Linux jobs for gitleak
 
 ## Roadmap
 
-Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Coming next:
-- an opt-in personal preset of working rules and stack skills;
+Shipped in 0.2.0-beta.1: per-project recommendations from a pinned catalog. Shipped in 0.2.0-beta.2: the opt-in personal preset, the context budget, the usage report, PR size checks and team decisions. Coming next:
+- quote detection for team decisions;
 - memory, the PR reviewer, and TDD for other languages.

@@ -23,6 +23,16 @@ test('installPlugins without claude reports every id', () => {
   expect(r.failed.map((f) => f.message)).toEqual(['Claude Code CLI not found on PATH', 'Claude Code CLI not found on PATH']);
 });
 
+// Claude Code 2.1.322's real words when a shell install runs before any trusted session registered the project's marketplace
+// (live check A1, 2026-11-12): the marketplace is named after "not found", so the old pattern missed it.
+test('the real 2.1.322 not-found-in-marketplace message gives the restart message', () => {
+  const message = 'Plugin \\"code-simplifier\\" not found in marketplace \\"harness-pins\\". Your local copy may be out of date — try `claude plugin marketplace update harness-pins`.';
+  const r = installPlugins(['code-simplifier@harness-pins'], () => ({ status: 1, stdout: `{"command":"install","outcome":"failed","message":"${message}","failureCode":"not_found"}` }));
+  expect(r.failed[0].message).toBe("Claude Code hasn't registered `harness-pins` yet. Restart Claude Code in this folder (trust it if asked), then run /harness:sync.");
+  const other = installPlugins(['x@other'], () => ({ status: 1, stdout: '{"command":"install","outcome":"failed","message":"Plugin \\"x\\" not found in marketplace \\"other\\"."}' }));
+  expect(other.failed[0].message).toBe('Plugin \\"x\\" not found in marketplace \\"other\\".'); // esc() escapes the CLI's quotes
+});
+
 test('marketplace not registered gives the restart message', () => {
   const r = installPlugins(['a@harness-pins'], () => ({ status: 1, stdout: '{"command":"install","outcome":"failed","message":"Marketplace harness-pins not found"}' }));
   expect(r.failed[0].message).toBe("Claude Code hasn't registered `harness-pins` yet. Restart Claude Code in this folder (trust it if asked), then run /harness:sync.");

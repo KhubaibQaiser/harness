@@ -28,7 +28,7 @@ async function runOne(c: Check, ctx: Ctx): Promise<Decision | null> {
 function resolveAsk(d: AskDecision, event: HookEvent, unattended: boolean, log: Log): Exclude<Decision, { kind: 'allow' }> | null {
   if (event === 'Stop') return { kind: 'block', reason: d.reason, check: d.check };
   if (event !== 'PreToolUse') {
-    log(d.check, 'ask-ignored', d.reason);
+    log(d.check, 'ask-ignored', d.log || d.reason);
     return null;
   }
   return unattended ? { kind: 'deny', reason: `Unattended run: ${d.reason}`, check: d.check, ...(d.log ? { log: d.log } : {}) } : d;

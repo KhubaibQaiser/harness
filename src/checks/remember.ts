@@ -1,5 +1,6 @@
-// The guard's ask for `harness remember` (team-decisions spec §6.1). The person reads the decision text in the ask, so
-// that text must be what the shell passes on: no expansion, substitution or stdin. Field text never reaches the log.
+// The guard's ask for `harness remember` (team-decisions spec §6.1). An allowlist: the person approves exactly the
+// text the CLI writes, so the command must be one plain invocation whose words the shell passes on unchanged.
+// Field text never reaches the log.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DECISIONS_DIR, shown, slugId } from '../core/decision-file.js';
@@ -7,90 +8,85 @@ import { ruleRel } from '../core/decision-rule.js';
 import { gitIn } from '../core/decisions-stale.js';
 import { planSync, readDecisions } from '../core/decisions.js';
 import { appendEvent } from '../core/events.js';
+import { type Flags, parseRemember } from '../core/remember-args.js';
 import { redactSecrets, scanSecrets } from '../core/secrets.js';
-import { cPayloads, pieces, unquote, words } from '../core/shell-words.js';
 import type { Ctx } from '../hooks/check.js';
 import type { Decision } from '../hooks/types.js';
-import { commandStart } from './guard.js';
 
 export const REMEMBER_WHY = 'the agent is saving a team decision';
+export const NOT_LITERAL = 'Blocked by guard: harness remember needs its text as plain quoted words, so the person sees exactly what is written. Remove $, backticks and substitutions.';
+export const NOT_PLAIN = 'Blocked by guard: write harness remember as one plain command, with nothing before or after it. Run it without pipes, redirections or other commands.';
+export const REFUSED = 'Blocked by guard: harness remember would refuse these arguments (run harness remember --help), so there is nothing to approve.';
 type Result = Extract<Decision, { kind: 'deny' | 'ask' }>;
 
-const NOT_LITERAL = 'Blocked by guard: harness remember needs its text as plain quoted words, so the person sees exactly what is written. Remove $, backticks and substitutions.';
-const VALUED = new Set(['--title', '--rule', '--why', '--path', '--supersedes', '--by']);
-const HARNESS = /(^|\/)harness(@\S+)?(\.(cmd|ps1|bat|exe))?$|(^|\/)cli\.m?js$/i;
 const ID = /^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$/;
-const MAX_DEPTH = 3;
+const PLUGIN_CLI = 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" '; // the skill's form: the one expansion allowed
+const UNQUOTED = /[\w@+:,./-]/; // ASCII only: no glob, ~, $, quote, backslash or Unicode space
+const SHAPE = /[;&|<>()#\n\r]/; // another command, a redirection, a subshell or a comment
+const IN_QUOTES_BAD = /[$`~]|[^\S ]/u; // anywhere, single quotes too (§6.1); a tab or Unicode space looks like a space
+const deny = (reason: string, log: string): Result => ({ kind: 'deny', reason, check: 'guard', log });
 
-/** One `harness remember` invocation: its words after `remember` as written, and whether stdin or a substitution feeds it. */
-interface Raw { words: string[]; fed: boolean }
-
-/** Every `harness remember` segment, in the command and in the -c payloads it runs. */
-function invocations(text: string, depth = 0): Raw[] {
-  const out: Raw[] = [];
-  const ps = pieces(text);
-  ps.forEach((p, i) => {
-    const ws = words(p.text);
-    const plain = ws.map(unquote);
-    const k = commandStart(plain);
-    if (!HARNESS.test(plain[k] ?? '') || plain[k + 1] !== 'remember') return;
-    // Piped into it, or a `$(`, `<(` or backtick right after it: the shell supplies some of its words.
-    out.push({ words: ws.slice(k + 2), fed: /^\|/.test(ps[i - 1]?.sep ?? '') || /^[(`]$/.test(p.sep) });
-  });
-  if (depth < MAX_DEPTH) for (const c of cPayloads(text)) out.push(...invocations(c, depth + 1));
+/** The command's words as the shell passes them on, or why it is not one plain line of literal words. */
+function lex(cmd: string): string[] | 'shape' | 'literal' {
+  if (/[<>]\(/.test(cmd)) return 'literal'; // process substitution: §6.1 names it with $( and backticks
+  const out: string[] = [];
+  let cur: string | null = null, quote = '';
+  for (const c of cmd) {
+    if (quote) {
+      if (c === quote) quote = '';
+      else if (c === '\n' || c === '\r') return 'shape';
+      else if (IN_QUOTES_BAD.test(c) || (quote === '"' && c === '\\')) return 'literal';
+      else cur += c;
+    } else if (c === ' ') {
+      if (cur !== null) out.push(cur);
+      cur = null;
+    } else if (c === '"' || c === "'") [quote, cur] = [c, cur ?? ''];
+    else if (UNQUOTED.test(c) || (c === '=' && cur !== null)) cur = (cur ?? '') + c; // zsh expands a leading unquoted =
+    else return SHAPE.test(c) ? 'shape' : 'literal';
+  }
+  if (quote) return 'literal';
+  if (cur !== null) out.push(cur);
   return out;
 }
 
-/** The characters of a word that are outside quotes (an escaped character counts as quoted). */
-function unquotedPart(w: string): string {
-  let out = '', quote = '';
-  for (let i = 0; i < w.length; i++) {
-    const c = w[i]!;
-    if (quote) { if (c === quote) quote = ''; }
-    else if (c === '"' || c === "'") quote = c;
-    else if (c === '\\') i++;
-    else out += c;
-  }
-  return out;
+/** The words after `remember`, when the whole command is `<harness> remember …` with one of the prefixes the skills
+ *  and docs use; else why not. */
+function invocation(command: string): string[] | 'shape' | 'literal' {
+  const plugin = command.startsWith(PLUGIN_CLI);
+  const ws = lex(plugin ? command.slice(PLUGIN_CLI.length) : command);
+  if (typeof ws === 'string') return ws;
+  let i = plugin ? 0 : -1;
+  if (ws[0] === 'harness') i = 1;
+  else if (ws[0] === 'npx') {
+    const j = ws[1] === '--no-install' ? 2 : 1;
+    if (/^@khubaibqaiser\/harness(@[\w.+-]+)?$/.test(ws[j] ?? '')) i = j + 1;
+  } else if (ws[0] === 'node' && /^([\w@+:,. /-]*\/)?dist\/cli\.mjs$/.test(ws[1] ?? '')) i = 2;
+  return i >= 0 && ws[i] === 'remember' ? ws.slice(i + 1) : 'shape';
 }
 
-const literal = (r: Raw): boolean =>
-  !r.fed && r.words.every((w) => !/[$`]/.test(w) && !/^[<@]/.test(w) && !/[*?[\]{}<>]|^[~#]/.test(unquotedPart(w)));
+const one = (f: Flags, k: string): string => f.values.get(k)?.[0] ?? '';
+const ask = (reason: string, log: string): Result => ({ kind: 'ask', reason, check: 'guard', log });
+const idLog = (sub: string, id: string) => `remember ${sub}${ID.test(id) ? ` ${id}` : ''}`;
 
-interface Parsed { sub: string; values: Map<string, string[]>; rest: string[] }
-function parse(ws: string[]): Parsed {
-  const [sub = '', ...args] = ws.map(unquote);
-  const p: Parsed = { sub, values: new Map(), rest: [] };
-  for (let i = 0; i < args.length; i++) {
-    if (VALUED.has(args[i]!) && i + 1 < args.length) p.values.set(args[i]!, [...(p.values.get(args[i]!) ?? []), args[++i]!]);
-    else if (!args[i]!.startsWith('-')) p.rest.push(args[i]!);
-  }
-  return p;
-}
-const one = (p: Parsed, k: string): string => p.values.get(k)?.[0] ?? '';
-
-function secretIn(p: Parsed): string | null {
-  const fields: [string, string][] = [...[...p.values].flatMap(([k, vs]) => vs.map((v): [string, string] => [k, v])), ...p.rest.map((v): [string, string] => ['the id', v])];
+function secretIn(f: Flags): string | null {
+  const fields: [string, string][] = [...[...f.values].flatMap(([k, vs]) => vs.map((v): [string, string] => [k, v])), ...f.rest.map((v): [string, string] => ['the id', v])];
   for (const [name, text] of fields) {
     const hit = scanSecrets(text)[0];
-    if (hit) return hit.kind + '\0' + name;
+    if (hit) return `Blocked by guard: this decision looks like it holds a secret (${hit.kind} in ${name}). Decisions are committed to git. Remove it.\0remember: secret (${hit.kind})`;
   }
   return null;
 }
 
-const ask = (reason: string, log: string): Result => ({ kind: 'ask', reason, check: 'guard', log });
-const idLog = (sub: string, id: string) => `remember ${sub}${ID.test(id) ? ` ${id}` : ''}`;
-
-function addAsk(ctx: Ctx, p: Parsed, today: string): Result {
-  const title = one(p, '--title');
+function addAsk(ctx: Ctx, f: Flags, today: string): Result {
+  const title = one(f, '--title');
   const id = slugId(title, today, (x) => existsSync(join(ctx.root, DECISIONS_DIR, `${x}.md`)));
-  const why = one(p, '--why');
+  const why = one(f, '--why');
   const text = [
     `Confirm: the agent wants to save a team decision to ${DECISIONS_DIR}/${id}.md.`,
     `Title: ${shown(title)}.`,
-    `Rule: ${shown(one(p, '--rule'))}.`,
+    `Rule: ${shown(one(f, '--rule'))}.`,
     ...(why ? [`Why: ${shown(why)}.`] : []),
-    `Paths: ${(p.values.get('--path') ?? []).map(shown).join(', ')}.`,
+    `Paths: ${(f.values.get('--path') ?? []).map(shown).join(', ')}.`,
     'Once merged it loads for every teammate whose session touches those paths. Approve to write the files (nothing is committed).',
   ];
   return ask(text.join(' '), `remember add ${id}`);
@@ -119,35 +115,29 @@ function syncAsk(ctx: Ctx, today: string): Result {
   return ask(`Confirm: the agent wants to sync the team decision rules. ${what}`, 'remember sync');
 }
 
-function judge(ctx: Ctx, r: Raw, today: string): Result {
-  if (!literal(r)) return { kind: 'deny', reason: NOT_LITERAL, check: 'guard', log: 'remember: not literal' };
-  const p = parse(r.words);
-  if (ctx.unattended && p.sub === 'add') {
-    const reason = `${redactSecrets(one(p, '--title'))} | ${redactSecrets(one(p, '--rule'))}`;
-    appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'remember', decision: 'decision-candidate', reason });
-  }
-  const secret = secretIn(p);
-  if (secret) {
-    const [kind, field] = secret.split('\0');
-    return { kind: 'deny', reason: `Blocked by guard: this decision looks like it holds a secret (${kind} in ${field}). Decisions are committed to git. Remove it.`, check: 'guard', log: `remember: secret (${kind})` };
-  }
-  const quote = quoteHit(); // Task 10 fills this in
-  if (quote) return quote;
-  if (p.sub === 'add') return addAsk(ctx, p, today);
-  if (p.sub === 'confirm') return confirmAsk(ctx, p.rest[0] ?? '');
-  if (p.sub === 'retire') return retireAsk(p.rest[0] ?? '', one(p, '--by'));
-  if (p.sub === 'sync') return syncAsk(ctx, today);
-  return ask(`Confirm: ${REMEMBER_WHY}`, `remember ${p.sub === 'list' || p.sub === 'check' ? p.sub : ''}`.trim());
-}
-
 /** Quote detection (§7.1) lands in Task 10; until then nothing counts as a quote. */
 const quoteHit = (): Result | null => null;
 
-/** The guard's decision on a command it found running `harness remember` without a read-only form: §6.1 steps 1 to 4. */
+/** The guard's decision on a command that runs `harness remember` and needs the person: §6.1 steps 1 to 4, with
+ *  every shape but one plain invocation denied. */
 export function rememberAsk(ctx: Ctx, command: string, now: Date = new Date()): Exclude<Decision, { kind: 'allow' }> {
   const today = now.toISOString().slice(0, 10);
-  const found = invocations(command);
-  if (!found.length) return { kind: 'deny', reason: NOT_LITERAL, check: 'guard', log: 'remember: not literal' }; // the guard saw one; this reader can't
-  const results = found.map((r) => judge(ctx, r, today));
-  return results.find((d) => d.kind === 'deny') ?? results.find((d) => d.log !== 'remember list' && d.log !== 'remember check') ?? results[0]!;
+  const words = invocation(command.replace(/^ +| +$/g, ''));
+  if (words === 'shape') return deny(NOT_PLAIN, 'remember: not one plain command');
+  if (words === 'literal') return deny(NOT_LITERAL, 'remember: not literal');
+  const p = parseRemember(words);
+  if (!p) return deny(REFUSED, 'remember: refused');
+  const { sub, flags: f } = p;
+  if (ctx.unattended && sub === 'add') {
+    const reason = `${redactSecrets(one(f, '--title'))} | ${redactSecrets(one(f, '--rule'))}`;
+    appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'remember', decision: 'decision-candidate', reason });
+  }
+  const secret = secretIn(f);
+  if (secret) return deny(...(secret.split('\0') as [string, string]));
+  const quote = quoteHit(); // Task 10 fills this in
+  if (quote) return quote;
+  if (sub === 'add') return addAsk(ctx, f, today);
+  if (sub === 'confirm') return confirmAsk(ctx, f.rest[0]!);
+  if (sub === 'retire') return retireAsk(f.rest[0]!, one(f, '--by'));
+  return syncAsk(ctx, today);
 }

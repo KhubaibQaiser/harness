@@ -4,11 +4,10 @@ import picomatch from 'picomatch';
 import { childEnv } from '../budget/count-api.js';
 import { DECISIONS_DIR, type TeamDecision } from './decision-file.js';
 import { renderRule } from './decision-rule.js';
+import { SAFE_DIFF, SAFE_GIT } from './git-safe.js';
 
 export const GIT_TIMEOUT_MS = 2000;
 const MAX_BUFFER = 64 * 1024 * 1024;
-// A cloned repo's own config must not make these read-only calls run a program.
-const SAFE = ['-c', 'core.fsmonitor=false'];
 const DAY_MS = 86_400_000;
 
 /** `ok` is exit 0. `reason` is set for a failure: `timeout`, `spawn: <msg>`, or git's stderr line for exit above 1. Exit 1 has none. */
@@ -27,7 +26,7 @@ export interface Staleness {
 export const isStale = (s: Staleness): boolean => s.dead.length > 0 || s.changed.length > 0;
 
 export const gitIn = (root: string): Git => (args, input) => {
-  const r = spawnSync('git', args, { cwd: root, ...(input === undefined ? {} : { input }), encoding: 'utf8', timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, env: childEnv() });
+  const r = spawnSync('git', args, { cwd: root, ...(input === undefined ? {} : { input }), encoding: 'utf8', timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, env: childEnv() }); // callers prepend SAFE_GIT (it shows in the injected Git)
   if (r.error) return { ok: false, out: '', reason: (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'timeout' : `spawn: ${r.error.message}` };
   if (r.status === 0) return { ok: true, out: r.stdout };
   const reason = r.status === 1 ? undefined : (r.stderr || '').trim().split('\n')[0] || `git exited ${r.status ?? 'on a signal'}`;
@@ -72,7 +71,7 @@ export function staleness(
 ): { states: Staleness[]; note: string | null } {
   const git = o.git ?? gitIn(root);
   const run = (args: string[], input?: string): string => {
-    const r = git([...SAFE, ...args], input);
+    const r = git([...SAFE_GIT, ...args], input);
     if (!r.ok) throw new GitFailure(r.reason ?? 'git failed');
     return r.out;
   };
@@ -81,7 +80,7 @@ export function staleness(
   const isAncestor = (x: string, y: string): boolean => {
     const k = `${x} ${y}`;
     if (!pairs.has(k)) {
-      const r = git([...SAFE, 'merge-base', '--is-ancestor', x, y]);
+      const r = git([...SAFE_GIT, 'merge-base', '--is-ancestor', x, y]);
       if (!r.ok && (r.reason === 'timeout' || r.reason?.startsWith('spawn:'))) throw new GitFailure(r.reason);
       pairs.set(k, r.ok);
     }
@@ -108,7 +107,7 @@ export function staleness(
       const { ref, fallback } = pickRef(isAncestor, here, last.get(d.rel) ?? '', d);
       Object.assign(s, { ref, fallback });
       if (!ref) return;
-      if (!diffs.has(ref)) diffs.set(ref, names(run(['diff', '--no-ext-diff', '--no-textconv', '--name-only', '-z', ref, 'HEAD'])));
+      if (!diffs.has(ref)) diffs.set(ref, names(run(['diff', ...SAFE_DIFF, '--name-only', '-z', ref, 'HEAD'])));
       s.changed = diffs.get(ref)!.filter((f) => f !== d.rel && match.some((m) => m(f)));
     });
     return { states, note: null };

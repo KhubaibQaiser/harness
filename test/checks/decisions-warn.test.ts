@@ -9,6 +9,7 @@ import { readState, type SessionState } from '../../src/core/state.js';
 import type { Ctx } from '../../src/hooks/check.js';
 import type { Git } from '../../src/core/decisions-stale.js';
 import { decision, installedRepo, syncNow, writeDecision } from '../core/decisions-helpers.js';
+import { SAFE_GIT } from '../../src/core/git-safe.js';
 
 const today = new Date().toISOString().slice(0, 10);
 // An attended env: CI, HARNESS_UNATTENDED and CLAUDE_CODE_REMOTE are absent (CI sets CI=true).
@@ -21,7 +22,7 @@ const mk = (root: string, state: Partial<SessionState> = {}, unattended = false)
   return ctx;
 };
 const fake = (files = ['src/env/a.ts', 'src/other/b.ts']): Git => (args) => {
-  const cmd = args[2];
+  const cmd = args[SAFE_GIT.length];
   if (cmd === 'ls-files') return { ok: true, out: files.join('\0') + '\0' };
   if (cmd === 'log') return { ok: true, out: 'abc\n' };
   return { ok: true, out: '' };

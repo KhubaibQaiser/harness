@@ -8,6 +8,7 @@ type PlatformPath = typeof nodePath;
 import { defaultExec } from '../core/exec.js';
 import { childEnv } from './count-api.js';
 import { MAX_FILE_BYTES, fenceAfter, lf, stripComments } from './text.js';
+import { SAFE_GIT } from '../core/git-safe.js';
 
 export const MAX_HOPS = 4;
 /** Files kept per expansion call. Claude Code has no such cap; hitting it is reported as a `cap` skip, never silent. */
@@ -38,7 +39,7 @@ export const realIO: RepoIO = {
     try { const st = statSync(abs); return st.isFile() ? st.size : null; } catch { return null; }
   },
   lsFiles(root) {
-    const r = defaultExec('git', ['-C', root, 'ls-files', '-z'], { timeoutMs: LS_FILES_MS, env: childEnv() });
+    const r = defaultExec('git', [...SAFE_GIT, '-C', root, 'ls-files', '-z'], { timeoutMs: LS_FILES_MS, env: childEnv() });
     return r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null;
   },
   real(abs) {

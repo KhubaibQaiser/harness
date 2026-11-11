@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { type Git, headBranch, isOver, measure, realGit, type SizeConfig } from '../../../src/checks/pr-size/measure.js';
 import { defaults } from '../../../src/core/config.js';
 import { makeRepo } from '../../install/helpers.js';
+import { SAFE_DIFF } from '../../../src/core/git-safe.js';
 
 vi.mock('node:child_process', async (orig) => {
   const real = await orig<typeof import('node:child_process')>();
@@ -223,8 +224,8 @@ describe('failures', () => {
     const { calls, g } = fakeGit({ status: 0, stdout: 'sha1\n' });
     measure('/x', { base: 'main', head: 'feat' }, cfg(), { git: g });
     expect(calls.slice(-2)).toEqual([
-      ['-c', 'core.quotePath=false', 'diff', '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', 'sha1...sha1'],
-      ['-c', 'core.quotePath=false', 'diff', '--name-status', '-z', '--diff-filter=D', '--no-ext-diff', 'sha1...sha1'],
+      ['-c', 'core.quotePath=false', 'diff', '--numstat', '-z', '-M', ...SAFE_DIFF, 'sha1...sha1'],
+      ['-c', 'core.quotePath=false', 'diff', '--name-status', '-z', '--diff-filter=D', ...SAFE_DIFF, 'sha1...sha1'],
     ]);
   });
 });

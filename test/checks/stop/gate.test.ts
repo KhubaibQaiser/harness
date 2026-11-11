@@ -33,7 +33,7 @@ const setup = (o: Opts = {}) => {
   const calls: { cmd: string; args: string[]; ms: number }[] = [];
   const exec = (porcelain: string, fail = '', timeout = '', committed = ''): Exec => (cmd, args, ms) => {
     calls.push({ cmd, args, ms });
-    if (cmd === 'git') return { status: 0, output: args[0] === 'diff' ? committed : porcelain, timedOut: false };
+    if (cmd === 'git') return { status: 0, output: args.includes('diff') ? committed : porcelain, timedOut: false };
     if (args[1] === timeout) return { status: null, output: '', timedOut: true };
     return args[1] === fail ? { status: 1, output: `boom in ${fail}`, timedOut: false } : { status: 0, output: '', timedOut: false };
   };
@@ -41,6 +41,7 @@ const setup = (o: Opts = {}) => {
   return { root, ctx, calls, exec, steps, saved };
 };
 import { mkdirSync } from 'node:fs';
+import { SAFE_DIFF, SAFE_GIT } from '../../../src/core/git-safe.js';
 const require_mkdir = (root: string) => mkdirSync(join(root, '.harness'), { recursive: true });
 const SRC = ' M src/a.ts\0';
 
@@ -61,7 +62,7 @@ test('all steps pass: runs in order via the package manager, allows, resets atte
   expect(await runStop(s.ctx, s.exec(SRC))).toEqual({ kind: 'allow' });
   expect(s.steps()).toEqual(ALL);
   expect(s.calls[1]).toMatchObject({ cmd: 'pnpm', args: ['run', 'format:check'] });
-  expect(s.calls[0]).toMatchObject({ cmd: 'git', args: ['status', '--porcelain', '-z'] });
+  expect(s.calls[0]).toMatchObject({ cmd: 'git', args: [...SAFE_GIT, 'status', '--porcelain', '-z'] });
   expect(s.saved.at(-1)).toBe(0);
 });
 
@@ -185,7 +186,7 @@ test('failed or timed-out git status fails closed: steps run and stop-diff-faile
     for (const baseHead of [undefined, 'abc']) {
       const s = setup({ baseHead });
       const base = s.exec('');
-      expect(await runStop(s.ctx, (cmd, args, ms) => (cmd === 'git' && args[0] === 'status' ? bad : base(cmd, args, ms)))).toEqual({ kind: 'allow' });
+      expect(await runStop(s.ctx, (cmd, args, ms) => (cmd === 'git' && args.includes('status') ? bad : base(cmd, args, ms)))).toEqual({ kind: 'allow' });
       expect(s.steps()).toEqual(ALL);
       expect(readEvents(s.root)).toMatchObject([{ check: 'stop', decision: 'stop-diff-failed', reason: 'git status failed' }]);
     }
@@ -196,14 +197,14 @@ test('committed code change on a clean tree runs the steps; committed docs only 
   const a = setup({ baseHead: 'abc' });
   await runStop(a.ctx, a.exec('', '', '', 'src/a.ts\0README.md\0'));
   expect(a.steps()).toEqual(ALL);
-  expect(a.calls.find((c) => c.args[0] === 'diff')?.args).toEqual(['diff', '--name-only', '-z', 'abc', 'HEAD']);
+  expect(a.calls.find((c) => c.args.includes('diff'))?.args).toEqual([...SAFE_GIT, 'diff', ...SAFE_DIFF, '--name-only', '-z', 'abc', 'HEAD']);
   const b = setup({ baseHead: 'abc' });
   await runStop(b.ctx, b.exec('', '', '', 'README.md\0docs/x.ts\0'));
   expect(b.steps()).toEqual([]);
   const c = setup();
   await runStop(c.ctx, c.exec('', '', '', 'src/a.ts\0'));
   expect(c.steps()).toEqual([]);
-  expect(c.calls.some((x) => x.args[0] === 'diff')).toBe(false);
+  expect(c.calls.some((x) => x.args.includes('diff'))).toBe(false);
 });
 
 test('coverage hook point: called after steps pass only when checks.tdd (nothing in tdd.paths allows)', async () => {
@@ -215,7 +216,7 @@ test('diff failure or timeout fails closed: steps run and stop-diff-failed is lo
   for (const bad of [{ status: 128, output: 'fatal', timedOut: false }, { status: null, output: '', timedOut: true }]) {
     const s = setup({ baseHead: 'abc' });
     const base = s.exec('');
-    await runStop(s.ctx, (cmd, args, ms) => (args[0] === 'diff' ? bad : base(cmd, args, ms)));
+    await runStop(s.ctx, (cmd, args, ms) => (args.includes('diff') ? bad : base(cmd, args, ms)));
     expect(s.steps()).toEqual(ALL);
     expect(readEvents(s.root)).toMatchObject([{ check: 'stop', decision: 'stop-diff-failed' }]);
   }
@@ -226,7 +227,7 @@ test('git calls get a fixed 5 s timeout and do not eat the step budget', async (
   let t = 0;
   const base = s.exec('');
   const exec: Exec = (cmd, args, ms) => {
-    if (args[0] === 'diff') {
+    if (args.includes('diff')) {
       s.calls.push({ cmd, args, ms });
       t += 5000;
       return { status: null, output: '', timedOut: true };
@@ -287,7 +288,7 @@ test('git status parsed with -z: rename keeps the new path, odd names stay code'
   const b = setup();
   await runStop(b.ctx, b.exec(' M docs/x.md\0 M a "b".ts\0'));
   expect(b.steps()).toEqual(ALL);
-  expect(b.calls[0].args).toEqual(['status', '--porcelain', '-z']);
+  expect(b.calls[0].args).toEqual([...SAFE_GIT, 'status', '--porcelain', '-z']);
 });
 
 test('stop-no-git logged once per session', async () => {
@@ -304,7 +305,7 @@ test('stop-no-git logged once per session', async () => {
 test('git status failure in a repo logs stop-diff-failed each time', async () => {
   const s = setup();
   const base = s.exec('');
-  const exec: Exec = (cmd, args, ms) => (cmd === 'git' && args[0] === 'status' ? { status: 128, output: 'fatal', timedOut: false } : base(cmd, args, ms));
+  const exec: Exec = (cmd, args, ms) => (cmd === 'git' && args.includes('status') ? { status: 128, output: 'fatal', timedOut: false } : base(cmd, args, ms));
   await runStop(s.ctx, exec);
   await runStop(s.ctx, exec);
   expect(readEvents(s.root).map((e) => e.decision)).toEqual(['stop-diff-failed', 'stop-diff-failed']);
@@ -414,7 +415,7 @@ test('no steps with tdd on: allowed, coverage gate not run', async () => {
   const s = setup({ yaml: 'stop:\n  package_manager: none\nchecks:\n  tdd: true\n' });
   expect(s.ctx.config.checks.tdd).toBe(true);
   expect(await runStop(s.ctx, s.exec(SRC))).toEqual({ kind: 'allow' });
-  expect(s.calls.every((c) => c.cmd === 'git' && c.args[0] === 'status')).toBe(true);
+  expect(s.calls.every((c) => c.cmd === 'git' && c.args.includes('status'))).toBe(true);
 });
 
 test('each step run writes one timing line (step, outcome); events.jsonl is unchanged', async () => {

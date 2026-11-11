@@ -6,6 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import { deriveFacts } from './facts.js';
 import { harnessIgnore } from './harnessignore.js';
 import { jestCoverageUnreadable } from './test-config.js';
+import { SAFE_GIT } from '../core/git-safe.js';
 
 export interface PackageFacts {
   dir: string;
@@ -93,7 +94,7 @@ function readJson(root: string, rel: string, warnings: string[], skipped: string
 
 const git = (root: string, ...args: string[]): string | null => {
   try {
-    return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).trim();
+    return execFileSync('git', [...SAFE_GIT, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).trim();
   } catch {
     return null;
   }

@@ -136,3 +136,8 @@ test('taste-skill applies to web and landing repos, not mobile', () => {
   const t = loadCatalog().catalog.items.find((i) => i.id === 'taste-skill');
   expect(t?.applies_when.project_types).toEqual(['web', 'landing']);
 });
+
+test("remember's reason names the overlap with auto memory and team decisions (team-decisions C12)", () => {
+  const r = loadCatalog().excluded.find((e) => e.id === 'remember')?.reason;
+  expect(r).toMatch(/; it also overlaps Claude Code's auto memory and harness team decisions \(harness remember\)$/);
+});

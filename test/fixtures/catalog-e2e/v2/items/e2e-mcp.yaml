@@ -3,7 +3,7 @@ kind: mcp
 title: "E2E MCP server"
 source: {"type":"npm","package":"e2e-mcp-server","version":"1.0.0"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"always":true}
 cost: {"context":"low","setup":"none"}
 stance: optional

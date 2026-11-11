@@ -16,6 +16,7 @@ export interface HookInput {
   agent_id?: string;
   agent_type?: string;
   tool_name?: string;
+  tool_use_id?: string;
   tool_input?: Record<string, unknown>;
   tool_response?: unknown;
   stop_hook_active?: boolean;

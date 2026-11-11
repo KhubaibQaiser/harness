@@ -11,7 +11,7 @@ export interface HarnessEvent {
   co?: true; // denied alongside an earlier deny on the same call
   of?: string; // reason-found-late: the ts of the allow-log event it completes
   use?: string; // the hook input's tool_use_id
-  ms?: number; // process start to the decision; for the stop gate, one step's run time
+  ms?: number; // dispatcher module start to the decision (no Node startup, before the stdout write); for the stop gate, one step's run time
 }
 
 const file = (root: string) => join(root, '.harness/logs/events.jsonl');

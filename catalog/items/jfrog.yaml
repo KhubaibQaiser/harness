@@ -3,7 +3,7 @@ kind: plugin
 title: "JFrog (Artifactory, Xray, Curation)"
 source: {"type": "github", "repo": "jfrog/claude-plugin", "plugin": "jfrog", "sha": "9b1f8f6c883522a87502e5155abd593a8befe3c5"}
 license: Apache-2.0
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 plugin_version: "0.3.11"
 applies_when: {"project_types": ["other"]}
 cost: {"context": "medium", "setup": "high", "context_tokens": 1125}

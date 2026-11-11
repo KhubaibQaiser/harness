@@ -107,10 +107,10 @@ test.each(names.flatMap((n) => [[n, 'unattended'], [n, 'always']] as const))('%s
   const denied = hook(root, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: join(root, '.harness/config.yaml'), old_string: 'a', new_string: 'b' } });
   expect(denied?.hookSpecificOutput?.permissionDecision).toBe('deny');
 
-  const old = cli(root, ['doctor'], withClaude('2.1.313'));
-  expect(old.out).toContain('fix Claude Code 2.1.313 is older than 2.1.314: update Claude Code');
+  const old = cli(root, ['doctor'], withClaude('2.1.294'));
+  expect(old.out).toContain('fix Claude Code 2.1.294 is older than 2.1.295: update Claude Code');
   expect(old.code).toBe(1);
-  expect(cli(root, ['doctor'], withClaude('2.1.314')).out).toContain('ok Claude Code 2.1.314');
+  expect(cli(root, ['doctor'], withClaude('2.1.295')).out).toContain('ok Claude Code 2.1.295');
 
   const kept: Record<string, string> = {};
   if (mode === 'always') {

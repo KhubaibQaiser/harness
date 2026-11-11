@@ -3,7 +3,7 @@ kind: plugin
 title: "Stripe"
 source: {"type": "git-subdir", "repo": "stripe/ai", "path": "providers/claude/plugin", "plugin": "stripe", "sha": "deae744bc0cbf6034b4b6f22f51c690b71a4e779"}
 license: MIT
-min_claude_code: 2.1.314
+min_claude_code: 2.1.295
 applies_when: {"any_dep": ["stripe"]}
 cost: {"context": "medium", "setup": "medium", "context_tokens": 1654}
 stance: optional

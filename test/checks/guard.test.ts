@@ -1358,10 +1358,51 @@ test('a person-only preview never passes when an argument holds a shell expansio
   }
 });
 
-test('the uninstall ask covers --global, its --dry-run too', () => {
-  for (const c of ['harness uninstall --global', 'harness uninstall --global --yes', 'harness uninstall --global --yes --force', 'harness uninstall --global --dry-run', 'npx @khubaibqaiser/harness uninstall --global --yes']) {
+test('the uninstall ask covers --global', () => {
+  for (const c of ['harness uninstall --global', 'harness uninstall --global --yes', 'harness uninstall --global --yes --force', 'npx @khubaibqaiser/harness uninstall --global --yes']) {
     const d = decideCommand(c, ctx());
     expect(d.kind, c).toBe('ask');
     expect(reason(d), c).toBe(UNINSTALL_WHY);
   }
+});
+
+describe('preset asks: AI trailer and branch prefix', () => {
+  const pctx = () => {
+    const c = ctx();
+    c.config!.preset = { id: 'khubaib-frontend', version: '1', items: [], git: { branch_prefixes: ['feature/', 'fix/', 'chore/'], no_ai_trailer: true, pr_size_warning: true } };
+    return c;
+  };
+  const TRAILER = 'Confirm: the agent is committing with an AI trailer, which the khubaib-frontend preset bans';
+  const trailered = [
+    'git commit -m "fix: x\n\nCo-Authored-By: Claude Opus <noreply@anthropic.com>"',
+    "git commit -F - <<'EOF'\nfix: x\n\nCo-Authored-By: Claude Opus <noreply@anthropic.com>\nEOF",
+    'git -C . commit -m "fix: x\n\nGenerated with Claude Code"',
+  ];
+  test.each(trailered)('a commit with an AI trailer asks: %s', (cmd) => {
+    const d = decideCommand(cmd, pctx());
+    expect(d.kind).toBe('ask');
+    expect(reason(d)).toBe(TRAILER);
+  });
+  test('a plain commit, a prefixed new branch and a switch are allowed', () => {
+    for (const c of ['git commit -m "fix: x"', 'git switch -c feature/x', 'git checkout -b fix/y', 'git switch main', 'git checkout -B chore/z'])
+      expect(decideCommand(c, pctx()).kind, c).toBe('allow');
+  });
+  test.each(['git switch -c wip', 'git checkout -b wip', 'git switch -C wip', 'git checkout -B wip'])('an unprefixed new branch asks: %s', (cmd) => {
+    const d = decideCommand(cmd, pctx());
+    expect(d.kind).toBe('ask');
+    expect(reason(d)).toBe('Confirm: branch "wip" has no listed prefix; use one of: feature/wip, fix/wip, chore/wip');
+  });
+  test('with no preset, nothing fires', () => {
+    for (const c of [...trailered, 'git switch -c wip', 'git checkout -b wip']) expect(decideCommand(c, ctx()).kind, c).toBe('allow');
+  });
+  test('the trailer ask needs the no_ai_trailer setting', () => {
+    const c = pctx();
+    c.config!.preset!.git.no_ai_trailer = false;
+    expect(decideCommand(trailered[0], c).kind).toBe('allow');
+  });
+});
+
+test('uninstall --global --dry-run is allowed (a dry run writes nothing); --global alone asks', () => {
+  all(['harness uninstall --global --dry-run', 'harness uninstall --dry-run --global'], 'allow');
+  all(['harness uninstall --global', 'harness uninstall --global --dry-run --yes', 'harness uninstall --global --global'], 'ask');
 });

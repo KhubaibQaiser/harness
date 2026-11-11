@@ -15,6 +15,7 @@ import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 import { REMEMBER_WHY, rememberAsk } from './remember.js';
 import { rememberReadOnly } from '../core/remember-args.js';
+import { suggestBranches } from '../core/branch-prefix.js';
 
 type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { startedAt?: number; lookup?: VerifyOpts['lookup'] }; // lookup: test seam
 type Verdict = ['allow'] | ['deny' | 'ask', string];
@@ -87,7 +88,7 @@ const PREVIEW = (a: string[]): boolean => {
 };
 const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (run: (sub: string) => string) => string }> = {
   tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (run) => `Only a person can pause TDD: run ${run('tdd off')} in your own terminal.` },
-  uninstall: { kind: 'ask', allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
+  uninstall: { kind: 'ask', allowed: (a) => a.includes('--dry-run') && a.every((t) => t === '--dry-run' || t === '--global'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
   init: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is installing the harness, which writes its hooks, rules and settings' },
   update: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is updating the harness, which rewrites its hooks, rules and settings' },
   add: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is adding a harness item, which writes its files and settings' },
@@ -868,8 +869,27 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   }
   const install = checkInstall(command, ctx);
   if (install) return install;
+  const preset = ctx.config?.preset && /\bgit\b/.test(command) ? walkCommands(command, ctx, presetVisit(command, ctx.config.preset)) : null;
+  if (preset) return toDecision(['ask', preset.reason]);
   for (const [re, why] of ASK) if (texts.some((t) => re.test(t))) return toDecision(['ask', why]);
   return { kind: 'allow' };
+}
+
+const AI_TRAILER = /Co-Authored-By:[^\n]*(Claude|noreply@anthropic\.com)|Generated with \[?Claude Code/i;
+/** The preset's git asks for one segment: a commit while the command holds an AI trailer, a new branch without a listed prefix. */
+// ponytail: the trailer is matched on the whole command, heredoc bodies included, so `echo "Co-Authored-By: Claude"; git
+// commit -m x` asks too (accepted); a message from `-F <file>` or an editor is not visible to the guard at all.
+function presetVisit(command: string, preset: NonNullable<NonNullable<GuardCtx['config']>['preset']>): Visit<Hit> {
+  return ({ toks }) => {
+    const [sub, ...args] = gitArgs(toks);
+    if (sub === 'commit' && preset.git.no_ai_trailer && AI_TRAILER.test(command))
+      return { kind: 'ask', reason: `the agent is committing with an AI trailer, which the ${preset.id} preset bans` };
+    const flags = sub === 'checkout' ? ['-b', '-B'] : sub === 'switch' ? ['-c', '-C'] : [];
+    const at = args.findIndex((t) => flags.includes(t));
+    const name = at >= 0 ? args[at + 1] : undefined;
+    if (!name || preset.git.branch_prefixes.some((p) => name.startsWith(p))) return null;
+    return { kind: 'ask', reason: `branch "${name}" has no listed prefix; use one of: ${suggestBranches(preset.git.branch_prefixes, name).join(', ')}` };
+  };
 }
 
 /** `*.{a,b}` -> [`*.a`, `*.b`], innermost groups first, at most 256 results (the rest is checked unexpanded). */

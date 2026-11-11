@@ -6,6 +6,7 @@ import { defineConfig } from 'vitest/config';
 const UNIT_TIMEOUT = 30_000;
 export default defineConfig({
   test: {
+    globalSetup: ['test/global-tmp.ts'],
     projects: [
       { test: { name: 'unit', include: ['test/**/*.test.ts'], exclude: ['test/e2e/**', 'test/perf/**', '**/node_modules/**'], setupFiles: ['test/setup-no-gh.ts'], testTimeout: UNIT_TIMEOUT, hookTimeout: UNIT_TIMEOUT } },
       { test: { name: 'e2e', include: ['test/e2e/**/*.test.ts'], testTimeout: 60_000, hookTimeout: 60_000 } },

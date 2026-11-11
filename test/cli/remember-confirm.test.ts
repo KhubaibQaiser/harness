@@ -107,3 +107,48 @@ for (const sub of ['confirm', 'retire']) {
     expect(existsSync(join(root, ruleOf(A)))).toBe(true);
   });
 }
+
+// Fix round 1 (review 2026-11-11).
+test('retire --yes touches only its own decision and rule; other drift gets one note', async () => {
+  const root = await repo();
+  const sib = join(root, rel(B));
+  writeFileSync(sib, readFileSync(sib, 'utf8').replace('status: active', 'status: active\nbogus: 1'));
+  const sibRule = readFileSync(join(root, ruleOf(B)), 'utf8');
+  expect(await go(root, ['retire', A, '--yes'])).toEqual({ code: 0, out: `Retired ${A}. Removed its rule. The decision file stays as a record.\nOther decisions are out of sync; run harness remember sync.` });
+  expect(readFileSync(join(root, ruleOf(B)), 'utf8')).toBe(sibRule);
+  expect(existsSync(join(root, ruleOf(A)))).toBe(false);
+  expect(await go(root, ['confirm', B, '--yes'])).toEqual({ code: 1, out: `harness remember: ${B} is invalid; run harness remember sync to see why` });
+  expect((await go(root, ['add', '--title', 'T', '--rule', 'R', '--path', 'src/env/**', '--supersedes', B, '--yes'])).out).toBe(`harness remember: ${B} is invalid; run harness remember sync to see why`);
+});
+
+test('retire: no "Removed its rule." when the rule was already gone', async () => {
+  const root = await repo();
+  writeDecision(root, decision('2026-08-01-old', { verified_on: '2026-08-01' }));
+  expect(await go(root, ['retire', '2026-08-01-old', '--yes'])).toEqual({ code: 0, out: 'Retired 2026-08-01-old. The decision file stays as a record.' });
+});
+
+test('retire --by must name an active decision', async () => {
+  const root = await repo();
+  await go(root, ['retire', B, '--yes']);
+  expect(await go(root, ['retire', A, '--by', B, '--yes'])).toEqual({ code: 1, out: `harness remember: ${B} is retired, not active. Only an active decision can supersede another.` });
+  expect(read(root, A).status).toBe('active');
+});
+
+test('confirm and retire: secrets in <id> or --by are refused unechoed', async () => {
+  const root = await repo();
+  const r = await go(root, ['confirm', 'token=abcdefgh12', '--yes']);
+  expect(r).toEqual({ code: 1, out: 'harness remember: <id> looks like it holds a secret (assignment). Decisions are committed to git. Remove it.' });
+  expect((await go(root, ['retire', A, '--by', 'token=abcdefgh12', '--yes'])).out).toBe('harness remember: --by looks like it holds a secret (assignment). Decisions are committed to git. Remove it.');
+  expect(events(root).at(-1)).toMatchObject({ decision: 'refused', reason: 'secret' });
+});
+
+for (const sub of ['confirm', 'retire']) {
+  test(`${sub}: a typed yes writes`, async () => {
+    const root = await repo();
+    const asked: string[] = [];
+    const yes: Prompt = { async confirm(q) { asked.push(q); return true; }, async edit(_l, v) { return v; } };
+    expect((await go(root, [sub, A], { tty: true, prompt: yes })).code).toBe(0);
+    expect(asked).toEqual(['Write these files? [y/N]']);
+    expect(read(root, A).status).toBe(sub === 'confirm' ? 'active' : 'retired');
+  });
+}

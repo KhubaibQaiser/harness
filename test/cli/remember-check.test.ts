@@ -92,3 +92,10 @@ test('list: the staleness column', async () => {
   commitAll(root, 'change');
   expect(list(root, defaults(), TODAY)).toEqual([`${ID}  active   confirmed ${TODAY}  src/env/**, src/config.ts  stale: 1 linked file changed since ${ref}`]);
 });
+
+test('check: a git failure is a note and exits 0', async () => {
+  const root = await repo();
+  const r = await go(root, ['check'], { git: () => ({ ok: false, out: '', reason: 'timeout' }) });
+  expect(r.code).toBe(0);
+  expect(r.out.split('\n')).toContain("note couldn't check decision staleness (timeout)");
+});

@@ -112,7 +112,17 @@ function fieldProblem(title: string, rule: string, why: string, paths: string[])
 }
 
 const deadPath = (glob: string) => `harness remember: ${shown(glob)} matches no tracked file. Fix the path, or retire the decision.`;
-const unknownId = (id: string) => `harness remember: no decision ${shown(id)} in ${DECISIONS_DIR}/.`;
+/** No such decision, or its file exists but failed validation (its errors start with its path). */
+const unknownId = (set: DecisionSet, id: string) => set.errors.some((e) => e.startsWith(`${DECISIONS_DIR}/${shown(id)}.md: `))
+  ? `harness remember: ${shown(id)} is invalid; run harness remember sync to see why`
+  : `harness remember: no decision ${shown(id)} in ${DECISIONS_DIR}/.`;
+const OTHER_DRIFT = 'Other decisions are out of sync; run harness remember sync.';
+const planSize = (p: SyncPlan) => p.changes.length + p.foreign.length + p.adopt.length + p.rehash.length + p.stale.length;
+/** The plan cut down to one rule file: confirm and retire never apply other decisions' drift. */
+const onlyRule = (p: SyncPlan, rel: string): SyncPlan => {
+  const mine = (r: string) => r === rel;
+  return { ...p, changes: p.changes.filter((c) => mine(c.rel)), foreign: p.foreign.filter(mine), adopt: p.adopt.filter(mine), rehash: p.rehash.filter(mine), stale: p.stale.filter(mine) };
+};
 const notActive = (d: TeamDecision, verb: string) => `harness remember: ${d.id} is ${d.status}, not active. Only an active decision can be ${verb}.`;
 
 /** HEAD and the paths that match no tracked file, or a refusal. */
@@ -162,7 +172,7 @@ function build(ctx: Ctx, set: DecisionSet, f: { title: string; rule: string; why
   let decisions = [...set.decisions, d];
   if (f.supersedes !== undefined) {
     const old = set.decisions.find((x) => x.id === f.supersedes);
-    if (!old) return { error: unknownId(f.supersedes) };
+    if (!old) return { error: unknownId(set, f.supersedes) };
     if (old.status !== 'active') return { error: notActive(old, 'superseded') };
     const next: TeamDecision = { ...old, status: 'superseded', superseded_by: id };
     changes.push({ kind: 'update', rel: old.rel, before: readFileSync(join(ctx.root, old.rel), 'utf8'), after: serializeDecision(next), blocks: [], rewrite: true });
@@ -244,22 +254,29 @@ async function rewrite(sub: 'confirm' | 'retire', args: string[], cli: RememberE
   const set = readDecisions(ctx.root, ctx.today);
   const find = (x: string) => set.decisions.find((d) => d.id === x);
   const unknown = [id, by].find((x) => x !== undefined && !find(x));
-  if (unknown !== undefined) return no('unknown-id', unknownId(unknown));
+  if (unknown !== undefined) return no('unknown-id', unknownId(set, unknown));
   if (by === id) return no('invalid', 'harness remember: --by must name another decision.');
+  const byD = by === undefined ? undefined : find(by)!;
+  if (byD && byD.status !== 'active') return no('not-active', `harness remember: ${byD.id} is ${byD.status}, not active. Only an active decision can supersede another.`);
   const d = find(id)!;
   const next = edited(ctx, sub, d, by);
   if (Array.isArray(next)) return no(...next);
   const text = serializeDecision(next);
   const fileSecret = secretIn([['the decision file', text]]);
   if (fileSecret) return no('secret', fileSecret);
-  const plan = planSync(ctx.root, { ...set, decisions: set.decisions.map((x) => (x === d ? next : x)) }, ctx.cfg.decisions, ctx.today);
+  const full = planSync(ctx.root, { ...set, decisions: set.decisions.map((x) => (x === d ? next : x)) }, ctx.cfg.decisions, ctx.today);
+  const plan = onlyRule(full, ruleRel(d.id));
   const change: Change = { kind: 'update', rel: d.rel, before: readFileSync(join(ctx.root, d.rel), 'utf8'), after: text, blocks: [], rewrite: true };
   const stop = await commit(cli, ctx, f, [change], plan);
   if (stop !== null) return stop;
   if (sub === 'confirm') {
     const expires = new Date(Date.parse(`${ctx.today}T00:00:00Z`) + ctx.cfg.decisions.expiry_days * DAY_MS).toISOString().slice(0, 10);
     cli.out(`Confirmed ${id} at ${next.verified_at.slice(0, 7)} on ${ctx.today}. It expires on ${expires} unless confirmed again.`);
-  } else cli.out(`Retired ${id}${by === undefined ? '' : ` (superseded by ${by})`}. Removed its rule. The decision file stays as a record.`);
+  } else {
+    const removed = plan.changes.some((c) => c.kind === 'delete') ? ' Removed its rule.' : '';
+    cli.out(`Retired ${id}${by === undefined ? '' : ` (superseded by ${by})`}.${removed} The decision file stays as a record.`);
+  }
+  if (set.errors.length || planSize(full) > planSize(plan)) cli.out(OTHER_DRIFT);
   log(ctx.root, sub === 'confirm' ? 'confirmed' : 'retired');
   return 0;
 }

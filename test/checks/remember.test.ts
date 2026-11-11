@@ -209,6 +209,7 @@ describe('the ask shows exactly the argv the shell passes', () => {
     'harness remember add --title T --rule "a#b; c && d | e" --why "" --path src/a.ts',
     'harness remember add --title --dry-run --rule R --path src/a.ts --yes',
   ];
+  if (!SHELLS.length) test.skip('needs /bin/bash or /bin/zsh (none on Windows)', () => {});
   for (const shell of SHELLS)
     test.each(cases)(`${shell}: %s`, (c) => {
       const argv = shellArgv(shell, c);

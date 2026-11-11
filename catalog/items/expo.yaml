@@ -5,7 +5,7 @@ source: {"type":"git-subdir","repo":"expo/skills","path":"plugins/expo","plugin"
 license: MIT
 min_claude_code: 2.1.314
 applies_when: {"frameworks":["expo"]}
-cost: {"context":"low","setup":"low"}
+cost: {"context":"low","setup":"low","context_tokens":2869}
 stance: optional
 why: "Official Expo skills for building, deploying, upgrading, and debugging Expo apps"
 unpinned_runtime: "its feedback step runs `npx --yes @expo/agent-cli@latest feedback`, only when feedback is submitted"

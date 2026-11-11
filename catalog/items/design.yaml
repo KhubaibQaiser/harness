@@ -5,7 +5,7 @@ source: {"type":"git-subdir","repo":"anthropics/knowledge-work-plugins","path":"
 license: Apache-2.0
 min_claude_code: 2.1.314
 applies_when: {"project_types":["web","landing","mobile"]}
-cost: {"context":"low","setup":"low"}
+cost: {"context":"low","setup":"low","context_tokens":517}
 stance: optional
 why: "Accelerates design workflows: critique, design system management, UX writing, accessibility audits, research synthesis and dev handoff."
 evidence:

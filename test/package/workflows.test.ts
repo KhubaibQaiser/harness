@@ -226,7 +226,7 @@ test('test steps set HARNESS_PLAIN_INIT so the Claude-Code-only gate does not bl
     expect(allSteps(f).find((s: any) => s.run === 'pnpm test').env).toEqual({ HARNESS_PLAIN_INIT: '1' });
 });
 
-test('catalog-pins runs weekly and on catalog changes with --resolve', () => {
+test('catalog-pins runs weekly and on catalog changes with --resolve --context', () => {
   const w = load('catalog-pins.yml');
   expect(w.on.schedule).toEqual([{ cron: '0 6 * * 1' }]);
   expect(w.on.push.paths).toEqual(['catalog/**', 'src/catalog/**']);
@@ -235,8 +235,8 @@ test('catalog-pins runs weekly and on catalog changes with --resolve', () => {
   const steps = allSteps('catalog-pins.yml');
   const runs = steps.map((s: any) => s.run).filter(Boolean);
   expect(runs.indexOf('pnpm build')).toBeGreaterThan(-1);
-  expect(runs.indexOf('node dist/cli.mjs catalog check --resolve')).toBeGreaterThan(runs.indexOf('pnpm build'));
-  expect(steps.find((s: any) => s.run === 'node dist/cli.mjs catalog check --resolve').env).toEqual({ GH_TOKEN: '${{ github.token }}' });
+  expect(runs.indexOf('node dist/cli.mjs catalog check --resolve --context')).toBeGreaterThan(runs.indexOf('pnpm build'));
+  expect(steps.find((s: any) => s.run === 'node dist/cli.mjs catalog check --resolve --context').env).toEqual({ GH_TOKEN: '${{ github.token }}' });
 });
 
 test('re-running a release is safe: each publish step checks for the version first', () => {

@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "railwayapp/railway-skills", "path": "plu
 license: MIT
 min_claude_code: 2.1.314
 applies_when: {"project_types": ["web", "api"]}
-cost: {"context": "low", "setup": "medium"}
+cost: {"context": "low", "setup": "medium", "context_tokens": 268}
 stance: optional
 side_effects: ["installs-hook"]
 why: "Railway agent skills and hosted MCP server for deploying, configuring, monitoring, and troubleshooting apps and infrastructure on Railway from Claude Code."

@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "aws/agent-toolkit-for-aws", "path": "plu
 license: Apache-2.0
 min_claude_code: 2.1.314
 applies_when: {"any_dep": ["aws-cdk-lib", "aws-cdk"]}
-cost: {"context": "low", "setup": "medium"}
+cost: {"context": "low", "setup": "medium", "context_tokens": 4727}
 stance: optional
 side_effects: ["installs-hook"]
 why: "Build, deploy, and operate applications on AWS."

@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "trailofbits/skills", "path": "plugins/in
 license: CC-BY-SA-4.0
 min_claude_code: 2.1.314
 applies_when: {"always": true}
-cost: {"context": "low", "setup": "low"}
+cost: {"context": "low", "setup": "low", "context_tokens": 83}
 stance: optional
 why: "Detects insecure default configurations including hardcoded credentials, fallback secrets, weak authentication defaults, and dangerous values in production"
 evidence:

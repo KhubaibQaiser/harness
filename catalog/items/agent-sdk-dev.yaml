@@ -5,7 +5,7 @@ source: {"type": "git-subdir", "repo": "anthropics/claude-plugins-official", "pa
 license: Apache-2.0
 min_claude_code: 2.1.314
 applies_when: {"any_dep": ["@anthropic-ai/claude-agent-sdk"]}
-cost: {"context": "low", "setup": "low"}
+cost: {"context": "low", "setup": "low", "context_tokens": 176}
 stance: optional
 why: "A comprehensive plugin for creating and verifying Claude Agent SDK applications in Python and TypeScript."
 evidence:

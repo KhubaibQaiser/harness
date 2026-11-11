@@ -132,6 +132,14 @@ test('catalog check --context skips mcp and own items, and a fetch error is "cou
   expect(r.out).not.toMatch(/measured/);
 });
 
+test('catalog check --context lists an item too large to measure as not measured, not a problem', () => {
+  const big: ExecBytes = () => ({ status: 0, stdout: Buffer.alloc(0), tooBig: true });
+  const r = goCtx(['check', '--resolve', '--context'], dir({ a: y('a') }), big);
+  expect(r).toEqual({ code: 0, out: 'Not measured:\n  a (too large for vet to measure)' });
+  const w = goCtx(['check', '--resolve', '--context', '--write-context'], dir({ a: y('a') }), big);
+  expect(w.code).toBe(0);
+});
+
 test('--write-context rewrites only the cost line; usage errors', () => {
   const d = dir({ a: y('a') });
   const file = join(d, 'items', 'a.yaml');

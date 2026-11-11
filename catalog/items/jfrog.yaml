@@ -6,7 +6,7 @@ license: Apache-2.0
 min_claude_code: 2.1.314
 plugin_version: "0.3.11"
 applies_when: {"project_types": ["other"]}
-cost: {"context": "medium", "setup": "high"}
+cost: {"context": "medium", "setup": "high", "context_tokens": 1125}
 stance: optional
 side_effects: ["installs-hook"]
 why: "Connect Claude Code to JFrog to manage, secure, and govern your software supply chain."

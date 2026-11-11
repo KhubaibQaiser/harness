@@ -6,7 +6,7 @@ license: MIT
 min_claude_code: 2.1.314
 plugin_version: "0.6.15"
 applies_when: {"always":true}
-cost: {"context":"low","setup":"low"}
+cost: {"context":"low","setup":"low","context_tokens":2813}
 stance: optional
 why: "Production-grade engineering skills for AI coding agents, covering the full software development lifecycle from spec to ship."
 evidence:

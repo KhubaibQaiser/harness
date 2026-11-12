@@ -88,7 +88,7 @@ export function installSelected({ root, chosen, cat, exec, out, applied = true, 
   const r = installPlugins(ids, exec);
   for (const id of r.ok) out(`Installed plugin ${id}`);
   if (r.failed.length) out(`${applied ? 'Files applied; ' : ''}${r.failed.length} plugin(s) not installed.`);
-  for (const f of r.failed) out(`Could not install ${f.id}: ${f.message}\n  Run this yourself with Claude Code's \`!\` prefix: claude plugin install ${shq(f.id)} --scope project`);
+  for (const f of r.failed) out(`Could not install ${f.id}: ${f.message}\n  Run this yourself with Claude Code's \`!\` prefix (a \`!\` command runs outside the sandbox): claude plugin install ${shq(f.id)} --scope project`);
   if (r.failed.length) out('Then run /harness:sync to record the install.');
   try {
     if (r.ok.length) {

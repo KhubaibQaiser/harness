@@ -604,7 +604,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 - `CLAUDECODE` is also set in IDE terminals, so `init` and `update` run there too, not only inside a Claude Code session. They don't print `Run /harness:init inside Claude Code`.
 - There is no version-drift check for `git-subdir` plugins that have no `plugin_version`. The commit is pinned, but `doctor` has nothing to compare. The release notes list them.
 - A harness command that is killed in the middle of writing, or whose rollback fails, leaves `.harness/apply.lock`. Every command, a dry run and `doctor` and `status` included, reports it and refuses to plan until you undo the partial change with git and delete the lock (the guard stops the agent from deleting it). Two harness commands running in one repo at the same time: the second to finish stops with "Another harness command changed the install while this one ran" and writes nothing.
-- Under `sandbox: always`, item commands may need Claude Code's `!` prefix. Unverified, pending the live check.
+- Under `sandbox: always`, the sandbox blocks harness commands the agent runs that write harness's own files (such as `add` and `remove`), and harness prints the command to run with Claude Code's `!` prefix instead. Checked live on Claude Code 2.1.322: a `!` command runs outside the sandbox and the change lands. The agent may still wrongly tell you the `!` run would be blocked too; it isn't.
 - `.harnessignore` has no `!` negation.
 - `remove tdd-gate` (or deselecting it) leaves the test-config edits `init` made in place; undo them by hand.
 - `update` doesn't rename a package config and make another edit to it in one run. Run it twice.

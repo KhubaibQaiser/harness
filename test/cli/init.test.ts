@@ -422,7 +422,7 @@ test('a write the OS refuses rolls back and prints the person\'s command', async
   };
   const r = await ai(root, [...aiArgs(OWN), '--yes', '--over-budget'], { fs });
   expect(r.code).toBe(1);
-  expect(r.out).toContain("Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's `!` prefix: ");
+  expect(r.out).toContain("Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's `!` prefix (a `!` command runs outside the sandbox): ");
   expect(r.out).toContain('init');
   expect(r.out).toContain('--yes');
   expect(tree(root)).toBe('');
@@ -472,7 +472,7 @@ test('a failed plugin install prints the per-plugin command and the sync line; a
   };
   const net = await run('getaddrinfo ENOTFOUND github.com');
   expect(net.code).toBe(1);
-  expect(net.out).toContain("Run this yourself with Claude Code's `!` prefix: claude plugin install impeccable@harness-pins --scope project");
+  expect(net.out).toContain("Run this yourself with Claude Code's `!` prefix (a `!` command runs outside the sandbox): claude plugin install impeccable@harness-pins --scope project");
   expect(net.out).toContain('Then run /harness:sync to record the install.');
   const other = await run('Plugin impeccable@harness-pins requires a newer Claude Code');
   expect(other.code).toBe(1);

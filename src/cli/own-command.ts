@@ -8,7 +8,7 @@ export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove' | 
 /** The person's own command line, with the `!` prefix hint. */
 export function ownCommand(cmd: string, args: string[]): string {
   const self = process.argv[1] ? `node "${resolve(process.argv[1])}"` : 'npx @khubaibqaiser/harness';
-  return `Run this yourself with Claude Code's \`!\` prefix: ${self} ${cmd} ${args.map(shq).join(' ')}`;
+  return `Run this yourself with Claude Code's \`!\` prefix (a \`!\` command runs outside the sandbox): ${self} ${cmd} ${args.map(shq).join(' ')}`;
 }
 /** One shell word: bare when plain, else single-quoted (embedded quotes the POSIX way); control characters are escaped first so they never reach the terminal. */
 export const shq = (a: string): string => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${(/[\u0000-\u001f\u007f-\u009f]/.test(a) ? esc(a) : a).replace(/'/g, `'\\''`)}'`);

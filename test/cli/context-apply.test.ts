@@ -210,7 +210,7 @@ test('a sandbox-denied write prints the context apply command to run with the ! 
   const denied = { ...realFs, renameSync: (x: string, y: string) => { if (y.endsWith('settings.json') || y.endsWith('manifest.json')) throw Object.assign(new Error('EPERM: nope'), { code: 'EPERM' }); return realFs.renameSync(x, y); } } as unknown as FsLike;
   const r = await apply(root, [String(n), '--yes'], { fs: denied });
   expect(r.code, r.out).toBe(1);
-  expect(r.out).toContain("Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's `!` prefix:");
+  expect(r.out).toContain("Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's `!` prefix (a `!` command runs outside the sandbox):");
   expect(r.out).toMatch(new RegExp(` context apply ${n} --yes$`));
 });
 

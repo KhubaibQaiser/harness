@@ -84,7 +84,7 @@ test('README has no stale out-of-scope line and promises no telemetry', () => {
 });
 
 test('the reference states the M3 known limits, with C1 unverified', () => {
-  for (const s of ['local only', 'extraKnownMarketplaces', 'folder trust', '`CLAUDECODE`', '`git-subdir`', '`!` prefix', 'Unverified, pending the live check']) expect(reference, s).toContain(s);
+  for (const s of ['local only', 'extraKnownMarketplaces', 'folder trust', '`CLAUDECODE`', '`git-subdir`', '`!` prefix', 'Checked live on Claude Code 2.1.322: a `!` command runs outside the sandbox']) expect(reference, s).toContain(s);
 });
 
 test('release notes list every excluded id and every unpinned git-subdir item', () => {

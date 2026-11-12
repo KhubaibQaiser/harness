@@ -3,16 +3,16 @@ import { expect, test } from 'vitest';
 
 const t = readFileSync('skills/vet/SKILL.md', 'utf8');
 
-test('vet skill: frontmatter, size, only the bundled CLI and mktemp', () => {
+test('vet skill: frontmatter, size, only the bundled CLI', () => {
   expect(t.split('\n').length).toBeLessThan(40);
   const fm = t.split('---')[1].trim().split('\n');
   expect(fm).toHaveLength(3);
   expect(fm[0]).toBe('name: vet');
   expect(fm[1]).toMatch(/^description: .+/);
   expect(fm[2]).toBe('disable-model-invocation: true');
-  const cmds = [...t.matchAll(/`([^`]*(?:dist\/cli\.mjs|mktemp)[^`]*)`/g)].map((m) => m[1]);
+  const cmds = [...t.matchAll(/`([^`]*dist\/cli\.mjs[^`]*)`/g)].map((m) => m[1]);
   expect(cmds.length).toBeGreaterThan(0);
-  for (const c of cmds) expect(c).toMatch(/^(node "\$\{CLAUDE_PLUGIN_ROOT\}\/dist\/cli\.mjs"|mktemp -d)/);
+  for (const c of cmds) expect(c).toMatch(/^node "\$\{CLAUDE_PLUGIN_ROOT\}\/dist\/cli\.mjs"/);
 });
 
 test('vet skill: steps, options and second-yes rule', () => {

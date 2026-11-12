@@ -66,7 +66,7 @@ test('init skill holds every CLI line', () => {
   expect(t).toContain('/harness:sync');
   expect(t).toContain('Could not install');
   expect(t).toContain("Claude Code's sandbox blocks harness's own files");
-  expect(t).toContain('${CLAUDE_PLUGIN_ROOT}/templates/skills/review-rubric/SKILL.md');
+  expect(t).toContain(`${CLI} guide review-rubric`);
   expect(t).toContain('(recommended)');
 });
 
@@ -82,11 +82,11 @@ test('interview.md says never to read dotenv files or unpointed files', () => {
   expect(t).toMatch(/names only/i);
 });
 
-test('recommend.md calls harness:staff-reviewer, passes the rubric path and prefers on-demand items', () => {
+test('recommend.md calls harness:staff-reviewer, passes the rubric text and prefers on-demand items', () => {
   const t = readFileSync('skills/init/recommend.md', 'utf8');
   expect(t).toContain('harness:staff-reviewer');
   expect(t).toContain('Mode: repo audit');
-  expect(t).toMatch(/rubric path/);
+  expect(t).toMatch(/rubric text/);
   expect(t).toMatch(/on demand/i);
   expect(t).toMatch(/cost\.context/);
   expect(t).toMatch(/Artifactory or Nexus/);

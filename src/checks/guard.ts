@@ -893,6 +893,19 @@ export function expandBraces(glob: string): string[] {
 /** A `harness remember` in command position in any reading: an ask for it is the remember ask, or a deny (never a generic ask). */
 const runsRemember = (cmd: string, w: Where): boolean => withWorkBudget(() => walkCommands(cmd, w, ({ toks, k }) => (HARNESS_CMD.test(toks[k] ?? '') && toks[k + 1] === 'remember') || null)) === true;
 
+// Fail closed (final review I1): a command with `harness remember` behind any word but the allowlist's own prefixes
+// (an unknown wrapper such as chronic or caffeinate) goes to the remember check, which denies it. Only the readings that
+// keep a quoted string as one word, so a commit message or an echoed sentence that names it is not a command.
+const viaPrefix = (toks: string[], k: number, j: number): boolean =>
+  j === k || (j === k + 1 && (toks[k] === 'node' || toks[k] === 'npx')) || (j === k + 2 && toks[k] === 'npx' && toks[k + 1] === '--no-install');
+const remembers: Visit<true> = ({ toks, k }) => toks.some((t, j) => j >= k && HARNESS_CMD.test(t) && toks[j + 1] === 'remember' && !viaPrefix(toks, k, j)) || null;
+function wrappedRemember(cmd: string, w: Where, depth = 0): boolean {
+  const text = withoutHeredocBodies(joinAll(cmd));
+  if ([true, false].some((e) => walkReading(grouped(text, e), w, remembers, {}, depth) === true)) return true;
+  const programs = [...cPayloads(text), ...shellPrograms(cmd).filter((p) => SHELLS.has(p.name)).map((p) => p.text)];
+  return depth < 3 && programs.some((p) => wrappedRemember(p, w, depth + 1));
+}
+
 export const guard: Check = {
   name: 'guard',
   events: ['PreToolUse'],
@@ -904,6 +917,7 @@ export const guard: Check = {
     if (isShell(tool_name)) {
       const cmd = String(tool_input.command ?? '');
       const d = decideCommand(cmd, ctx);
+      if (d.kind !== 'deny' && withWorkBudget(() => wrappedRemember(cmd, ctx))) return rememberAsk(ctx, cmd);
       if (d.kind === 'ask' && (d.reason.includes(REMEMBER_WHY) || runsRemember(cmd, ctx))) return rememberAsk(ctx, cmd);
       // Harness does not parse PowerShell, so any mention of its own paths needs a person.
       if (tool_name === 'PowerShell' && d.kind === 'allow' && /\.harness|\.claude|\.env/i.test(cmd))

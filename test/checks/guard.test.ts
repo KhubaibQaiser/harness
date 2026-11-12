@@ -1243,8 +1243,10 @@ test('protect asks when a protected path is passed through an expansion, glob, c
   const H = '.harness/config.yaml';
   for (const c of [`p=${H}; tee $p`, `tee .harness/conf*.yaml`, `tee .harness/config.yam?`, `tee .harness/config.{yaml,}`, `tee $(echo ${H})`, `tee \`echo ${H}\``,
     `printf -v p %s ${H}; tee $p`, `read p <<< ${H}; tee $p`, `declare p=${H}; tee $p`, `typeset p=${H}; tee $p`, `a=(${H}); tee \${a[0]}`,
-    `f(){ tee "$1"; }; f ${H}`, 'cd .harness && tee config.yaml', `echo 'tee ${H}' > x.sh; . x.sh`, `echo 'tee ${H}' > x.sh; source x.sh`, 'cd .claude && tee settings.json'])
+    `f(){ tee "$1"; }; f ${H}`, `echo 'tee ${H}' > x.sh; . x.sh`, `echo 'tee ${H}' > x.sh; source x.sh`])
     expect(prot(c), c).toMatchObject({ kind: 'ask', check: 'protect' });
+  // A literal cd is followed now (re-review): the write is read from that folder, so it is denied.
+  for (const c of ['cd .harness && tee config.yaml', 'cd .claude && tee settings.json']) expect(prot(c), c).toMatchObject({ kind: 'deny', check: 'protect' });
   for (const c of [`cat ${H}`, 'ls -la .harness/state', `head -5 ${H}`, `grep -rn tdd ${H}`, 'rg tdd .harness', 'git status .harness', `git diff -- ${H}`, 'git log --oneline -- .harness',
     `git show HEAD:${H}`, 'cat .claude/settings.json', 'harness doctor', 'harness status', 'harness explain', `git commit -m "docs: protect ${H}"`, `cat ${H} | grep tdd`])
     expect(prot(c).kind, c).toBe('allow');

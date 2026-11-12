@@ -194,3 +194,43 @@ describe('final review I2: turning a file in docs/decisions/ into a decision ask
     expect(bash(`cat x >> ${ADR}`, false).kind).toBe('allow');
   });
 });
+
+describe('re-review: a cd earlier in the line moves where relative paths land', () => {
+  const ADR = 'docs/decisions/2026-01-01-adr.md';
+  test.each([
+    [`cd docs/decisions && cat evil >> ${ID}.md`, 'deny'],
+    [`cd docs && echo hi > decisions/${ID}.md`, 'deny'],
+    [`cd docs; cd decisions; echo hi > ${ID}.md`, 'deny'],
+    [`pushd docs/decisions && echo hi > new.md`, 'deny'],
+    [`(cd docs/decisions && echo hi > ${ID}.md)`, 'deny'],
+    [`cd .claude/rules && echo hi > harness-decision-${ID}.md`, 'deny'],
+    [`cd ${ROOT}/docs/decisions && echo hi > ${ID}.md`, 'deny'],
+    [`cd docs/decisions && rm ${ID}.md`, 'deny'],
+    [`cd docs/decisions && cat x >> 2026-01-01-adr.md`, 'ask'],
+    [`cd .claude && echo x > settings.json`, 'deny'],
+  ])('%s', (c, kind) => {
+    writeFileSync(join(ROOT, ADR), '# old ADR\n');
+    expect(bash(c).kind).toBe(kind);
+  });
+  test.each(['cd $X && echo hi > a.md', 'cd - && echo hi > a.md', 'cd ~user/x && echo hi > a.md', 'cd && echo hi > a.md', 'pushd "$D" && echo hi > a.md'])('an unresolvable cd before a write asks: %s', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'ask', check: 'protect' });
+  });
+  test('allowed: a cd with no protected write after it, and an unresolvable cd with no write', () => {
+    for (const c of ['cd docs && echo hi > notes.md', 'cd docs/decisions && cat README.md', 'cd docs/decisions && echo hi >> README.md', 'cd - && ls', 'cd $X && npm test'])
+      expect(bash(c).kind, c).toBe('allow');
+  });
+});
+
+describe('re-review: editors that write files themselves ask for decisions and rules', () => {
+  test.each([
+    `ex -sc wq ${DEC}`, `ex -sc '%s/a/b/|wq' ${DEC}`, `vi -c wq ${DEC}`, `vim -c 'normal x' -c wq ${RULE}`, `vim -es ${DEC}`, `nvim --headless -c wq ${DEC}`,
+    `ed ${DEC}`, `printf ',s/a/b/\\nw\\n' | ed -s ${DEC}`, `nano ${RULE}`, `sudo vim -c wq ${DEC}`, 'ex -sc wq docs/decisions/2026-01-01-adr.md',
+    `cd docs/decisions && ex -sc wq ${ID}.md`, 'vim docs/decisions/new.md',
+  ])('%s', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'ask', check: 'protect' });
+  });
+  test('allowed: editors on other files, and the words as arguments', () => {
+    for (const c of ['vim -c wq src/a.ts', 'ex -sc wq docs/decisions/README.md', `grep -r ed ${DEC}`, `echo vim ${DEC}`]) expect(bash(c).kind, c).toBe('allow');
+  });
+  test('off with checks.decisions false', () => expect(bash(`ex -sc wq ${DEC}`, false).kind).toBe('allow'));
+});

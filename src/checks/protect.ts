@@ -5,7 +5,7 @@ import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
-import { becomesDecision, codeNames, decisionRoutes, decisionsDeny, globHits } from './decisions-protect.js';
+import { becomesDecision, codeNames, decisionRoutes, decisionsDeny, editorAsk, editorFiles, globHits } from './decisions-protect.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
@@ -35,6 +35,27 @@ function expand(cmd: string): string[] {
   }
   return out;
 }
+
+/**
+ * The folders `cd` and `pushd` move to in one command line, each from the one before (re-review): later relative paths
+ * land there. null when one can't be resolved (`$X`, `-`, `~`, a glob, no argument). ponytail: a union, not an order:
+ * every relative path is read from the root and from each folder, and `popd` is not followed (stricter only).
+ */
+function cdDirs(cmds: string[]): string[] | null {
+  const out: string[] = [];
+  let at = '.';
+  for (const toks of cmds.flatMap(segTokens)) {
+    if (!/^[({]*(cd|pushd)$/.test(toks[0] ?? '')) continue;
+    const arg = toks.slice(1).find((t) => !/^-[LPe@]+$/.test(t))?.replace(/[)}]+$/, '');
+    if (!arg || arg === '-' || /[$`~*?[{\\]/.test(arg)) return null;
+    at = nodePath.isAbsolute(arg) ? arg : nodePath.posix.join(at, arg);
+    out.push(at);
+  }
+  return out;
+}
+const CD_REASON = "The command changes to a folder protect can't resolve ($X, -, ~ or no folder), so it can't tell where its writes land. Confirm the command.";
+const relative = (ps: string[]): string[] => ps.filter((p) => p && !nodePath.isAbsolute(p));
+const fromDirs = (dirs: string[], ps: string[]): string[] => [...ps, ...dirs.flatMap((d) => relative(ps).map((p) => nodePath.posix.join(d, p)))];
 
 // mv: every path (source and destination); cp: the destination. ponytail: ignores -t DIR; splits on ; & | even inside quotes.
 function moveCopyTargets(cmds: string[]): { mv: string[]; cp: string[] } {
@@ -378,12 +399,16 @@ export const protect: Check = {
       const git = gitRestoreTargets(cmds);
       if (git.some((t) => isWholeTree(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
       if ([...removed, ...mc.cp, ...git].some((t) => GLOB.test(t) && isProtectedGlob(root, t))) return { kind: 'deny', reason: REASON, check: 'protect' };
-      paths = [...new Set([...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)])]; // once each: every check of one touches the disk (re-review 22b, F4)
+      // A cd earlier in the line moves where relative paths land: each is read from the root and from every cd folder.
+      const dirs = cdDirs(cmds) ?? [], at = (ps: string[]) => fromDirs(dirs, ps);
+      const segs = cmds.flatMap(segTokens), edited = at(editorFiles(cmds.flatMap((c) => segments(c).map((g) => words(g).map(unquote))))); // quote-aware: ex -sc '%s/a/b/|wq'
+      paths = [...new Set(at([...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)]))]; // once each: every check of one touches the disk (re-review 22b, F4)
       // Decisions: the directory routes (cp into a folder, tar -C, find -delete) and git restores replace what is under them.
-      const dr = decisionRoutes(root, cmds.flatMap(segTokens)), names = codeNames(code);
-      const dd = decisionsDeny(root, config, [...paths, ...dr.writes, ...names], [...rmT, ...dr.removed, ...git, ...names]);
+      const dr = decisionRoutes(root, segs), names = codeNames(code), rmAt = at(rmT);
+      const dd = decisionsDeny(root, config, [...paths, ...at(dr.writes), ...names], [...rmAt, ...at(dr.removed), ...at(git), ...names]);
       if (dd) return dd;
-      const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmT.includes(p)) });
+      if (cdDirs(cmds) === null && relative([...paths, ...dr.writes, ...dr.removed, ...edited]).length) return { kind: 'ask', reason: CD_REASON, check: 'protect' };
+      const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...at(dr.writes)].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(cmd);
       if (!paths.some((p) => p && isProtected(root, p))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' });

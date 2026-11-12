@@ -192,6 +192,22 @@ export function becomesDecision(root: string, config: HarnessConfig, o: { tool: 
   return isDecisionText(text) ? ASK : null;
 }
 
+// Programs that write the file they are given themselves (re-review): protect can't read what they change.
+const EDITORS = new Set(['ex', 'vi', 'vim', 'nvim', 'view', 'ed', 'red', 'nano', 'pico']);
+const WRAPS = /^(sudo|command|builtin|exec|env|nohup|nice|time)$|^\w+=/;
+/** The file words of an editor run in each segment (after the wrappers above); its `-c`/`+` commands count too, harmlessly. */
+export const editorFiles = (segs: string[][]): string[] => segs.flatMap((toks) => {
+  let i = 0;
+  while (toks[i] !== undefined && WRAPS.test(toks[i]!)) i++;
+  return EDITORS.has(base(toks[i] ?? '')) ? toks.slice(i + 1).filter((t) => !/^[-+]/.test(t)) : [];
+});
+export const EDITOR_REASON = 'An editor run by the agent writes the file itself, and this file is a team decision, a new file in docs/decisions/ or a generated rule. Decisions change through harness remember; approve only if the person asked for this edit.';
+/** An editor's file that is a decision path, or a dated plain file there it could turn into one: ask. */
+export function editorAsk(root: string, config: HarnessConfig, files: string[]): Decision | null {
+  if (config?.checks.decisions === false) return null;
+  return files.some((p) => p && !GLOB.test(p) && (isDecisionPath(root, p) || plainFile(root, p, true))) ? { kind: 'ask', reason: EDITOR_REASON, check: 'protect' } : null;
+}
+
 export function decisionsDeny(root: string, config: HarnessConfig, writes: string[], removed: string[]): Decision | null {
   if (config?.checks.decisions === false) return null;
   const globs = [...writes, ...removed].filter((p) => p && GLOB.test(p));

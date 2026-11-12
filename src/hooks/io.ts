@@ -56,9 +56,6 @@ export function emit(event: string, d: Decision): string {
     const decision = d.kind === 'block' ? 'deny' : d.kind;
     return JSON.stringify({
       hookSpecificOutput: { hookEventName: event, permissionDecision: decision, permissionDecisionReason: d.reason },
-      // Claude Code 2.1.322 shows the reason in a Bash ask dialog but not in an Edit/Write one (live check i5m), so an ask
-      // also shows it to the person directly.
-      ...(decision === 'ask' ? { systemMessage: shown(d.reason) } : {}),
     });
   }
   return JSON.stringify({ decision: 'block', reason: d.reason });

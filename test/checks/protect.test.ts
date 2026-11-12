@@ -483,6 +483,20 @@ describe('the skills\' work folders under .harness/tmp', () => {
     expect(bash(c)).not.toBe('allow');
   });
 
+  const W = 'echo pwn > .harness/tmp/x/q/config.yaml';
+  test.each([`python3 -c 'import os; os.symlink("/p/." + "harness", "l")'; ${W}`, `perl -e 'symlink "/p/.har"."ness", "l"'; ${W}`, `patch -p0 -i x.diff; ${W}`, `bsdcpio -id < a.cpio; ${W}`,
+    `jar xf a.jar; ${W}`, `osascript -e 'x'; ${W}`, `bash -c 'ln -s / s'; ${W}`, `bash <<'EOF'\nln -s / s\nEOF\n${W}`, `node -e 'x'; ${W}`, `7z x a.7z; ${W}`, `install -d x; ${W}`])(
+    'round 2: a line that may place a link first asks: %j', (c) => {
+      const d = run('Bash', { command: c });
+      expect(d.kind).toBe('ask');
+      expect(d.reason).toMatch(/can place links/);
+    });
+  test('round 2: a link word alone asks instead of denying a work-folder write', () => {
+    expect(run('Bash', { command: 'echo git > .harness/tmp/x/a' }).kind).toBe('ask');
+  });
+  test.each(['echo git > .harness/tmp/.gitignore', 'cp a .harness/tmp', 'git status; tee .harness/tmp/x/r/.harness/config.yaml', 'ln -s / x; rm -rf .harness/tmp'])(
+    'round 2: still denied: %s', (c) => expect(bash(c)).toBe('deny'));
+
   test('M3: a quoted path under a repo root with a space, @ or + keeps the exemption', () => {
     for (const root of ['/a b/r', '/a@b/r+1']) {
       const go = (command: string) => (protect.run({ input: { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command } }, root, config: loadConfig('/nonexistent-harness-root').config, env: {}, unattended: false } as unknown as Ctx) as { kind: string }).kind;

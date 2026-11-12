@@ -377,9 +377,12 @@ export function inWorkdir(root: string, p: string): boolean {
   return true;
 }
 // Commands that can make, copy or move a link into the work folder in the same line, before lstat could see it: the
-// line then gets no exemption. ponytail: a script or program that makes one is not seen (see Known limits).
-const LINKERS = /^(ln|link|cp|mv|rsync|tar|bsdtar|gtar|unzip|ditto|cpio|pax|git)$/;
-const placesLinks = (cmds: string[]): boolean => cmds.flatMap(segTokens).some((toks) => toks.some((t) => !t.includes('.harness/tmp') && LINKERS.test(base(t))));
+// line then gets no exemption, and neither does one with inline code (node -e, python -c, sh -c, a heredoc to either).
+// ponytail: a script file run in the same command is not seen (see Known limits).
+const LINKERS = /^(ln|link|cp|mv|rsync|tar|bsdtar|gtar|unzip|ditto|cpio|bsdcpio|pax|git|patch|jar|7z|7za|unar|ar|install|osascript)$/;
+const placesLinks = (cmd: string, cmds: string[], code: string[]): boolean =>
+  code.length > 0 || cPayloads(cmd).length > 0 || stdinProgramsOf(cmd).length > 0 || cmds.flatMap(segTokens).some((toks) => toks.some((t) => !t.includes('.harness/tmp') && LINKERS.test(base(t))));
+const LINK_REASON = 'This command can place links (ln, cp, mv, tar, git, inline code and the like), so protect cannot tell what a write into .harness/tmp reaches. Confirm the command.';
 // The `.harness/tmp/<id>` prefix of a literal work-folder path, swapped for a plain word so the "names a protected path"
 // ask skips it; the rest of the path stays. A whole word, bare or in one pair of quotes, in a line with no expansion,
 // backslash, `..` or cd, where nothing can change what it means. ${CLAUDE_PLUGIN_ROOT} is the skills' form.
@@ -434,7 +437,7 @@ export const protect: Check = {
       // ponytail: textual only; a path built from pieces (".har" + "ness") still gets past.
       if (code.some((c) => H_SEG.test(c))) return { kind: 'deny', reason: H_INLINE, check: 'protect' };
       const cmds = expand(cmd);
-      exempt = !placesLinks(cmds);
+      exempt = !placesLinks(cmd, cmds, code);
       const mc = moveCopyTargets(cmds);
       const rmT = cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets));
       const removed = [...rmT, ...mc.mv];
@@ -449,7 +452,9 @@ export const protect: Check = {
       const dr = decisionRoutes(root, segs, dirs), names = codeNames(code), rmAt = at(rmT);
       const dd = decisionsDeny(root, config, [...paths, ...dr.writes, ...names], [...rmAt, ...dr.removed, ...at(git), ...names]);
       if (dd) return dd;
-      if (paths.some((p) => p && isProtected(root, p, exempt))) return { kind: 'deny', reason: REASON, check: 'protect' }; // before the cd ask (re-review 2, N1)
+      const hit = paths.filter((p) => p && isProtected(root, p, exempt));
+      // Protected only because the exemption is off: ask. tmp itself, its .gitignore or a protected name below it: deny.
+      if (hit.length) return !exempt && hit.every((p) => inWorkdir(root, p)) ? { kind: 'ask', reason: LINK_REASON, check: 'protect' } : { kind: 'deny', reason: REASON, check: 'protect' }; // before the cd ask (re-review 2, N1)
       if (cdDirs(cmds) === null && relative([...paths, ...dr.writes, ...dr.removed, ...edited]).length) return { kind: 'ask', reason: CD_REASON, check: 'protect' };
       const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.

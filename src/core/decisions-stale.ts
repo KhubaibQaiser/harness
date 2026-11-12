@@ -36,8 +36,8 @@ export const gitIn = (root: string): Git => (args, input) => {
 const days = (from: string, to: string): number => (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS;
 const names = (out: string): string[] => out.split('\0').filter(Boolean);
 /** The globs that match none of `files` (tracked repo paths). Shared by staleness and `remember add`/`confirm`. */
-export const deadGlobs = (globs: string[], files: string[]): string[] =>
-  globs.filter((g) => { const m = picomatch(g, { dot: true }); return !files.some((f) => m(f)); });
+export const deadGlobs = (globs: string[], files: string[], ms = globs.map((g) => picomatch(g, { dot: true }))): string[] =>
+  globs.filter((_, j) => !files.some((f) => ms[j]!(f)));
 
 class GitFailure extends Error {}
 
@@ -106,7 +106,7 @@ export function staleness(
     ds.forEach((d, i) => {
       const s = states[i]!;
       const match = d.paths.map((p) => picomatch(p, { dot: true }));
-      s.dead = deadGlobs(d.paths, files);
+      s.dead = deadGlobs(d.paths, files, match); // compiled once: Stop runs this for every decision (perf, 500 decisions)
       const { ref, fallback } = pickRef(isAncestor, here, last.get(d.rel) ?? '', d);
       Object.assign(s, { ref, fallback });
       if (!ref) return;

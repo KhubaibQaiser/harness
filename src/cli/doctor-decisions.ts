@@ -21,6 +21,7 @@ export function decisionsStatusLine(root: string, config: HarnessConfig, o: Opts
   const s = report(root, config, o).summary;
   if (s.unreadable) return `Decisions: unreadable (${s.unreadable})`;
   const counts = s.unchecked ? `${s.expired} expired, staleness unchecked` : `${s.stale} stale, ${s.expired} expired`;
-  const head = s.active ? `${s.active} active (${counts}), rules ${s.inSync ? 'in sync' : 'out of sync'}` : 'none';
+  const rules = s.inSync ? 'in sync' : 'out of sync';
+  const head = s.active ? `${s.active} active (${counts}), rules ${rules}` : s.inSync ? 'none' : `none active, rules ${rules}`; // rules still load (M5)
   return `Decisions: ${head}${s.invalid ? `, ${s.invalid} invalid` : ''}`;
 }

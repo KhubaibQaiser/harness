@@ -15,22 +15,26 @@ import { findQuote } from './quote.js';
 import type { Decision } from '../hooks/types.js';
 
 export const REMEMBER_WHY = 'the agent is saving a team decision';
-export const NOT_LITERAL = 'Blocked by guard: harness remember needs its text as plain quoted words, so the person sees exactly what is written. Remove $, backticks and substitutions.';
+export const NOT_LITERAL = 'Blocked by guard: harness remember needs its text as plain quoted words, so the person sees exactly what is written. Remove $, backticks, backslashes, ~, unquoted globs or @ and substitutions.';
 export const NOT_PLAIN = 'Blocked by guard: write harness remember as one plain command, with nothing before or after it. Run it on its own from the repo folder, without a cd prefix, pipes, redirections or other commands.';
 export const REFUSED = 'Blocked by guard: harness remember would refuse these arguments (run harness remember --help), so there is nothing to approve.';
 type Result = Extract<Decision, { kind: 'deny' | 'ask' }>;
 
 const ID = /^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$/;
 const PLUGIN_CLI = 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" '; // the skill's form: the one expansion allowed
+// The same with the root already filled in: a quoted path, Windows backslashes and any letters allowed, no $ or quote.
+const NODE_CLI = /^node (?:"([^"]*)"|'([^']*)') /;
+const CLI_PATH = /^[\p{L}\p{N}\p{M} _.@+,:()\\/-]*[\\/]dist[\\/]cli\.mjs$/u;
 const UNQUOTED = /[\w@+:,./-]/; // ASCII only: no glob, ~, $, quote, backslash or Unicode space
 const SHAPE = /[;&|<>()#\n\r]/; // another command, a redirection, a subshell or a comment
 const IN_QUOTES_BAD = /[$`~]|[^\S ]/u; // anywhere, single quotes too (§6.1); a tab or Unicode space looks like a space
 const deny = (reason: string, log: string): Result => ({ kind: 'deny', reason, check: 'guard', log });
 
-/** The command's words as the shell passes them on, or why it is not one plain line of literal words. */
-function lex(cmd: string): string[] | 'shape' | 'literal' {
+/** The command's words as the shell passes them on, or why it is not one plain line of literal words. `at`: the
+ *  words that start with an unquoted `@`, which PowerShell splats. */
+function lex(cmd: string): { ws: string[]; at: number[] } | 'shape' | 'literal' {
   if (/[<>]\(/.test(cmd)) return 'literal'; // process substitution: §6.1 names it with $( and backticks
-  const out: string[] = [];
+  const out: string[] = [], at: number[] = [];
   let cur: string | null = null, quote = '';
   for (const c of cmd) {
     if (quote) {
@@ -42,20 +46,24 @@ function lex(cmd: string): string[] | 'shape' | 'literal' {
       if (cur !== null) out.push(cur);
       cur = null;
     } else if (c === '"' || c === "'") [quote, cur] = [c, cur ?? ''];
-    else if (UNQUOTED.test(c) || (c === '=' && cur !== null)) cur = (cur ?? '') + c; // zsh expands a leading unquoted =
-    else return SHAPE.test(c) ? 'shape' : 'literal';
+    else if (UNQUOTED.test(c) || (c === '=' && cur !== null)) {
+      if (c === '@' && cur === null) at.push(out.length);
+      cur = (cur ?? '') + c; // zsh expands a leading unquoted =
+    } else return SHAPE.test(c) ? 'shape' : 'literal';
   }
   if (quote) return 'literal';
   if (cur !== null) out.push(cur);
-  return out;
+  return { ws: out, at };
 }
 
 /** The words after `remember`, when the whole command is `<harness> remember …` with one of the prefixes the skills
  *  and docs use; else why not. */
 function invocation(command: string): string[] | 'shape' | 'literal' {
-  const plugin = command.startsWith(PLUGIN_CLI);
-  const ws = lex(plugin ? command.slice(PLUGIN_CLI.length) : command);
-  if (typeof ws === 'string') return ws;
+  const node = NODE_CLI.exec(command);
+  const plugin = command.startsWith(PLUGIN_CLI) ? PLUGIN_CLI.length : node && CLI_PATH.test(node[1] ?? node[2]!) ? node[0].length : 0;
+  const lexed = lex(command.slice(plugin));
+  if (typeof lexed === 'string') return lexed;
+  const { ws, at } = lexed;
   let i = -1;
   if (plugin) i = 0;
   else if (ws[0] === 'harness') i = 1;
@@ -63,7 +71,16 @@ function invocation(command: string): string[] | 'shape' | 'literal' {
     const j = ws[1] === '--no-install' ? 2 : 1;
     if (/^@khubaibqaiser\/harness(@[\w.+-]+)?$/.test(ws[j] ?? '')) i = j + 1;
   } else if (ws[0] === 'node' && /^([\w@+:,. /-]*\/)?dist\/cli\.mjs$/.test(ws[1] ?? '')) i = 2;
-  return i >= 0 && ws[i] === 'remember' ? ws.slice(i + 1) : 'shape';
+  if (i < 0 || ws[i] !== 'remember') return 'shape';
+  return at.some((k) => k > i) ? 'literal' : ws.slice(i + 1);
+}
+
+const trimmed = (command: string): string => command.replace(/^ +/, '').replace(/[ \t\r\n]+$/, ''); // a trailing newline changes no word
+/** A real `remember add` that writes: parsed as the CLI parses it, and not a dry run. */
+export function realAdd(command: string): boolean {
+  const ws = invocation(trimmed(command));
+  const p = Array.isArray(ws) ? parseRemember(ws) : null;
+  return p?.sub === 'add' && !p.flags.switches.has('--dry-run');
 }
 
 const one = (f: Flags, k: string): string => f.values.get(k)?.[0] ?? '';
@@ -96,8 +113,8 @@ function addAsk(ctx: Ctx, f: Flags, today: string, quote: string | null): Result
 }
 
 function confirmAsk(ctx: Ctx, id: string): Result {
-  const head = gitIn(ctx.root)(['-c', 'core.fsmonitor=false', 'rev-parse', '--short=7', 'HEAD']);
-  const sha7 = head.ok ? head.out.trim() : 'HEAD';
+  const head = gitIn(ctx.root)(['rev-parse', 'HEAD']); // gitIn adds SAFE_GIT; the CLI prints the first 7 too
+  const sha7 = head.ok ? head.out.trim().slice(0, 7) : 'HEAD';
   return ask(`Confirm: the agent wants to mark decision ${shown(id)} as still true at ${sha7}; it then stays loaded for another ${ctx.config.decisions.expiry_days} days.`, idLog('confirm', id));
 }
 
@@ -130,7 +147,7 @@ const quoteIn = (ctx: Ctx, sub: string, f: Flags): string | null => {
  *  every shape but one plain invocation denied. */
 export function rememberAsk(ctx: Ctx, command: string, now: Date = new Date()): Exclude<Decision, { kind: 'allow' }> {
   const today = now.toISOString().slice(0, 10);
-  const words = invocation(command.replace(/^ +/, '').replace(/[ \t\r\n]+$/, '')) // a trailing newline changes no word;
+  const words = invocation(trimmed(command));
   if (words === 'shape') return deny(NOT_PLAIN, 'remember: not one plain command');
   if (words === 'literal') return deny(NOT_LITERAL, 'remember: not literal');
   const p = parseRemember(words);

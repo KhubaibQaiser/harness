@@ -127,7 +127,7 @@ test('the reference carries every team-decisions known limit (spec section 12) a
     'so a broad glob goes stale often',
     'conflict in `.harness/manifest.json`',
     'names a secrets file, such as `.env`',
-    '`--dry-run` and a glob',
+    '`--dry-run` and a word holding a glob',
   ]) expect(limits, s).toContain(s);
   expect(reference.match(/^## Team decisions$/gm)).toHaveLength(1);
 });

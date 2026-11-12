@@ -23,16 +23,16 @@ const row = (level: DecisionLine['level'], what: string, next?: string): Decisio
   ({ level, what, text: next === undefined ? what : `${what}: ${next}`, ...(next === undefined ? {} : { next }) });
 
 /** Staleness of the active decisions, by id; `note` when git failed. */
-function staleOf(root: string, cfg: HarnessConfig, today: string, ds: TeamDecision[], git?: Git) {
+function staleOf(root: string, cfg: HarnessConfig, ds: TeamDecision[], o: { today: string; git?: Git | undefined }) {
   const active = ds.filter((d) => d.status === 'active');
-  const r = staleness(root, active, { today, expiryDays: cfg.decisions.expiry_days, cap: cfg.decisions.max_lines, ...(git ? { git } : {}) });
+  const r = staleness(root, active, { today: o.today, expiryDays: cfg.decisions.expiry_days, cap: cfg.decisions.max_lines, ...(o.git ? { git: o.git } : {}) });
   return { active, states: r.states, note: r.note };
 }
 
 /** One line per valid decision, sorted by id, then a count of the invalid ones. */
 export function list(root: string, cfg: HarnessConfig, today: string, git?: Git): string[] {
   const set = readDecisions(root, today);
-  const { states, note } = staleOf(root, cfg, today, set.decisions, git);
+  const { states, note } = staleOf(root, cfg, set.decisions, { today, git });
   const byId = new Map(states.map((s) => [s.id, s]));
   const column = (s: Staleness | undefined): string => {
     if (!s || !isStale(s)) return '';
@@ -75,7 +75,7 @@ export function decisionLines(root: string, cfg: HarnessConfig, today: string, g
   if (plan && outOfSync(plan)) lines.push(fix(`decision rules are out of sync with ${DECISIONS_DIR}/`, `run ${CMD} sync`));
   for (const f of plan?.foreign ?? []) lines.push(fix(`${shown(f)} is named like a harness decision rule but isn't harness's`, 'rename it'));
   const inSync = plan !== null && !outOfSync(plan) && plan.foreign.length === 0;
-  const { active, states, note } = staleOf(root, cfg, today, set.decisions, git);
+  const { active, states, note } = staleOf(root, cfg, set.decisions, { today, git });
   const rules = plan === null ? 'not checked' : inSync ? 'in sync' : 'out of sync';
   lines.push(row('ok', set.decisions.length ? `decisions: ${active.length} active, rules ${rules}` : 'no team decisions yet'));
   if (note) lines.push(row('note', shown(note)));
@@ -91,8 +91,9 @@ export function decisionLines(root: string, cfg: HarnessConfig, today: string, g
 }
 
 /** `harness remember check`: for CI. Exit 1 on an invalid file or rules out of sync; staleness alone never fails it. */
-export function check(root: string, cfg: HarnessConfig, today: string, out: (s: string) => void, git?: Git): number {
-  const { lines, summary: s } = decisionLines(root, cfg, today, git);
+export function check(root: string, cfg: HarnessConfig, o: { today: string; out: (s: string) => void; git?: Git }): number {
+  const { lines, summary: s } = decisionLines(root, cfg, o.today, o.git);
+  const { out } = o;
   lines.forEach((l) => out(`${l.level} ${l.text}`));
   out(`${s.n} decisions: ${s.errors} errors, ${s.stale} stale, ${s.expired} expired, ${s.oversized} oversized, rules ${s.inSync ? 'in sync' : 'out of sync'}`);
   return s.errors || !s.inSync ? 1 : 0;

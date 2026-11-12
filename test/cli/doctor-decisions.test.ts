@@ -128,3 +128,11 @@ test('checks.decisions: false still reports (plan decision)', async () => {
   expect(lines.some((l) => l.includes('out of sync'))).toBe(true);
   expect(decisionsStatusLine(r, off, { today: TODAY })).toMatch(/^Decisions: 1 active/);
 });
+
+test('final review M5: with no active decision, status still names rules out of sync, as doctor does', async () => {
+  const r = await installedRepo(); put(r, 'src/env/a.ts'); const sha = commit(r);
+  writeDecision(r, decision('2026-11-03-a', { verified_at: sha })); syncNow(r);
+  writeDecision(r, decision('2026-11-03-a', { verified_at: sha, status: 'retired' })); // retired by hand, no sync
+  expect(run(r).lines).toContain('fix decision rules are out of sync with docs/decisions/: run harness remember sync');
+  expect(decisionsStatusLine(r, cfg, { today: TODAY })).toBe('Decisions: none active, rules out of sync');
+});

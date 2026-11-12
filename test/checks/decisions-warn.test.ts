@@ -40,7 +40,7 @@ async function synced(over = {}) {
 test('lists only decisions linked to changed files, with the verbatim line', async () => {
   const root = await synced();
   const out = decisionWarnings(mk(root), ['src/env/a.ts'], fake());
-  expect(out).toEqual([`Harness: you changed code covered by team decision \`${A}\` ("Title ${A}"). If it still holds, ask the person to run \`harness remember confirm ${A}\`; if not, \`harness remember retire ${A}\`.`]);
+  expect(out).toEqual([`Harness: you changed code covered by team decision \`${A}\` ("Title ${A}"). If it still holds, run \`harness remember confirm ${A}\`; if not, \`harness remember retire ${A}\`.`]);
   expect(decisionWarnings(mk(root), ['README.md'], fake())).toEqual([]);
 });
 

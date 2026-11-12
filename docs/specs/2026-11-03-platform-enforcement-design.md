@@ -241,7 +241,7 @@ A Claude Code older than 2.1.314 isn't refused by `update`: `doctor` fails on it
 
 - The Stop gate fails open if its process can't run (`onFailure` has no effect on Stop).
 - Native Windows has no sandbox: shell commands are checked by text only, and the guard doesn't parse PowerShell.
-- Interactive sessions under the default `unattended` mode keep the text-check gaps (a `cd` before a write, shell reads of secrets, writes protect doesn't parse, and scripts that turn TDD off) unless the person turns the sandbox on before the session starts or uses `always`.
+- Interactive sessions under the default `unattended` mode keep the text-check gaps (a folder change protect doesn't see, such as one in an earlier Bash call or inside a script, shell reads of secrets, writes protect doesn't parse, and scripts that turn TDD off) unless the person turns the sandbox on before the session starts or uses `always`.
 - A blocked settings change still sits on disk; the next session loads it. Change detection reports it at the next prompt and Stop.
 - Force-push and push-to-main rules are text rules; branch protection is the real stop.
 - `HARNESS_SANDBOX=1` is the launcher's claim; harness can't see `--settings`.

@@ -537,6 +537,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 ## Known limits
 
 - `init`, `update`, `uninstall` and `context-optimize` start only from their slash commands, not from plain words.
+- When harness asks before an Edit, Write or MultiEdit (the PR-size pause, the multi-file gate, a protected path), Claude Code 2.1.322 shows only its own "Do you want to make this edit to …?" dialog, without harness's reason; Bash dialogs do show it (live check, 2026-11-12). A `systemMessage` sent with the ask is not shown either. For PR size, the size note after the previous edit says why the next edit asks; for the multi-file gate, the reason is in `harness report` and `.harness/logs/events.jsonl`.
 - The guard recognises the commands `harness` and `cli.mjs` by name. A renamed copy or symlink of the CLI (`node h.mjs add x --yes`) isn't recognised, so it doesn't ask first.
 - The person-only check reads the command text, so a harness command built at run time inside `eval` (for example from pieces of a variable, or from a glob) is not caught. Claude Code's own permission prompt still applies.
 - Two hooks writing at once can lose or double a `timing.jsonl` rotation (rename after a size check). Lines are append-only and never torn.

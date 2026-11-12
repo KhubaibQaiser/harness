@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -271,4 +271,11 @@ test('change detection reports a sandbox change', () => {
   const before = snapshotHarnessFiles(root)['.claude/settings.json'];
   writeFileSync(join(root, '.claude/settings.json'), '{"sandbox":{"enabled":false}}');
   expect(snapshotHarnessFiles(root)['.claude/settings.json']).not.toBe(before);
+});
+
+test('a .harness holding only the skills\' work folders is not an install: the CLI stamps nothing there', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-hf-tmp-'));
+  mkdirSync(join(root, '.harness/tmp/w-1'), { recursive: true });
+  stampHarnessFiles(root);
+  expect(existsSync(join(root, '.harness/state'))).toBe(false);
 });

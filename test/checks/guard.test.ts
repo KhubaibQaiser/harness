@@ -255,7 +255,10 @@ test('P1: only the repo\'s node_modules CLI is recorded, it is re-checked when p
   const nm = fakeCli(root, 'node_modules/@khubaibqaiser/harness/dist/cli.mjs');
   recordCliPath(root, nm);
   expect(readCliPath(root)).toBeNull(); // not installed here: nothing recorded
-  mkdirSync(join(root, '.harness'));
+  mkdirSync(join(root, '.harness/tmp'), { recursive: true });
+  recordCliPath(root, nm);
+  expect(readCliPath(root)).toBeNull(); // only the skills' work folders: still not installed
+  rmSync(join(root, '.harness/tmp'), { recursive: true });
   for (const bad of [fakeCli(root, 'tmp/evil/dist/cli.mjs'), fakeCli(root, 'plug/dist/cli.mjs'), fakeCli(realpathSync.native(mkdtempSync(join(tmpdir(), 'h-guard-p1o-'))), 'node_modules/@khubaibqaiser/harness/dist/cli.mjs')]) {
     recordCliPath(root, bad);
     expect(readCliPath(root), bad).toBeNull();

@@ -1,5 +1,6 @@
 // Harness files and Claude settings are changed by a person; the agent is denied at the tool-call level.
 import { spawnSync } from 'node:child_process';
+import { lstatSync } from 'node:fs';
 import nodePath, { resolve } from 'node:path';
 import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
@@ -11,8 +12,8 @@ import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReadi
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
 import { SAFE_GIT } from '../core/git-safe.js';
 
-const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude/settings.json', '.claude/settings.local.json'];
-const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
+const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
+const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
 const REASON = 'Harness files and Claude settings are changed by a person, not the agent.';
 const NM_REASON = 'node_modules is managed by the package manager, not edited by hand: change package.json and run an install instead.';
 const INLINE_WHY = 'Inline code (node -e, python -c and the like) that names';
@@ -355,8 +356,33 @@ export const isWholeTree = (root: string, t: string, path: typeof nodePath = nod
   return !rel.startsWith('..') && !path.isAbsolute(rel);
 };
 
+const TMP = '.harness/tmp';
+/** Inside a skill's work folder (`harness workdir`): lexically `.harness/tmp/<id>[/…]`, no `..` left, and no symlink on the
+ *  way from `.harness` down, so the write lands where it reads. `.harness/tmp` and its .gitignore are not. */
+export function inWorkdir(root: string, p: string): boolean {
+  const rel = nodePath.relative(root, nodePath.resolve(root, p)).split(nodePath.sep).join('/');
+  if (!rel.startsWith(TMP + '/') || rel === TMP + '/.gitignore') return false;
+  const segs = rel.split('/');
+  for (let i = 1; i <= segs.length; i++) {
+    try {
+      if (lstatSync(nodePath.join(root, ...segs.slice(0, i))).isSymbolicLink()) return false;
+    } catch {
+      break; // missing: nothing below it exists either
+    }
+  }
+  return true;
+}
+// Literal work-folder paths in a command, swapped for a plain word so the "names a protected path" ask skips them. Only in
+// a line with no expansion, `..` or cd, where nothing can change what the path means. ${CLAUDE_PLUGIN_ROOT} is the skills' form.
+const TMP_WORD = /(?<=^|[\s<>|;&(])(?:\/[\w.\/-]*\/)?\.harness\/tmp\/[\w.-][\w.\/-]*(?=$|[\s;&|)<>])/g;
+const withoutWorkdirs = (root: string, cmd: string): string =>
+  /[$`\\]|\.\.|\b(cd|pushd)\b/.test(cmd.replaceAll('${CLAUDE_PLUGIN_ROOT}', '')) ? cmd : cmd.replace(TMP_WORD, (w) => (inWorkdir(root, w) ? 'workdir-file' : w));
+
 // A bare directory (rm -rf .harness/hooks) counts as inside its own glob.
 const isProtected = (root: string, p: string): boolean => {
+  if (inWorkdir(root, p)) return false;
+  const lex = nodePath.relative(root, nodePath.resolve(root, p)).split(nodePath.sep).join('/').toLowerCase();
+  if (lex === TMP || lex.startsWith(TMP + '/')) return true; // a symlinked tmp would read as outside the repo below
   const rel = toRepoPath(root, p)?.toLowerCase() ?? null; // macOS is case-insensitive
   return rel !== null && (rel === '.harness' || rel === '.claude' || matches(rel, PROTECTED) || matches(`${rel}/x`, PROTECTED));
 };
@@ -412,7 +438,7 @@ export const protect: Check = {
       if (cdDirs(cmds) === null && relative([...paths, ...dr.writes, ...dr.removed, ...edited]).length) return { kind: 'ask', reason: CD_REASON, check: 'protect' };
       const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
-      const built = touchesProtectedText(cmd);
+      const built = touchesProtectedText(withoutWorkdirs(root, cmd));
       if (!paths.some((p) => p && isProtected(root, p))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' });
     }
     if (target !== null) { const dd = decisionsDeny(root, config, [target], []); if (dd) return dd; }

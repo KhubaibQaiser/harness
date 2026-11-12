@@ -458,3 +458,46 @@ test('the pr-ship skill\'s --pr-size call passes the full PreToolUse registry', 
   const ctx = { input: { hook_event_name: 'PreToolUse', session_id: 's', cwd: ROOT, tool_name: 'Bash', tool_input: { command: cmd } }, root: ROOT, config, env: {}, unattended: false } as unknown as Ctx;
   for (const c of registry.filter((c) => c.events.includes('PreToolUse') && (c.name === 'guard' || c.name === 'protect'))) expect((await c.run(ctx)).kind, c.name).toBe('allow');
 });
+
+describe('the skills\' work folders under .harness/tmp', () => {
+  test.each(['.harness/tmp/x/answers.json', '/p/.harness/tmp/x/answers.json', '.harness/tmp/x/sub/picks.json', '.harness/tmp/x'])('Write to %s is allowed', (p) => {
+    expect(edit(p, 'Write').kind).toBe('allow');
+  });
+  test.each(['cat > .harness/tmp/x/answers.json', "cat > /p/.harness/tmp/x/answers.json <<'EOF'\n{}\nEOF", 'tee .harness/tmp/x/a.json', 'echo {} | tee /p/.harness/tmp/x/a.json >/dev/null',
+    'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" vet owner/repo --json --keep > /p/.harness/tmp/x/scan.json', 'rm -rf .harness/tmp/x', 'rm -rf /p/.harness/tmp/x'])('%s is allowed', (c) => {
+    expect(bash(c)).toBe('allow');
+  });
+  test.each(['.harness/tmp/../config.yaml', '.harness/tmp/x/../../config.yaml', '.harness/tmp', '/p/.harness/tmp', '.harness/tmp/.gitignore'])('Write to %s is denied', (p) => {
+    expect(edit(p, 'Write').kind).toBe('deny');
+  });
+  test.each(['rm -rf .harness/tmp', 'rm -rf .harness/tmp/', 'rm -rf .harness', 'cat > .harness/tmp/../config.yaml', 'tee .harness/tmp/x/../../config.yaml', 'rm -rf .harness/tmp/x/../..', 'mv .harness/tmp /elsewhere'])('%s is denied', (c) => {
+    expect(bash(c)).toBe('deny');
+  });
+  test.each(['x=.harness/tmp/a; rm -rf $x/..', 'cd .harness/tmp/a && tee $(printf ..)/../config.yaml', 'rm -rf .harness/tmp/x/{..,y}'])('%s is not allowed', (c) => {
+    expect(bash(c)).not.toBe('allow');
+  });
+
+  test('a symlinked tmp folder, or a symlink below it, gets no exemption', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'h-tmpl-')));
+    const away = realpathSync(mkdtempSync(join(tmpdir(), 'h-away-')));
+    const at = (p: string, command?: string) => {
+      const config = loadConfig('/nonexistent-harness-root').config;
+      const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: command ? 'Bash' : 'Write', tool_input: command ? { command } : { file_path: p } };
+      return (protect.run({ input, root, config, env: {}, unattended: false } as unknown as Ctx) as { kind: string }).kind;
+    };
+    mkdirSync(join(root, '.harness'));
+    symlinkSync(away, join(root, '.harness/tmp'));
+    expect(at('.harness/tmp/x/answers.json')).toBe('deny');
+    expect(at('', 'cat > .harness/tmp/x/answers.json')).not.toBe('allow');
+    expect(at('', 'rm -rf .harness/tmp/x')).toBe('deny');
+
+    const root2 = realpathSync(mkdtempSync(join(tmpdir(), 'h-tmpl-')));
+    mkdirSync(join(root2, '.harness/tmp'), { recursive: true });
+    symlinkSync(away, join(root2, '.harness/tmp/x'));
+    writeFileSync(join(away, 'f'), '');
+    const at2 = (p: string) => (protect.run({ input: { hook_event_name: 'PreToolUse', session_id: 's', cwd: root2, tool_name: 'Write', tool_input: { file_path: p } }, root: root2, config: loadConfig('/nonexistent-harness-root').config, env: {}, unattended: false } as unknown as Ctx) as { kind: string }).kind;
+    expect(at2('.harness/tmp/x/f')).toBe('deny');
+    mkdirSync(join(root2, '.harness/tmp/y'));
+    expect(at2('.harness/tmp/y/f')).toBe('allow');
+  });
+});

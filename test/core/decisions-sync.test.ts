@@ -7,6 +7,8 @@ import { uninstall } from '../../src/cli/uninstall.js';
 import { renderRule, ruleRel } from '../../src/core/decision-rule.js';
 import { commitDecisions, isLive, outOfSync, planSync, readDecisions } from '../../src/core/decisions.js';
 import { readManifest } from '../../src/install/manifest.js';
+import { loadConfig } from '../../src/core/config.js';
+import { decisionLines } from '../../src/cli/remember-read.js';
 import { hashText } from '../../src/install/text.js';
 import { TODAY, decision, installedRepo, syncNow, writeDecision } from './decisions-helpers.js';
 
@@ -226,3 +228,28 @@ test('Important 3: a file one byte over the cap gets the size error; a big non-d
   expect(set.others).toEqual(['docs/decisions/README.md']);
 });
 
+
+test('final review I3: a CRLF checkout (core.autocrlf=true) of the rules is in sync, adopted or still foreign by LF content', async () => {
+  const root = await installedRepo();
+  writeDecision(root, decision(A));
+  writeDecision(root, decision(B));
+  syncNow(root);
+  const crlf = (rel: string) => writeFileSync(join(root, rel), onDisk(root, rel).replace(/\n/g, '\r\n'));
+  crlf(ruleRel(A));
+  crlf(ruleRel(B));
+  expect(onDisk(root, ruleRel(A))).toContain('\r\n');
+  const p = plan(root);
+  expect({ changes: p.changes, foreign: p.foreign, adopt: p.adopt, rehash: p.rehash, out: outOfSync(p) }).toEqual({ changes: [], foreign: [], adopt: [], rehash: [], out: false });
+  const summary = decisionLines(root, loadConfig(root).config, TODAY, () => ({ ok: false, out: '', reason: 'test' })).summary;
+  expect(summary.inSync).toBe(true);
+  // No manifest entry (after a conflict): the CRLF copy of what sync would write is adopted, not foreign.
+  const full = readManifest(root)!;
+  writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ ...full, files: full.files.filter((f) => f.rel !== ruleRel(A)) }, null, 2) + '\n');
+  expect({ foreign: plan(root).foreign, adopt: plan(root).adopt }).toEqual({ foreign: [], adopt: [ruleRel(A)] });
+  syncNow(root);
+  expect(readManifest(root)!.files).toEqual(full.files);
+  // Different content stays foreign.
+  writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ ...full, files: full.files.filter((f) => f.rel !== ruleRel(A)) }, null, 2) + '\n');
+  writeFileSync(join(root, ruleRel(A)), '# mine\r\n');
+  expect(plan(root).foreign).toEqual([ruleRel(A)]);
+});

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Catalog } from '../catalog/schema.js';
-import { foreignLine, manifestWork, planSync, readDecisions, withRules } from '../core/decisions.js';
+import { foreignLine, manifestWork, planSync, readDecisions, secretLine, withRules } from '../core/decisions.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
 import { ApplyError, type Change, type FsLike, applyChanges, removeEmptyDirs } from '../install/apply.js';
@@ -76,7 +76,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   const decided = readDecisions(root, today);
   for (const e of decided.errors) out(`Note: ${e}`);
   const rules = planSync(root, decided, config.decisions, today);
-  const foreign = foreignLine(rules);
+  const foreign = foreignLine(rules) ?? secretLine(rules);
   if (foreign) return out(foreign), 1;
   changes.push(...rules.changes);
   const ruleFix = manifestWork(rules) > 0;

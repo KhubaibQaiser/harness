@@ -8,6 +8,7 @@ import type { HarnessConfig } from './config.js';
 import { DECISIONS_DIR, MAX_DECISION_BYTES, isDecisionText, parseDecision, shown, type TeamDecision } from './decision-file.js';
 import { RULE_GLOB, renderRule, ruleRel } from './decision-rule.js';
 import { stampHarnessFiles } from './harness-files.js';
+import { scanSecrets } from './secrets.js';
 
 export interface DecisionSet { decisions: TeamDecision[]; errors: string[]; others: string[] }
 
@@ -91,9 +92,10 @@ export function planSync(root: string, set: DecisionSet, cfg: HarnessConfig['dec
   const p: SyncPlan = { changes: [], foreign: [], adopt: [], rehash: [], stale: [], wanted: want.size, leftOut: set.decisions.length - want.size };
   for (const [rel, text] of want) {
     const cur = disk.get(rel);
+    const same = cur?.replace(/\r\n/g, '\n') === text; // a core.autocrlf=true checkout is CRLF (§4.1: LF, so hashes match)
     if (cur === undefined) p.changes.push({ kind: 'create', rel, content: text });
-    else if (!known.has(rel)) (cur === text ? p.adopt : p.foreign).push(rel);
-    else if (cur !== text) p.changes.push({ kind: 'update', rel, before: cur, after: text, blocks: [], rewrite: true });
+    else if (!known.has(rel)) (same ? p.adopt : p.foreign).push(rel);
+    else if (!same) p.changes.push({ kind: 'update', rel, before: cur, after: text, blocks: [], rewrite: true });
     else if (!matchesHash(text, hashes.get(rel)!)) p.rehash.push(rel);
   }
   for (const [rel, cur] of disk) {
@@ -118,6 +120,15 @@ function placeRules(files: Manifest['files'], firstRule: number): Manifest['file
 
 /** The §4.3 stop line for the first foreign rule, or null. */
 export const foreignLine = (plan: SyncPlan): string | null => (plan.foreign.length ? `harness remember: ${shown(plan.foreign[0]!)} is not harness's; rename it` : null);
+
+/** §5 step 3 for sync: the stop line for the first rule it would write that looks like it holds a secret, or null. */
+export function secretLine(plan: SyncPlan): string | null {
+  for (const c of plan.changes) {
+    const hit = c.kind === 'delete' ? undefined : scanSecrets(c.kind === 'create' ? c.content : c.after)[0];
+    if (hit) return `harness remember: ${shown(c.rel)} would hold a secret (${hit.kind}). Decisions are committed to git. Remove it from the decision by hand, then run sync again.`;
+  }
+  return null;
+}
 
 /** Manifest-only work: rules to adopt, rehash or forget. */
 export const manifestWork = (plan: SyncPlan): number => plan.adopt.length + plan.rehash.length + plan.stale.length;

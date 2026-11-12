@@ -381,3 +381,14 @@ test("a foreign decision rule stops sync with the §4.3 line", async () => {
   expect(r.out).toContain(`harness remember: ${RULE} is not harness's; rename it`);
   expect(tree(root)).toEqual(before);
 });
+
+test('final review M1: a decision rule that would hold a secret stops sync, nothing written', async () => {
+  const root = installed();
+  writeDecision(root, decision(DEC, { verified_on: DAY, body: `**Rule:** Use ghp_${'a1'.repeat(18)}.\n` }));
+  commitAll(root);
+  const before = tree(root);
+  const r = await runAt(root, ['--yes']);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`harness remember: ${RULE} would hold a secret (GitHub token).`);
+  expect(tree(root)).toEqual(before);
+});

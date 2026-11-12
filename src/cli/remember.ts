@@ -2,14 +2,13 @@
 // anything echoes it, printed through `shown`, and never logged.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import picomatch from 'picomatch';
 import { ApplyError, type Change, type FsLike } from '../install/apply.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import type { HarnessConfig } from '../core/config.js';
 import { DECISIONS_DIR, MAX_PATHS, MAX_TITLE_CHARS, addBody, globProblem, parseDecision, serializeDecision, shown, slugId, type TeamDecision } from '../core/decision-file.js';
 import { renderRule, ruleRel } from '../core/decision-rule.js';
-import { commitDecisions, planSync, readDecisions, type DecisionSet, type SyncPlan } from '../core/decisions.js';
-import { gitIn, type Git } from '../core/decisions-stale.js';
+import { commitDecisions, planSync, readDecisions, secretLine, type DecisionSet, type SyncPlan } from '../core/decisions.js';
+import { deadGlobs, gitIn, type Git } from '../core/decisions-stale.js';
 import { appendEvent } from '../core/events.js';
 import { gitRoot } from '../core/repo-root.js';
 import { argsValid, type Flags, parseFlags, REMEMBER_SPECS } from '../core/remember-args.js';
@@ -114,8 +113,7 @@ function fromGit(git: Git, paths: string[]): { head: string; dead: string[] } | 
   if (!head.ok || !SHA.test(sha)) return 'harness remember: no commit to record as verified_at. Commit once, then run it again.';
   const ls = git(['ls-files', '-z']);
   if (!ls.ok) return `harness remember: couldn't list tracked files (${shown(ls.reason ?? 'git failed')}).`;
-  const files = ls.out.split('\0').filter(Boolean);
-  return { head: sha, dead: paths.filter((p) => { const m = picomatch(p, { dot: true }); return !files.some((f) => m(f)); }) };
+  return { head: sha, dead: deadGlobs(paths, ls.out.split('\0').filter(Boolean)) };
 }
 
 /** `verb`: write, remove, update. A manifest-only fix (adopt, rehash, drop) gets its own line, so a yes is never blind. */
@@ -125,7 +123,8 @@ const fileLines = (changes: Change[], plan: SyncPlan, verb: [string, string, str
 ];
 
 /** Steps 4 and 5: dry run, the prompt, then one transaction. Returns the exit code when it stops, or null once written. */
-async function commit(cli: RememberEnv, ctx: Ctx, flags: Flags, decisionChanges: Change[], plan: SyncPlan): Promise<number | null> {
+async function commit(cli: RememberEnv, ctx: Ctx, o: { flags: Flags; decisionChanges: Change[]; plan: SyncPlan }): Promise<number | null> {
+  const { flags, decisionChanges, plan } = o;
   const all = [...decisionChanges, ...plan.changes];
   if (plan.foreign.length) return refuse(cli, ctx.root, 'foreign', `harness remember: ${shown(plan.foreign[0]!)} is not harness's; rename it`);
   if (flags.switches.has('--dry-run')) return fileLines(all, plan, ['Would write', 'Would remove', 'Would update']).forEach((l) => cli.out(l)), 0;
@@ -186,7 +185,7 @@ async function add(args: string[], cli: RememberEnv): Promise<number> {
   const fileSecret = secretIn([['the decision file', b.text]]);
   if (fileSecret) return no('secret', fileSecret);
   const plan = planSync(ctx.root, b.set, ctx.cfg.decisions, ctx.today);
-  const stop = await commit(cli, ctx, f, b.changes, plan);
+  const stop = await commit(cli, ctx, { flags: f, decisionChanges: b.changes, plan });
   if (stop !== null) return stop;
   for (const l of fileLines([...b.changes, ...plan.changes], plan, ['Wrote', 'Removed', 'Updated'])) cli.out(l === `Wrote ${ruleRel(b.d.id)}` ? `${l} (loads when ${paths.map(shown).join(', ')} are touched)` : l);
   cli.out(NOT_COMMITTED);
@@ -204,8 +203,10 @@ async function syncCmd(args: string[], cli: RememberEnv): Promise<number> {
   const plan = planSync(ctx.root, set, ctx.cfg.decisions, ctx.today);
   const inSync = `Rules in sync: ${set.decisions.length} decisions, ${plan.wanted} rules (${plan.leftOut} expired or retired, left out).`;
   const code = set.errors.length ? 1 : 0;
+  const secret = secretLine(plan);
+  if (secret) return refuse(cli, ctx.root, 'secret', secret);
   if (plan.changes.length + plan.adopt.length + plan.rehash.length + plan.stale.length === 0 && !plan.foreign.length) return cli.out(inSync), code;
-  const stop = await commit(cli, ctx, f, [], plan);
+  const stop = await commit(cli, ctx, { flags: f, decisionChanges: [], plan });
   if (stop !== null) return stop;
   fileLines(plan.changes, plan, ['Wrote', 'Removed', 'Updated']).forEach((l) => cli.out(l));
   log(ctx.root, 'synced');
@@ -247,7 +248,7 @@ async function rewrite(sub: 'confirm' | 'retire', args: string[], cli: RememberE
   const full = planSync(ctx.root, { ...set, decisions: set.decisions.map((x) => (x === d ? next : x)) }, ctx.cfg.decisions, ctx.today);
   const plan = onlyRule(full, ruleRel(d.id));
   const change: Change = { kind: 'update', rel: d.rel, before: readFileSync(join(ctx.root, d.rel), 'utf8'), after: text, blocks: [], rewrite: true };
-  const stop = await commit(cli, ctx, f, [change], plan);
+  const stop = await commit(cli, ctx, { flags: f, decisionChanges: [change], plan });
   if (stop !== null) return stop;
   if (sub === 'confirm') {
     const expires = new Date(Date.parse(`${ctx.today}T00:00:00Z`) + ctx.cfg.decisions.expiry_days * DAY_MS).toISOString().slice(0, 10);
@@ -269,7 +270,7 @@ export async function remember(args: string[], cli: RememberEnv): Promise<number
   if ((sub !== 'list' && sub !== 'check') || rest.length) return usage(cli);
   const ctx = open(cli, false);
   if (typeof ctx === 'number') return ctx;
-  if (sub === 'check') return check(ctx.root, ctx.cfg, ctx.today, cli.out, ctx.git);
+  if (sub === 'check') return check(ctx.root, ctx.cfg, { today: ctx.today, out: cli.out, git: ctx.git });
   const lines = list(ctx.root, ctx.cfg, ctx.today, ctx.git);
   cli.out(lines.length ? lines.join('\n') : `No team decisions in ${DECISIONS_DIR}/.`);
   return 0;

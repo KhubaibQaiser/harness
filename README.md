@@ -88,6 +88,10 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 - **Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted.
 - The report quotes your sessions, so don't share it. It sends nothing anywhere.
 
+## Team decisions
+
+When the team agrees on a rule for some paths, ask Claude to remember it (`/harness:remember`) or run `harness remember add` yourself. It writes `docs/decisions/<id>.md` and a rule in `.claude/rules/` that Claude Code loads when those paths are touched. Each write asks you first, and nothing is committed: open a PR so the team reviews it. A decision expires after 90 days unless someone runs `harness remember confirm`, and `doctor`, `status` and the Stop gate say when one is stale or out of sync. `uninstall` keeps `docs/decisions/`. Details and limits: [docs/reference.md](docs/reference.md#team-decisions).
+
 ## What it costs
 
 - **Context.** Always-loaded text has a budget of 2000 tokens by default (`context.budget_tokens`). `harness explain` shows what each item loads. The budget counts your repo's own `CLAUDE.md`, rules and skills too. `init`, `update`, `add` and `sync` ask before going past it. With `--yes`, they stop unless you also pass `--over-budget`. An unattended run over the budget is refused, even with `--over-budget`. `doctor` and `status` show the total and never call the API. Counts are estimates (characters ÷ 4). `harness context` uses Anthropic's token-counting API only when `ANTHROPIC_API_KEY` is set (never stored); that sends the measured text to Anthropic under your key's account. `--offline` skips it.

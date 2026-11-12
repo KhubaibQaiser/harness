@@ -404,11 +404,11 @@ export const protect: Check = {
       const segs = cmds.flatMap(segTokens), edited = at(editorFiles(cmds.flatMap((c) => segments(c).map((g) => words(g).map(unquote))))); // quote-aware: ex -sc '%s/a/b/|wq'
       paths = [...new Set(at([...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)]))]; // once each: every check of one touches the disk (re-review 22b, F4)
       // Decisions: the directory routes (cp into a folder, tar -C, find -delete) and git restores replace what is under them.
-      const dr = decisionRoutes(root, segs), names = codeNames(code), rmAt = at(rmT);
-      const dd = decisionsDeny(root, config, [...paths, ...at(dr.writes), ...names], [...rmAt, ...at(dr.removed), ...at(git), ...names]);
+      const dr = decisionRoutes(root, segs, dirs), names = codeNames(code), rmAt = at(rmT);
+      const dd = decisionsDeny(root, config, [...paths, ...dr.writes, ...names], [...rmAt, ...dr.removed, ...at(git), ...names]);
       if (dd) return dd;
       if (cdDirs(cmds) === null && relative([...paths, ...dr.writes, ...dr.removed, ...edited]).length) return { kind: 'ask', reason: CD_REASON, check: 'protect' };
-      const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...at(dr.writes)].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
+      const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(cmd);
       if (!paths.some((p) => p && isProtected(root, p))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' });

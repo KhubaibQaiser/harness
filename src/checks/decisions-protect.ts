@@ -114,13 +114,13 @@ function operands(ws: string[], targets: boolean): { target?: string; args: stri
 // cp, mv, install and rsync into a directory: the files they leave there. Copying a folder's contents (`src/`, `src/.`)
 // counts as a write to the directory itself. Short value flags (-S, -m, -o, -g) end their cluster and take their value.
 // ponytail: rsync's option values (-e ssh) count as sources (harmless).
-function copyRoutes(root: string, toks: string[], r: Routes): void {
+function copyRoutes(root: string, toks: string[], r: Routes, at: (p: string) => string): void {
   const i = toks.findIndex((t) => ['cp', 'mv', 'install', 'rsync'].includes(base(t)));
   if (i < 0) return;
   const { target, args } = operands(toks.slice(i + 1), base(toks[i]) !== 'rsync');
   if (target === undefined && args.length < 2) return;
-  const dest = target ?? args.pop()!;
-  if (base(toks[i]) === 'mv') r.removed.push(...args);
+  const dest = at(target ?? args.pop()!);
+  if (base(toks[i]) === 'mv') r.removed.push(...args.map(at));
   if (target === undefined && !isDir(root, dest)) {
     if (base(toks[i]) === 'mv') r.removed.push(dest);
     return;
@@ -133,7 +133,7 @@ function copyRoutes(root: string, toks: string[], r: Routes): void {
 }
 
 // tar extracting into -C/--directory, unzip -d, and find's start paths when it deletes: removals of that directory.
-function treeRoutes(root: string, toks: string[], r: Routes): void {
+function treeRoutes(root: string, toks: string[], r: Routes, at: (p: string) => string): void {
   const i = toks.findIndex((t) => ['tar', 'unzip', 'find'].includes(base(t)));
   if (i < 0) return;
   const args = toks.slice(i + 1);
@@ -149,15 +149,19 @@ function treeRoutes(root: string, toks: string[], r: Routes): void {
     const starts = args.slice(0, Math.max(0, args.findIndex((t) => /^[-(!]/.test(t)))).filter(Boolean);
     dirs = starts.length ? starts : ['.'];
   }
-  r.removed.push(...dirs.filter(Boolean).map((d) => asDir(root, d)));
+  r.removed.push(...dirs.filter(Boolean).map((d) => asDir(root, at(d))));
 }
 
-/** What the shell's directory routes write and remove, from each segment's words. */
-export function decisionRoutes(root: string, segs: string[][]): Routes {
+/** What the shell's directory routes write and remove, from each segment's words, with relative paths read from the
+ *  root and from each of `dirs` (the folders a `cd` earlier in the line moved to). */
+export function decisionRoutes(root: string, segs: string[][], dirs: string[] = []): Routes {
   const r: Routes = { writes: [], removed: [] };
-  for (const toks of segs) {
-    copyRoutes(root, toks, r);
-    treeRoutes(root, toks, r);
+  for (const d of ['.', ...dirs]) {
+    const at = (p: string) => (isAbsolute(p) ? p : posix.join(d, p)); // join keeps a trailing /
+    for (const toks of segs) {
+      copyRoutes(root, toks, r, at);
+      treeRoutes(root, toks, r, at);
+    }
   }
   return r;
 }

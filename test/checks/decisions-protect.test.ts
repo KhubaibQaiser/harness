@@ -234,3 +234,22 @@ describe('re-review: editors that write files themselves ask for decisions and r
   });
   test('off with checks.decisions false', () => expect(bash(`ex -sc wq ${DEC}`, false).kind).toBe('allow'));
 });
+
+describe('re-review: a copy or move into a folder after a cd resolves the folder from there too', () => {
+  test.each([
+    `cd docs && cp /tmp/${ID}.md decisions/`,
+    `cd docs && mv /tmp/${ID}.md decisions`,
+    `cd docs && install -m 644 /tmp/${ID}.md decisions/`,
+    `cd docs && cp -t decisions /tmp/${ID}.md`,
+    `cd docs && rsync /tmp/${ID}.md decisions/`,
+    `cd .claude && cp /tmp/harness-decision-${ID}.md rules/`,
+    `cd docs && tar -xf /tmp/a.tar -C decisions`,
+    'cd docs && unzip /tmp/a.zip -d decisions',
+    `cd docs && mv decisions/${ID}.md /tmp/x.md`,
+  ])('%s is denied', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'deny', check: 'protect' });
+  });
+  test('allowed: a copy into another folder after a cd', () => {
+    for (const c of ['cd docs && cp /tmp/notes.md plans/', 'cd docs && cp /tmp/x.md decisions/']) expect(bash(c).kind, c).toBe('allow');
+  });
+});

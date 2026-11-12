@@ -204,7 +204,7 @@ describe('re-review: a cd earlier in the line moves where relative paths land', 
     [`pushd docs/decisions && echo hi > new.md`, 'deny'],
     [`(cd docs/decisions && echo hi > ${ID}.md)`, 'deny'],
     [`cd .claude/rules && echo hi > harness-decision-${ID}.md`, 'deny'],
-    [`cd ${ROOT}/docs/decisions && echo hi > ${ID}.md`, 'deny'],
+    [`cd ${ROOT.replaceAll('\\', '/')}/docs/decisions && echo hi > ${ID}.md`, 'deny'], // Git Bash reads an unquoted \ as an escape
     [`cd docs/decisions && rm ${ID}.md`, 'deny'],
     [`cd docs/decisions && cat x >> 2026-01-01-adr.md`, 'ask'],
     [`cd .claude && echo x > settings.json`, 'deny'],
@@ -212,7 +212,7 @@ describe('re-review: a cd earlier in the line moves where relative paths land', 
     writeFileSync(join(ROOT, ADR), '# old ADR\n');
     expect(bash(c).kind).toBe(kind);
   });
-  test.each(['cd $X && echo hi > a.md', 'cd - && echo hi > a.md', 'cd ~user/x && echo hi > a.md', 'cd && echo hi > a.md', 'pushd "$D" && echo hi > a.md'])('an unresolvable cd before a write asks: %s', (c) => {
+  test.each(['cd $X && echo hi > a.md', 'cd - && echo hi > a.md', 'cd ~user/x && echo hi > a.md', 'cd && echo hi > a.md', 'cd C:\\Users\\x && echo hi > a.md', 'pushd "$D" && echo hi > a.md'])('an unresolvable cd before a write asks: %s', (c) => {
     expect(bash(c)).toMatchObject({ kind: 'ask', check: 'protect' });
   });
   test.each(['cd $X && echo x > .harness/config.yaml', 'cd - && tee .claude/settings.json', 'cd $X && rm -rf .harness'])('an unresolvable cd does not soften a protected write to an ask: %s', (c) => {

@@ -48,7 +48,7 @@ function cdDirs(cmds: string[]): string[] | null {
     const toks = /^[({]*(builtin|command)$/.test(all[0] ?? '') ? all.slice(1) : all; // builtin cd / command cd are a cd
     if (!/^[({]*(cd|pushd)$/.test(toks[0] ?? '')) continue;
     const arg = toks.slice(1).find((t) => t !== '--' && !/^-[LPe@]+$/.test(t))?.replace(/[)}]+$/, '');
-    if (!arg || arg === '-' || /[$`~*?[{\\]/.test(arg)) return null;
+    if (!arg || arg === '-' || arg.startsWith('~') || /[$`*?[{\\]/.test(arg)) return null; // a ~ mid-word (RUNNER~1) is literal
     at = nodePath.isAbsolute(arg) ? arg : nodePath.posix.join(at, arg);
     out.push(at);
   }

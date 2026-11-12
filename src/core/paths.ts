@@ -46,7 +46,7 @@ export const pairKey = (rel: string): string => rel.replace(/(^|\/)__tests__\//,
 /** Harness's own local files: install gitignores them, and the in-progress size never counts them (pr-size spec §5). */
 export const HARNESS_LOCAL = ['.harness/state/', '.harness/logs/', '.harness/backup/', '.harness/results/', '.harness/debug/', '.harness/reports/'];
 
-/** `.harness/` exists and holds more than the skills' work folders (`.harness/tmp`, made before init): harness is or was installed. */
+/** `.harness/` exists and is not just the skills' work folders (`.harness/tmp`, made before init): harness is or was installed. An empty `.harness/` counts, as the old existsSync check did. */
 export function hasHarnessDir(root: string): boolean {
   try {
     return readdirSync(join(root, '.harness')).join('/') !== 'tmp';

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
@@ -464,7 +464,8 @@ describe('the skills\' work folders under .harness/tmp', () => {
     expect(edit(p, 'Write').kind).toBe('allow');
   });
   test.each(['cat > .harness/tmp/x/answers.json', "cat > /p/.harness/tmp/x/answers.json <<'EOF'\n{}\nEOF", 'tee .harness/tmp/x/a.json', 'echo {} | tee /p/.harness/tmp/x/a.json >/dev/null',
-    'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" vet owner/repo --json --keep > /p/.harness/tmp/x/scan.json', 'rm -rf .harness/tmp/x', 'rm -rf /p/.harness/tmp/x'])('%s is allowed', (c) => {
+    'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" vet owner/repo --json --keep > /p/.harness/tmp/x/scan.json', 'rm -rf .harness/tmp/x', 'rm -rf /p/.harness/tmp/x',
+    "rm -rf '.harness/tmp/x'", 'cat > "/p/.harness/tmp/x/a.json"', "tee '/p/.harness/tmp/w-1/a b.json'"])('%s is allowed', (c) => {
     expect(bash(c)).toBe('allow');
   });
   test.each(['.harness/tmp/../config.yaml', '.harness/tmp/x/../../config.yaml', '.harness/tmp', '/p/.harness/tmp', '.harness/tmp/.gitignore'])('Write to %s is denied', (p) => {
@@ -473,8 +474,21 @@ describe('the skills\' work folders under .harness/tmp', () => {
   test.each(['rm -rf .harness/tmp', 'rm -rf .harness/tmp/', 'rm -rf .harness', 'cat > .harness/tmp/../config.yaml', 'tee .harness/tmp/x/../../config.yaml', 'rm -rf .harness/tmp/x/../..', 'mv .harness/tmp /elsewhere'])('%s is denied', (c) => {
     expect(bash(c)).toBe('deny');
   });
-  test.each(['x=.harness/tmp/a; rm -rf $x/..', 'cd .harness/tmp/a && tee $(printf ..)/../config.yaml', 'rm -rf .harness/tmp/x/{..,y}'])('%s is not allowed', (c) => {
+  test.each(['x=.harness/tmp/a; rm -rf $x/..', 'cd .harness/tmp/a && tee $(printf ..)/../config.yaml', 'rm -rf .harness/tmp/x/{..,y}',
+    // fix round 1, C1: a link made in the same command, which lstat can't see yet
+    'ln -s /p .harness/tmp/x/r && echo pwn > .harness/tmp/x/r/.harness/config.yaml', 'ln -s / .harness/tmp/x/s; echo pwn > .harness/tmp/x/s/p/.harness/config.yaml',
+    'ln -s /p/.harness/config.yaml .harness/tmp/x/f; tee .harness/tmp/x/f', 'cp -s /p/.harness/config.yaml .harness/tmp/x/f; tee .harness/tmp/x/f',
+    'mv /elsewhere/l .harness/tmp/x/f; tee .harness/tmp/x/f', 'cp -P /elsewhere/l .harness/tmp/x/f; tee .harness/tmp/x/f', 'tar -xf a.tar -C .harness/tmp/x; tee .harness/tmp/x/f',
+    'ln .harness/config.yaml .harness/tmp/x/h && echo pwn > .harness/tmp/x/h', 'tee .harness/tmp/x/r/.harness/config.yaml', 'tee .harness/tmp/x/r/.claude/settings.json'])('%s is not allowed', (c) => {
     expect(bash(c)).not.toBe('allow');
+  });
+
+  test('M3: a quoted path under a repo root with a space, @ or + keeps the exemption', () => {
+    for (const root of ['/a b/r', '/a@b/r+1']) {
+      const go = (command: string) => (protect.run({ input: { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command } }, root, config: loadConfig('/nonexistent-harness-root').config, env: {}, unattended: false } as unknown as Ctx) as { kind: string }).kind;
+      expect(go(`cat > "${root}/.harness/tmp/w-1/answers.json"`), root).toBe('allow');
+      expect(go(`cat > '${root}/.harness/tmp/w-1/../../config.yaml'`), root).not.toBe('allow');
+    }
   });
 
   test('a symlinked tmp folder, or a symlink below it, gets no exemption', () => {
@@ -499,5 +513,11 @@ describe('the skills\' work folders under .harness/tmp', () => {
     expect(at2('.harness/tmp/x/f')).toBe('deny');
     mkdirSync(join(root2, '.harness/tmp/y'));
     expect(at2('.harness/tmp/y/f')).toBe('allow');
+    // M1: a hard link to a protected file, made in an earlier call
+    writeFileSync(join(root2, '.harness/config.yaml'), 'x');
+    linkSync(join(root2, '.harness/config.yaml'), join(root2, '.harness/tmp/y/h'));
+    expect(at2('.harness/tmp/y/h')).toBe('deny');
+    // C1 in an edit tool: a protected name below the work folder
+    expect(at2('.harness/tmp/y/r/.harness/config.yaml')).toBe('deny');
   });
 });

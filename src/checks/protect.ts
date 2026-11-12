@@ -357,30 +357,43 @@ export const isWholeTree = (root: string, t: string, path: typeof nodePath = nod
 };
 
 const TMP = '.harness/tmp';
-/** Inside a skill's work folder (`harness workdir`): lexically `.harness/tmp/<id>[/…]`, no `..` left, and no symlink on the
- *  way from `.harness` down, so the write lands where it reads. `.harness/tmp` and its .gitignore are not. */
+/** Inside a skill's work folder (`harness workdir`): lexically `.harness/tmp/<id>[/…]`, no `..` left, no protected name
+ *  below it, no symlink on the way from `.harness` down and no hard-linked file, so the write lands where it reads.
+ *  `.harness/tmp` and its .gitignore are not. */
 export function inWorkdir(root: string, p: string): boolean {
   const rel = nodePath.relative(root, nodePath.resolve(root, p)).split(nodePath.sep).join('/');
   if (!rel.startsWith(TMP + '/') || rel === TMP + '/.gitignore') return false;
   const segs = rel.split('/');
+  // A link made in the same command isn't on disk yet: through it, a protected file is reached only by naming it.
+  if (segs.slice(2).some((s) => /^(\.harness|\.claude|node_modules)$/i.test(s))) return false;
   for (let i = 1; i <= segs.length; i++) {
     try {
-      if (lstatSync(nodePath.join(root, ...segs.slice(0, i))).isSymbolicLink()) return false;
+      const st = lstatSync(nodePath.join(root, ...segs.slice(0, i)));
+      if (st.isSymbolicLink() || (st.isFile() && st.nlink > 1)) return false;
     } catch {
       break; // missing: nothing below it exists either
     }
   }
   return true;
 }
-// Literal work-folder paths in a command, swapped for a plain word so the "names a protected path" ask skips them. Only in
-// a line with no expansion, `..` or cd, where nothing can change what the path means. ${CLAUDE_PLUGIN_ROOT} is the skills' form.
-const TMP_WORD = /(?<=^|[\s<>|;&(])(?:\/[\w.\/-]*\/)?\.harness\/tmp\/[\w.-][\w.\/-]*(?=$|[\s;&|)<>])/g;
+// Commands that can make, copy or move a link into the work folder in the same line, before lstat could see it: the
+// line then gets no exemption. ponytail: a script or program that makes one is not seen (see Known limits).
+const LINKERS = /^(ln|link|cp|mv|rsync|tar|bsdtar|gtar|unzip|ditto|cpio|pax|git)$/;
+const placesLinks = (cmds: string[]): boolean => cmds.flatMap(segTokens).some((toks) => toks.some((t) => !t.includes('.harness/tmp') && LINKERS.test(base(t))));
+// The `.harness/tmp/<id>` prefix of a literal work-folder path, swapped for a plain word so the "names a protected path"
+// ask skips it; the rest of the path stays. A whole word, bare or in one pair of quotes, in a line with no expansion,
+// backslash, `..` or cd, where nothing can change what it means. ${CLAUDE_PLUGIN_ROOT} is the skills' form.
+const TMP_WORD = /(?<=^|[\s<>|;&(])(?:(['"])((?:\/[\w.\/@+ -]*\/)?\.harness\/tmp\/[\w.@+-]+)([\w.\/@+ -]*)\1|((?:\/[\w.\/@+-]*\/)?\.harness\/tmp\/[\w.@+-]+)([\w.\/@+-]*))(?=$|[\s;&|)<>])/g;
 const withoutWorkdirs = (root: string, cmd: string): string =>
-  /[$`\\]|\.\.|\b(cd|pushd)\b/.test(cmd.replaceAll('${CLAUDE_PLUGIN_ROOT}', '')) ? cmd : cmd.replace(TMP_WORD, (w) => (inWorkdir(root, w) ? 'workdir-file' : w));
+  /[$`\\]|\.\.|\b(cd|pushd)\b/.test(cmd.replaceAll('${CLAUDE_PLUGIN_ROOT}', '')) ? cmd
+    : cmd.replace(TMP_WORD, (w, q, qp, qt, up, ut) => {
+      const p = qp ?? up, t = qt ?? ut, quote = q ?? '';
+      return inWorkdir(root, p + t) ? `${quote}workdir${t}${quote}` : w;
+    });
 
 // A bare directory (rm -rf .harness/hooks) counts as inside its own glob.
-const isProtected = (root: string, p: string): boolean => {
-  if (inWorkdir(root, p)) return false;
+const isProtected = (root: string, p: string, exempt = true): boolean => {
+  if (exempt && inWorkdir(root, p)) return false;
   const lex = nodePath.relative(root, nodePath.resolve(root, p)).split(nodePath.sep).join('/').toLowerCase();
   if (lex === TMP || lex.startsWith(TMP + '/')) return true; // a symlinked tmp would read as outside the repo below
   const rel = toRepoPath(root, p)?.toLowerCase() ?? null; // macOS is case-insensitive
@@ -397,6 +410,7 @@ export const protect: Check = {
     if (config?.checks.protect === false) return { kind: 'allow' };
     const { tool_name, tool_input = {} } = input;
     let paths: string[] = [];
+    let exempt = true; // the work-folder exemption, off for a shell line that may place a link first
     const target = editTarget(input);
     const nm = { kind: 'deny' as const, reason: NM_REASON, check: 'protect' };
     if (target !== null && inNodeModules(root, target)) return nm;
@@ -420,6 +434,7 @@ export const protect: Check = {
       // ponytail: textual only; a path built from pieces (".har" + "ness") still gets past.
       if (code.some((c) => H_SEG.test(c))) return { kind: 'deny', reason: H_INLINE, check: 'protect' };
       const cmds = expand(cmd);
+      exempt = !placesLinks(cmds);
       const mc = moveCopyTargets(cmds);
       const rmT = cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets));
       const removed = [...rmT, ...mc.mv];
@@ -434,16 +449,16 @@ export const protect: Check = {
       const dr = decisionRoutes(root, segs, dirs), names = codeNames(code), rmAt = at(rmT);
       const dd = decisionsDeny(root, config, [...paths, ...dr.writes, ...names], [...rmAt, ...dr.removed, ...at(git), ...names]);
       if (dd) return dd;
-      if (paths.some((p) => p && isProtected(root, p))) return { kind: 'deny', reason: REASON, check: 'protect' }; // before the cd ask (re-review 2, N1)
+      if (paths.some((p) => p && isProtected(root, p, exempt))) return { kind: 'deny', reason: REASON, check: 'protect' }; // before the cd ask (re-review 2, N1)
       if (cdDirs(cmds) === null && relative([...paths, ...dr.writes, ...dr.removed, ...edited]).length) return { kind: 'ask', reason: CD_REASON, check: 'protect' };
       const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
-      const built = touchesProtectedText(withoutWorkdirs(root, cmd));
-      if (!paths.some((p) => p && isProtected(root, p))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' });
+      const built = touchesProtectedText(exempt ? withoutWorkdirs(root, cmd) : cmd);
+      if (!paths.some((p) => p && isProtected(root, p, exempt))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' });
     }
     if (target !== null) { const dd = decisionsDeny(root, config, [target], []); if (dd) return dd; }
     const da = target === null ? null : becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target, shellWrites: [] });
-    return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : da ?? { kind: 'allow' };
+    return paths.some((p) => p && isProtected(root, p, exempt)) ? { kind: 'deny', reason: REASON, check: 'protect' } : da ?? { kind: 'allow' };
   },
 };
 // One work budget per run, the nested runs above included (re-review 21, P1b): past it WorkBudget is thrown and the

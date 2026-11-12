@@ -6,6 +6,7 @@ import { retryTransient, writeAtomic } from './atomic.js';
 import { RULE_GLOB } from './decision-rule.js';
 import { userSettingsPath } from './settings-layers.js';
 import { SAFE_GIT } from './git-safe.js';
+import { hasHarnessDir } from './paths.js';
 
 // Change detection, the backstop behind the path checks (owner decision 2026-11-03): when a route the path checks
 // don't parse changed one of harness's own files, the next prompt and Stop say so. A session compares against its
@@ -163,7 +164,7 @@ export function readRepoSnapshot(root: string): RepoSnapshot {
 }
 function writeRepoSnapshot(root: string, v: RepoSnapshot): void {
   try {
-    if (!existsSync(join(root, '.harness'))) return; // not installed
+    if (!hasHarnessDir(root)) return; // not installed
     mkdirSync(join(root, '.harness/state'), { recursive: true }); // right after init it doesn't exist yet
     writeAtomic(join(root, REPO), JSON.stringify(v));
   } catch {} // best effort: without it the next session starts from its first hook

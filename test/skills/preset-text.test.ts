@@ -42,7 +42,7 @@ const builderInterview = read('skills/preset/interview.md');
 test('the builder skill says each step in order', () => {
   const steps = [
     'one question per call with AskUserQuestion',
-    'mktemp -d',
+    'workdir`',
     'validate preset-answers',
     'Draft only from the answers',
     'verbatim',

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +51,14 @@ test('init then uninstall leaves the repo byte-identical', async () => {
   expect(hashes(root)).toEqual(before);
   expect(existsSync(join(root, '.harness'))).toBe(false);
   expect(existsSync(join(root, '.claude'))).toBe(false);
+});
+
+test('uninstall --yes removes the skills\' work folders with the rest of .harness/', async () => {
+  const root = await installed();
+  mkdirSync(join(root, '.harness/tmp/w-1'), { recursive: true });
+  writeFileSync(join(root, '.harness/tmp/w-1/answers.json'), '{}');
+  expect((await un(root, ['--yes'])).code).toBe(0);
+  expect(existsSync(join(root, '.harness'))).toBe(false);
 });
 
 test('uninstall tells you to restart open Claude Code sessions, whose hooks still point at the removed dispatcher', async () => {

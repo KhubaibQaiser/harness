@@ -80,6 +80,16 @@ test('second init refuses and names update', async () => {
   expect(r.out).toContain('Harness is already installed (.harness/manifest.json). Run /harness:update instead.');
 });
 
+test('an empty or work-folder-only .harness/ before init still counts as not installed', async () => {
+  for (const pre of ['.harness', '.harness/tmp/w-1']) {
+    const root = makeRepo(NPM_VITEST);
+    mkdirSync(join(root, pre), { recursive: true });
+    if (pre !== '.harness') writeFileSync(join(root, '.harness/tmp/.gitignore'), '*\n'); // as harness workdir leaves it
+    await ok(root, ['--yes']);
+    expect(existsSync(join(root, '.harness/manifest.json')), pre).toBe(true);
+  }
+});
+
 test('declining the plan writes nothing', async () => {
   const root = makeRepo(NPM_VITEST);
   const p = fake([false, false]); // no edit, no apply

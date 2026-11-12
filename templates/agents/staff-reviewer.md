@@ -33,7 +33,7 @@ End with exactly: `BLOCKERS: <n>, MEDIUM: <n>, NITS: <n>` (BLOCKERS counts criti
 
 Used only when the caller says `Mode: repo audit`. The diff review above, including its "no diff" rule, does not apply in this mode.
 
-Inputs, all inline from the caller: the facts, the answers, `product.md`, the compact catalog, and a rubric file path. Read only that rubric file path. Do not read or search anything else. Never open dotenv files, `.harnessignore` paths or credential files.
+Inputs, all inline from the caller: the facts, the answers, `product.md`, the compact catalog, and the rubric text. Do not read or search anything. Never open dotenv files, `.harnessignore` paths or credential files.
 
 Reply with exactly two blocks, in this order:
 

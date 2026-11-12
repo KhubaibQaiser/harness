@@ -83,6 +83,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `remember add\|confirm\|retire\|sync\|list\|check` | Saves a team decision to `docs/decisions/` and loads it as a rule when its paths are touched. Asks first, commits nothing. |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. |
 | `vet <target>` | Scans a plugin or skill before you install it. Needs `gh`. Installs nothing. |
+| `guide <name>` / `workdir` | Helpers the skills call: print a bundled doc, and make a git-ignored work folder in `.harness/tmp/`, so no skill touches a file outside the repo. |
 | `uninstall [--dry-run]` | Removes what harness added and restores your files. `--global` does the same for a preset installed under `~/.claude`. |
 
 - **Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted.
@@ -114,6 +115,7 @@ Native Windows has no sandbox and keeps the text checks. More: [docs/reference.m
 - Hooks run with your permissions. Turn on branch protection: it is the real stop for force-pushes.
 - TDD and coverage gates are for JS/TS only. Other repos get every other gate.
 - Windows: unit tests run in CI, but live Claude Code use is untested.
+- The skills read and write only inside the repo, so `blockReadsOutsideWorkingDirectories` doesn't stop them. `/harness:vet`'s reviewer is the exception: it reads the fetched plugin from the OS temp folder.
 
 The full list: [docs/reference.md](docs/reference.md#known-limits).
 

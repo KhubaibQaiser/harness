@@ -34,7 +34,7 @@ test('staff-reviewer has an audit mode with picks and report blocks', () => {
   expect(a).toMatch(/fenced `markdown` block/);
   expect(a.indexOf('`json`')).toBeLessThan(a.indexOf('`markdown`'));
   for (const h of ['Findings', 'Roadmap', 'Deliberate exclusions', 'Limits']) expect(a).toContain(h);
-  expect(a).toMatch(/rubric file path/i);
+  expect(a).toMatch(/the rubric text/i);
   expect(a).toMatch(/lower `cost\.context`/);
   expect(a).toMatch(/no `\[sev\] file:line` lines/i);
 });
@@ -43,7 +43,7 @@ test('audit mode: top switch, enums and read limit', () => {
   const s = read('templates/agents/staff-reviewer.md');
   expect(s.indexOf('skip to Audit mode')).toBeLessThan(s.indexOf('If no diff was supplied'));
   const a = s.slice(s.indexOf('## Audit mode'));
-  for (const t of ['`recommended` or `optional`', '`critical`, `medium` or `nit`', 'copy it from the compact catalog', 'Read only that rubric file path', 'dotenv']) expect(a).toContain(t);
+  for (const t of ['`recommended` or `optional`', '`critical`, `medium` or `nit`', 'copy it from the compact catalog', 'Do not read or search anything', 'dotenv']) expect(a).toContain(t);
 });
 
 test('diff review rules unchanged', () => {

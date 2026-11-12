@@ -215,6 +215,12 @@ describe('re-review: a cd earlier in the line moves where relative paths land', 
   test.each(['cd $X && echo hi > a.md', 'cd - && echo hi > a.md', 'cd ~user/x && echo hi > a.md', 'cd && echo hi > a.md', 'pushd "$D" && echo hi > a.md'])('an unresolvable cd before a write asks: %s', (c) => {
     expect(bash(c)).toMatchObject({ kind: 'ask', check: 'protect' });
   });
+  test.each(['cd $X && echo x > .harness/config.yaml', 'cd - && tee .claude/settings.json', 'cd $X && rm -rf .harness'])('an unresolvable cd does not soften a protected write to an ask: %s', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'deny', check: 'protect' });
+  });
+  test.each(['cd -- .harness && tee config.yaml', 'builtin cd .harness && tee config.yaml', 'command cd .claude && echo x > settings.json'])('cd -- and builtin/command cd are followed: %s', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'deny', check: 'protect' });
+  });
   test('allowed: a cd with no protected write after it, and an unresolvable cd with no write', () => {
     for (const c of ['cd docs && echo hi > notes.md', 'cd docs/decisions && cat README.md', 'cd docs/decisions && echo hi >> README.md', 'cd - && ls', 'cd $X && npm test'])
       expect(bash(c).kind, c).toBe('allow');

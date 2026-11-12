@@ -44,9 +44,10 @@ function expand(cmd: string): string[] {
 function cdDirs(cmds: string[]): string[] | null {
   const out: string[] = [];
   let at = '.';
-  for (const toks of cmds.flatMap(segTokens)) {
+  for (const all of cmds.flatMap(segTokens)) {
+    const toks = /^[({]*(builtin|command)$/.test(all[0] ?? '') ? all.slice(1) : all; // builtin cd / command cd are a cd
     if (!/^[({]*(cd|pushd)$/.test(toks[0] ?? '')) continue;
-    const arg = toks.slice(1).find((t) => !/^-[LPe@]+$/.test(t))?.replace(/[)}]+$/, '');
+    const arg = toks.slice(1).find((t) => t !== '--' && !/^-[LPe@]+$/.test(t))?.replace(/[)}]+$/, '');
     if (!arg || arg === '-' || /[$`~*?[{\\]/.test(arg)) return null;
     at = nodePath.isAbsolute(arg) ? arg : nodePath.posix.join(at, arg);
     out.push(at);
@@ -407,6 +408,7 @@ export const protect: Check = {
       const dr = decisionRoutes(root, segs, dirs), names = codeNames(code), rmAt = at(rmT);
       const dd = decisionsDeny(root, config, [...paths, ...dr.writes, ...names], [...rmAt, ...dr.removed, ...at(git), ...names]);
       if (dd) return dd;
+      if (paths.some((p) => p && isProtected(root, p))) return { kind: 'deny', reason: REASON, check: 'protect' }; // before the cd ask (re-review 2, N1)
       if (cdDirs(cmds) === null && relative([...paths, ...dr.writes, ...dr.removed, ...edited]).length) return { kind: 'ask', reason: CD_REASON, check: 'protect' };
       const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.

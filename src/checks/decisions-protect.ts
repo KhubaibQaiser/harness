@@ -162,6 +162,36 @@ export function decisionRoutes(root: string, segs: string[][]): Routes {
   return r;
 }
 
+export const BECOMES_DECISION = 'This would turn a file in docs/decisions/ into a team decision (schema: harness-decision/1). New decisions come through harness remember add, which shows the person the rule first. Approve only if the person asked for this.';
+const ASK: Decision = { kind: 'ask', reason: BECOMES_DECISION, check: 'protect' };
+/** An existing file directly in docs/decisions/ that is not a decision; `dated`: only a `YYYY-MM-DD-…md` name. */
+function plainFile(root: string, p: string, dated: boolean): string | null {
+  const rel = toRepoPath(root, p)?.toLowerCase();
+  const name = rel?.startsWith(DIR) ? rel.slice(DIR.length) : '';
+  if (!name.endsWith('.md') || name.includes('/') || (dated && !DECISION_NAME.test(name))) return null;
+  const abs = resolve(root, p);
+  return statSync(abs, { throwIfNoEntry: false })?.isFile() && !isDecisionText(head(abs)) ? abs : null;
+}
+type Edit = { old_string?: unknown; new_string?: unknown; replace_all?: unknown };
+const applied = (text: string, e: Edit): string => {
+  const [o, n] = [String(e.old_string ?? ''), String(e.new_string ?? '')];
+  return e.replace_all === true ? text.split(o).join(n) : text.replace(o, () => n);
+};
+/**
+ * Final review I2: an Edit, MultiEdit or Write that leaves a plain file in docs/decisions/ with the decision frontmatter
+ * asks (a decision the CLI wrote is denied above). A shell write can't be read, so any shell write to an existing dated
+ * file there asks.
+ */
+export function becomesDecision(root: string, config: HarnessConfig, o: { tool: string; input: Record<string, unknown>; target: string | null; shellWrites: string[] }): Decision | null {
+  if (config?.checks.decisions === false) return null;
+  if (o.target === null) return o.shellWrites.some((p) => p && !GLOB.test(p) && plainFile(root, p, true)) ? ASK : null;
+  const abs = plainFile(root, o.target, false);
+  if (!abs) return null;
+  const edits = o.tool === 'MultiEdit' ? o.input.edits : [o.input];
+  const text = o.tool === 'Write' ? String(o.input.content ?? '') : Array.isArray(edits) ? (edits as Edit[]).reduce(applied, head(abs)) : '';
+  return isDecisionText(text) ? ASK : null;
+}
+
 export function decisionsDeny(root: string, config: HarnessConfig, writes: string[], removed: string[]): Decision | null {
   if (config?.checks.decisions === false) return null;
   const globs = [...writes, ...removed].filter((p) => p && GLOB.test(p));

@@ -5,7 +5,7 @@ import picomatch from 'picomatch';
 import { matches, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
-import { codeNames, decisionRoutes, decisionsDeny, globHits } from './decisions-protect.js';
+import { becomesDecision, codeNames, decisionRoutes, decisionsDeny, globHits } from './decisions-protect.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
@@ -383,12 +383,14 @@ export const protect: Check = {
       const dr = decisionRoutes(root, cmds.flatMap(segTokens)), names = codeNames(code);
       const dd = decisionsDeny(root, config, [...paths, ...dr.writes, ...names], [...rmT, ...dr.removed, ...git, ...names]);
       if (dd) return dd;
+      const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmT.includes(p)) });
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(cmd);
-      if (!paths.some((p) => p && isProtected(root, p))) return built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' };
+      if (!paths.some((p) => p && isProtected(root, p))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' });
     }
     if (target !== null) { const dd = decisionsDeny(root, config, [target], []); if (dd) return dd; }
-    return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : { kind: 'allow' };
+    const da = target === null ? null : becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target, shellWrites: [] });
+    return paths.some((p) => p && isProtected(root, p)) ? { kind: 'deny', reason: REASON, check: 'protect' } : da ?? { kind: 'allow' };
   },
 };
 // One work budget per run, the nested runs above included (re-review 21, P1b): past it WorkBudget is thrown and the

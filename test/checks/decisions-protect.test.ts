@@ -1,8 +1,8 @@
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
-import { DECISIONS_REASON, decisionsDeny } from '../../src/checks/decisions-protect.js';
+import { describe, expect, test } from 'vitest';
+import { BECOMES_DECISION, DECISIONS_REASON, decisionsDeny } from '../../src/checks/decisions-protect.js';
 import { protect } from '../../src/checks/protect.js';
 import { loadConfig } from '../../src/core/config.js';
 import { isDecisionText, parseDecision, serializeDecision } from '../../src/core/decision-file.js';
@@ -162,4 +162,35 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('a glob el
 test('the settings fragment gains no deny rule for decisions (C9)', () => {
   const deny: string[] = settingsFragment().permissions.deny;
   expect(deny.filter((d) => /decision|rules/.test(d))).toEqual([]);
+});
+
+describe('final review I2: turning a file in docs/decisions/ into a decision asks', () => {
+  const ADR = 'docs/decisions/2026-01-01-adr.md';
+  writeFileSync(join(ROOT, ADR), '# old ADR\n');
+  writeFileSync(join(ROOT, 'docs/decisions/0002-notes.md'), '# notes\n');
+  const front = serializeDecision({ id: '2026-01-01-adr', title: 'Adr', status: 'active', paths: ['src/**'], verified_at: 'a'.repeat(40), verified_on: '2026-01-01', body: '**Rule:** Do it.\n' });
+  const ask = { kind: 'ask', reason: BECOMES_DECISION, check: 'protect' };
+  test('Write, Edit and MultiEdit whose result has the schema frontmatter ask', () => {
+    expect(run('Write', { file_path: ADR, content: front })).toEqual(ask);
+    expect(run('Write', { file_path: join(ROOT, ADR), content: front })).toEqual(ask);
+    expect(run('Edit', { file_path: ADR, old_string: '# old ADR\n', new_string: front })).toEqual(ask);
+    expect(run('MultiEdit', { file_path: ADR, edits: [{ old_string: '# old ADR', new_string: front.trimEnd() }] })).toEqual(ask);
+    expect(run('Write', { file_path: 'docs/decisions/0002-notes.md', content: front })).toEqual(ask);
+  });
+  test('shell writes to a dated file there ask, since protect cannot see what they write', () => {
+    for (const c of [`cat x >> ${ADR}`, `echo hi > ${ADR}`, `cp /tmp/x.md ${ADR}`, `tee ${ADR} < x`]) expect(bash(c), c).toEqual(ask);
+  });
+  test('an edit that keeps a plain ADR a non-decision is allowed', () => {
+    expect(run('Edit', { file_path: ADR, old_string: 'old', new_string: 'new' }).kind).toBe('allow');
+    expect(run('Write', { file_path: ADR, content: '# new ADR\n\nschema: not frontmatter\n' }).kind).toBe('allow');
+    expect(bash('echo hi >> docs/decisions/README.md').kind).toBe('allow');
+    expect(bash(`cat ${ADR}`).kind).toBe('allow');
+  });
+  test('an existing decision is still denied, not asked', () => {
+    expect(run('Write', { file_path: DEC, content: front })).toMatchObject({ kind: 'deny', reason: REASON });
+  });
+  test('off with checks.decisions false', () => {
+    expect(run('Write', { file_path: ADR, content: front }, false).kind).toBe('allow');
+    expect(bash(`cat x >> ${ADR}`, false).kind).toBe('allow');
+  });
 });

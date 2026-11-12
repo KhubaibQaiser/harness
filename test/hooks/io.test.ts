@@ -21,6 +21,14 @@ test('emit PreToolUse ask uses permissionDecision ask', () => {
   const out = JSON.parse(emit('PreToolUse', { kind: 'ask', reason: 'r', check: 'c' }));
   expect(out.hookSpecificOutput.permissionDecision).toBe('ask');
 });
+// Live check i5m (Claude Code 2.1.322, acceptEdits and auto): an Edit dialog caused by a hook ask shows only "Do you want to
+// make this edit to b.js?", never permissionDecisionReason; Bash dialogs do show it. The reason also goes to the person.
+test('emit PreToolUse ask also shows the reason to the person as a systemMessage', () => {
+  const out = JSON.parse(emit('PreToolUse', { kind: 'ask', reason: 'Confirm: `feat/grow` is now 202 changed lines', check: 'pr-size' }));
+  expect(out.systemMessage).toBe('Confirm: `feat/grow` is now 202 changed lines');
+  expect(out.hookSpecificOutput.permissionDecisionReason).toBe('Confirm: `feat/grow` is now 202 changed lines');
+  expect(JSON.parse(emit('PreToolUse', { kind: 'deny', reason: 'r', check: 'guard' })).systemMessage).toBeUndefined();
+});
 test('emit Stop block uses decision/reason', () => {
   expect(JSON.parse(emit('Stop', { kind: 'block', reason: 'r', check: 'stop' }))).toEqual({ decision: 'block', reason: 'r' });
 });

@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildEvalPlugin, EVAL_MODEL, type CaseInfo, type EvalKind } from '../eval/build.js';
-import { evalArgs, planLines } from '../eval/run.js';
+import { evalArgs, planLines, type PlanEstimate } from '../eval/run.js';
 import { packageDir } from '../core/package-dir.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { EVALS_DIR, readEvalResults, type EvalSummary } from '../report/evals.js';
@@ -51,24 +51,29 @@ function costPerRun(saved: EvalSummary[], model: string, kind: EvalKind): number
   return last ? last.costUsd! / last.runs : null;
 }
 
-/** One rate for the plan: null unless every selected kind has an earlier result. */
-function planRate(saved: EvalSummary[], model: string, builds: Build[], runs: number): number | null {
-  let cost = 0, count = 0;
-  for (const b of builds) {
+/** The plan's estimate from the kinds with an earlier result, naming the kinds (with cases) that have none; null when none has one. */
+function planEstimate(saved: EvalSummary[], model: string, builds: Build[], runs: number): PlanEstimate | null {
+  let usd = 0, known = 0;
+  const missing: string[] = [];
+  for (const b of builds.filter((x) => x.cases.length)) {
     const rate = costPerRun(saved, model, b.kind);
-    if (rate === null) return null;
-    cost += rate * b.cases.length * runs;
-    count += b.cases.length * runs;
+    if (rate === null) missing.push(b.kind);
+    else {
+      usd += rate * b.cases.length * runs;
+      known += 1;
+    }
   }
-  return count === 0 ? null : cost / count;
+  return known ? { usd, missing } : null;
 }
 
 interface RunOpts { runs: number; model: string; maxCost: number; root: string; date: string }
 
 function runOne(b: Build, o: RunOpts, exec: Exec, out: (s: string) => void): { code: number; summary: EvalSummary | null } | 'missing' {
   mkdirSync(b.out, { recursive: true });
-  // Gates allow the same tools so a hook that misses shows as the action going through, not a permission stop.
-  const tools = b.kind === 'skills' ? [] : RULE_TOOLS;
+  // Gates need no --allow-tools: each prompt.md's allowed_tools was enough in the 2026-11-12 smoke run.
+  const tools = b.kind === 'rules' ? RULE_TOOLS : [];
+  // ponytail: gate cases keep the real HOME. A temp HOME logs claude out (`claude auth status`: loggedIn false, 2026-11-12),
+  // since its auth and ~/.claude.json live there. Isolate HOME once claude can take auth from the env alone.
   const r = exec('claude', evalArgs(b.dir, { ...o, out: b.out, scaffold: b.kind === 'gates', tools }), { timeoutMs: HOUR_MS });
   if (r.missing) return 'missing';
   if (!existsSync(join(b.out, 'result.json'))) return out(`${b.kind}: no result (exit ${r.status}). ${r.stderr ?? ''}`.trim()), { code: EXIT_FAIL, summary: null };
@@ -125,8 +130,8 @@ export async function evalCmd(args: string[], cli: Env): Promise<number> {
   const base = cli.tmp ?? mkdtempSync(join(tmpdir(), 'harness-eval-'));
   try {
     const builds = buildAll(cli, opts, model, base);
-    const rate = planRate(readEvalResults(cli.root), model, builds, opts.runs);
-    planLines(builds.flatMap((b) => b.cases), opts.runs, model, opts.maxCost, rate).forEach(cli.out);
+    const est = planEstimate(readEvalResults(cli.root), model, builds, opts.runs);
+    planLines(builds.flatMap((b) => b.cases), opts.runs, model, opts.maxCost, est).forEach(cli.out);
     if ((await cli.prompt.edit('This spends money. Type yes to run', '')).trim() !== 'yes') return cli.out('Not run. Nothing was spent.'), EXIT_FAIL;
     const o = { runs: opts.runs, model, maxCost: opts.maxCost, root: cli.root, date: new Date().toISOString().slice(0, DATE_LEN) };
     return await runAll(builds, o, opts.maxCost, cli);

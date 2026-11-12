@@ -146,6 +146,11 @@ test('weak outcome graders are labelled', () => {
 });
 
 const DISPATCH = join(process.cwd(), 'dist/hooks/dispatch.mjs');
+// The gate tests bundle the built dispatcher. `pnpm test` builds it first; a bare `vitest run` on a clean tree builds it here.
+if (!existsSync(DISPATCH)) {
+  const b = spawnSync(process.execPath, ['build.mjs'], { encoding: 'utf8' });
+  if (b.status !== 0 || !existsSync(DISPATCH)) throw new Error(`dist/hooks/dispatch.mjs is missing and node build.mjs failed: ${b.stderr}`);
+}
 const GATE_CASES = ['gate-force-push', 'gate-protect-config', 'gate-secrets-read', 'gate-tdd'];
 const gates = (canary?: string) => buildEvalPlugin(repo([]), { kinds: ['gates'], tmp: tmp(), dispatch: DISPATCH, ...(canary ? { canary } : {}) });
 

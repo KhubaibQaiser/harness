@@ -62,6 +62,7 @@ test('gates runs with the scaffold and the hooked plugin, after the same yes', a
   expect(h.calls).toHaveLength(1);
   const a = h.calls[0]!;
   expect(a).toContain('--scaffold');
+  expect(a).not.toContain('--allow-tools'); // each prompt.md's allowed_tools is enough (smoke run 2026-11-12)
   expect(existsSync(join(a[3]!, 'hooks/dispatch.mjs'))).toBe(true);
   expect(readdirSync(join(h.root, '.harness/reports/evals'))).toEqual([expect.stringMatching(/-claude-x-gates$/)]);
   expect(h.lines.join('\n')).toContain('cases: 4');
@@ -95,4 +96,14 @@ test('model flag skips the question; earlier result gives an estimate', async ()
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ costUsd: 0.6, cases: Array.from({ length: 6 }, (_, i) => ({ name: `r${i}-rules`, arms: { with: [{ score: 1 }] } })) }));
   await h2.run(['--kind', 'rules', '--model', 'claude-x']);
   expect(h2.lines.join('\n')).toContain('Estimate from your last run: ~$');
+});
+
+test('history for rules only: the default run still estimates, and names gates as unestimated', async () => {
+  const h = harness(['no']);
+  const dir = join(h.root, '.harness/reports/evals/2026-01-01-claude-x-rules');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'result.json'), JSON.stringify({ costUsd: 0.6, cases: Array.from({ length: 6 }, (_, i) => ({ name: `r${i}-rules`, arms: { with: [{ score: 1 }] } })) }));
+  await h.run(['--model', 'claude-x']);
+  // No skills installed: zero skills cases, so only gates is named.
+  expect(h.lines.join('\n')).toMatch(/Estimate from your last run: ~\$\d+\.\d\d, without gates \(no estimate yet/);
 });

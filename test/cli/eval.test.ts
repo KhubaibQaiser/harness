@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { expect, test } from 'vitest';
 import { evalCmd } from '../../src/cli/eval.js';
 import type { Exec } from '../../src/core/exec.js';
@@ -83,7 +83,7 @@ test('skills and rules never get the scaffold flag', async () => {
 test('no kind runs all three', async () => {
   const h = harness(['claude-x', 'yes']);
   await h.run([]);
-  expect(h.calls.map((c) => c[3]!.split('/').pop())).toEqual(['skills', 'rules', 'gates']);
+  expect(h.calls.map((c) => basename(c[3]!))).toEqual(['skills', 'rules', 'gates']); // basename: the path uses \ on Windows
 });
 
 test('model flag skips the question; earlier result gives an estimate', async () => {

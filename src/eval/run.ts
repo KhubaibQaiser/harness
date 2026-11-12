@@ -14,13 +14,17 @@ export function evalArgs(dir: string, o: EvalArgsOpts): string[] {
   ];
 }
 
-export function planLines(cases: CaseInfo[], runs: number, model: string, maxCost: number, lastCostPerRun: number | null): string[] {
+/** Spend estimate from earlier results: total for the kinds that have one, and the kinds that do not. */
+export interface PlanEstimate { usd: number; missing: string[] }
+
+export function planLines(cases: CaseInfo[], runs: number, model: string, maxCost: number, est: PlanEstimate | null): string[] {
   const total = cases.length * runs;
   const kinds = [...new Set(cases.map((c) => c.kind))].join(', ');
   const variants = [...new Set(cases.flatMap((c) => (c.variant ? [c.variant] : [])))].join(', ') || 'none';
-  const estimate = lastCostPerRun === null
+  const none = `no estimate yet; the $${maxCost} ceiling caps the spend`;
+  const estimate = est === null
     ? `No estimate yet; the $${maxCost} ceiling caps the spend`
-    : `Estimate from your last run: ~$${(lastCostPerRun * total).toFixed(USD_DECIMALS)}`;
+    : `Estimate from your last run: ~$${est.usd.toFixed(USD_DECIMALS)}${est.missing.length ? `, without ${est.missing.join(', ')} (${none})` : ''}`;
   return [
     `kinds: ${kinds} (one eval run per kind)`, `model: ${model}`, `cases: ${cases.length}`, `variants: ${variants}`, `runs per case: ${runs}`,
     `agent runs: ${total}`, 'judge calls: 0', estimate,

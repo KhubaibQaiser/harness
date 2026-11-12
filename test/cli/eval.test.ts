@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { expect, test } from 'vitest';
 import { evalCmd } from '../../src/cli/eval.js';
 import type { Exec } from '../../src/core/exec.js';
@@ -56,11 +56,34 @@ test.each([[{ CLAUDECODE: '1' }, undefined], [{ CI: 'true' }, undefined], [{ CI:
   expect(h.asked).toHaveLength(0);
 });
 
-test('gates kind is a clear message, never a run', async () => {
+test('gates runs with the scaffold and the hooked plugin, after the same yes', async () => {
   const h = harness(['claude-x', 'yes']);
+  expect(await h.run(['--kind', 'gates'])).toBe(0);
+  expect(h.calls).toHaveLength(1);
+  const a = h.calls[0]!;
+  expect(a).toContain('--scaffold');
+  expect(a).not.toContain('--allow-tools'); // each prompt.md's allowed_tools is enough (smoke run 2026-11-12)
+  expect(existsSync(join(a[3]!, 'hooks/dispatch.mjs'))).toBe(true);
+  expect(readdirSync(join(h.root, '.harness/reports/evals'))).toEqual([expect.stringMatching(/-claude-x-gates$/)]);
+  expect(h.lines.join('\n')).toContain('cases: 4');
+});
+
+test('gates: no yes, no run', async () => {
+  const h = harness(['claude-x', 'no']);
   expect(await h.run(['--kind', 'gates'])).toBe(1);
   expect(h.calls).toHaveLength(0);
-  expect(h.lines.join('\n')).toMatch(/probe/);
+});
+
+test('skills and rules never get the scaffold flag', async () => {
+  const h = harness(['claude-x', 'yes']);
+  await h.run(['--kind', 'rules']);
+  expect(h.calls[0]).not.toContain('--scaffold');
+});
+
+test('no kind runs all three', async () => {
+  const h = harness(['claude-x', 'yes']);
+  await h.run([]);
+  expect(h.calls.map((c) => basename(c[3]!))).toEqual(['skills', 'rules', 'gates']); // basename: the path uses \ on Windows
 });
 
 test('model flag skips the question; earlier result gives an estimate', async () => {
@@ -73,4 +96,14 @@ test('model flag skips the question; earlier result gives an estimate', async ()
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ costUsd: 0.6, cases: Array.from({ length: 6 }, (_, i) => ({ name: `r${i}-rules`, arms: { with: [{ score: 1 }] } })) }));
   await h2.run(['--kind', 'rules', '--model', 'claude-x']);
   expect(h2.lines.join('\n')).toContain('Estimate from your last run: ~$');
+});
+
+test('history for rules only: the default run still estimates, and names gates as unestimated', async () => {
+  const h = harness(['no']);
+  const dir = join(h.root, '.harness/reports/evals/2026-01-01-claude-x-rules');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'result.json'), JSON.stringify({ costUsd: 0.6, cases: Array.from({ length: 6 }, (_, i) => ({ name: `r${i}-rules`, arms: { with: [{ score: 1 }] } })) }));
+  await h.run(['--model', 'claude-x']);
+  // No skills installed: zero skills cases, so only gates is named.
+  expect(h.lines.join('\n')).toMatch(/Estimate from your last run: ~\$\d+\.\d\d, without gates \(no estimate yet/);
 });

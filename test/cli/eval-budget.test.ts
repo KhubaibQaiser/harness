@@ -31,10 +31,10 @@ function harness(write: Writer | null, over: { status?: number; missing?: true }
 }
 const ceiling = (args: string[]) => args[args.indexOf('--max-cost-usd') + 1];
 
-test('the ceiling caps the whole command: the second kind gets what is left', async () => {
+test('the ceiling caps the whole command: each later kind gets what is left', async () => {
   const h = harness(spend(0.5));
   expect(await h.run(['--model', 'claude-x'])).toBe(0);
-  expect(h.calls.map(ceiling)).toEqual(['2', '1.5']);
+  expect(h.calls.map(ceiling)).toEqual(['2', '1.5', '1']);
 });
 
 test('the second kind does not start when less than one run is left', async () => {

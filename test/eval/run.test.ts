@@ -31,5 +31,12 @@ test('plan without an earlier result', () => {
 });
 
 test('plan with an earlier result', () => {
-  expect(planLines(cases, 3, 'claude-x', 2, 0.1).join('\n')).toContain('Estimate from your last run: ~$0.60');
+  const p = planLines(cases, 3, 'claude-x', 2, { usd: 0.6, missing: [] }).join('\n');
+  expect(p).toContain('Estimate from your last run: ~$0.60');
+  expect(p).not.toContain('no estimate yet');
+});
+
+test('plan with history for some kinds names the ones without', () => {
+  const p = planLines(cases, 3, 'claude-x', 2, { usd: 0.6, missing: ['gates', 'skills'] }).join('\n');
+  expect(p).toContain('Estimate from your last run: ~$0.60, without gates, skills (no estimate yet; the $2 ceiling caps the spend)');
 });

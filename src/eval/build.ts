@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse, stringify } from 'yaml';
@@ -57,11 +58,13 @@ interface Ctx {
   model: string;
   /** Regex alternation of the allowed branch prefixes, read once per build. */
   prefixes: string;
+  /** Made-up value the gates scaffold writes into the secrets file; graders check it never shows. */
+  canary: string;
   cases: CaseInfo[];
   links: string[];
 }
 
-/** Copies a template case; the model is written into prompt.md from one place, prefixes into the graders. */
+/** Copies a template case; the model is written into prompt.md from one place, prefixes and the canary into the graders. */
 function writeCase(c: Ctx, name: string, from: string, caseYaml: Record<string, unknown>): void {
   const out = join(c.tmp, 'evals', name);
   cpSync(from, out, { recursive: true });
@@ -69,7 +72,7 @@ function writeCase(c: Ctx, name: string, from: string, caseYaml: Record<string, 
   writeFileSync(prompt, readFileSync(prompt, 'utf8').replace(/^---\n/, `---\nmodel: ${c.model}\n`));
   for (const g of readdirSync(join(out, 'graders'))) {
     const f = join(out, 'graders', g);
-    writeFileSync(f, readFileSync(f, 'utf8').replace('{{prefixes}}', c.prefixes));
+    writeFileSync(f, readFileSync(f, 'utf8').replace('{{prefixes}}', c.prefixes).replaceAll('{{canary}}', c.canary));
   }
   const body = { schema_version: SCHEMA_VERSION, name, plugins: ['../..'], ...caseYaml };
   writeFileSync(join(out, 'case.yaml'), stringify(body));
@@ -111,6 +114,24 @@ function buildRules(c: Ctx): void {
   }
 }
 
+// The tools harness's own PreToolUse hook covers (templates/settings.fragment.json), minus PowerShell and Monitor.
+const HOOK_TOOLS = 'Bash|Read|Grep|Edit|Write|MultiEdit|NotebookEdit';
+
+/** Bundles the dispatcher as the plugin's PreToolUse hook (the form P0 proved runs in eval sessions) and writes the gate cases. */
+function buildGates(c: Ctx, dispatch: string): void {
+  if (!existsSync(dispatch)) throw new Error(`${dispatch} not found; gate evals bundle the built hook dispatcher`);
+  mkdirSync(join(c.tmp, 'hooks'));
+  cpSync(dispatch, join(c.tmp, 'hooks/dispatch.mjs'));
+  const hook = { type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs"', timeout: 10 };
+  writeFileSync(join(c.tmp, 'hooks/hooks.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: HOOK_TOOLS, hooks: [hook] }] } }, null, 2));
+  const scaffold = readFileSync(join(c.tpl, 'gates/scaffold.sh'), 'utf8').replaceAll('{{canary}}', c.canary);
+  for (const name of dirs(join(c.tpl, 'gates'))) {
+    writeCase(c, name, join(c.tpl, 'gates', name), { context: { scaffold_script: 'scaffold.sh' } });
+    writeFileSync(join(c.tmp, 'evals', name, 'scaffold.sh'), scaffold, { mode: 0o755 });
+    c.cases.push({ name, kind: 'gates' });
+  }
+}
+
 function checkTmp(root: string, tmp: string): void {
   const rel = relative(resolve(root), tmp);
   const outside = rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel);
@@ -120,7 +141,9 @@ function checkTmp(root: string, tmp: string): void {
 
 /** Builds the eval plugin under `opts.tmp` (never under `root`). Only free graders are written. */
 export function buildEvalPlugin(root: string, opts: EvalOpts): EvalBuild {
-  if (opts.kinds.includes('gates')) throw new Error('gate evals wait for the P0 probe (spec 7.6); they are not built yet');
+  const canary = opts.canary ?? `HARNESS_CANARY_${randomBytes(8).toString('hex')}`;
+  // Written into a shell script and a regex, so only word characters.
+  if (!/^\w+$/.test(canary)) throw new Error('the canary must be letters, digits and underscores');
   const tmp = resolve(opts.tmp);
   checkTmp(root, tmp);
   mkdirSync(join(tmp, '.claude-plugin'), { recursive: true });
@@ -132,10 +155,12 @@ export function buildEvalPlugin(root: string, opts: EvalOpts): EvalBuild {
     tpl: join(packageDir('templates'), 'evals'),
     model: opts.model ?? EVAL_MODEL,
     prefixes: branchPrefixes(root).join('|'),
+    canary,
     cases: [],
     links: [],
   };
   const skippedSkills = opts.kinds.includes('skills') ? buildSkills(c) : [];
   if (opts.kinds.includes('rules')) buildRules(c);
+  if (opts.kinds.includes('gates')) buildGates(c, opts.dispatch);
   return { dir: tmp, cases: c.cases, skippedSkills, skippedLinks: c.links };
 }

@@ -79,7 +79,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `stats [--days N]` | Counts harness events (default: the last 7 days). |
 | `report [--days N] [--open] [--export]` | Writes the usage and adherence report to `.harness/reports/`. Local only. |
 | `rules [--apply]` | Shows today's violation count for each proposed ESLint rule and stricter TS option first. The rules are errors from day one, so `--apply` asks you to type `yes`. |
-| `eval [--kind skills\|rules] [--runs N] [--max-cost-usd X]` | Paid checks that your skills and rules change what the agent does. Costs money and asks every run. |
+| `eval [--kind skills\|rules\|gates] [--runs N] [--max-cost-usd X]` | Paid checks that your skills and rules change what the agent does, and that the gates fire in a real session. Costs money and asks every run. |
 | `remember add\|confirm\|retire\|sync\|list\|check` | Saves a team decision to `docs/decisions/` and loads it as a rule when its paths are touched. Asks first, commits nothing. |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. |
 | `vet <target>` | Scans a plugin or skill before you install it. Needs `gh`. Installs nothing. |

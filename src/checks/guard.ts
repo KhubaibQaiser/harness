@@ -15,6 +15,7 @@ import type { Check, Ctx } from '../hooks/dispatch.js';
 import type { Decision } from '../hooks/types.js';
 import { REMEMBER_WHY, rememberAsk } from './remember.js';
 import { rememberReadOnly } from '../core/remember-args.js';
+import { suggestBranches } from '../core/branch-prefix.js';
 
 type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { startedAt?: number; lookup?: VerifyOpts['lookup'] }; // lookup: test seam
 type Verdict = ['allow'] | ['deny' | 'ask', string];
@@ -87,7 +88,7 @@ const PREVIEW = (a: string[]): boolean => {
 };
 const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (run: (sub: string) => string) => string }> = {
   tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (run) => `Only a person can pause TDD: run ${run('tdd off')} in your own terminal.` },
-  uninstall: { kind: 'ask', allowed: (a) => a.length > 0 && a.every((t) => t === '--dry-run'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
+  uninstall: { kind: 'ask', allowed: (a) => a.includes('--dry-run') && a.every((t) => t === '--dry-run' || t === '--global'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
   init: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is installing the harness, which writes its hooks, rules and settings' },
   update: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is updating the harness, which rewrites its hooks, rules and settings' },
   add: { kind: 'ask', allowed: PREVIEW, why: () => 'the agent is adding a harness item, which writes its files and settings' },
@@ -868,8 +869,55 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   }
   const install = checkInstall(command, ctx);
   if (install) return install;
+  const preset = ctx.config?.preset && /\bgit\b/.test(command) ? walkCommands(command, ctx, presetVisit(command, ctx.config.preset)) : null;
+  if (preset) return toDecision(['ask', preset.reason]);
   for (const [re, why] of ASK) if (texts.some((t) => re.test(t))) return toDecision(['ask', why]);
   return { kind: 'allow' };
+}
+
+const NEW_BRANCH_FLAGS: Record<string, string[]> = {
+  checkout: ['-b', '-B', '--orphan'], switch: ['-c', '-C', '--create', '--force-create', '--orphan'], worktree: ['-b', '-B'], // worktree's --orphan is a switch
+};
+const BRANCH_CREATE_FLAGS = /^(-f|--force|-t|--track(=\S*)?|--no-track|--create-reflog)$/;
+const BRANCH_COPY = /^(-c|-C|--copy)$/;
+/** The branch a git command creates: `checkout -b|-B|--orphan`, `switch -c|-C|--create|--force-create|--orphan`,
+ *  `worktree add -b|-B` (also `--flag=name`, a stuck `-bname` and a cluster `-fb name`), `git branch <name> [<start>]` with only
+ *  creation flags (`-d`, `-m`, `--list`, … create nothing), `git branch -c|-C|--copy [<old>] <new>`, and `worktree add
+ *  <path>` with no branch flag, `--detach` or commit-ish (git names that branch after the path). */
+function newBranch(sub: string | undefined, args: string[]): string | undefined {
+  const positional = args.filter((t, i) => !t.startsWith('-') && args[i - 1] !== '--reason'); // worktree's --reason takes a value
+  if (sub === 'branch') {
+    if (args.some((t) => BRANCH_COPY.test(t))) return args.every((t) => !t.startsWith('-') || BRANCH_COPY.test(t) || /^(-f|--force)$/.test(t)) ? positional.at(-1) : undefined;
+    return args.every((t) => !t.startsWith('-') || BRANCH_CREATE_FLAGS.test(t)) ? positional[0] : undefined;
+  }
+  if (sub === 'worktree' && args[0] !== 'add') return undefined;
+  const flags = Object.hasOwn(NEW_BRANCH_FLAGS, sub ?? '') ? NEW_BRANCH_FLAGS[sub!] : [];
+  for (const [i, t] of args.entries()) {
+    if (flags.includes(t)) return args[i + 1];
+    const eq = t.indexOf('=');
+    if (t.startsWith('--') && eq > 0 && flags.includes(t.slice(0, eq))) return t.slice(eq + 1);
+    if (/^-[a-zA-Z]./.test(t) && flags.includes(t.slice(0, 2))) return t.slice(2);
+    if (/^-[a-zA-Z]+$/.test(t) && flags.includes(`-${t.at(-1)}`)) return args[i + 1];
+  }
+  if (sub === 'worktree' && positional.length === 2 && !args.some((t) => /^(-d|--detach)$/.test(t))) return positional[1].replace(/\/+$/, '').split('/').pop() || undefined;
+  return undefined;
+}
+const AI_TRAILER = /Co-Authored-By:[^\n]*(Claude|noreply@anthropic\.com)|Generated with \[?Claude Code/i;
+/** The preset's git asks for one segment whose command word is git (or a path to it): a commit while the command holds
+ *  an AI trailer, a new branch without a listed prefix. */
+// ponytail: the trailer is matched on the whole command, heredoc bodies included, so `echo "Co-Authored-By: Claude"; git
+// commit -m x` asks too, and so does a human co-author named Claude (both accepted); a message from `-F <file>`, an
+// editor, a template or a reused commit (`-C`, `--amend --no-edit`) is not visible to the guard at all.
+function presetVisit(command: string, preset: NonNullable<NonNullable<GuardCtx['config']>['preset']>): Visit<Hit> {
+  return ({ toks, k }) => {
+    if (runnerName(toks[k] ?? '') !== 'git') return null;
+    const [sub, ...args] = gitArgs(['git', ...toks.slice(k + 1)]);
+    if (sub === 'commit' && preset.git.no_ai_trailer && AI_TRAILER.test(command))
+      return { kind: 'ask', reason: `the agent is committing with an AI trailer, which the ${preset.id} preset bans` };
+    const name = newBranch(sub, args);
+    if (!name || preset.git.branch_prefixes.some((p) => name.startsWith(p))) return null;
+    return { kind: 'ask', reason: `branch "${name}" has no listed prefix; use one of: ${suggestBranches(preset.git.branch_prefixes, name).join(', ')}` };
+  };
 }
 
 /** `*.{a,b}` -> [`*.a`, `*.b`], innermost groups first, at most 256 results (the rest is checked unexpanded). */

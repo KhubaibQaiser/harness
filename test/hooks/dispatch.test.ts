@@ -437,6 +437,16 @@ test('harness remember: unattended, the ask is denied and one redacted decision-
   expect(JSON.stringify(ev)).not.toContain('Readers skim');
 });
 
+test('unattended, a commit with an AI trailer is denied (O11)', async () => {
+  const r = mkdtempSync(join(tmpdir(), 'h-dp-trailer-'));
+  mkdirSync(join(r, '.harness'));
+  writeFileSync(join(r, '.harness/config.yaml'), 'checks:\n  guard: true\npreset:\n  id: khubaib-frontend\n  version: "1"\n  items: [a]\n  git:\n    branch_prefixes: [feature/]\n    no_ai_trailer: true\n    pr_size_warning: true\n');
+  const raw = pre({ cwd: r, tool_name: 'Bash', tool_input: { command: 'git commit -m "fix: x\n\nCo-Authored-By: Claude <noreply@anthropic.com>"' } });
+  expect(decisionOf(await dispatch(raw, registry, {}))).toBe('ask');
+  const un = await dispatch(raw, registry, { CI: 'true' });
+  expect(decisionOf(un)).toBe('deny');
+  expect(out(un).hookSpecificOutput?.permissionDecisionReason).toMatch(/^Unattended run: Confirm: the agent is committing with an AI trailer/);
+});
 const fresh = () => {
   const r = mkdtempSync(join(tmpdir(), 'h-dp-t-'));
   mkdirSync(join(r, '.harness'));

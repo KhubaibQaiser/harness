@@ -1358,10 +1358,84 @@ test('a person-only preview never passes when an argument holds a shell expansio
   }
 });
 
-test('the uninstall ask covers --global, its --dry-run too', () => {
-  for (const c of ['harness uninstall --global', 'harness uninstall --global --yes', 'harness uninstall --global --yes --force', 'harness uninstall --global --dry-run', 'npx @khubaibqaiser/harness uninstall --global --yes']) {
+test('the uninstall ask covers --global', () => {
+  for (const c of ['harness uninstall --global', 'harness uninstall --global --yes', 'harness uninstall --global --yes --force', 'npx @khubaibqaiser/harness uninstall --global --yes']) {
     const d = decideCommand(c, ctx());
     expect(d.kind, c).toBe('ask');
     expect(reason(d), c).toBe(UNINSTALL_WHY);
   }
+});
+
+describe('preset asks: AI trailer and branch prefix', () => {
+  const pctx = () => {
+    const c = ctx();
+    c.config!.preset = { id: 'khubaib-frontend', version: '1', items: [], git: { branch_prefixes: ['feature/', 'fix/', 'chore/'], no_ai_trailer: true, pr_size_warning: true } };
+    return c;
+  };
+  const TRAILER = 'Confirm: the agent is committing with an AI trailer, which the khubaib-frontend preset bans';
+  const trailered = [
+    'git commit -m "fix: x\n\nCo-Authored-By: Claude Opus <noreply@anthropic.com>"',
+    "git commit -F - <<'EOF'\nfix: x\n\nCo-Authored-By: Claude Opus <noreply@anthropic.com>\nEOF",
+    'git -C . commit -m "fix: x\n\nGenerated with Claude Code"',
+  ];
+  test.each(trailered)('a commit with an AI trailer asks: %s', (cmd) => {
+    const d = decideCommand(cmd, pctx());
+    expect(d.kind).toBe('ask');
+    expect(reason(d)).toBe(TRAILER);
+  });
+  test('a plain commit, a prefixed new branch and a switch are allowed', () => {
+    for (const c of ['git commit -m "fix: x"', 'git switch -c feature/x', 'git checkout -b fix/y', 'git switch main', 'git checkout -B chore/z'])
+      expect(decideCommand(c, pctx()).kind, c).toBe('allow');
+  });
+  test.each(['git switch -c wip', 'git checkout -b wip', 'git switch -C wip', 'git checkout -B wip'])('an unprefixed new branch asks: %s', (cmd) => {
+    const d = decideCommand(cmd, pctx());
+    expect(d.kind).toBe('ask');
+    expect(reason(d)).toBe('Confirm: branch "wip" has no listed prefix; use one of: feature/wip, fix/wip, chore/wip');
+  });
+  test.each([
+    'git switch --create wip', 'git switch --create=wip', 'git switch --force-create wip', 'git checkout --orphan wip', 'git checkout --orphan=wip',
+    'git branch wip', 'git branch wip main', 'git branch -f wip main', 'git branch --track wip origin/main',
+    'git worktree add -b wip ../wt', 'git worktree add -B wip ../wt main', 'git worktree add ../wt -b wip',
+    '/usr/bin/git switch -c wip', 'git switch --orphan wip', 'git switch -cwip', 'git checkout -bwip', 'git checkout -Bwip', 'git worktree add -bwip ../wt',
+    'git branch -c wip', 'git branch -C main wip', 'git branch --copy feature/a wip', 'git worktree add ../wip', 'git worktree add -f ../x/wip',
+    'git worktree add --orphan ../wip', 'git worktree add --reason why ../wip', 'git worktree add --reason "two words" ../wip', 'git worktree add --reason=why ../wip',
+    'git checkout -fb wip', 'git switch -fc wip', 'git worktree add -fB wip ../wt',
+  ])('an unprefixed new branch asks: %s', (cmd) => {
+    const d = decideCommand(cmd, pctx());
+    expect(d.kind).toBe('ask');
+    expect(reason(d)).toBe('Confirm: branch "wip" has no listed prefix; use one of: feature/wip, fix/wip, chore/wip');
+  });
+  test('branch commands that create nothing, or a prefixed branch, never get the prefix ask', () => {
+    for (const c of ['git branch', 'git branch -d wip', 'git branch -D wip', 'git branch -m wip', 'git branch -M old wip', 'git branch --list', 'git branch -a',
+      'git branch -r', 'git branch --show-current', 'git branch --contains abc123', 'git branch feature/wip main', 'git switch --create=fix/y',
+      'git checkout --orphan chore/z', 'git worktree add -b feature/wip ../wt', 'git worktree add ../wt main', 'git worktree list',
+      'grep -rn "git branch" docs/', 'rg "git branch" src', 'echo git branch wip', 'echo git switch -c wip', 'git commit -m "fix: x\n\ntry git switch -c wip later"',
+      'git worktree add --orphan -b feature/x ../wt', 'git worktree add --lock --reason why ../wt main', 'git checkout -fb feature/x',
+      'git worktree add --detach ../wip', 'git worktree add -d ../wip', 'git branch -c feature/a fix/b', 'git switch -cfeature/x'])
+      expect(reason(decideCommand(c, pctx())), c).not.toContain('no listed prefix'); // -D already asks on its own rule
+  });
+  // cmp-x runs with no config; this pins the preset asks the same way, with a preset recorded (expected verdict per command).
+  test('cmp-style table with a preset', () => {
+    const table: [string, string][] = [
+      ['git commit -m "fix: x"', 'allow'], ['git commit -m "x\n\nCo-Authored-By: Claude <noreply@anthropic.com>"', 'ask'],
+      ["git -c a=b commit -F - <<'EOF'\nx\n\nGenerated with [Claude Code](https://claude.com/claude-code)\nEOF", 'ask'],
+      ['git switch -c wip', 'ask'], ['git switch --create=wip', 'ask'], ['git checkout --orphan wip', 'ask'], ['git branch wip', 'ask'],
+      ['git worktree add -b wip ../wt', 'ask'], ['git switch -c feature/x', 'allow'], ['git branch -d wip', 'allow'], ['git branch', 'allow'],
+      ['git push --force origin feature/x', 'deny'],
+    ];
+    for (const [c, want] of table) expect(decideCommand(c, pctx()).kind, c).toBe(want);
+  });
+  test('with no preset, nothing fires', () => {
+    for (const c of [...trailered, 'git switch -c wip', 'git checkout -b wip']) expect(decideCommand(c, ctx()).kind, c).toBe('allow');
+  });
+  test('the trailer ask needs the no_ai_trailer setting', () => {
+    const c = pctx();
+    c.config!.preset!.git.no_ai_trailer = false;
+    expect(decideCommand(trailered[0], c).kind).toBe('allow');
+  });
+});
+
+test('uninstall --global --dry-run is allowed (a dry run writes nothing); --global alone asks', () => {
+  all(['harness uninstall --global --dry-run', 'harness uninstall --dry-run --global'], 'allow');
+  all(['harness uninstall --global', 'harness uninstall --global --dry-run --yes', 'harness uninstall --global --global'], 'ask');
 });

@@ -257,3 +257,15 @@ test('list: says how many decisions are invalid', async () => {
     '1 invalid; run harness remember sync to see why',
   ]);
 });
+
+test('final review M1: sync secret-scans the rules it would write, and refuses a hand-edited secret', async () => {
+  const root = await repo();
+  await go(root, ADD);
+  const token = `ghp_${'a1'.repeat(18)}`;
+  writeFileSync(join(root, DEC), readFileSync(join(root, DEC), 'utf8').replace('Two outages.', `Use ${token}.`));
+  const before = readFileSync(join(root, RULE), 'utf8');
+  const r = await go(root, ['sync', '--yes']);
+  expect(r).toEqual({ code: 1, out: `harness remember: ${RULE} would hold a secret (GitHub token). Decisions are committed to git. Remove it from the decision by hand, then run sync again.` });
+  expect(readFileSync(join(root, RULE), 'utf8')).toBe(before);
+  expect(events(root).at(-1)).toMatchObject({ decision: 'refused', reason: 'secret' });
+});

@@ -1,8 +1,8 @@
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
-import { DECISIONS_REASON, decisionsDeny } from '../../src/checks/decisions-protect.js';
+import { describe, expect, test } from 'vitest';
+import { BECOMES_DECISION, DECISIONS_REASON, decisionsDeny } from '../../src/checks/decisions-protect.js';
 import { protect } from '../../src/checks/protect.js';
 import { loadConfig } from '../../src/core/config.js';
 import { isDecisionText, parseDecision, serializeDecision } from '../../src/core/decision-file.js';
@@ -162,4 +162,100 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('a glob el
 test('the settings fragment gains no deny rule for decisions (C9)', () => {
   const deny: string[] = settingsFragment().permissions.deny;
   expect(deny.filter((d) => /decision|rules/.test(d))).toEqual([]);
+});
+
+describe('final review I2: turning a file in docs/decisions/ into a decision asks', () => {
+  const ADR = 'docs/decisions/2026-01-01-adr.md';
+  writeFileSync(join(ROOT, ADR), '# old ADR\n');
+  writeFileSync(join(ROOT, 'docs/decisions/0002-notes.md'), '# notes\n');
+  const front = serializeDecision({ id: '2026-01-01-adr', title: 'Adr', status: 'active', paths: ['src/**'], verified_at: 'a'.repeat(40), verified_on: '2026-01-01', body: '**Rule:** Do it.\n' });
+  const ask = { kind: 'ask', reason: BECOMES_DECISION, check: 'protect' };
+  test('Write, Edit and MultiEdit whose result has the schema frontmatter ask', () => {
+    expect(run('Write', { file_path: ADR, content: front })).toEqual(ask);
+    expect(run('Write', { file_path: join(ROOT, ADR), content: front })).toEqual(ask);
+    expect(run('Edit', { file_path: ADR, old_string: '# old ADR\n', new_string: front })).toEqual(ask);
+    expect(run('MultiEdit', { file_path: ADR, edits: [{ old_string: '# old ADR', new_string: front.trimEnd() }] })).toEqual(ask);
+    expect(run('Write', { file_path: 'docs/decisions/0002-notes.md', content: front })).toEqual(ask);
+  });
+  test('shell writes to a dated file there ask, since protect cannot see what they write', () => {
+    for (const c of [`cat x >> ${ADR}`, `echo hi > ${ADR}`, `cp /tmp/x.md ${ADR}`, `tee ${ADR} < x`]) expect(bash(c), c).toEqual(ask);
+  });
+  test('an edit that keeps a plain ADR a non-decision is allowed', () => {
+    expect(run('Edit', { file_path: ADR, old_string: 'old', new_string: 'new' }).kind).toBe('allow');
+    expect(run('Write', { file_path: ADR, content: '# new ADR\n\nschema: not frontmatter\n' }).kind).toBe('allow');
+    expect(bash('echo hi >> docs/decisions/README.md').kind).toBe('allow');
+    expect(bash(`cat ${ADR}`).kind).toBe('allow');
+  });
+  test('an existing decision is still denied, not asked', () => {
+    expect(run('Write', { file_path: DEC, content: front })).toMatchObject({ kind: 'deny', reason: REASON });
+  });
+  test('off with checks.decisions false', () => {
+    expect(run('Write', { file_path: ADR, content: front }, false).kind).toBe('allow');
+    expect(bash(`cat x >> ${ADR}`, false).kind).toBe('allow');
+  });
+});
+
+describe('re-review: a cd earlier in the line moves where relative paths land', () => {
+  const ADR = 'docs/decisions/2026-01-01-adr.md';
+  test.each([
+    [`cd docs/decisions && cat evil >> ${ID}.md`, 'deny'],
+    [`cd docs && echo hi > decisions/${ID}.md`, 'deny'],
+    [`cd docs; cd decisions; echo hi > ${ID}.md`, 'deny'],
+    [`pushd docs/decisions && echo hi > new.md`, 'deny'],
+    [`(cd docs/decisions && echo hi > ${ID}.md)`, 'deny'],
+    [`cd .claude/rules && echo hi > harness-decision-${ID}.md`, 'deny'],
+    [`cd ${ROOT.replaceAll('\\', '/')}/docs/decisions && echo hi > ${ID}.md`, 'deny'], // Git Bash reads an unquoted \ as an escape
+    [`cd docs/decisions && rm ${ID}.md`, 'deny'],
+    [`cd docs/decisions && cat x >> 2026-01-01-adr.md`, 'ask'],
+    [`cd .claude && echo x > settings.json`, 'deny'],
+  ])('%s', (c, kind) => {
+    writeFileSync(join(ROOT, ADR), '# old ADR\n');
+    expect(bash(c).kind).toBe(kind);
+  });
+  test.each(['cd $X && echo hi > a.md', 'cd - && echo hi > a.md', 'cd ~user/x && echo hi > a.md', 'cd && echo hi > a.md', 'cd C:\\Users\\x && echo hi > a.md', 'pushd "$D" && echo hi > a.md'])('an unresolvable cd before a write asks: %s', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'ask', check: 'protect' });
+  });
+  test.each(['cd $X && echo x > .harness/config.yaml', 'cd - && tee .claude/settings.json', 'cd $X && rm -rf .harness'])('an unresolvable cd does not soften a protected write to an ask: %s', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'deny', check: 'protect' });
+  });
+  test.each(['cd -- .harness && tee config.yaml', 'builtin cd .harness && tee config.yaml', 'command cd .claude && echo x > settings.json'])('cd -- and builtin/command cd are followed: %s', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'deny', check: 'protect' });
+  });
+  test('allowed: a cd with no protected write after it, and an unresolvable cd with no write', () => {
+    for (const c of ['cd docs && echo hi > notes.md', 'cd docs/decisions && cat README.md', 'cd docs/decisions && echo hi >> README.md', 'cd - && ls', 'cd $X && npm test'])
+      expect(bash(c).kind, c).toBe('allow');
+  });
+});
+
+describe('re-review: editors that write files themselves ask for decisions and rules', () => {
+  test.each([
+    `ex -sc wq ${DEC}`, `ex -sc '%s/a/b/|wq' ${DEC}`, `vi -c wq ${DEC}`, `vim -c 'normal x' -c wq ${RULE}`, `vim -es ${DEC}`, `nvim --headless -c wq ${DEC}`,
+    `ed ${DEC}`, `printf ',s/a/b/\\nw\\n' | ed -s ${DEC}`, `nano ${RULE}`, `sudo vim -c wq ${DEC}`, 'ex -sc wq docs/decisions/2026-01-01-adr.md',
+    `cd docs/decisions && ex -sc wq ${ID}.md`, 'vim docs/decisions/new.md',
+  ])('%s', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'ask', check: 'protect' });
+  });
+  test('allowed: editors on other files, and the words as arguments', () => {
+    for (const c of ['vim -c wq src/a.ts', 'ex -sc wq docs/decisions/README.md', `grep -r ed ${DEC}`, `echo vim ${DEC}`]) expect(bash(c).kind, c).toBe('allow');
+  });
+  test('off with checks.decisions false', () => expect(bash(`ex -sc wq ${DEC}`, false).kind).toBe('allow'));
+});
+
+describe('re-review: a copy or move into a folder after a cd resolves the folder from there too', () => {
+  test.each([
+    `cd docs && cp /tmp/${ID}.md decisions/`,
+    `cd docs && mv /tmp/${ID}.md decisions`,
+    `cd docs && install -m 644 /tmp/${ID}.md decisions/`,
+    `cd docs && cp -t decisions /tmp/${ID}.md`,
+    `cd docs && rsync /tmp/${ID}.md decisions/`,
+    `cd .claude && cp /tmp/harness-decision-${ID}.md rules/`,
+    `cd docs && tar -xf /tmp/a.tar -C decisions`,
+    'cd docs && unzip /tmp/a.zip -d decisions',
+    `cd docs && mv decisions/${ID}.md /tmp/x.md`,
+  ])('%s is denied', (c) => {
+    expect(bash(c)).toMatchObject({ kind: 'deny', check: 'protect' });
+  });
+  test('allowed: a copy into another folder after a cd', () => {
+    for (const c of ['cd docs && cp /tmp/notes.md plans/', 'cd docs && cp /tmp/x.md decisions/']) expect(bash(c).kind, c).toBe('allow');
+  });
 });

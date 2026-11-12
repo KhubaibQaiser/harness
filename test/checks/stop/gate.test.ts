@@ -489,7 +489,7 @@ test('nudge: an A-only hit on a blocked Stop is held for the next passing Stop',
   signals("Going forward, I'll run lint first.");
   expect(await runStop(s.ctx, s.exec(SRC, 'lint'))).toMatchObject({ kind: 'block' });
   signals('Fixed lint.');
-  expect(text(await runStop(s.ctx, s.exec(SRC)))).toContain('(you said "Going forward, I\'ll run lint first.")');
+  expect(text(await runStop(s.ctx, s.exec(SRC)))).toContain('(Claude said "Going forward, I\'ll run lint first.")'); // an A hit is Claude's words (final review M3)
 });
 
 test('nudge: the gave-up allow shows it too', async () => {

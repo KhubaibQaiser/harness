@@ -270,3 +270,71 @@ test('a commit message that names harness remember is not routed to the remember
 test('REMEMBER_WHY is the person-only reason the guard hands over', () => {
   expect(REMEMBER_WHY).toBe('the agent is saving a team decision');
 });
+
+describe('final review I1: a remember behind any wrapper is denied as not plain', () => {
+  const ctx = mk();
+  test.each(['chronic', 'caffeinate', 'caffeinate -i', 'ionice', 'ionice -c3', 'arch -arm64', 'unknown-xyz'].flatMap((w) => [
+    `${w} ${PLAIN} --yes`,
+    `${w} harness remember confirm 2026-01-01-x --yes`,
+    `${w} harness remember retire 2026-01-01-x --yes`,
+    `${w} harness remember sync --yes`,
+    `${w} node dist/cli.mjs remember retire 2026-01-01-x --yes`,
+    `${w} npx @khubaibqaiser/harness remember retire 2026-01-01-x --yes`,
+  ]))('%s', (c) => {
+    expect(run(c, ctx)).toEqual({ kind: 'deny', check: 'guard', reason: NOT_PLAIN, log: 'remember: not one plain command' });
+  });
+  test('quote tricks, -c payloads and shell heredocs are read through', () => {
+    for (const c of ["chronic harness rem'ember' retire 2026-01-01-x --yes", "sh -c 'chronic harness remember retire 2026-01-01-x --yes'", 'bash <<EOF\nchronic harness remember retire 2026-01-01-x --yes\nEOF'])
+      expect(run(c, ctx), c).toMatchObject({ kind: 'deny', reason: NOT_PLAIN });
+  });
+  test('a plain read-only remember in a pipeline is still judged as before', () => {
+    expect(run('harness remember list | head -5', ctx).kind).toBe('allow');
+  });
+});
+
+describe('final review I4: the plugin CLI by its absolute path', () => {
+  test.each([
+    'node "C:\\Users\\me\\.claude\\plugins\\harness\\dist\\cli.mjs" remember add --title T --rule R --path src/a.ts',
+    "node 'C:\\Users\\me\\.claude\\plugins\\harness\\dist\\cli.mjs' remember add --title T --rule R --path src/a.ts",
+    'node "C:/Users/me/.claude/plugins/harness/dist/cli.mjs" remember add --title T --rule R --path src/a.ts',
+    'node "/Users/José/.claude/plugins/cache/harness/dist/cli.mjs" remember add --title T --rule R --path src/a.ts',
+    'node "/home/Ünal Öz/.claude/plugins/harness/dist/cli.mjs" remember add --title T --rule R --path src/a.ts',
+    "node '/Users/x/.claude/plugins/cache/harness/dist/cli.mjs' remember add --title T --rule R --path src/a.ts",
+  ])('%s asks', (c) => {
+    expect(run(c)).toMatchObject({ kind: 'ask', log: `remember add ${today()}-t` });
+  });
+  test.each([
+    'node "C:\\Users\\me\\$x\\dist\\cli.mjs" remember add --title T --rule R --path src/a.ts',
+    'node "C:\\Users\\me\\dist\\cli.mjs.bak" remember add --title T --rule R --path src/a.ts',
+    'node "C:\\Users\\me\\dist\\evil.mjs" remember add --title T --rule R --path src/a.ts',
+  ])('%s never reaches the add ask', (c) => {
+    expect(log(run(c))).not.toBe(`remember add ${today()}-t`);
+  });
+  test('the literal deny names backslashes, so a Windows path outside the CLI form is not told to remove $', () => {
+    expect(NOT_LITERAL).toMatch(/backslash/);
+  });
+});
+
+describe('final review M10: an unquoted @word is denied (PowerShell splats it)', () => {
+  test.each([
+    'harness remember add --title T --rule @r --path src/a.ts',
+    'harness remember add --title @t --rule R --path src/a.ts',
+    'harness remember retire @id --yes',
+  ])('%s', (c) => {
+    expect(run(c)).toEqual({ kind: 'deny', check: 'guard', reason: NOT_LITERAL, log: 'remember: not literal' });
+  });
+  test('a quoted @word and the npx package name still pass', () => {
+    expect(run('harness remember add --title T --rule "@r" --path src/a.ts')).toMatchObject({ kind: 'ask' });
+    expect(run('npx @khubaibqaiser/harness remember add --title T --rule R --path src/a.ts')).toMatchObject({ kind: 'ask' });
+    expect(run('harness remember add --title T --rule a@b --path src/a.ts')).toMatchObject({ kind: 'ask' });
+  });
+});
+
+test('final review M6: the confirm ask shows the CLI\'s sha form, the first 7 of rev-parse HEAD', () => {
+  const ctx = mk();
+  const git = (...a: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: ctx.root, encoding: 'utf8' });
+  git('init', '-q');
+  git('commit', '-q', '--allow-empty', '-m', 'x');
+  const sha = git('rev-parse', 'HEAD').stdout.trim().slice(0, 7);
+  expect(reason(run('harness remember confirm 2026-11-03-x --yes', ctx))).toContain(` at ${sha};`);
+});

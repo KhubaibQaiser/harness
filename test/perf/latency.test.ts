@@ -17,6 +17,8 @@ const CEILING_MS = 1000; // gross-regression guard on the whole spawn
 // 186 ms (50 MB transcript) and 495 ms (500 decisions) on main 86833e8 (Nov 2026), over the old 150 / 450; about 1.35x headroom.
 const STOP_OVERHEAD_MS = { win32: 450, darwin: 250 }[process.platform as string] ?? 100;
 const WARN_OVERHEAD_MS = { win32: 1350, darwin: 650 }[process.platform as string] ?? 300;
+// The warning run's total holds its own overhead plus the bare spawn, so it can't share the 1000 ms ceiling where that overhead may reach 1350.
+const WARN_CEILING_MS = Math.max(CEILING_MS, WARN_OVERHEAD_MS + 300);
 // Each median is printed so the next calibration reads measured numbers from the CI log.
 const report = (name: string, m: { overhead: number; total: number }) => writeSync(2, `[perf] ${name} ${process.platform}: overhead ${m.overhead.toFixed(1)} ms, total ${m.total.toFixed(1)} ms\n`); // straight to stderr: the reporter hides a passing test's console
 
@@ -181,7 +183,7 @@ test('attended Stop with 500 team decisions covering the changed file: harness o
   }, true);
   report('stop-500-decisions', m);
   expect(m.overhead, `warning overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(WARN_OVERHEAD_MS);
-  expect(m.total, `warning total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
+  expect(m.total, `warning total median ${m.total.toFixed(1)} ms`).toBeLessThan(WARN_CEILING_MS);
 }, 120000);
 
 // Final review I3: links back into .claude/rules once took 22 s at 3 links and never finished at 4. Each folder is now

@@ -117,7 +117,11 @@ test('no nudge after a harness remember add ran; a failed one or another tool re
   post(c, 'Bash', 'harness remember add --title x', { interrupted: true });
   post(c, 'Edit', 'remember add', {});
   expect(c.state.rememberAdded).toBeUndefined();
-  post(c, 'Bash', 'npx @khubaibqaiser/harness remember add --title "Zod" --rule "use zod"', { stdout: 'Saved' });
+  post(c, 'Bash', 'harness remember list && git add .', { stdout: '' });
+  post(c, 'Bash', 'harness remember add --title "Zod" --rule "use zod" --path src/a.ts --dry-run', { stdout: 'Would write' });
+  post(c, 'Bash', 'echo remember to add tests', { stdout: '' });
+  expect(c.state.rememberAdded).toBeUndefined(); // final review M4: only a real add that writes
+  post(c, 'Bash', 'npx @khubaibqaiser/harness remember add --title "Zod" --rule "use zod" --path src/a.ts --yes', { stdout: 'Saved' });
   expect(c.state.rememberAdded).toBe(true);
   expect(stop(c)).toEqual([]);
 });
@@ -150,8 +154,9 @@ test('A signals fall back to the last assistant text in the transcript', () => {
   writeFileSync(t, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
   const c = mk({ input: { transcript_path: t } });
   const [note] = stop(c);
-  expect(note).toContain('(you said "Going forward, I will run lint first.")');
-  expect(c.state.decisionHits?.map((h) => h.pattern)).toEqual(['A2']);
+  // final review M2: text read from the transcript is never stored or shown, only the signal id
+  expect(note).toMatch(/^Harness: this session may hold a team decision\. To keep it/);
+  expect(c.state.decisionHits).toEqual([{ pattern: 'A2', excerpt: '' }]);
   expect(stop(mk({ input: { transcript_path: join(dir, 'missing.jsonl') } }))).toEqual([]);
 });
 
@@ -159,7 +164,7 @@ test('a transcript that ends in a tool result still falls back to the assistant 
   const t = join(mkdtempSync(join(tmpdir(), 'h-dstop-tr-')), 't.jsonl');
   const recs = [prompt('lint please'), assistant({ content: [{ type: 'text', text: 'Going forward, I will run lint first.' }] }), toolResult('t1', { content: 'lint ok' })];
   writeFileSync(t, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
-  expect(stop(mk({ input: { transcript_path: t } }))[0]).toContain('(you said "Going forward, I will run lint first.")');
+  expect(stop(mk({ input: { transcript_path: t } }))[0]).toMatch(/^Harness: this session may hold a team decision\. To keep it/);
 });
 
 test('the fallback reads only the current turn: an earlier turn\'s text is never picked, nor logged twice', () => {
@@ -184,7 +189,7 @@ test('A hits are stored at Stop, under the cap, and shown from the stored state'
   decisionSignals.run(c);
   expect(ids(c)).toEqual(['A1']);
   c.input = { ...c.input, last_assistant_message: 'Fixed lint.' };
-  expect(decisionNotes(c, [])[0]).toContain('(you said "I\'ll remember that.")');
+  expect(decisionNotes(c, [])[0]).toContain('(Claude said "I\'ll remember that.")'); // final review M3
   const full = mk({ state: { decisionHits: [1, 2, 3].map((n) => ({ pattern: 'P1', excerpt: `e${n}` })) } });
   stop(full, "I'll remember that.");
   expect(full.state.decisionHits).toHaveLength(MAX_HITS);
@@ -198,4 +203,19 @@ test('readTail returns the last bytes of a file; the transcript cap is 8 MiB', (
   expect(readTail(p, 4)).toBe('ef'); // the line the cut split is dropped
   expect(readTail(p, 5)).toBe('cd\nef'); // a cut on a line boundary keeps that whole line
   expect(TRANSCRIPT_TAIL).toBe(8 * 1024 * 1024);
+});
+
+test('final review M2: unattended, a hit read from the transcript logs only its signal id', () => {
+  const t = join(mkdtempSync(join(tmpdir(), 'h-dstop-m2-')), 't.jsonl');
+  writeFileSync(t, [prompt('a'), assistant({ content: [{ type: 'text', text: "I'll remember that secret plan." }] })].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const u = mk({ unattended: true, input: { transcript_path: t } });
+  stop(u);
+  expect(candidates(u).map((e) => e.reason)).toEqual(['A1']);
+});
+
+test('final review M3: the nudge quotes what the person said over what Claude said', () => {
+  const c = mk({ state: { decisionHits: [{ pattern: 'A1', excerpt: "I'll remember that." }, { pattern: 'P1', excerpt: 'from now on use zod' }] } });
+  const [note] = decisionNotes(c, []);
+  expect(note).toContain('(you said "from now on use zod")');
+  expect(note).not.toContain('remember that');
 });

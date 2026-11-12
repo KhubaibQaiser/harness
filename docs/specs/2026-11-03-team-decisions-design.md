@@ -92,7 +92,7 @@ Source: `docs/decisions/2026-11-03-validate-env-with-zod.md`, confirmed 2026-11-
 ```
 
 - `paths` is the only frontmatter key Claude Code reads in a rule (R, Claude Code section); harness writes nothing else there. Globs are double-quoted YAML strings.
-- LF line ends and a final newline, so the bytes and hashes match on every OS (as `plan.ts` does for templates).
+- LF line ends and a final newline, so the bytes and hashes match on every OS (as `plan.ts` does for templates). Sync, `check`, `doctor` and `status` compare a rule on disk after turning CRLF into LF, so a `core.autocrlf=true` checkout is in sync.
 
 ### 4.2 The cap (`decisions.max_lines`, default 20)
 
@@ -155,7 +155,7 @@ Field limits for `add`: `--title` as `title`; `--rule` 1 to 300 characters; `--w
 **Every write subcommand, before writing:**
 1. Refuses in an unattended run, using the env parts of `isUnattended` (`CLAUDE_CODE_REMOTE`, `CI`, `HARNESS_UNATTENDED`); the CLI can't see `permission_mode`, which the guard covers.
 2. Inside Claude Code (`CLAUDECODE` set) with `checks.guard: false`: refuses, because then nobody asks the person.
-3. Runs the secret scan (section 7.2) on every field and on the rendered file. A hit refuses; there is no override.
+3. Runs the secret scan (section 7.2) on every field and on the rendered file; `sync` (and `harness sync`) scans each rule it would write, since a person may have edited the decision by hand. A hit refuses; there is no override.
 4. In a terminal (TTY): shows the file(s) it will write and asks `Write these files? [y/N]`, unless `--yes`. Inside Claude Code there is no TTY: the guard's ask was the approval.
 5. Writes nothing to git. No commit, no staging.
 
@@ -191,6 +191,7 @@ Refusals:
 - Unattended: `harness remember does not write in unattended runs (CI, cloud or no-prompt sessions). A person can save it later.`
 - Guard off: `harness remember won't write from inside Claude Code while checks.guard is off, because nobody would be asked. Run it in your own terminal.`
 - Secret: `harness remember: --why looks like it holds a secret (<kind>). Decisions are committed to git. Remove it.`
+- Secret in a rule `sync` would write: `harness remember: .claude/rules/harness-decision-<id>.md would hold a secret (<kind>). Decisions are committed to git. Remove it from the decision by hand, then run sync again.`
 - Dead path: `harness remember: src/env/** matches no tracked file. Fix the path, or retire the decision.`
 - Unknown id: `harness remember: no decision 2026-11-03-x in docs/decisions/.`
 
@@ -204,7 +205,7 @@ Events (`.harness/logs/events.jsonl`, check `remember`): `added`, `confirmed`, `
 
 The ask's reason is built by `rememberAsk(ctx, words)` in `src/checks/remember.ts`, from the command's own words. Its result:
 
-1. **Not literal.** Any `remember` argument holds `$`, a backtick, `$(` or `<(`, or the command feeds `remember` from stdin or a file: **deny**. `Blocked by guard: harness remember needs its text as plain quoted words, so the person sees exactly what is written. Remove $, backticks and substitutions.`
+1. **Not literal.** Any `remember` argument holds `$`, a backtick, `$(` or `<(`, or the command feeds `remember` from stdin or a file: **deny**. `Blocked by guard: harness remember needs its text as plain quoted words, so the person sees exactly what is written. Remove $, backticks, backslashes, ~, unquoted globs or @ and substitutions.` (An unquoted word starting with `@` counts: PowerShell splats it.)
 2. **Secret** (7.2) in any field: **deny**. `Blocked by guard: this decision looks like it holds a secret (<kind> in --<field>). Decisions are committed to git. Remove it.`
 3. **Quotes untrusted text** (7.1), without `--quoted`: **deny**. `Blocked by guard: this decision repeats text from tool output ("<excerpt>"). Decisions become standing instructions for the whole team, so text from tool output, PR text or web pages needs the person's yes. Rewrite it from what the person said, or ask the person; if they agree, run it again with --quoted.`
 4. **Otherwise ask.** For `add`: `Confirm: the agent wants to save a team decision to docs/decisions/<id>.md. Title: <title>. Rule: <rule>. Why: <why>. Paths: <paths>. Once merged it loads for every teammate whose session touches those paths. Approve to write the files (nothing is committed).` With `--quoted` and a quote found, it starts with `Warning: this draft repeats tool output ("<excerpt>"). Approve only if you trust where that text came from.` For `confirm`: `Confirm: the agent wants to mark decision <id> as still true at <sha7>; it then stays loaded for another <expiry_days> days.` `retire` and `sync` name the files they change.
@@ -213,19 +214,22 @@ Unattended: the dispatcher already turns the ask into a deny. For `add`, the gua
 
 The id in the ask is computed the same way the CLI computes it; if the CLI picks a `-2` suffix, its output says so.
 
+Fail closed: a command whose parsed words hold `harness remember` (or `cli.mjs remember`) behind any word other than the allowed prefixes, such as a wrapper the guard doesn't know (`chronic`, `caffeinate`, `ionice`), goes to `rememberAsk`, which denies it as not one plain command. A quoted string that only names it (a commit message) is one word and doesn't count. The plugin form may also carry the filled-in root: `node "<absolute path>/dist/cli.mjs"`, quoted, with `\` or `/` separators and any letters.
+
 ### 6.2 Protect
 
 - Protected for Claude's file tools and for shell write targets named in the command text (the existing routes, including `git checkout/restore` and inline code that names the path):
   - `.claude/rules/harness-decision-*.md`;
   - a file in `docs/decisions/` that exists and is a decision (3.1);
   - any **new** file in `docs/decisions/`, because a new decision must come through `add`.
+  - an edit that would turn an existing non-decision file there into a decision asks (see the agent-editable note below).
 - Reason: `Team decisions change only through harness remember, which asks the person first. Edit a decision by hand yourself, then run harness remember sync.`
 - `PROTECTED_CONCRETE` gains `docs`, `docs/decisions` and `.claude/rules`, so `rm -rf docs` is caught as `rm -rf .claude` is today.
 - **No permission deny rule** is added for these paths. Under the sandbox, `Edit(...)` deny rules become OS write denies for every command (PE §2, §4), which would stop the `harness remember` process itself. This is the same choice PE made for `.harness/results/**`.
 - With `checks.decisions: false` none of this applies.
 - Reading stays free: the agent can Read, Grep and `cat` decisions.
 
-**Is `docs/decisions/` agent-editable? No** (for decision files and new files). Reasons: a plain Edit would skip the person's yes (D4), the untrusted-text and secret checks (D9), and rule sync. The cost: the agent can't fix a typo; a person edits by hand (protect never sees their editor) and runs `harness remember sync`. Existing non-decision files in the folder stay editable (C8).
+**Is `docs/decisions/` agent-editable? No** (for decision files and new files). Reasons: a plain Edit would skip the person's yes (D4), the untrusted-text and secret checks (D9), and rule sync. The cost: the agent can't fix a typo; a person edits by hand (protect never sees their editor) and runs `harness remember sync`. Existing non-decision files in the folder stay editable (C8), as long as they stay non-decisions: an Edit or Write whose result has the `schema: harness-decision/1` frontmatter asks, and a shell write to an existing dated (`YYYY-MM-DD-…md`) file there asks, since protect can't read what it writes. A new decision comes through `add`.
 
 ### 6.3 Change detection
 
@@ -284,15 +288,17 @@ Both are notes (`context`, shown to the person as `systemMessage`; the agent doe
   - P5 `\b(the|our)\s+(convention|rule|standard|policy)\s+(is|here is)\b`
 
   A hit stores `{ pattern, excerpt }` (the 120 characters around the match) in the session state, at most 3 per session.
-- **A (the agent accepts a standing rule).** At Stop, `last_assistant_message` is matched against:
+- **A (the agent accepts a standing rule).** At Stop, `last_assistant_message` is matched against (when the field is missing, the transcript tail's last assistant text is matched instead, and only the pattern id is kept: nothing read from the transcript is stored or logged, D1):
   - A1 `\bI('ll| will)\s+(remember|keep (this|that) in mind)\b`
   - A2 `\b(from now on|going forward),?\s+I('ll| will)\b`
 
-**When it shows:** at Stop, when there is at least one P or A hit this session, `decisions.nudge` is true, the run is attended, no nudge was shown yet this session, and no `harness remember add` ran this session (PostToolUse records it).
+**When it shows:** at Stop, when there is at least one P or A hit this session, `decisions.nudge` is true, the run is attended, no nudge was shown yet this session, and no real `harness remember add` ran this session (PostToolUse records it: one plain invocation, parsed with the CLI's own argument parser, not `--dry-run`, that did not fail).
 
 **Copy:**
 
 > Harness: this session may hold a team decision (you said "…from now on use the env schema…"). To keep it for the team, ask Claude to save it with `harness remember add`; you approve the write and the PR reviews it. If it's only your own preference, Claude Code's auto memory is the place.
+
+The quote is a P hit's excerpt when there is one (`you said`); with only A hits it is `Claude said "…"`, and with only a transcript-read A hit there is no quote.
 
 **Unattended:** no nudge. Each hit is logged once as `decision-candidate` with the pattern id and the redacted excerpt (D8).
 
@@ -302,7 +308,9 @@ Limit: English phrases only; unmeasured precision (R, design C). The patterns ar
 
 At Stop, for each active decision whose `paths` match a file this session changed (the gate's changed-file list: `git status` plus the diff from the session's base), harness checks staleness (section 9) once per session per decision. It shows one line per affected decision:
 
-> Harness: you changed code covered by team decision `<id>` ("<title>"). If it still holds, ask the person to run `harness remember confirm <id>`; if not, `harness remember retire <id>`.
+> Harness: you changed code covered by team decision `<id>` ("<title>"). If it still holds, run `harness remember confirm <id>`; if not, `harness remember retire <id>`.
+
+The line is a Stop note, shown to the person (not to the agent), so it tells the person what to run.
 
 It adds `It is expired (last confirmed <date>).` or `Its path <glob> no longer matches any file.` when those apply, and `Rules are out of sync: run harness remember sync.` when they are. It never blocks and never counts as a Stop attempt.
 

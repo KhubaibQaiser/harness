@@ -4,6 +4,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { esc } from '../core/config.js';
+import { unquote, words } from '../core/shell-words.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import { isShell } from '../hooks/edit-target.js';
 import type { Decision } from '../hooks/types.js';
@@ -119,7 +120,17 @@ function bodyText(ctx: Ctx, file: string): { text: string } | { why: string } {
 const deny = (why: string, use = true): Decision => ({ kind: 'deny', check: 'pr-body', reason: use ? `PR body: ${why}. ${USE}` : why });
 
 /** Why one create or edit is denied, or null. */
-function bodyWhy(ctx: Ctx, t: Extract<Target, { args: string[] }>, others: boolean): Decision | null {
+/** The --body-file value bash itself passes to gh, from the command's own words. The walker's readings also try `\`→`/`
+ *  and drop quoting's meaning, so a quoted Windows path (`'C:\x\body.md'`) would otherwise never resolve. Only used when
+ *  gh is the one command on the line; a gh inside a `bash -c` payload falls back to the walker's value. */
+function bashBodyFile(command: string, sub: string): string | undefined {
+  const ws = words(command).map(unquote);
+  const i = ws.findIndex((w) => runnerName(w) === 'gh');
+  const args = i < 0 ? null : afterPr(ws.slice(i + 1), sub);
+  return args ? flags(args).values.get('--body-file')?.at(-1) : undefined;
+}
+
+function bodyWhy(ctx: Ctx, command: string, t: Extract<Target, { args: string[] }>, others: boolean): Decision | null {
   const f = flags(t.args), cmd = `gh pr ${t.sub}`;
   const removes = (f.values.get('--remove-label') ?? []).flatMap((v) => v.split(',').map((l) => l.trim()));
   if (removes.includes(NEEDS_HUMAN)) return deny(`Only a person removes the ${NEEDS_HUMAN} label: it marks a PR that needs a human step before merge or deploy.`, false);
@@ -133,7 +144,7 @@ function bodyWhy(ctx: Ctx, t: Extract<Target, { args: string[] }>, others: boole
   if (/\$\(|`/.test(file)) return deny("a --body-file named by a substitution can't be checked");
   // Another command on the line could write the file after harness reads it (`cp x body.md && gh pr create -F body.md`).
   if (others || t.redirect) return deny(`${cmd} with a --body-file must be the only command on the line, with no redirect, so nothing can rewrite the file after harness reads it`);
-  const body = bodyText(ctx, file);
+  const body = bodyText(ctx, bashBodyFile(command, t.sub) ?? file);
   if ('why' in body) return deny(body.why);
   const labels = (t.kind === 'create' ? ['--label'] : ['--add-label']).flatMap((k) => f.values.get(k) ?? []).flatMap((v) => v.split(',').map((l) => l.trim()));
   const problems = bodyProblems(body.text, labels);
@@ -152,7 +163,7 @@ export function decidePrBody(ctx: Ctx): Decision {
       if (t.args.some((a) => /^--admin(=|$)/.test(a))) return deny('gh pr merge --admin skips branch protection, so harness never lets the agent run it. Ask the person to merge.', false);
       continue;
     }
-    const why = bodyWhy(ctx, t, others);
+    const why = bodyWhy(ctx, String(tool_input.command ?? ''), t, others);
     if (why) return why;
   }
   return { kind: 'allow' };

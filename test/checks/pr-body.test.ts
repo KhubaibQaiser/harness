@@ -10,11 +10,14 @@ import { makeRepo } from '../install/helpers.js';
 import { ctx } from './pr-size/helpers.js';
 
 const skill = readFileSync('templates/skills/pr-ship/SKILL.md', 'utf8');
-const template = /```markdown\n([\s\S]*?)\n```/.exec(skill)![1]!;
+const template = /```text\n([\s\S]*?)\n```/.exec(skill)![1]!;
 const filled = (human = 'None.') => [MARKER, ...HEADINGS.map((h) => `## ${h}\n\n${h === HEADINGS[8] ? human : 'not run: no app in this repo'}\n`)].join('\n');
 const USE = "Write the body from the pr-ship skill's template to a file and pass --body-file <file>.";
 const LABEL = 'the "Human steps before merge or deploy" section lists steps, so the PR needs the needs-human label (`--label needs-human` on create, `--add-label needs-human` on edit); never auto-merge or auto-deploy it';
 const reason = (d: ReturnType<typeof decidePrBody>) => ('reason' in d ? d.reason : '');
+const WIN = process.platform === 'win32';
+// As an agent writes a path for Claude Code's Bash (Git Bash on Windows): forward slashes, or single-quoted.
+const fwd = (p: string) => p.replace(/\\/g, '/');
 
 describe('the template in pr-ship', () => {
   test('carries the marker and every heading, in order', () => {
@@ -79,10 +82,15 @@ describe('decidePrBody', () => {
     writeFileSync(join(r, 'ok.md'), filled());
     writeFileSync(join(r, 'steps.md'), filled('Run the migration first.'));
     writeFileSync(join(r, 'evil.md'), 'just a body\n');
-    execFileSync('mkfifo', [join(r, 'fifo')]);
-    symlinkSync(join(r, 'fifo'), join(r, 'tofifo.md'));
-    symlinkSync('/dev/stdin', join(r, 'tostdin.md'));
     mkdirSync(join(r, 'sub'));
+    // On Windows `sub\ok.md` is a file in sub/; elsewhere it is one file whose name holds a backslash. Either way it is
+    // what a single-quoted 'sub\ok.md' names.
+    writeFileSync(join(r, 'sub\\ok.md'), filled());
+    if (!WIN) {
+      execFileSync('mkfifo', [join(r, 'fifo')]);
+      symlinkSync(join(r, 'fifo'), join(r, 'tofifo.md'));
+      symlinkSync('/dev/stdin', join(r, 'tostdin.md'));
+    }
     return r;
   };
   const r = root();
@@ -90,10 +98,10 @@ describe('decidePrBody', () => {
   const d = (cmd: string, o: Parameters<typeof ctx>[2] = {}) => decidePrBody(ctx(r, cmd, o));
 
   test.each([
-    'gh pr create --base main --body-file ok.md', `gh pr create -F ${join(r, 'ok.md')}`, 'gh pr new --body-file ok.md', 'gh pr create -R other/repo --body-file ok.md',
+    'gh pr create --base main --body-file ok.md', `gh pr create -F ${fwd(join(r, 'ok.md'))}`, `gh pr create -F '${join(r, 'ok.md')}'`, `gh pr create -F "${join(r, 'ok.md')}"`, "gh pr create -F 'sub\\ok.md'", 'gh pr new --body-file ok.md', 'gh pr create -R other/repo --body-file ok.md',
     'gh pr create --body-file steps.md -l bug,needs-human', 'gh pr create --body-file=steps.md --label=needs-human', 'gh pr create --body-file steps.md -lneeds-human',
     'gh pr create --body-file steps.md --label needs-human,other', 'gh pr edit 7 --body-file steps.md --add-label needs-human', 'gh pr edit 7 --add-label bug --title x',
-    'gh pr create --title "--fill" --body-file ok.md', `gh pr create --body-file ${join(S, 'outside.md')}`, 'gh pr merge 7 --squash', 'gh pr merge 7 --disable-auto', 'gh pr merge 7 -A',
+    'gh pr create --title "--fill" --body-file ok.md', `gh pr create --body-file ${fwd(join(S, 'outside.md'))}`, 'gh pr merge 7 --squash', 'gh pr merge 7 --disable-auto', 'gh pr merge 7 -A',
     'bash -c "gh pr create --body-file ok.md"',
   ])('%s is allowed', (c) => {
     expect(d(c)).toEqual({ kind: 'allow' });
@@ -122,8 +130,9 @@ describe('decidePrBody', () => {
     ['gh pr create -F ok.md --body-file evil.md', /more than one/], ['gh pr create --body-file ok.md --body-file evil.md', /more than one/], ['gh pr create --body x -b y', /more than one/],
     ['gh pr create --body-file ok.md --recover evil.json', /^PR body: --recover and --editor take the body/], ['gh pr create -e', /--recover and --editor/], ['gh pr edit 7 --editor', /--recover and --editor/],
     ['gh pr create --body-file -', /^PR body: a body read from stdin \(--body-file -\) can't be checked/],
-    ['gh pr create --body-file /dev/stdin', /^PR body: \/dev\/stdin is not a regular file of at most 1 MB/],
-    ['gh pr create --body-file tofifo.md', /tofifo\.md is not a regular file/], ['gh pr create --body-file tostdin.md', /tostdin\.md is not a regular file/], ['gh pr create --body-file sub', /sub is not a regular file/],
+    ['gh pr create --body-file sub', /sub is not a regular file/],
+    // Unquoted, bash drops the backslash (`subok.md`), so gh would not find it either.
+    ['gh pr create -F sub\\ok.md', /^PR body: there is no body file at .*subok\.md\./],
     ['gh pr create --body-file nope.md', /^PR body: there is no body file at /],
     ['gh pr create --body "$(cat ok.md)"', /inline --body can never/],
     [`gh pr create --body "$(cat <<'EOF'\n${filled()}\nEOF\n)"`, /inline --body can never/],
@@ -146,6 +155,14 @@ describe('decidePrBody', () => {
     const dec = d(c);
     expect(dec, c).toMatchObject({ kind: 'deny', check: 'pr-body' });
     expect(reason(dec)).toMatch(re);
+  });
+
+  // No FIFOs, and no /dev/stdin to link to, on Windows; `--body-file -` above is the stdin case there.
+  test.skipIf(WIN).each([
+    ['gh pr create --body-file /dev/stdin', /^PR body: \/dev\/stdin is not a regular file of at most 1 MB/],
+    ['gh pr create --body-file tofifo.md', /tofifo\.md is not a regular file/], ['gh pr create --body-file tostdin.md', /tostdin\.md is not a regular file/],
+  ])('%s is denied (not on Windows)', (c, re) => {
+    expect(reason(d(c))).toMatch(re);
   });
 
   test('wrappers still reach the gh command', () => {

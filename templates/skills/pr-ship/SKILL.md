@@ -19,12 +19,12 @@ description: Splits a large change into stacked PRs. Use before opening a PR, or
 
 ## PR description
 
-Every `gh pr create` needs this body; the pr-body check denies one without it. Write it for a reviewer who has not seen this session. Run `node .harness/hooks/dispatch.mjs --workdir` (it prints a git-ignored folder; if it exits non-zero or prints nothing, stop and report it, and never write body.md anywhere else), copy the template into `<folder>/body.md`, keep its first line and fill every section. Then run `gh pr create … --body-file <folder>/body.md` as the only command on the line (no `&&`, `cd`, `--fill`, `--body`, stdin or `$(…)`). After it runs, whether it worked or not, run `node .harness/hooks/dispatch.mjs --workdir --clean <folder>`.
+Every `gh pr create` needs this body; the pr-body check denies one without it. Write it for a reviewer who has not seen this session. Run `node .harness/hooks/dispatch.mjs --workdir` (it prints a git-ignored folder; if it exits non-zero or prints nothing, stop and report it, and never write body.md anywhere else), copy the template into `<folder>/body.md`, keep its first line and fill every section. Then run `gh pr create … --body-file '<folder>/body.md'` (single-quoted, so a Windows path keeps its backslashes) as the only command on the line (no `&&`, `cd`, `--fill`, `--body`, stdin or `$(…)`). After it runs, whether it worked or not, run `node .harness/hooks/dispatch.mjs --workdir --clean <folder>`.
 
 - Never invent a result: each number, pass or screenshot names the command or capture you ran in this session. Label an estimate "estimate". A section with no evidence says `not run: <reason>` or `n/a: <reason>`, never a guess.
 - Human steps: when there are any, add `--label needs-human` (only a person removes it) (if gh says it is missing, run `gh label create needs-human` once) and tell the person. Never run `gh pr merge --auto`, enable auto-merge or start a deploy for such a PR.
 
-```markdown
+```text
 <!-- harness:pr-body -->
 ## Summary <!-- Two or three sentences: what this PR does and why. -->
 ## What changed and why <!-- One bullet per change: file or area, what changed, why. -->

@@ -61,7 +61,7 @@ export function planChanges(
   /** `legacyDir`: update's old results folder; a package whose results file still names it is migrated, TDD on or off.
    * `recorded`: the settings blocks the manifest holds, so update replaces harness's own old hook groups in place. */
   ctx: PlanCtx,
-): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[]; /** The config as written: checks follow the selection on the AI path. */ config: HarnessConfig } {
+): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[]; /** The config as written: checks follow the selection on the AI path. */ config: HarnessConfig; /** The install's pins marketplace name. */ market: string } {
   const templatesDir = ctx.templatesDir ?? packageDir('templates');
   const p = newPlan(root, ctx.recordedFiles);
   const g = gateItems(config, ctx, p.notes);
@@ -75,7 +75,7 @@ export function planChanges(
   planOwnFiles(p, ownFiles, { on: g.on, tpl, tagged: !!g.catalog });
   const lp = config.preset ? ctx.preset : undefined;
   planPresetFiles(p, config.preset, lp, ctx.recordedFiles);
-  const dropped = planSettings(p, { config, selected: selectedIds(config), plugins: [...pinnedPlugins(g.chosen), ...g.keepPlugins], lp, recorded: ctx.recorded });
+  const { dropped, market } = planSettings(p, { config, selected: selectedIds(config), plugins: [...pinnedPlugins(g.chosen), ...g.keepPlugins], lp, recorded: ctx.recorded });
   const servers = [...g.chosen.flatMap((i) => (i.kind === 'mcp' && i.mcp ? [{ name: i.mcp.name, item: i.id, config: i.mcp.config }] : [])), ...g.keepServers];
   if (g.catalog && (servers.length || ctx.mcpRecorded?.length)) planMcp(p, servers, ctx.mcpRecorded, dropped);
   planAgents(p, { harness: g.on('agents-md'), lp, preset: config.preset });
@@ -83,7 +83,7 @@ export function planChanges(
   planTests(p, facts, config, { legacyDir: ctx.legacyDir, tpl });
   if (ctx.ai) planAi(p, facts, ctx.ai);
   formatEdits(root, p.changes, p.notes);
-  return { changes: p.changes, manual: p.manual, notes: p.notes, dropped, config };
+  return { changes: p.changes, manual: p.manual, notes: p.notes, dropped, config, market };
 }
 
 /** The selection gates the own items. Without a catalog or items nothing is gated: the beta behaviour. */

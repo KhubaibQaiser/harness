@@ -10,7 +10,7 @@ import type { Exec } from '../core/exec.js';
 import { packageDir } from '../core/package-dir.js';
 import { ApplyError, linkedPath, type Change } from '../install/apply.js';
 import { readManifest, rehashManifest, settingsOnlyPluginEdits } from '../install/manifest.js';
-import { pinnedPlugins } from '../install/merge.js';
+import { installPins, pinnedPlugins } from '../install/merge.js';
 import { installPlugins } from '../install/plugin-install.js';
 import { isDenied, shq } from './own-command.js';
 
@@ -82,7 +82,8 @@ export const recordedExtra = (root: string, config: { preset?: { id: string; ite
 
 /** Installs the selected pinned plugins, prints one line each, and re-hashes settings. Returns 1 when any install or the re-hash failed. `applied`: the files were written in this run. */
 export function installSelected({ root, chosen, cat, exec, out, applied = true, have = [] }: { root: string; chosen: string[]; cat: Catalog; exec: Exec; out: (s: string) => void; applied?: boolean; have?: string[] }): number {
-  const all = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@harness-pins`);
+  const market = installPins(readManifest(root)); // runs after the plan is applied, so the manifest names this install's marketplace
+  const all = pinnedPlugins(cat.items.filter((i) => chosen.includes(i.id))).map((p) => `${p.name}@${market}`);
   const ids = all.filter((id) => !have.includes(id));
   if (!ids.length) return 0;
   const r = installPlugins(ids, exec);

@@ -33,6 +33,12 @@ test('the real 2.1.322 not-found-in-marketplace message gives the restart messag
   expect(other.failed[0].message).toBe('Plugin \\"x\\" not found in marketplace \\"other\\".'); // esc() escapes the CLI's quotes
 });
 
+test("an install's own marketplace name gives the restart message naming it", () => {
+  const message = 'Plugin \\"code-simplifier\\" not found in marketplace \\"harness-pins-0123abcd\\".';
+  const r = installPlugins(['code-simplifier@harness-pins-0123abcd'], () => ({ status: 1, stdout: `{"command":"install","outcome":"failed","message":"${message}"}` }));
+  expect(r.failed[0].message).toBe("Claude Code hasn't registered `harness-pins-0123abcd` yet. Restart Claude Code in this folder (trust it if asked), then run /harness:sync.");
+});
+
 test('marketplace not registered gives the restart message', () => {
   const r = installPlugins(['a@harness-pins'], () => ({ status: 1, stdout: '{"command":"install","outcome":"failed","message":"Marketplace harness-pins not found"}' }));
   expect(r.failed[0].message).toBe("Claude Code hasn't registered `harness-pins` yet. Restart Claude Code in this folder (trust it if asked), then run /harness:sync.");

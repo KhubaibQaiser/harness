@@ -157,6 +157,9 @@ test('a hand-added item that grows context past the budget asks', async () => {
   expect(existsSync(join(root, '.mcp.json'))).toBe(true);
 });
 
+const pinsOf = (root: string): string => Object.keys(JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).extraKnownMarketplaces).find((k) => k.startsWith('harness-pins'))!;
+const imp = (root: string) => `impeccable@${pinsOf(root)}`;
+
 test('missing plugins are installed with --install-plugins', async () => {
   const root = installed([...OWN, 'impeccable']);
   const calls: string[][] = [];
@@ -166,16 +169,33 @@ test('missing plugins are installed with --install-plugins', async () => {
   };
   const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, exec);
   expect(r.code, r.out).toBe(0);
-  expect(calls).toContainEqual(['plugin', 'install', 'impeccable@harness-pins', '--scope', 'project', '--json']);
-  expect(r.out).toContain('Installed plugin impeccable@harness-pins');
+  expect(calls).toContainEqual(['plugin', 'install', imp(root), '--scope', 'project', '--json']);
+  expect(r.out).toContain(`Installed plugin ${imp(root)}`);
   // already installed: no second install
   calls.length = 0;
-  const again = await run(root, ['--yes', '--install-plugins'], CLAUDE, (c, a) => (a[1] === 'list' ? { status: 0, stdout: JSON.stringify([{ id: 'impeccable@harness-pins', version: '1', enabled: true }]) } : exec(c, a)));
+  const again = await run(root, ['--yes', '--install-plugins'], CLAUDE, (c, a) => (a[1] === 'list' ? { status: 0, stdout: JSON.stringify([{ id: imp(root), version: '1', enabled: true }]) } : exec(c, a)));
   expect(again.code, again.out).toBe(0);
   expect(calls.some((a) => a[1] === 'install')).toBe(false);
 });
 
 const SETTINGS = '.claude/settings.json';
+
+test('sync moves an install on the shared harness-pins name to its own name, in settings and the manifest', async () => {
+  const root = installed([...OWN, 'impeccable']);
+  const own = pinsOf(root);
+  for (const rel of [SETTINGS, '.harness/manifest.json']) writeFileSync(join(root, rel), readFileSync(join(root, rel), 'utf8').replaceAll(own, 'harness-pins')); // an install from before per-repo names
+  commitAll(root);
+  const r = await run(root, ['--yes'], CLAUDE, listing([]));
+  expect(r.code, r.out).toBe(0);
+  const now = pinsOf(root);
+  expect(now).toMatch(/^harness-pins-[0-9a-f]{8}$/);
+  const text = readFileSync(join(root, SETTINGS), 'utf8');
+  expect(text).not.toMatch(/"harness-pins"|@harness-pins"/);
+  expect(JSON.parse(text).enabledPlugins).toEqual({ [`impeccable@${now}`]: true });
+  expect(readFileSync(join(root, '.harness/manifest.json'), 'utf8')).not.toMatch(/"harness-pins\\"|@harness-pins\\"/);
+  expect(await uninstall(['--yes'], { env: {}, root, out: () => {}, prompt: yes })).toBe(0);
+  expect(existsSync(join(root, SETTINGS)) ? readFileSync(join(root, SETTINGS), 'utf8') : '').not.toContain('harness-pins');
+});
 const listing = (ids: string[]): Exec => (_c, a) => (a[1] === 'list' ? { status: 0, stdout: JSON.stringify(ids.map((id) => ({ id, version: '1', enabled: true }))) } : { status: 1, stdout: '' });
 const hash = (root: string) => readManifest(root)!.files.find((f) => f.rel === SETTINGS)!.hash;
 
@@ -183,10 +203,10 @@ test('a plugin installed by hand is recorded with --install-plugins', async () =
   const root = installed([...OWN, 'impeccable']);
   const p = join(root, SETTINGS);
   const j = JSON.parse(readFileSync(p, 'utf8'));
-  j.enabledPlugins['impeccable@harness-pins'] = false; // stands in for claude's own change to the entry
+  j.enabledPlugins[imp(root)] = false; // stands in for claude's own change to the entry
   writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
   const old = hash(root);
-  const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, listing(['impeccable@harness-pins']));
+  const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, listing([imp(root)]));
   expect(r.code, r.out).toBe(0);
   expect(r.out).toContain('Recorded the plugin install');
   expect(hash(root)).not.toBe(old);
@@ -200,7 +220,7 @@ test('sync without --install-plugins never rehashes settings, and a hand-edited 
   writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
   commitAll(root);
   const old = hash(root);
-  const r = await run(root, ['--yes'], CLAUDE, listing(['impeccable@harness-pins']));
+  const r = await run(root, ['--yes'], CLAUDE, listing([imp(root)]));
   expect(r.code, r.out).toBe(0);
   expect(r.out).not.toContain('Recorded');
   expect(hash(root)).toBe(old);
@@ -212,7 +232,7 @@ test('sync without --install-plugins never rehashes settings, and a hand-edited 
 test('the preview lists missing plugins without --install-plugins', async () => {
   const root = installed([...OWN, 'impeccable']);
   const r = await run(root, ['--dry-run'], CLAUDE, listing([]));
-  expect(r.out).toContain('Plugins not installed: impeccable@harness-pins');
+  expect(r.out).toContain(`Plugins not installed: ${imp(root)}`);
 });
 
 test('a failed plugin install prints the recovery copy', async () => {
@@ -252,12 +272,12 @@ test('a hand install plus another edit is not recorded, and the person\'s key su
   const root = installed([...OWN, 'impeccable']);
   const p = join(root, SETTINGS);
   const j = JSON.parse(readFileSync(p, 'utf8'));
-  j.enabledPlugins['impeccable@harness-pins'] = false;
+  j.enabledPlugins[imp(root)] = false;
   j.mine = { keep: true };
   writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
   commitAll(root);
   const old = hash(root);
-  const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, listing(['impeccable@harness-pins']));
+  const r = await run(root, ['--yes', '--install-plugins'], CLAUDE, listing([imp(root)]));
   expect(r.code, r.out).toBe(0);
   expect(r.out).toContain('settings.json has other edits; not recorded. Run /harness:update to review them.');
   expect(hash(root)).toBe(old);
@@ -265,13 +285,12 @@ test('a hand install plus another edit is not recorded, and the person\'s key su
   expect(JSON.parse(readFileSync(p, 'utf8')).mine).toEqual({ keep: true });
 });
 
-const PLUGIN = 'impeccable@harness-pins';
 /** Stands in for `claude plugin install`: reports it missing, then rewrites settings.json the way claude does (the entry flips), plus `extra`. */
 const installer = (root: string, extra: object = {}): Exec => (_c, a) => {
   if (a[1] === 'list') return { status: 0, stdout: '[]' };
   const p = join(root, SETTINGS);
   const j = JSON.parse(readFileSync(p, 'utf8'));
-  j.enabledPlugins[PLUGIN] = false;
+  j.enabledPlugins[imp(root)] = false;
   writeFileSync(p, JSON.stringify({ ...j, ...extra }, null, 2) + '\n');
   return { status: 0, stdout: JSON.stringify({ command: 'install', outcome: 'ok', message: '' }) };
 };

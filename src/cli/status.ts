@@ -4,7 +4,7 @@ import { loadCatalog, type LoadedCatalog } from '../catalog/load.js';
 import { contextSet } from '../budget/summary.js';
 import { contextDirs, contextLine } from './doctor-context.js';
 import { decisionsStatusLine } from './doctor-decisions.js';
-import { pinnedPlugins } from '../install/merge.js';
+import { installPins, pinnedPlugins } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
 import { PRESET_ITEM } from '../install/plan-preset.js';
@@ -67,7 +67,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   if (blocked) lines.push(`Last blocked settings change: ${blocked.ts} (${blocked.reason})`);
   const changed = lastHarnessFilesChange(root);
   if (changed) lines.push(`Harness files last changed during a session: ${changed.ts} (${changed.files.map((f) => `\`${f}\``).join(', ')}); review with git diff -- .harness .claude/settings.json .claude/rules docs/decisions`);
-  if (config.items.length) lines.push(...itemLines(config, lc, deps.pluginList ?? pluginList));
+  if (config.items.length) lines.push(...itemLines(config, lc, deps.pluginList ?? pluginList, installPins(m)));
   const pr = config.preset;
   if (pr) lines.push(`Preset: ${pr.id}`, ...m.files.filter((f) => f.item === `${PRESET_ITEM}${pr.id}`).map((f) => `  ${f.rel}`));
   lines.push('Last day');
@@ -87,11 +87,11 @@ function blocksOnFailure(root: string): boolean {
 }
 
 /** Catalog version, selected items, and plugins not installed. A catalog that fails to load adds nothing. */
-function itemLines(config: ReturnType<typeof loadConfig>['config'], lc: LoadedCatalog, list: typeof pluginList): string[] {
+function itemLines(config: ReturnType<typeof loadConfig>['config'], lc: LoadedCatalog, list: typeof pluginList, market: string): string[] {
   if (lc.errors.length) return [];
   const ids = selectedIds(config);
   const lines = [`Catalog ${config.catalog_version}`, `Items: ${ids.length} selected`];
-  const wanted = pinnedPlugins(lc.catalog.items.filter((i) => ids.includes(i.id))).map((p) => `${p.name}@harness-pins`);
+  const wanted = pinnedPlugins(lc.catalog.items.filter((i) => ids.includes(i.id))).map((p) => `${p.name}@${market}`);
   if (wanted.length) {
     const have = list(); // one call
     lines.push(have ? `Plugins not installed: ${wanted.filter((id) => !have.some((p) => p.id === id)).length}` : 'Plugins not installed: unknown (claude not found)');

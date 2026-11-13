@@ -111,7 +111,15 @@ test('plugins, external skills and mcp servers install with the selection and ar
   const ids = [...OWN, 'impeccable', 'shadcn', 'mobile-mcp'];
   const m = install(root, plan(root, ids).changes);
   const settings = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'));
-  expect(Object.keys(settings.enabledPlugins).sort()).toEqual(['impeccable@harness-pins', 'shadcn@harness-pins']);
+  const market = Object.keys(settings.extraKnownMarketplaces)[0];
+  expect(market).toMatch(/^harness-pins-[0-9a-f]{8}$/);
+  expect(Object.keys(settings.enabledPlugins).sort()).toEqual([`impeccable@${market}`, `shadcn@${market}`]);
+  // a second repo gets its own name; re-planning this one keeps its name and changes nothing in settings
+  const other = makeRepo(REPO);
+  expect(plan(other, ids).market).not.toBe(market);
+  const again = plan(root, ids, { recorded: blocksOf(m, '.claude/settings.json'), mcpRecorded: blocksOf(m, '.mcp.json') });
+  expect(again.market).toBe(market);
+  expect(get(again.changes, '.claude/settings.json')).toBeUndefined();
   expect(JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8')).mcpServers).toHaveProperty('mobile-mcp');
   expect(m.files.find((f) => f.rel === '.mcp.json')).toMatchObject({ kind: 'create' });
   // everything deselected: the settings and .mcp.json are rewritten and their old blocks dropped

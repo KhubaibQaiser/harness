@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { buildEvalPlugin, EVAL_MODEL, type CaseInfo, type EvalKind } from '../eval/build.js';
 import { evalArgs, planLines, type PlanEstimate } from '../eval/run.js';
 import { packageDir } from '../core/package-dir.js';
+import { MODEL_RX } from '../core/config.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { EVALS_DIR, readEvalResults, type EvalSummary } from '../report/evals.js';
 import { insideClaude } from './claude-only.js';
@@ -15,8 +16,6 @@ const EXIT_FAIL = 1, EXIT_USAGE = 2, DATE_LEN = 10;
 const HOUR_MS = 3_600_000;
 const KINDS: EvalKind[] = ['skills', 'rules', 'gates'];
 const RULE_TOOLS = ['Bash', 'Write', 'Edit'];
-// Passed to `claude --model` unchanged, so it allows ids like claude-opus-5[1m]; no leading dash, no spaces.
-const MODEL_RX = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,99}$/;
 const USAGE = 'Usage: harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model <id>]';
 
 type Env = CliEnv & { prompt: Prompt; exec?: Exec; tmp?: string };

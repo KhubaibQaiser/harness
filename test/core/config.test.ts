@@ -320,3 +320,19 @@ test.each([
 test.each(['  max_lines: 5', '  max_lines: 200', '  expiry_days: 7', '  expiry_days: 365'])('decisions boundary %s passes', (yaml) => {
   expect(loadConfig(withDecisions(yaml)).errors).toEqual([]);
 });
+
+test('config: checks.done defaults false; done.review_model sonnet; review_timeout_s 600; timeout_s 1800; a bad model is an error', () => {
+  expect(defaults().checks.done).toBe(false);
+  expect(defaults().done).toEqual({ review_model: 'sonnet', review_timeout_s: 600, timeout_s: 1800 });
+  const ok = loadConfig(dirWith('.harness/config.yaml', 'checks:\n  done: true\ndone:\n  review_model: claude-opus-5[1m]\n'));
+  expect(ok.errors).toEqual([]);
+  expect(ok.config.checks.done).toBe(true);
+  expect(ok.config.done.review_model).toBe('claude-opus-5[1m]');
+  const bad = loadConfig(dirWith('.harness/config.yaml', "done:\n  review_model: '-x --dangerously'\n  review_timeout_s: 0\n  timeout_s: 1.5\n"));
+  expect(bad.errors).toEqual([
+    '"done.review_model" must be a model id or alias such as sonnet: a letter or digit, then letters, digits and ._:/[]-',
+    '"done.review_timeout_s" must be an integer from 30 to 3600',
+    '"done.timeout_s" must be an integer from 60 to 21600',
+  ]);
+  expect(bad.config.done).toEqual(defaults().done);
+});

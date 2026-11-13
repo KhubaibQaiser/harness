@@ -31,7 +31,7 @@ export interface Selected {
 
 export interface HarnessConfig {
   version: 1;
-  checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop' | 'prSize' | 'prBody' | 'decisions' | 'secretScan', boolean>;
+  checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop' | 'prSize' | 'prBody' | 'decisions' | 'secretScan' | 'done', boolean>;
   sandbox: SandboxMode;
   /** 0 means no catalog. */
   catalog_version: number;
@@ -58,6 +58,8 @@ export interface HarnessConfig {
   pr_size: { target_lines: number; max_lines: number; max_files: number; exclude: string[] };
   decisions: { max_lines: number; expiry_days: number; nudge: boolean };
   review: { max_findings: number };
+  /** The done contract (needs checks.done): the review model and the time budgets of harness verify. */
+  done: { review_model: string; review_timeout_s: number; timeout_s: number };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean; review: 'skip' | 'code-only' };
   stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
   /** Absent until init records a chosen preset. */
@@ -75,7 +77,7 @@ export const PR_SIZE_EXCLUDE: string[] = [
 
 export const defaults = (): HarnessConfig => ({
   version: 1,
-  checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true, prSize: true, prBody: true, decisions: true, secretScan: false },
+  checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true, prSize: true, prBody: true, decisions: true, secretScan: false, done: false },
   sandbox: 'unattended',
   catalog_version: 0,
   project: { type: '', domain: '', compliance: [], data_handling: '', team_size: 0, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [], scope_paths: [] },
@@ -88,6 +90,7 @@ export const defaults = (): HarnessConfig => ({
   pr_size: { target_lines: 200, max_lines: 400, max_files: 20, exclude: [...PR_SIZE_EXCLUDE] },
   decisions: { max_lines: 20, expiry_days: 90, nudge: true },
   review: { max_findings: 15 },
+  done: { review_model: 'sonnet', review_timeout_s: 600, timeout_s: 1800 },
   unattended: { multi_file_gate: 'block', require_reason: false, review: 'code-only' },
   stop: {
     steps: ['format:check', 'lint', 'typecheck', 'test'],
@@ -191,6 +194,9 @@ const presetRule = objRule({
   }),
 });
 const MODEL_RE = /^claude-[a-z0-9-]{1,60}$/;
+// Passed to `claude --model` unchanged, so it allows ids like claude-opus-5[1m]; no leading dash, no spaces.
+export const MODEL_RX = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,99}$/;
+export const MODEL_RULE = 'must be a model id or alias such as sonnet: a letter or digit, then letters, digits and ._:/[]-';
 const RULES: Record<string, Rule> = {
   preset: presetRule,
   'tdd.results_dir': resultsDirRule,
@@ -214,6 +220,9 @@ const RULES: Record<string, Rule> = {
   'pr_size.max_files': num(1, 10000, true),
   'decisions.max_lines': num(5, 200, true),
   'review.max_findings': num(1, 100, true),
+  'done.review_model': (v) => (typeof v === 'string' && MODEL_RX.test(v) ? null : MODEL_RULE),
+  'done.review_timeout_s': num(30, 3600, true),
+  'done.timeout_s': num(60, 21600, true),
   'decisions.expiry_days': num(7, 365, true),
   apps: listOf('app mappings', appRule),
   items: listOf('item mappings', itemRule),

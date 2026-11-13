@@ -26,7 +26,8 @@ test('every own item maps to an existing check, template or merge', () => {
     for (const f of s.files ?? []) expect(existsSync(join(packageDir('templates'), f.from))).toBe(true);
     expect(s.merge ?? []).not.toContain('permissions');
   }
-  expect([...checks].sort()).toEqual(Object.keys(defaults().checks).sort());
+  // checks.done gets its item (done-contract) in the done contract's PR 8; until then no item turns it on
+  expect([...checks].sort()).toEqual(Object.keys(defaults().checks).filter((k) => k !== 'done').sort());
   const ownIds = new Set([...NOT_BUILT, ...CORE, ...REVIEWER, ...REPLACED]);
   const reasons = new Map(excluded.filter((e) => ownIds.has(e.id)).map((e) => [e.id, e.reason]));
   expect(reasons.size).toBe(20);

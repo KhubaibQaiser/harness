@@ -208,7 +208,7 @@ describe('validate pr-review', () => {
   const dir = '.harness/tmp/w-1';
   const repo = () => { const t = makeRepo({ 'package.json': '{}' }, { git: false }); mkdirSync(join(t, dir, 'head/src'), { recursive: true }); return t; };
   const g = {
-    repo: 'o/r', pr: 7, base: 'main', base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), merge_base: 'a'.repeat(40), nonce: 'f'.repeat(32), fork: null, labels: [], body_template: false,
+    repo: 'o/r', pr: 7, base: 'main', base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), merge_base: 'a'.repeat(40), nonce: 'f'.repeat(32), fork: null, labels: [], body_template: false, body_problems: [],
     files: [{ path: 'src/a.ts', status: 'modified', binary: false }], lines: { 'src/a.ts': { RIGHT: [1], LEFT: [] } }, map: { 'src/a.ts': 'src/a.ts.pr-snapshot', 'src/b.ts': 'src/b.ts.pr-snapshot' }, omitted: [],
   };
   const f1 = { id: 'f1', severity: 'nit', category: 'design', file: 'src/a.ts', line: 1, side: 'RIGHT', title: 't', evidence: { kind: 'quote', text: 'a' }, fix: 'x' };

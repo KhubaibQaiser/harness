@@ -4,7 +4,7 @@ import type { GatherJson } from '../../src/review/gather.js';
 
 // Synthetic gather and reviewer replies, made up here.
 const G = {
-  repo: 'o/r', pr: 7, base: 'main', base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), merge_base: 'a'.repeat(40), nonce: 'f'.repeat(32), fork: null, labels: [], body_template: false,
+  repo: 'o/r', pr: 7, base: 'main', base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), merge_base: 'a'.repeat(40), nonce: 'f'.repeat(32), fork: null, labels: [], body_template: false, body_problems: [],
   files: [{ path: 'src/a.ts', status: 'modified', binary: false }], lines: { 'src/a.ts': { RIGHT: [1, 2], LEFT: [] } }, map: { 'src/a.ts': 'src/a.ts.pr-snapshot', 'src/b.ts': 'src/b.ts.pr-snapshot' }, omitted: [],
 } as GatherJson;
 const inSnap = (f: string) => f === 'src/b.ts';

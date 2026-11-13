@@ -22,7 +22,7 @@ function setup(base: Files, head: Files) {
   const snap = writeSnapshot(defaultExecBytes, r.root, r.head, join(dir, 'head'), { ignore: () => false });
   const files = parseDiff(defaultExec('git', [...SAFE_GIT, ...diffArgs(r.base, r.head)], { cwd: r.root }).stdout);
   const g = {
-    repo: 'o/r', pr: 7, base: 'main', base_sha: r.base, head_sha: r.head, merge_base: r.base, nonce: N, fork: null, labels: [], body_template: false,
+    repo: 'o/r', pr: 7, base: 'main', base_sha: r.base, head_sha: r.head, merge_base: r.base, nonce: N, fork: null, labels: [], body_template: false, body_problems: [],
     files: files.map((f) => ({ path: f.path, ...(f.old_path && { old_path: f.old_path }), status: f.status, binary: f.binary })), lines: commentable(files), map: snap.map, omitted: [],
   } as GatherJson;
   const exec: Exec = (c, a, o) => defaultExec(c, a, { cwd: r.root, ...o });

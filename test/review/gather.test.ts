@@ -234,7 +234,14 @@ describe('gather: other cases', () => {
   test('a templated body is recorded', () => {
     const s = setup();
     const r = run(s, fakeGh(s, { body: '<!-- harness:pr-body -->\n## Summary\nx' }).exec);
-    expect((JSON.parse(r.read('gather.json')) as GatherJson).body_template).toBe(true);
+    const g = JSON.parse(r.read('gather.json')) as GatherJson;
+    expect(g.body_template).toBe(true);
+    expect(g.body_problems[0]).toMatch(/^missing sections: What changed and why/);
+    expect(JSON.stringify(g.body_problems)).not.toContain('x\n');
+  });
+  test('the findings cap comes from the base config', () => {
+    const s = setup({ base: { '.harness/config.yaml': 'version: 1\nreview:\n  max_findings: 7\n' } });
+    expect(run(s, fakeGh(s).exec).read('context.md')).toContain('Findings cap: 7');
   });
   test('a deleted fork is named as such', () => {
     const s = setup();

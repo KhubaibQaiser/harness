@@ -93,6 +93,10 @@ decisions:
   expiry_days: 90
   nudge: true
 
+# The code-only PR review (harness review).
+review:
+  max_findings: 15
+
 # Behaviour when no human is watching.
 unattended:
   multi_file_gate: block

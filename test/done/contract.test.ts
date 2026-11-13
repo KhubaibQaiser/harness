@@ -183,8 +183,9 @@ test('activeTaskId prefers a valid HARNESS_TASK, throws on an invalid one, else 
   // a bad launch value is an error the caller turns into deny or not-done, never a silent fall back to the state file
   expect(() => activeTaskId(root, { HARNESS_TASK: '../evil' })).toThrow('HARNESS_TASK "../evil" is not a task id');
   expect(() => activeTaskId(root, { HARNESS_TASK: '' })).toThrow('HARNESS_TASK "" is not a task id');
+  // a corrupt record is never read as "no active task"
   writeFileSync(join(root, ACTIVE_TASK), 'Not An Id\n');
-  expect(activeTaskId(root, {})).toBeNull();
+  expect(() => activeTaskId(root, {})).toThrow('the active task record is unreadable: .harness/state/active-task holds "Not An Id", not a task id');
   setActiveTask(root, null);
   expect(activeTaskId(root, {})).toBeNull();
   setActiveTask(root, null); // clearing twice is fine

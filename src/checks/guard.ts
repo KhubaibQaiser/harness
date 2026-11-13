@@ -18,7 +18,7 @@ import type { Decision } from '../hooks/types.js';
 import { REMEMBER_WHY, rememberAsk } from './remember.js';
 import { rememberReadOnly } from '../core/remember-args.js';
 import { suggestBranches } from '../core/branch-prefix.js';
-import { ghWriteWhy, HUB_OWN, hubWriteWhy, pushConfigWhy, pushOptionWhy } from './gh-writes.js';
+import { ghWriteWhy, HUB_OWN, hubWriteWhy, pushConfigWhy, pushOptionWhy, remoteRefWhy } from './gh-writes.js';
 
 type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { startedAt?: number; lookup?: VerifyOpts['lookup'] }; // lookup: test seam
 type Verdict = ['allow'] | ['deny' | 'ask', string];
@@ -1009,10 +1009,10 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   if (install) return install;
   const preset = ctx.config?.preset && /\bgit\b/.test(command) ? walkCommands(command, ctx, presetVisit(command, ctx.config.preset)) : null;
   if (preset) return toDecision(['ask', preset.reason]);
-  // gh/hub writes and GitLab push options: found past wrappers and path heads by the walk, read with the getopt reader.
+  // gh/hub writes, GitLab push options and refs/remotes writes: found past wrappers and path heads by the walk, read with the getopt reader.
   // The quote-free text too, so a head spelled `g\h`, `"gh"` or `$'\x67h'` is read as gh.
   const ghText = vUnq === command ? command : `${command}\n${vUnq}`;
-  if (/\b(?:gh|hub)\b|merge_request/i.test(ghText)) {
+  if (/\b(?:gh|hub|update-ref|symbolic-ref|remote|fetch|pull)\b|merge_request|insteadof/i.test(ghText)) {
     const visit = ghWriteVisit(command, ctx);
     const gw = walkCommands(command, ctx, visit) ?? (vUnq !== command ? walkCommands(vUnq, ctx, visit) : null);
     if (gw) return gw;
@@ -1062,7 +1062,7 @@ const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
   if (name === 'git') {
     const [sub, ...rest] = gitArgs(['git', ...args]);
     const globals = sub === undefined ? args : args.slice(0, args.length - rest.length - 1);
-    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest));
+    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest) ?? remoteRefWhy(globals, sub, rest));
   }
   return null;
   };

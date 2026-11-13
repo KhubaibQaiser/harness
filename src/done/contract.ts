@@ -186,7 +186,7 @@ export function originDefault(root: string, git: Exec = defaultExec): string | n
   return h.status === 0 && /^refs\/remotes\/origin\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref) ? ref : null;
 }
 
-/** HARNESS_TASK from the launch environment, else `.harness/state/active-task`, else null. A HARNESS_TASK that is not a task id throws: callers deny. */
+/** HARNESS_TASK from the launch environment, else `.harness/state/active-task`, else null. A HARNESS_TASK that is not a task id, or an unreadable record, throws: callers deny. */
 export function activeTaskId(root: string, env: NodeJS.ProcessEnv): string | null {
   if (env.HARNESS_TASK !== undefined) {
     if (!TASK_ID.test(env.HARNESS_TASK)) throw new Error(`task: HARNESS_TASK ${q(env.HARNESS_TASK)} is not a task id (lowercase letters, digits and hyphens, at most 64)`);
@@ -194,8 +194,15 @@ export function activeTaskId(root: string, env: NodeJS.ProcessEnv): string | nul
   }
   const p = abs(root, ACTIVE_TASK);
   if (!existsSync(p)) return null;
-  const id = readFileSync(p, 'utf8').trim();
-  return TASK_ID.test(id) ? id : null;
+  const unreadable = (why: string) => new Error(`the active task record is unreadable: ${why}`);
+  let id: string;
+  try {
+    id = readFileSync(p, 'utf8').trim();
+  } catch (e) {
+    throw unreadable((e as Error).message);
+  }
+  if (!TASK_ID.test(id)) throw unreadable(`${ACTIVE_TASK} holds ${q(id)}, not a task id`);
+  return id;
 }
 
 export function setActiveTask(root: string, id: string | null): void {

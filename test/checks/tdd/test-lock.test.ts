@@ -32,7 +32,7 @@ const setup = (cfg = CFG, env: NodeJS.ProcessEnv = {}) => {
 };
 
 test('registered after tamper, not fail-closed, Pre and PostToolUse', () => {
-  expect(registry.map((c) => c.name).slice(0, 7)).toEqual(['guard', 'pr-size', 'protect', 'sandbox-required', 'redFirst', 'tamper', 'testLock']);
+  expect(registry.map((c) => c.name).slice(0, 8)).toEqual(['guard', 'pr-size', 'protect', 'task', 'sandbox-required', 'redFirst', 'tamper', 'testLock']);
   expect(testLock.failClosed).toBeFalsy();
   expect(testLock.events).toEqual(['PreToolUse', 'PostToolUse']);
 });

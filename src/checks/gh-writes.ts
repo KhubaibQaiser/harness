@@ -100,3 +100,47 @@ export function pushConfigWhy(globals: string[], sub: string | undefined, rest: 
   }
   return null;
 }
+
+// Done contract: a contract on origin's default branch vouches for itself (loadContract), so a local command that repoints
+// refs/remotes/* could vouch for a forged one. Commands that can: update-ref/symbolic-ref there, remote add/set-url/rename/
+// set-head, a fetch or pull of a URL, with a refspec that names a destination or --refmap, and remote URL or fetch config.
+const REMOTE_REF = /^refs\/remotes\//i; // i: a loose ref on a case-insensitive file system
+const REMOTE_KEY = /^(remote\..+\.(url|fetch)|url\..+\.insteadof)$/i;
+const REMOTE_SUBS = new Set(['add', 'set-url', 'rename', 'set-head']);
+const FETCH_OPTS: OptTable = {
+  v: 'josX', lv: ['jobs', 'server-option', 'upload-pack', 'refmap', 'depth', 'deepen', 'shallow-since', 'shallow-exclude', 'negotiation-tip', 'filter', 'submodule-prefix', 'recurse-submodules-default', 'strategy', 'strategy-option'],
+  lo: ['recurse-submodules', 'rebase', 'gpg-sign'], prefix: true,
+};
+const CONFIG_OPTS: OptTable = { v: 'f', lv: ['file', 'blob', 'type', 'default', 'comment', 'value'] };
+const REF_WHY = 'can repoint a remote-tracking ref (refs/remotes/*), which vouches for a task contract; a person runs it';
+const isUrl = (w: string) => /[/\\:]/.test(w) || w.startsWith('.');
+/** Why a git command with these words may repoint refs/remotes/*, or null. `globals` are the words before the subcommand. */
+export function remoteRefWhy(globals: string[], sub: string | undefined, rest: string[]): string | null {
+  const why = (what: string) => `${what} ${REF_WHY}`;
+  for (let i = 0; i < globals.length; i++) {
+    const kv = globals[i] === '-c' ? (globals[i + 1] ?? '') : /^-c./.test(globals[i]) ? globals[i].slice(2) : globals[i].startsWith('--config-env=') ? globals[i].slice(13) : '';
+    if (REMOTE_KEY.test(kv.slice(0, kv.indexOf('=')))) return why(`git -c ${kv.slice(0, kv.indexOf('='))}`);
+  }
+  if (sub === 'update-ref' || sub === 'symbolic-ref') {
+    const p = readOptions(rest, { v: 'm' });
+    if (p.flags.includes('--stdin')) return why('git update-ref --stdin (its refs are not visible to harness)');
+    const write = sub === 'update-ref' || p.pos.length > 1 || p.flags.some((f) => f === '-d' || f === '--delete');
+    return write && REMOTE_REF.test((p.pos[0] ?? '').replace(/\/+/g, '/')) ? why(`git ${sub} ${p.pos[0]}`) : null;
+  }
+  if (sub === 'remote') {
+    const s = readOptions(rest, {}).pos[0] ?? '';
+    return REMOTE_SUBS.has(s) ? why(`git remote ${s}`) : null;
+  }
+  if (sub === 'fetch' || sub === 'pull') {
+    const p = readOptions(rest, FETCH_OPTS);
+    if (valuesOf(p, ['--refmap']).length) return why(`git ${sub} --refmap`);
+    const repos = p.flags.includes('--multiple') ? p.pos : p.pos.slice(0, 1);
+    if (repos.some(isUrl)) return why(`git ${sub} of a URL or path`);
+    return p.pos.slice(repos.length).some((r) => r.includes(':')) ? why(`git ${sub} with a refspec that names a destination`) : null;
+  }
+  if (sub === 'config') {
+    const pos = readOptions(rest, CONFIG_OPTS).pos, k = pos.findIndex((w) => REMOTE_KEY.test(w));
+    return k >= 0 && pos[k + 1] !== undefined ? why(`git config ${pos[k]}`) : null;
+  }
+  return null;
+}

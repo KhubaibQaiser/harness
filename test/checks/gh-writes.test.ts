@@ -100,6 +100,30 @@ describe('hub writes and GitLab push options ask', () => {
   });
 });
 
+// Task 4 residual: origin's remote-tracking refs vouch for a task contract (loadContract), so repointing them asks.
+describe('commands that can repoint refs/remotes/* ask', () => {
+  test('update-ref and symbolic-ref on refs/remotes, remote add/set-url/rename/set-head, fetch of a URL or refspec, remote config', () => {
+    all(['git update-ref refs/remotes/origin/main HEAD', 'git update-ref -d refs/remotes/origin/main', 'git update-ref -m x refs/remotes/origin/main abc', 'git update-ref --no-deref Refs//Remotes/origin/main HEAD',
+      'git update-ref --stdin', 'git update-ref -z --stdin', 'git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/feat', 'git symbolic-ref -m x refs/remotes/origin/HEAD refs/remotes/origin/feat',
+      'git remote add evil /tmp/x', 'git remote set-url origin /tmp/x', 'git remote -v rename origin old', 'git remote set-head origin feat', 'git remote set-head origin --auto',
+      'git fetch /tmp/forged', 'git fetch ../forged', 'git fetch https://example.com/r.git', 'git fetch git@example.com:o/r.git', 'git fetch origin +refs/heads/x:refs/remotes/origin/main', 'git fetch origin x:y',
+      'git fetch --refmap=+refs/heads/*:refs/remotes/origin/* origin', 'git fetch --multiple origin /tmp/x', 'git pull /tmp/forged main', 'git pull origin x:refs/remotes/origin/main',
+      'git -c remote.origin.url=/tmp/x fetch', 'git -c remote.origin.fetch=+refs/heads/x:refs/remotes/origin/main fetch origin', 'git -c url./tmp/x.insteadOf=https://github.com/ fetch',
+      'git config remote.origin.url /tmp/x', 'git config set remote.origin.fetch +refs/heads/x:refs/remotes/origin/main', 'git config --add remote.origin.fetch +refs/heads/x:refs/remotes/origin/main',
+      'git config -f .git/config url./tmp/x.insteadOf https://github.com/'], 'ask');
+  });
+  test('wrapper, path and nested forms decide the same', () => {
+    all(['env git update-ref refs/remotes/origin/main HEAD', 'nice git remote set-url origin /tmp/x', '/usr/bin/git fetch /tmp/x', '"git" remote add e /tmp/x', 'g\\it remote add e /tmp/x',
+      'git -C sub fetch ../x main:refs/remotes/origin/main', 'hub remote add e /tmp/x', 'sh -c "git remote add e /tmp/x"', 'true && git update-ref refs/remotes/origin/main HEAD', 'timeout 5 git fetch /tmp/x'], 'ask');
+  });
+  test('ordinary fetch, pull and remote reads stay allowed', () => {
+    all(['git fetch', 'git fetch origin', 'git fetch --all --prune', 'git fetch origin main', 'git fetch -q origin', 'git fetch --depth 1 origin', 'git fetch -j 4 origin', 'git pull', 'git pull origin main',
+      'git pull --rebase origin main', 'git remote', 'git remote -v', 'git remote show origin', 'git remote prune origin', 'git remote get-url origin', 'git update-ref refs/heads/x HEAD',
+      'git symbolic-ref refs/remotes/origin/HEAD', 'git symbolic-ref --short HEAD', 'git config remote.origin.url', 'git config --get remote.origin.url', 'git config get remote.origin.fetch',
+      'echo git remote add e /tmp/x'], 'allow');
+  });
+});
+
 describe('a deny beats the ask; unattended follows the ask rule', () => {
   const root = mkdtempSync(join(tmpdir(), 'h-ghw-'));
   mkdirSync(join(root, '.harness'));
@@ -115,5 +139,13 @@ describe('a deny beats the ask; unattended follows the ask rule', () => {
   test('an attended ask asks; unattended it is denied', async () => {
     expect(await run('gh pr close 1')).toBe('ask');
     expect(await run('gh pr close 1', { HARNESS_UNATTENDED: '1' })).toBe('deny');
+    expect(await run('git remote set-url origin /tmp/x')).toBe('ask');
+  });
+  test('a refs/remotes ask is denied unattended, with its own reason', async () => {
+    writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\nsandbox: off\n');
+    const input = { hook_event_name: 'PreToolUse', session_id: 's2', cwd: root, tool_name: 'Bash', tool_input: { command: 'git update-ref refs/remotes/origin/main HEAD' } };
+    const out = JSON.parse(await dispatch(JSON.stringify(input), registry, { HARNESS_UNATTENDED: '1' }, { home: root })).hookSpecificOutput;
+    expect(out).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringMatching(/^Unattended run: .*git update-ref refs\/remotes\/origin\/main can repoint a remote-tracking ref/) });
+    expect(await run('git fetch origin', { HARNESS_UNATTENDED: '1' })).toBe('allow');
   });
 });

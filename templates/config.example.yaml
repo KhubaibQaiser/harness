@@ -97,6 +97,7 @@ decisions:
 unattended:
   multi_file_gate: block
   require_reason: false
+  review: code-only
 
 # Verification steps that must pass before the agent may stop.
 stop:

@@ -104,6 +104,14 @@ test('results dir is protected from Write, shell redirects and rm', () => {
   expect(bash('pnpm test')).toBe('allow');
 });
 
+// R12: the agent can't forge or edit a review record; reading one is fine.
+test('review records are protected from Write, Edit and shell writes; reads are allowed', () => {
+  for (const t of ['Write', 'Edit']) expect(edit('.harness/reviews/1.json', t).kind, t).toBe('deny');
+  for (const c of ['echo x > .harness/reviews/1.json', 'cp f .harness/reviews/1.json', 'mv f .harness/reviews/', 'rm -rf .harness/reviews']) expect(bash(c), c).toBe('deny');
+  expect(run('Read', { file_path: '.harness/reviews/1.json' }).kind).toBe('allow');
+  expect(bash('cat .harness/reviews/1.json')).toBe('allow');
+});
+
 test('a repo reached through a symlinked path is still protected (dispatch, real registry)', async () => {
   const real = realpathSync(mkdtempSync(join(tmpdir(), 'h-symp-')));
   mkdirSync(join(real, 'repo'));

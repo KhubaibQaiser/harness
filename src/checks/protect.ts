@@ -14,17 +14,19 @@ import { SAFE_GIT } from '../core/git-safe.js';
 import { type OptTable, readOptions, valuesOf } from '../core/options.js';
 import { globGuardAsk, guardedPaths, plainHeads, wrapperForms } from '../core/command-head.js';
 
-export const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
-const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
+export const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/reviews/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
+const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/reviews', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
 /**
  * Protected paths the sandbox leaves writable, because the agent's own Bash writes them through harness (protect still
  * guards them as text):
  * - `.harness/tmp`: the skills' work folders (`harness workdir`);
  * - `.harness/logs`: the event log every harness command appends to;
  * - `.harness/results`: the TDD reporter's output. The agent's test run (`npm test` in its sandboxed Bash) writes it;
- *   denied, every red-first check would find no results and the TDD gates would block all edits.
+ *   denied, every red-first check would find no results and the TDD gates would block all edits;
+ * - `.harness/reviews`: the review CLI (`harness review`) writes its records from the agent's Bash; denied, it fails
+ *   with EPERM. protect's text check and the Edit deny rule still guard it.
  */
-export const DENY_WRITE_SKIPPED = ['.harness/tmp', '.harness/logs', '.harness/results'];
+export const DENY_WRITE_SKIPPED = ['.harness/tmp', '.harness/logs', '.harness/results', '.harness/reviews'];
 /** Claude Code's `sandbox.filesystem.denyWrite` for harness, from protect's table: each protected path (a `/**` folder
  *  as the folder), `./`-relative, minus DENY_WRITE_SKIPPED. A path added to PROTECTED is denied by the sandbox too. */
 export const denyWritePaths = (table: readonly string[] = PROTECTED): string[] => [

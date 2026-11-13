@@ -58,7 +58,7 @@ export function validateAnswers(raw: unknown, facts: Facts): { ok: true; answers
   };
   const d = defaults();
   need('project', Object.keys(d.project).filter((n) => n !== 'scope_paths'));
-  need('unattended', Object.keys(d.unattended));
+  need('unattended', Object.keys(d.unattended).filter((n) => n !== 'review')); // R5: review defaults to code-only; the interview doesn't ask
   need('tdd', ['paths', 'diff_coverage']);
   errors.push(...missing.map((m) => `${m}: required`));
   const project = isObj(raw.project) ? { ...raw.project, scope_paths: [] } : {};

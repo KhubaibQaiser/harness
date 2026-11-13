@@ -73,13 +73,13 @@ test('own files carry their item', () => {
   expect(get(plan(root, OWN).changes, '.claude/agents/staff-reviewer.md')).toMatchObject({ kind: 'create', item: 'staff-reviewer' });
 });
 
-test('deselecting permissions-baseline turns checks.protect off and keeps all 34 deny rules', () => {
+test('deselecting permissions-baseline turns checks.protect off and keeps all 35 deny rules', () => {
   const root = makeRepo(REPO);
   const p = plan(root, OWN.filter((i) => i !== 'permissions-baseline'), { off: ['permissions-baseline'] });
   expect(text(get(p.changes, '.harness/config.yaml'))).toMatch(/protect: false/);
   const deny = JSON.parse(text(get(p.changes, '.claude/settings.json'))).permissions.deny;
   const frag = JSON.parse(readFileSync(join(templatesDir, 'settings.fragment.json'), 'utf8')).permissions.deny;
-  expect(frag).toHaveLength(34);
+  expect(frag).toHaveLength(35);
   expect(deny).toEqual(frag);
 });
 

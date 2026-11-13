@@ -11,14 +11,16 @@ const dw = (after: string) => JSON.parse(after).sandbox?.filesystem?.denyWrite;
 test('denyWrite comes from protect\'s table: each protected path, but the work folders, the logs and the test results', () => {
   const paths = denyWritePaths();
   for (const p of ['./.harness/config.yaml', './.harness/hooks', './.harness/state', './.harness/manifest.json', './.claude/settings.json']) expect(paths).toContain(p);
-  for (const p of ['./.harness/tmp', './.harness/logs', './.harness/results']) expect(paths).not.toContain(p);
+  for (const p of ['./.harness/tmp', './.harness/logs', './.harness/results', './.harness/reviews']) expect(paths).not.toContain(p);
   // Every entry of protect's table is either denied or skipped on purpose: the two can't drift apart.
   for (const glob of PROTECTED) {
     const p = glob.replace(/\/\*\*$/, '');
     expect(paths.includes(`./${p}`) || DENY_WRITE_SKIPPED.some((s) => p === s || p.startsWith(`${s}/`)), glob).toBe(true);
   }
-  // A path protect adds later (.harness/reviews, PR #218) is picked up with no change here.
-  expect(denyWritePaths(['.harness/reviews/**', '.harness/tmp/**', '.harness/logs/**', '.harness/results/**', '.harness/config.yaml'])).toEqual(['./.harness/reviews', './.harness/config.yaml']);
+  // A path protect adds later is picked up with no change here; .harness/reviews (#218) is skipped: `harness review` writes it.
+  expect(denyWritePaths(['.harness/future/**', '.harness/reviews/**', '.harness/tmp/**', '.harness/logs/**', '.harness/results/**', '.harness/config.yaml'])).toEqual(['./.harness/future', './.harness/config.yaml']);
+  expect(PROTECTED).toContain('.harness/reviews/**');
+  expect(paths).not.toContain('./.harness/reviews');
 });
 
 test('the merge writes denyWrite in every sandbox mode, recorded per path; a re-render is stable', () => {

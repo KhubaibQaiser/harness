@@ -26,7 +26,7 @@ it('pnpm monorepo preset', () => {
   expect(p.config.tdd.paths).toEqual(['src/**', 'packages/a/src/**']);
   expect(p.config.tdd.exempt).toContain('**/*.tsx');
   expect(p.config.tdd.diff_coverage).toBe(80);
-  expect(p.config.unattended).toEqual({ multi_file_gate: 'block', require_reason: false });
+  expect(p.config.unattended).toEqual({ multi_file_gate: 'block', require_reason: false, review: 'code-only' });
   expect(p.config.stop.steps).toEqual(['format', 'lint', 'typecheck', { name: 'test', run: ['pnpm', '-r', 'test'] }]);
   expect(p.config.stop.base_ref).toBe('origin/main');
   expect(p.off).toEqual([]);

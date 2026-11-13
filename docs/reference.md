@@ -86,7 +86,7 @@ On with `checks.prBody`, which the `pr-ship` item turns on. It is separate from 
 
 Two catalog items, owner ruling: a local check and a CI check ship together. Harness installs no binary on your machine.
 
-The commit check is a seatbelt against honest mistakes and casual bypasses: it reads the command's text and the repo before the command runs, and an agent set on getting a secret past it has ways around it (below). The backstops are the CI scan (`gitleaks-ci`), which reads the pushed history whatever happened locally, and the done-contract CI verdict. Rely on those, not on the commit check.
+The commit check is a seatbelt against honest mistakes and casual bypasses: it reads the command's text and the repo before the command runs, and an agent set on getting a secret past it has ways around it (below). The backstops are the CI scan (`gitleaks-ci`), which reads the pushed history whatever happened locally, and, once it ships, the done-contract CI verdict. Rely on those, not on the commit check.
 
 | Item | Kind | What it does |
 |---|---|---|

@@ -32,7 +32,7 @@ const REPO = {
 const prompt: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
 const installed = async (prefix?: string) => {
   const root = makeRepo(REPO, prefix ? { prefix } : {});
-  await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist'), platform: 'linux' });
   writeHookEnv(root); // as if a hook had run
   return root;
 };
@@ -45,9 +45,12 @@ const bin = (name: string) => {
   writeFileSync(join(d, `${name}.cmd`), '@echo off\n'); // what findOnPath looks for on Windows
   return d;
 };
-const run = (root: string, o: { claude?: string | null; path?: string; platform?: NodeJS.Platform } = {}) => {
+// The machine probes and the user/managed settings never come from this host: CI's Ubuntu restricts user namespaces.
+const HOME = mkdtempSync(join(tmpdir(), 'h-home-'));
+const hermetic = (o: { read?: (p: string) => string | null; home?: string; managed?: string } = {}) => ({ read: o.read ?? (() => null), home: o.home ?? HOME, managed: o.managed ?? join(HOME, 'no-managed.json') });
+const run = (root: string, o: { claude?: string | null; path?: string; platform?: NodeJS.Platform; read?: (p: string) => string | null; home?: string; managed?: string } = {}) => {
   let out = '';
-  const code = doctor([], { root, env: { PATH: withNode(o.path) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => (o.claude === undefined ? MIN_CLAUDE_CODE : o.claude), platform: o.platform });
+  const code = doctor([], { root, env: { PATH: withNode(o.path) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => (o.claude === undefined ? MIN_CLAUDE_CODE : o.claude), platform: o.platform, ...hermetic(o) });
   return { code, out, lines: out.trim().split('\n') };
 };
 const setConfig = (root: string, edit: (s: string) => string) => {
@@ -151,7 +154,7 @@ test('custom tdd.paths: missing reporter is still reported', async () => {
 const UNSAFE = "import { defineConfig } from 'vitest/config';\nexport default defineConfig({ test: { root: './src' } });\n";
 test('package left out of TDD: doctor repeats the manual lines, then names the tdd.paths edit once they are there', async () => {
   const root = makeRepo({ ...REPO, 'vitest.config.ts': UNSAFE });
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist'), platform: 'linux' });
   const a = run(root, { path: bin('npm') });
   expect(a.out).toMatch(/^note TDD is off for the root package because its test config could not be edited safely: do this by hand: .*outputFile: \{ json: '\.harness\/results\/root\.json' \}.*then set checks\.tdd to true and add `src\/\*\*` to tdd\.paths in \.harness\/config\.yaml$/m);
   expect(a.code).toBe(0); // a note, not a problem
@@ -167,7 +170,7 @@ test('package left out of TDD: doctor repeats the manual lines, then names the t
 
 test('jest repo: doctor checks the installed reporter against the manifest', async () => {
   const root = makeRepo({ 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' } }), 'package-lock.json': '{}\n' });
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist'), platform: 'linux' });
   const ok = run(root, { path: bin('npm') });
   expect(ok.out).toMatch(/^ok Jest reporter matches the manifest$/m);
   expect(ok.out).not.toMatch(/writes test results under/); // the reporter script is not a legacy results path
@@ -179,7 +182,7 @@ test('jest repo: doctor checks the installed reporter against the manifest', asy
 
 test('vitest without a coverage provider: doctor gives the install hint, then the steps once it is installed', async () => {
   const root = makeRepo({ ...REPO, 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^1.0.0' } }) });
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist'), platform: 'linux' });
   expect(readFileSync(join(root, 'vitest.config.ts'), 'utf8')).not.toContain('enabled: true');
   const a = run(root, { path: bin('npm') });
   expect(a.out).toMatch(/^note the coverage gate is off for the root package: install @vitest\/coverage-v8 to turn on the coverage gate$/m);
@@ -201,7 +204,7 @@ test('CRLF checkout of the dispatcher still matches the manifest', async () => {
 test('package with no vitest config file: the note says so and gives the lines to create it', async () => {
   const { 'vitest.config.ts': _, ...noCfg } = REPO;
   const root = makeRepo(noCfg);
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist'), platform: 'linux' });
   const r = run(root, { path: bin('npm') });
   expect(r.out).toMatch(/^note TDD is off for the root package because it has no Vitest\/Jest config file: do this by hand: Create `vitest\.config\.ts` with:/m);
   expect(r.code).toBe(0);
@@ -216,8 +219,8 @@ test('doctor notes that the hooks may see a different PATH than this terminal', 
 const JEST_TEXT = { 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' }, jest: { coverageReporters: ['text'] } }, null, 2) + '\n', 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n' };
 test('doctor: a Jest coverage config the gate cannot read is a note when skipped, a fix when it is not', async () => {
   const root = makeRepo(JEST_TEXT);
-  await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
-  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE }); return { code, out }; };
+  await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist'), platform: 'linux' });
+  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic() }); return { code, out }; };
   const a = await run();
   expect(a.out).toMatch(/^note the coverage gate is off for the root package: `package.json` "jest" sets `coverageReporters` without 'json'/m);
   const p = join(root, '.harness/config.yaml');
@@ -233,7 +236,7 @@ test('doctor: a package with working coverage that the user lists in tdd.coverag
   writeFileSync(p, readFileSync(p, 'utf8').replace(/coverage_skip: \[\]/, 'coverage_skip:\n    - src/**'));
   expect(readFileSync(p, 'utf8')).toContain('    - src/**');
   let out = '';
-  const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE });
+  const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic() });
   expect(out).toMatch(/^note the coverage gate is off for the root package: it is listed in tdd.coverage_skip/m);
   expect(code).toBe(0);
 });
@@ -245,7 +248,7 @@ test.each([
   const root = await installed();
   writeFileSync(join(root, '.harness/config.yaml'), yaml);
   let out = '';
-  expect(await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE })).toBe(1);
+  expect(await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic() })).toBe(1);
   expect(out).toMatch(/^fix `\.harness\/config\.yaml` is (invalid|not valid YAML)/m);
 });
 
@@ -254,8 +257,8 @@ test('doctor: a format or lint Stop step that would check the .harness/ files is
   pkg.scripts['format:check'] = 'prettier --check .';
   pkg.devDependencies.prettier = '^3.0.0';
   const root = makeRepo({ ...REPO, 'package.json': JSON.stringify(pkg, null, 2) + '\n', 'eslint.config.js': 'export default makeConfig();\n' });
-  await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
-  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE }); return { code, out }; };
+  await init(['--yes'], { env: { PATH: bin('npm'), HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist'), platform: 'linux' });
+  const run = async () => { let out = ''; const code = await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic() }); return { code, out }; };
   const a = await run(); // init wrote .prettierignore, but could not edit the computed ESLint config
   expect(a.out).not.toMatch(/runs Prettier/);
   expect(a.out).toMatch(/^fix Stop step `lint` runs ESLint, which lints the `\.harness\/` files: add `\{ ignores: \['\.harness\/'\] \}` to the exported array in `eslint\.config\.js`/m);
@@ -274,7 +277,7 @@ test('N6: the restore advice says to commit or stash first when the file has unc
   g('add', '-A'); g('commit', '-q', '-m', 'harness');
   const p = join(root, '.harness/hooks/dispatch.mjs');
   writeFileSync(p, readFileSync(p, 'utf8') + '\n// tampered\n');
-  const run = async () => { let out = ''; await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE }); return out; };
+  const run = async () => { let out = ''; await doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic() }); return out; };
   expect(await run()).toMatch(/does not match the installed version: commit or stash your changes, then run \/harness:update to restore it$/m);
   g('commit', '-q', '-am', 'tampered');
   expect(await run()).toMatch(/does not match the installed version: run \/harness:update to restore it$/m);
@@ -344,7 +347,7 @@ test('a missing dispatcher gives one line, not also "does not run"', async () =>
 test('no node on the PATH: the dispatcher does not run', async () => {
   const root = await installed();
   let out = '';
-  const code = doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE });
+  const code = doctor([], { root, env: { PATH: bin('npm') }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic() });
   expect(out).toMatch(/^fix the dispatcher does not run \(.*ENOENT.*\): check that node is on the PATH/m);
   expect(code).toBe(1);
 });
@@ -434,24 +437,137 @@ test('sandbox lines per platform and mode', async () => {
   const root = await installed();
   expect(run(root, { path: bin('npm') }).out).toMatch(/^ok sandbox: unattended \(required for unattended runs\)$/m);
   const win = run(root, { path: bin('npm'), platform: 'win32' });
-  expect(win.out).toMatch(/^note no sandbox on native Windows: hooks, permission rules and text checks only$/m);
+  expect(win.out).toMatch(/^note this machine can't run Claude Code's sandbox \(native Windows has no Claude Code sandbox\): hooks, permission rules and text checks only$/m);
   expect(win.code).toBe(0);
   const lin = run(root, { path: bin('npm'), platform: 'linux' });
-  expect(lin.out).toMatch(/^note the Linux sandbox needs bwrap and socat \(missing: bwrap, socat\): install them$/m);
+  expect(lin.out).toMatch(/^note this machine can't run Claude Code's sandbox \(the Linux sandbox needs bwrap and socat \(missing: bwrap, socat\)\): install bwrap and socat$/m);
+  expect(lin.out).not.toMatch(/sandbox is off in interactive/); // says why it can't run instead
   expect(lin.code).toBe(0);
   const both = withNode(bin('npm')) + delimiter + bin('bwrap') + delimiter + bin('socat');
   let out = '';
-  doctor([], { root, env: { PATH: both }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, platform: 'linux' });
+  doctor([], { root, env: { PATH: both }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, platform: 'linux', ...hermetic() });
   if (process.platform !== 'win32') expect(out).not.toMatch(/bwrap/); // a linux PATH splits on ':', which a Windows PATH breaks
   setConfig(root, (s) => s.replace('sandbox: unattended', 'sandbox: always'));
   const always = run(root, { path: bin('npm'), platform: 'linux' });
   expect(always.out).toMatch(/^ok sandbox: always \(on in every session\)$/m);
-  expect(always.out).toMatch(/^fix the Linux sandbox needs bwrap and socat \(missing: bwrap, socat\): install them$/m);
+  expect(always.out).toMatch(/^fix this machine can't run Claude Code's sandbox \(the Linux sandbox needs bwrap and socat \(missing: bwrap, socat\)\): install bwrap and socat$/m);
   expect(always.code).toBe(1);
   setConfig(root, (s) => s.replace('sandbox: always', 'sandbox: off'));
   const off = run(root, { path: bin('npm'), platform: 'linux' });
   expect(off.out).toMatch(/^ok sandbox: off \(text checks only\)$/m);
-  expect(off.out).not.toMatch(/bwrap/);
+  expect(off.out).toMatch(/^note this machine can't run Claude Code's sandbox \(the Linux sandbox needs bwrap/m);
+  expect(off.out).not.toMatch(/sandbox is off in interactive/);
+});
+
+test('doctor: the sandbox settings that undo or weaken the protection', async () => {
+  const root = await installed();
+  const sp = join(root, '.claude/settings.json');
+  const edit = (f: (s: any) => void) => { const s = JSON.parse(readFileSync(sp, 'utf8')); f(s); writeFileSync(sp, JSON.stringify(s, null, 2) + '\n'); };
+  const mac = () => run(root, { path: bin('npm'), platform: 'darwin' });
+  // init wrote every denyWrite path; the sandbox is off (sandbox: unattended), which is a note with the fix.
+  expect(mac().out).not.toMatch(/denyWrite/);
+  expect(mac().out).toMatch(/^note Claude Code's sandbox is off in interactive sessions: set `sandbox: always` in `\.harness\/config\.yaml` and run \/harness:update$/m);
+  expect(run(root, { path: bin('npm'), platform: 'win32' }).out).not.toMatch(/sandbox is off in interactive/); // nothing to turn on there
+  edit((s) => { s.sandbox.enabled = true; });
+  expect(mac().out).not.toMatch(/sandbox is off/);
+  edit((s) => { s.sandbox.filesystem.denyWrite = s.sandbox.filesystem.denyWrite.filter((p: string) => p !== './.harness/config.yaml'); });
+  let r = mac();
+  expect(r.out).toMatch(/^fix `sandbox\.filesystem\.denyWrite` is missing \.\/\.harness\/config\.yaml: run \/harness:update$/m);
+  expect(r.code).toBe(1);
+  edit((s) => { s.sandbox.filesystem.denyWrite.push('./.harness/config.yaml'); s.sandbox.allowUnsandboxedCommands = true; });
+  r = mac();
+  expect(r.out).toMatch(/^note `sandbox\.allowUnsandboxedCommands` is true/m);
+  expect(r.code).toBe(0);
+  edit((s) => { s.sandbox.allowUnsandboxedCommands = false; s.sandbox.excludedCommands = ['git']; });
+  expect(mac().out).toMatch(/^fix `sandbox\.excludedCommands` lists git, which run outside the sandbox/m);
+  edit((s) => { delete s.sandbox.excludedCommands; s.sandbox.filesystem.disabled = true; });
+  expect(mac().out).not.toMatch(/filesystem\.disabled/); // Claude Code reads it from user, managed and --settings only
+});
+
+test('doctor: user and managed settings count, and sandbox filesystem arrays merge across scopes', async () => {
+  const root = await installed();
+  const sp = join(root, '.claude/settings.json');
+  const s = JSON.parse(readFileSync(sp, 'utf8'));
+  const config = s.sandbox.filesystem.denyWrite.filter((p: string) => p === './.harness/config.yaml');
+  s.sandbox.filesystem.denyWrite = s.sandbox.filesystem.denyWrite.filter((p: string) => p !== './.harness/config.yaml');
+  s.sandbox.enabled = true;
+  writeFileSync(sp, JSON.stringify(s, null, 2) + '\n');
+  const home = mkdtempSync(join(tmpdir(), 'h-home-'));
+  const user = (j: unknown) => { mkdirSync(join(home, '.claude'), { recursive: true }); writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(j)); };
+  const mac = () => run(root, { path: bin('npm'), platform: 'darwin', home });
+  expect(mac().out).toMatch(/^fix `sandbox\.filesystem\.denyWrite` is missing \.\/\.harness\/config\.yaml/m);
+  // A local denyWrite adds to the project's (Claude Code merges the arrays), so the union has every path.
+  writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify({ sandbox: { filesystem: { denyWrite: config } } }));
+  expect(mac().out).not.toMatch(/denyWrite/);
+  rmSync(join(root, '.claude/settings.local.json'));
+  user({ sandbox: { filesystem: { denyWrite: config } } });
+  expect(mac().out).not.toMatch(/denyWrite/);
+  // The user's own file is where the protection is usually undone.
+  user({ sandbox: { filesystem: { denyWrite: config, disabled: true }, excludedCommands: ['git'] } });
+  let r = mac();
+  expect(r.out).toMatch(/^fix `sandbox\.filesystem\.disabled` is true in `.*\.claude\/settings\.json`, which turns off the sandbox's write rules: remove it$/m);
+  expect(r.out).toMatch(/^fix `sandbox\.excludedCommands` lists git, which run outside the sandbox/m);
+  expect(r.code).toBe(1);
+  // Managed settings too (a drop-in folder sits beside the file).
+  user({ sandbox: { filesystem: { denyWrite: config } } });
+  const managed = join(home, 'managed-settings.json');
+  writeFileSync(managed, JSON.stringify({ sandbox: { excludedCommands: ['docker'] } }));
+  expect(run(root, { path: bin('npm'), platform: 'darwin', home, managed }).out).toMatch(/^fix `sandbox\.excludedCommands` lists docker/m);
+  // Scalars keep precedence: a user `enabled: false` loses to the project's `true`.
+  user({ sandbox: { enabled: false, filesystem: { denyWrite: config } } });
+  expect(mac().out).not.toMatch(/sandbox is off/);
+});
+
+test('doctor: WSL1 and the AppArmor user-namespace restriction are machines that cannot run the sandbox', async () => {
+  const root = await installed();
+  const tools = withNode(bin('npm')) + delimiter + bin('bwrap') + delimiter + bin('socat');
+  const go = (files: Record<string, string>) => {
+    let out = '';
+    const code = doctor([], { root, env: { PATH: tools }, out: (x) => (out += x + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, platform: 'linux', ...hermetic({ read: (p) => files[p] ?? null }) });
+    return { out, code };
+  };
+  if (process.platform === 'win32') return; // a linux PATH splits on ':', which a Windows PATH breaks
+  const aa = go({ '/proc/sys/kernel/apparmor_restrict_unprivileged_userns': '1\n' });
+  expect(aa.out).toMatch(/^note this machine can't run Claude Code's sandbox \(AppArmor restricts unprivileged user namespaces, which bwrap needs\): .*kernel\.apparmor_restrict_unprivileged_userns=0/m);
+  expect(aa.out).not.toMatch(/sandbox is off in interactive/);
+  const wsl1 = go({ '/proc/version': 'Linux version 4.4.0-19041-Microsoft (Microsoft@Microsoft.com)' });
+  expect(wsl1.out).toMatch(/^note this machine can't run Claude Code's sandbox \(WSL1 has no Claude Code sandbox\): move to WSL2$/m);
+  // With the strict keys committed, it is the fix that names the opt-out.
+  const sp = join(root, '.claude/settings.json');
+  const s = JSON.parse(readFileSync(sp, 'utf8'));
+  s.sandbox = { ...s.sandbox, enabled: true, failIfUnavailable: true };
+  writeFileSync(sp, JSON.stringify(s, null, 2) + '\n');
+  const strict = go({ '/proc/sys/kernel/apparmor_restrict_unprivileged_userns': '1\n' });
+  expect(strict.out).toMatch(/^fix this machine can't run Claude Code's sandbox \(AppArmor restricts .*\), and Claude Code's settings set `sandbox\.failIfUnavailable: true`, so it won't run Bash here: add an AppArmor profile .*, or set `sandbox\.failIfUnavailable: false` in your own `\.claude\/settings\.local\.json` \(text guards only\)$/m);
+  expect(strict.code).toBe(1);
+});
+
+test('doctor: this machine cannot run the sandbox the shared settings require (failIfUnavailable: true)', async () => {
+  const root = await installed();
+  const sp = join(root, '.claude/settings.json');
+  const s = JSON.parse(readFileSync(sp, 'utf8'));
+  s.sandbox = { ...s.sandbox, enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false };
+  writeFileSync(sp, JSON.stringify(s, null, 2) + '\n');
+  const CANT = /^fix this machine can't run Claude Code's sandbox \((?:native Windows has no Claude Code sandbox|the Linux sandbox needs bwrap and socat \(missing: bwrap, socat\))\), and Claude Code's settings set `sandbox\.failIfUnavailable: true`, so it won't run Bash here: /m;
+  // Linux without bwrap/socat: install them, or opt out in the personal settings file.
+  const lin = run(root, { path: bin('npm'), platform: 'linux' });
+  expect(lin.out).toMatch(CANT);
+  expect(lin.out).toMatch(/install bwrap and socat, or set `sandbox\.failIfUnavailable: false` in your own `\.claude\/settings\.local\.json` \(text guards only\)$/m);
+  expect(lin.code).toBe(1);
+  // Native Windows: no sandbox to install, so only the personal opt-out.
+  const win = run(root, { path: bin('npm'), platform: 'win32' });
+  expect(win.out).toMatch(CANT);
+  expect(win.out).toMatch(/: set `sandbox\.failIfUnavailable: false` in your own `\.claude\/settings\.local\.json` \(text guards only\)$/m);
+  // macOS runs the sandbox; Linux with both tools does too.
+  expect(run(root, { path: bin('npm'), platform: 'darwin' }).out).not.toMatch(CANT);
+  if (process.platform !== 'win32') {
+    let out = '';
+    doctor([], { root, env: { PATH: withNode(bin('npm')) + delimiter + bin('bwrap') + delimiter + bin('socat') }, out: (x) => (out += x + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, platform: 'linux', ...hermetic() });
+    expect(out).not.toMatch(CANT);
+  }
+  // The personal override turns the fix off.
+  writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify({ sandbox: { failIfUnavailable: false } }) + '\n');
+  expect(run(root, { path: bin('npm'), platform: 'linux' }).out).not.toMatch(CANT);
 });
 
 test('a package still writing under .harness/state is a fix', async () => {
@@ -470,7 +586,7 @@ test.each([
   ['jest.config.js', { 'jest.config.js': "module.exports = { outputFile: '.harness/results/root.json' };\n" }],
 ])('a Jest package still writing under .harness/state is one fix (%s)', async (_n, extra) => {
   const root = makeRepo({ 'package.json': JSON.stringify({ name: 'app', scripts: { test: 'jest' }, devDependencies: { jest: '^30.0.0' } }), 'package-lock.json': '{}\n', ...extra });
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist'), platform: 'linux' });
   for (const f of ['package.json', ...Object.keys(extra)]) {
     const p = join(root, f);
     writeFileSync(p, readFileSync(p, 'utf8').replaceAll('.harness/results', '.harness/state/test-results'));
@@ -510,7 +626,7 @@ const itemsRepo = (ids: string[], catalogVersion = loadCatalog().catalog.version
 const runItems = (root: string, list: PL | (() => PL)) => {
   let out = '';
   let calls = 0;
-  const code = doctor([], { root, env: { PATH: withNode() }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, pluginList: () => (calls++, typeof list === 'function' ? list() : list) });
+  const code = doctor([], { root, env: { PATH: withNode() }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic(), pluginList: () => (calls++, typeof list === 'function' ? list() : list) });
   return { code, out, calls };
 };
 const pinsOf = (root: string): string => Object.keys(JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).extraKnownMarketplaces).find((k) => k.startsWith('harness-pins'))!;
@@ -667,7 +783,7 @@ const protectionRun = async (api: { status: number | null; stdout: string }, wor
   const calls: string[][] = [];
   const gh = (a: string[]) => (calls.push(a), a[0] === 'repo' ? VIEW : api);
   let out = '';
-  const code = doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, gh });
+  const code = doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic(), gh });
   return { out, code, calls };
 };
 const prot = (required: object) => ({ status: 0, stdout: JSON.stringify({ required_status_checks: required }) });
@@ -725,7 +841,7 @@ test('doctor: gh failing without a status is "not available"; a signed-out gh is
   const root = await installed();
   const go = (gh: () => { status: number | null; stdout: string }) => {
     let out = '';
-    doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, gh });
+    doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: (s) => (out += s + '\n') }, { claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic(), gh });
     return out;
   };
   expect(go(() => ({ status: null, stdout: '' }))).toContain('note branch protection unknown (gh not available)');
@@ -748,13 +864,13 @@ test('doctor: an unsafe branch name from gh is not used in the api path', async 
   const root = await installed();
   const calls: string[][] = [];
   const gh = (a: string[]) => (calls.push(a), { status: 0, stdout: JSON.stringify({ nameWithOwner: 'o/r', defaultBranchRef: { name: 'x; echo hi' } }) });
-  doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE, gh });
+  doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic(), gh });
   expect(calls).toHaveLength(1);
 });
 
 test('doctor: the test setup stops a real gh from being spawned', async () => {
   const root = await installed();
-  expect(() => doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE })).toThrow(/real gh/);
+  expect(() => doctor([], { root, env: { PATH: withNode(bin('npm')) }, out: () => {} }, { claudeVersion: () => MIN_CLAUDE_CODE, ...hermetic() })).toThrow(/real gh/);
 });
 
 const withBudget = (root: string, n: number) => setConfig(root, (t) => `${t.replace(/^context:\n(?:[ \t].*\n?)*/m, '')}\ncontext:\n  budget_tokens: ${n}\n`);

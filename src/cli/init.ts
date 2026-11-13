@@ -226,7 +226,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
 
   // 2. Detect and preset
   const facts = detect(root);
-  const p = preset(facts, (cmd) => findOnPath(cmd, cli.env, process.platform));
+  const p = preset(facts, (cmd) => findOnPath(cmd, cli.env, process.platform), cli.platform ?? process.platform);
   for (const w of facts.warnings) out(`Warning: ${w}`);
   const run: Run = { cli, f, root, facts, p };
   let config = await chooseConfig(run);
@@ -250,7 +250,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   try {
     applyChanges(root, built.plan.changes, cli.version, undefined, cli.fs, { tddOff: p.tddOff.map((o) => o.dir) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('init', args) : e.message), 1;
+    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('init', args, root) : e.message), 1;
     throw e;
   }
   stampHarnessFiles(root); // change detection: these writes are harness's own

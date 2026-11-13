@@ -6,6 +6,7 @@ import { parseModule } from 'magicast';
 import { packageDir } from '../core/package-dir.js';
 import { HARNESS_LOCAL } from '../core/paths.js';
 import type { SandboxMode } from '../core/config.js';
+import { denyWritePaths } from '../checks/protect.js';
 import { eolOf, jsonIndentOf, quoteOf, requote, withEol } from './text.js';
 import type { CatalogItem } from '../catalog/schema.js';
 import type { Manifest } from './manifest.js';
@@ -59,8 +60,11 @@ const dump = (s: unknown, before: string | null): string => {
 
 const parse = (b: string): unknown => { try { return JSON.parse(b); } catch { return null; } };
 
-// The `always` keys. `failIfUnavailable` is never committed: it belongs to the unattended launch's --settings only.
-const SANDBOX = { enabled: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false };
+// The `always` keys (owner ruling, 2026-11-13): the sandbox on for interactive sessions too, and a session refuses to
+// run Bash unsandboxed rather than fall back. A teammate on a platform with no sandbox turns it off in their own
+// `.claude/settings.local.json` (see the Sandbox section of docs/reference.md).
+const SANDBOX = { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false };
+const NETWORK_NOTE = `${SETTINGS}: Claude Code's sandbox is on (sandbox: always). Its network allowlist starts empty, so a package install or an HTTPS git push asks the first time, and some tools fail inside it; allow a host under sandbox.network.allowedDomains in ${SETTINGS}.`;
 
 /**
  * Deletes each recorded `{"set":[...path],"value":v}` key of `s` whose value still deep-equals v, deepest path first, so a
@@ -177,6 +181,7 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
       if (!Object.hasOwn(s.sandbox, k)) {
         s.sandbox[k] = v;
         blocks.push(JSON.stringify({ set: ['sandbox', k], value: v }));
+        if (k === 'enabled') notes.push(NETWORK_NOTE);
       } else if (!isDeepStrictEqual(s.sandbox[k], v)) notes.push(`${SETTINGS}: sandbox.${k} is already ${JSON.stringify(s.sandbox[k])}; left as is (harness would set ${JSON.stringify(v)}).`);
     }
   } else {
@@ -184,9 +189,34 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
     dropped.push(...r.sets);
     for (const p of r.changed) notes.push(`\`${SETTINGS}\`: \`${p}\` was changed; left as is.`);
   }
+  mergeDenyWrite(s, opts.recorded ?? [], blocks, notes);
   const market = pinsName(opts.plugins ?? []);
   mergePlugins(s, opts.plugins ?? [], market, opts.recorded ?? [], blocks, dropped, notes);
   return { after: dump(s, before), blocks, dropped, notes, market };
+}
+
+/**
+ * `sandbox.filesystem.denyWrite`: every protected harness path (denyWritePaths), in every sandbox mode, so whenever the
+ * sandbox runs (an unattended `--settings` launch, `/sandbox`, `sandbox: always`) a Bash write to them fails at the OS
+ * level. One `{"denyWrite":path}` block per path harness adds, as for deny rules: a path already there is the person's,
+ * a removed one comes back, and uninstall drops the paths and the containers it made. A non-object or non-array on the
+ * way is a hand edit: left as is, with a note.
+ */
+function mergeDenyWrite(s: any, recorded: string[], blocks: string[], notes: string[]): void {
+  const skip = (what: string): void => void notes.push(`${SETTINGS}: ${what}; left as is and harness's sandbox.filesystem.denyWrite was not added.`);
+  if (s.sandbox !== undefined && !isObj(s.sandbox)) return skip('"sandbox" is not an object');
+  s.sandbox ??= {};
+  if (s.sandbox.filesystem !== undefined && !isObj(s.sandbox.filesystem)) return skip('sandbox.filesystem is not an object');
+  s.sandbox.filesystem ??= {};
+  if (s.sandbox.filesystem.denyWrite !== undefined && !Array.isArray(s.sandbox.filesystem.denyWrite)) return skip('sandbox.filesystem.denyWrite is not an array');
+  const list: unknown[] = (s.sandbox.filesystem.denyWrite ??= []);
+  for (const p of denyWritePaths()) {
+    if (list.includes(p)) continue;
+    list.push(p);
+    blocks.push(JSON.stringify({ denyWrite: p }));
+    // Recorded before and now gone: the person removed it, so say it is back rather than restore it silently.
+    if (recorded.some((b) => (parse(b) as any)?.denyWrite === p)) notes.push(`${SETTINGS}: harness's sandbox.filesystem.denyWrite path ${p} was removed by hand and is added back: harness needs it to protect its files.`);
+  }
 }
 
 export type SetBlock = { set: string[]; value: unknown };
@@ -486,6 +516,10 @@ export function removeFromSettings(current: string, f: Manifest['files'][number]
       const list = s.permissions?.deny;
       if (!Array.isArray(list) || !list.includes(blk.deny)) notes.push(`\`${SETTINGS}\`: deny rule \`${blk.deny}\` was not found; left as is.`);
       else s.permissions.deny = list.filter((d: unknown) => d !== blk.deny);
+    } else if (typeof blk?.denyWrite === 'string') {
+      const list = s.sandbox?.filesystem?.denyWrite;
+      if (!Array.isArray(list) || !list.includes(blk.denyWrite)) notes.push(`\`${SETTINGS}\`: sandbox denyWrite path \`${blk.denyWrite}\` was not found; left as is.`);
+      else s.sandbox.filesystem.denyWrite = list.filter((d: unknown) => d !== blk.denyWrite);
     } else if (typeof blk?.plugin === 'string') {
       const v = s.enabledPlugins?.[blk.plugin];
       if (v === true) delete s.enabledPlugins[blk.plugin];
@@ -505,6 +539,12 @@ export function removeFromSettings(current: string, f: Manifest['files'][number]
     if (Array.isArray(s.permissions.deny) && !s.permissions.deny.length && !had('permissions', 'deny')) delete s.permissions.deny;
     if (!Object.keys(s.permissions).length && !had('permissions')) delete s.permissions;
   }
+  const fs = isObj(s.sandbox) && isObj(s.sandbox.filesystem) ? s.sandbox.filesystem : null;
+  if (fs) {
+    if (Array.isArray(fs.denyWrite) && !fs.denyWrite.length && !had('sandbox', 'filesystem', 'denyWrite')) delete fs.denyWrite;
+    if (!Object.keys(fs).length && !had('sandbox', 'filesystem')) delete s.sandbox.filesystem;
+  }
+  if (isObj(s.sandbox) && !Object.keys(s.sandbox).length && !had('sandbox')) delete s.sandbox;
   for (const k of ['enabledPlugins', 'extraKnownMarketplaces']) if (isObj(s[k]) && !Object.keys(s[k]).length && gone(k)) delete s[k];
   return o.done();
 }

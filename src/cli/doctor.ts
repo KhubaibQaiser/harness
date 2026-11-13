@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { isDeepStrictEqual } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { validateConfig } from '../core/config-io.js';
@@ -27,8 +28,15 @@ import { LEGACY_PINS, PINS_NAME, STRUCTURAL, contentPins, pinnedPlugins, pinsMis
 import { pluginList } from '../install/plugin-install.js';
 import { reconcile } from '../install/reconcile.js';
 import { selectedIds } from '../install/plan.js';
+import { effective, managedSettingsPath, readManagedLayers, userSettingsPath, type Layer } from '../core/settings-layers.js';
+import { sandboxBlocker, type MachineProbe } from '../core/sandbox-machine.js';
+import { denyWritePaths } from '../checks/protect.js';
 
-export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJS.Platform; pluginList?: typeof pluginList; gh?: Gh };
+export type DoctorDeps = {
+  claudeVersion?: () => string | null; platform?: NodeJS.Platform; pluginList?: typeof pluginList; gh?: Gh;
+  /** Machine probe (/proc reads); `home` and `managed` locate the user and managed settings. Tests inject all three. */
+  read?: MachineProbe['read']; home?: string; managed?: string;
+};
 
 const DISPATCH = '.harness/hooks/dispatch.mjs';
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
@@ -162,9 +170,36 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
 
   const mode = config.sandbox;
   ok(`sandbox: ${mode} (${SANDBOX_WHY[mode]})`);
-  if (mode !== 'off' && platform === 'win32') note('no sandbox on native Windows', 'hooks, permission rules and text checks only');
-  const missing = mode !== 'off' && platform === 'linux' ? ['bwrap', 'socat'].filter((c) => !findOnPath(c, env, platform)) : [];
-  if (missing.length) (mode === 'always' ? fix : note)(`the Linux sandbox needs bwrap and socat (missing: ${missing.join(', ')})`, 'install them');
+  // Claude Code's settings as it reads them: managed, local, project, user. Scalars go by that precedence; the sandbox
+  // `filesystem` arrays and `excludedCommands` merge across scopes, so those are unions.
+  const file = (path: string, name: Layer['name']): Layer => { try { return { name, json: JSON.parse(readFileSync(path, 'utf8')) }; } catch { return { name, json: undefined }; } };
+  const userPath = userSettingsPath(deps.home ?? homedir(), env);
+  const named: [Layer, string][] = [
+    ...readManagedLayers(deps.managed ?? managedSettingsPath(platform)).map((l): [Layer, string] => [l, 'managed settings']),
+    [file(join(root, '.claude/settings.local.json'), 'local'), '`.claude/settings.local.json`'],
+    [file(join(root, '.claude/settings.json'), 'project'), '`.claude/settings.json`'],
+    [file(userPath, 'user'), `\`${userPath.replace(/\\/g, '/')}\``], // `/` as in the rest of doctor's paths
+  ];
+  const layers = named.map(([l]) => l);
+  const sb = (...p: string[]) => effective(layers, ['sandbox', ...p]);
+  const union = (...p: string[]) => [...new Set(layers.flatMap((l) => { const v = effective([l], ['sandbox', ...p]); return Array.isArray(v) ? v : []; }))];
+  // The shared settings commit the strict sandbox (owner ruling): on a machine that can't run it, Claude Code then won't run Bash.
+  const block = sandboxBlocker(platform, { which: (c) => findOnPath(c, env, platform), read: deps.read });
+  const cant = block && `this machine can't run Claude Code's sandbox (${block.why})`;
+  if (cant && sb('enabled') === true && sb('failIfUnavailable') === true) {
+    fix(`${cant}, and Claude Code's settings set \`sandbox.failIfUnavailable: true\`, so it won't run Bash here`,
+      `${block.fix ? `${block.fix}, or ` : ''}set \`sandbox.failIfUnavailable: false\` in your own \`.claude/settings.local.json\` (text guards only)`);
+  } else if (cant) (mode === 'always' && block.fix && sb('failIfUnavailable') !== false ? fix : note)(cant, block.fix || 'hooks, permission rules and text checks only');
+  else if (sb('enabled') !== true) note("Claude Code's sandbox is off in interactive sessions", 'set `sandbox: always` in `.harness/config.yaml` and run /harness:update');
+  const have = union('filesystem', 'denyWrite');
+  const gone = denyWritePaths().filter((p) => !have.includes(p) && !have.includes(p.slice(2)));
+  if (gone.length) fix(`\`sandbox.filesystem.denyWrite\` is missing ${gone.join(', ')}`, 'run /harness:update');
+  if (sb('allowUnsandboxedCommands') === true) note('`sandbox.allowUnsandboxedCommands` is true, so a command can ask to run outside the sandbox', 'set it to false');
+  const ex = union('excludedCommands');
+  if (ex.length) fix(`\`sandbox.excludedCommands\` lists ${ex.join(', ')}, which run outside the sandbox and can write harness's files`, 'remove them, or accept that only the text checks guard those commands');
+  // Claude Code reads `filesystem.disabled` from user, managed and --settings only; --settings is a launch flag doctor can't see.
+  const off = named.find(([l]) => (l.name === 'managed' || l.name === 'user') && effective([l], ['sandbox', 'filesystem', 'disabled']) === true);
+  if (off) fix(`\`sandbox.filesystem.disabled\` is true in ${off[1]}, which turns off the sandbox's write rules`, 'remove it');
 
   const whereOf = (dir: string) => (dir === '.' ? 'the root package' : `\`${dir}\``);
   // resultsRename, not hasResultsOutput: a Jest script with the harness reporter counts as set up for any folder.

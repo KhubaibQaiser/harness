@@ -1,7 +1,9 @@
 import { expect, it } from 'vitest';
 import { validateConfig } from '../../src/core/config-io.js';
 import { detect, type Facts } from '../../src/install/detect.js';
-import { preset } from '../../src/install/preset.js';
+import { preset as presetOn } from '../../src/install/preset.js';
+// Pinned to macOS with no /proc reads, so the sandbox default never depends on the host (windows-latest CI).
+const preset = (f: Parameters<typeof presetOn>[0], which?: Parameters<typeof presetOn>[1]) => presetOn(f, which, 'darwin', () => null);
 import { makeRepo } from './helpers.js';
 
 const pj = (o: object) => JSON.stringify(o);
@@ -168,4 +170,10 @@ it('a vitest package with no config file is left out with its own reason', () =>
   const p = preset(detect(makeRepo({ 'package.json': pj({ name: 'n', scripts: { test: 'vitest run' }, devDependencies: { vitest: '1' } }) })), ALL);
   expect(p.config.checks.tdd).toBe(false);
   expect(p.off[0].why).toBe('TDD off for the root package because it has no Vitest/Jest config file; create one with the printed lines, then add `src/**` to tdd.paths.');
+});
+
+it('on native Windows the sandbox is an off-reason, whatever the host', () => {
+  const p = presetOn(detect(makeRepo({ 'README.md': 'x' })), ALL, 'win32', () => null);
+  expect(p.config.sandbox).toBe('unattended');
+  expect(p.off).toContainEqual({ gate: 'sandbox', why: expect.stringMatching(/native Windows has no Claude Code sandbox/) });
 });

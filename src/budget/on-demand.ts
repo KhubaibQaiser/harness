@@ -95,7 +95,7 @@ const objectKeys = (v: unknown): string[] => (v && typeof v === 'object' && !Arr
 export function unmeasuredFor(c: Ctx): string[] {
   const settings = jsonObject(c, '.claude/settings.json');
   const plugins = settings?.enabledPlugins;
-  const on = objectKeys(plugins).filter((id) => (plugins as Record<string, unknown>)[id] === true && id.slice(id.lastIndexOf('@') + 1) !== 'harness-pins');
+  const on = objectKeys(plugins).filter((id) => (plugins as Record<string, unknown>)[id] === true && !/^harness-pins(-[0-9a-f]+)?$/.test(id.slice(id.lastIndexOf('@') + 1))); // harness's own pins, measured as items
   const mcp = objectKeys(jsonObject(c, '.mcp.json')?.mcpServers);
   return [...on.map((id) => `plugin: ${id}`), ...mcp.map((n) => `mcp: ${n}`)].sort();
 }

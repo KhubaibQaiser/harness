@@ -14,7 +14,7 @@ const MCP = '.mcp.json';
  */
 export function reconcile(
   root: string, config: HarnessConfig, m: Manifest, ctx: Parameters<typeof planChanges>[3],
-): { changes: Change[]; edited: { owned: string[]; merged: string[] }; notes: string[]; dropped: string[]; manual: string[]; config: HarnessConfig } {
+): { changes: Change[]; edited: { owned: string[]; merged: string[] }; notes: string[]; dropped: string[]; manual: string[]; config: HarnessConfig; market: string } {
   const entry = (rel: string) => m.files.find((f) => f.rel === rel);
   const planned = planChanges(root, config, detect(root), {
     ...ctx, recorded: entry(SETTINGS)?.blocks, mcpRecorded: entry(MCP)?.blocks, recordedFiles: m.files,
@@ -25,6 +25,6 @@ export function reconcile(
     .map((c) => c.rel);
   return {
     changes: planned.changes, edited: { owned: edited.filter((r) => !merged(r)), merged: edited.filter(merged) },
-    notes: planned.notes, dropped: planned.dropped, manual: planned.manual, config: planned.config,
+    notes: planned.notes, dropped: planned.dropped, manual: planned.manual, config: planned.config, market: planned.market,
   };
 }

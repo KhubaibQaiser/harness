@@ -823,7 +823,7 @@ test('update --install-plugins after a committed hand edit does not record it, a
     const exec = (_c: string, a: string[]) => {
       if (!a.includes('install')) return { status: 0, stdout: '[]' };
       const j = JSON.parse(readFileSync(p, 'utf8'));
-      j.enabledPlugins['impeccable@harness-pins'] = false; // claude's own write
+      j.enabledPlugins[Object.keys(j.enabledPlugins).find((k) => k.startsWith('impeccable@harness-pins-'))!] = false; // claude's own write
       writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
       return { status: 0, stdout: '{"command":"install","outcome":"ok","message":""}' };
     };

@@ -438,6 +438,9 @@ test('a write the OS refuses rolls back and prints the person\'s command', async
   expect(tree(root)).toBe('');
 });
 
+// The install's own pins marketplace name, read from what init wrote.
+const pinsOf = (root: string): string => Object.keys(JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).extraKnownMarketplaces).find((k) => /^harness-pins-[0-9a-f]{12}$/.test(k))!;
+
 test('--install-plugins installs the pinned ids after apply, and rehashes settings', async () => {
   const root = makeRepo(NPM_VITEST);
   const seen: string[][] = [];
@@ -449,8 +452,8 @@ test('--install-plugins installs the pinned ids after apply, and rehashes settin
   };
   const r = await ai(root, [...aiArgs([...OWN, 'impeccable']), '--yes', '--over-budget', '--install-plugins'], { exec });
   expect(r.code, r.out).toBe(0);
-  expect(seen).toEqual([['plugin', 'install', 'impeccable@harness-pins', '--scope', 'project', '--json']]);
-  expect(r.out).toContain('impeccable@harness-pins');
+  expect(seen).toEqual([['plugin', 'install', `impeccable@${pinsOf(root)}`, '--scope', 'project', '--json']]);
+  expect(r.out).toContain(`impeccable@${pinsOf(root)}`);
   const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
   const text = readFileSync(join(root, '.claude/settings.json'), 'utf8');
   expect(m.files.find((f: { rel: string }) => f.rel === '.claude/settings.json').hash).toBe(createHash('sha256').update(text).digest('hex'));
@@ -478,17 +481,28 @@ test('init --install-plugins: other edits made during the install are not record
 test('a failed plugin install prints the per-plugin command and the sync line; a sandbox network failure exits 1', async () => {
   const run = async (message: string) => {
     const root = makeRepo(NPM_VITEST);
-    return ai(root, [...aiArgs([...OWN, 'impeccable']), '--yes', '--over-budget', '--install-plugins'], { exec: () => ({ status: 0, stdout: JSON.stringify({ command: 'install', outcome: 'failed', message }) }) });
+    return { ...(await ai(root, [...aiArgs([...OWN, 'impeccable']), '--yes', '--over-budget', '--install-plugins'], { exec: () => ({ status: 0, stdout: JSON.stringify({ command: 'install', outcome: 'failed', message }) }) })), root };
   };
   const net = await run('getaddrinfo ENOTFOUND github.com');
   expect(net.code).toBe(1);
-  expect(net.out).toContain("Run this yourself with Claude Code's `!` prefix (a `!` command runs outside the sandbox): claude plugin install impeccable@harness-pins --scope project");
+  expect(net.out).toContain("Run this yourself with Claude Code's `!` prefix (a `!` command runs outside the sandbox): claude plugin install impeccable@" + pinsOf(net.root) + ' --scope project');
   expect(net.out).toContain('Then run /harness:sync to record the install.');
   const other = await run('Plugin impeccable@harness-pins requires a newer Claude Code');
   expect(other.code).toBe(1);
   expect(other.out).toContain('Files applied; 1 plugin(s) not installed.');
   expect(other.out).toContain('requires a newer Claude Code');
   expect(other.out).not.toContain('Restart Claude Code');
+});
+
+test('installSelected refuses when settings.json cannot be read', async () => {
+  const { installSelected } = await import('../../src/cli/init.js');
+  const { loadCatalog } = await import('../../src/catalog/load.js');
+  const root = makeRepo({ '.claude/settings.json': '{ nope' });
+  let out = '';
+  const calls: string[][] = [];
+  expect(installSelected({ root, chosen: ['impeccable'], cat: loadCatalog().catalog, exec: (_c, a) => (calls.push(a), { status: 0, stdout: '' }), out: (s) => (out += s + '\n') })).toBe(1);
+  expect(out).toMatch(/`.claude\/settings.json` could not be read .*No plugins were installed./);
+  expect(calls).toEqual([]);
 });
 
 test('plugin or budget flags without the AI flags are a usage error', async () => {

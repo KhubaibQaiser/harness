@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { validateConfig } from '../core/config-io.js';
-import { LEGACY_RESULTS_DIR, type HarnessConfig } from '../core/config.js';
+import { esc, isObj, LEGACY_RESULTS_DIR, type HarnessConfig } from '../core/config.js';
 import { readHookEnv } from '../core/hook-env.js';
 import { MIN_CLAUDE_CODE, claudeVersion, olderThan } from '../core/min-claude.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
@@ -23,7 +23,7 @@ import type { CliEnv } from './index.js';
 import { dirtyPaths } from '../install/git-status.js';
 import { loadCatalog } from '../catalog/load.js';
 import { packageDir } from '../core/package-dir.js';
-import { STRUCTURAL, pinnedPlugins } from '../install/merge.js';
+import { LEGACY_PINS, PINS_NAME, STRUCTURAL, contentPins, pinnedPlugins, pinsMismatch } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { reconcile } from '../install/reconcile.js';
 import { selectedIds } from '../install/plan.js';
@@ -247,8 +247,11 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   return bad ? 1 : 0;
 }
 
-const PINS = 'harness-pins';
-const EDITED = /harness-pins marketplace was edited|^`\.mcp\.json`: .*(was edited|was changed)/;
+// Claude Code keeps the user-level copy until it is removed; only safe once no repo on the machine still uses the old name.
+const LEGACY_FIX = `run /harness:update to rename it, then /harness:sync --install-plugins; when no repo on this machine still uses ${LEGACY_PINS}, run claude plugin marketplace remove ${LEGACY_PINS}`;
+const EDITED_PINS = /the (harness-pins(?:-[0-9a-f]+)?) marketplace was edited/;
+const EDITED_MCP = /^`\.mcp\.json`: .*(was edited|was changed)/;
+const pinsOfKey = (k: string) => k.slice(k.lastIndexOf('@') + 1);
 
 /** Catalog version, item drift (from reconcile, the same plan sync applies), plugin state and edited entries. Only for installs with an items list. */
 function itemChecks(
@@ -261,21 +264,41 @@ function itemChecks(
   if (cat.version > config.catalog_version) p.note(`catalog ${cat.version} is newer than this repo's ${config.catalog_version}`, 'run /harness:update');
   else p.ok(`catalog ${config.catalog_version}`);
   const ids = selectedIds(config);
+  let settings: any = {};
+  try { settings = JSON.parse(readText(join(root, '.claude/settings.json')) ?? '{}') ?? {}; } catch {} // an unreadable file fails the plan below, with its own fix
+  const enabled: Record<string, unknown> = isObj(settings.enabledPlugins) ? settings.enabledPlugins : {};
+  // The shared name lets the last-started repo's pins replace this repo's in Claude Code's user-level marketplace cache.
+  const legacy = Object.hasOwn(settings.extraKnownMarketplaces ?? {}, LEGACY_PINS) || Object.keys(enabled).some((k) => k.endsWith(`@${LEGACY_PINS}`));
+  if (legacy) p.fix(`\`.claude/settings.json\` uses the shared \`${LEGACY_PINS}\` marketplace name, so another repo's pins can replace this repo's plugins`, LEGACY_FIX);
+  const both = contentPins(settings);
+  if (both.length > 1) return p.fix(`\`.claude/settings.json\` has two harness pins marketplaces, ${both.join(' and ')}; keep the one your plugin keys use and delete the other`, 'run /harness:sync');
+  // A content name is a promise about the pins; an edit breaks it, and another repo's copy with the original pins would stand in.
+  const mismatched = pinsMismatch(settings);
+  for (const n of mismatched) p.fix(`the ${n} marketplace was edited, so its name no longer matches its pins and can clash with other repos on this machine`, 'undo the edit, or delete that entry and run /harness:sync');
   let planned;
   try {
     planned = reconcile(root, config, manifest, { version: manifest.version, distDir: packageDir('dist'), templatesDir: packageDir('templates'), catalog: cat });
   } catch (e) {
-    return p.fix(`the items could not be compared with the files (${(e as Error).message.split('\n')[0]})`, 'fix the file it names, then run harness doctor');
+    return p.fix(`the items could not be compared with the files (${esc((e as Error).message.split('\n')[0])})`, 'fix the file it names, then run harness doctor');
   }
+  // A key the rename or a pin change would move is there under another pins name, so it is not missing.
+  const keyed = (id: string) => Object.keys(enabled).some((k) => k.split('@')[0] === id.split('@')[0] && PINS_NAME.test(pinsOfKey(k)));
   const seen = new Set<string>();
   const missing = (item: string, rel: string) => seen.has(item + rel) || (seen.add(item + rel), p.fix(`${item} is missing ${rel}`, 'run /harness:sync'));
   for (const c of planned.changes) {
     if (c.kind === 'create' && c.item) missing(c.item, c.rel);
     // A settings or .mcp.json block of an item that harness would add again is missing from the file.
     if (c.kind !== 'delete' && STRUCTURAL.has(c.rel))
-      for (const b of c.blocks ?? []) try { const j = JSON.parse(b); if (typeof j?.item === 'string') missing(j.item, c.rel); } catch {}
+      for (const b of c.blocks ?? []) try { const j = JSON.parse(b); if (typeof j?.item === 'string' && !(typeof j.plugin === 'string' && keyed(j.plugin))) missing(j.item, c.rel); } catch {}
   }
-  if (planned.notes.some((n) => EDITED.test(n))) p.note('the harness-pins marketplace or a harness MCP server differs from what harness installed', 'run /harness:sync');
+  const what = [...new Set(planned.notes.flatMap((n) => n.match(EDITED_PINS)?.[1] ?? []))].filter((n) => !mismatched.includes(n)).map((n) => `the ${n} marketplace`);
+  if (planned.notes.some((n) => EDITED_MCP.test(n))) what.push('a harness MCP server');
+  if (what.length) p.note(`${what.join(' and ')} ${what.length > 1 ? 'differ' : 'differs'} from what harness installed`, 'run /harness:sync');
+  const markets = isObj(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
+  for (const k of Object.keys(enabled)) {
+    const m = pinsOfKey(k);
+    if (PINS_NAME.test(m) && !Object.hasOwn(markets, m)) p.note(`\`${esc(k)}\` names the ${m} marketplace, which this repo no longer has`, 'remove it from .claude/settings.json');
+  }
   const diff = (Object.keys(config.checks) as (keyof typeof config.checks)[]).filter((k) => config.checks[k] !== planned.config.checks[k]);
   if (diff.length) p.note(`config.yaml checks differ from the selected items (${diff.join(', ')}); the items win on the next update. Use /harness:add or harness remove to change gates.`);
 
@@ -283,10 +306,9 @@ function itemChecks(
   if (!pinned.length) return;
   const have = list(); // the one `claude plugin list` call
   if (!have) return p.note('claude is missing or its plugin list is unreadable, so plugin checks were skipped', 'install Claude Code or run harness doctor from a shell where claude works');
-  let enabled: Record<string, unknown> = {};
-  try { enabled = JSON.parse(readText(join(root, '.claude/settings.json')) ?? '{}').enabledPlugins ?? {}; } catch {}
+  const market = both[0] ?? LEGACY_PINS;
   for (const pin of pinned) {
-    const id = `${pin.name}@${PINS}`;
+    const id = `${pin.name}@${market}`;
     const got = have.find((x) => x.id === id);
     if (!got) {
       if (enabled[id] === true) p.fix(`${id} is enabled in this repo but not installed`, `claude plugin install ${id} --scope project`);
@@ -295,6 +317,6 @@ function itemChecks(
     const want = cat.items.find((i) => i.id === pin.item)?.plugin_version;
     if (want && got.version && got.version !== want) p.note(`${id} is ${got.version}, the catalog pins ${want}`, `run claude plugin update ${id} --scope project`);
     for (const o of have.filter((x) => x.enabled && x.id !== id && x.id.split('@')[0] === pin.name))
-      if (got.enabled || enabled[id] === true) p.note(`${pin.name} is enabled twice (${o.id} and ${PINS}); only one copy's hooks run. Disable one.`);
+      if (got.enabled || enabled[id] === true) p.note(`${pin.name} is enabled twice (${esc(o.id)} and ${market}); only one copy's hooks run. Disable one.`);
   }
 }

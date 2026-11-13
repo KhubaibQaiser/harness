@@ -77,8 +77,8 @@ export function planPresetFiles(p: Plan, preset: HarnessConfig['preset'], lp: Lo
   if (!preset || lp) for (const e of recordedFiles ?? []) if (e.item?.startsWith(PRESET_ITEM) && !wanted.some((f) => f.to === e.rel)) p.dropOwn(e.rel, `the ${e.item.slice(PRESET_ITEM.length)} preset`);
 }
 
-/** `.claude/settings.json` with harness's and the preset's blocks; returns the dropped blocks. */
-export function planSettings(p: Plan, o: { config: HarnessConfig; selected: string[]; plugins: PinnedPlugin[]; lp?: LoadedPreset; recorded?: string[] }): string[] {
+/** `.claude/settings.json` with harness's and the preset's blocks; returns the dropped blocks and the install's marketplace name. */
+export function planSettings(p: Plan, o: { config: HarnessConfig; selected: string[]; plugins: PinnedPlugin[]; lp?: LoadedPreset; recorded?: string[] }): { dropped: string[]; market: string } {
   const settings = mergeSettings(p.read('.claude/settings.json'), { sandbox: o.config.sandbox, recorded: o.recorded, plugins: o.plugins });
   const ps = mergeSettingsPreset(settings.after, { preset: o.lp, selected: o.selected, recorded: o.recorded ?? [], keep: !!o.config.preset && !o.lp });
   const dropped = [...settings.dropped, ...(ps?.dropped ?? [])];
@@ -88,7 +88,7 @@ export function planSettings(p: Plan, o: { config: HarnessConfig; selected: stri
     const c = p.changes.at(-1);
     if (c?.kind === 'update' && c.rel === '.claude/settings.json' && dropped.length) c.dropped = [...dropped];
   }
-  return dropped;
+  return { dropped, market: settings.market };
 }
 
 const isEmptyJson = (text: string): boolean => !Object.keys((() => { try { return JSON.parse(text); } catch { return { x: 1 }; } })()).length;

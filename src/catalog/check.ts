@@ -7,7 +7,7 @@ import type { Catalog } from './schema.js';
 export function checkCatalog(c: Catalog, templatesDir = packageDir('templates')): string[] {
   const errors: string[] = [];
   const ids = new Set(c.items.map((i) => i.id));
-  const names = new Map<string, string>(); // `<plugin>@harness-pins` and the .mcp.json server name must be unique
+  const names = new Map<string, string>(); // `<plugin>@<pins marketplace>` and the .mcp.json server name must be unique
   for (const it of c.items) {
     for (const k of ['requires', 'conflicts_with'] as const) for (const t of it[k]) if (t === it.id) errors.push(`${it.id}: ${k} "${t}": an item cannot list itself`);
       else if (!ids.has(t)) errors.push(`${it.id}: ${k} "${t}", which is not in the catalog`);

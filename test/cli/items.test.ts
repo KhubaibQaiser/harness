@@ -309,6 +309,22 @@ test('add of a plugin item prints the install step', async () => {
   expect(r.out).toContain('Run /harness:sync --install-plugins to install the plugin.');
 });
 
+test('add of a plugin fails loudly while an edited pins entry blocks the plugin merge, and records nothing', async () => {
+  const root = installed([...OWN, 'impeccable']);
+  const p = join(root, '.claude/settings.json');
+  const j = JSON.parse(readFileSync(p, 'utf8'));
+  const name = Object.keys(j.extraKnownMarketplaces)[0];
+  j.extraKnownMarketplaces[name].source.owner.name = 'me';
+  writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+  commitAll(root);
+  const cfg = readFileSync(join(root, '.harness/config.yaml'), 'utf8');
+  const r = await run(root, 'add', ['frontend-design', '--yes', '--over-budget']);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain(`the ${name} marketplace was edited, so harness can't change the plugin pins`);
+  expect(r.out).toContain('Undo the edit, or delete that entry, then run /harness:sync.');
+  expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).toBe(cfg);
+});
+
 test('add of an external-skill item prints the install step too', async () => {
   const root = installed();
   const r = await run(root, 'add', ['webapp-testing', '--yes', '--over-budget']);

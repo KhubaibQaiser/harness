@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -137,7 +138,7 @@ function mergeEvent(ev: string, list: any[], wants: any[], o: EventOut): void {
  * and one per inserted deny rule, `{"deny":"Read(./secrets/**)"}`. Uninstall removes them by deep equality.
  * A harness group equal to a `recorded` block but not to the fragment is replaced at its index; its old block is `dropped`.
  */
-export function mergeSettings(before: string | null, opts: { sandbox: SandboxMode; recorded?: string[]; plugins?: PinnedPlugin[] }): { after: string; blocks: string[]; dropped: string[]; notes: string[] } {
+export function mergeSettings(before: string | null, opts: { sandbox: SandboxMode; recorded?: string[]; plugins?: PinnedPlugin[] }): { after: string; blocks: string[]; dropped: string[]; notes: string[]; market: string } {
   let s: any;
   try { s = before === null ? {} : JSON.parse(before); } catch (e) { return bad(`is not valid JSON: ${(e as Error).message}`); }
   if (!isObj(s)) bad('must be a JSON object');
@@ -183,8 +184,9 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
     dropped.push(...r.sets);
     for (const p of r.changed) notes.push(`\`${SETTINGS}\`: \`${p}\` was changed; left as is.`);
   }
-  mergePlugins(s, opts.plugins ?? [], opts.recorded ?? [], blocks, dropped, notes);
-  return { after: dump(s, before), blocks, dropped, notes };
+  const market = pinsName(opts.plugins ?? []);
+  mergePlugins(s, opts.plugins ?? [], market, opts.recorded ?? [], blocks, dropped, notes);
+  return { after: dump(s, before), blocks, dropped, notes, market };
 }
 
 export type SetBlock = { set: string[]; value: unknown };
@@ -243,7 +245,40 @@ export function mergeTsconfigOptions(before: string, opts: Record<string, true>)
   }
 }
 const MCP = '.mcp.json';
-const PINS = 'harness-pins';
+/** The name every install used before content names: Claude Code keeps one user-level copy per name, so repos sharing it get each other's pins. */
+export const LEGACY_PINS = 'harness-pins';
+/** Every name harness has written for its pins marketplace. */
+export const PINS_NAME = /^harness-pins(-[0-9a-f]+)?$/;
+const CONTENT_PINS = /^harness-pins-[0-9a-f]{12}$/;
+const canonical = (v: unknown): string =>
+  Array.isArray(v) ? `[${v.map(canonical).join(',')}]` : isObj(v) ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}` : JSON.stringify(v);
+/** Named after the pins themselves: identical pins may share a name harmlessly, different pins never do (forks, branches, worktrees included). */
+// Every field counts (a hand-added `hooks` or `strict` changes what loads); only `item`, harness's catalog id, is not written to the entry.
+export function pinsName(plugins: PinnedPlugin[]): string {
+  const list = plugins.map(({ item: _item, ...rest }) => rest).sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+  return `${LEGACY_PINS}-${createHash('sha256').update(canonical(list)).digest('hex').slice(0, 12)}`;
+}
+/** settingsPins of the repo's settings file; throws MergeError when it can't be read, so no install guesses a name. */
+export function pinsAt(root: string): string {
+  let s: unknown;
+  try { s = JSON.parse(readFileSync(join(root, SETTINGS), 'utf8')); } catch (e) { throw new MergeError(`\`${SETTINGS}\` could not be read (${(e as Error).message.split('\n')[0]}).`); }
+  return settingsPins(s);
+}
+/** The content-named pins entries in a parsed settings file, in key order. */
+export const contentPins = (s: unknown): string[] => (isObj(s) && isObj(s.extraKnownMarketplaces) ? Object.keys(s.extraKnownMarketplaces).filter((k) => CONTENT_PINS.test(k)) : []);
+/** The pins marketplace a parsed settings file uses now: its content-named entry, else the old shared name. Two entries refuse: neither is safe to pick. */
+export function settingsPins(s: unknown): string {
+  const m = contentPins(s);
+  if (m.length > 1) throw new MergeError(`\`${SETTINGS}\` has two harness pins marketplaces, ${m.join(' and ')}; keep the one your plugin keys use and delete the other, then run /harness:sync.`);
+  return m[0] ?? LEGACY_PINS;
+}
+/** Content-named entries whose pins no longer hash to their name: an edit that would let another repo's copy stand in for them. */
+export function pinsMismatch(s: unknown): string[] {
+  return contentPins(s).filter((k) => {
+    const e = (s as any).extraKnownMarketplaces[k];
+    return !Array.isArray(e?.source?.plugins) || pinsName(e.source.plugins) !== k;
+  });
+}
 
 export interface PinnedPlugin {
   name: string;
@@ -269,10 +304,51 @@ export function pinnedPlugins(items: CatalogItem[]): PinnedPlugin[] {
   return out;
 }
 
-/** enabledPlugins keys and the one inline harness-pins marketplace; the same replace-in-place and drop rules as the hook groups. */
-function mergePlugins(s: any, plugins: PinnedPlugin[], recorded: string[], blocks: string[], dropped: string[], notes: string[]): void {
+const pinsEntry = (plugins: PinnedPlugin[], market: string) => ({ source: { source: 'settings', name: market, owner: { name: 'harness' }, plugins: plugins.map((p) => ({ name: p.name, source: p.source, ...(p.lspServers ? { lspServers: p.lspServers } : {}) })) } });
+const renameKey = (o: Record<string, unknown>, from: string, to: string, v: unknown) => Object.fromEntries(Object.entries(o).map(([k, x]) => (k === from ? [to, v] : [k, x])));
+
+/**
+ * Moves harness's keys and entry from an older pins name (the shared `harness-pins`, or the name of older pins) to `market`,
+ * in place. A key keeps its value. Returns the records still to merge; throws MergeError when an old entry was edited.
+ */
+function migratePins(s: any, plugins: PinnedPlugin[], market: string, recorded: string[], blocks: string[], dropped: string[]): string[] {
   const recs = recorded.map((b) => [b, parse(b)] as [string, any]);
-  const want = new Set(plugins.map((p) => `${p.name}@${PINS}`));
+  const old = (n: unknown): n is string => typeof n === 'string' && n !== market && PINS_NAME.test(n);
+  const edited = recs.filter(([, r]) => isObj(r) && old(r.marketplace) && s.extraKnownMarketplaces?.[r.marketplace] !== undefined && !isDeepStrictEqual(s.extraKnownMarketplaces[r.marketplace], r.entry));
+  // Merging past it would record picks that are never enabled, so the whole plan stops here.
+  if (edited.length) throw new MergeError(`\`${SETTINGS}\`: the ${edited[0][1].marketplace} marketplace was edited, so harness can't change the plugin pins. Undo the edit, or delete that entry, then run /harness:sync.`);
+  const rest: string[] = [];
+  for (const [b, r] of recs) {
+    const at = isObj(r) && typeof r.plugin === 'string' ? r.plugin.lastIndexOf('@') : -1;
+    if (at > 0 && old(r.plugin.slice(at + 1))) {
+      const p = plugins.find((x) => x.name === r.plugin.slice(0, at));
+      const key = `${p?.name}@${market}`;
+      if (p && isObj(s.enabledPlugins) && Object.hasOwn(s.enabledPlugins, r.plugin) && !Object.hasOwn(s.enabledPlugins, key)) {
+        s.enabledPlugins = renameKey(s.enabledPlugins, r.plugin, key, s.enabledPlugins[r.plugin]);
+        blocks.push(JSON.stringify({ plugin: key, item: p.item }));
+        dropped.push(b);
+        continue;
+      }
+    } else if (isObj(r) && old(r.marketplace)) {
+      dropped.push(b);
+      if (s.extraKnownMarketplaces?.[r.marketplace] === undefined) continue; // the person removed it
+      if (plugins.length && !Object.hasOwn(s.extraKnownMarketplaces, market)) {
+        const entry = pinsEntry(plugins, market);
+        s.extraKnownMarketplaces = renameKey(s.extraKnownMarketplaces, r.marketplace, market, entry);
+        blocks.push(JSON.stringify({ marketplace: market, entry }));
+      } else delete s.extraKnownMarketplaces[r.marketplace];
+      continue;
+    }
+    rest.push(b);
+  }
+  return rest;
+}
+
+/** enabledPlugins keys and the one inline pins marketplace; the same replace-in-place and drop rules as the hook groups. */
+function mergePlugins(s: any, plugins: PinnedPlugin[], market: string, recorded: string[], blocks: string[], dropped: string[], notes: string[]): void {
+  const left = migratePins(s, plugins, market, recorded, blocks, dropped);
+  const recs = left.map((b) => [b, parse(b)] as [string, any]);
+  const want = new Set(plugins.map((p) => `${p.name}@${market}`));
   for (const [b, r] of recs) {
     if (!isObj(r) || typeof r.plugin !== 'string' || want.has(r.plugin)) continue;
     const v = s.enabledPlugins?.[r.plugin];
@@ -281,33 +357,33 @@ function mergePlugins(s: any, plugins: PinnedPlugin[], recorded: string[], block
     dropped.push(b);
   }
   for (const p of plugins) {
-    const key = `${p.name}@${PINS}`;
+    const key = `${p.name}@${market}`;
     if (isObj(s.enabledPlugins) && Object.hasOwn(s.enabledPlugins, key)) continue;
     if (s.enabledPlugins === undefined) { s.enabledPlugins = {}; blocks.push(created('enabledPlugins')); }
     s.enabledPlugins[key] = true;
     blocks.push(JSON.stringify({ plugin: key, item: p.item }));
   }
   // ponytail: a live check (Task 27) confirms that an inline `settings` marketplace honours `lspServers`.
-  const entry = plugins.length ? { source: { source: 'settings', name: PINS, owner: { name: 'harness' }, plugins: plugins.map((p) => ({ name: p.name, source: p.source, ...(p.lspServers ? { lspServers: p.lspServers } : {}) })) } } : null;
-  const have = s.extraKnownMarketplaces?.[PINS];
-  const rec = recs.find(([, r]) => isObj(r) && r.marketplace === PINS && have !== undefined && isDeepStrictEqual(r.entry, have));
+  const entry = plugins.length ? pinsEntry(plugins, market) : null;
+  const have = s.extraKnownMarketplaces?.[market];
+  const rec = recs.find(([, r]) => isObj(r) && r.marketplace === market && have !== undefined && isDeepStrictEqual(r.entry, have));
   if (have === undefined) {
-    for (const [b, r] of recs) if (isObj(r) && r.marketplace === PINS) dropped.push(b); // the person removed it; the new entry replaces the record
+    for (const [b, r] of recs) if (isObj(r) && r.marketplace === market) dropped.push(b); // the person removed it; the new entry replaces the record
     if (entry) {
       if (s.extraKnownMarketplaces === undefined) { s.extraKnownMarketplaces = {}; blocks.push(created('extraKnownMarketplaces')); }
-      s.extraKnownMarketplaces[PINS] = entry;
-      blocks.push(JSON.stringify({ marketplace: PINS, entry }));
+      s.extraKnownMarketplaces[market] = entry;
+      blocks.push(JSON.stringify({ marketplace: market, entry }));
     }
   } else if (entry && isDeepStrictEqual(have, entry)) {
     // already current
   } else if (rec) {
     dropped.push(rec[0]);
     if (entry) {
-      s.extraKnownMarketplaces[PINS] = entry;
-      blocks.push(JSON.stringify({ marketplace: PINS, entry }));
-    } else delete s.extraKnownMarketplaces[PINS];
-  } else if (entry || recs.some(([, r]) => isObj(r) && r.marketplace === PINS)) {
-    notes.push(`\`${SETTINGS}\`: the harness-pins marketplace was edited; left as is. harness doctor checks it.`);
+      s.extraKnownMarketplaces[market] = entry;
+      blocks.push(JSON.stringify({ marketplace: market, entry }));
+    } else delete s.extraKnownMarketplaces[market];
+  } else if (entry || recs.some(([, r]) => isObj(r) && r.marketplace === market)) {
+    notes.push(`\`${SETTINGS}\`: the ${market} marketplace was edited; left as is. harness doctor checks it.`);
   }
   for (const k of ['enabledPlugins', 'extraKnownMarketplaces']) dropCreated(s, k, recorded, dropped);
 }

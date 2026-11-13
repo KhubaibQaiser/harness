@@ -41,14 +41,18 @@ const plugin = (id: string) => ({ id, kind: 'plugin', source: { type: 'github', 
 test('replaced marketplace blocks do not accumulate across three updates', () => {
   let text: string | null = null;
   let entry: Manifest['files'][number] = { rel: '.claude/settings.json', kind: 'create', hash: 'h' };
+  const markets: string[] = [];
   for (const plugins of [[plugin('p1')], [plugin('p1'), plugin('p2')], [plugin('p2'), plugin('p3')]]) {
     const r = mergeSettings(text, { sandbox: 'off', recorded: entry.blocks, plugins: pinnedPlugins(plugins) });
+    markets.push(r.market);
     const c: Change = text === null ? { kind: 'create', rel: entry.rel, content: r.after, blocks: r.blocks } : { kind: 'update', rel: entry.rel, before: text, after: r.after, blocks: r.blocks, dropped: r.dropped };
     entry = mergeManifestFiles(man([entry]), [c])[0];
     text = r.after;
   }
   expect(entry.blocks!.filter((b) => JSON.parse(b).marketplace)).toHaveLength(1);
-  expect(entry.blocks!.filter((b) => JSON.parse(b).plugin).map((b) => JSON.parse(b).plugin).sort()).toEqual(['p2@harness-pins', 'p3@harness-pins']);
+  expect(entry.blocks!.filter((b) => JSON.parse(b).plugin).map((b) => JSON.parse(b).plugin).sort()).toEqual([`p2@${markets[2]}`, `p3@${markets[2]}`]);
+  expect(new Set(markets).size).toBe(3); // the name follows the pins
+  for (const old of markets.slice(0, 2)) expect(entry.blocks!.join()).not.toContain(old);
 });
 
 test('mcp blocks are kept as structural blocks', () => {

@@ -38,6 +38,30 @@ describe('gh writes ask, reads stay allowed', () => {
   });
 });
 
+describe('round 1 (owner ruling): an allow-list, so only known reads run freely', () => {
+  test('aliases, uncovered and unknown subcommands, extensions and user aliases ask', () => {
+    all(['gh release new v1', 'gh gist new f', 'gh pr update-branch 1', 'gh pr revert 1', 'gh discussion create -t x', 'gh discussion comment 1 -b x', 'gh project item-add 1 --owner o --url u',
+      'gh project delete 1', 'gh repo autolink create x y', 'gh repo fork o/r', 'gh repo create x --public', 'gh repo new x', 'gh issue create -t x', 'gh issue new -t x', 'gh issue develop 1',
+      'gh ssh-key add k.pub', 'gh gpg-key add k', 'gh codespace delete -c x', 'gh cs delete -c x', 'gh agent-task create "do x"', 'gh skill publish', 'gh extension install o/gh-x', 'gh ext install o/x',
+      'gh extension exec x', 'gh x-merge 1', 'gh co 1', 'gh secret remove X', 'gh auth logout', 'gh config set editor vim'], 'ask');
+  });
+  test('ls aliases, group aliases, help and version forms read', () => {
+    all(['gh secret ls', 'gh variable ls', 'gh label ls', 'gh rs ls', 'gh ruleset view 1', 'gh cs ls', 'gh ext ls', 'gh pr', 'gh', 'gh --help pr merge 1', 'gh pr merge --help',
+      'gh pr merge -h', 'gh help pr merge', 'gh --version', 'gh repo deploy-key ls', 'gh repo gitignore view Go', 'gh repo clone o/r', 'gh pr checkout 1', 'gh run download 9', 'gh browse'], 'allow');
+    expect(guard('gh pr comment 1 -b --help').kind).toBe('ask'); // --help as another option's value is not help
+  });
+  test('quoted, escaped and ANSI-C spellings, and gh right after an unknown head', () => {
+    all(["gh $'pr' merge 1", "gh pr $'\\x6derge' 1", "$'\\x67h' pr merge 1", 'g\\h pr merge 1', "gh pr 'merge' 1", 'zzwrap gh pr merge 1', 'zzwrap /opt/homebrew/bin/gh pr merge 1'], 'ask');
+    all(['echo gh pr merge 1', 'man gh', 'which gh', 'grep -r "gh pr merge" docs'], 'allow');
+  });
+  test('gh api GraphQL with fields is a read only for one literal query word with no mutation', () => {
+    all(['Q=\'mutation{x}\'; gh api graphql -f query="$Q"', 'gh api graphql -f query="$(cat m.gql)"', "gh api graphql -f query=$'mut\\x61tion{x}'", "gh api graphql -f query='mut''ation{x}'",
+      "gh api graphql -f query='#c\nmutation{x}'", "gh api graphql -f query='query($n:Int){x}' -F n=5", 'gh api https://api.github.com/graphql -f query=\'mutation{x}\'',
+      'gh api -H "X-HTTP-Method-Override: POST" repos/o/r', 'gh api x -X GET -X POST'], 'ask');
+    all(["gh api graphql -f query='query{viewer{login}}'", "gh api /graphql -f query='{x}'", 'gh api x -X POST -X GET'], 'allow');
+  });
+});
+
 describe('gh api asks unless clearly a read', () => {
   test('an explicit non-GET method, in every spelling', () => all(['gh api -X POST repos/o/r/issues', 'gh api --method DELETE repos/o/r', 'gh api --method=PUT repos/o/r/topics', 'gh api -XPATCH repos/o/r', 'gh api -X post x'], 'ask'));
   test('fields or an input body (gh then defaults to POST)', () => all(['gh api repos/o/r/issues -f title=x', 'gh api repos/o/r/labels -F name=bug', 'gh api x --field a=b', 'gh api x --raw-field a=b', 'gh api x --input body.json'], 'ask'));
@@ -52,9 +76,15 @@ describe('hub writes and GitLab push options ask', () => {
     all(['hub pull-request -m t', 'hub merge https://github.com/o/r/pull/1', 'hub release create v1', 'hub release edit v1', 'hub release delete v1', 'hub api -X DELETE repos/o/r', 'hub api repos/o/r/issues -f title=x'], 'ask');
     all(['hub release', 'hub release show v1', 'hub api repos/o/r', 'hub browse', 'hub ci-status'], 'allow');
   });
-  test('git push -o merge_request.*', () => {
-    all(['git push -o merge_request.create', 'git push -o merge_request.merge_when_pipeline_succeeds origin feat', 'git push --push-option=merge_request.create', 'git push -omerge_request.target=main'], 'ask');
-    all(['git push -o ci.skip origin feat', 'git push origin feat'], 'allow');
+  test('git push -o merge_request.*, also set by git -c or git config', () => {
+    all(['git push -o merge_request.create', 'git push -o merge_request.merge_when_pipeline_succeeds origin feat', 'git push --push-option=merge_request.create', 'git push -omerge_request.target=main',
+      'git -c push.pushOption=merge_request.create push', 'git -c push.pushoption=merge_request.create push origin x', 'git config push.pushOption merge_request.create'], 'ask');
+    all(['git push -o ci.skip origin feat', 'git push origin feat', 'git -c push.pushOption=ci.skip push', 'git config push.pushOption ci.skip'], 'allow');
+  });
+  test('hub: own commands are an allow-list; its git passthrough follows the git rules', () => {
+    all(['hub delete o/r', 'hub create', 'hub fork', 'hub gist create f', 'hub sync', 'hub issue create -m x', 'hub issue update 1 -s closed', 'hub pr merge 1'], 'ask');
+    all(['hub push -f', 'hub push origin main', 'hub push --force origin feat'], 'deny');
+    all(['hub pr checkout 1', 'hub pr list', 'hub issue', 'hub issue show 1', 'hub push origin feat', 'hub status', 'hub clone o/r'], 'allow');
   });
 });
 

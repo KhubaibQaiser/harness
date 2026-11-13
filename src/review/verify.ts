@@ -12,9 +12,13 @@ import { gatherHash, type GatherJson } from './gather.js';
 export const TEST_PATHSPECS = [':(glob)**/*.test.*', ':(glob)**/*.spec.*', ':(glob)**/__tests__/**', ':(glob)test/**', ':(glob)tests/**'];
 const WINDOW = 3, SNIPPET = 10;
 const norm = (s: string) => s.replace(/\r/g, '').trim().replace(/\s+/g, ' ');
-const MIN_PART = 12; // a shorter quote (`;`, `}`) would match almost any line, so it must be the whole line
-/** Controller rule: the normalised quote equals the whole normalised line, or is a part of it with at least 12 non-space characters. */
-const holds = (line: string, q: string) => { const l = norm(line); return l === q || (q.replace(/ /g, '').length >= MIN_PART && l.includes(q)); };
+// Short quotes (`;`, `}`, `});`, `*/`) are on almost every page of code, so they can't anchor a finding.
+const MIN_LINE = 6, MIN_PART = 12;
+/** Controller rule: the normalised quote equals the whole normalised line with at least 6 non-space characters, or is a part of it with at least 12. */
+const holds = (line: string, q: string) => {
+  const l = norm(line), n = q.replace(/ /g, '').length;
+  return (l === q && n >= MIN_LINE) || (n >= MIN_PART && l.includes(q));
+};
 const first = (r: { status: number; stderr?: string }) => esc((r.stderr ?? '').split('\n').find((l) => l.trim())?.trim() ?? '') || `git exited ${r.status}`;
 
 /** A file the head snapshot holds: only names gather mapped, never a raw path under `head/`. */

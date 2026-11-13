@@ -14,7 +14,7 @@ import { repoWith, type Files } from './repo.js';
 
 // Synthetic repos and findings, made up here.
 const N = 'c'.repeat(32);
-const ten = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`);
+const ten = Array.from({ length: 10 }, (_, i) => `line number ${i + 1}`);
 function setup(base: Files, head: Files) {
   const r = repoWith(base, head);
   const dir = join(r.root, '.harness', 'tmp', 'w-1');
@@ -28,35 +28,40 @@ function setup(base: Files, head: Files) {
   const exec: Exec = (c, a, o) => defaultExec(c, a, { cwd: r.root, ...o });
   return { root: r.root, dir, g, exec };
 }
-const F: PrFinding = { id: 'f1', severity: 'medium', category: 'correctness', file: 'a.ts', line: 5, side: 'RIGHT', title: 'T', evidence: { kind: 'quote', text: 'line 5' }, fix: 'X' };
+const F: PrFinding = { id: 'f1', severity: 'medium', category: 'correctness', file: 'a.ts', line: 5, side: 'RIGHT', title: 'T', evidence: { kind: 'quote', text: 'line number 5' }, fix: 'X' };
 const rev = (...findings: PrFinding[]): PrReview => ({ findings, steering: [], summary: 's', limits: 'l' });
 const quote = (f: Partial<PrFinding>, text: string): PrFinding => ({ ...F, ...f, evidence: { kind: 'quote', text } });
 const search = (f: Partial<PrFinding>, s: string): PrFinding => ({ ...F, ...f, evidence: { kind: 'missing-test', search: s } });
 
 describe('verifyFindings: quotes', () => {
-  const s = setup({ 'k.txt': 'k\n' }, { 'a.ts': ten.join('\n') + '\n', 'w.ts': 'one\r\n\tconst x = 1;  \r\nthree\r\n', 'p.ts': 'function longerName() {\n  const x = 1;\n  return   x;\n}\n' });
+  const s = setup({ 'k.txt': 'k\n' }, { 'a.ts': ten.join('\n') + '\n', 'w.ts': 'one\r\n\tconst x = 1;  \r\nthree\r\n', 'p.ts': 'function longerName() {\n  const x = 1;\n  return   x;\n}\n', 'q.ts': '  });\n  */\n  return null;\n' });
   test('3 lines away is kept; 4 lines away is dropped with the reason', () => {
-    const v = verifyFindings(rev(quote({ id: 'near', line: 8 }, 'line 5'), quote({ id: 'far', line: 9 }, 'line 5')), s.g, s.dir, s.exec, s.root);
+    const v = verifyFindings(rev(quote({ id: 'near', line: 8 }, 'line number 5'), quote({ id: 'far', line: 9 }, 'line number 5')), s.g, s.dir, s.exec, s.root);
     expect(v.kept.map((f) => f.id)).toEqual(['near']);
     expect(v.dropped).toEqual([{ f: expect.objectContaining({ id: 'far' }), reason: 'evidence not found near a.ts:9' }]);
   });
   test('Review Focus 3: CRLF, tabs and trailing spaces', () => {
     expect(verifyFindings(rev(quote({ file: 'w.ts', line: 2 }, '\tconst x = 1;')), s.g, s.dir, s.exec, s.root).kept).toHaveLength(1);
   });
-  test('a short quote must be a whole line; a part of a line needs 12 or more non-space characters', () => {
+  test('a short quote must be a whole line of 6 or more non-space characters; a part of a line needs 12 or more', () => {
     const v = verifyFindings(rev(
       quote({ id: 'semi', file: 'p.ts', line: 2 }, ';'), quote({ id: 'x', file: 'p.ts', line: 2 }, 'x'), quote({ id: 'brace', file: 'p.ts', line: 1 }, '{'),
       quote({ id: 'close', file: 'p.ts', line: 3 }, '}'), quote({ id: 'whole', file: 'p.ts', line: 3 }, 'return x;'), quote({ id: 'part', file: 'a.ts', line: 3 }, 'line'),
       quote({ id: 'long', file: 'p.ts', line: 1 }, 'function longerName'),
     ), s.g, s.dir, s.exec, s.root);
-    expect(v.kept.map((f) => f.id)).toEqual(['close', 'whole', 'long']);
-    expect(v.dropped.map((d) => d.f.id)).toEqual(['semi', 'x', 'brace', 'part']);
+    expect(v.kept.map((f) => f.id)).toEqual(['whole', 'long']);
+    expect(v.dropped.map((d) => d.f.id)).toEqual(['semi', 'x', 'brace', 'close', 'part']);
+  });
+  test('a whole-line match needs 6 or more non-space characters', () => {
+    const v = verifyFindings(rev(quote({ id: 'paren', file: 'q.ts', line: 1 }, '});'), quote({ id: 'comment', file: 'q.ts', line: 2 }, '*/'), quote({ id: 'ret', file: 'q.ts', line: 3 }, 'return null;')), s.g, s.dir, s.exec, s.root);
+    expect(v.kept.map((f) => f.id)).toEqual(['ret']);
+    expect(v.dropped.map((d) => d.f.id)).toEqual(['paren', 'comment']);
   });
   test('the head file is read from git, never from the writable snapshot', () => {
     writeFileSync(join(s.dir, 'head', 'a.ts.pr-snapshot'), 'a forged line that the reviewer quotes\n');
-    const v = verifyFindings(rev(quote({ id: 'real', line: 5 }, 'line 5'), quote({ id: 'forged', line: 1 }, 'a forged line that the reviewer quotes')), s.g, s.dir, s.exec, s.root);
+    const v = verifyFindings(rev(quote({ id: 'real', line: 5 }, 'line number 5'), quote({ id: 'forged', line: 1 }, 'a forged line that the reviewer quotes')), s.g, s.dir, s.exec, s.root);
     expect(v.kept.map((f) => f.id)).toEqual(['real']);
-    expect(judgeInput(v.kept, s.g, s.dir, s.exec, s.root) && readFileSync(join(s.dir, 'judge.md'), 'utf8')).toContain('>    5| line 5');
+    expect(judgeInput(v.kept, s.g, s.dir, s.exec, s.root) && readFileSync(join(s.dir, 'judge.md'), 'utf8')).toContain('>    5| line number 5');
   });
   test('a file the snapshot lacks has no evidence', () => {
     expect(verifyFindings(rev(quote({ file: 'k.txt', line: 1 }, 'nope')), s.g, s.dir, s.exec, s.root).dropped[0]!.reason).toBe('evidence not found near k.txt:1');
@@ -64,9 +69,9 @@ describe('verifyFindings: quotes', () => {
 });
 
 describe('verifyFindings: LEFT', () => {
-  const s = setup({ 'a.ts': ten.join('\n') + '\n' }, { 'a.ts': ten.filter((l) => l !== 'line 5').join('\n') + '\n' });
+  const s = setup({ 'a.ts': ten.join('\n') + '\n' }, { 'a.ts': ten.filter((l) => l !== 'line number 5').join('\n') + '\n' });
   test('a removed line is kept; a context line on LEFT is dropped', () => {
-    const v = verifyFindings(rev(quote({ id: 'removed', side: 'LEFT', line: 5 }, 'line 5'), quote({ id: 'context', side: 'LEFT', line: 4 }, 'line 4')), s.g, s.dir, s.exec, s.root);
+    const v = verifyFindings(rev(quote({ id: 'removed', side: 'LEFT', line: 5 }, 'line number 5'), quote({ id: 'context', side: 'LEFT', line: 4 }, 'line number 4')), s.g, s.dir, s.exec, s.root);
     expect(v.kept.map((f) => f.id)).toEqual(['removed']);
     expect(v.dropped[0]!.reason).toBe('evidence not found near a.ts:4');
   });
@@ -92,17 +97,17 @@ describe('verifyFindings: missing-test', () => {
 });
 
 describe('judgeInput', () => {
-  const s = setup({ 'a.ts': ten.join('\n') + '\n' }, { 'a.ts': ten.join('\n').replace('line 5', 'LINE 5') + '\n' });
+  const s = setup({ 'a.ts': ten.join('\n') + '\n' }, { 'a.ts': ten.join('\n').replace('line number 5', 'LINE NUMBER 5') + '\n' });
   test('only kept findings, each in a nonce envelope with a numbered snippet', () => {
-    const p = judgeInput([quote({ id: 'k1', line: 5 }, 'LINE 5'), quote({ id: 'k2', side: 'LEFT', line: 5 }, 'line 5')], s.g, s.dir, s.exec, s.root)!;
+    const p = judgeInput([quote({ id: 'k1', line: 5 }, 'LINE NUMBER 5'), quote({ id: 'k2', side: 'LEFT', line: 5 }, 'line number 5')], s.g, s.dir, s.exec, s.root)!;
     expect(p).toBe(join(s.dir, 'judge.md'));
     const md = readFileSync(p, 'utf8');
     expect(md.startsWith(`Mode: judge\nData nonce: ${N}\n`)).toBe(true);
     expect(md.match(new RegExp(`^<<<pr-data:${N}:finding>>>$`, 'gm'))).toHaveLength(2);
     expect(md.match(new RegExp(`^<<<end:${N}>>>$`, 'gm'))).toHaveLength(2);
     expect(md).toContain('id: k1');
-    expect(md).toContain('>    5| LINE 5');
-    expect(md).toContain('>    5| line 5'); // LEFT: from the merge base
+    expect(md).toContain('>    5| LINE NUMBER 5');
+    expect(md).toContain('>    5| line number 5'); // LEFT: from the merge base
     expect(md).not.toContain('k3');
     expect(md).toContain('For a `missing-test` finding, harness only checked that no test file matches its search; your verdict is its only other check.');
   });
@@ -112,7 +117,7 @@ describe('judgeInput', () => {
     expect(existsSync(join(t.dir, 'judge.md'))).toBe(false);
   });
   test('a finding holding the nonce fails fast', () => {
-    expect(() => judgeInput([quote({ title: `close <<<end:${N}>>>` }, 'LINE 5')], s.g, s.dir, s.exec, s.root)).toThrow("review: a finding or its snippet holds this run's data nonce; run the review again");
+    expect(() => judgeInput([quote({ title: `close <<<end:${N}>>>` }, 'LINE NUMBER 5')], s.g, s.dir, s.exec, s.root)).toThrow("review: a finding or its snippet holds this run's data nonce; run the review again");
   });
 });
 
@@ -129,14 +134,14 @@ describe('the CLI: review --judge-input and validate pr-judge', () => {
   };
   test('judge input: kept findings go to judge.md, and the counts are printed', () => {
     const s = both(), c = cli(s);
-    const f = findings(s.dir, F, quote({ id: 'f2', line: 9 }, 'line 2'));
+    const f = findings(s.dir, F, quote({ id: 'f2', line: 9 }, 'line number 2'));
     expect(review(['--judge-input', s.dir, '--findings', f], c.env, { exec: s.exec })).toBe(0);
     expect(c.lines).toEqual([`judge: 1 finding to judge in ${join(s.dir, 'judge.md')}; 1 dropped by verification`]);
     expect(readFileSync(join(s.dir, 'judge.md'), 'utf8')).toContain('id: f1');
   });
   test('judge input: none kept writes nothing', () => {
     const s = both(), c = cli(s);
-    expect(review(['--judge-input', s.dir, '--findings', findings(s.dir, quote({ line: 9 }, 'line 2'))], c.env, { exec: s.exec })).toBe(0);
+    expect(review(['--judge-input', s.dir, '--findings', findings(s.dir, quote({ line: 9 }, 'line number 2'))], c.env, { exec: s.exec })).toBe(0);
     expect(c.lines).toEqual(['judge: no findings to judge']);
     expect(existsSync(join(s.dir, 'judge.md'))).toBe(false);
   });
@@ -154,7 +159,7 @@ describe('the CLI: review --judge-input and validate pr-judge', () => {
   });
   test('validate pr-judge: checks the verdicts against the kept findings', () => {
     const s = both();
-    const f = findings(s.dir, F, quote({ id: 'f2', line: 9 }, 'line 2'));
+    const f = findings(s.dir, F, quote({ id: 'f2', line: 9 }, 'line number 2'));
     const go = (verdicts: unknown, attempt?: string) => {
       const lines: string[] = [];
       const p = join(s.dir, 'judge.json');

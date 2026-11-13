@@ -102,14 +102,16 @@ test('loadContract with ref reads git show <ref>:.harness/tasks/<id>.json and ch
   expect(calls[0]).toContain('core.hooksPath=/dev/null/harness-no-hooks');
 });
 
-test('activeTaskId prefers a valid HARNESS_TASK, ignores an invalid one, else reads the state file', () => {
+test('activeTaskId prefers a valid HARNESS_TASK, throws on an invalid one, else reads the state file', () => {
   const root = dir();
   expect(activeTaskId(root, {})).toBeNull();
   setActiveTask(root, 'from-file');
   expect(readFileSync(join(root, ACTIVE_TASK), 'utf8')).toBe('from-file\n');
   expect(activeTaskId(root, {})).toBe('from-file');
   expect(activeTaskId(root, { HARNESS_TASK: 'from-env' })).toBe('from-env');
-  expect(activeTaskId(root, { HARNESS_TASK: '../evil' })).toBe('from-file');
+  // a bad launch value is an error the caller turns into deny or not-done, never a silent fall back to the state file
+  expect(() => activeTaskId(root, { HARNESS_TASK: '../evil' })).toThrow('HARNESS_TASK "../evil" is not a task id');
+  expect(() => activeTaskId(root, { HARNESS_TASK: '' })).toThrow('HARNESS_TASK "" is not a task id');
   writeFileSync(join(root, ACTIVE_TASK), 'Not An Id\n');
   expect(activeTaskId(root, {})).toBeNull();
   setActiveTask(root, null);

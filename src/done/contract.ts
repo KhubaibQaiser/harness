@@ -166,9 +166,12 @@ export function loadContract(root: string, id: string, o: { ref?: string; git?: 
   return { contract: v.contract };
 }
 
-/** HARNESS_TASK from the launch environment when it is a task id, else `.harness/state/active-task`, else null. */
+/** HARNESS_TASK from the launch environment, else `.harness/state/active-task`, else null. A HARNESS_TASK that is not a task id throws: callers deny. */
 export function activeTaskId(root: string, env: NodeJS.ProcessEnv): string | null {
-  if (env.HARNESS_TASK !== undefined && TASK_ID.test(env.HARNESS_TASK)) return env.HARNESS_TASK;
+  if (env.HARNESS_TASK !== undefined) {
+    if (!TASK_ID.test(env.HARNESS_TASK)) throw new Error(`task: HARNESS_TASK ${q(env.HARNESS_TASK)} is not a task id (lowercase letters, digits and hyphens, at most 64)`);
+    return env.HARNESS_TASK;
+  }
   const p = abs(root, ACTIVE_TASK);
   if (!existsSync(p)) return null;
   const id = readFileSync(p, 'utf8').trim();

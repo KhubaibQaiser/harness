@@ -118,10 +118,44 @@ function plainSegment(seg: string, valueMode: boolean, out: { unsure: boolean })
  * decides it as the plain command and a wrapper option that writes a file (time -o) is still its own segment.
  * Empty when no segment changes. When a wrapper has an option the table does not know, its value can't be told from the
  * command, so two readings come back — the option taking a value, and not — and `unsure` is set; the caller takes the
- * strictest decision across them, so either reading's deny is a deny.
+ * strictest decision across them, so either reading's deny is a deny. With `guarded` (the caller's command names), one
+ * more reading comes back: see guardedPaths.
  * ponytail: with two unknown options, mixed readings (one with a value, one without) are not tried.
  */
-export function plainHeads(cmd: string): { texts: string[]; unsure: boolean } {
+export function plainHeads(cmd: string, guarded: ReadonlySet<string> = NONE): { texts: string[]; unsure: boolean } {
+  const g = guardedPaths(cmd, guarded);
+  const r = plainReadings(cmd);
+  return g === null ? r : { texts: [...r.texts, g], unsure: r.unsure };
+}
+const NONE: ReadonlySet<string> = new Set();
+const PATH_WORD = (w: string): boolean => { const u = unquote(w); return /[/\\'"]/.test(w) && !/[$`*?[{=]/.test(u) && !/^[-<>&|]/.test(u) && !/^\d*[<>]/.test(w); };
+/**
+ * The command with each path or quoted word that names a guarded command (`/bin/rm`, `"/usr/bin/npm"`) reduced to that
+ * name and started as a segment of its own, so a wrapper no table knows (`zzwrap -q /bin/rm -rf ~`) hides nothing.
+ * Every other word, an argument path included, is left whole. A `cd`/`pushd` folder is never cut (`cd /src/git`).
+ * Null when no word changes.
+ */
+function guardedPaths(cmd: string, guarded: ReadonlySet<string>): string | null {
+  if (!guarded.size) return null;
+  let text = '', from = 0, changed = false;
+  for (const p of pieces(cmd)) {
+    const k = cmd.indexOf(p.text, from); // pieces are trimmed and in order; only separators lie between them
+    const ws = words(p.text), cdLike = /^(cd|pushd)$/.test(nameOf(ws[0] ?? ''));
+    let seg = '', at = 0, pos = 0;
+    for (let j = 0; j < ws.length; j++) {
+      const o = p.text.indexOf(ws[j], pos); // only whitespace lies between two words
+      pos = o + ws[j].length;
+      if (cdLike || !PATH_WORD(ws[j]) || !guarded.has(nameOf(ws[j]))) continue;
+      seg += (j ? `${p.text.slice(at, o).replace(/\s+$/, '')} ; ` : p.text.slice(at, o)) + nameOf(ws[j]);
+      [at, changed] = [pos, true];
+    }
+    text += cmd.slice(from, k) + seg + p.text.slice(at);
+    from = k + p.text.length;
+  }
+  return changed ? text + cmd.slice(from) : null;
+}
+
+function plainReadings(cmd: string): { texts: string[]; unsure: boolean } {
   const out = { unsure: false };
   const read = (valueMode: boolean): string | null => {
     let text = '', from = 0, changed = false;

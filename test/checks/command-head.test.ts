@@ -62,6 +62,15 @@ describe('guard: wrapped and path heads decide as the plain form', () => {
       'xargs --max-a 1 /usr/bin/rm -rf /', 'stdbuf --out L /usr/bin/rm -rf /', 'env --un X --ig "/usr/bin/npm" install x'])
       expect(guard(c), c).toBe('deny');
   });
+  test('a wrapper no table knows: a path to a guarded command after it is still read (round 2)', () => {
+    for (const c of ['zzwrap -q /bin/rm -rf ~', 'zzwrap /usr/bin/rm -rf /', 'zzwrap -x val "/usr/local/bin/npm" install x', 'zzwrap /opt/homebrew/bin/pnpm add x', 'parallel /usr/bin/rm -rf ::: /'])
+      expect(guard(c), c).toBe('deny');
+    // A guarded command's path in argument position runs nothing new: still allowed.
+    for (const c of ['ls -l /usr/bin/git', 'cat /usr/bin/rm', 'which /usr/bin/npm', 'file /bin/rm']) expect(guard(c), c).toBe('allow');
+  });
+  test('a command in backticks meets the rm rule (round 2)', () => {
+    for (const c of ['`rm -rf /`', '`/bin/rm -rf ~`', 'echo `rm -rf /`', 'x=`rm -rf ~`']) expect(guard(c), c).toBe('deny');
+  });
   test('a known-option wrapper with a plain command is still allowed', () => {
     for (const c of ['nice -n 5 npm test', 'timeout 60 git status', 'env FOO=1 /usr/bin/git log', 'xargs -0 -n1 echo', 'command -v git', '/usr/local/bin/node script.js',
       'caffeinate -i npm test', 'flock /tmp/l git status', 'taskset -c 0 npm test', 'watch -n1 git status'])
@@ -85,6 +94,11 @@ describe('protect: write targets behind wrappers, paths and --output', () => {
       `curl --output-dir .harness http://x`, `wget -O ${T} http://x`, `wget --output-document=${T} http://x`, `wget --output-doc=${T} http://x`, `wget --output-docu ${T} http://x`, `wget -P .harness http://x`,
       `sort -o ${T} x`, `sort --output=${T} x`, `sort --out=${T} x`, `sort --outp ${T} x`, `time -o ${T} ls`, `nice time -o ${T} ls`, `/usr/bin/time -o ${T} ls`, `nice /usr/bin/time -o ${T} ls`, `command git diff --output=${T}`])
       expect(prot(c), c).toBe('deny');
+  });
+  test('a wrapper no table knows before a path writer, and a quoted flag name (round 2)', () => {
+    for (const c of [`zzwrap /usr/bin/tee ${T}`, `zzwrap -q /bin/cp x ${T}`, `zzwrap "/usr/bin/sed" -i s/a/b/ ${T}`, `git diff '--output'=${T}`, `git diff "--out"put=${T}`])
+      expect(prot(c), c).toBe('deny');
+    for (const c of ['cat /usr/bin/tee', 'ls -l /bin/cp']) expect(prot(c), c).toBe('allow');
   });
   test('an unknown wrapper option: either reading writing the protected path is not allowed', () => {
     expect(prot(`sudo --frobnicate x tee ${T}`)).not.toBe('allow');

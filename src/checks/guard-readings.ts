@@ -10,7 +10,7 @@ import { LAST_ARG } from './guard-reruns.js';
 import { JOIN } from './guard-base.js';
 
 /** Command names the text rules and checks look for. A command-position glob that can match one is read as it. */
-const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
+export const RULED = ['git', 'gh', 'curl', 'wget', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'chmod', 'dd', 'rm', 'sudo', 'eval', 'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv',
   'cdk', 'terraform', 'aws', 'kubectl', 'docker', 'vercel', 'harness', 'cli.mjs', 'cli.js'];
 /** Readings of one segment (a glob, then a glob after the wrapper it became, …) or of one command word's zsh alternations. */
 const MAX_SEGMENT_READINGS = 32;

@@ -470,6 +470,8 @@ export const protect: Check = {
 // One work budget per run, the nested runs above included (re-review 21, P1b): past it WorkBudget is thrown and the
 // dispatcher denies.
 const unbudgeted = protect.run;
+// Commands whose writes protect reads: a path to one after a wrapper no table knows still heads its own segment.
+const WRITE_HEADS: ReadonlySet<string> = new Set([...WRITERS, ...DELETERS, 'sed', 'perl', 'git', 'curl', 'wget', 'sort', 'time', 'tar', 'unzip', 'find']);
 const rank = (d: Decision): number => (d.kind === 'deny' ? 2 : d.kind === 'ask' ? 1 : 0);
 /** The command as written and its plain-head readings (wrappers split off, every path or quoted word read as its name),
  *  the strictest winning. When a wrapper's option is unknown the two readings bracket what it consumes, so either one's
@@ -478,7 +480,7 @@ function withPlainHeads(ctx: Parameters<Check['run']>[0]): Decision {
   const d = unbudgeted(ctx) as Decision;
   if (d.kind === 'deny' || !isShell(ctx.input.tool_name)) return d;
   let worst = d;
-  for (const command of plainHeads(String(ctx.input.tool_input?.command ?? '')).texts) {
+  for (const command of plainHeads(String(ctx.input.tool_input?.command ?? ''), WRITE_HEADS).texts) {
     const r = unbudgeted({ ...ctx, input: { ...ctx.input, tool_input: { ...ctx.input.tool_input, command } } }) as Decision;
     if (rank(r) > rank(worst)) worst = r;
   }

@@ -4,10 +4,10 @@ import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { plainHeads } from '../core/command-head.js';
-import { commandName, cPayloads, remember, SHELLS, stdinPrograms, withWorkBudget } from '../core/shell-words.js';
+import { commandName, cPayloads, remember, SHELLS, stdinPrograms, unquote as shellUnquote, withWorkBudget, words as shellWords } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
-import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, joinVariant, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, joinVariant, MAX_READINGS, RULED, splicedReading, textRulesView } from './guard-readings.js';
 import { type Quoted, Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
 import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
@@ -446,11 +446,12 @@ const ASK: [RegExp, string][] = [
 /** A subshell or substitution closing right after a word: `(rm -rf /)`, `(git push origin main)`. Not `}`: it ends a brace word. */
 const CLOSERS = /[)`]+$/;
 export const rmTargets = (cmd: string): { recursive: boolean; targets: string[] }[] =>
-  [...cmd.matchAll(/(?:^|[;&|(]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => {
+  [...cmd.matchAll(/(?:^|[;&|(`]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => { // a backtick opens a command too: `rm -rf /`
     const toks = m[1].trim().split(/\s+/).filter(Boolean);
     const flags = toks.filter((t) => t.startsWith('-')).join('');
     // A closer ends a group opened before rm, as in `(rm -rf /)`; one in rm's own words (-$(cat tmp)) is part of a target.
-    const closesOuter = !/[(`]/.test(m[1]) && /[(`]/.test(cmd.slice(0, m.index + m[0].length - m[1].length));
+    // A backtick is its own closer, so only an opener before the trailing closers counts as rm's own (`rm -rf /`).
+    const closesOuter = !/[(`]/.test(m[1].trimEnd().replace(CLOSERS, '')) && /[(`]/.test(cmd.slice(0, m.index + m[0].length - m[1].length));
     return { recursive: /-[a-zA-Z]*[rR]|--recursive/.test(flags), targets: toks.filter((t) => !t.startsWith('-')).map((t) => unquote(closesOuter ? t.replace(CLOSERS, '') : t)) };
   });
 
@@ -542,15 +543,15 @@ function outputTargets(name: string | undefined, toks: string[]): string[] {
   const longMatch = (n: string): boolean => longs.includes(n) || (prefix && longs.filter((f) => f.startsWith(n)).length === 1);
   const out: string[] = [];
   for (let i = 1; i < toks.length; i++) {
-    const t = unquote(toks[i]), eq = t.indexOf('=');
+    const t = shellUnquote(toks[i]), eq = t.indexOf('='); // the shell's reading: '--output'=F and --output="F" are --output=F
     if (t.startsWith('--')) {
-      if (longMatch(eq < 0 ? t : t.slice(0, eq))) out.push(eq < 0 ? unquote(toks[++i] ?? '') : t.slice(eq + 1));
+      if (longMatch(eq < 0 ? t : t.slice(0, eq))) out.push(eq < 0 ? shellUnquote(toks[++i] ?? '') : t.slice(eq + 1));
     } else if (/^-[a-zA-Z]/.test(t)) {
       const j = [...t.slice(1)].findIndex((ch) => flags.includes(`-${ch}`));
-      if (j >= 0) out.push(j === t.length - 2 ? unquote(toks[++i] ?? '') : t.slice(j + 2));
+      if (j >= 0) out.push(j === t.length - 2 ? shellUnquote(toks[++i] ?? '') : t.slice(j + 2));
     }
   }
-  return out.filter(Boolean).map(unquote); // a value whose quote sat after the `=` (--output=".../x") still has it
+  return out.filter(Boolean);
 }
 
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
@@ -574,7 +575,9 @@ export function fileWriteTargets(cmd: string): string[] {
       const t = m[1].replace(/^['"]+/, '').replace(/['"`)}]+$/, ''); // `)`, a backtick or quote ends a substitution ("$(… > f)")
       if (!t.startsWith('&') && t !== '/dev/null') out.push(t);
     }
-    out.push(...outputTargets(name, toks));
+    // The shell's words from the command name on, so a quoted flag name glued to its value ('--output'=F) is one word.
+    const sw = shellWords(seg), at = sw.findIndex((w) => commandName(shellUnquote(w)) === name);
+    out.push(...outputTargets(name, at < 0 ? toks : sw.slice(at)));
     const c = toks.findIndex((t) => /^-[a-z]*c$/.test(t));
     if ((name === 'bash' || name === 'sh' || name === 'zsh') && c > 0 && toks[c + 1]) {
       out.push(...fileWriteTargets(unquote(toks[c + 1])));
@@ -834,7 +837,7 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
   // unknown, two readings bracket what it might consume; the strictest wins, so either reading's deny is a deny and a
   // disagreement that is allow-vs-ask asks. Depth 3: the payloads inside are the same strings the reading as written
   // already judges (with their own plain heads), so they are not re-opened here.
-  for (const t of plainHeads(command).texts) {
+  for (const t of plainHeads(command, GUARDED_HEADS).texts) {
     const r = decideRead(t, ctx, 3);
     if (r.kind === 'deny') return r;
     rs.push(r);
@@ -849,6 +852,10 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
 const GIT_OUTPUT_RUN_WHY = 'the command writes git output (log, show, rev-parse or cat-file) to a file and runs a file, so an earlier commit message could become the script';
 const GIT_OUTPUT_CONFIG_WHY = 'the command writes git output (log, show, rev-parse or cat-file) into .git/, a gitconfig or a hook, so an earlier commit message could become git config or a hook';
 const EDITOR_WHY = 'the command sets an editor or pager for git (GIT_EDITOR, EDITOR, core.editor, …) and builds its message at run time, and git may run that program on the message';
+// Command names the plain reading reads at any word when spelled as a path. Not harness or cli.mjs (they have their own
+// path rule), and not a shell or eval: a re-runner counts only where the shell runs it (`git -C /tmp/sh commit -m "…"`
+// runs no shell), and a `-c` payload is found wherever it sits.
+const GUARDED_HEADS: ReadonlySet<string> = new Set(RULED.filter((n) => !/^(harness|cli\.m?js|eval)$/.test(n) && !SHELLS.has(n)));
 const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
 const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 

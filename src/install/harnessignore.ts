@@ -12,6 +12,11 @@ export function harnessIgnore(root: string): (rel: string) => boolean {
   } catch {
     return () => false;
   }
+  return harnessIgnoreText(text);
+}
+
+/** The matcher for a .harnessignore text (the review reads it from the base branch, not the working tree). */
+export function harnessIgnoreText(text: string): (rel: string) => boolean {
   const globs = text
     .split(/\r?\n/)
     .map((l) => l.trim())

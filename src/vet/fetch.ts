@@ -16,7 +16,7 @@ const PREFIX = 'harness-vet-';
 export const tmpPrefix = (r: Resolved): string => `${PREFIX}${vetId(r).slice(0, 40)}-${r.sha.slice(0, 7)}-`;
 
 /** Why an entry path can't be written safely on any OS, or undefined if it can. */
-function unsafe(path: string): string | undefined {
+export function unsafe(path: string): string | undefined {
   if (path.startsWith('/')) return 'absolute path';
   const segs = path.replace(/\/$/, '').split('/');
   if (segs.includes('..')) return 'parent path (..)';

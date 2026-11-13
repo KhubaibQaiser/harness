@@ -11,6 +11,7 @@ import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
 import { SAFE_GIT } from '../core/git-safe.js';
+import { globGuardAsk, guardedPaths, plainHeads, wrapperForms } from '../core/command-head.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
@@ -469,4 +470,25 @@ export const protect: Check = {
 // One work budget per run, the nested runs above included (re-review 21, P1b): past it WorkBudget is thrown and the
 // dispatcher denies.
 const unbudgeted = protect.run;
-protect.run = (ctx) => withWorkBudget(() => unbudgeted(ctx));
+// Commands whose writes protect reads: a path to one after a wrapper no table knows still heads its own segment.
+const WRITE_HEADS: ReadonlySet<string> = new Set([...WRITERS, ...DELETERS, 'sed', 'perl', 'git', 'curl', 'wget', 'sort', 'time', 'tar', 'unzip', 'find']);
+const rank = (d: Decision): number => (d.kind === 'deny' ? 2 : d.kind === 'ask' ? 1 : 0);
+const GUARDED_ASK = 'A path that names a writer (`./bin/tee`) was reduced to that writer and then names a protected path, but protect cannot tell a read from a write here. Confirm the command.';
+const GLOB_ASK = 'A glob in a command path could match a writer and a protected path, so protect cannot tell what it writes. Confirm the command.';
+/** The command as written, its wrapper readings (wrappers split off, or removed before a pipe), and the guarded-path
+ *  reading (a path to a writer read as that writer). The strictest wins; a wrapper reading may deny, but the guarded-path
+ *  reading only ever asks — on its own `cat ./bin/tee .harness/x` is a read, so it must not deny (re-review round 3, item 4). */
+function withPlainHeads(ctx: Parameters<Check['run']>[0]): Decision {
+  const d = unbudgeted(ctx) as Decision;
+  if (d.kind === 'deny' || !isShell(ctx.input.tool_name)) return d;
+  const cmd = withoutHeredocBodies(String(ctx.input.tool_input?.command ?? '')); // data bodies hold no command
+  const run = (command: string) => unbudgeted({ ...ctx, input: { ...ctx.input, tool_input: { ...ctx.input.tool_input, command } } }) as Decision;
+  let worst = d;
+  const take = (r: Decision) => { if (rank(r) > rank(worst)) worst = r; };
+  for (const command of wrapperForms(cmd).texts) take(run(command));
+  const gp = guardedPaths(cmd, WRITE_HEADS);
+  if (gp) { const r = run(gp); if (r.kind !== 'allow') take({ kind: 'ask', reason: GUARDED_ASK, check: 'protect' }); } // deny capped to ask
+  if (globGuardAsk(cmd, WRITE_HEADS)) take({ kind: 'ask', reason: GLOB_ASK, check: 'protect' });
+  return worst;
+}
+protect.run = (ctx) => withWorkBudget(() => withPlainHeads(ctx));

@@ -3,10 +3,11 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
-import { cPayloads, remember, SHELLS, stdinPrograms, withWorkBudget } from '../core/shell-words.js';
+import { plainHeads } from '../core/command-head.js';
+import { commandName, cPayloads, remember, SHELLS, stdinPrograms, unquote as shellUnquote, withWorkBudget, words as shellWords } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
-import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, joinVariant, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
+import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, joinVariant, MAX_READINGS, RULED, splicedReading, textRulesView } from './guard-readings.js';
 import { type Quoted, Scan, SCAN_BUDGET_WHY, ScanBudget } from './guard-scan.js';
 import { commandTests, EDITOR_SET, wholeFlags } from './guard-sinks.js';
 import { writesGitOutputAndRunsFile, writesGitOutputToSensitivePath } from './guard-allow.js';
@@ -445,11 +446,12 @@ const ASK: [RegExp, string][] = [
 /** A subshell or substitution closing right after a word: `(rm -rf /)`, `(git push origin main)`. Not `}`: it ends a brace word. */
 const CLOSERS = /[)`]+$/;
 export const rmTargets = (cmd: string): { recursive: boolean; targets: string[] }[] =>
-  [...cmd.matchAll(/(?:^|[;&|(]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => {
+  [...cmd.matchAll(/(?:^|[;&|(`]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => { // a backtick opens a command too: `rm -rf /`
     const toks = m[1].trim().split(/\s+/).filter(Boolean);
     const flags = toks.filter((t) => t.startsWith('-')).join('');
     // A closer ends a group opened before rm, as in `(rm -rf /)`; one in rm's own words (-$(cat tmp)) is part of a target.
-    const closesOuter = !/[(`]/.test(m[1]) && /[(`]/.test(cmd.slice(0, m.index + m[0].length - m[1].length));
+    // A backtick is its own closer, so only an opener before the trailing closers counts as rm's own (`rm -rf /`).
+    const closesOuter = !/[(`]/.test(m[1].trimEnd().replace(CLOSERS, '')) && /[(`]/.test(cmd.slice(0, m.index + m[0].length - m[1].length));
     return { recursive: /-[a-zA-Z]*[rR]|--recursive/.test(flags), targets: toks.filter((t) => !t.startsWith('-')).map((t) => unquote(closesOuter ? t.replace(CLOSERS, '') : t)) };
   });
 
@@ -521,6 +523,37 @@ export function gitArgs(toks: string[]): string[] {
   return i > 0 ? toks.slice(i) : [];
 }
 
+// Options whose value is a file or folder the command writes: git diff/log/show --output, curl -o, wget -O, sort -o, GNU time -o.
+const OUTPUT_FLAGS: Record<string, string[]> = {
+  git: ['--output', '--output-directory'],
+  curl: ['-o', '--output', '--output-dir', '-D', '--dump-header', '-c', '--cookie-jar', '--trace', '--trace-ascii', '--stderr', '--etag-save'],
+  wget: ['-O', '--output-document', '-o', '--output-file', '-a', '--append-output', '-P', '--directory-prefix'],
+  sort: ['-o', '--output'],
+  time: ['-o', '--output'],
+};
+// getopt_long tools accept an unambiguous prefix of a long option; git and curl take only the exact spelling.
+const OUTPUT_PREFIX = new Set(['wget', 'sort', 'time']);
+/** The values of `name`'s output options in `toks` (quotes removed before matching): `--output=F`, `--output F`, `-o F`,
+ *  a stuck `-oF`, a cluster `-sSo F`, and for getopt tools an unambiguous long prefix (`--out`, `--output-doc`).
+ *  ponytail: a cluster letter that takes a value before the output letter (-to) is not told apart: the next word is read as the target, stricter only. */
+function outputTargets(name: string | undefined, toks: string[]): string[] {
+  const flags = name === 'git' && gitArgs(toks)[0] === 'format-patch' ? [...OUTPUT_FLAGS.git, '-o'] : Object.hasOwn(OUTPUT_FLAGS, name ?? '') ? OUTPUT_FLAGS[name!] : null;
+  if (!flags) return [];
+  const longs = flags.filter((f) => f.startsWith('--')), prefix = OUTPUT_PREFIX.has(name!);
+  const longMatch = (n: string): boolean => longs.includes(n) || (prefix && longs.filter((f) => f.startsWith(n)).length === 1);
+  const out: string[] = [];
+  for (let i = 1; i < toks.length; i++) {
+    const t = shellUnquote(toks[i]), eq = t.indexOf('='); // the shell's reading: '--output'=F and --output="F" are --output=F
+    if (t.startsWith('--')) {
+      if (longMatch(eq < 0 ? t : t.slice(0, eq))) out.push(eq < 0 ? shellUnquote(toks[++i] ?? '') : t.slice(eq + 1));
+    } else if (/^-[a-zA-Z]/.test(t)) {
+      const j = [...t.slice(1)].findIndex((ch) => flags.includes(`-${ch}`));
+      if (j >= 0) out.push(j === t.length - 2 ? shellUnquote(toks[++i] ?? '') : t.slice(j + 2));
+    }
+  }
+  return out.filter(Boolean);
+}
+
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
 // ponytail: splits on ; & | even inside quotes, and ignores here-docs and subshells; upgrade to a real shell parser if bypasses matter.
 export function fileWriteTargets(cmd: string): string[] {
@@ -537,11 +570,14 @@ export function fileWriteTargets(cmd: string): string[] {
       }
     }
     toks.splice(0, k); // look past sudo, env, VAR=value and xargs, with their flags
-    const name = toks[0];
+    const name = commandName(unquote(toks[0] ?? '')); // /usr/bin/time, "sed": the bare command name decides the branch
     for (const m of seg.matchAll(/\d*>>?\s*([^\s;&|>]+)/g)) {
       const t = m[1].replace(/^['"]+/, '').replace(/['"`)}]+$/, ''); // `)`, a backtick or quote ends a substitution ("$(… > f)")
       if (!t.startsWith('&') && t !== '/dev/null') out.push(t);
     }
+    // The shell's words from the command name on, so a quoted flag name glued to its value ('--output'=F) is one word.
+    const sw = shellWords(seg), at = sw.findIndex((w) => commandName(shellUnquote(w)) === name);
+    out.push(...outputTargets(name, at < 0 ? toks : sw.slice(at)));
     const c = toks.findIndex((t) => /^-[a-z]*c$/.test(t));
     if ((name === 'bash' || name === 'sh' || name === 'zsh') && c > 0 && toks[c + 1]) {
       out.push(...fileWriteTargets(unquote(toks[c + 1])));
@@ -797,6 +833,19 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
     rs.push(r);
   }
   if (globs.some((g) => g.capped)) rs.push(toDecision(['ask', GLOB_CAP_WHY]));
+  // The plain-head reading: wrappers split off, every path or quoted word read as its name. When a wrapper's option is
+  // unknown, two readings bracket what it might consume; the strictest wins, so either reading's deny is a deny and a
+  // disagreement that is allow-vs-ask asks. Depth 3: the payloads inside are the same strings the reading as written
+  // already judges (with their own plain heads), so they are not re-opened here.
+  // Read on the text without its data heredoc bodies: a body nobody runs holds no command, and reading it costs (perf).
+  const ph = plainHeads(withoutHeredocBodies(command), GUARDED_HEADS);
+  for (const t of ph.texts) {
+    const r = decideRead(t, ctx, 3);
+    if (r.kind === 'deny') return r;
+    rs.push(r);
+  }
+  if (ph.ask) rs.push(toDecision(['ask', GLOB_HEAD_WHY])); // a glob head that could be a guarded command
+
   // git runs its editor or pager on the message, so a message built by $(…) or a heredoc may run: ask at least.
   if (EDITOR_SET.test(command) && /\bgit\b/.test(command) && /\$\(|`|<</.test(command)) rs.push(toDecision(['ask', EDITOR_WHY]));
   // A substitution glued inside a word prints what the guard cannot know: read without it, a ruled reading asks.
@@ -807,6 +856,11 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
 const GIT_OUTPUT_RUN_WHY = 'the command writes git output (log, show, rev-parse or cat-file) to a file and runs a file, so an earlier commit message could become the script';
 const GIT_OUTPUT_CONFIG_WHY = 'the command writes git output (log, show, rev-parse or cat-file) into .git/, a gitconfig or a hook, so an earlier commit message could become git config or a hook';
 const EDITOR_WHY = 'the command sets an editor or pager for git (GIT_EDITOR, EDITOR, core.editor, …) and builds its message at run time, and git may run that program on the message';
+// Command names the plain reading reads at any word when spelled as a path. Not harness or cli.mjs (they have their own
+// path rule), and not a shell or eval: a re-runner counts only where the shell runs it (`git -C /tmp/sh commit -m "…"`
+// runs no shell), and a `-c` payload is found wherever it sits.
+const GUARDED_HEADS: ReadonlySet<string> = new Set(RULED.filter((n) => !/^(harness|cli\.m?js|eval)$/.test(n) && !SHELLS.has(n)));
+const GLOB_HEAD_WHY = 'a glob in a command path could match a guarded command (rm, git, …), so the guard cannot tell what runs';
 const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
 const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 

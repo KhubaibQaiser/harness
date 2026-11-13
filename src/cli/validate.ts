@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { validatePrJudge } from '../ai/pr-judge.js';
 import { validatePrReview } from '../ai/pr-review.js';
+import { defaultExec } from '../core/exec.js';
+import { readFindings, snapshotHas, verifyFindings } from '../review/verify.js';
 import { gatherHash, type GatherJson } from '../review/gather.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { esc, loadConfig } from '../core/config.js';
@@ -20,7 +23,7 @@ import { validateProduct } from '../ai/product.js';
 import { detect } from '../install/detect.js';
 import type { CliEnv } from './index.js';
 
-const USAGE = 'Usage: harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]\n       harness validate pr-review <file> --gather <dir>/gather.json [--attempt 1|2]\n       harness validate preset-answers <file>';
+const USAGE = 'Usage: harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]\n       harness validate pr-review <file> --gather <dir>/gather.json [--attempt 1|2]\n       harness validate pr-judge <file> --findings <file> --gather <dir>/gather.json [--attempt 1|2]\n       harness validate preset-answers <file>';
 
 /** Checks what the interview wrote. Exit 0 prints ok; exit 2 prints one error per line. Safe in a plain terminal and in Claude Code. */
 export function validate(argv: string[], { root, out }: CliEnv): number {
@@ -32,6 +35,7 @@ export function validate(argv: string[], { root, out }: CliEnv): number {
     if (typeof c === 'number') return c;
     merge = (raw) => (raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? overlayAnswers(configToAnswers(c), raw as Record<string, unknown>) : raw);
   }
+  if (args[0] === 'pr-judge') return prJudge(args, root, out);
   if (args[0] === 'picks' || args[0] === 'report' || args[0] === 'vet-review' || args[0] === 'pr-review') return recommend(args, root, out, merge);
   const [what, file] = args;
   if (args.length !== 2 || (what !== 'answers' && what !== 'product' && what !== 'preset-answers')) return out(USAGE), 2;
@@ -82,7 +86,7 @@ const json = (t: string): unknown => {
 
 /** picks/report: exit 0 ok, 2 invalid (a retry is left), 1 invalid on attempt 2 (raw output saved, stop). */
 type Kind = 'picks' | 'report' | 'vet-review' | 'pr-review';
-const LABEL: Record<Kind, string> = { picks: 'Recommend output', report: 'Recommend output', 'vet-review': 'Vet review', 'pr-review': 'PR review' };
+const LABEL: Record<Kind | 'pr-judge', string> = { picks: 'Recommend output', report: 'Recommend output', 'vet-review': 'Vet review', 'pr-review': 'PR review', 'pr-judge': 'PR judge' };
 type Merge = (raw: unknown) => unknown;
 function recommend(args: string[], root: string, out: (l: string) => void, merge: Merge): number {
   const [what, file, flag, other, ...tail] = args as [Kind, ...string[]];
@@ -123,7 +127,7 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
   } else if (what === 'pr-review') {
     const raw = json(text as string);
     const g = sideRaw as GatherJson;
-    const inSnapshot = (f: string) => Object.hasOwn(g.map, f) && existsSync(join(gdir, 'head', ...g.map[f]!.split('/')));
+    const inSnapshot = snapshotHas(g, gdir);
     if (raw === undefined) errors = ['pr-review: not valid JSON'];
     else {
       const r = validatePrReview(raw, g, inSnapshot);
@@ -134,11 +138,35 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
     if (!Array.isArray(fs) || !fs.every((x) => typeof x?.id === 'string')) errors = ['picks: the picks file is not valid; run harness validate picks first'];
     else errors = validateReport(text as string, sideRaw as Picks);
   }
+  return judged(errors, attempt, what, text as string, root, out);
+}
+
+/** pr-judge: the verdicts must cover exactly the findings verification kept. */
+function prJudge(args: string[], root: string, out: (l: string) => void): number {
+  const [, file, f1, findings, f2, gatherFile, ...tail] = args;
+  let attempt = 1;
+  if (tail.length === 2 && tail[0] === '--attempt' && (tail[1] === '1' || tail[1] === '2')) attempt = Number(tail[1]);
+  else if (tail.length) return out(USAGE), 2;
+  if (!file || f1 !== '--findings' || !findings || f2 !== '--gather' || !gatherFile) return out(USAGE), 2;
+  if (basename(gatherFile) !== 'gather.json') return out('pr-judge: --gather must name <dir>/gather.json'), 2;
+  const r = readFindings(root, dirname(resolve(gatherFile)), findings);
+  if ('errors' in r) return r.errors.forEach((e) => out(e)), 2;
+  const text = read(file);
+  if (typeof text !== 'string') return out(`pr-judge: ${text.error}`), 2;
+  let kept: string[];
+  try { kept = verifyFindings(r.review, r.g, r.dir, defaultExec, root).kept.map((f) => f.id); } catch (e) { return out((e as Error).message), 1; }
+  const raw = json(text);
+  const v = raw === undefined ? { ok: false as const, errors: ['pr-judge: not valid JSON'] } : validatePrJudge(raw, kept);
+  return judged(v.ok ? [] : v.errors, attempt, 'pr-judge', text, root, out);
+}
+
+/** Exit 0 ok, 2 invalid (a retry is left), 1 invalid on attempt 2 (raw output saved, stop). */
+function judged(errors: string[], attempt: number, what: Kind | 'pr-judge', text: string, root: string, out: (l: string) => void): number {
   if (!errors.length) return out('ok'), 0; // read-only: finalizeReport is applied by init
   for (const e of errors) out(e);
   if (attempt < 2) return 2;
   // Only an installed repo gets a .harness/ folder; anywhere else the raw output is printed.
-  if (!existsSync(join(root, MANIFEST_REL))) return out(`${LABEL[what].replace(/ output$/, '')} output failed validation twice. Raw output follows. Stopping.\n${(text as string).split(/\r?\n/).map(esc).join('\n')}`), 1;
-  out(`${LABEL[what]} failed validation twice. Raw output is in \`${saveDebug(root, what, text as string)}\`. Stopping.`);
+  if (!existsSync(join(root, MANIFEST_REL))) return out(`${LABEL[what].replace(/ output$/, '')} output failed validation twice. Raw output follows. Stopping.\n${text.split(/\r?\n/).map(esc).join('\n')}`), 1;
+  out(`${LABEL[what]} failed validation twice. Raw output is in \`${saveDebug(root, what, text)}\`. Stopping.`);
   return 1;
 }

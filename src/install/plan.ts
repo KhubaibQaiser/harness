@@ -21,6 +21,7 @@ export const LEGACY_OWN = ['agent-guard', 'permissions-baseline', 'stop-gate', '
 // The own files of the legacy items, for a plan without a catalog.
 const LEGACY_FILES = [
   { id: 'staff-reviewer', from: 'agents/staff-reviewer.md', to: '.claude/agents/staff-reviewer.md' },
+  { id: 'staff-reviewer', from: 'agents/review-judge.md', to: '.claude/agents/review-judge.md' },
   { id: 'review-rubric', from: 'skills/review-rubric/SKILL.md', to: '.claude/skills/review-rubric/SKILL.md' },
   { id: 'pr-ship', from: 'skills/pr-ship/SKILL.md', to: '.claude/skills/pr-ship/SKILL.md' },
 ];

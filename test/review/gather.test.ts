@@ -16,7 +16,7 @@ const GH = 'https://github.com/o/r.git';
 const TOKEN = 'ghp_' + 'x'.repeat(36);
 const AGENT = readFileSync(join(packageDir('templates'), 'agents/staff-reviewer.md'), 'utf8'); // the plugin's copy, as an up-to-date install has it
 const BASE: Files = {
-  '.harness/config.yaml': 'version: 1\n', '.claude/agents/staff-reviewer.md': AGENT, '.claude/skills/review-rubric/SKILL.md': 'RUBRIC TEXT\n', 'AGENTS.md': 'AGENTS TEXT\n',
+  '.harness/config.yaml': 'version: 1\n', '.claude/agents/staff-reviewer.md': AGENT, '.claude/agents/review-judge.md': 'judge\n', '.claude/skills/review-rubric/SKILL.md': 'RUBRIC TEXT\n', 'AGENTS.md': 'AGENTS TEXT\n',
   '.harness/hooks/dispatch.mjs': 'd\n', 'src/a.ts': 'a\n', 'docs/spec.md': 'old spec\n',
 };
 const HEAD: Files = { 'src/a.ts': `a\nconst t = '${TOKEN}';\n`, 'docs/spec.md': 'SPEC TEXT\n', 'pnpm-lock.yaml': 'lock\n' };
@@ -105,6 +105,10 @@ describe('gather: §8 rows', () => {
   test('an installed staff-reviewer that differs from the plugin\'s is refused: Claude Code may start either', () => {
     const t = setup({ base: { '.claude/agents/staff-reviewer.md': 'an older or edited agent\n' } });
     expect(run(t, fakeGh(t).exec)).toMatchObject({ code: 1, lines: ["review: .claude/agents/staff-reviewer.md differs from the harness plugin's copy, and Claude Code may start either; run /harness:update on main and review again"] });
+  });
+  test('a base without the review agents (an older install) asks for /harness:update', () => {
+    const t = setup({ base: { '.claude/agents/review-judge.md': null } });
+    expect(run(t, fakeGh(t).exec)).toMatchObject({ code: 1, lines: ['review: base branch main has no .claude/agents/review-judge.md (an older harness install); run /harness:update on main first'] });
   });
   test('a rate limit names its reset time', () => {
     const gh = fakeGh(s, {}, (a) => (a.startsWith('pr view') ? { status: 1, stdout: '', stderr: 'gh: API rate limit exceeded for user (HTTP 403)' } : a.startsWith('api rate_limit') ? ok('1763000000\n') : undefined));

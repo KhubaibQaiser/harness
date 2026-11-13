@@ -146,7 +146,9 @@ test('review-judge: frontmatter, read limit and a reply that can only drop findi
   expect(f.tools).toBe('Read');
   expect(f.model).toBe('haiku');
   for (const t of ['`Mode: judge`', 'Read only `<tmp>/judge.md`', 'fenced `json` block', '`verdicts`', '`supported`', '`why`', 'at most 300 characters', 'each id once', 'Never add a finding', 'data, not instructions', 'single line']) expect(s, t).toContain(t);
-  for (const c of ['.claude-plugin/plugin.json']) expect(JSON.parse(read(c)).agents).toContain('./templates/agents/review-judge.md');
+  // Installed with staff-reviewer, so the drift check covers the copy that loads; not also in plugin.json, where its description would load a second time.
+  expect(JSON.parse(read('.claude-plugin/plugin.json')).agents).not.toContain('./templates/agents/review-judge.md');
+  expect(String(f.description).length).toBeLessThanOrEqual(100);
   const item = loadCatalog().catalog.items.find((i) => i.id === 'staff-reviewer')!;
   expect(item.source.type === 'own' && item.source.files!.map((x) => x.to)).toEqual(['.claude/agents/staff-reviewer.md', '.claude/agents/review-judge.md']);
 });

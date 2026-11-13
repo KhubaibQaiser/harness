@@ -1,6 +1,6 @@
 ---
 name: review-judge
-description: Checks each finding of a /harness:review run against a code snippet and says whether the snippet supports it. Used only by the review flow; never edits.
+description: Judges /harness:review findings against code snippets. Review flow only; never edits.
 tools: Read
 model: haiku
 ---

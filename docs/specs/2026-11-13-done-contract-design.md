@@ -75,6 +75,7 @@ Rules:
 - **Approval:** `! harness task approve <file>` is person-only (the guard denies it from the agent, as `tdd off` is). It validates the file, shows the criteria, and asks for a yes. It then copies the file into `.harness/tasks/` and records the hash.
 - **Lock:** after approval, `.harness/tasks/**` is protected three ways: protect's deny tables, the `Edit(./.harness/tasks/**)` deny rule, and the sandbox's `denyWrite`. Only `! harness task edit|approve|close` change a contract, and each needs a person's yes.
 - **Committed:** contracts are committed, so CI can read them from the base branch.
+- **Which task a PR is for:** the pr-ship body template gains a `Task: <id>` line, and the PR gate requires it. `harness verify --ci` reads the id from the PR body (fetched with `gh`) and loads that contract from the base branch. A PR body with no id, or an id that doesn't exist on the base branch, is not done.
 - **Active task:** one active task per session, kept in `.harness/state/active-task`. A session's first edit is denied while no approved contract is active, with the message "Draft criteria: run harness task draft, then ask the person to approve".
 
 ### 4.2 Evidence ledger: `.harness/state/evidence.jsonl`
@@ -191,6 +192,7 @@ Headline: the **false-done rate**, blocked claims divided by all done claims.
 - Repos without CI get only the attended verdict.
 - In-session hooks don't run in setups that skip them, but CI still decides.
 - Without the sandbox, the ledger and contracts rely on text guards plus the Edit deny rules.
+- **Tests the agent wrote itself.** A `test` criterion often names a test the agent writes during the task, so the agent controls that test. Three things mitigate this: the tamper check, the review's question "does the evidence really test the criterion?", and the M2a evidence checks. The strongest form is a `run` criterion or a test the person writes before approval, which is the research's "hidden tests" pattern. `harness task draft` should prefer those and say which criteria rest on agent-written tests.
 - The claim checker is a phrase match. A claim worded outside the list isn't caught at Stop, though verify still decides.
 - The review is a model and can miss things. The code checks and the judge only drop findings; they don't prove correctness.
 - Not in scope:

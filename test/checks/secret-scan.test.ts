@@ -184,8 +184,9 @@ describe('secret-scan', () => {
       ['filter.x.clean', 'sh x.sh', 'ask'], ['filter.x.smudge', 'cat', 'ask'], ['filter.x.process', 'p', 'ask'],
       ['filter.lfs.clean', 'git-lfs clean -- %f', 'allow'], ['filter.lfs.smudge', 'git-lfs smudge -- %f', 'allow'], ['filter.lfs.process', 'git-lfs filter-process', 'allow'], ['filter.lfs.clean', 'git-lfs clean -- %f; sh x', 'ask'],
       // Any key that names a program git may run during the commit, by pattern: gpg signing, editors, textconv, a future *.program.
-      ['gpg.program', './sign.sh', 'ask'], ['gpg.ssh.program', './s', 'ask'], ['gpg.x509.program', './s', 'ask'], ['gpg.ssh.defaultKeyCommand', './k', 'ask'],
-      ['core.editor', 'vim', 'ask'], ['sequence.editor', 'vim', 'ask'], ['diff.x.textconv', 'cat', 'ask'], ['diff.external', './d', 'ask'], ['future.thing.program', './p', 'ask'], ['foo.command', './c', 'ask'],
+      // Signing and the editor are off for `-m x` with no gpgsign, so their programs don't run (see the next tests).
+      ['gpg.program', './sign.sh', 'allow'], ['gpg.ssh.program', './s', 'allow'], ['gpg.x509.program', './s', 'allow'], ['gpg.ssh.defaultKeyCommand', './k', 'allow'],
+      ['core.editor', 'vim', 'allow'], ['sequence.editor', 'vim', 'allow'], ['foo.editor', './e', 'ask'], ['diff.x.textconv', 'cat', 'ask'], ['diff.external', './d', 'ask'], ['future.thing.program', './p', 'ask'], ['foo.command', './c', 'ask'],
       // Namespaces git never runs during a commit or stash.
       ['credential.helper', 'osxkeychain', 'allow'], ['difftool.x.cmd', 'opendiff', 'allow'], ['mergetool.x.cmd', 'x', 'allow']];
     for (const [key, value, want] of cases) {
@@ -194,6 +195,38 @@ describe('secret-scan', () => {
       const d = run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin())));
       expect(d.kind, `${key}=${value}`).toBe(want);
       if (want === 'ask') expect(d.reason).toContain(key.toLowerCase());
+    }
+  });
+
+  test('the editor asks only when this commit opens it', () => {
+    const cases: [string, string][] = [
+      ['git commit --allow-empty -m x', 'allow'], ['git commit --allow-empty -F msg.txt', 'allow'], ['git commit --allow-empty -C HEAD', 'allow'], ['git commit --allow-empty --no-edit', 'allow'],
+      ['git commit -am x', 'allow'], ['git commit --allow-empty --message=x', 'allow'], ['git commit --amend --no-edit', 'allow'], ['git commit --allow-empty -m "-e"', 'allow'],
+      ['git commit --allow-empty', 'ask'], ['git commit --allow-empty -m x -e', 'ask'], ['git commit --allow-empty -em x', 'ask'], ['git commit --allow-empty --edit -m x', 'ask'],
+      ['git commit --amend', 'ask'], ['git commit --allow-empty -c HEAD', 'ask'], ['git commit --allow-empty --reedit-message=HEAD', 'ask'],
+    ];
+    const root = makeRepo({ 'README.md': 'hi\n', 'msg.txt': 'm\n' });
+    git(root, 'config', 'core.editor', './ed.sh');
+    for (const [cmd, want] of cases) expect(run(ctx(root, cmd, withStub(stubBin()))).kind, cmd).toBe(want);
+    expect(run(ctx(root, 'git stash', withStub(stubBin()))).kind).toBe('allow');
+    const bare = makeRepo({ 'README.md': 'hi\n' });
+    for (const v of ['GIT_EDITOR', 'VISUAL', 'EDITOR']) {
+      expect(run(ctx(bare, 'git commit --allow-empty', { ...withStub(stubBin()), [v]: './ed.sh' })).reason, v).toContain(v);
+      expect(run(ctx(bare, 'git commit --allow-empty -m x', { ...withStub(stubBin()), [v]: './ed.sh' })).kind, v).toBe('allow');
+    }
+  });
+
+  test('a gpg program asks only when this commit signs', () => {
+    for (const key of ['gpg.program', 'gpg.ssh.program', 'gpg.x509.program', 'gpg.ssh.defaultKeyCommand']) {
+      const root = makeRepo({ 'README.md': 'hi\n' });
+      git(root, 'config', key, './s');
+      expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind, key).toBe('allow');
+      for (const cmd of ['git commit --allow-empty -S -m x', 'git commit --allow-empty --gpg-sign -m x', 'git commit --allow-empty -Sabc -m x', 'git commit --allow-empty --gpg-sign=abc -m x'])
+        expect(run(ctx(root, cmd, withStub(stubBin()))).kind, `${key}: ${cmd}`).toBe('ask');
+      git(root, 'config', 'commit.gpgsign', 'true');
+      expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind, key).toBe('ask');
+      expect(run(ctx(root, 'git commit --allow-empty --no-gpg-sign -m x', withStub(stubBin()))).kind, key).toBe('allow');
+      expect(run(ctx(root, 'git stash', withStub(stubBin()))).kind, key).toBe('allow'); // stash commits are not signed
     }
   });
 

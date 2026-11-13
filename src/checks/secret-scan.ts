@@ -127,22 +127,69 @@ function hookFiles(dir: string, platform: NodeJS.Platform): string[] {
 // lines (`git lfs install`) and true/false fsmonitor run nothing of the repo's. Namespaces git never reads during a commit
 // or stash (credential helpers, diff and merge tools, mail, browsers, help) are left out: a credential helper is in most
 // installs' system config, and asking on every commit for it would only teach people to say yes.
-const PROGRAM_KEYS = '(^|\\.)(program|command|cmd|editor|fsmonitor|helper|defaultkeycommand)$|^filter\\..*\\.(clean|smudge|process)$|^diff\\..*\\.textconv$|^diff\\.external$';
+const PROGRAM_KEYS = '^commit\\.gpgsign$|(^|\\.)(program|command|cmd|editor|fsmonitor|helper|defaultkeycommand)$|^filter\\..*\\.(clean|smudge|process)$|^diff\\..*\\.textconv$|^diff\\.external$';
 const NOT_IN_COMMIT = /^(credential|difftool|mergetool|sendemail|browser|web|man|instaweb|gui|guitool)\./;
 const LFS: Record<string, string> = { 'filter.lfs.clean': 'git-lfs clean -- %f', 'filter.lfs.smudge': 'git-lfs smudge -- %f', 'filter.lfs.process': 'git-lfs filter-process' };
 const BOOL = /^(true|false|yes|no|on|off|1|0)$/i;
-/** The program keys the effective config sets (every scope, includes followed), or null when git config fails.
- *  SAFE_GIT_USER: SAFE_GIT turns fsmonitor off. */
-function programsInConfig(ctx: Ctx): string[] | null {
+/** What this command makes git run: the editor, and signing. Stash opens no editor and signs nothing. */
+/** signFlag: -S (true), --no-gpg-sign (false), or neither (null, commit.gpgsign decides). */
+type Use = { editor: boolean; signFlag: boolean | null };
+const MSG_LONG = /^--(message|file|reuse-message|fixup|squash)(=|$)/;
+/** From a plain `git commit` line: the editor opens unless a message comes from -m, -F, -C or --no-edit, and always with
+ *  -e, --edit, -c or --reedit-message; -S or --gpg-sign signs, --no-gpg-sign doesn't, otherwise commit.gpgsign decides. */
+export function commitUse(command: string): Use {
+  const ws = words(pieces(messages(command))[0]?.text ?? '').map(unquote);
+  const { i } = gitSub(ws, 0);
+  if (ws[i] !== 'commit') return { editor: false, signFlag: false };
+  let msg = false, edit = false, noEdit = false, signFlag: boolean | null = null;
+  for (let j = i + 1; j < ws.length; j++) {
+    const w = ws[j]!;
+    if (w === '--') break;
+    if (w.startsWith('--')) {
+      if (MSG_LONG.test(w)) { msg = true; if (!w.includes('=')) j++; }
+      else if (w === '--edit') edit = true;
+      else if (w === '--no-edit') noEdit = true;
+      else if (/^--reedit-message(=|$)/.test(w)) { edit = true; if (!w.includes('=')) j++; }
+      else if (/^--gpg-sign(=|$)/.test(w)) signFlag = true;
+      else if (w === '--no-gpg-sign') signFlag = false;
+      else if (/^--(template|author|date|cleanup|trailer|pathspec-from-file|untracked-files)$/.test(w)) j++; // a value comes next
+      continue;
+    }
+    if (!w.startsWith('-') || w === '-') continue;
+    for (let c = 1; c < w.length; c++) {
+      const ch = w[c]!;
+      if (ch === 'S') { signFlag = true; break; } // -S[<keyid>]: the rest is the key id
+      if (ch === 'e') edit = true;
+      if ('mFCct'.includes(ch)) {
+        if (ch === 'c') edit = true; else if (ch !== 't') msg = true;
+        if (c === w.length - 1) j++; // the value is the next word
+        break; // the rest of the word is the value
+      }
+    }
+  }
+  return { editor: edit || (!msg && !noEdit), signFlag };
+}
+
+/** The program keys of the effective config (every scope, includes followed) git would run for this command, or null
+ *  when git config fails. SAFE_GIT_USER: SAFE_GIT turns fsmonitor off. */
+function programsInConfig(ctx: Ctx, use: Use): string[] | null {
   const r = spawnSync('git', [...SAFE_GIT_USER, 'config', '--get-regexp', PROGRAM_KEYS], { cwd: ctx.root, env: ctx.env, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
-  if (r.status === 1) return []; // no such key
-  if (r.status !== 0) return null;
-  return [...new Set(r.stdout.split('\n').filter(Boolean).flatMap((l) => {
+  if (r.status !== 0 && r.status !== 1) return null; // 1: no such key
+  const rows = r.stdout.split('\n').filter(Boolean).map((l) => {
     const i = l.indexOf(' ');
-    const [key, value] = i < 0 ? [l, ''] : [l.slice(0, i), l.slice(i + 1)];
-    if (NOT_IN_COMMIT.test(key) || LFS[key] === value || (key === 'core.fsmonitor' && BOOL.test(value))) return [];
-    return [esc(key)];
-  }))];
+    return i < 0 ? [l, ''] : [l.slice(0, i), l.slice(i + 1)];
+  });
+  // Signing is on with -S, or with commit.gpgsign true in any scope (stricter than git's last-wins) unless --no-gpg-sign.
+  const sign = use.signFlag ?? rows.some(([k, v]) => k === 'commit.gpgsign' && /^(true|yes|on|1)$/i.test(v!));
+  const runs = ([key, value]: string[]): boolean => {
+    if (key === 'commit.gpgsign' || NOT_IN_COMMIT.test(key!) || LFS[key!] === value || (key === 'core.fsmonitor' && BOOL.test(value!))) return false;
+    if (key === 'sequence.editor') return false; // rebase -i only
+    if (key === 'core.editor') return use.editor;
+    if (/^gpg\.(.*\.)?(program|defaultkeycommand)$/.test(key!)) return sign;
+    return true;
+  };
+  const env = use.editor ? ['GIT_EDITOR', 'VISUAL', 'EDITOR'].filter((v) => ctx.env[v]) : [];
+  return [...new Set([...rows.filter(runs).map(([k]) => esc(k!)), ...env])];
 }
 
 /** Git 2.40 added GIT_ATTR_SOURCE, which the scan needs so .gitattributes can't mark a file binary and hide it. */
@@ -166,7 +213,7 @@ function found(report: string): string {
   return `gitleaks found ${list.length} likely secret${list.length > 1 ? 's' : ''} in what this command could commit (the staged changes, and the unstaged and untracked files that are not ignored): ${shown.join('; ')}${more}. Values are not shown. Remove the secret, and rotate it if it was ever pushed. If it is a false positive, stop and ask the person: they can commit it from their own terminal or remove the gitleaks-commit item`;
 }
 
-function scan(ctx: Ctx): Decision {
+function scan(ctx: Ctx, use: Use): Decision {
   const platform = ctx.platform ?? process.platform;
   const bin = findOnPath('gitleaks', ctx.env, platform);
   if (!bin) return deny(MISSING);
@@ -225,7 +272,7 @@ function scan(ctx: Ctx): Decision {
       const why = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' ? 'gitleaks timed out' : `gitleaks exited ${r.status ?? r.signal ?? 'abnormally'}`;
       return deny(`could not scan this commit for secrets: ${why}. Run \`gitleaks git --pre-commit --staged --redact\` in your terminal to see why, ${OFF}.`);
     }
-    const progs = programsInConfig(ctx);
+    const progs = programsInConfig(ctx, use);
     if (progs === null) return deny(`could not scan this commit for secrets: git config could not be read, ${OFF}.`);
     const run = hookFiles(hooks!, platform);
     const why = [
@@ -280,7 +327,7 @@ export const secretScan: Check = {
     const k = kinds(command, ctx);
     if (k.has('commit') || k.has('stash')) {
       const why = notPlain(command);
-      const d = why ? deny(why + '.') : scan(ctx);
+      const d = why ? deny(why + '.') : scan(ctx, k.has('commit') ? commitUse(command) : { editor: false, signFlag: false });
       if (d.kind !== 'allow') return d;
     }
     if (k.has('ask')) return ask('This git command makes commits from content harness can\'t scan for secrets before they are made (a merge, rebase, cherry-pick, revert, am, pull, commit-tree, a stash create, a git alias or a git named at run time). Confirm it.');

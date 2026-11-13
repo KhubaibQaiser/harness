@@ -73,6 +73,7 @@ test('a prerelease moves latest while latest is still a prerelease, and fails lo
   expect(run).toContain('dist-tags.latest');
   expect(run).toMatch(/sort -V/); // never moves latest backwards
   expect(run).toContain('Allow npm dist-tag');
+  expect(run).toContain('[ -z "$cur" ]'); // an empty answer from npm fails, not "latest is stable"
   expect(run).toMatch(/exit 1/);
   expect(run).not.toMatch(/\|\|\s*true/);
 });

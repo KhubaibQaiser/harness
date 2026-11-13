@@ -95,6 +95,7 @@ jobs:
           v=$(node -p "require('./package.json').version")
           case "$v" in *-*) ;; *) echo "stable $v was published as latest"; exit 0 ;; esac
           cur=$(npm view "$name" dist-tags.latest)
+          if [ -z "$cur" ]; then echo "npm returned no latest tag for $name; refusing to guess" >&2; exit 1; fi
           case "$cur" in *-*) ;; *) echo "latest is stable ($cur); leaving it"; exit 0 ;; esac
           if [ "$cur" = "$v" ] || [ "$(printf '%s\n%s\n' "$cur" "$v" | sort -V | tail -n1)" != "$v" ]; then
             echo "latest is $cur; not moving it to $v"; exit 0

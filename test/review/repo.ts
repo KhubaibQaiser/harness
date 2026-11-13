@@ -34,7 +34,7 @@ export function commit(root: string, files: Files, msg = 'c'): string {
 export function repoWith(base: Files, head: Files): { root: string; base: string; head: string } {
   const root = mkdtempSync(join(tmpdir(), 'h-review-'));
   git(root, 'init', '-q', '-b', 'main');
-  for (const [k, v] of [['user.name', 'test'], ['user.email', 'test@example.com'], ['commit.gpgsign', 'false'], ['core.autocrlf', 'false']]) git(root, 'config', k!, v!);
+  for (const [k, v] of [['user.name', 'test'], ['user.email', 'test@example.com'], ['commit.gpgsign', 'false'], ['core.autocrlf', 'false'], ['core.protectNTFS', 'false']]) git(root, 'config', k!, v!); // protectNTFS: Git for Windows refuses NTFS-hostile index paths; the fixture keeps them in the tree, never on disk
   const b = commit(root, base, 'base');
   return { root, base: b, head: commit(root, head, 'head') };
 }

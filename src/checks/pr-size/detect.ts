@@ -1,7 +1,7 @@
 import { gitArgs, runnerName, type Seg, walkCommands, type Where } from '../guard.js';
 
 export type PrTarget =
-  | { kind: 'create'; base?: string; head?: string }
+  | { kind: 'create'; base?: string; head?: string; bodyFile?: string; labels?: string[] }
   | { kind: 'push'; all: boolean; refs: { src: string; dst: string }[] }
   | { kind: 'raise'; lines?: string; files?: string };
 export type RaiseArgs = { lines?: string; files?: string };
@@ -50,15 +50,20 @@ function afterPrCreate(rest: string[]): string[] | null {
   return words[0] === 'pr' && words[1] === 'create' ? rest.slice(i) : null;
 }
 
+const CREATE_KEYS: Record<string, 'base' | 'head' | 'bodyFile' | 'labels'> = {
+  '-B': 'base', '--base': 'base', '-H': 'head', '--head': 'head', '-F': 'bodyFile', '--body-file': 'bodyFile', '-l': 'labels', '--label': 'labels',
+};
+
 function createTarget(args: string[]): PrTarget {
-  const t: { kind: 'create'; base?: string; head?: string } = { kind: 'create' };
+  const t: { kind: 'create'; base?: string; head?: string; bodyFile?: string; labels?: string[] } = { kind: 'create' };
   for (let i = 0; i < args.length; i++) {
-    const m = /^(?:(--base|--head)=|(-B|-H)(?=.))(.*)$/s.exec(args[i]);
-    const flag = m ? m[1] ?? m[2] : args[i];
-    const key = flag === '-B' || flag === '--base' ? 'base' : flag === '-H' || flag === '--head' ? 'head' : null;
+    const m = /^(?:(--base|--head|--body-file|--label)=|(-B|-H|-F|-l)(?=.))(.*)$/s.exec(args[i]);
+    const key = CREATE_KEYS[m ? m[1] ?? m[2] : args[i]];
     if (key) {
       const v = m ? m[3] : args[++i];
-      if (v !== undefined) t[key] = key === 'head' ? v.slice(v.lastIndexOf(':') + 1) : v;
+      if (v === undefined) continue;
+      if (key === 'labels') t.labels = [...(t.labels ?? []), ...v.split(',').map((l) => l.trim())]; // gh takes `a,b` and repeats
+      else t[key] = key === 'head' ? v.slice(v.lastIndexOf(':') + 1) : v;
     } else if (GH_VALUE_FLAGS.has(args[i])) i++;
   }
   return t;

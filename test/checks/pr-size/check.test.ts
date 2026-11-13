@@ -276,3 +276,53 @@ describe('a raise runs on its own', () => {
     expect(decidePrSize(ctx(repo(), R)).kind).toBe('ask');
   });
 });
+
+describe('templated PR body', () => {
+  const MARK = '<!-- harness:pr-body -->';
+  const HEADS = ['Summary', 'What changed and why', 'Alternatives considered', 'How to review', 'How to verify', 'Screenshots', 'Performance', 'Security', 'Human steps before merge or deploy', 'Not verified and known limits'];
+  const body = (human: string) => [MARK, ...HEADS.map((h) => `## ${h}\n\n${h.startsWith('Human') ? human : 'n/a: test'}\n`)].join('\n');
+  const LABEL = /^PR body: the "Human steps before merge or deploy" section lists steps, so the PR needs `--label needs-human`/;
+
+  test('human steps without the label are denied, attended and unattended; the label lets it through', () => {
+    const root = repo({ 'a.ts': lines(3) });
+    writeFileSync(join(root, 'body.md'), body('Run the migration first.'));
+    for (const unattended of [false, true]) expect(decidePrSize(ctx(root, 'gh pr create --body-file body.md', { unattended }))).toMatchObject({ kind: 'deny', check: 'pr-size', reason: expect.stringMatching(LABEL) });
+    expect(decidePrSize(ctx(root, 'gh pr create --body-file body.md --label needs-human'))).toEqual({ kind: 'allow' });
+  });
+
+  test('a missing section is denied; "None." and an untemplated body pass', () => {
+    const root = repo({ 'a.ts': lines(3) });
+    writeFileSync(join(root, 'gap.md'), body('None.').replace('## Security\n', ''));
+    writeFileSync(join(root, 'ok.md'), body('None.'));
+    writeFileSync(join(root, 'plain.md'), 'just a body\n');
+    expect(reason(decidePrSize(ctx(root, 'gh pr create -F gap.md')))).toMatch(/^PR body: missing sections: Security\. /);
+    expect(decidePrSize(ctx(root, 'gh pr create -F ok.md'))).toEqual({ kind: 'allow' });
+    expect(decidePrSize(ctx(root, 'gh pr create -F plain.md'))).toEqual({ kind: 'allow' });
+  });
+
+  test('a body inline in the command (a heredoc) is checked from the command text', () => {
+    const root = repo({ 'a.ts': lines(3) });
+    const cmd = `gh pr create --body "$(cat <<'EOF'\n${body('Rotate the API secret.')}\nEOF\n)"`;
+    expect(decidePrSize(ctx(root, cmd))).toMatchObject({ kind: 'deny', reason: expect.stringMatching(LABEL) });
+  });
+
+  test('a body file that is not a regular file is never read (a FIFO would hang the hook)', () => {
+    const root = repo({ 'a.ts': lines(3) });
+    expect(decidePrSize(ctx(root, 'gh pr create --body-file /dev/stdin'))).toEqual({ kind: 'allow' });
+  });
+
+  test("the skill's own command passes every check (guard and protect included)", async () => {
+    const root = repo({ 'a.ts': lines(3) });
+    mkdirSync(join(root, '.harness/tmp/pr'), { recursive: true });
+    writeFileSync(join(root, '.harness/tmp/pr/body.md'), body('Run the migration first.'));
+    const cmd = 'gh pr create --base main --body-file .harness/tmp/pr/body.md';
+    expect((await out(send(root, 'PreToolUse', cmd, {}, registry))).permissionDecision).toBe('deny');
+    expect(await send(root, 'PreToolUse', `${cmd} --label needs-human`, {}, registry)).toBe('');
+  });
+
+  test('checks.prSize false turns the body check off too', () => {
+    const root = repo({ 'a.ts': lines(3) });
+    writeFileSync(join(root, 'body.md'), body('Run the migration first.'));
+    expect(decidePrSize(ctx(root, 'gh pr create --body-file body.md', { config: (c) => (c.checks.prSize = false) }))).toEqual({ kind: 'allow' });
+  });
+});

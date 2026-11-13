@@ -7,6 +7,7 @@ import { writeAtomic } from '../core/atomic.js';
 import { CONTROL, esc, isObj, MODEL_RULE, MODEL_RX, relPathProblem } from '../core/config.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { SAFE_GIT } from '../core/git-safe.js';
+import { TASKS_DIR } from '../core/paths.js';
 import { plainArgv } from './commands.js';
 
 export type CriterionCheck = { test: string } | { run: string; expect_exit: number } | { person: string };
@@ -16,7 +17,7 @@ export interface Contract {
   closed_at: string | null; criteria: Criterion[]; checks: string[]; review: { model: string }; sha256: string | null;
 }
 
-export const TASKS_DIR = '.harness/tasks';
+export { TASKS_DIR };
 export const TASK_HASHES = '.harness/state/task-hashes.json';
 export const ACTIVE_TASK = '.harness/state/active-task';
 export const TASK_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;

@@ -112,6 +112,14 @@ test('review records are protected from Write, Edit and shell writes; reads are 
   expect(bash('cat .harness/reviews/1.json')).toBe('allow');
 });
 
+// Done contract (T2): only a person changes task contracts (`! harness task …`); the agent may read them.
+test('task contracts are protected from Write, Edit and shell writes; reads are allowed', () => {
+  for (const t of ['Write', 'Edit']) expect(edit('.harness/tasks/x.json', t).kind, t).toBe('deny');
+  for (const c of ['echo {} > .harness/tasks/x.json', 'cp f .harness/tasks/x.json', 'rm -rf .harness/tasks']) expect(bash(c), c).toBe('deny');
+  expect(run('Read', { file_path: '.harness/tasks/x.json' }).kind).toBe('allow');
+  expect(bash('cat .harness/tasks/x.json')).toBe('allow');
+});
+
 test('a repo reached through a symlinked path is still protected (dispatch, real registry)', async () => {
   const real = realpathSync(mkdtempSync(join(tmpdir(), 'h-symp-')));
   mkdirSync(join(real, 'repo'));

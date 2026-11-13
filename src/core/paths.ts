@@ -44,6 +44,8 @@ export const isAnyTestFile = (rel: string): boolean => isTestFile(rel) || /(^|\/
 export const pairKey = (rel: string): string => rel.replace(/(^|\/)__tests__\//, '$1').replace(/\.(test|spec)(\.[^./]+)$/, '$2');
 
 /** Harness's own local files: install gitignores them, and the in-progress size never counts them (pr-size spec §5). */
+/** Task contracts (done contract). Here, a leaf with no harness imports, so protect's table can name it. */
+export const TASKS_DIR = '.harness/tasks';
 export const HARNESS_LOCAL = ['.harness/state/', '.harness/logs/', '.harness/backup/', '.harness/results/', '.harness/debug/', '.harness/reports/', '.harness/reviews/'];
 
 /** `.harness/` exists and is not just the skills' work folders (`.harness/tmp`, made before init): harness is or was installed. An empty `.harness/` counts, as the old existsSync check did. */

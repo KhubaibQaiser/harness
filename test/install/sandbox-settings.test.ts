@@ -1,8 +1,10 @@
 // Owner ruling 2026-11-13: Claude Code's sandbox is harness's primary defense. init/update/sync write
 // sandbox.filesystem.denyWrite for every protected harness path (derived from protect's table), with the same
 // record / replace / uninstall rules as the other harness settings blocks.
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { DENY_WRITE_SKIPPED, denyWritePaths, PROTECTED } from '../../src/checks/protect.js';
+import { HARNESS_LOCAL, TASKS_DIR } from '../../src/core/paths.js';
+import { TASKS_DIR as CONTRACT_TASKS_DIR } from '../../src/done/contract.js';
 import { mergeSettings, removeFromSettings } from '../../src/install/merge.js';
 
 const FILE = (blocks: string[], kind = 'update') => ({ rel: '.claude/settings.json', kind, hash: 'x', blocks }) as never;
@@ -21,6 +23,12 @@ test('denyWrite comes from protect\'s table: each protected path, but the work f
   expect(denyWritePaths(['.harness/future/**', '.harness/reviews/**', '.harness/tmp/**', '.harness/logs/**', '.harness/results/**', '.harness/config.yaml'])).toEqual(['./.harness/future', './.harness/config.yaml']);
   expect(PROTECTED).toContain('.harness/reviews/**');
   expect(paths).not.toContain('./.harness/reviews');
+  // Task contracts are person-only (T2): nothing the agent runs writes them, so the sandbox denies them too.
+  expect(PROTECTED).toContain(`${TASKS_DIR}/**`);
+  expect(paths).toContain(`./${TASKS_DIR}`);
+  expect(DENY_WRITE_SKIPPED).not.toContain(TASKS_DIR);
+  // Contracts are committed (CI reads them from the base branch), so .gitignore must not hide them.
+  expect(HARNESS_LOCAL).not.toContain(`${TASKS_DIR}/`);
 });
 
 test('the merge writes denyWrite in every sandbox mode, recorded per path; a re-render is stable', () => {
@@ -66,4 +74,12 @@ test('`always` turns the sandbox on for interactive sessions too, failIfUnavaila
   expect(sb).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false });
   expect(m.notes.join('\n')).toMatch(/sandbox\.network\.allowedDomains/);
   expect(mergeSettings(null, { sandbox: 'unattended' }).notes.join('\n')).not.toMatch(/allowedDomains/);
+});
+
+test('protect loaded on its own lists the task contracts folder (TASKS_DIR comes from a leaf module, never undefined)', async () => {
+  vi.resetModules();
+  const fresh = await import('../../src/checks/protect.js');
+  expect(fresh.PROTECTED).toContain('.harness/tasks/**');
+  expect(fresh.PROTECTED.join()).not.toMatch(/undefined/);
+  expect(CONTRACT_TASKS_DIR).toBe(TASKS_DIR); // contract.ts re-exports the one constant
 });

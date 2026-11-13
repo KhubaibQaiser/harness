@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import nodePath, { resolve } from 'node:path';
 import picomatch from 'picomatch';
-import { matches, toRepoPath } from '../core/paths.js';
+import { matches, TASKS_DIR, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import { becomesDecision, codeNames, decisionRoutes, decisionsDeny, editorAsk, editorFiles, globHits } from './decisions-protect.js';
@@ -14,8 +14,8 @@ import { SAFE_GIT } from '../core/git-safe.js';
 import { type OptTable, readOptions, valuesOf } from '../core/options.js';
 import { globGuardAsk, guardedPaths, plainHeads, wrapperForms } from '../core/command-head.js';
 
-export const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/reviews/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
-const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/reviews', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
+export const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/reviews/**', `${TASKS_DIR}/**`, '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
+const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/reviews', TASKS_DIR, '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
 /**
  * Protected paths the sandbox leaves writable, because the agent's own Bash writes them through harness (protect still
  * guards them as text):

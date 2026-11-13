@@ -124,7 +124,7 @@ test.skipIf(!hasClaude)('plugin validates with claude plugin validate', () => {
 
 test('slash-only skills carry disable-model-invocation; doctor and status stay visible', () => {
   const off = (s: string) => /^disable-model-invocation: true$/m.test(readFileSync(`skills/${s}/SKILL.md`, 'utf8'));
-  for (const s of ['init', 'update', 'uninstall', 'add', 'sync', 'vet', 'preset']) expect(off(s), s).toBe(true);
+  for (const s of ['init', 'update', 'uninstall', 'add', 'sync', 'vet', 'preset', 'review']) expect(off(s), s).toBe(true);
   for (const s of ['doctor', 'status', 'remember']) expect(off(s), s).toBe(false);
 });
 

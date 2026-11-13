@@ -33,7 +33,7 @@ const first = (s: string | undefined) => esc((s ?? '').trim().split('\n')[0] ?? 
 // git's global options that take a value, and those that point git at another repo, worktree or attribute source.
 const GLOBAL_VALUE = /^(-[Cc]|--(git-dir|work-tree|namespace|exec-path|super-prefix|config-env|attr-source|list-cmds))$/;
 const ELSEWHERE = /^(-C|--(git-dir|work-tree|namespace|exec-path|super-prefix|config-env|attr-source))(=|$)/;
-const SAFE_C = /^(user\.(name|email|signingkey)|commit\.gpgsign)=/; // -c keys that can't change what is committed
+const SAFE_C = /^(user\.(name|email|signingkey)=|commit\.gpgsign=false$)/; // -c keys that can't change what is committed (signing runs gpg.program)
 const UNSCANNED = new Set(['merge', 'cherry-pick', 'rebase', 'revert', 'am', 'commit-tree', 'pull']);
 const STASH_SCANNED = /^(push|save|-.*)?$/; // `git stash` alone pushes; list/show/apply/pop/drop make no commit
 const COMMIT_WORD = /^(commit|stash|merge|cherry-pick|rebase|revert|am|commit-tree|pull)$/;
@@ -89,7 +89,7 @@ function notPlain(command: string): string | null {
   if (runnerName(ws[0] ?? '') !== 'git') return 'run git commit as a plain command, with no variable assignment, wrapper, eval or shell in front of it';
   const { opts } = gitSub(ws, 0);
   if (opts.some((o) => ELSEWHERE.test(o))) return 'run git commit from the repo folder, without -C, --git-dir, --work-tree or other options that point git elsewhere';
-  if (opts.some((o) => o.startsWith('-c=') && !SAFE_C.test(o.slice(3)))) return 'a git -c setting other than user.name, user.email, user.signingkey or commit.gpgsign can change what is committed';
+  if (opts.some((o) => o.startsWith('-c=') && !SAFE_C.test(o.slice(3)))) return 'a git -c setting other than user.name, user.email, user.signingkey or commit.gpgsign=false can change what is committed (signing runs gpg.program)';
   return null;
 }
 
@@ -122,21 +122,26 @@ function hookFiles(dir: string, platform: NodeJS.Platform): string[] {
   }
 }
 
-// git-lfs's own filter lines (`git lfs install`); any other clean, smudge or process program runs during the commit and can
-// tell the scan's throwaway index from the commit's (GIT_INDEX_FILE), so it could stage something else.
+// Git config that names a program git may run during a commit or stash, after the scan, where it could stage files or
+// make a commit of its own: matched by key pattern, not a list, so a key git adds later asks too. git-lfs's own filter
+// lines (`git lfs install`) and true/false fsmonitor run nothing of the repo's. Namespaces git never reads during a commit
+// or stash (credential helpers, diff and merge tools, mail, browsers, help) are left out: a credential helper is in most
+// installs' system config, and asking on every commit for it would only teach people to say yes.
+const PROGRAM_KEYS = '(^|\\.)(program|command|cmd|editor|fsmonitor|helper|defaultkeycommand)$|^filter\\..*\\.(clean|smudge|process)$|^diff\\..*\\.textconv$|^diff\\.external$';
+const NOT_IN_COMMIT = /^(credential|difftool|mergetool|sendemail|browser|web|man|instaweb|gui|guitool)\./;
 const LFS: Record<string, string> = { 'filter.lfs.clean': 'git-lfs clean -- %f', 'filter.lfs.smudge': 'git-lfs smudge -- %f', 'filter.lfs.process': 'git-lfs filter-process' };
 const BOOL = /^(true|false|yes|no|on|off|1|0)$/i;
-/** The git config that runs programs during the commit which could act differently from the scan: an fsmonitor program
- *  and clean, smudge or process filters other than git-lfs's. SAFE_GIT_USER: SAFE_GIT turns fsmonitor off. */
+/** The program keys the effective config sets (every scope, includes followed), or null when git config fails.
+ *  SAFE_GIT_USER: SAFE_GIT turns fsmonitor off. */
 function programsInConfig(ctx: Ctx): string[] | null {
-  const r = spawnSync('git', [...SAFE_GIT_USER, 'config', '--get-regexp', '^(core\\.fsmonitor|filter\\..*\\.(clean|smudge|process))$'], { cwd: ctx.root, env: ctx.env, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+  const r = spawnSync('git', [...SAFE_GIT_USER, 'config', '--get-regexp', PROGRAM_KEYS], { cwd: ctx.root, env: ctx.env, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
   if (r.status === 1) return []; // no such key
   if (r.status !== 0) return null;
   return [...new Set(r.stdout.split('\n').filter(Boolean).flatMap((l) => {
     const i = l.indexOf(' ');
     const [key, value] = i < 0 ? [l, ''] : [l.slice(0, i), l.slice(i + 1)];
-    if (key === 'core.fsmonitor') return BOOL.test(value) ? [] : ['core.fsmonitor'];
-    return LFS[key] === value ? [] : [esc(key)];
+    if (NOT_IN_COMMIT.test(key) || LFS[key] === value || (key === 'core.fsmonitor' && BOOL.test(value))) return [];
+    return [esc(key)];
   }))];
 }
 

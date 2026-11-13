@@ -45,7 +45,9 @@ function ctx(root: string, command: string, env: NodeJS.ProcessEnv, o: { on?: bo
   return { input, root, config, unattended: false, env, platform: process.platform, startedAt: Date.now() } as unknown as Ctx;
 }
 const run = (c: Ctx) => secretScan.run(c) as { kind: string; reason?: string };
-const withStub = (s: { dir: string }) => ({ ...process.env, PATH: `${s.dir}${delimiter}${process.env.PATH ?? ''}` });
+// No system or global git config: this machine's own (a credential helper, a difftool) must not change what a test sees.
+const NO_USER_CONFIG = (() => { const f = join(mkdtempSync(join(tmpdir(), 'harness-gitcfg-')), 'empty'); writeFileSync(f, ''); return { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: f }; })();
+const withStub = (s: { dir: string }) => ({ ...process.env, ...NO_USER_CONFIG, PATH: `${s.dir}${delimiter}${process.env.PATH ?? ''}` });
 const noGitleaks = () => ({ PATH: mkdtempSync(join(tmpdir(), 'harness-nopath-')) });
 const leak = (root: string, rel = 'leak.txt') => writeFileSync(join(root, rel), `token = ${TOKEN}\n`);
 
@@ -180,14 +182,27 @@ describe('secret-scan', () => {
   test('an fsmonitor program or a clean, smudge or process filter in git config asks; git-lfs\'s own filter does not', () => {
     const cases: [string, string, string][] = [['core.fsmonitor', './.fsmon', 'ask'], ['core.fsmonitor', 'true', 'allow'], ['core.fsmonitor', 'false', 'allow'],
       ['filter.x.clean', 'sh x.sh', 'ask'], ['filter.x.smudge', 'cat', 'ask'], ['filter.x.process', 'p', 'ask'],
-      ['filter.lfs.clean', 'git-lfs clean -- %f', 'allow'], ['filter.lfs.smudge', 'git-lfs smudge -- %f', 'allow'], ['filter.lfs.process', 'git-lfs filter-process', 'allow'], ['filter.lfs.clean', 'git-lfs clean -- %f; sh x', 'ask']];
+      ['filter.lfs.clean', 'git-lfs clean -- %f', 'allow'], ['filter.lfs.smudge', 'git-lfs smudge -- %f', 'allow'], ['filter.lfs.process', 'git-lfs filter-process', 'allow'], ['filter.lfs.clean', 'git-lfs clean -- %f; sh x', 'ask'],
+      // Any key that names a program git may run during the commit, by pattern: gpg signing, editors, textconv, a future *.program.
+      ['gpg.program', './sign.sh', 'ask'], ['gpg.ssh.program', './s', 'ask'], ['gpg.x509.program', './s', 'ask'], ['gpg.ssh.defaultKeyCommand', './k', 'ask'],
+      ['core.editor', 'vim', 'ask'], ['sequence.editor', 'vim', 'ask'], ['diff.x.textconv', 'cat', 'ask'], ['diff.external', './d', 'ask'], ['future.thing.program', './p', 'ask'], ['foo.command', './c', 'ask'],
+      // Namespaces git never runs during a commit or stash.
+      ['credential.helper', 'osxkeychain', 'allow'], ['difftool.x.cmd', 'opendiff', 'allow'], ['mergetool.x.cmd', 'x', 'allow']];
     for (const [key, value, want] of cases) {
       const root = makeRepo({ 'README.md': 'hi\n' });
       git(root, 'config', key, value);
       const d = run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin())));
       expect(d.kind, `${key}=${value}`).toBe(want);
-      if (want === 'ask') expect(d.reason).toContain(key.startsWith('core') ? 'core.fsmonitor' : 'filter');
+      if (want === 'ask') expect(d.reason).toContain(key.toLowerCase());
     }
+  });
+
+  test('gpg signing with a gpg.program asks: the program runs after the scan and could make a commit of its own', () => {
+    const root = makeRepo({ 'README.md': 'hi\n' });
+    writeFileSync(join(root, 'sign.sh'), `#!/bin/sh\necho k=${'$'}T > x.txt; git add x.txt; git commit -qm nested --no-verify\n`, { mode: 0o755 });
+    git(root, 'config', 'gpg.program', './sign.sh');
+    git(root, 'config', 'commit.gpgsign', 'true');
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('ask');
   });
 
   test('writing commit hooks or changing core.hooksPath asks', () => {
@@ -222,7 +237,7 @@ describe('secret-scan', () => {
     writeFileSync(join(root, 'a.txt'), 'nothing secret\n');
     git(root, 'add', 'a.txt');
     const heredoc = `git commit -m "$(cat <<'EOF'\nfeat: x; y && z\n\nbody | more\nEOF\n)"`;
-    for (const cmd of ['git commit -m clean', 'git commit -m "fix: a; b && c"', heredoc, 'git -c user.name=a -c user.email=b@c commit -m x', '/usr/bin/git commit -m x 2>&1', 'git stash'])
+    for (const cmd of ['git commit -m clean', 'git commit -m "fix: a; b && c"', heredoc, 'git -c user.name=a -c user.email=b@c commit -m x', 'git -c commit.gpgsign=false commit -m x', '/usr/bin/git commit -m x 2>&1', 'git stash'])
       expect(run(ctx(root, cmd, withStub(stubBin()))).kind, cmd).toBe('allow');
   });
 
@@ -239,7 +254,7 @@ describe('secret-scan', () => {
       expect(run(ctx(root, cmd, env)).reason, cmd).toContain('must be the only command');
     for (const cmd of ['GIT_INDEX_FILE=/tmp/i git commit -m x', 'env A=1 git commit -m x', 'sh -c "git commit -m x"', 'eval "git commit -m x"'])
       expect(run(ctx(root, cmd, env)).reason, cmd).toContain('plain');
-    for (const cmd of ['git -C . commit -m x', 'git --git-dir=.git commit -m x', 'git -c core.attributesFile=/x commit -m x'])
+    for (const cmd of ['git -C . commit -m x', 'git --git-dir=.git commit -m x', 'git -c core.attributesFile=/x commit -m x', 'git -c commit.gpgsign=true commit -m x', 'git -c gpg.program=./s commit -m x'])
       expect(run(ctx(root, cmd, env)).kind, cmd).toBe('deny');
     const smuggled = `git commit -m "$(cat <<'EOF'\nx\nEOF\necho k > f; git add f\ncat <<'EOF'\ny\nEOF\n)"`;
     // bash 3.2 also ends a heredoc at a line that starts with the delimiter (`EOF)`).

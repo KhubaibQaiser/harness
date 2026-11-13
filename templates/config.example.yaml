@@ -15,6 +15,7 @@ checks:
   prBody: true
   decisions: true
   secretScan: false
+  done: false
 
 # Claude Code's sandbox: required for unattended runs (unattended), on for everyone (always), or not used (off).
 sandbox: unattended
@@ -97,6 +98,12 @@ decisions:
 # The code-only PR review (harness review).
 review:
   max_findings: 15
+
+# The done contract (needs checks.done): the review model and the time budgets of harness verify.
+done:
+  review_model: sonnet
+  review_timeout_s: 600
+  timeout_s: 1800
 
 # Behaviour when no human is watching.
 unattended:

@@ -590,6 +590,7 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `checks.prBody` | `true` | PR body: every agent `gh pr create` (or `gh pr new`), and every `gh pr edit` that sets a body, must carry a filled pr-ship template in `--body-file`; `gh pr merge --auto` and `--admin` and removing the `needs-human` label are denied. Separate from `checks.prSize`; when the key is missing it takes `checks.prSize`'s value. It belongs to the `pr-ship` item. |
 | `checks.decisions` | `true` | Turns on team decisions and the `decisions.*` keys. It belongs to the `agents-md` item: with a catalog, `update` sets it from the selected items, so unticking `agents-md` turns it off. `doctor` and `status` report on decisions whatever this is set to. |
 | `checks.secretScan` | `false` | Secret scan: before an agent `git commit` or `git stash`, gitleaks scans what it could take and a finding blocks it, showing rule, file and line but never the value; merges, rebases and similar commands ask. Needs gitleaks on PATH and git 2.40 or newer; without them every agent commit is blocked. It belongs to the `gitleaks-commit` item. |
+| `checks.done` | `false` | Done contract: an agent's "done" becomes a verdict harness computes from evidence against a task contract a person approved. Off by default; nothing uses it yet. |
 | `sandbox` | `"unattended"` | `unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only. Value must be one of unattended, always, off. |
 | `catalog_version` | `0` | Version of the catalog the recommendations came from. `0` means no catalog. |
 | `project.type` | `""` | What kind of project this is. Empty until the interview sets it. Value must be one of web, landing, mobile, api, infra, library, other. |
@@ -624,6 +625,9 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `decisions.expiry_days` | `90` | A decision not confirmed for this long stops loading at the next sync. Value must be an integer from 7 to 365. |
 | `decisions.nudge` | `true` | Stop suggests saving a decision when the session shows signals. |
 | `review.max_findings` | `15` | Most findings a PR review reports: the reviewer is asked for at most this many (read from the base branch), and the most severe are kept. Value must be an integer from 1 to 100. |
+| `done.review_model` | `"sonnet"` | The model `harness verify` reviews a task's diff with: an alias such as `sonnet` or a full id. A contract's `review.model` sets it for that task. Value must be a model id or alias such as sonnet: a letter or digit, then letters, digits and ._:/[]-. |
+| `done.review_timeout_s` | `600` | Seconds the task review may take before it counts as failed. Value must be an integer from 30 to 3600. |
+| `done.timeout_s` | `1800` | Seconds every command one `harness verify` runs may take in total. Value must be an integer from 60 to 21600. |
 | `unattended.multi_file_gate` | `"block"` | What the multi-file gate does when no human is watching. Value must be one of block, allow-log, off. |
 | `unattended.require_reason` | `false` | With `allow-log`, extra files need a one-line reason. No effect while the gate is `block`. |
 | `unattended.review` | `"code-only"` | `code-only`: an unattended `harness review` gathers the PR for a code-only review that is never posted; `skip`: it does nothing. Value must be one of skip, code-only. |

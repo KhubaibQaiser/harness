@@ -9,9 +9,9 @@ export interface PrFinding {
   id: string; severity: 'critical' | 'medium' | 'nit'; category: Category; file: string; line: number; side: 'RIGHT' | 'LEFT'; title: string;
   evidence: { kind: 'quote'; text: string } | { kind: 'missing-test'; search: string }; fix: string;
 }
-export interface PrReview { findings: PrFinding[]; steering: { source: 'title' | 'body' | 'comment' | 'issue' | 'diff' | 'file'; text: string }[]; summary: string; limits: string }
-
-const SOURCES = ['title', 'body', 'comment', 'issue', 'diff', 'file'];
+const SOURCES = new Set(['title', 'body', 'comment', 'issue', 'diff', 'file'] as const);
+export type SteeringSource = typeof SOURCES extends Set<infer T> ? T : never;
+export interface PrReview { findings: PrFinding[]; steering: { source: SteeringSource; text: string }[]; summary: string; limits: string }
 
 /** The reviewer's findings.json as data (spec §7.2). More findings than review.max_findings is not an error: finish collapses them. */
 export function validatePrReview(raw: unknown, g: GatherJson, inSnapshot: (file: string) => boolean): { ok: true; review: PrReview } | { ok: false; errors: string[] } {
@@ -47,7 +47,7 @@ export function validatePrReview(raw: unknown, g: GatherJson, inSnapshot: (file:
   list('steering', raw.steering).forEach((s, i) => {
     if (!isObj(s)) return void errors.push(`steering[${i}]: must be a mapping`);
     keys(`steering[${i}].`, s, ['source', 'text']);
-    if (!SOURCES.includes(s.source as string)) errors.push(`steering[${i}].source: must be title, body, comment, issue, diff or file`);
+    if (!SOURCES.has(s.source as SteeringSource)) errors.push(`steering[${i}].source: must be title, body, comment, issue, diff or file`);
     str(`steering[${i}].text`, s.text, 500);
   });
   str('summary', raw.summary, 2000);

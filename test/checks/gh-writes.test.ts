@@ -116,11 +116,27 @@ describe('commands that can repoint refs/remotes/* ask', () => {
     all(['env git update-ref refs/remotes/origin/main HEAD', 'nice git remote set-url origin /tmp/x', '/usr/bin/git fetch /tmp/x', '"git" remote add e /tmp/x', 'g\\it remote add e /tmp/x',
       'git -C sub fetch ../x main:refs/remotes/origin/main', 'hub remote add e /tmp/x', 'sh -c "git remote add e /tmp/x"', 'true && git update-ref refs/remotes/origin/main HEAD', 'timeout 5 git fetch /tmp/x'], 'ask');
   });
+  test('review round 1: push into this repo or onto refs/remotes, fetch --stdin, replace, ref plumbing', () => {
+    all(['git push . HEAD:refs/remotes/origin/main', 'git push ./ HEAD:x', 'git push file:///p HEAD:x', 'git push ../wt HEAD:x', 'git push --mirror .', 'git push --mirror origin',
+      'git push origin HEAD:refs/remotes/origin/main', 'git push origin +HEAD:Refs//Remotes/origin/main', 'git push --repo=. HEAD:x', 'git send-pack . HEAD:refs/remotes/origin/main', 'git send-pack ./ x',
+      'git fetch --stdin origin', 'git fetch origin --stdin', 'git replace abc def', 'git replace -d abc', 'git fast-import', 'git filter-branch -- --all', 'git receive-pack .'], 'ask');
+  });
+  test('review round 1: spaced global values, dynamic refs, xargs, aliases, includes and unknown subcommands', () => {
+    all(['git --git-dir .git update-ref refs/remotes/origin/main HEAD', 'git --work-tree . remote add e /tmp/x', 'git --config-env remote.origin.url=V fetch', 'git --config-env=url./tmp/x.insteadOf=V fetch',
+      'git update-ref $R HEAD', 'git update-ref "$(echo refs/remotes/origin/main)" HEAD', 'git symbolic-ref refs/remotes/origin/HEAD `x`', 'git push . "$R"', 'git fetch origin $SPEC', 'git update-ref',
+      'echo refs/remotes/origin/main HEAD | xargs git update-ref', 'echo . | xargs git push', 'echo /tmp/x | xargs -n1 git fetch',
+      'git -c alias.co=update-ref co refs/remotes/origin/main HEAD', 'git config alias.co "!git update-ref refs/remotes/origin/main HEAD"', 'git config --global alias.st status', 'git -c include.path=/tmp/x fetch',
+      'git config include.path /tmp/evil', 'git config includeIf.gitdir:/p/.path /tmp/evil', 'git config remote.origin.pushurl .', 'git config url./tmp/x.pushInsteadOf https://github.com/', 'git co main', 'git my-plugin run'], 'ask');
+  });
   test('ordinary fetch, pull and remote reads stay allowed', () => {
     all(['git fetch', 'git fetch origin', 'git fetch --all --prune', 'git fetch origin main', 'git fetch -q origin', 'git fetch --depth 1 origin', 'git fetch -j 4 origin', 'git pull', 'git pull origin main',
       'git pull --rebase origin main', 'git remote', 'git remote -v', 'git remote show origin', 'git remote prune origin', 'git remote get-url origin', 'git update-ref refs/heads/x HEAD',
       'git symbolic-ref refs/remotes/origin/HEAD', 'git symbolic-ref --short HEAD', 'git config remote.origin.url', 'git config --get remote.origin.url', 'git config get remote.origin.fetch',
       'echo git remote add e /tmp/x'], 'allow');
+    // everyday git and plain pushes to a remote stay allowed
+    all(['git status', 'git log --oneline -5', 'git diff HEAD~1', 'git add -A', 'git commit -m x', 'git checkout -b feat/x', 'git switch main', 'git branch -a', 'git rebase main', 'git stash list',
+      'git show HEAD:README.md', 'git rev-parse HEAD', 'git ls-files', 'git worktree list', 'git push origin feat/x', 'git push -u origin HEAD', 'git push origin HEAD:refs/heads/feat/x', 'git config user.name x',
+      'git --git-dir .git log', 'git -C sub status', 'git replace --list', 'git replace -l', 'git --version', 'git help push', 'mkdir -p git src', 'cp -r git dist'], 'allow');
   });
 });
 

@@ -102,30 +102,55 @@ export function pushConfigWhy(globals: string[], sub: string | undefined, rest: 
 }
 
 // Done contract: a contract on origin's default branch vouches for itself (loadContract), so a local command that repoints
-// refs/remotes/* could vouch for a forged one. Commands that can: update-ref/symbolic-ref there, remote add/set-url/rename/
-// set-head, a fetch or pull of a URL, with a refspec that names a destination or --refmap, and remote URL or fetch config.
+// refs/remotes/* could vouch for a forged one. Commands that can: update-ref/symbolic-ref there; remote add/set-url/rename/
+// set-head; fetch or pull of a URL, from stdin, with a refspec that names a destination or --refmap; push or send-pack into
+// this repo, onto refs/remotes or --mirror; replace and ref plumbing; remote, alias and include config; refs built at run
+// time or fed by xargs; and a subcommand git doesn't have (an alias could do any of these).
 const REMOTE_REF = /^refs\/remotes\//i; // i: a loose ref on a case-insensitive file system
-const REMOTE_KEY = /^(remote\..+\.(url|fetch)|url\..+\.insteadof)$/i;
+const CONFIG_KEY = /^(remote\..+\.(url|pushurl|fetch|push|mirror)|url\..+\.(insteadof|pushinsteadof)|alias\..+|include\.path|includeif\..+\.path)$/i;
 const REMOTE_SUBS = new Set(['add', 'set-url', 'rename', 'set-head']);
+const REF_SUBS = new Set(['update-ref', 'symbolic-ref', 'push', 'send-pack', 'fetch', 'pull', 'remote', 'config', 'replace']);
+const PLUMBING = new Set(['fast-import', 'filter-branch', 'receive-pack', 'http-fetch', 'remote-ext', 'remote-fd']);
+// `git --list-cmds=main` (git 2.46).
+const GIT_CMDS = new Set(`add am annotate apply archimport archive bisect blame branch bugreport bundle cat-file check-attr check-ignore check-mailmap check-ref-format checkout checkout--worker
+checkout-index cherry cherry-pick clean clone column commit commit-graph commit-tree config count-objects credential credential-cache credential-cache--daemon credential-netrc credential-osxkeychain
+credential-store cvsexportcommit cvsimport cvsserver daemon describe diagnose diff diff-files diff-index diff-tree difftool difftool--helper fast-export fast-import fetch fetch-pack filter-branch
+fmt-merge-msg for-each-ref for-each-repo format-patch fsck fsck-objects fsmonitor--daemon gc get-tar-commit-id grep hash-object help hook http-backend http-fetch http-push imap-send index-pack init
+init-db instaweb interpret-trailers log ls-files ls-remote ls-tree mailinfo mailsplit maintenance merge merge-base merge-file merge-index merge-octopus merge-one-file merge-ours merge-recursive
+merge-recursive-ours merge-recursive-theirs merge-resolve merge-subtree merge-tree mergetool mktag mktree multi-pack-index mv name-rev notes p4 pack-objects pack-redundant pack-refs patch-id pickaxe
+prune prune-packed pull push quiltimport range-diff read-tree rebase receive-pack reflog refs remote remote-ext remote-fd remote-ftp remote-ftps remote-http remote-https repack replace replay
+request-pull rerere reset restore rev-list rev-parse revert rm send-email send-pack sh-i18n--envsubst shell shortlog show show-branch show-index show-ref sparse-checkout stage stash status stripspace
+submodule submodule--helper subtree switch symbolic-ref tag unpack-file unpack-objects update-index update-ref update-server-info upload-archive upload-archive--writer upload-pack var verify-commit
+verify-pack verify-tag version web--browse whatchanged worktree write-tree`.split(/\s+/));
 const FETCH_OPTS: OptTable = {
   v: 'josX', lv: ['jobs', 'server-option', 'upload-pack', 'refmap', 'depth', 'deepen', 'shallow-since', 'shallow-exclude', 'negotiation-tip', 'filter', 'submodule-prefix', 'recurse-submodules-default', 'strategy', 'strategy-option'],
   lo: ['recurse-submodules', 'rebase', 'gpg-sign'], prefix: true,
 };
+const SEND_OPTS: OptTable = { ...PUSH_OPTS, lv: [...PUSH_OPTS.lv!, 'remote'] };
 const CONFIG_OPTS: OptTable = { v: 'f', lv: ['file', 'blob', 'type', 'default', 'comment', 'value'] };
 const REF_WHY = 'can repoint a remote-tracking ref (refs/remotes/*), which vouches for a task contract; a person runs it';
 const isUrl = (w: string) => /[/\\:]/.test(w) || w.startsWith('.');
-/** Why a git command with these words may repoint refs/remotes/*, or null. `globals` are the words before the subcommand. */
-export function remoteRefWhy(globals: string[], sub: string | undefined, rest: string[]): string | null {
+// This repository: `.`, a path, or file://. Not an https:// or scp-style (host:path) remote.
+const isLocal = (w: string) => w === '.' || /^file:/i.test(w) || (!/^[a-z][a-z0-9+.-]*:\/\//i.test(w) && !/^[^/\\]*:/.test(w) && /[/\\]|^\.\.$/.test(w));
+const toRemote = (spec: string) => REMOTE_REF.test(spec.slice(spec.lastIndexOf(':') + 1).replace(/^\+/, '').replace(/\/+/g, '/'));
+/** Why a git command may repoint refs/remotes/*, or null. `globals` are the words before the subcommand; `head`: git is
+ *  the command word (not a word found later); `fed`: xargs or parallel hands it more words. */
+export function remoteRefWhy(globals: string[], sub: string | undefined, rest: string[], o: { head?: boolean; fed?: boolean } = {}): string | null {
   const why = (what: string) => `${what} ${REF_WHY}`;
   for (let i = 0; i < globals.length; i++) {
-    const kv = globals[i] === '-c' ? (globals[i + 1] ?? '') : /^-c./.test(globals[i]) ? globals[i].slice(2) : globals[i].startsWith('--config-env=') ? globals[i].slice(13) : '';
-    if (REMOTE_KEY.test(kv.slice(0, kv.indexOf('=')))) return why(`git -c ${kv.slice(0, kv.indexOf('='))}`);
+    const g = globals[i], kv = g === '-c' || g === '--config-env' ? (globals[i + 1] ?? '') : /^-c./.test(g) ? g.slice(2) : g.startsWith('--config-env=') ? g.slice(13) : '';
+    const key = kv.slice(0, kv.indexOf('='));
+    if (CONFIG_KEY.test(key)) return why(`git -c ${key}`);
   }
+  if (sub === undefined) return null;
+  if (REF_SUBS.has(sub) && (o.fed || rest.some((w) => /[$`]/.test(w)))) return why(`git ${sub} with words built at run time`);
+  if (PLUMBING.has(sub)) return why(`git ${sub}`);
+  if (o.head !== false && !GIT_CMDS.has(sub)) return why(`git ${sub} (not a git command, so possibly an alias that)`);
   if (sub === 'update-ref' || sub === 'symbolic-ref') {
     const p = readOptions(rest, { v: 'm' });
-    if (p.flags.includes('--stdin')) return why('git update-ref --stdin (its refs are not visible to harness)');
+    if (p.flags.includes('--stdin') || !p.pos[0]) return why(`git ${sub} with refs harness can't see`);
     const write = sub === 'update-ref' || p.pos.length > 1 || p.flags.some((f) => f === '-d' || f === '--delete');
-    return write && REMOTE_REF.test((p.pos[0] ?? '').replace(/\/+/g, '/')) ? why(`git ${sub} ${p.pos[0]}`) : null;
+    return write && REMOTE_REF.test(p.pos[0].replace(/\/+/g, '/')) ? why(`git ${sub} ${p.pos[0]}`) : null;
   }
   if (sub === 'remote') {
     const s = readOptions(rest, {}).pos[0] ?? '';
@@ -133,13 +158,23 @@ export function remoteRefWhy(globals: string[], sub: string | undefined, rest: s
   }
   if (sub === 'fetch' || sub === 'pull') {
     const p = readOptions(rest, FETCH_OPTS);
-    if (valuesOf(p, ['--refmap']).length) return why(`git ${sub} --refmap`);
+    if (valuesOf(p, ['--refmap']).length || p.flags.includes('--stdin')) return why(`git ${sub} --refmap or --stdin`);
     const repos = p.flags.includes('--multiple') ? p.pos : p.pos.slice(0, 1);
     if (repos.some(isUrl)) return why(`git ${sub} of a URL or path`);
     return p.pos.slice(repos.length).some((r) => r.includes(':')) ? why(`git ${sub} with a refspec that names a destination`) : null;
   }
+  if (sub === 'push' || sub === 'send-pack') {
+    const p = readOptions(rest, SEND_OPTS);
+    if (p.flags.includes('--mirror')) return why(`git ${sub} --mirror`);
+    if ([p.pos[0] ?? '', ...valuesOf(p, ['--repo', '--remote'])].some(isLocal)) return why(`git ${sub} into this repository`);
+    return p.pos.slice(1).some(toRemote) ? why(`git ${sub} onto refs/remotes`) : null;
+  }
+  if (sub === 'replace') {
+    const p = readOptions(rest, { lo: ['format'] });
+    return p.pos.length || p.flags.some((f) => f !== '-l' && f !== '--list') ? why('git replace (it changes what every read of an object returns, and') : null;
+  }
   if (sub === 'config') {
-    const pos = readOptions(rest, CONFIG_OPTS).pos, k = pos.findIndex((w) => REMOTE_KEY.test(w));
+    const pos = readOptions(rest, CONFIG_OPTS).pos, k = pos.findIndex((w) => CONFIG_KEY.test(w));
     return k >= 0 && pos[k + 1] !== undefined ? why(`git config ${pos[k]}`) : null;
   }
   return null;

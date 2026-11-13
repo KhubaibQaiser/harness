@@ -7,5 +7,6 @@
 // SAFE_GIT_USER keeps hooks, and nothing here touches credential helpers, core.sshCommand or gpg signing: `harness git`
 // checkout/commit/push are steps the person runs in their own repo and expects them. Upgrade if a hook ever runs those.
 export const SAFE_GIT_USER = ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false'];
-export const SAFE_GIT = [...SAFE_GIT_USER, '-c', 'core.hooksPath=/dev/null/harness-no-hooks'];
+// --no-replace-objects: a local `git replace` must not change what harness reads (it could forge the contract on origin/HEAD).
+export const SAFE_GIT = [...SAFE_GIT_USER, '--no-replace-objects', '-c', 'core.hooksPath=/dev/null/harness-no-hooks'];
 export const SAFE_DIFF = ['--no-ext-diff', '--no-textconv'];

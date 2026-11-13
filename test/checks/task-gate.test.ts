@@ -54,6 +54,14 @@ test('the first edit is denied with no approved contract', () => {
   expect(run(root, edit(join(root, 'src/a.ts')))).toEqual(deny(NO_CONTRACT));
 });
 
+test('review round 1: writes through cd and pushd, and >|, are read; an unresolvable cd never drops a write', () => {
+  const root = dir();
+  for (const c of ['cd src && echo x > ../a.ts', 'pushd src; cp x ../a.ts', 'cd src; cp x ../a.ts', 'cd $X && echo x > a.ts', 'cd - && echo x > a.ts', 'cd ~ && rm a.ts', 'echo x >| src/a.ts'])
+    expect(run(root, bash(c)), c).toEqual(deny(NO_CONTRACT));
+  expect(run(root, bash('cd $X && ls'))).toEqual({ kind: 'allow' }); // no write at all
+  expect(run(root, bash('cd $X && echo x > /tmp/h-tg.log'))).toEqual({ kind: 'allow' }); // absolute and outside the repo
+});
+
 test('writes into a workdir are allowed without a contract (drafting)', () => {
   const root = dir();
   expect(run(root, edit('.harness/tmp/ab12/draft.json'))).toEqual({ kind: 'allow' });
@@ -92,6 +100,10 @@ test('unattended: HARNESS_TASK must name a contract present at the session base 
   expect(run(root, edit('src/a.ts'), { env, unattended: true, baseHead: before })).toEqual(deny(NO_CONTRACT_UNATTENDED));
   expect(run(root, edit('src/a.ts'), { env, unattended: true })).toEqual(deny(NO_CONTRACT_UNATTENDED)); // no base commit recorded
   expect(run(root, edit('src/a.ts'), { unattended: true, baseHead: head })).toEqual(deny(NO_CONTRACT_UNATTENDED));
+  // no origin/HEAD in an unattended checkout: nothing here can vouch, and nobody can run set-head
+  git(root, 'remote', 'set-head', 'origin', '-d');
+  expect(run(root, edit('src/a.ts'), { env, unattended: true, baseHead: head })).toEqual(deny("Active task add-login: CI decides; this checkout can't vouch for the contract (origin/HEAD is not set)"));
+  git(root, 'remote', 'set-head', 'origin', 'main');
   // a contract the agent committed on its own branch is not on origin's default branch: refused
   const forged = contract({ id: 'forged' });
   const at = commit(root, { '.harness/tasks/forged.json': sealed(forged) });

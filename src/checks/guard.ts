@@ -532,11 +532,11 @@ const checkInstall = (cmd: string, ctx: GuardCtx): Decision | undefined => {
   return toDecision(['deny', `${what}. Dependencies are added by a human: ask the user to run it`]);
 };
 
-// Tokens after "git" and its global options (-C dir, -c k=v, --no-pager, --git-dir=…): [subcommand, ...args].
-// ponytail: a space-separated --git-dir X / --work-tree X value is read as the subcommand.
+// Tokens after "git" and its global options (-C dir, -c k=v, --no-pager, --git-dir=… or --git-dir …): [subcommand, ...args].
+const GIT_GLOBAL_VALUE = /^(-[Cc]|--git-dir|--work-tree|--namespace|--config-env|--super-prefix|--attr-source)$/;
 export function gitArgs(toks: string[]): string[] {
   let i = toks.indexOf('git') + 1;
-  while (i > 0 && i < toks.length && toks[i].startsWith('-')) i += /^-[Cc]$/.test(toks[i]) ? 2 : 1;
+  while (i > 0 && i < toks.length && toks[i].startsWith('-')) i += GIT_GLOBAL_VALUE.test(toks[i]) ? 2 : 1;
   return i > 0 ? toks.slice(i) : [];
 }
 
@@ -617,6 +617,7 @@ export const targetDir = (args: string[]): string | null => valuesOf(readOptions
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
 // ponytail: splits on ; & | even inside quotes, and ignores here-docs and subshells; upgrade to a real shell parser if bypasses matter.
 export function fileWriteTargets(cmd: string): string[] {
+  cmd = cmd.replace(/>\|/g, '> '); // `>|` overrides noclobber: still a write, and its `|` is no pipe
   const out: string[] = [];
   const SCRIPT_FLAG = /^-[a-zA-Z]*[ef]$/; // value follows: sed -e SCRIPT, perl -pi -e SCRIPT
   for (const seg of cmd.split(/[;&|\n]+/)) {
@@ -1012,7 +1013,7 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   // gh/hub writes, GitLab push options and refs/remotes writes: found past wrappers and path heads by the walk, read with the getopt reader.
   // The quote-free text too, so a head spelled `g\h`, `"gh"` or `$'\x67h'` is read as gh.
   const ghText = vUnq === command ? command : `${command}\n${vUnq}`;
-  if (/\b(?:gh|hub|update-ref|symbolic-ref|remote|fetch|pull)\b|merge_request|insteadof/i.test(ghText)) {
+  if (/\b(?:gh|hub|git)\b|merge_request/i.test(ghText)) {
     const visit = ghWriteVisit(command, ctx);
     const gw = walkCommands(command, ctx, visit) ?? (vUnq !== command ? walkCommands(vUnq, ctx, visit) : null);
     if (gw) return gw;
@@ -1045,11 +1046,12 @@ const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
   // Once per line: a GraphQL query on it may be built at run time. A `$` inside single quotes is literal (GraphQL's own
   // `query($o:String!)`); one outside them (`"$Q"`, `$'…'`, `-F o=$O`), a backtick there, or a newline anywhere is not.
   const built = /\n/.test(raw) || expandsOutsideSingleQuotes(raw);
+  const dyn = /`|\$\(/.test(raw) && expandsOutsideSingleQuotes(raw); // a substitution: its words are gone from the reading
   return ({ toks, k }) => {
   let at = k, name = runnerName(plainWord(toks[k] ?? ''));
   // A head the guard doesn't know may run gh or hub later in its words (`op run -- gh …`, `direnv exec . gh …`, `zzwrap -q gh …`).
   if (!['gh', 'hub', 'git'].includes(name) && !NOT_RUNNERS.has(name)) {
-    const j = toks.findIndex((t, i) => i > k && /^(gh|hub)$/.test(runnerName(plainWord(t))));
+    const j = toks.findIndex((t, i) => i > k && /^(gh|hub|git)$/.test(runnerName(plainWord(t))));
     if (j > k) [at, name] = [j, runnerName(plainWord(toks[j]))];
   }
   const args = toks.slice(at + 1).map(plainWord), ask = (why: string | null) => (why ? toDecision(['ask', why]) : null);
@@ -1062,7 +1064,8 @@ const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
   if (name === 'git') {
     const [sub, ...rest] = gitArgs(['git', ...args]);
     const globals = sub === undefined ? args : args.slice(0, args.length - rest.length - 1);
-    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest) ?? remoteRefWhy(globals, sub, rest));
+    const fed = toks.slice(0, at).some((t) => /^(xargs|parallel)$/.test(runnerName(plainWord(t))));
+    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest) ?? remoteRefWhy(globals, sub, rest, { head: at === k, fed: fed || dyn }));
   }
   return null;
   };

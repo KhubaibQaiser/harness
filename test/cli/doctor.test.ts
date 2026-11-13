@@ -581,6 +581,15 @@ test('items: a pins entry whose content no longer matches its name is a fix; an 
   expect(runItems(b, []).out).toContain('note a harness MCP server differs from what harness installed: run /harness:sync\n');
 });
 
+test('items: a field hand-added to a pinned plugin entry is a fix', () => {
+  const a = caveRepo(['caveman']);
+  const name = pinsOf(a);
+  editJson(a, '.claude/settings.json', (j) => { j.extraKnownMarketplaces[name].source.plugins[0].strict = false; });
+  const r = runItems(a, [cave()]);
+  expect(r.out).toContain(`fix the ${name} marketplace was edited, so its name no longer matches its pins`);
+  expect(r.code).toBe(1);
+});
+
 test('items: two content-named pins entries are a fix naming both, and the plugin checks are skipped', () => {
   const root = caveRepo(['caveman']);
   const name = pinsOf(root);

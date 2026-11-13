@@ -633,6 +633,20 @@ describe('plugins, marketplace and MCP blocks', () => {
     expect(() => pinsAt(root)).toThrow(/`.claude\/settings.json` could not be read/);
   });
 
+  it('the name hashes every field of each entry but the item id; harness-rendered names are unchanged (golden)', () => {
+    expect(N(GH, LSP)).toBe('harness-pins-1b5a2fd46603'); // the round-2 formula's name: existing installs keep theirs
+    expect(N({ ...GH, strict: false })).not.toBe(N(GH));
+    expect(N({ ...GH, hooks: { Stop: [] } })).not.toBe(N(GH));
+    const e = JSON.parse(plug(null, [GH, LSP]).after).extraKnownMarketplaces[N(GH, LSP)];
+    expect(N(...e.source.plugins)).toBe(N(GH, LSP)); // the rendered entry hashes back to its name
+  });
+
+  it('pinsMismatch flags a hand-added field in a plugin entry', () => {
+    const s = JSON.parse(plug(null, [GH]).after);
+    s.extraKnownMarketplaces[N(GH)].source.plugins[0].commands = ['./evil'];
+    expect(pinsMismatch(s)).toEqual([N(GH)]);
+  });
+
   it('pinsMismatch lists content-named entries whose name no longer matches their pins', () => {
     const s = JSON.parse(plug(null, [GH]).after);
     expect(pinsMismatch(s)).toEqual([]);

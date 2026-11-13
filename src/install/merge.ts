@@ -253,8 +253,9 @@ const CONTENT_PINS = /^harness-pins-[0-9a-f]{12}$/;
 const canonical = (v: unknown): string =>
   Array.isArray(v) ? `[${v.map(canonical).join(',')}]` : isObj(v) ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}` : JSON.stringify(v);
 /** Named after the pins themselves: identical pins may share a name harmlessly, different pins never do (forks, branches, worktrees included). */
+// Every field counts (a hand-added `hooks` or `strict` changes what loads); only `item`, harness's catalog id, is not written to the entry.
 export function pinsName(plugins: PinnedPlugin[]): string {
-  const list = plugins.map((p) => ({ name: p.name, source: p.source, ...(p.lspServers ? { lspServers: p.lspServers } : {}) })).sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+  const list = plugins.map(({ item: _item, ...rest }) => rest).sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
   return `${LEGACY_PINS}-${createHash('sha256').update(canonical(list)).digest('hex').slice(0, 12)}`;
 }
 /** settingsPins of the repo's settings file; throws MergeError when it can't be read, so no install guesses a name. */

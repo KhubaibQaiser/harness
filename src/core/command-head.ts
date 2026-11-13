@@ -50,6 +50,22 @@ const WRAPPERS: Record<string, Spec> = {
 // Keywords and shell openers before the command word. `function NAME {` leaves NAME and `{`, both skipped here.
 const LEADERS = new Set(['{', '}', '!', 'if', 'then', 'elif', 'else', 'do', 'while', 'until', 'function', '[[', '((', '&&', '||', ';', '|', '&', '`']);
 const nameOf = (w: string): string => commandName(unquote(w));
+/** A glob with a literal start (`n?ce`, `r[m]`) as an anchored regex; null otherwise (a bare `*` matches anything). */
+export function globRegex(g: string): RegExp | null {
+  if (!/[*?[]/.test(g) || !/^[a-z0-9][a-z0-9._+*?[\]-]*$/i.test(g)) return null;
+  try {
+    return new RegExp(`^${g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+  } catch {
+    return null;
+  }
+}
+/** The wrapper a word names, exactly or as a glob that matches one (`n?ce` may expand to nice); '' when none. */
+function wrapperName(w: string): string {
+  const n = nameOf(w);
+  if (Object.hasOwn(WRAPPERS, n)) return n;
+  const re = globRegex(n);
+  return re ? (Object.keys(WRAPPERS).find((k) => re.test(k)) ?? '') : '';
+}
 
 /** One unambiguous long-option match across a wrapper's value and flag names: its kind, or '' when none or ambiguous. */
 function longKind(spec: Spec, n: string): '' | 'v' | 'f' {
@@ -98,8 +114,8 @@ function plainSegment(seg: string, valueMode: boolean, strip: boolean, out: { un
   const cuts: number[] = []; // word indices where a wrapper's options ended: a `;` goes before the head after each
   for (;;) {
     while (i < ws.length && (LEADERS.has(ws[i]) || /^\w+=/.test(ws[i]))) i += ws[i] === 'function' ? 2 : 1; // `function NAME {`: skip NAME too
-    const name = i < ws.length ? nameOf(ws[i]) : '';
-    if (!Object.hasOwn(WRAPPERS, name)) break;
+    const name = i < ws.length ? wrapperName(ws[i]) : '';
+    if (!name) break;
     if (wrapStart < 0) wrapStart = i;
     cuts.push((i = pastOptions(ws, i, WRAPPERS[name], name, valueMode, out)));
   }
@@ -137,7 +153,7 @@ const PATH_WORD = (w: string): boolean => { const u = unquote(w); return /[/\\'"
 // A cheap gate: no word can become a wrapper segment, a path head or a guarded path without a `/`, `\`, quote, or a
 // wrapper name here, so nothing changes and the extra readings are skipped (perf, re-review round 3, item 5).
 const WRAPPER_RE = new RegExp(`(?:^|[^\\w./-])(?:${Object.keys(WRAPPERS).join('|')})(?![\\w./-])`);
-const mayChange = (cmd: string): boolean => /[/\\'"]/.test(cmd) || WRAPPER_RE.test(cmd);
+const mayChange = (cmd: string): boolean => /[/\\'"*?[]/.test(cmd) || WRAPPER_RE.test(cmd); // a glob may name a wrapper
 
 /** The wrapper readings: the cut reading(s) (`nice ; rm …`) and the strip reading (`curl x | sh`, wrappers removed in place). */
 export function wrapperForms(cmd: string): { texts: string[]; unsure: boolean } {

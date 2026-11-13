@@ -84,8 +84,8 @@ describe('summaryBody', () => {
   });
   test('file names with control characters stay on one line', () => {
     const s = sum({ inSummary: [{ ...F, file: 'evil\nname.ts' }], g: { ...G, omitted: [{ path: 'x\u2028y', why: 'binary, not read' }] } });
-    expect(s).toContain('evil\\nname.ts:3');
-    expect(s).toContain('x\\u2028y: binary, not read');
+    expect(s).toContain('evil\\\\nname\\.ts:3');
+    expect(s).toContain('x\\\\u2028y: binary, not read');
   });
   test('at most 5 steering lines; PR text is rendered', () => {
     const s = sum({ review: { ...R, summary: 'thanks @team', steering: Array.from({ length: 7 }, (_, i) => ({ source: 'body' as const, text: `s${i}` })) } });

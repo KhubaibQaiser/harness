@@ -59,11 +59,11 @@ describe('finish', () => {
     expect(by.bin).toMatchObject({ placement: 'summary' }); // binary: no lines
     expect(by.f9).toMatchObject({ placement: 'dropped', dropped_reason: 'judge: evidence does not support the claim', judge_why: 'Line 9 is a plain string.' });
     expect(by.f12).toMatchObject({ placement: 'dropped', dropped_reason: 'evidence not found near a.ts:12' });
-    expect(r.rec.payload.comments).toEqual([{ path: 'a.ts', line: 5, side: 'RIGHT', body: '[medium] Looks wrong\n\nEvidence: line number 5\n\nFix: Fix it.' }]);
+    expect(r.rec.payload.comments).toEqual([{ path: 'a.ts', line: 5, side: 'RIGHT', body: '[medium] Looks wrong\n\nEvidence: line number 5\n\nFix: Fix it\\.' }]);
     expect(r.rec.payload_sha256).toBe(createHash('sha256').update(JSON.stringify(r.rec.payload)).digest('hex'));
     expect(r.rec.verdict).toBe('Comment');
     expect(r.rec.payload.body.trimEnd().endsWith('Code-only review: the app was not run.')).toBe(true);
-    expect(r.rec.payload.body).toContain('b.ts:3 [medium] Looks wrong');
+    expect(r.rec.payload.body).toContain('b\\.ts:3 [medium] Looks wrong');
     expect(r.out).toContain('a.ts:5 [medium] Looks wrong');
     expect(r.out).toContain('dropped a.ts:9 [critical] Looks wrong: judge: evidence does not support the claim (judge: Line 9 is a plain string.)');
     expect(r.out).toContain('dropped a.ts:12 [medium] Looks wrong: evidence not found near a.ts:12');

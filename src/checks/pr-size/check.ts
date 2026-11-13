@@ -1,13 +1,10 @@
 // pr-size (spec §6, §10): asks before `gh pr create`, or a push to a PR branch harness recorded, goes over the limit.
-import { readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { esc, type HarnessConfig } from '../../core/config.js';
 import { appendEvent } from '../../core/events.js';
 import { unquote, words } from '../../core/shell-words.js';
 import type { Check, Ctx } from '../../hooks/dispatch.js';
 import { isEdit, isShell } from '../../hooks/edit-target.js';
 import type { Decision } from '../../hooks/types.js';
-import { bodyProblems } from './body.js';
 import { type PrTarget, prTargets } from './detect.js';
 import { asBaseName, count, type Git, GIT_CALL_MS, headBranch, hookBudgetMs, isOver, limitText as limit, measure, plainBranch, realGit, type Size } from './measure.js';
 import { clearAllPending, pauseAsk, type Progress, progressWarning, raisedLimit, readProgress } from './progress.js';
@@ -163,29 +160,6 @@ function recordPost(ctx: Ctx, git: Git, targets: PrJob[], c: Clock): void {
   }
 }
 
-const BODY_MAX = 1 << 20;
-/** The body file's text, or null for anything but a regular file of at most 1 MB: a FIFO or `/dev/stdin` would hang the hook. */
-function readBody(path: string): string | null {
-  try {
-    const st = statSync(path);
-    return st.isFile() && st.size <= BODY_MAX ? readFileSync(path, 'utf8') : null;
-  } catch {
-    return null; // missing or unreadable: gh fails on it by itself
-  }
-}
-
-/** A deny for a templated PR body that misses a section, or lists human steps without the needs-human label. The body is
- *  the --body-file's text, else the command's own text, which holds an inline --body or a heredoc. */
-function bodyDeny(ctx: Ctx, command: string, targets: PrJob[]): Decision | null {
-  for (const t of targets) {
-    if (t.kind !== 'create') continue;
-    const text = (t.bodyFile && t.bodyFile !== '-' ? readBody(resolve(ctx.input.cwd || ctx.root, t.bodyFile)) : null) ?? command;
-    const problems = bodyProblems(text, t.labels ?? []);
-    if (problems?.length) return { kind: 'deny', check: 'pr-size', reason: `PR body: ${problems.join('; ')}. Fix the body (the template is in the pr-ship skill), then run gh pr create again.` };
-  }
-  return null;
-}
-
 /** A raise's ask or deny comes first; a PR create or push in the same command that also asks, or its note, joins the dialog. */
 function withRaise(raise: Decision | null, pr: Decision): Decision {
   if (!raise || raise.kind !== 'ask') return raise ?? pr;
@@ -209,8 +183,6 @@ export function decidePrSize(ctx: Ctx, git: Git = realGit(ctx.root), now: () => 
   if (!all.length) return { kind: 'allow' };
   const clock: Clock = { now, git, deadline: now() + hookBudgetMs(ctx.startedAt, now) };
   const cur = () => current(clock);
-  const body = event === 'PreToolUse' ? bodyDeny(ctx, command, targets) : null;
-  if (body) return body;
   if (event === 'PreToolUse') return withRaise(preRaise(ctx, command, all, cur), targets.length ? decidePre(ctx, git, targets, clock) : { kind: 'allow' });
   if (tool_name === 'Monitor') return { kind: 'allow' }; // a Monitor command is checked, not recorded
   try {

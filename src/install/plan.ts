@@ -100,7 +100,7 @@ type Gate = { catalog?: Catalog; on: (id: string) => boolean; chosen: Catalog['i
 
 /** checks come from the selected own items (any kind); sandbox is not derived */
 function checksOf(chosen: Catalog['items']): HarnessConfig['checks'] {
-  const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false, prSize: false, decisions: false };
+  const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false, prSize: false, prBody: false, decisions: false };
   for (const i of chosen) if (i.source.type === 'own') for (const k of i.source.checks ?? []) checks[k] = true;
   return checks;
 }

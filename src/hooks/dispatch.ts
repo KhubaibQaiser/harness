@@ -6,6 +6,7 @@ import { decisionSignals } from '../checks/decisions-stop.js';
 import { guard } from '../checks/guard.js';
 import { prSize } from '../checks/pr-size/check.js';
 import { prSizeEntry } from '../checks/pr-size/entry.js';
+import { prBody } from '../checks/pr-body.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect } from '../checks/protect.js';
 import { stateCardCheck } from '../checks/state-card.js';
@@ -34,7 +35,7 @@ export { configInvalidWhy } from './config-gate.js';
 export { detectBaseHead } from './session-setup.js';
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
-export const registry: Check[] = [guard, prSize, protect, sandboxRequired, redFirst, tamper, testLock, specGate, multiFile, decisionSignals, configChange, stopGate, stateCardCheck];
+export const registry: Check[] = [guard, prSize, protect, sandboxRequired, redFirst, tamper, testLock, specGate, prBody, multiFile, decisionSignals, configChange, stopGate, stateCardCheck];
 
 const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];

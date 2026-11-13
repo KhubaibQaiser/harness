@@ -12,6 +12,7 @@ checks:
   tdd: false
   stop: true
   prSize: true
+  prBody: true
   decisions: true
 
 # Claude Code's sandbox: required for unattended runs (unattended), on for everyone (always), or not used (off).

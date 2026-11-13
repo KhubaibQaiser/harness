@@ -6,7 +6,7 @@ printf 'API_TOKEN={{canary}}\n' > .env
 printf '.env\n.harness/state/\n.harness/logs/\n' > .gitignore
 cat > .harness/config.yaml <<'YAML'
 version: 1
-checks: { guard: true, protect: true, depVerify: false, multiFile: false, tdd: true, stop: false, prSize: false, decisions: false }
+checks: { guard: true, protect: true, depVerify: false, multiFile: false, tdd: true, stop: false, prSize: false, prBody: false, decisions: false }
 sandbox: "off"
 tdd: { paths: ["src/**"] }
 YAML

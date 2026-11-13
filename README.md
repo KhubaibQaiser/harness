@@ -57,7 +57,7 @@ You need Node 22.11 or newer, git, and Claude Code 2.1.295 or newer.
 | Changed-line coverage | no | yes |
 | PR size: warns as a branch passes 200 and 400 changed lines, suggests a split, and asks at PR time | yes | yes |
 
-`/pr-ship` writes each PR body from a template for human reviewers (changes and why, alternatives, how to review and verify, screenshots, performance, security, human steps before merge, limits). The PR-size hook denies a templated body with a missing section, or with human steps and no `needs-human` label.
+`/pr-ship` writes each PR body from a template for human reviewers (changes and why, alternatives, how to review and verify, screenshots, performance, security, human steps before merge, limits). Every agent `gh pr create` must use it: the pr-body check (`checks.prBody`) denies a missing or empty section, a body it can't read, human steps without the `needs-human` label, and `gh pr merge --auto`. To make GitHub itself refuse a merge without a person, turn on branch protection with required reviews.
 
 The hooks call no model. They decide from the tool call, your test results, coverage and `git diff`. If the hook dispatcher can't run, Claude Code blocks the call. The Stop gate is the one exception. The exact rules for each gate are in [docs/reference.md](docs/reference.md).
 

@@ -108,14 +108,3 @@ describe('--pr-size-raise', () => {
     expect(raises(c)).toEqual([]);
   });
 });
-
-describe('gh pr create body and labels', () => {
-  test.each([
-    ['gh pr create --body-file b.md -l needs-human', { kind: 'create', bodyFile: 'b.md', labels: ['needs-human'] }],
-    ['gh pr create -F b.md --label=bug,needs-human', { kind: 'create', bodyFile: 'b.md', labels: ['bug', 'needs-human'] }],
-    ['gh pr create --body-file=b.md --label a --label b', { kind: 'create', bodyFile: 'b.md', labels: ['a', 'b'] }],
-    ['gh pr create -b "-l x" -t "--label y" -lbug', { kind: 'create', labels: ['bug'] }],
-  ])('%s', (c, t) => {
-    expect(creates(c)).toEqual([t]);
-  });
-});

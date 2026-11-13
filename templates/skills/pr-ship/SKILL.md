@@ -19,7 +19,7 @@ description: Splits a large change into stacked PRs. Use before opening a PR, or
 
 ## PR description
 
-Write it for a reviewer who has not seen this session: copy the template into `.harness/tmp/pr/body.md`, fill every section and pass `--body-file .harness/tmp/pr/body.md`. Keep its first line: the pr-size check then denies the create when a section is missing or empty, or when human steps are listed without `--label needs-human`.
+Every `gh pr create` needs this body; the pr-body check denies one without it. Write it for a reviewer who has not seen this session: copy the template into `.harness/tmp/pr/body.md`, keep its first line, fill every section, and pass `--body-file .harness/tmp/pr/body.md` from the repo root (no `cd`, `--fill`, stdin or `$(…)`).
 
 - Never invent a result: each number, pass or screenshot names the command or capture you ran in this session. Label an estimate "estimate". A section with no evidence says `not run: <reason>` or `n/a: <reason>`, never a guess.
 - Human steps: when there are any, add `--label needs-human` (if gh says it is missing, run `gh label create needs-human` once) and tell the person. Never run `gh pr merge --auto`, enable auto-merge or start a deploy for such a PR.

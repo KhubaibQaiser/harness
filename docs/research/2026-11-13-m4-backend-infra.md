@@ -260,3 +260,16 @@ Design consequences:
 9. The marketplace `terraform` plugin pins HashiCorp server 0.4.0 while upstream is at v1.4.1. Recommend it as is, or note the gap?
 10. Several [gk] rows in 6.2 (aws, gcloud, az, knex, alembic, rails, django, psql/mysql, cdk) were not checked against a doc this session. Verify before they become guard rules.
 11. Gitleaks: the full commit sha for tag v8.30.1 still has to be looked up when the template is written.
+
+## Rulings (2026-11-13)
+- Q1, owner: Checkov is pinned through pip with a hashed requirements file that harness generates for each pinned version (the require-hashes mode).
+- Q2: Trivy is excluded because of the March 2026 compromise. It needs a re-review before it can come back.
+- Q3: KICS is not listed until a Checkmarx source confirms the action compromise is resolved.
+- Q4: bundler-audit is an optional item, with a GPL-3.0 note.
+- Q5: MySQL migration linting is a documented gap. Skeema gets researched later.
+- Q6: the Alembic gap is documented, along with the `alembic upgrade --sql` route.
+- Q7, owner: coverage is per cloud. Any IaC for that cloud blocks all write commands for its CLI and points to the IaC.
+- Q8, owner: harness guards MCP tool calls too. Write-capable infra tools are denied unattended and asked when attended, under the same IaC rule. Read-only tools pass, and unknown tools from an infra server ask.
+- Q9: recommend the terraform plugin, and note its version gap.
+- Q10: every general-knowledge row is checked against vendor docs before it becomes a guard rule.
+- Q11: the sha is looked up when the gitleaks template is written.

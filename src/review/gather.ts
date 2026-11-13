@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
-import { MARKER } from '../checks/pr-body.js';
+import { bodyProblems, MARKER } from '../checks/pr-body.js';
 import type { CliEnv } from '../cli/index.js';
 import { writeAtomic } from '../core/atomic.js';
+import { packageDir } from '../core/package-dir.js';
 import { esc } from '../core/config.js';
 import { validateConfig } from '../core/config-io.js';
 import { appendEvent } from '../core/events.js';
@@ -20,14 +21,12 @@ import { issueView, parsePr, preflight, prView, reviewComments } from './gh.js';
 import { writeSnapshot } from './snapshot.js';
 
 export interface GatherJson {
-  repo: string; pr: number; base: string; base_sha: string; head_sha: string; merge_base: string; nonce: string; fork: string | null; labels: string[]; body_template: boolean;
+  repo: string; pr: number; base: string; base_sha: string; head_sha: string; merge_base: string; nonce: string; fork: string | null; labels: string[]; body_template: boolean; body_problems: string[]; max_findings: number;
   files: { path: string; old_path?: string; status: string; binary: boolean; skipped?: true }[];
   lines: Record<string, { RIGHT: number[]; LEFT: number[] }>; map: Record<string, string>; omitted: { path: string; why: string }[];
 }
 export interface GatherDeps { exec?: Exec; bytes?: ExecBytes; nonce?: () => string }
 
-// ponytail: review.max_findings arrives with --finish (PR C); until then the reviewer's cap is its default.
-const MAX_FINDINGS = 15;
 const SPECS = 3, SPEC_BYTES = 50 * 1024;
 const STATE = '.harness/state/review-gather.json';
 const GITHUB_URL = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/i;
@@ -111,6 +110,12 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
     const drift = driftCheck(root, bytes, base, commits);
     if ('error' in drift) return fail(drift.error);
     const { blobs } = drift;
+    const judge = '.claude/agents/review-judge.md';
+    if (blobs[judge] == null) return fail(`review: base branch ${esc(base)} has no ${judge} (an older harness install); run /harness:update on ${esc(base)} first`);
+    // The plugin registers its own staff-reviewer, and which one Claude Code starts is unverified: both must be the same text.
+    const agent = '.claude/agents/staff-reviewer.md', lf = (t: string | null | undefined) => t?.replace(/\r\n/g, '\n');
+    if (lf(blobs[agent]) !== lf(readFileSync(join(packageDir('templates'), 'agents', 'staff-reviewer.md'), 'utf8')))
+      return fail(`review: ${agent} differs from the harness plugin's copy, and Claude Code may start either; run /harness:update on ${esc(base)} and review again`);
 
     const mb = exec('git', [...SAFE_GIT, 'merge-base', baseSha, headSha]);
     const mergeBase = mb.stdout.trim();
@@ -153,22 +158,18 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
     if (nonceIn(prTexts, nonce)) return fail('review: PR text contains this run\'s data nonce; run the review again');
 
     writeAtomic(join(dir, 'context.md'), contextMd({
-      nonce, repo, pr: n, base, baseSha, headSha, maxFindings: MAX_FINDINGS, rubric: blobs['.claude/skills/review-rubric/SKILL.md'] ?? null, agents: blobs['AGENTS.md'] ?? null,
+      nonce, repo, pr: n, base, baseSha, headSha, maxFindings: cfg.config.review.max_findings, rubric: blobs['.claude/skills/review-rubric/SKILL.md'] ?? null, agents: blobs['AGENTS.md'] ?? null,
       product: blobs['.harness/context/product.md'] ?? null, view, reviewComments: comments, issues, diffText: diff, specs: sp, omitted, map: snap.map,
     }));
     const skipped = new Set(cap.omitted.map((o) => o.path));
     const g: GatherJson = {
       repo, pr: n, base, base_sha: baseSha, head_sha: headSha, merge_base: mergeBase, nonce, fork: view.isCrossRepository ? view.headRepository || DELETED_FORK : null, labels: view.labels,
-      body_template: view.body.includes(MARKER),
+      body_template: view.body.includes(MARKER), body_problems: bodyProblems(view.body, view.labels), // never PR text: bodyProblems names sections only
+      max_findings: cfg.config.review.max_findings,
       files: files.map((x) => ({ path: x.path, ...(x.old_path !== undefined && { old_path: x.old_path }), status: x.status, binary: x.binary, ...(skipped.has(x.path) && { skipped: true as const }) })),
       lines: commentable(cap.sent), map: snap.map, omitted,
     };
-    const json = JSON.stringify(g, null, 2) + '\n';
-    writeAtomic(join(dir, 'gather.json'), json);
-    const state = readState(root);
-    state[dir] = sha256(json);
-    mkdirSync(join(root, '.harness', 'state'), { recursive: true });
-    writeAtomic(join(root, ...STATE.split('/')), JSON.stringify(state, null, 2) + '\n');
+    writeGather(root, dir, g);
 
     const lines = cap.sent.reduce((s, x) => s + x.lines, 0), sha7 = headSha.slice(0, 7);
     appendEvent(root, { ts: new Date().toISOString(), session: 'cli', check: 'review', decision: 'review-gathered', reason: `pr ${n} ${sha7} files ${cap.sent.length} lines ${lines} omitted ${omitted.length}` });
@@ -177,6 +178,16 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
   } catch (e) {
     return fail((e as Error).message.startsWith('review: ') ? (e as Error).message : `review: ${esc((e as Error).message)}`);
   }
+}
+
+/** Writes `<dir>/gather.json` and records its hash in protected state (Review Focus 1). */
+export function writeGather(root: string, dir: string, g: GatherJson): void {
+  const json = JSON.stringify(g, null, 2) + '\n', abs = resolve(root, dir);
+  writeAtomic(join(abs, 'gather.json'), json);
+  const state = readState(root);
+  state[abs] = sha256(json);
+  mkdirSync(join(root, '.harness', 'state'), { recursive: true });
+  writeAtomic(join(root, ...STATE.split('/')), JSON.stringify(state, null, 2) + '\n');
 }
 
 function readState(root: string): Record<string, string> {

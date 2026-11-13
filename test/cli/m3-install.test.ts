@@ -286,6 +286,7 @@ test('pruneStale drops the dropped blocks of a file with no change and counts th
 test('a second command applying in the same process still stops the first (explicit manifest text)', async () => {
   const root = installed([...OWN, 'staff-reviewer']);
   rmSync(join(root, SR));
+  rmSync(join(root, '.claude/agents/review-judge.md')); // staff-reviewer's second file
   editItems(root, (list) => { list.find((i) => i.id === 'staff-reviewer').selected = false; }); // A's job: only forget the record
   // Session B runs to the end inside A's confirm, in this process.
   const both: Prompt = { async confirm() { await items('add', ['mobile-mcp', '--yes', '--over-budget'], { env: CLAUDE, root, out: () => {}, prompt: say(false), templatesDir, distDir: join(pkgDir, 'dist'), claudeVersion: () => null }); return true; }, async edit(_l, v) { return v; } };

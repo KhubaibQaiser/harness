@@ -124,13 +124,14 @@ test.skipIf(!hasClaude)('plugin validates with claude plugin validate', () => {
 
 test('slash-only skills carry disable-model-invocation; doctor and status stay visible', () => {
   const off = (s: string) => /^disable-model-invocation: true$/m.test(readFileSync(`skills/${s}/SKILL.md`, 'utf8'));
-  for (const s of ['init', 'update', 'uninstall', 'add', 'sync', 'vet', 'preset']) expect(off(s), s).toBe(true);
+  for (const s of ['init', 'update', 'uninstall', 'add', 'sync', 'vet', 'preset', 'review']) expect(off(s), s).toBe(true);
   for (const s of ['doctor', 'status', 'remember']) expect(off(s), s).toBe(false);
 });
 
 // Always-loaded tokens of the default install (plugin + legacy own items), measured. Raise only in a reviewed PR.
 // 658 (team decisions, 2026-11-10): 553 + 71 for the AGENTS.md pointer and protected line + 34 for the remember skill.
-const HARNESS_FOOTPRINT = 658;
+// 681 (M2a PR B, 2026-11-13, owner approved up to 688): + 23 for the review-judge agent's name and description, installed with staff-reviewer.
+const HARNESS_FOOTPRINT = 681;
 test('the default install footprint stays within HARNESS_FOOTPRINT', () => {
   expect(footprint({ templates: 'templates', plugin: '.' }, loadCatalog().catalog)).toBeLessThanOrEqual(HARNESS_FOOTPRINT);
 });

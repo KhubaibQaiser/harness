@@ -11,18 +11,14 @@ export interface VetReview {
   summary: string;
 }
 
-const MAX = 200; // a list longer than this is not a real review; keeps a huge file cheap to check
+export const MAX = 200; // a list longer than this is not a real review; keeps a huge file cheap to check
 const text = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 // Echoed values are cut to 120 code points: a hostile 5 MB value must not become a 5 MB error line.
-const cut = (s: string) => { const a = [...s.slice(0, 480)]; return esc(a.slice(0, 120).join('')) + (a.length > 120 || s.length > 480 ? '…' : ''); };
-const q = (s: string) => `"${cut(s)}"`;
+export const cut = (s: string) => { const a = [...s.slice(0, 480)]; return esc(a.slice(0, 120).join('')) + (a.length > 120 || s.length > 480 ? '…' : ''); };
+export const q = (s: string) => `"${cut(s)}"`;
 
-/** Checks the reviewer's file against the scan and the installed items. The reviewer can only add context: there is no severity key to lower. */
-export function validateVetReview(raw: unknown, scan: ScanResult, installed: string[] | null): { ok: true; review: VetReview } | { ok: false; errors: string[] } {
-  const s = scan as Partial<ScanResult> | null;
-  if (!isObj(s) || !Array.isArray(s.findings) || typeof s.sha !== 'string' || !/^[0-9a-f]{40}$/.test(s.sha)) return { ok: false, errors: ['scan: not a vet scan; run harness vet --json first'] };
-  if (!isObj(raw)) return { ok: false, errors: ['vet-review: must be a mapping'] };
-  const errors: string[] = [];
+/** The field checks the AI-reply validators share; each pushes its errors onto `errors`. */
+export function checks(errors: string[]) {
   const str = (at: string, v: unknown, max: number) => {
     if (!text(v)) errors.push(`${at}: must be a non-empty string`);
     else if (v.length > max) errors.push(`${at}: must be at most ${max} characters`);
@@ -41,6 +37,16 @@ export function validateVetReview(raw: unknown, scan: ScanResult, installed: str
     }
     if (extra > 10) errors.push(`…and ${extra - 10} more unknown keys`);
   };
+  return { str, list, keys };
+}
+
+/** Checks the reviewer's file against the scan and the installed items. The reviewer can only add context: there is no severity key to lower. */
+export function validateVetReview(raw: unknown, scan: ScanResult, installed: string[] | null): { ok: true; review: VetReview } | { ok: false; errors: string[] } {
+  const s = scan as Partial<ScanResult> | null;
+  if (!isObj(s) || !Array.isArray(s.findings) || typeof s.sha !== 'string' || !/^[0-9a-f]{40}$/.test(s.sha)) return { ok: false, errors: ['scan: not a vet scan; run harness vet --json first'] };
+  if (!isObj(raw)) return { ok: false, errors: ['vet-review: must be a mapping'] };
+  const errors: string[] = [];
+  const { str, list, keys } = checks(errors);
   keys('', raw, ['relevance', 'why', 'overlaps', 'injection', 'recommendation', 'summary']);
   if (!['high', 'medium', 'low', 'none'].includes(raw.relevance as string)) errors.push('relevance: must be high, medium, low or none');
   if (!['install', 'install-with-care', 'skip'].includes(raw.recommendation as string)) errors.push('recommendation: must be install, install-with-care or skip');

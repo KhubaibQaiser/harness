@@ -27,6 +27,7 @@ const SECTIONS: Record<keyof HarnessConfig, string> = {
   multi_file_gate: 'Multi-file edit gate (needs checks.multiFile).',
   pr_size: 'Pull request size (needs checks.prSize). Asks above max_lines or max_files; the pr-ship skill aims for target_lines.',
   decisions: 'Team decisions in docs/decisions/ (needs checks.decisions). Each loads as a rule when its paths are touched.',
+  review: 'The code-only PR review (harness review).',
   unattended: 'Behaviour when no human is watching.',
   stop: 'Verification steps that must pass before the agent may stop.',
   preset: 'Named preset chosen at init (rules, skills, git checks).',

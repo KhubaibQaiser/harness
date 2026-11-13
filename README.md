@@ -87,7 +87,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `remember add\|confirm\|retire\|sync\|list\|check` | Saves a team decision to `docs/decisions/` and loads it as a rule when its paths are touched. Asks first, commits nothing. |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. |
 | `vet <target>` | Scans a plugin or skill before you install it. Needs `gh`. Installs nothing. |
-| `review <pr> --out <dir>` | Gathers a PR for review; nothing is posted yet. Needs `gh`. Runs none of the PR's code. Run it from the base branch, in a fresh session. |
+| `/harness:review <pr>` | A code-only review of a PR that you read locally: gathered without running the PR's code, checked by a reviewer agent, verified, and checked by a small-model judge. Posting comes next. Needs the harness plugin and `gh`; run it from the base branch, in a fresh session. The steps are also CLI commands (`review <pr> --out`, `review --finish`, `review --keep`). |
 | `guide <name>` / `workdir` | Helpers the skills call: print a bundled doc, and make a git-ignored work folder in `.harness/tmp/`, so no skill touches a file outside the repo. |
 | `uninstall [--dry-run]` | Removes what harness added and restores your files. `--global` does the same for a preset installed under `~/.claude`. |
 

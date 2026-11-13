@@ -479,6 +479,34 @@ test('doctor: the sandbox settings that undo or weaken the protection', async ()
   expect(mac().out).toMatch(/^fix `sandbox\.filesystem\.disabled` is true/m);
 });
 
+test('doctor: this machine cannot run the sandbox the shared settings require (failIfUnavailable: true)', async () => {
+  const root = await installed();
+  const sp = join(root, '.claude/settings.json');
+  const s = JSON.parse(readFileSync(sp, 'utf8'));
+  s.sandbox = { ...s.sandbox, enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false };
+  writeFileSync(sp, JSON.stringify(s, null, 2) + '\n');
+  const CANT = /^fix this machine can't run Claude Code's sandbox \((?:native Windows|the Linux sandbox needs bwrap and socat)\), and `\.claude\/settings\.json` sets `sandbox\.failIfUnavailable: true`, so Claude Code won't run Bash here: /m;
+  // Linux without bwrap/socat: install them, or opt out in the personal settings file.
+  const lin = run(root, { path: bin('npm'), platform: 'linux' });
+  expect(lin.out).toMatch(CANT);
+  expect(lin.out).toMatch(/install bwrap and socat, or set `sandbox\.failIfUnavailable: false` in your own `\.claude\/settings\.local\.json` \(text guards only\)$/m);
+  expect(lin.code).toBe(1);
+  // Native Windows: no sandbox to install, so only the personal opt-out.
+  const win = run(root, { path: bin('npm'), platform: 'win32' });
+  expect(win.out).toMatch(CANT);
+  expect(win.out).toMatch(/: set `sandbox\.failIfUnavailable: false` in your own `\.claude\/settings\.local\.json` \(text guards only\)$/m);
+  // macOS runs the sandbox; Linux with both tools does too.
+  expect(run(root, { path: bin('npm'), platform: 'darwin' }).out).not.toMatch(CANT);
+  if (process.platform !== 'win32') {
+    let out = '';
+    doctor([], { root, env: { PATH: withNode(bin('npm')) + delimiter + bin('bwrap') + delimiter + bin('socat') }, out: (x) => (out += x + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => MIN_CLAUDE_CODE, platform: 'linux' });
+    expect(out).not.toMatch(CANT);
+  }
+  // The personal override turns the fix off.
+  writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify({ sandbox: { failIfUnavailable: false } }) + '\n');
+  expect(run(root, { path: bin('npm'), platform: 'linux' }).out).not.toMatch(CANT);
+});
+
 test('a package still writing under .harness/state is a fix', async () => {
   const root = await installed();
   const p = join(root, 'vitest.config.ts');

@@ -172,6 +172,12 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   const layers = [layer('.claude/settings.local.json', 'local'), layer('.claude/settings.json', 'project')];
   const sb = (...p: string[]) => effective(layers, ['sandbox', ...p]);
   if (platform !== 'win32' && sb('enabled') !== true) note("Claude Code's sandbox is off in interactive sessions", 'set `sandbox: always` in `.harness/config.yaml` and run /harness:update');
+  // The shared settings commit the strict sandbox (owner ruling): on a machine that can't run it, Claude Code then won't run Bash.
+  const cant = platform === 'win32' ? 'native Windows' : platform === 'linux' && ['bwrap', 'socat'].some((c) => !findOnPath(c, env, platform)) ? 'the Linux sandbox needs bwrap and socat' : '';
+  if (cant && sb('enabled') === true && sb('failIfUnavailable') === true) {
+    fix(`this machine can't run Claude Code's sandbox (${cant}), and \`.claude/settings.json\` sets \`sandbox.failIfUnavailable: true\`, so Claude Code won't run Bash here`,
+      `${platform === 'win32' ? '' : 'install bwrap and socat, or '}set \`sandbox.failIfUnavailable: false\` in your own \`.claude/settings.local.json\` (text guards only)`);
+  }
   const dw = sb('filesystem', 'denyWrite'), have = Array.isArray(dw) ? dw : [];
   const gone = denyWritePaths().filter((p) => !have.includes(p) && !have.includes(p.slice(2)));
   if (gone.length) fix(`\`sandbox.filesystem.denyWrite\` is missing ${gone.join(', ')}`, 'run /harness:update');

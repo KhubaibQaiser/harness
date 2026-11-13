@@ -8,6 +8,8 @@ Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, a
 
 **Safety model, in two layers.** The first is Claude Code's sandbox, at the OS level. Init turns it on for every session on macOS, and on Linux and WSL2 when `bwrap` and `socat` are installed (`sandbox: always`). Harness also lists its own protected files in the sandbox's `denyWrite`. With the sandbox on, any Bash write to them fails, however it is spelled (`echo >`, `tee`, `/bin/cp`, `sh -c`, Python). The second layer is harness's text checks, guard and protect, which read every command and edit. They cover the Edit and Write tools, which the sandbox doesn't, and every platform. On native Windows there is no sandbox, so the text checks are the only layer: a seatbelt that catches mistakes and can be bypassed. See [Sandbox](docs/reference.md#sandbox).
 
+**A machine that can't run the sandbox.** The strict sandbox settings are committed for everyone, so on a machine that can't run the sandbox, Claude Code won't run Bash at all. That means native Windows, or Linux and WSL2 without `bwrap` and `socat`. `harness doctor` tells you so on that machine. Install `bwrap` and `socat`, or set `sandbox.failIfUnavailable: false` in your own `.claude/settings.local.json`; Bash then runs without the sandbox there, guarded only by harness's text checks.
+
 **Status:** beta, version `0.2.0-beta.2`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. Release notes: [docs/release-notes/0.2.0-beta.2.md](docs/release-notes/0.2.0-beta.2.md).
 
 ## Who it's for

@@ -17,9 +17,12 @@ import { globGuardAsk, guardedPaths, plainHeads, wrapperForms } from '../core/co
 export const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
 /**
- * Protected paths the sandbox leaves writable, because the agent's own Bash writes them through harness: the skills'
- * work folders (`harness workdir`), the event log every harness command appends to, and the TDD reporter's results,
- * which the test runner writes.
+ * Protected paths the sandbox leaves writable, because the agent's own Bash writes them through harness (protect still
+ * guards them as text):
+ * - `.harness/tmp`: the skills' work folders (`harness workdir`);
+ * - `.harness/logs`: the event log every harness command appends to;
+ * - `.harness/results`: the TDD reporter's output. The agent's test run (`npm test` in its sandboxed Bash) writes it;
+ *   denied, every red-first check would find no results and the TDD gates would block all edits.
  */
 export const DENY_WRITE_SKIPPED = ['.harness/tmp', '.harness/logs', '.harness/results'];
 /** Claude Code's `sandbox.filesystem.denyWrite` for harness, from protect's table: each protected path (a `/**` folder

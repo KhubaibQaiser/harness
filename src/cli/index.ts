@@ -28,6 +28,7 @@ import { gitStep } from './git.js';
 import { guide, workdir } from './guide.js';
 import { REMEMBER_USAGE, remember } from './remember.js';
 import { REVIEW_USAGE, review } from './review.js';
+import { TASK_USAGE, task } from './task.js';
 import { detect } from '../install/detect.js';
 import { factsJson } from '../install/facts.js';
 import { pauseStatus, pauseTdd, resumeTdd } from '../core/pause.js';
@@ -45,7 +46,7 @@ export interface CliEnv {
 
 declare const __HARNESS_VERSION__: string; // injected by build.mjs; undefined when tests import the source
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
-const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       /harness:init [--yes] [--dry-run] [--config <file>] [--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]\n       harness uninstall [--global] [--yes] [--force] [--dry-run]\n       /harness:update [--yes] [--check] [--dry-run] [AI flags as init]\n       /harness:sync [--dry-run|--yes] [--take <file,...>] [--install-plugins] [--over-budget]\n       harness doctor\n       harness status\n       harness context [--json] [--offline]\n       harness context apply <n>[,<n>…] [--dry-run|--yes]\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness preset list|check <dir>\n       harness preset install <dir> [--dry-run|--yes]\n       harness preset install <dir> --global [--dry-run|--yes --take <path,...>]\n       harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]\n       harness validate preset-answers <file>\n       harness vet <target> [--json [--keep]]\n       harness vet --finish <scan.json> --review <file>\n       harness vet --install <scan.json>\n       harness vet --clean\n       harness select --picks <file> [--choose <id,...>]\n       harness git branch|commit|push|pr [--title <t>]\n       harness guide init-skill|init-interview|init-recommend|review-rubric|preset-interview|preset-example\n       harness workdir [--clean <path>]\n       ' + REVIEW_USAGE + '\n       /harness:add <id> [--take <file,...>] [--over-budget] [--dry-run|--yes]\n       harness remove <id> [--take <file,...>] [--dry-run|--yes]\n       harness why <id>\n       harness explain\n       harness report [--days N] [--open] [--export]\n       harness rules [--apply]\n       harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model M] (gates: not yet)\n       ' + REMEMBER_USAGE.join('\n       ');
+const USAGE = 'Usage: harness tdd off|on|status\n       harness stats [--days N]\n       /harness:init [--yes] [--dry-run] [--config <file>] [--answers <file> --product <file> --picks <file> --report <file> --choose <id,...>] [--install-plugins] [--over-budget]\n       harness uninstall [--global] [--yes] [--force] [--dry-run]\n       /harness:update [--yes] [--check] [--dry-run] [AI flags as init]\n       /harness:sync [--dry-run|--yes] [--take <file,...>] [--install-plugins] [--over-budget]\n       harness doctor\n       harness status\n       harness context [--json] [--offline]\n       harness context apply <n>[,<n>…] [--dry-run|--yes]\n       harness scan\n       harness catalog [check [--resolve] [--only <id,...>]]\n       harness preset list|check <dir>\n       harness preset install <dir> [--dry-run|--yes]\n       harness preset install <dir> --global [--dry-run|--yes --take <path,...>]\n       harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]\n       harness validate preset-answers <file>\n       harness vet <target> [--json [--keep]]\n       harness vet --finish <scan.json> --review <file>\n       harness vet --install <scan.json>\n       harness vet --clean\n       harness select --picks <file> [--choose <id,...>]\n       harness git branch|commit|push|pr [--title <t>]\n       harness guide init-skill|init-interview|init-recommend|review-rubric|preset-interview|preset-example\n       harness workdir [--clean <path>]\n       ' + REVIEW_USAGE + '\n       /harness:add <id> [--take <file,...>] [--over-budget] [--dry-run|--yes]\n       harness remove <id> [--take <file,...>] [--dry-run|--yes]\n       harness why <id>\n       harness explain\n       harness report [--days N] [--open] [--export]\n       harness rules [--apply]\n       harness eval [--kind skills|rules|gates] [--runs N] [--max-cost-usd X] [--model M] (gates: not yet)\n       ' + REMEMBER_USAGE.join('\n       ') + '\n       ' + TASK_USAGE;
 const DAY = 86_400_000;
 
 export function tddStatus(root: string): string {
@@ -175,6 +176,13 @@ try {
       const prompt = readlinePrompt();
       try {
         process.exitCode = await remember(argv.slice(1), { ...cli, prompt });
+      } finally {
+        prompt.close();
+      }
+    } else if (argv[0] === 'task') {
+      const prompt = readlinePrompt();
+      try {
+        process.exitCode = await task(argv.slice(1), { ...cli, prompt });
       } finally {
         prompt.close();
       }

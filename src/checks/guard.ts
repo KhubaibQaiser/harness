@@ -18,6 +18,7 @@ import type { Decision } from '../hooks/types.js';
 import { REMEMBER_WHY, rememberAsk } from './remember.js';
 import { rememberReadOnly } from '../core/remember-args.js';
 import { suggestBranches } from '../core/branch-prefix.js';
+import { ghWriteWhy, HUB_OWN, hubWriteWhy, pushConfigWhy, pushOptionWhy } from './gh-writes.js';
 
 type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { startedAt?: number; lookup?: VerifyOpts['lookup'] }; // lookup: test seam
 type Verdict = ['allow'] | ['deny' | 'ask', string];
@@ -546,7 +547,7 @@ const CP_OPTS: OptTable = {
 };
 const TARGET_DIR = ['-t', '--target-directory'];
 /** GNU coreutils and tar under another name (Homebrew's g-prefix, bsdtar): read as the plain tool. */
-export const WRITER_ALIAS: Record<string, string> = { gcp: 'cp', gmv: 'mv', gln: 'ln', ginstall: 'install', gtar: 'tar', bsdtar: 'tar', gpatch: 'patch', gsort: 'sort' };
+export const WRITER_ALIAS: Record<string, string> = { gcp: 'cp', gmv: 'mv', gln: 'ln', ginstall: 'install', gtar: 'tar', bsdtar: 'tar', gpatch: 'patch', gsort: 'sort', hub: 'git' };
 type Writer = { opts: OptTable; out: readonly string[]; pos?: (p: Parsed) => string[] };
 const WRITERS: Record<string, Writer> = {
   curl: { opts: { v: 'oDcdHuxXeAEKbmrTUwYyzt', lv: ['output', 'output-dir', 'dump-header', 'cookie-jar', 'trace', 'trace-ascii', 'stderr', 'etag-save', 'data', 'header', 'user', 'proxy', 'request', 'referer', 'user-agent', 'cookie', 'config', 'max-time', 'range', 'upload-file', 'write-out', 'connect-timeout'] }, // curl takes no abbreviations (curl 8.7)
@@ -574,16 +575,33 @@ const GIT_WRITERS: Record<string, Writer> = {
   archive: { opts: { v: 'o', lv: ['output', 'format', 'prefix', 'remote', 'exec', 'add-file', 'add-virtual-file', 'mtime'], lf: ['list', 'verbose', 'worktree-attributes'], prefix: true }, out: ['-o', '--output'] },
   'format-patch': { opts: { v: 'ov', lv: ['output-directory', 'start-number', 'subject-prefix', 'to', 'cc', 'in-reply-to', 'signature', 'signature-file', 'suffix', 'base', 'reroll-count', 'interdiff', 'range-diff', 'creation-factor', 'from', 'notes', 'cover-from-description'], prefix: true }, out: ['-o', '--output-directory'] },
   bundle: { opts: { lv: ['version'], lf: ['progress', 'quiet', 'all', 'branches', 'tags'] }, out: [], pos: (p) => (p.pos[0] === 'create' ? p.pos.slice(1, 2) : []) },
+  // `git clone <repo> [<dir>]`: the folder made is <dir>, or the repo's own name (`https://x/.harness.git` makes `.harness`).
+  clone: { opts: { v: 'obucj', lv: ['origin', 'branch', 'upload-pack', 'template', 'config', 'reference', 'reference-if-able', 'depth', 'shallow-since', 'shallow-exclude', 'separate-git-dir', 'jobs', 'filter', 'bundle-uri', 'server-option', 'ref-format'],
+    lo: ['recurse-submodules', 'shallow-submodules'], lf: ['local', 'no-hardlinks', 'shared', 'dissociate', 'quiet', 'verbose', 'progress', 'no-checkout', 'bare', 'mirror', 'single-branch', 'no-single-branch', 'no-tags', 'sparse', 'reject-shallow'], prefix: true },
+    out: ['--separate-git-dir'], pos: (p) => [p.pos[1] ?? repoName(p.pos[0] ?? '')] },
 };
 const GIT_OUTPUT: Writer = { opts: { lv: ['output'] }, out: ['--output'] };
+/** The folder `git clone <repo>` makes with no <dir>: the repo's last path part, `.git` dropped. */
+const repoName = (r: string): string => r.replace(/[/\\]+$/, '').split(/[/\\:]/).pop()!.replace(/\.git$/, '');
+// gh's local writes: downloads into a folder or file, and clones into a folder (gh repo/gist clone <r> [<dir>]).
+const GH_LOCAL: Record<string, Writer> = {
+  'release download': { opts: { v: 'DOpAR', lv: ['dir', 'output', 'pattern', 'archive', 'repo'], lf: ['clobber', 'skip-existing'] }, out: ['-D', '--dir', '-O', '--output'] },
+  'run download': { opts: { v: 'DnpR', lv: ['dir', 'name', 'pattern', 'repo'] }, out: ['-D', '--dir'] },
+  'repo clone': { opts: { v: 'u', lv: ['upstream-remote-name'], lf: ['no-upstream'] }, out: [], pos: (p) => p.pos.slice(1, 2) },
+  'gist clone': { opts: {}, out: [], pos: (p) => p.pos.slice(1, 2) },
+};
 
 /** The files and folders `name` (with its words, from the command name on, unquoted) writes through its options or the
  *  positional the tool writes. */
 function writerTargets(name: string, words: string[]): string[] {
   name = WRITER_ALIAS[name] ?? name;
   let w = Object.hasOwn(WRITERS, name) ? WRITERS[name] : undefined, args = withoutRedirects(words.slice(1));
-  if (name === 'git') {
-    const [sub, ...rest] = gitArgs(words);
+  if (name === 'gh') {
+    const [group = '', sub = ''] = readOptions(args, { v: 'R', lv: ['repo', 'hostname'] }).pos, key = `${group} ${sub}`;
+    if (!Object.hasOwn(GH_LOCAL, key)) return [];
+    [w, args] = [GH_LOCAL[key], args.slice(args.indexOf(sub) + 1)];
+  } else if (name === 'git') {
+    const [sub, ...rest] = gitArgs(['git', ...words.slice(1)]); // hub reads as git too
     [w, args] = [Object.hasOwn(GIT_WRITERS, sub ?? '') ? GIT_WRITERS[sub!] : GIT_OUTPUT, withoutRedirects(rest)];
   }
   if (!w) return [];
@@ -989,9 +1007,64 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   if (install) return install;
   const preset = ctx.config?.preset && /\bgit\b/.test(command) ? walkCommands(command, ctx, presetVisit(command, ctx.config.preset)) : null;
   if (preset) return toDecision(['ask', preset.reason]);
+  // gh/hub writes and GitLab push options: found past wrappers and path heads by the walk, read with the getopt reader.
+  // The quote-free text too, so a head spelled `g\h`, `"gh"` or `$'\x67h'` is read as gh.
+  const ghText = vUnq === command ? command : `${command}\n${vUnq}`;
+  if (/\b(?:gh|hub)\b|merge_request/i.test(ghText)) {
+    const visit = ghWriteVisit(command, ctx);
+    const gw = walkCommands(command, ctx, visit) ?? (vUnq !== command ? walkCommands(vUnq, ctx, visit) : null);
+    if (gw) return gw;
+  }
   for (const [re, why] of ASK) if (texts.some((t) => re.test(t))) return toDecision(['ask', why]);
   return { kind: 'allow' };
 }
+
+/** A gh or hub command that changes shared state, or a git push with a GitLab merge-request option: the reason to ask. */
+// Commands that only read or print their words: a gh/hub word right after one of them is data (`echo gh pr merge`).
+const NOT_RUNNERS = new Set(['echo', 'printf', 'man', 'which', 'whereis', 'type', 'grep', 'egrep', 'fgrep', 'rg', 'cat', 'less', 'more', 'head', 'tail', 'help', 'info', 'apropos', 'whatis',
+  'alias', 'unalias', 'history', 'file', 'stat', 'ls', 'wc', 'sort', 'uniq', 'cut', 'tr', 'sed', 'awk', 'jq', 'yq', 'tee', 'printenv', 'export', 'set', 'unset', 'read', 'test', '[', 'true', 'false', 'brew', 'npm', 'pnpm', 'yarn', 'pip']);
+/** A word as the shell passes it: quotes removed and `$'…'` decoded (`gh $'pr' merge`, `gh pr $'\x6derge'`). */
+const plainWord = (t: string): string => (t.startsWith("$'") && t.endsWith("'") ? decodeAnsiC(t.slice(2, -1)) : shellUnquote(t)).replace(/\u0001/g, ' ');
+/** A `$` or backtick the shell expands: outside single quotes (double quotes expand), `$'…'` included. Linear, quote-aware. */
+function expandsOutsideSingleQuotes(s: string): boolean {
+  let q = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q === "'") { if (c === "'") q = ''; continue; }
+    if (c === '\\') { i++; continue; }
+    if (c === '$' || c === '`') return true;
+    if (q === '"') { if (c === '"') q = ''; continue; }
+    if (c === "'" || c === '"') q = c;
+  }
+  return false;
+}
+/** gh/hub commands that are not known reads, hub's git passthrough judged as git, and GitLab merge-request push options. */
+const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
+  // Once per line: a GraphQL query on it may be built at run time. A `$` inside single quotes is literal (GraphQL's own
+  // `query($o:String!)`); one outside them (`"$Q"`, `$'…'`, `-F o=$O`), a backtick there, or a newline anywhere is not.
+  const built = /\n/.test(raw) || expandsOutsideSingleQuotes(raw);
+  return ({ toks, k }) => {
+  let at = k, name = runnerName(plainWord(toks[k] ?? ''));
+  // A head the guard doesn't know may run gh or hub later in its words (`op run -- gh …`, `direnv exec . gh …`, `zzwrap -q gh …`).
+  if (!['gh', 'hub', 'git'].includes(name) && !NOT_RUNNERS.has(name)) {
+    const j = toks.findIndex((t, i) => i > k && /^(gh|hub)$/.test(runnerName(plainWord(t))));
+    if (j > k) [at, name] = [j, runnerName(plainWord(toks[j]))];
+  }
+  const args = toks.slice(at + 1).map(plainWord), ask = (why: string | null) => (why ? toDecision(['ask', why]) : null);
+  if (name === 'gh') return ask(ghWriteWhy(args, built));
+  if (name === 'hub') {
+    const first = readOptions(args, { lf: ['help', 'version', 'noop'] }).pos[0] ?? '';
+    if (first && !HUB_OWN.has(first)) { const d = decideRead(`git ${args.join(' ')}`, ctx, 3); return d.kind === 'allow' ? null : d; } // hub passes git commands on: `hub push -f` is `git push -f`
+    return ask(hubWriteWhy(args, built));
+  }
+  if (name === 'git') {
+    const [sub, ...rest] = gitArgs(['git', ...args]);
+    const globals = sub === undefined ? args : args.slice(0, args.length - rest.length - 1);
+    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest));
+  }
+  return null;
+  };
+};
 
 const NEW_BRANCH_FLAGS: Record<string, string[]> = {
   checkout: ['-b', '-B', '--orphan'], switch: ['-c', '-C', '--create', '--force-create', '--orphan'], worktree: ['-b', '-B'], // worktree's --orphan is a switch

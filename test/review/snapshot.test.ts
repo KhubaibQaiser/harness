@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,6 +53,20 @@ describe('writeSnapshot', () => {
   });
   test('submodules are skipped and listed', () => {
     expect(snap({ sub: { gitlink: 'a'.repeat(40) } }).omitted).toContainEqual({ path: 'sub', why: 'submodule, not read' });
+  });
+  test('.git path segments are never written', () => {
+    // git add refuses such paths, so the tree is built by hand, as a hostile PR could push it.
+    const r = repoWith({ 'k.txt': 'k\n' }, {});
+    const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: r.root, input: '[core]\n\tfsmonitor = evil\n', encoding: 'utf8' }).trim();
+    const mk = (lines: string) => execFileSync('git', ['mktree'], { cwd: r.root, input: lines, encoding: 'utf8' }).trim();
+    const inner = mk(`100644 blob ${blob}\tconfig\n`);
+    const top = mk(`040000 tree ${inner}\t.git\n040000 tree ${mk(`040000 tree ${inner}\t.GIT\n`)}\tsub\n100644 blob ${blob}\tok.txt\n`);
+    const sha = execFileSync('git', ['commit-tree', top, '-m', 'hostile'], { cwd: r.root, encoding: 'utf8' }).trim();
+    const dir = join(mkdtempSync(join(tmpdir(), 'h-snap-')), 'head');
+    const s = writeSnapshot(defaultExecBytes, r.root, sha, dir, { ignore: () => false });
+    expect(Object.keys(s.map)).toEqual(['ok.txt']);
+    expect(s.omitted).toEqual([{ path: '.git/config', why: 'a .git path, not written' }, { path: 'sub/.GIT/config', why: 'a .git path, not written' }]);
+    expect(existsSync(join(dir, '.git'))).toBe(false);
   });
   test('hostile names: a leading dash and a colon', () => {
     const s = snap({ '-rf': 'dash\n', 'a:b.ts': 'colon\n', 'sp é.txt': 'u\n' });

@@ -41,7 +41,7 @@ function setup(o: { base?: Files; head?: Files; tip?: Files; fork?: boolean } = 
     git(root, 'config', `url.${join(root, 'no-such-repo')}.insteadOf`, 'https://github.com/me/r.git'); // a fetch from the fork fails locally
   } else git(root, 'remote', 'set-url', 'origin', GH);
   mkdirSync(join(root, '.harness/tmp/w-1'), { recursive: true });
-  return { root, base: w.base, head: w.head, tip, dir: '.harness/tmp/w-1' };
+  return { root, bare, base: w.base, head: w.head, tip, dir: '.harness/tmp/w-1' };
 }
 
 type R = ReturnType<Exec>;
@@ -117,6 +117,16 @@ describe('gather: §8 rows', () => {
     const t = setup();
     git(t.root, 'remote', 'set-url', 'origin', 'https://github.com/x/y.git');
     expect(run(t, fakeGh(t).exec)).toMatchObject({ code: 1, lines: ['review: no git remote points to github.com/o/r; add one, for example: git remote add upstream https://github.com/o/r.git'] });
+  });
+  test('a shallow clone stops with how to fix it', () => {
+    const t = setup();
+    writeFileSync(join(t.root, '.git', 'shallow'), `${t.base}\n`);
+    expect(run(t, fakeGh(t).exec)).toMatchObject({ code: 1, lines: ['review: this clone is shallow; fetch the full history (git fetch --unshallow) and retry'] });
+  });
+  test('a base branch deleted on the remote is named', () => {
+    const t = setup();
+    git(t.bare, 'update-ref', '-d', 'refs/heads/main');
+    expect(run(t, fakeGh(t).exec)).toMatchObject({ code: 1, lines: ['review: base branch main is not on origin (deleted?); a PR whose base branch is gone cannot be reviewed'] });
   });
   test('head moved during fetch', () => {
     expect(run(s, fakeGh(s, { headRefOid: 'c'.repeat(40) }).exec)).toMatchObject({ code: 1, lines: ['review: PR head moved during fetch; run again'] });

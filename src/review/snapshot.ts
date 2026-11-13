@@ -15,7 +15,8 @@ export function writeSnapshot(exec: ExecBytes, root: string, headSha: string, di
   for (const e of lsTree(exec, root, headSha)) {
     if (o.only && !o.only.has(e.path)) continue;
     const bad = unsafe(e.path);
-    const why = e.mode === '160000' ? 'submodule, not read'
+    const why = e.path.split('/').some((x) => x.toLowerCase() === '.git') ? 'a .git path, not written' // a nested .git could make the copy a repo
+      : e.mode === '160000' ? 'submodule, not read'
       : /^\.env/i.test(e.path.split('/').pop()!) ? 'dotenv file, not read'
       : o.ignore(e.path) ? 'matches .harnessignore, not read'
       : bad && (bad !== WIN_ONLY || process.platform === 'win32') ? bad

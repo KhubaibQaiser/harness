@@ -42,6 +42,8 @@ function remoteFor(exec: Exec, repo: string): { name: string } | { error: string
   const name = names.includes('origin') ? 'origin' : names[0];
   return name ? { name } : { error: `review: no git remote points to github.com/${repo}; add one, for example: git remote add upstream https://github.com/${repo}.git` };
 }
+/** gh's or git's first stderr line, escaped; never empty. */
+const gitErr = (r: { status: number; stderr?: string }) => esc((r.stderr ?? '').split('\n').find((l) => l.trim())?.trim() ?? '') || `git exited ${r.status}`;
 const sha256 = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
 
 /** Up to 3 repo-relative `docs/**\/*.md` paths named in the body, read from the snapshot, 50 KB each. */
@@ -79,17 +81,24 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
 
     // FETCH_HEAD lists the refspecs in order: the PR head, the PR's base commit (R11), then the base branch tip.
     const f = exec('git', [...SAFE_GIT, 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', remote.name, `refs/pull/${n}/head`, baseSha, `refs/heads/${base}`], { timeoutMs: 600_000 });
-    if (f.status !== 0) return fail(`review: git fetch failed: ${esc((f.stderr ?? '').split('\n')[0]!.trim())}`);
+    const gone = (f.stderr ?? '').split('\n').some((l) => l.trim() === `fatal: couldn't find remote ref refs/heads/${base}`);
+    if (f.status !== 0) return fail(gone
+      ? `review: base branch ${esc(base)} is not on ${esc(remote.name)} (deleted?); a PR whose base branch is gone cannot be reviewed`
+      : `review: git fetch failed: ${gitErr(f)}`);
     const fh = exec('git', [...SAFE_GIT, 'rev-parse', '--git-path', 'FETCH_HEAD']);
     const fetched = readFileSync(resolve(root, fh.stdout.trim()), 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t')[0]!);
     if (fetched.length !== 3 || fetched[1] !== baseSha) return fail('review: git fetch gave an unexpected FETCH_HEAD; run again');
     if (fetched[0] !== headSha) return fail('review: PR head moved during fetch; run again');
     const tip = fetched[2]!;
 
+    const shallow = exec('git', [...SAFE_GIT, 'rev-parse', '--is-shallow-repository']);
+    if (shallow.status !== 0) return fail(`review: git rev-parse --is-shallow-repository failed: ${gitErr(shallow)}`);
+    if (shallow.stdout.trim() === 'true') return fail('review: this clone is shallow; fetch the full history (git fetch --unshallow) and retry');
+
     // Claude Code loaded this session's CLAUDE.md, hooks and .mcp.json from this checkout: it must be the base branch, not the PR.
     const anc = exec('git', [...SAFE_GIT, 'merge-base', '--is-ancestor', 'HEAD', tip]);
     if (anc.status === 1) return fail(`review: this checkout is not ${esc(base)} or behind it (is it the PR branch?). Switch to ${esc(base)} and start a fresh Claude Code session: this one may already have loaded the PR's CLAUDE.md, hooks or .mcp.json.`);
-    if (anc.status !== 0) return fail(`review: git merge-base --is-ancestor failed: ${esc((anc.stderr ?? '').split('\n')[0]!.trim())}`);
+    if (anc.status !== 0) return fail(`review: git merge-base --is-ancestor failed: ${gitErr(anc)}`);
 
     const commits = [...new Set([baseSha, tip])].map((sha) => ({ sha, blobs: baseBlobs(bytes, root, sha) }));
     const cfgText = commits[0]!.blobs['.harness/config.yaml'];
@@ -105,9 +114,9 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
 
     const mb = exec('git', [...SAFE_GIT, 'merge-base', baseSha, headSha]);
     const mergeBase = mb.stdout.trim();
-    if (mb.status !== 0 || !mergeBase) return fail(`review: git merge-base failed: ${esc((mb.stderr ?? '').split('\n')[0]!.trim())}`);
+    if (mb.status !== 0 || !mergeBase) return fail(`review: git merge-base failed: ${gitErr(mb)}`);
     const d = exec('git', [...SAFE_GIT, ...diffArgs(mergeBase, headSha)], { timeoutMs: 120_000 });
-    if (d.status !== 0) return fail(`review: git diff failed: ${esc((d.stderr ?? '').split('\n')[0]!.trim())}`);
+    if (d.status !== 0) return fail(`review: git diff failed: ${gitErr(d)}`);
     const files = parseDiff(d.stdout);
     const cap = capDiff(files, DIFF_CAP, cfg.config.pr_size.exclude);
 

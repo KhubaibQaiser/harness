@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { CONTROL, esc } from '../core/config.js';
+import { esc, HIDDEN_CLASS } from '../core/config.js';
 import { redactSecrets } from '../core/secrets.js';
 import type { DiffFile } from './diff.js';
 import type { PrView } from './gh.js';
@@ -9,7 +9,7 @@ export const newNonce = (): string => randomBytes(16).toString('hex');
 
 export const DELETED_FORK = '(deleted fork)';
 // Control, hidden and line-separator characters (U+2028/U+2029, which JSON.stringify leaves raw).
-const CONTROLS = new RegExp(`${CONTROL.source.slice(0, -1)}\\u2028\\u2029]`, 'gu');
+const CONTROLS = new RegExp(`[\\u0000-\\u001f${HIDDEN_CLASS}\\u2028\\u2029]`, 'gu');
 const escChar = (c: string) => (c === '\u2028' || c === '\u2029' ? `\\u${c.charCodeAt(0).toString(16)}` : esc(c));
 /** Control characters become escapes per line; tabs stay, they can't drive a terminal. */
 const escLines = (text: string) => text.split('\n').map((l) => l.replace(CONTROLS, (c) => (c === '\t' ? c : escChar(c)))).join('\n');

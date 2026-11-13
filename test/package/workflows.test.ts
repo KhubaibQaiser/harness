@@ -55,13 +55,26 @@ test('the publish job waits on the npm-release environment', () => {
   expect(load('release.yml').jobs.publish.environment).toBe('npm-release');
 });
 
-test('release pins npm 11.5.1 before publishing and fails when npm is older', () => {
+test('release pins npm 11.21.0 (OIDC dist-tag) before publishing and fails when npm is older', () => {
   const steps = load('release.yml').jobs.publish.steps;
-  const i = steps.findIndex((s: any) => s.run === 'npm install -g npm@11.5.1');
-  const chk = steps.findIndex((s: any) => /older than 11\.5\.1/.test(s.run ?? ''));
+  const i = steps.findIndex((s: any) => s.run === 'npm install -g npm@11.21.0');
+  const chk = steps.findIndex((s: any) => /older than 11\.21\.0/.test(s.run ?? ''));
   expect(i).toBeGreaterThan(-1);
   expect(chk).toBeGreaterThan(i);
   expect(chk).toBeLessThan(steps.findIndex((s: any) => /npm publish/.test(s.run ?? '')));
+});
+
+test('a prerelease moves latest while latest is still a prerelease, and fails loudly if npm refuses', () => {
+  const steps = load('release.yml').jobs.publish.steps;
+  const pub = steps.findIndex((s: any) => /npm publish/.test(s.run ?? ''));
+  const i = steps.findIndex((s: any) => /npm dist-tag add/.test(s.run ?? ''));
+  expect(i).toBeGreaterThan(pub);
+  const run: string = steps[i].run;
+  expect(run).toContain('dist-tags.latest');
+  expect(run).toMatch(/sort -V/); // never moves latest backwards
+  expect(run).toContain('Allow npm dist-tag');
+  expect(run).toMatch(/exit 1/);
+  expect(run).not.toMatch(/\|\|\s*true/);
 });
 
 test('release publishes with --provenance', () => {

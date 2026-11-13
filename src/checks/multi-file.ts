@@ -158,9 +158,15 @@ export const multiFile: Check = {
     if (event === 'PostToolUse') {
       units.add(pairKey(rel));
       const next = files.includes(rel) ? files : [...files, rel];
-      ctx.save({ ...ctx.state, files: next, approved: approved || units.size >= 2 });
+      // Claude Code shows its own dialog for an Edit ask, not our reason: say it here, once a turn, before the ask comes.
+      const note = !approved && !ctx.unattended && !ctx.state.askNoted && units.size === 1;
+      ctx.save({ ...ctx.state, files: next, approved: approved || units.size >= 2, ...(note ? { askNoted: true as const } : {}) });
       // Attended, a second unit only gets here after the user approved the ask; unattended runs log allow-log instead.
       if (!approved && units.size >= 2 && !ctx.unattended) appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'approved', files: next });
+      if (note) {
+        const why = `This turn has touched ${rel}. The next edit to another file will ask you first, because the multi-file gate approves a change that spans more than one file once per turn.`;
+        return { kind: 'context', check: 'multi-file', notice: `harness: ${why}`, text: `Multi-file gate:${why} Before editing another file, explain to the person why it is needed, or ask with AskUserQuestion.` };
+      }
       return { kind: 'allow' };
     }
     // PreToolUse only decides; afterAllow records once the whole call is allowed, PostToolUse otherwise.

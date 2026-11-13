@@ -17,7 +17,8 @@ const setup = (mode = 'block', extra = '') => {
     const out = await send({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: { [tool === 'NotebookEdit' ? 'notebook_path' : 'file_path']: p }, ...extra2 }, env);
     return out ? (JSON.parse(out).hookSpecificOutput as { permissionDecision: string; permissionDecisionReason: string }) : { permissionDecision: 'allow', permissionDecisionReason: '' };
   };
-  const post = (p: string, tool = 'Edit') => send({ hook_event_name: 'PostToolUse', tool_name: tool, tool_input: { [tool === 'NotebookEdit' ? 'notebook_path' : 'file_path']: p } });
+  // non-block modes only matter unattended, so those tests' posts run unattended too (an attended post would add the note event)
+  const post = (p: string, tool = 'Edit') => send({ hook_event_name: 'PostToolUse', tool_name: tool, tool_input: { [tool === 'NotebookEdit' ? 'notebook_path' : 'file_path']: p } }, mode === 'block' ? {} : { CI: 'true' });
   const prompt = () => send({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' });
   return { root, send, edit, post, prompt };
 };
@@ -482,4 +483,26 @@ test('require_reason: Stop clears the handled late reasons under the lock, keepi
   expect(await multiFile.run(ctx)).toEqual({ kind: 'allow' });
   expect(readState(t.root, 's')).toMatchObject({ files: ['x.ts'], lateReasons: [B] });
   expect(t.log().filter((e) => e.decision === 'reason-not-found').map((e) => e.of)).toEqual([A.ts]);
+});
+
+test('note after the first file: shown once per turn, to the person and the agent; decisions unchanged', async () => {
+  const t = setup();
+  const out = JSON.parse((await t.post('a.ts'))!);
+  expect(out.systemMessage).toContain('This turn has touched a.ts');
+  expect(out.systemMessage).toContain('will ask');
+  expect(out.hookSpecificOutput.additionalContext).toContain('AskUserQuestion');
+  expect(await t.post('a.ts')).toBe(''); // same file again: no second note
+  expect(kind(await t.edit('b.ts'))).toBe('ask');
+  expect(await t.post('b.ts')).toBe(''); // approved: no note
+  await t.prompt();
+  expect(await t.post('c.ts')).toContain('This turn has touched c.ts'); // new turn, new note
+});
+
+test('no note when the gate is off, unattended, or for a test file', async () => {
+  const off = setup();
+  expect(await off.send({ hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: 'a.ts' } }, {}, [])).toBe('');
+  writeFileSync(join(off.root, '.harness/config.yaml'), 'checks:\n  multiFile: false\n');
+  expect(await off.post('a.ts')).toBe('');
+  expect(await setup('allow-log').send({ hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: 'a.ts' } }, { CI: 'true' })).toBe('');
+  expect(await setup().post('a.test.ts')).toBe('');
 });

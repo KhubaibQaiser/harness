@@ -33,26 +33,29 @@ describe('baseBlobs', () => {
   });
 });
 
+const commits = (root: string, ...shas: string[]) => shas.map((sha) => ({ sha, blobs: baseBlobs(defaultExecBytes, root, sha) }));
+const check = (root: string, ...shas: string[]) => driftCheck(root, defaultExecBytes, 'main', commits(root, ...shas));
+const err = (d: ReturnType<typeof check>) => ('error' in d ? d.error : null);
+
 describe('driftCheck', () => {
   const drift = (edit: (root: string) => void) => {
     const r = repoWith(BASE, { 'src/a.ts': 'a\n' });
     edit(r.root);
-    return driftCheck(r.root, defaultExecBytes, r.base, baseBlobs(defaultExecBytes, r.root, r.base));
+    return err(check(r.root, r.base));
   };
-  test('equal trees', () => {
-    expect(drift(() => {})).toBeNull();
+  test('equal trees: the trusted text is the base commit\'s', () => {
+    const r = repoWith(BASE, { 'src/a.ts': 'a\n' });
+    expect(check(r.root, r.base)).toEqual({ blobs: baseBlobs(defaultExecBytes, r.root, r.base) });
   });
-  test('an edited agent names the file and the base', () => {
+  test('an edited agent names the file and the base branch', () => {
     const r = repoWith(BASE, {});
     writeFileSync(join(r.root, AGENT), 'agent edited\n');
-    expect(driftCheck(r.root, defaultExecBytes, r.base, baseBlobs(defaultExecBytes, r.root, r.base)))
-      .toBe(`review: ${AGENT} differs from ${r.base.slice(0, 7)}; run the review from ${r.base.slice(0, 7)} or a clean worktree of it`);
+    expect(err(check(r.root, r.base))).toBe(`review: ${AGENT} differs from main (${r.base.slice(0, 7)}); run the review from main or a clean worktree of it`);
   });
-  test('the PR branch checked out (head commit changed the agent) is drift', () => {
+  test('the PR branch checked out (head commit changed the rubric) is drift', () => {
     const r = repoWith(BASE, {});
-    const head = commit(r.root, { '.claude/skills/review-rubric/SKILL.md': 'rubric from the PR\n' });
-    expect(head).toBeTruthy();
-    expect(driftCheck(r.root, defaultExecBytes, r.base, baseBlobs(defaultExecBytes, r.root, r.base))).toMatch(/^review: \.claude\/skills\/review-rubric\/SKILL\.md differs from /);
+    commit(r.root, { '.claude/skills/review-rubric/SKILL.md': 'rubric from the PR\n' });
+    expect(err(check(r.root, r.base))).toMatch(/^review: \.claude\/skills\/review-rubric\/SKILL\.md differs from main /);
   });
   test('settings.json: hooks count, permissions do not', () => {
     expect(drift((root) => writeFileSync(join(root, '.claude/settings.json'), SETTINGS({ Stop: [] }, { deny: ['a'] })))).toMatch(/^review: \.claude\/settings\.json differs/);
@@ -64,5 +67,33 @@ describe('driftCheck', () => {
   });
   test('missing on one side is a difference', () => {
     expect(drift((root) => { mkdirSync(join(root, '.claude/agents'), { recursive: true }); writeFileSync(join(root, '.claude/agents/review-judge.md'), 'j\n'); })).toMatch(/review-judge\.md differs/);
+  });
+
+  // The base branch moved past the PR's base commit: a checkout of its tip is a base-branch commit too.
+  describe('base commit or the base branch tip', () => {
+    const moved = () => {
+      const r = repoWith(BASE, { 'src/a.ts': 'a\n' });
+      const tip = commit(r.root, { [AGENT]: 'agent v2 on main\n', '.harness/hooks/dispatch.mjs': 'd2\n', 'AGENTS.md': 'newer\n' });
+      return { ...r, tip };
+    };
+    test('a working tree equal to the tip is accepted, and the agent text comes from the tip', () => {
+      const r = moved();
+      const d = check(r.root, r.base, r.tip);
+      expect(err(d)).toBeNull();
+      expect('blobs' in d && d.blobs[AGENT]).toBe('agent v2 on main\n');
+      expect('blobs' in d && d.blobs['AGENTS.md']).toBeNull(); // not drift-checked: from the base commit, where it is absent
+    });
+    test('a working tree equal to the base commit is accepted against both', () => {
+      const r = moved();
+      writeFileSync(join(r.root, AGENT), 'agent v1\n');
+      writeFileSync(join(r.root, '.harness/hooks/dispatch.mjs'), 'x\n');
+      const d = check(r.root, r.base, r.tip);
+      expect('blobs' in d && d.blobs[AGENT]).toBe('agent v1\n');
+    });
+    test('a working tree matching neither names both commits', () => {
+      const r = moved();
+      writeFileSync(join(r.root, AGENT), 'from the PR\n');
+      expect(err(check(r.root, r.base, r.tip))).toBe(`review: ${AGENT} differs from main (${r.base.slice(0, 7)} and ${r.tip.slice(0, 7)}); run the review from main or a clean worktree of it`);
+    });
   });
 });

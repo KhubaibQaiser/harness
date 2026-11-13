@@ -5,8 +5,10 @@ import { LIMITS, neutralise, unsafe } from '../vet/fetch.js';
 import { catFile, lsTree } from './base.js';
 
 const WIN_ONLY = 'name not valid on Windows'; // the files stay on this machine, so only this OS's rules apply
+// Every file gets this suffix, so no test runner, package manager or tool started in the repo treats a PR file as its own.
+export const SNAPSHOT_SUFFIX = '.pr-snapshot';
 
-/** `<dir>` from the head commit's blobs: no checkout, archive, worktree or tar. Symlinks become text files holding the target. */
+/** `<dir>` from the head commit's blobs: no checkout, archive, worktree or tar. Symlinks become text files holding the target. `map` takes every written file to its name under `<dir>`. */
 export function writeSnapshot(exec: ExecBytes, root: string, headSha: string, dir: string, o: { ignore: (rel: string) => boolean; only?: Set<string> }): { files: number; map: Record<string, string>; omitted: { path: string; why: string }[] } {
   const omitted: { path: string; why: string }[] = [];
   const todo: { path: string; to: string; sha: string; size: number; link: boolean }[] = [];
@@ -20,7 +22,7 @@ export function writeSnapshot(exec: ExecBytes, root: string, headSha: string, di
       : e.type !== 'blob' ? 'not a file, not read'
       : e.size > LIMITS.fileBytes ? 'over 1 MB, not read' : undefined;
     if (why) omitted.push({ path: e.path, why });
-    else todo.push({ path: e.path, to: neutralise(e.path), sha: e.sha, size: e.size, link: e.mode === '120000' });
+    else todo.push({ path: e.path, to: neutralise(e.path) + SNAPSHOT_SUFFIX, sha: e.sha, size: e.size, link: e.mode === '120000' });
   }
   // Case-insensitive filesystems fold case and Unicode form: names that collide would overwrite each other, so none is written.
   const fold = (s: string) => s.normalize('NFC').toUpperCase().toLowerCase();
@@ -49,7 +51,7 @@ export function writeSnapshot(exec: ExecBytes, root: string, headSha: string, di
       return void omitted.push({ path: t.path, why: `could not write (${(err as NodeJS.ErrnoException).code ?? 'error'})` });
     }
     files++;
-    if (t.to !== t.path) map[t.path] = t.to;
+    map[t.path] = t.to;
   });
   return { files, map, omitted };
 }

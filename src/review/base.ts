@@ -67,15 +67,26 @@ const hooksOf = (t: string | null) => {
 };
 const same = (a: Buffer | null, b: Buffer | null) => (a === null || b === null ? a === b : a.equals(b));
 
-/** Claude Code loads agents, settings hooks and hook files from the working tree: they must equal base, or the PR could steer its own review. */
-export function driftCheck(root: string, exec: ExecBytes, baseSha: string, blobs: Record<string, string | null>): string | null {
-  const b7 = baseSha.slice(0, 7);
-  const differs = (rel: string) => `review: ${rel} differs from ${b7}; run the review from ${b7} or a clean worktree of it`;
-  const blob = (rel: string) => (blobs[rel] == null ? null : Buffer.from(blobs[rel]!, 'utf8'));
-  for (const f of DRIFT_FILES) if (!same(readOrNull(root, f), blob(f))) return differs(f);
-  const s = '.claude/settings.json';
-  if (!isDeepStrictEqual(hooksOf(readOrNull(root, s)?.toString('utf8') ?? null), hooksOf(blobs[s] ?? null))) return differs(s);
-  const base = new Map(lsTree(exec, root, baseSha, ['.harness/hooks/']).map((e) => [e.path, e.sha]));
+export interface BaseCommit { sha: string; blobs: Record<string, string | null> }
+
+/** Claude Code loads agents, settings hooks and hook files from the working tree: each must equal its blob at one of `commits`
+ *  (the PR's base commit, then the base branch tip), or the PR could steer its own review. The trusted text of each checked
+ *  path comes from the commit it matched; every other path from the first commit. */
+export function driftCheck(root: string, exec: ExecBytes, base: string, commits: BaseCommit[]): { blobs: Record<string, string | null> } | { error: string } {
+  const shas = [...new Set(commits.map((c) => c.sha.slice(0, 7)))].join(' and ');
+  const differs = (rel: string) => ({ error: `review: ${rel} differs from ${base} (${shas}); run the review from ${base} or a clean worktree of it` });
+  const buf = (t: string | null | undefined) => (t == null ? null : Buffer.from(t, 'utf8'));
+  const blobs = { ...commits[0]!.blobs };
+  for (const f of DRIFT_FILES) {
+    const w = readOrNull(root, f), c = commits.find((x) => same(w, buf(x.blobs[f])));
+    if (!c) return differs(f);
+    blobs[f] = c.blobs[f] ?? null;
+  }
+  const s = '.claude/settings.json', w = hooksOf(readOrNull(root, s)?.toString('utf8') ?? null);
+  const cs = commits.find((x) => isDeepStrictEqual(w, hooksOf(x.blobs[s] ?? null)));
+  if (!cs) return differs(s);
+  blobs[s] = cs.blobs[s] ?? null;
+  const trees = commits.map((c) => new Map(lsTree(exec, root, c.sha, ['.harness/hooks/']).map((e) => [e.path, e.sha])));
   let work: string[] = [];
   try {
     work = readdirSync(join(root, '.harness', 'hooks'), { recursive: true, withFileTypes: true }).filter((d) => !d.isDirectory())
@@ -83,8 +94,9 @@ export function driftCheck(root: string, exec: ExecBytes, baseSha: string, blobs
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
-  const got = catFile(exec, root, [...base.values()]);
-  const at = new Map([...base.keys()].map((p, k) => [p, got[k]!]));
-  const bad = [...new Set([...base.keys(), ...work])].sort().find((p) => !same(readOrNull(root, p), at.get(p) ?? null));
-  return bad === undefined ? null : differs(bad);
+  const ids = [...new Set(trees.flatMap((t) => [...t.values()]))];
+  const got = new Map(catFile(exec, root, ids).map((b, k) => [ids[k]!, b]));
+  const bad = [...new Set([...trees.flatMap((t) => [...t.keys()]), ...work])].sort()
+    .find((p) => { const wb = readOrNull(root, p); return !trees.some((t) => same(wb, t.has(p) ? got.get(t.get(p)!) ?? null : null)); });
+  return bad === undefined ? { blobs } : differs(bad);
 }

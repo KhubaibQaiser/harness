@@ -130,8 +130,8 @@ test('slash-only skills carry disable-model-invocation; doctor and status stay v
 
 // Always-loaded tokens of the default install (plugin + legacy own items), measured. Raise only in a reviewed PR.
 // 658 (team decisions, 2026-11-10): 553 + 71 for the AGENTS.md pointer and protected line + 34 for the remember skill.
-// 688 (M2a PR B, 2026-11-13): + 30 for the review-judge agent's name and description, installed with staff-reviewer.
-const HARNESS_FOOTPRINT = 688;
+// 681 (M2a PR B, 2026-11-13, owner approved up to 688): + 23 for the review-judge agent's name and description, installed with staff-reviewer.
+const HARNESS_FOOTPRINT = 681;
 test('the default install footprint stays within HARNESS_FOOTPRINT', () => {
   expect(footprint({ templates: 'templates', plugin: '.' }, loadCatalog().catalog)).toBeLessThanOrEqual(HARNESS_FOOTPRINT);
 });

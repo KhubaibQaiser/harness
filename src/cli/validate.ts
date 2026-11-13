@@ -148,6 +148,7 @@ function prJudge(args: string[], root: string, out: (l: string) => void): number
   if (tail.length === 2 && tail[0] === '--attempt' && (tail[1] === '1' || tail[1] === '2')) attempt = Number(tail[1]);
   else if (tail.length) return out(USAGE), 2;
   if (!file || f1 !== '--findings' || !findings || f2 !== '--gather' || !gatherFile) return out(USAGE), 2;
+  if (basename(gatherFile) !== 'gather.json') return out('pr-judge: --gather must name <dir>/gather.json'), 2;
   const r = readFindings(root, dirname(resolve(gatherFile)), findings);
   if ('errors' in r) return r.errors.forEach((e) => out(e)), 2;
   const text = read(file);

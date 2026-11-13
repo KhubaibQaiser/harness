@@ -112,6 +112,8 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
     const drift = driftCheck(root, bytes, base, commits);
     if ('error' in drift) return fail(drift.error);
     const { blobs } = drift;
+    const judge = '.claude/agents/review-judge.md';
+    if (blobs[judge] == null) return fail(`review: base branch ${esc(base)} has no ${judge} (an older harness install); run /harness:update on ${esc(base)} first`);
     // The plugin registers its own staff-reviewer, and which one Claude Code starts is unverified: both must be the same text.
     const agent = '.claude/agents/staff-reviewer.md', lf = (t: string | null | undefined) => t?.replace(/\r\n/g, '\n');
     if (lf(blobs[agent]) !== lf(readFileSync(join(packageDir('templates'), 'agents', 'staff-reviewer.md'), 'utf8')))

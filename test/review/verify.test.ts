@@ -34,7 +34,7 @@ const quote = (f: Partial<PrFinding>, text: string): PrFinding => ({ ...F, ...f,
 const search = (f: Partial<PrFinding>, s: string): PrFinding => ({ ...F, ...f, evidence: { kind: 'missing-test', search: s } });
 
 describe('verifyFindings: quotes', () => {
-  const s = setup({ 'k.txt': 'k\n' }, { 'a.ts': ten.join('\n') + '\n', 'w.ts': 'one\r\n\tconst x = 1;  \r\nthree\r\n' });
+  const s = setup({ 'k.txt': 'k\n' }, { 'a.ts': ten.join('\n') + '\n', 'w.ts': 'one\r\n\tconst x = 1;  \r\nthree\r\n', 'p.ts': 'function longerName() {\n  const x = 1;\n  return   x;\n}\n' });
   test('3 lines away is kept; 4 lines away is dropped with the reason', () => {
     const v = verifyFindings(rev(quote({ id: 'near', line: 8 }, 'line 5'), quote({ id: 'far', line: 9 }, 'line 5')), s.g, s.dir, s.exec, s.root);
     expect(v.kept.map((f) => f.id)).toEqual(['near']);
@@ -42,6 +42,21 @@ describe('verifyFindings: quotes', () => {
   });
   test('Review Focus 3: CRLF, tabs and trailing spaces', () => {
     expect(verifyFindings(rev(quote({ file: 'w.ts', line: 2 }, '\tconst x = 1;')), s.g, s.dir, s.exec, s.root).kept).toHaveLength(1);
+  });
+  test('a short quote must be a whole line; a part of a line needs 12 or more non-space characters', () => {
+    const v = verifyFindings(rev(
+      quote({ id: 'semi', file: 'p.ts', line: 2 }, ';'), quote({ id: 'x', file: 'p.ts', line: 2 }, 'x'), quote({ id: 'brace', file: 'p.ts', line: 1 }, '{'),
+      quote({ id: 'close', file: 'p.ts', line: 3 }, '}'), quote({ id: 'whole', file: 'p.ts', line: 3 }, 'return x;'), quote({ id: 'part', file: 'a.ts', line: 3 }, 'line'),
+      quote({ id: 'long', file: 'p.ts', line: 1 }, 'function longerName'),
+    ), s.g, s.dir, s.exec, s.root);
+    expect(v.kept.map((f) => f.id)).toEqual(['close', 'whole', 'long']);
+    expect(v.dropped.map((d) => d.f.id)).toEqual(['semi', 'x', 'brace', 'part']);
+  });
+  test('the head file is read from git, never from the writable snapshot', () => {
+    writeFileSync(join(s.dir, 'head', 'a.ts.pr-snapshot'), 'a forged line that the reviewer quotes\n');
+    const v = verifyFindings(rev(quote({ id: 'real', line: 5 }, 'line 5'), quote({ id: 'forged', line: 1 }, 'a forged line that the reviewer quotes')), s.g, s.dir, s.exec, s.root);
+    expect(v.kept.map((f) => f.id)).toEqual(['real']);
+    expect(judgeInput(v.kept, s.g, s.dir, s.exec, s.root) && readFileSync(join(s.dir, 'judge.md'), 'utf8')).toContain('>    5| line 5');
   });
   test('a file the snapshot lacks has no evidence', () => {
     expect(verifyFindings(rev(quote({ file: 'k.txt', line: 1 }, 'nope')), s.g, s.dir, s.exec, s.root).dropped[0]!.reason).toBe('evidence not found near k.txt:1');
@@ -89,6 +104,7 @@ describe('judgeInput', () => {
     expect(md).toContain('>    5| LINE 5');
     expect(md).toContain('>    5| line 5'); // LEFT: from the merge base
     expect(md).not.toContain('k3');
+    expect(md).toContain('For a `missing-test` finding, harness only checked that no test file matches its search; your verdict is its only other check.');
   });
   test('no kept findings writes nothing', () => {
     const t = setup({ 'k.txt': 'k\n' }, { 'a.ts': 'x\n' });
@@ -149,5 +165,9 @@ describe('the CLI: review --judge-input and validate pr-judge', () => {
     expect(go({ verdicts: [{ id: 'f1', supported: false, why: 'no' }] })).toEqual({ code: 0, lines: ['ok'] });
     expect(go({ verdicts: [{ id: 'f2', supported: true, why: 'dropped one' }] })).toEqual({ code: 2, lines: ['verdicts[0].id: "f2" is not a finding to judge', 'verdicts: no verdict for "f1"'] });
     expect(go({ verdicts: [] }, '2').code).toBe(1);
+    const lines: string[] = [];
+    writeFileSync(join(s.dir, 'fake.json'), readFileSync(join(s.dir, 'gather.json')));
+    expect(run(['validate', 'pr-judge', join(s.dir, 'judge.json'), '--findings', f, '--gather', join(s.dir, 'fake.json')], { root: s.root, env: {}, out: (l) => lines.push(l) })).toBe(2);
+    expect(lines).toEqual(['pr-judge: --gather must name <dir>/gather.json']);
   });
 });

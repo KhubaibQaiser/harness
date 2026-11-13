@@ -53,6 +53,14 @@ describe('ghError', () => {
     expect(msg).toContain('review: GitHub rate limit hit; resets at ');
     expect(msg).toContain(new Date(1763000000 * 1000).toLocaleString());
   });
+  test('a GraphQL rate limit names the GraphQL reset time', () => {
+    const { exec } = fake((a) => (a === 'api rate_limit --jq .resources.graphql.reset' ? ok('1763000000\n') : undefined));
+    expect(ghError(exec, { status: 1, stdout: '', stderr: 'GraphQL: API rate limit exceeded for user ID 1.' }, 'PR view')).toBe(`review: GitHub rate limit hit; resets at ${new Date(1763000000 * 1000).toLocaleString()}`);
+  });
+  test('a rate limit whose reset time is unavailable says so', () => {
+    const { exec } = fake(() => undefined);
+    expect(ghError(exec, { status: 1, stdout: '', stderr: 'API rate limit exceeded (HTTP 429)' }, 'x')).toBe('review: GitHub rate limit hit; resets at an unknown time (gh api rate_limit failed)');
+  });
   test('any other error names what, the status and the first stderr line, escaped', () => {
     const { exec } = fake(() => undefined);
     expect(ghError(exec, { status: 1, stdout: '', stderr: 'gh: Server Error \u001b[31m(HTTP 502)\nmore' }, 'PR view')).toBe('review: PR view failed (HTTP 502): gh: Server Error \\u001b[31m(HTTP 502)');
@@ -62,7 +70,7 @@ describe('ghError', () => {
 const VIEW = {
   number: 7, state: 'OPEN', isDraft: false, isCrossRepository: true, headRepository: { name: 'r' }, headRepositoryOwner: { login: 'fork' },
   baseRefName: 'main', baseRefOid: 'a'.repeat(40), headRefOid: 'b'.repeat(40), author: { login: 'dev' }, title: 'T', body: 'B', url: 'https://github.com/o/r/pull/7',
-  labels: [{ name: 'needs-human' }], closingIssuesReferences: [{ number: 3 }], comments: [{ body: 'c1' }], reviews: [{ body: 'r1' }, { body: '' }],
+  labels: [{ name: 'needs-human' }], closingIssuesReferences: [{ number: 3, repository: { name: 'r', owner: { login: 'o' } } }, { number: 4, url: 'https://github.com/x/y/issues/4' }, { number: 5 }], comments: [{ body: 'c1' }], reviews: [{ body: 'r1' }, { body: '' }],
 };
 
 describe('prView', () => {
@@ -70,7 +78,7 @@ describe('prView', () => {
     const { exec, calls } = fake((a) => (a.startsWith('pr view 7') ? ok(JSON.stringify(VIEW)) : undefined));
     expect(prView(exec, 'o/r', 7)).toEqual({
       number: 7, state: 'OPEN', isDraft: false, isCrossRepository: true, headRepository: 'fork/r', baseRefName: 'main', baseRefOid: 'a'.repeat(40), headRefOid: 'b'.repeat(40),
-      author: 'dev', title: 'T', body: 'B', url: 'https://github.com/o/r/pull/7', labels: ['needs-human'], closingIssues: [3], comments: ['c1'], reviews: ['r1', ''],
+      author: 'dev', title: 'T', body: 'B', url: 'https://github.com/o/r/pull/7', labels: ['needs-human'], closingIssues: [{ number: 3, repo: 'o/r' }, { number: 4, repo: 'x/y' }, { number: 5, repo: '' }], comments: ['c1'], reviews: ['r1', ''],
     });
     expect(calls[0]).toBe('gh pr view 7 --repo o/r --json number,state,isDraft,isCrossRepository,headRepository,headRepositoryOwner,baseRefName,baseRefOid,headRefOid,author,title,body,url,labels,closingIssuesReferences,comments,reviews');
   });
@@ -93,8 +101,9 @@ describe('the other reads', () => {
     expect(calls[0]).toBe("gh api --paginate repos/o/r/pulls/7/comments --jq .[].body | tojson");
   });
   test('issue and login', () => {
-    const { exec } = fake((a) => (a.startsWith('issue view 3') ? ok('{"title":"I","body":"IB"}') : a === 'api user --jq .login' ? ok('me\n') : undefined));
-    expect(issueView(exec, 3)).toEqual({ title: 'I', body: 'IB' });
+    const { exec, calls } = fake((a) => (a.startsWith('issue view 3') ? ok('{"title":"I","body":"IB"}') : a === 'api user --jq .login' ? ok('me\n') : undefined));
+    expect(issueView(exec, 'o/r', 3)).toEqual({ title: 'I', body: 'IB' });
+    expect(calls[0]).toBe('gh issue view 3 --repo o/r --json title,body');
     expect(ghLogin(exec)).toBe('me');
   });
   test('pendingReview is the PENDING review of this login only', () => {

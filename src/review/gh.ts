@@ -5,7 +5,7 @@ import type { Exec } from '../core/exec.js';
 export interface PrView {
   number: number; state: 'OPEN' | 'CLOSED' | 'MERGED'; isDraft: boolean; isCrossRepository: boolean; headRepository: string;
   baseRefName: string; baseRefOid: string; headRefOid: string; author: string; title: string; body: string; url: string;
-  labels: string[]; closingIssues: number[]; comments: string[]; reviews: string[];
+  labels: string[]; closingIssues: { number: number; repo: string }[]; comments: string[]; reviews: string[];
 }
 type Err = { error: string };
 type R = ReturnType<Exec>;
@@ -42,8 +42,9 @@ export function preflight(exec: Exec): { repo: string } | Err {
 export function ghError(exec: Exec, r: R, what: string): string {
   const err = r.stderr ?? '';
   const http = /HTTP (\d{3})/.exec(err)?.[1];
-  if ((http === '403' || http === '429') && /rate limit/i.test(err)) {
-    const reset = Number(exec('gh', ['api', 'rate_limit', '--jq', '.resources.core.reset']).stdout.trim());
+  const graphql = /^GraphQL:/m.test(err); // a GraphQL rate limit comes with no HTTP status
+  if ((http === '403' || http === '429' || graphql) && /rate limit/i.test(err)) {
+    const reset = Number(exec('gh', ['api', 'rate_limit', '--jq', `.resources.${graphql ? 'graphql' : 'core'}.reset`]).stdout.trim());
     return `review: GitHub rate limit hit; resets at ${reset > 0 ? new Date(reset * 1000).toLocaleString() : 'an unknown time (gh api rate_limit failed)'}`;
   }
   return `review: ${what} failed (${http ? `HTTP ${http}` : `gh exit ${r.status}`}): ${first(r)}`;
@@ -52,6 +53,13 @@ export function ghError(exec: Exec, r: R, what: string): string {
 const strs = (v: unknown, key: string): string[] | undefined =>
   Array.isArray(v) && v.every((x) => isObj(x) && typeof x[key] === 'string') ? v.map((x) => (x as Record<string, string>)[key]!) : undefined;
 
+/** A closing issue and its repo: from `repository`, else its URL, else '' (unknown). Field names unverified. */
+function issueRef(x: unknown): { number: number; repo: string } {
+  const i = x as { number: number; repository?: { name?: unknown; owner?: { login?: unknown } }; url?: unknown };
+  const r = i.repository, fromUrl = typeof i.url === 'string' ? /^https:\/\/github\.com\/([^/]+\/[^/]+)\/issues\/\d+$/i.exec(i.url)?.[1] : undefined;
+  return { number: i.number, repo: typeof r?.name === 'string' && typeof r.owner?.login === 'string' ? `${r.owner.login}/${r.name}` : (fromUrl ?? '') };
+}
+
 export function prView(exec: Exec, repo: string, n: number): PrView | Err {
   const r = exec('gh', ['pr', 'view', String(n), '--repo', repo, '--json', FIELDS]);
   if (r.status !== 0) return /could not resolve to a pullrequest|not found/i.test(r.stderr ?? '') ? { error: `review: PR #${n} not found in ${repo}: ${first(r)}` } : { error: ghError(exec, r, 'gh pr view') };
@@ -59,7 +67,7 @@ export function prView(exec: Exec, repo: string, n: number): PrView | Err {
   const bad = { error: 'review: gh pr view returned an unexpected shape' };
   if (!isObj(v)) return bad;
   const head = isObj(v.headRepository) && isObj(v.headRepositoryOwner) ? `${v.headRepositoryOwner.login}/${v.headRepository.name}` : '';
-  const issues = Array.isArray(v.closingIssuesReferences) && v.closingIssuesReferences.every((x) => isObj(x) && Number.isSafeInteger(x.number)) ? v.closingIssuesReferences.map((x) => (x as { number: number }).number) : undefined;
+  const issues = Array.isArray(v.closingIssuesReferences) && v.closingIssuesReferences.every((x) => isObj(x) && Number.isSafeInteger(x.number)) ? v.closingIssuesReferences.map(issueRef) : undefined;
   const p = {
     number: v.number, state: v.state, isDraft: v.isDraft, isCrossRepository: v.isCrossRepository, headRepository: head, baseRefName: v.baseRefName, baseRefOid: v.baseRefOid,
     headRefOid: v.headRefOid, author: isObj(v.author) ? v.author.login : undefined, title: v.title, body: v.body, url: v.url,
@@ -79,8 +87,8 @@ export function reviewComments(exec: Exec, repo: string, n: number): string[] | 
   return out?.every((s) => typeof s === 'string') ? (out as string[]) : { error: 'review: review comments returned an unexpected shape' };
 }
 
-export function issueView(exec: Exec, k: number): { title: string; body: string } | Err {
-  const r = exec('gh', ['issue', 'view', String(k), '--json', 'title,body']);
+export function issueView(exec: Exec, repo: string, k: number): { title: string; body: string } | Err {
+  const r = exec('gh', ['issue', 'view', String(k), '--repo', repo, '--json', 'title,body']);
   if (r.status !== 0) return { error: ghError(exec, r, `gh issue view ${k}`) };
   const v = json(r.stdout);
   return isObj(v) && typeof v.title === 'string' && typeof v.body === 'string' ? { title: v.title, body: v.body } : { error: `review: gh issue view ${k} returned an unexpected shape` };

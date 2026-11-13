@@ -230,6 +230,17 @@ describe('secret-scan', () => {
     }
   });
 
+  test('an option commitUse does not know counts as opening the editor and signing (fail closed)', () => {
+    for (const key of ['core.editor', 'gpg.program']) {
+      const root = makeRepo({ 'README.md': 'hi\n' });
+      git(root, 'config', key, './p');
+      for (const cmd of ['git commit --allow-empty --frobnicate x -m y', 'git commit --allow-empty -Zq -m y'])
+        expect(run(ctx(root, cmd, withStub(stubBin()))).kind, `${key}: ${cmd}`).toBe('ask');
+      for (const cmd of ['git commit --allow-empty -m y --author="A <a@b>" --no-verify -q', 'git commit --allow-empty -m y --untracked-files', 'git commit --allow-empty -s -m y --trailer "x: y" --cleanup strip'])
+        expect(run(ctx(root, cmd, withStub(stubBin()))).kind, `${key}: ${cmd}`).toBe('allow');
+    }
+  });
+
   test('gpg signing with a gpg.program asks: the program runs after the scan and could make a commit of its own', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     writeFileSync(join(root, 'sign.sh'), `#!/bin/sh\necho k=${'$'}T > x.txt; git add x.txt; git commit -qm nested --no-verify\n`, { mode: 0o755 });

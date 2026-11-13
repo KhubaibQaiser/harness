@@ -135,13 +135,18 @@ const BOOL = /^(true|false|yes|no|on|off|1|0)$/i;
 /** signFlag: -S (true), --no-gpg-sign (false), or neither (null, commit.gpgsign decides). */
 type Use = { editor: boolean; signFlag: boolean | null };
 const MSG_LONG = /^--(message|file|reuse-message|fixup|squash)(=|$)/;
+// git commit's other options, so anything else is unknown. VALUE ones take the next word unless given as --x=v.
+const VALUE_LONG = /^--(template|author|date|cleanup|trailer|pathspec-from-file)(=|$)/;
+const FLAG_LONG = /^--(all|include|only|patch|interactive|quiet|verbose|no-verify|verify|signoff|no-signoff|allow-empty|allow-empty-message|amend|dry-run|short|branch|porcelain|long|null|reset-author|status|no-status|pathspec-file-nul|no-post-rewrite|untracked-files(=.*)?)$/;
+const FLAG_SHORT = 'aiopqvnsz';
 /** From a plain `git commit` line: the editor opens unless a message comes from -m, -F, -C or --no-edit, and always with
- *  -e, --edit, -c or --reedit-message; -S or --gpg-sign signs, --no-gpg-sign doesn't, otherwise commit.gpgsign decides. */
+ *  -e, --edit, -c or --reedit-message; -S or --gpg-sign signs, --no-gpg-sign doesn't, otherwise commit.gpgsign decides.
+ *  An option it doesn't know fails closed: the editor may open and the commit may sign. */
 export function commitUse(command: string): Use {
   const ws = words(pieces(messages(command))[0]?.text ?? '').map(unquote);
   const { i } = gitSub(ws, 0);
   if (ws[i] !== 'commit') return { editor: false, signFlag: false };
-  let msg = false, edit = false, noEdit = false, signFlag: boolean | null = null;
+  let msg = false, edit = false, noEdit = false, unknown = false, signFlag: boolean | null = null;
   for (let j = i + 1; j < ws.length; j++) {
     const w = ws[j]!;
     if (w === '--') break;
@@ -152,22 +157,24 @@ export function commitUse(command: string): Use {
       else if (/^--reedit-message(=|$)/.test(w)) { edit = true; if (!w.includes('=')) j++; }
       else if (/^--gpg-sign(=|$)/.test(w)) signFlag = true;
       else if (w === '--no-gpg-sign') signFlag = false;
-      else if (/^--(template|author|date|cleanup|trailer|pathspec-from-file|untracked-files)$/.test(w)) j++; // a value comes next
+      else if (VALUE_LONG.test(w)) { if (!w.includes('=')) j++; }
+      else if (!FLAG_LONG.test(w)) unknown = true;
       continue;
     }
     if (!w.startsWith('-') || w === '-') continue;
     for (let c = 1; c < w.length; c++) {
       const ch = w[c]!;
       if (ch === 'S') { signFlag = true; break; } // -S[<keyid>]: the rest is the key id
+      if (ch === 'u') break; // -u[<mode>]: the rest is the mode
       if (ch === 'e') edit = true;
-      if ('mFCct'.includes(ch)) {
+      else if ('mFCct'.includes(ch)) {
         if (ch === 'c') edit = true; else if (ch !== 't') msg = true;
         if (c === w.length - 1) j++; // the value is the next word
         break; // the rest of the word is the value
-      }
+      } else if (!FLAG_SHORT.includes(ch)) unknown = true;
     }
   }
-  return { editor: edit || (!msg && !noEdit), signFlag };
+  return unknown ? { editor: true, signFlag: true } : { editor: edit || (!msg && !noEdit), signFlag };
 }
 
 /** The program keys of the effective config (every scope, includes followed) git would run for this command, or null

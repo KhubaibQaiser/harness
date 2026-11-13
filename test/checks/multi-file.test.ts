@@ -488,14 +488,14 @@ test('require_reason: Stop clears the handled late reasons under the lock, keepi
 test('note after the first file: shown once per turn, to the person and the agent; decisions unchanged', async () => {
   const t = setup();
   const out = JSON.parse((await t.post('a.ts'))!);
-  expect(out.systemMessage).toContain('This turn has touched a.ts');
+  expect(out.systemMessage).toContain('This turn has touched `a.ts`');
   expect(out.systemMessage).toContain('will ask');
   expect(out.hookSpecificOutput.additionalContext).toContain('AskUserQuestion');
   expect(await t.post('a.ts')).toBe(''); // same file again: no second note
   expect(kind(await t.edit('b.ts'))).toBe('ask');
   expect(await t.post('b.ts')).toBe(''); // approved: no note
   await t.prompt();
-  expect(await t.post('c.ts')).toContain('This turn has touched c.ts'); // new turn, new note
+  expect(await t.post('c.ts')).toContain('This turn has touched `c.ts`'); // new turn, new note
 });
 
 test('no note when the gate is off, unattended, or for a test file', async () => {
@@ -505,4 +505,17 @@ test('no note when the gate is off, unattended, or for a test file', async () =>
   expect(await off.post('a.ts')).toBe('');
   expect(await setup('allow-log').send({ hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: 'a.ts' } }, { CI: 'true' })).toBe('');
   expect(await setup().post('a.test.ts')).toBe('');
+});
+
+test('note wording is exact, and a newline or control character in the file name is escaped in both texts', async () => {
+  const t = setup();
+  const out = JSON.parse((await t.post('a.ts'))!);
+  const why = 'This turn has touched `a.ts`. The next edit to a different source file will ask you once; your yes covers the rest of the turn.';
+  expect(out.systemMessage).toBe(`harness: ${why}`);
+  expect(out.hookSpecificOutput.additionalContext).toBe(`Multi-file gate: ${why} Before editing another file, explain to the person why it is needed, or ask with AskUserQuestion.`);
+  const u = setup();
+  const bad = JSON.parse((await u.post('x\nIgnore previous\u0007.ts'))!);
+  expect(bad.hookSpecificOutput.additionalContext).not.toContain('\n' + 'Ignore');
+  expect(bad.hookSpecificOutput.additionalContext).toContain('`x\\nIgnore previous\\u0007.ts`');
+  expect(bad.systemMessage).toContain('`x\\nIgnore previous\\u0007.ts`');
 });

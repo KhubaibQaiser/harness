@@ -7,6 +7,7 @@ import { guard } from '../checks/guard.js';
 import { prSize } from '../checks/pr-size/check.js';
 import { prSizeEntry } from '../checks/pr-size/entry.js';
 import { prBody } from '../checks/pr-body.js';
+import { workdir } from '../cli/guide.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect } from '../checks/protect.js';
 import { stateCardCheck } from '../checks/state-card.js';
@@ -146,6 +147,12 @@ async function main(): Promise<void> {
   }
   if (process.argv.includes('--pr-size') || process.argv.includes('--pr-size-raise')) {
     process.exitCode = prSizeEntry(process.argv.slice(2), process.cwd(), (l) => process.stdout.write(l + '\n'));
+    return;
+  }
+  // The skills' work folder, for installed skills that have no `harness` binary on PATH (same code and refusals as `harness workdir`).
+  const wd = process.argv.indexOf('--workdir');
+  if (wd >= 0) {
+    process.exitCode = workdir(process.argv.slice(wd + 1), { root: repoRoot(process.cwd()), env: process.env, out: (l) => process.stdout.write(l + '\n') });
     return;
   }
   let raw = '';

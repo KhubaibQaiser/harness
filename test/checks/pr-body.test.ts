@@ -29,7 +29,9 @@ describe('the template in pr-ship', () => {
   test('says what to write when screenshots are not captured, and makes the body file with harness workdir', () => {
     expect(skill).toContain("not captured: browser capture isn't set up for this repo yet");
     expect(skill).not.toContain('M2b');
-    expect(skill).toContain('harness workdir');
+    expect(skill).toContain('node .harness/hooks/dispatch.mjs --workdir');
+    expect(skill).toContain('node .harness/hooks/dispatch.mjs --workdir --clean <folder>');
+    expect(skill).not.toMatch(/`harness workdir/);
   });
 });
 

@@ -54,7 +54,7 @@ describe('writeSnapshot', () => {
     expect(snap({ sub: { gitlink: 'a'.repeat(40) } }).omitted).toContainEqual({ path: 'sub', why: 'submodule, not read' });
   });
   test('hostile names: a leading dash and a colon', () => {
-    const s = snap({ '-rf': 'dash\n', 'a:b.ts': 'colon\n', 'sp é.txt': 'u\n' });
+    const s = snap({ '-rf': 'dash\n', 'a:b.ts': { indexOnly: 'colon\n' }, 'sp é.txt': 'u\n' });
     expect(s.read('-rf')).toBe('dash\n');
     expect(s.read('sp é.txt')).toBe('u\n');
     if (process.platform === 'win32') expect(s.omitted).toContainEqual({ path: 'a:b.ts', why: 'name not valid on Windows' });

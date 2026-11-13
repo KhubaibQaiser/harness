@@ -1,7 +1,5 @@
 - id: post-edit-format
   reason: not built yet (this release ships existing own items only)
-- id: gitleaks-commit
-  reason: not built yet (this release ships existing own items only)
 - id: session-context
   reason: not built yet (this release ships existing own items only)
 - id: researcher

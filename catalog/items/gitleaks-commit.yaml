@@ -1,0 +1,19 @@
+id: gitleaks-commit
+kind: own-hook
+title: Gitleaks commit scan
+source:
+  type: own
+  checks: [secretScan]
+license: Apache-2.0
+min_claude_code: 2.1.295
+applies_when:
+  always: true
+cost:
+  context: none
+  setup: low
+stance: optional
+why: >-
+  Before an agent git commit, gitleaks scans every change the commit could take (staged, unstaged and untracked files that are not ignored) and blocks the commit on a finding, naming the rule, file and line but never the value. Needs gitleaks on PATH: harness installs nothing, and without it every agent commit is blocked with how to install it or turn the item off.
+evidence:
+  - docs/research/2026-11-13-m4-backend-infra.md#4-gitleaks
+  - docs/specs/2026-10-30-harness-design.md#73-seed-catalog-for-v1

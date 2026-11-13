@@ -59,6 +59,8 @@ You need Node 22.11 or newer, git, and Claude Code 2.1.295 or newer.
 
 `/pr-ship` writes each PR body from a template for human reviewers (changes and why, alternatives, how to review and verify, screenshots, performance, security, human steps before merge, limits). Every agent `gh pr create` must use it, through `--body-file`: the pr-body check (`checks.prBody`) denies a missing or empty section, a body it can't read, human steps without the `needs-human` label, and `gh pr merge --auto` or `--admin`. To make GitHub itself refuse a merge without a person, turn on branch protection with required reviews.
 
+Secrets scanning comes as two catalog items, recommended together: `gitleaks-ci` adds a GitHub workflow that scans the full history with a checksum-pinned gitleaks 8.30.1, and `gitleaks-commit` scans each agent `git commit` first and blocks it on a finding (`checks.secretScan`). Harness installs nothing: the commit scan needs gitleaks on PATH, and without it every agent commit is blocked until you install gitleaks or remove the item. Findings name the rule, file and line, never the value. `/harness:init` recommends `gitleaks-ci` for API and infra repos.
+
 The hooks call no model. They decide from the tool call, your test results, coverage and `git diff`. If the hook dispatcher can't run, Claude Code blocks the call. The Stop gate is the one exception. The exact rules for each gate are in [docs/reference.md](docs/reference.md).
 
 ## Commands

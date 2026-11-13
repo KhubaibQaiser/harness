@@ -82,6 +82,18 @@ On with `checks.prBody`, which the `pr-ship` item turns on. It is separate from 
 - **Exempt:** `harness git pr`, which opens the install PR with the init report. Its own `gh pr create` runs inside the CLI, where no hook sees it.
 - **Owner step.** Harness only stops its own agent. To make GitHub refuse to merge a PR before a person approves it, turn on branch protection for the default branch with required reviews (Settings, Branches). You can also add a rule or CI job that blocks merging while the `needs-human` label is on.
 
+## Secrets scanning (any repo)
+
+Two catalog items, owner ruling: a local check and a CI check ship together. Harness installs no binary on your machine.
+
+| Item | Kind | What it does |
+|---|---|---|
+| `gitleaks-commit` | own-hook | Turns on `checks.secretScan`. Before every agent `git commit`, gitleaks scans every change the commit could take and a finding denies it, attended or not. The reason names the rule, file and line, never the value: harness reads gitleaks's JSON report (written with `--redact`) and shows nothing else from it. |
+| `gitleaks-ci` | ci | Writes `.github/workflows/harness-gitleaks.yml`: on pull requests and pushes to `main` or `master`, it downloads gitleaks 8.30.1 (tag commit `83d9cd684c87d95d656c1458ef04895a7f1cbd8e`), checks the tarball's sha256 (the same value as this repo's own CI, which a test pins) and runs `gitleaks git --redact --verbose .` over the full history (`fetch-depth: 0`, `persist-credentials: false`, `contents: read`). `uninstall` and `remove gitleaks-ci` delete it unless you edited it. `/harness:init` recommends it for `api` and `infra` repos and lists it as optional elsewhere. |
+
+- **What the commit scan reads.** The hook runs before the command, so a `git add x && git commit` on one line has not staged `x` yet. Harness copies the index to a throwaway file, stages the whole worktree into it with `git add -A` (which honours `.gitignore`) and runs `gitleaks git --pre-commit --staged --redact` on that, so staged, unstaged and untracked files that are not ignored are all scanned. Your real index is not touched. A secret in such a file blocks the commit even if this commit leaves the file out: ignore the file, remove the secret, or mark a false positive with a `gitleaks:allow` comment or an allowlist in `.gitleaks.toml`.
+- **Fails closed.** No gitleaks on PATH, a gitleaks error, a git failure, or running out of the hook's time budget (about 9 seconds) denies the commit with how to install gitleaks (`brew install gitleaks`, or the release binary checked against its checksums.txt) or turn the item off (`harness remove gitleaks-commit` in your terminal). The scan is never skipped in silence.
+
 ## TDD gates (JS/TS with Vitest or Jest)
 
 - **Red-first.** An edit to a file in `tdd.paths` is denied until a related test has a fresh failing result from this session.
@@ -137,6 +149,7 @@ Run `init` anywhere in a git repo: it installs at the repo root and prints that 
 | `.gitignore` | Adds `.harness/state/`, `.harness/logs/`, `.harness/backup/`, `.harness/results/`, `.harness/debug/`, `.harness/reports/` and `.harness/reviews/`. |
 | `.claude/agents/staff-reviewer.md`, `.claude/agents/review-judge.md`, `.claude/skills/review-rubric/SKILL.md` | Created. The review agent, the PR review's small-model judge and the rubric. |
 | `.claude/skills/pr-ship/SKILL.md` | Created. The skill that writes the PR description and splits a large change into stacked PRs. |
+| `.github/workflows/harness-gitleaks.yml` (`gitleaks-ci` on) | Created. The CI secret scan; see [Secrets scanning](#secrets-scanning-any-repo). |
 | `AGENTS.md` (preset on) | A second block between `<!-- harness:preset:start -->` and `<!-- harness:preset:end -->`, after the harness block. It stays if you turn `agents-md` off. |
 | `.claude/skills/<name>/SKILL.md` (preset on) | Created for the preset's skills that match your stack (`engineering-principles`, `frontend-react`, `frontend-nextjs`, `frontend-react-native`). Turning the preset off in `/harness:update` removes the ones you have not edited. |
 | `.claude/settings.json` (preset on) | Adds `attribution: false` and the opt-out `env` keys of the items you chose (`DO_NOT_TRACK=1` for Impeccable, and the matching variable for Superpowers). Keys you already set are kept. |
@@ -550,6 +563,7 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `checks.prSize` | `true` | PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`. It also turns the size warnings, the pause ask, the raise and the hand-run dispatcher deny on or off. |
 | `checks.prBody` | `true` | PR body: every agent `gh pr create` (or `gh pr new`), and every `gh pr edit` that sets a body, must carry a filled pr-ship template in `--body-file`; `gh pr merge --auto` and `--admin` and removing the `needs-human` label are denied. Separate from `checks.prSize`; when the key is missing it takes `checks.prSize`'s value. It belongs to the `pr-ship` item. |
 | `checks.decisions` | `true` | Turns on team decisions and the `decisions.*` keys. It belongs to the `agents-md` item: with a catalog, `update` sets it from the selected items, so unticking `agents-md` turns it off. `doctor` and `status` report on decisions whatever this is set to. |
+| `checks.secretScan` | `false` | Secret scan: before every agent `git commit`, gitleaks scans the changes the commit could take and a finding blocks it, showing rule, file and line but never the value. Needs gitleaks on PATH; without it every agent commit is blocked. It belongs to the `gitleaks-commit` item. |
 | `sandbox` | `"unattended"` | `unattended`: required when nobody watches; `always`: on in every session; `off`: text checks only. Value must be one of unattended, always, off. |
 | `catalog_version` | `0` | Version of the catalog the recommendations came from. `0` means no catalog. |
 | `project.type` | `""` | What kind of project this is. Empty until the interview sets it. Value must be one of web, landing, mobile, api, infra, library, other. |
@@ -691,6 +705,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 - Under `sandbox: always`, the sandbox blocks harness commands the agent runs that write harness's own files (such as `add` and `remove`), and harness prints the command to run with Claude Code's `!` prefix instead. Checked live on Claude Code 2.1.322: a `!` command runs outside the sandbox and the change lands. The agent may still wrongly tell you the `!` run would be blocked too; it isn't.
 - `.harnessignore` has no `!` negation.
 - `remove tdd-gate` (or deselecting it) leaves the test-config edits `init` made in place; undo them by hand.
+- Secret scan (`gitleaks-commit`): a text check of the command, like the PR body check. It sees `git commit` past git's global options, a path, a wrapper, `sh -c`, `eval` and a command named by a variable, but not a git alias (`git ci`), a script or program that commits, `harness git commit`, or your own terminal; the `gitleaks-ci` workflow catches those on push. `git -C <dir> commit` scans the session's repo, not `<dir>`. A large worktree can run out of the hook's time budget, which blocks the commit. Not run against a real gitleaks yet: the tests use a stand-in binary.
 - `update` doesn't rename a package config and make another edit to it in one run. Run it twice.
 - `harness git` treats `origin/HEAD`, `init.defaultBranch`, `main` and `master` as the default branch. If your default is another name and `origin/HEAD` isn't set, run `git remote set-head origin -a` first.
 - PR body: a text check of the command. It misses `gh` aliases, `gh api` calls (a REST create or merge, and the GraphQL auto-merge mutation), `hub`, GitLab push options (`git push -o merge_request.create`), GitHub MCP tools, the web UI and your own terminal. The guard's ask on gh writes covers `gh api` writes, `hub`, the push options and MCP write tools (see [GitHub writes and MCP tools](#github-writes-and-mcp-tools)); the web UI and your own terminal stay outside it. It checks the marker, headings, filled sections and the label, not whether the words are true; the reviewer and you judge that. It reads the body file when the hook runs, so a background job started by an earlier command can still rewrite the file before `gh` reads it. `--workdir` makes the folder under the git root of the current directory, so after a `cd` into another repo it makes it there.

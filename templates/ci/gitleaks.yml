@@ -1,0 +1,28 @@
+# Written by harness (the gitleaks-ci item): scans the whole git history for secrets on pull requests and pushes to main.
+# gitleaks v8.30.1, tag commit 83d9cd684c87d95d656c1458ef04895a7f1cbd8e. The tarball sha256 below is from the release's
+# gitleaks_8.30.1_checksums.txt. Findings print with --redact, so a matched value never reaches the log.
+name: harness-gitleaks
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The binary, not the gitleaks GitHub action: the action needs pull-requests: read and only scans the event's commit range.
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          v=8.30.1
+          f=gitleaks_${v}_linux_x64.tar.gz
+          curl -sSfL -o "$f" "https://github.com/gitleaks/gitleaks/releases/download/v$v/$f"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $f" | sha256sum -c -
+          tar -xzf "$f" gitleaks
+      - name: Scan full history
+        run: ./gitleaks git --redact --verbose .

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { validatePrJudge } from '../ai/pr-judge.js';
 import { validatePrReview } from '../ai/pr-review.js';
 import { defaultExec } from '../core/exec.js';
@@ -97,10 +97,11 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
   if (!file || flag !== f2 || !other) return out(USAGE), 2;
   // Review Focus 1: the agent can write <dir>; gather.json must be the bytes gather wrote. Never counts as an attempt.
   const gdir = what === 'pr-review' ? dirname(resolve(other)) : '';
+  if (gdir && basename(other) !== 'gather.json') return out('pr-review: --gather must name <dir>/gather.json'), 2;
   const h = gdir ? gatherHash(root, gdir) : 'ok';
   if (h !== 'ok') return out(h), 2;
   const text = read(file);
-  const side = read(other);
+  const side = read(gdir ? join(gdir, 'gather.json') : other); // the very file the hash check read
   for (const t of [text, side]) if (typeof t !== 'string') return out(`${what}: ${t.error}`), 2;
   const sideRaw = what === 'picks' ? merge(json(side as string)) : json(side as string);
 

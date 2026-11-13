@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -94,7 +94,7 @@ test('a contract on the remote default branch loads in any clone; one only on HE
   const calls: string[][] = [];
   loadContract(root, 'add-login', { git: (cmd, args) => (calls.push([cmd, ...args]), args.includes('symbolic-ref') ? { status: 0, stdout: 'refs/remotes/origin/main\n' } : { status: 128, stdout: '' }) });
   for (const call of calls) expect(call).toContain('core.hooksPath=/dev/null/harness-no-hooks');
-  expect(calls.map((x) => x.slice(-3))).toEqual([['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], ['--verify', '--quiet', 'refs/remotes/origin/main:.harness/tasks/add-login.json']]);
+  expect(calls.map((x) => x.slice(-3))).toEqual([['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], ['cat-file', 'blob', 'refs/remotes/origin/main:.harness/tasks/add-login.json']]);
 });
 
 test('a Windows autocrlf clone (CRLF in the working tree) still matches the default branch', () => {
@@ -105,6 +105,19 @@ test('a Windows autocrlf clone (CRLF in the working tree) still matches the defa
   const root = join(d, 'c');
   expect(readFileSync(join(root, '.harness/tasks/add-login.json'), 'utf8')).toContain('\r\n');
   expect(loadContract(root, 'add-login')).toEqual({ contract: good });
+});
+
+test('the default-branch match runs no repo-configured program (a clean filter on the contract path)', () => {
+  const good = { ...c, sha256: contractHash(c) };
+  const { root: origin } = repoWith({ '.harness/tasks/add-login.json': JSON.stringify(good, null, 2) + '\n', '.gitattributes': '.harness/tasks/* filter=x\n' }, {});
+  const d = mkdtempSync(join(tmpdir(), 'h-done-filter-'));
+  git(d, 'clone', '-q', origin, 'c');
+  const root = join(d, 'c');
+  const marker = join(d, 'filter-ran');
+  writeFileSync(join(d, 'clean.sh'), `#!/bin/sh\ntouch '${marker}'\ncat\n`, { mode: 0o755 });
+  git(root, 'config', 'filter.x.clean', join(d, 'clean.sh'));
+  expect(loadContract(root, 'add-login')).toEqual({ contract: good });
+  expect(existsSync(marker)).toBe(false);
 });
 
 test('with origin/HEAD unset, the refusal tells the person to run git remote set-head origin --auto', () => {

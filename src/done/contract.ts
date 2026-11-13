@@ -162,17 +162,15 @@ export function loadContract(root: string, id: string, o: { ref?: string; git?: 
   } catch (e) {
     return { error: `${label}: ${(e as Error).message}` };
   }
-  // Approved here (task-hashes.json), or the same blob as the contract on origin's default branch, which a person merged.
+  // Approved here (task-hashes.json), or the contract on origin's default branch (a person merged it), up to line endings.
   // HEAD or a local branch never vouches: the agent can commit a self-consistent contract and check it out.
   const g = o.git ?? defaultExec;
   const ref = v.contract.sha256 === hash && recorded !== hash ? originDefault(root, g) : null;
   const onDefault = () => {
     if (!ref) return false;
-    const want = g('git', [...SAFE_GIT, 'rev-parse', '--verify', '--quiet', `${ref}:${label}`], { cwd: root });
-    if (want.status !== 0) return false;
-    // hash-object applies the path's eol rules (autocrlf, .gitattributes), so a CRLF checkout of the same blob matches.
-    const got = g('git', [...SAFE_GIT, 'hash-object', `--path=${label}`, '--', label], { cwd: root });
-    return got.status === 0 && SHA.test(got.stdout.trim()) && got.stdout.trim() === want.stdout.trim();
+    // cat-file blob runs no filter; only line endings are normalised, so an autocrlf checkout matches and no repo program runs.
+    const r = g('git', [...SAFE_GIT, 'cat-file', 'blob', `${ref}:${label}`], { cwd: root });
+    return r.status === 0 && r.stdout.replace(/\r\n/g, '\n') === text.replace(/\r\n/g, '\n');
   };
   if (v.contract.sha256 !== hash || (recorded !== hash && !onDefault())) {
     const unset = v.contract.sha256 === hash && !ref ? ' origin/HEAD is not set here, so the default branch could not vouch for it: a person runs git remote set-head origin --auto, then tries again.' : '';

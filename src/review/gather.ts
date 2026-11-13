@@ -5,6 +5,7 @@ import { parse } from 'yaml';
 import { MARKER } from '../checks/pr-body.js';
 import type { CliEnv } from '../cli/index.js';
 import { writeAtomic } from '../core/atomic.js';
+import { packageDir } from '../core/package-dir.js';
 import { esc } from '../core/config.js';
 import { validateConfig } from '../core/config-io.js';
 import { appendEvent } from '../core/events.js';
@@ -111,6 +112,10 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
     const drift = driftCheck(root, bytes, base, commits);
     if ('error' in drift) return fail(drift.error);
     const { blobs } = drift;
+    // The plugin registers its own staff-reviewer, and which one Claude Code starts is unverified: both must be the same text.
+    const agent = '.claude/agents/staff-reviewer.md', lf = (t: string | null | undefined) => t?.replace(/\r\n/g, '\n');
+    if (lf(blobs[agent]) !== lf(readFileSync(join(packageDir('templates'), 'agents', 'staff-reviewer.md'), 'utf8')))
+      return fail(`review: ${agent} differs from the harness plugin's copy, and Claude Code may start either; run /harness:update on ${esc(base)} and review again`);
 
     const mb = exec('git', [...SAFE_GIT, 'merge-base', baseSha, headSha]);
     const mergeBase = mb.stdout.trim();

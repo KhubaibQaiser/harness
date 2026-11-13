@@ -224,6 +224,14 @@ describe('validate pr-review', () => {
       .toEqual({ code: 2, lines: ['findings[0].file: "src/c.ts" is not in this PR or its snapshot'] });
     expect(go(['validate', 'pr-review', 'x'], r).code).toBe(2);
   });
+  test('--gather must name the gather.json gather wrote; a forged file beside it is refused', () => {
+    const t = repo();
+    writeGather(t, dir, g as GatherJson);
+    const fake = join(t, dir, 'fake.json');
+    writeFileSync(fake, JSON.stringify({ ...g, files: [{ path: 'src/c.ts', status: 'added', binary: false }] }));
+    const f = file('f.json', JSON.stringify({ findings: [{ ...f1, file: 'src/c.ts' }], steering: [], summary: 's', limits: 'l' }));
+    expect(go(['validate', 'pr-review', f, '--gather', fake], t)).toEqual({ code: 2, lines: ['pr-review: --gather must name <dir>/gather.json'] });
+  });
   test('Review Focus 1: a changed gather.json is refused', () => {
     const t = repo();
     writeGather(t, dir, g as GatherJson);

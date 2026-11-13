@@ -322,7 +322,7 @@ function scan(ctx: Ctx, use: Use): Decision {
       ...(run.length ? [`hooks (${run.map(esc).join(', ')} in ${esc(hooks!)})`] : []),
       ...(progs.length ? [`git config that runs programs (${progs.join(', ')})`] : []),
     ];
-    return why.length ? ask(`The repo has ${why.join(' and ')}. Git runs them after this secret scan, and they can change or stage files, so harness can't vouch for what gets committed. Confirm the command.`) : { kind: 'allow' };
+    return why.length ? ask(`The repo has ${why.join(' and ')}. Git runs them after this secret scan, and they can change or stage files, so harness can't vouch for what gets committed. Confirm the command. To trust this repo's hooks and programs, a person can set checks.secretScan: false in .harness/config.yaml; the gitleaks-ci check and the CI verdict still apply.`) : { kind: 'allow' };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

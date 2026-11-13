@@ -6,7 +6,7 @@ import { plainArgv } from '../../src/done/commands.js';
 import {
   ACTIVE_TASK, activeTaskId, type Contract, contractHash, type Criterion, featuresCriteria, loadContract, readTaskHashes, setActiveTask, TASK_HASHES, validateContract, writeContract,
 } from '../../src/done/contract.js';
-import { commit, repoWith } from '../review/repo.js';
+import { commit, git, repoWith } from '../review/repo.js';
 
 const crit = (id: string): Criterion => ({ id, text: 'it works', check: { test: 'test/a.test.ts::a works' } });
 const sample = (patch: Record<string, unknown> = {}): Contract => ({
@@ -70,26 +70,40 @@ test('writeContract records the hash; loadContract refuses a file whose bytes no
   expect(loadContract(root, 'add-login')).toEqual({ error: expect.stringContaining('changed since it was approved') });
 });
 
-test('a committed, unchanged contract loads in any checkout; task-hashes.json is extra evidence only', () => {
+test('a contract on the remote default branch loads in any clone; one only on HEAD or a local branch does not', () => {
   const good = { ...c, sha256: contractHash(c) };
   const text = JSON.stringify(good, null, 2) + '\n';
-  const { root } = repoWith({ '.harness/tasks/add-login.json': text }, {});
-  expect(loadContract(root, 'add-login')).toEqual({ contract: good }); // a fresh clone: no task-hashes.json
+  const { root: origin } = repoWith({ '.harness/tasks/add-login.json': text }, {});
+  const dirOf = mkdtempSync(join(tmpdir(), 'h-done-clone-'));
+  git(dirOf, 'clone', '-q', origin, 'c');
+  const root = join(dirOf, 'c');
+  for (const [k, v] of [['user.name', 'test'], ['user.email', 'test@example.com'], ['commit.gpgsign', 'false']]) git(root, 'config', k!, v!);
+  // (b) a fresh clone: no task-hashes.json, the file as on origin's default branch
+  expect(loadContract(root, 'add-login')).toEqual({ contract: good });
   mkdirSync(join(root, '.harness/state'), { recursive: true });
   writeFileSync(join(root, TASK_HASHES), JSON.stringify({ 'add-login': 'f'.repeat(64) }));
-  expect(loadContract(root, 'add-login')).toEqual({ contract: good }); // stale local state, file as committed
-  // a self-consistent edit that is not committed is refused, naming both repairs
+  expect(loadContract(root, 'add-login')).toEqual({ contract: good }); // stale local state, file as on the default branch
+  // (a) the agent's forge: a self-consistent contract committed on a local branch and checked out
   const forged = { ...c, criteria: [crit('C1')] };
-  writeFileSync(join(root, '.harness/tasks/add-login.json'), JSON.stringify({ ...forged, sha256: contractHash(forged) }, null, 2) + '\n');
-  const r = loadContract(root, 'add-login');
+  git(root, 'checkout', '-q', '-b', 'agent');
+  const r = (commit(root, { '.harness/tasks/add-login.json': JSON.stringify({ ...forged, sha256: contractHash(forged) }, null, 2) + '\n' }), loadContract(root, 'add-login'));
   expect(r).toEqual({ error: expect.stringContaining('changed since it was approved') });
-  expect(r).toEqual({ error: expect.stringContaining('git checkout -- .harness/tasks/add-login.json') });
+  expect(r).toEqual({ error: expect.stringContaining('git checkout origin/HEAD -- .harness/tasks/add-login.json') });
   expect(r).toEqual({ error: expect.stringContaining('harness task approve --replace <file>') });
-  // the git call uses SAFE_GIT
+  // the git calls use SAFE_GIT and read origin/HEAD, never HEAD
   const calls: string[][] = [];
-  loadContract(root, 'add-login', { git: (cmd, args) => (calls.push([cmd, ...args]), { status: 128, stdout: '' }) });
-  expect(calls[0]).toContain('core.hooksPath=/dev/null/harness-no-hooks');
-  expect(calls[0]?.slice(-3)).toEqual(['cat-file', 'blob', 'HEAD:.harness/tasks/add-login.json']);
+  loadContract(root, 'add-login', { git: (cmd, args) => (calls.push([cmd, ...args]), args.includes('symbolic-ref') ? { status: 0, stdout: 'refs/remotes/origin/main\n' } : { status: 128, stdout: '' }) });
+  for (const call of calls) expect(call).toContain('core.hooksPath=/dev/null/harness-no-hooks');
+  expect(calls.map((x) => x.slice(-3))).toEqual([['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], ['cat-file', 'blob', 'refs/remotes/origin/main:.harness/tasks/add-login.json']]);
+});
+
+test('(c) with no remote, a committed contract loads only when task-hashes.json records it', () => {
+  const good = { ...c, sha256: contractHash(c) };
+  const { root } = repoWith({ '.harness/tasks/add-login.json': JSON.stringify(good, null, 2) + '\n' }, {});
+  expect(loadContract(root, 'add-login')).toEqual({ error: expect.stringContaining('changed since it was approved') });
+  mkdirSync(join(root, '.harness/state'), { recursive: true });
+  writeFileSync(join(root, TASK_HASHES), JSON.stringify({ 'add-login': good.sha256 }));
+  expect(loadContract(root, 'add-login')).toEqual({ contract: good });
 });
 
 test('loadContract names the file for a missing, unparsable, invalid or misnamed contract, and refuses a bad id', () => {

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -187,7 +187,7 @@ test('edit and close refuse a contract changed since approval, and unattended ru
   expect(await task(['close', 't1', '--yes'], s.cli)).toBe(1);
   expect(s.text()).toContain('changed since it was approved');
   expect(await task(['edit', 't1', '--from', f, '--yes'], s.cli)).toBe(1);
-  expect(s.text()).toContain('git checkout -- .harness/tasks/t1.json');
+  expect(s.text()).toContain('git checkout origin/HEAD -- .harness/tasks/t1.json');
 });
 
 /** t1 approved and committed (only the contract), and a fresh clone of that repo. */
@@ -221,9 +221,23 @@ test('a committed contract can be edited and closed in a fresh clone; an uncommi
   writeFileSync(p, JSON.stringify({ ...forged, sha256: contractHash(forged) }));
   expect(await task(['close', 't1', '--yes'], cli2)).toBe(1);
   const out = l2.join('\n');
-  expect(out).toContain('git checkout -- .harness/tasks/t1.json');
+  expect(out).toContain('git checkout origin/HEAD -- .harness/tasks/t1.json');
   expect(out).toContain('harness task approve --replace <file>');
   expect(lines.length).toBeGreaterThan(0);
+});
+
+test('a forged contract committed on a local branch is refused; with no remote only the local hash vouches', async () => {
+  const { clone, cli, lines, s } = await committedClone();
+  for (const [k, v] of [['user.name', 'agent'], ['user.email', 'a@example.com'], ['commit.gpgsign', 'false']]) git(clone, 'config', k!, v!);
+  git(clone, 'checkout', '-q', '-b', 'agent');
+  const p = join(clone, '.harness/tasks/t1.json');
+  const forged = { ...(JSON.parse(readFileSync(p, 'utf8')) as Contract), criteria: [{ id: 'C1', text: 'nothing', check: { run: 'true', expect_exit: 0 } }] };
+  commit(clone, { '.harness/tasks/t1.json': JSON.stringify({ ...forged, sha256: contractHash(forged) }, null, 2) + '\n' }, 'forge');
+  expect(await task(['close', 't1', '--yes'], cli)).toBe(1);
+  expect(lines.join('\n')).toContain('changed since it was approved');
+  // the approving repo has no remote: committed is not enough once its local record is gone
+  rmSync(join(s.root, '.harness/state/task-hashes.json'));
+  expect(await task(['close', 't1', '--yes'], s.cli)).toBe(1);
 });
 
 test('approve --replace shows the diff against the committed contract and needs --yes', async () => {

@@ -129,7 +129,7 @@ export function writeContract(root: string, c: Contract): Contract {
 }
 
 /**
- * An approved contract, from the working tree (its hash must equal the embedded `sha256`, and task-hashes.json or the file must equal its blob at HEAD),
+ * An approved contract, from the working tree (its hash must equal the embedded `sha256`, and task-hashes.json or the blob on origin's default branch must vouch for it),
  * or with `ref` from that commit (embedded `sha256` only: CI has no state, and the base branch is person-merged).
  */
 export function loadContract(root: string, id: string, o: { ref?: string; git?: Exec } = {}): { contract: Contract } | { error: string } {
@@ -162,13 +162,18 @@ export function loadContract(root: string, id: string, o: { ref?: string; git?: 
   } catch (e) {
     return { error: `${label}: ${(e as Error).message}` };
   }
-  // Approved here (task-hashes.json), or committed and unchanged, so a fresh clone or worktree trusts it too.
-  const committed = () => {
-    const r = (o.git ?? defaultExec)('git', [...SAFE_GIT, 'cat-file', 'blob', `HEAD:${label}`], { cwd: root });
+  // Approved here (task-hashes.json), or byte-equal to the contract on origin's default branch, which a person merged.
+  // HEAD or a local branch never vouches: the agent can commit a self-consistent contract and check it out.
+  const onDefault = () => {
+    const g = o.git ?? defaultExec;
+    const h = g('git', [...SAFE_GIT, 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], { cwd: root });
+    const ref = h.stdout.trim();
+    if (h.status !== 0 || !/^refs\/remotes\/origin\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)) return false;
+    const r = g('git', [...SAFE_GIT, 'cat-file', 'blob', `${ref}:${label}`], { cwd: root });
     return r.status === 0 && r.stdout === text;
   };
-  if (v.contract.sha256 !== hash || (recorded !== hash && !committed()))
-    return { error: `${label} changed since it was approved: it matches neither its commit at HEAD nor an approval recorded here. Restore it with git checkout -- ${label}, or have a person run harness task approve --replace <file>.` };
+  if (v.contract.sha256 !== hash || (recorded !== hash && !onDefault()))
+    return { error: `${label} changed since it was approved: it matches neither the contract on the default branch (origin/HEAD) nor an approval recorded here. Restore it with git checkout origin/HEAD -- ${label}, or have a person run harness task approve --replace <file>.` };
   return { contract: v.contract };
 }
 

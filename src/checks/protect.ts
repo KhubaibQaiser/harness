@@ -470,15 +470,18 @@ export const protect: Check = {
 // One work budget per run, the nested runs above included (re-review 21, P1b): past it WorkBudget is thrown and the
 // dispatcher denies.
 const unbudgeted = protect.run;
-const WRAPPER_REASON = 'A wrapper (sudo, env, timeout, xargs, …) has an option protect does not know, so it cannot tell which word is the command. Confirm the command.';
 const rank = (d: Decision): number => (d.kind === 'deny' ? 2 : d.kind === 'ask' ? 1 : 0);
-/** The command as written and its plain-head reading (wrappers split off, /bin/cp read as cp), the stricter winning. */
+/** The command as written and its plain-head readings (wrappers split off, every path or quoted word read as its name),
+ *  the strictest winning. When a wrapper's option is unknown the two readings bracket what it consumes, so either one's
+ *  deny is a deny and an allow-vs-ask disagreement asks. */
 function withPlainHeads(ctx: Parameters<Check['run']>[0]): Decision {
   const d = unbudgeted(ctx) as Decision;
   if (d.kind === 'deny' || !isShell(ctx.input.tool_name)) return d;
-  const heads = plainHeads(String(ctx.input.tool_input?.command ?? ''));
-  const hs = heads.texts.map((command) => unbudgeted({ ...ctx, input: { ...ctx.input, tool_input: { ...ctx.input.tool_input, command } } }) as Decision);
-  if (heads.unsure && hs[0].kind !== hs[1].kind) return d.kind === 'ask' ? d : { kind: 'ask', reason: WRAPPER_REASON, check: 'protect' };
-  return hs[0] && rank(hs[0]) > rank(d) ? hs[0] : d;
+  let worst = d;
+  for (const command of plainHeads(String(ctx.input.tool_input?.command ?? '')).texts) {
+    const r = unbudgeted({ ...ctx, input: { ...ctx.input, tool_input: { ...ctx.input.tool_input, command } } }) as Decision;
+    if (rank(r) > rank(worst)) worst = r;
+  }
+  return worst;
 }
 protect.run = (ctx) => withWorkBudget(() => withPlainHeads(ctx));

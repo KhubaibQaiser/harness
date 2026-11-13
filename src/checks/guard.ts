@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { plainHeads } from '../core/command-head.js';
-import { cPayloads, remember, SHELLS, stdinPrograms, withWorkBudget } from '../core/shell-words.js';
+import { commandName, cPayloads, remember, SHELLS, stdinPrograms, withWorkBudget } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
 import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, joinVariant, MAX_READINGS, splicedReading, textRulesView } from './guard-readings.js';
@@ -530,23 +530,27 @@ const OUTPUT_FLAGS: Record<string, string[]> = {
   sort: ['-o', '--output'],
   time: ['-o', '--output'],
 };
-/** The values of `name`'s output options in `toks`: `--output=F`, `--output F`, `-o F`, a stuck `-oF` and a cluster `-sSo F`.
+// getopt_long tools accept an unambiguous prefix of a long option; git and curl take only the exact spelling.
+const OUTPUT_PREFIX = new Set(['wget', 'sort', 'time']);
+/** The values of `name`'s output options in `toks` (quotes removed before matching): `--output=F`, `--output F`, `-o F`,
+ *  a stuck `-oF`, a cluster `-sSo F`, and for getopt tools an unambiguous long prefix (`--out`, `--output-doc`).
  *  ponytail: a cluster letter that takes a value before the output letter (-to) is not told apart: the next word is read as the target, stricter only. */
 function outputTargets(name: string | undefined, toks: string[]): string[] {
   const flags = name === 'git' && gitArgs(toks)[0] === 'format-patch' ? [...OUTPUT_FLAGS.git, '-o'] : Object.hasOwn(OUTPUT_FLAGS, name ?? '') ? OUTPUT_FLAGS[name!] : null;
   if (!flags) return [];
+  const longs = flags.filter((f) => f.startsWith('--')), prefix = OUTPUT_PREFIX.has(name!);
+  const longMatch = (n: string): boolean => longs.includes(n) || (prefix && longs.filter((f) => f.startsWith(n)).length === 1);
   const out: string[] = [];
   for (let i = 1; i < toks.length; i++) {
-    const t = toks[i], eq = t.indexOf('=');
+    const t = unquote(toks[i]), eq = t.indexOf('=');
     if (t.startsWith('--')) {
-      if (eq > 0 && flags.includes(t.slice(0, eq))) out.push(t.slice(eq + 1));
-      else if (flags.includes(t)) out.push(toks[++i] ?? '');
+      if (longMatch(eq < 0 ? t : t.slice(0, eq))) out.push(eq < 0 ? unquote(toks[++i] ?? '') : t.slice(eq + 1));
     } else if (/^-[a-zA-Z]/.test(t)) {
       const j = [...t.slice(1)].findIndex((ch) => flags.includes(`-${ch}`));
-      if (j >= 0) out.push(j === t.length - 2 ? (toks[++i] ?? '') : t.slice(j + 2));
+      if (j >= 0) out.push(j === t.length - 2 ? unquote(toks[++i] ?? '') : t.slice(j + 2));
     }
   }
-  return out.filter(Boolean).map(unquote);
+  return out.filter(Boolean).map(unquote); // a value whose quote sat after the `=` (--output=".../x") still has it
 }
 
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
@@ -565,7 +569,7 @@ export function fileWriteTargets(cmd: string): string[] {
       }
     }
     toks.splice(0, k); // look past sudo, env, VAR=value and xargs, with their flags
-    const name = toks[0];
+    const name = commandName(unquote(toks[0] ?? '')); // /usr/bin/time, "sed": the bare command name decides the branch
     for (const m of seg.matchAll(/\d*>>?\s*([^\s;&|>]+)/g)) {
       const t = m[1].replace(/^['"]+/, '').replace(/['"`)}]+$/, ''); // `)`, a backtick or quote ends a substitution ("$(… > f)")
       if (!t.startsWith('&') && t !== '/dev/null') out.push(t);
@@ -826,12 +830,15 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
     rs.push(r);
   }
   if (globs.some((g) => g.capped)) rs.push(toDecision(['ask', GLOB_CAP_WHY]));
-  // The plain-head reading: wrappers split off, /usr/bin/git read as git. Two readings that disagree mean an unknown wrapper option decides.
-  // Depth 3: the payloads inside are the same strings, which the reading as written already judges (with their own plain heads).
-  const heads = plainHeads(command), hs = heads.texts.map((t) => decideRead(t, ctx, 3));
-  if (heads.unsure && hs[0].kind !== hs[1].kind) rs.push(toDecision(['ask', WRAPPER_WHY]));
-  else if (hs[0]?.kind === 'deny') return hs[0];
-  else if (hs[0]) rs.push(hs[0]);
+  // The plain-head reading: wrappers split off, every path or quoted word read as its name. When a wrapper's option is
+  // unknown, two readings bracket what it might consume; the strictest wins, so either reading's deny is a deny and a
+  // disagreement that is allow-vs-ask asks. Depth 3: the payloads inside are the same strings the reading as written
+  // already judges (with their own plain heads), so they are not re-opened here.
+  for (const t of plainHeads(command).texts) {
+    const r = decideRead(t, ctx, 3);
+    if (r.kind === 'deny') return r;
+    rs.push(r);
+  }
   // git runs its editor or pager on the message, so a message built by $(…) or a heredoc may run: ask at least.
   if (EDITOR_SET.test(command) && /\bgit\b/.test(command) && /\$\(|`|<</.test(command)) rs.push(toDecision(['ask', EDITOR_WHY]));
   // A substitution glued inside a word prints what the guard cannot know: read without it, a ruled reading asks.
@@ -842,7 +849,6 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
 const GIT_OUTPUT_RUN_WHY = 'the command writes git output (log, show, rev-parse or cat-file) to a file and runs a file, so an earlier commit message could become the script';
 const GIT_OUTPUT_CONFIG_WHY = 'the command writes git output (log, show, rev-parse or cat-file) into .git/, a gitconfig or a hook, so an earlier commit message could become git config or a hook';
 const EDITOR_WHY = 'the command sets an editor or pager for git (GIT_EDITOR, EDITOR, core.editor, …) and builds its message at run time, and git may run that program on the message';
-const WRAPPER_WHY = 'a wrapper (sudo, env, timeout, xargs, …) has an option the guard does not know, so it cannot tell which word is the command';
 const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
 const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 

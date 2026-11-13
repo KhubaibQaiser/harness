@@ -28,8 +28,9 @@ export const mcpWrites: Check = {
     const [, server = '', ...rest] = name.split('__'), sw = wordsOf(server);
     // `pull_request`/`merge_request` is an object, not the verb "request": one word `pr` before the verbs are read.
     const joined = wordsOf(rest.join('_')).join('_'), w = joined.replace(/(?:pull|merge)_?requests?/g, 'pr').split('_');
+    // Auto-merge is denied with a write verb, or alone (`autoMerge`); only a read verb first lets it pass (`get_automerge_config`).
     const autoMerge = /automerge|auto_merge/.test(joined), verbs = w.filter((x) => WRITE.has(x) && !(autoMerge && (x === 'merge')));
-    if (autoMerge && verbs.length) return { kind: 'deny', reason: AUTO_MERGE_WHY, check: 'mcp-writes' };
+    if (autoMerge && (verbs.length || !READ.has(w[0] ?? ''))) return { kind: 'deny', reason: AUTO_MERGE_WHY, check: 'mcp-writes' };
     const firstRead = READ.has(w[0] ?? ''), read = firstRead || (READ.has(w.at(-1) ?? '') && !w.some((x) => WRITE.has(x)));
     // A host server: its name (GitHub, claude_ai_GitHub), a `gh` word, or a pr server (the desktop's ccd_pr); or a tool naming a host object.
     const host = GIT_HOST.test(server.toLowerCase()) || sw.includes('gh') || sw.at(-1) === 'pr' || GIT_OBJECT.test(joined);

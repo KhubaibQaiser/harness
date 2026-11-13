@@ -56,9 +56,21 @@ describe('round 1 (owner ruling): an allow-list, so only known reads run freely'
   });
   test('gh api GraphQL with fields is a read only for one literal query word with no mutation', () => {
     all(['Q=\'mutation{x}\'; gh api graphql -f query="$Q"', 'gh api graphql -f query="$(cat m.gql)"', "gh api graphql -f query=$'mut\\x61tion{x}'", "gh api graphql -f query='mut''ation{x}'",
-      "gh api graphql -f query='#c\nmutation{x}'", "gh api graphql -f query='query($n:Int){x}' -F n=5", 'gh api https://api.github.com/graphql -f query=\'mutation{x}\'',
+      "gh api graphql -f query='#c\nmutation{x}'", 'gh api https://api.github.com/graphql -f query=\'mutation{x}\'',
       'gh api -H "X-HTTP-Method-Override: POST" repos/o/r', 'gh api x -X GET -X POST'], 'ask');
-    all(["gh api graphql -f query='query{viewer{login}}'", "gh api /graphql -f query='{x}'", 'gh api x -X POST -X GET'], 'allow');
+    all(["gh api graphql -f query='query{viewer{login}}'", "gh api /graphql -f query='{x}'", 'gh api x -X POST -X GET', "gh api graphql -f query='query($n:Int){x}' -F n=5"], 'allow'); // $ in single quotes is literal (round 2)
+  });
+});
+
+describe('round 2', () => {
+  test('gh anywhere after a runner head the guard does not know is read', () => {
+    all(['op run -- gh pr merge 1', 'doppler run -- gh pr merge 1', 'direnv exec . gh pr merge 1', 'aws-vault exec p -- gh pr merge 1', 'dotenv -- gh pr merge 1', 'zzwrap -q gh pr merge 1',
+      'op run -- hub pull-request -m x'], 'ask');
+    all(['op run -- gh pr view 1', 'mkdir gh', 'cd gh && ls', 'echo gh pr merge 1', 'grep gh pr merge', 'cat gh pr merge', 'brew install gh'], 'allow');
+  });
+  test('a GraphQL query counts as built at run time only for a $ or backtick outside single quotes', () => {
+    all(["gh api graphql -f query='query($o:String!){user(login:$o){id}}' -F o=x", "gh api graphql -F owner=o -f query='query($owner:String!){user(login:$owner){id}}'"], 'allow');
+    all(['gh api graphql -f query="query($o:String!){x}" -F o=x', 'gh api graphql -f query="query{x}" -F o=$O', "gh api graphql -f query=$'query{x}'", "gh api graphql -f query='query($o:String!){x}' -F o=`cat f`"], 'ask');
   });
 });
 

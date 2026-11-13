@@ -15,7 +15,8 @@ const UUID = 'mcp__3d57cafd-7a19-4c22-839e-5d410b830996';
 test('auto-merge with a write verb is denied, whatever the server and spelling', () => {
   all(['mcp__ccd_pr__set_auto_merge', 'mcp__github__enable_auto_merge', 'mcp__gitlab__set_automerge', 'mcp__x__enable-auto-merge', 'mcp__x__enableAutoMerge',
     'mcp__plugin_engineering_github__enable_pull_request_auto_merge', 'mcp__github__enable_pr_auto_merge'], 'deny');
-  all(['mcp__renovate__get_automerge_config', 'mcp__docs__search_automerge_docs'], 'allow'); // no write verb
+  all(['mcp__renovate__get_automerge_config', 'mcp__docs__search_automerge_docs'], 'allow'); // a read verb first
+  all(['mcp__x__autoMerge', 'mcp__x__auto_merge', 'mcp__x__AutoMerge', 'mcp__x__automerge_pr'], 'deny'); // only auto-merge, no read verb first (round 2)
 });
 
 test('on a git-host server everything but a read tool asks', () => {

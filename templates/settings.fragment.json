@@ -1,6 +1,6 @@
 {
   "hooks": {
-    "PreToolUse": [{ "matcher": "Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit",
+    "PreToolUse": [{ "matcher": "Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
       "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10, "onFailure": "block" }] },
       { "matcher": "AskUserQuestion",
       "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] }],

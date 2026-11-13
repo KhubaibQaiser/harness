@@ -189,7 +189,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   try {
     applyChanges(root, changes, m.version, () => at, cli.fs, { manifest: { ...m, files }, manifestBefore: rawOf(m) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine(cmd as 'add' | 'remove', args) : e.message), 1;
+    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine(cmd as 'add' | 'remove', args, root) : e.message), 1;
     throw e;
   }
   removeEmptyDirs(root, changes);

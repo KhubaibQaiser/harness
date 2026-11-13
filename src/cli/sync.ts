@@ -99,7 +99,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
       rehashManifest(root, ['.claude/settings.json']);
     } catch (e) {
       if (!(e instanceof ApplyError)) throw e;
-      return out(isDenied(e) ? sandboxLine('sync', args) : e.message), 1;
+      return out(isDenied(e) ? sandboxLine('sync', args, root) : e.message), 1;
     }
     if (readFileSync(join(root, MANIFEST_REL), 'utf8') !== before) out('Recorded the plugin install in the manifest.');
     return null;
@@ -144,7 +144,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   try {
     applyChanges(root, changes, man.version, () => at, cli.fs, { manifest: { ...man, files }, manifestBefore: rawOf(man) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('sync', args) : e.message), 1;
+    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('sync', args, root) : e.message), 1;
     throw e;
   }
   removeEmptyDirs(root, changes);

@@ -1,3 +1,4 @@
+import { denyWritePaths } from '../../src/checks/protect.js';
 import * as realFs from 'node:fs';
 import type { FsLike } from '../../src/install/apply.js';
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -49,7 +50,7 @@ const commitAll = (root: string) => {
 };
 const installed = async (files: Record<string, string> = REPO) => {
   const root = makeRepo(files);
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') , platform: 'linux' });
   commitAll(root);
   return root;
 };
@@ -251,7 +252,7 @@ test('update keeps the packages init left out of TDD in the manifest', async () 
 const oldJestInstall = async () => {
   const pkg = JSON.stringify({ name: 'app', scripts: { test: 'jest --silent' }, devDependencies: { jest: '^30.0.0' } }, null, 2) + '\n';
   const root = makeRepo({ 'package.json': pkg, 'package-lock.json': '{}\n', '.gitignore': 'node_modules\n' });
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt: fake(), version: '1.0.0', templatesDir, distDir: join(pkgDir, 'dist') , platform: 'linux' });
   const oldBlock = ' --json --outputFile=.harness/results/root.json --coverage';
   const oldPkg = pkg.replace('"jest --silent"', `"jest --silent${oldBlock}"`);
   writeFileSync(join(root, 'package.json'), oldPkg);
@@ -638,7 +639,7 @@ test('switching to always and back leaves the settings as before', async () => {
   writeFileSync(cfg, readFileSync(cfg, 'utf8').replace(/^sandbox: unattended$/m, 'sandbox: always'));
   commitAll(root);
   expect((await up(root, ['--yes'])).code).toBe(0);
-  expect(JSON.parse(readFileSync(p, 'utf8')).sandbox).toEqual({ enabled: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false });
+  expect(JSON.parse(readFileSync(p, 'utf8')).sandbox).toEqual({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false, filesystem: { denyWrite: denyWritePaths() } });
   writeFileSync(cfg, readFileSync(cfg, 'utf8').replace(/^sandbox: always$/m, 'sandbox: unattended'));
   commitAll(root);
   expect((await up(root, ['--yes'])).code).toBe(0);
@@ -654,7 +655,7 @@ test('leaving always with only a changed key left drops the set blocks from the 
   setMode('unattended', 'always');
   expect((await up(root, ['--yes'])).code).toBe(0);
   const s = JSON.parse(readFileSync(p, 'utf8'));
-  s.sandbox = { enabled: false };
+  s.sandbox = { enabled: false, filesystem: s.sandbox.filesystem }; // only the one changed key left, and the denyWrite paths
   writeFileSync(p, JSON.stringify(s, null, 2) + '\n');
   setMode('always', 'unattended');
   const first = await up(root, ['--yes']);

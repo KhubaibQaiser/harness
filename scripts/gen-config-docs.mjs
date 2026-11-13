@@ -51,6 +51,7 @@ const WHAT = {
   'decisions.max_lines': 'Content lines of one generated rule.',
   'decisions.expiry_days': 'A decision not confirmed for this long stops loading at the next sync.',
   'decisions.nudge': 'Stop suggests saving a decision when the session shows signals.',
+  'review.max_findings': 'Most findings a PR review reports: the reviewer is asked for at most this many (read from the base branch), and the most severe are kept.',
   'unattended.multi_file_gate': 'What the multi-file gate does when no human is watching.',
   'unattended.require_reason': 'With `allow-log`, extra files need a one-line reason. No effect while the gate is `block`.',
   'unattended.review': '`code-only`: an unattended `harness review` gathers the PR for a code-only review that is never posted; `skip`: it does nothing.',

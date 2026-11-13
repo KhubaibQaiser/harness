@@ -57,6 +57,7 @@ export interface HarnessConfig {
   multi_file_gate: { generated: string[] };
   pr_size: { target_lines: number; max_lines: number; max_files: number; exclude: string[] };
   decisions: { max_lines: number; expiry_days: number; nudge: boolean };
+  review: { max_findings: number };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean; review: 'skip' | 'code-only' };
   stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
   /** Absent until init records a chosen preset. */
@@ -86,6 +87,7 @@ export const defaults = (): HarnessConfig => ({
   multi_file_gate: { generated: [] },
   pr_size: { target_lines: 200, max_lines: 400, max_files: 20, exclude: [...PR_SIZE_EXCLUDE] },
   decisions: { max_lines: 20, expiry_days: 90, nudge: true },
+  review: { max_findings: 15 },
   unattended: { multi_file_gate: 'block', require_reason: false, review: 'code-only' },
   stop: {
     steps: ['format:check', 'lint', 'typecheck', 'test'],
@@ -211,6 +213,7 @@ const RULES: Record<string, Rule> = {
   'pr_size.max_lines': num(1, 100000, true),
   'pr_size.max_files': num(1, 10000, true),
   'decisions.max_lines': num(5, 200, true),
+  'review.max_findings': num(1, 100, true),
   'decisions.expiry_days': num(7, 365, true),
   apps: listOf('app mappings', appRule),
   items: listOf('item mappings', itemRule),

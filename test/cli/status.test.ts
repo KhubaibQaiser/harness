@@ -26,7 +26,7 @@ const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const prompt: Prompt = { async confirm() { return false; }, async edit(_l, v) { return v; } };
 const go = async (files: Record<string, string>) => {
   const root = makeRepo(files);
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') , platform: 'linux' });
   let out = '';
   const code = status([], { root, env: {}, out: (s) => (out += s + '\n') });
   return { code, out };
@@ -57,7 +57,7 @@ test('status shows gates on and not-installed', async () => {
 
 test('status prints config warnings before the gates', async () => {
   const root = makeRepo({ a: 'b' });
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') , platform: 'linux' });
   writeFileSync(join(root, '.harness/config.yaml'), 'bogus: 1\n');
   let out = '';
   status([], { root, env: {}, out: (s) => (out += s + '\n') });
@@ -106,7 +106,7 @@ test('status names a Jest package whose coverage the gate cannot read', async ()
 
 const installedAt = async () => {
   const root = makeRepo({ a: 'b' });
-  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') });
+  await init(['--yes'], { env: { HARNESS_PLAIN_INIT: '1' }, root, out: () => {}, prompt, version: '1.2.3', templatesDir: join(pkgDir, 'templates'), distDir: join(pkgDir, 'dist') , platform: 'linux' });
   return root;
 };
 const show = (root: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv = {}) => {

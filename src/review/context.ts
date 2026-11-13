@@ -14,7 +14,7 @@ const escChar = (c: string) => (c === '\u2028' || c === '\u2029' ? `\\u${c.charC
 /** Control characters become escapes per line; tabs stay, they can't drive a terminal. */
 const escLines = (text: string) => text.split('\n').map((l) => l.replace(CONTROLS, (c) => (c === '\t' ? c : escChar(c)))).join('\n');
 /** A PR path on one row: newlines and tabs are escaped too, so a name can't fake a row. */
-const escPath = (p: string) => p.replace(CONTROLS, escChar);
+export const escPath = (p: string) => p.replace(CONTROLS, escChar);
 
 /** PR-sourced text, fenced. The nonce is random per run and gather refuses PR text holding it, so no block can be closed early. */
 export const envelope = (nonce: string, kind: string, text: string): string => `<<<pr-data:${nonce}:${kind}>>>\n${escLines(text)}\n<<<end:${nonce}>>>`;

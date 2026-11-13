@@ -95,7 +95,7 @@ async function applyNameOnly(root: string, m: Manifest, names: string[], f: { ye
   try {
     applyChanges(root, [change], m.version, () => at, cli.fs, { manifest: { ...m, files }, manifestBefore: rawOf(m) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('context', ['apply', ...f.args]) : e.message), 1;
+    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('context', ['apply', ...f.args], root) : e.message), 1;
     throw e;
   }
   stampHarnessFiles(root); // change detection: this write is harness's own

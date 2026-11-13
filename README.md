@@ -6,7 +6,9 @@ A line in `CLAUDE.md` saying "write the test first" or "never read `.env`" is a 
 
 Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, and in every session with `sandbox: always`. Elsewhere, and on native Windows always, the guard and protect checks are a seatbelt.
 
-In plain terms: with the sandbox on, the operating system enforces the guard. Without it, the guard is a best-effort text check that catches mistakes but can be bypassed.
+**Safety model, in two layers.** The first is Claude Code's sandbox, at the OS level. Init turns it on for every session on macOS, and on Linux and WSL2 when the machine can run it (`sandbox: always`). Harness also lists its own protected files in the sandbox's `denyWrite`. With the sandbox on, any Bash write to them fails, however it is spelled (`echo >`, `tee`, `/bin/cp`, `sh -c`, Python). The second layer is harness's text checks, guard and protect, which read every command and edit. They cover the Edit and Write tools, which the sandbox doesn't, and every platform. On native Windows there is no sandbox, so the text checks are the only layer: a seatbelt that catches mistakes and can be bypassed. See [Sandbox](docs/reference.md#sandbox).
+
+**A machine that can't run the sandbox.** The strict sandbox settings are committed for everyone, so on a machine that can't run the sandbox, Claude Code won't run Bash at all. That means native Windows, WSL1, Linux and WSL2 without `bwrap` and `socat`, and Ubuntu with its AppArmor user-namespace restriction on. `harness doctor` tells you so on that machine, with the fix. Fix the machine, or set `sandbox.failIfUnavailable: false` in your own `.claude/settings.local.json`; Bash then runs without the sandbox there, guarded only by harness's text checks.
 
 **Status:** beta, version `0.2.0-beta.2`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. Release notes: [docs/release-notes/0.2.0-beta.2.md](docs/release-notes/0.2.0-beta.2.md).
 
@@ -87,7 +89,7 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `remember add\|confirm\|retire\|sync\|list\|check` | Saves a team decision to `docs/decisions/` and loads it as a rule when its paths are touched. Asks first, commits nothing. |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. |
 | `vet <target>` | Scans a plugin or skill before you install it. Needs `gh`. Installs nothing. |
-| `review <pr> --out <dir>` | Gathers a PR for review; nothing is posted yet. Needs `gh`. Runs none of the PR's code. Run it from the base branch, in a fresh session. The review agent's `Mode: pr` reply is checked with `validate pr-review`, verified, then checked by a small-model judge (`review --judge-input`, `validate pr-judge`). |
+| `/harness:review <pr>` | A code-only review of a PR that you read locally: gathered without running the PR's code, checked by a reviewer agent, verified, and checked by a small-model judge. Posting comes next. Needs the harness plugin and `gh`; run it from the base branch, in a fresh session. The steps are also CLI commands (`review <pr> --out`, `review --finish`, `review --keep`). |
 | `guide <name>` / `workdir` | Helpers the skills call: print a bundled doc, and make a git-ignored work folder in `.harness/tmp/`, so no skill touches a file outside the repo. |
 | `uninstall [--dry-run]` | Removes what harness added and restores your files. `--global` does the same for a preset installed under `~/.claude`. |
 

@@ -151,6 +151,12 @@ test('unattended.review defaults to code-only; skip loads; other values are erro
   expect(loadConfig(dirWith('.harness/config.yaml', 'unattended:\n  review: other\n')).errors).toEqual(['"unattended.review" must be one of skip, code-only']);
 });
 
+test('review.max_findings defaults to 15, from 1 to 100', () => {
+  expect(loadConfig(emptyDir()).config.review.max_findings).toBe(15);
+  expect(loadConfig(dirWith('.harness/config.yaml', 'review:\n  max_findings: 40\n')).config.review.max_findings).toBe(40);
+  expect(loadConfig(dirWith('.harness/config.yaml', 'review:\n  max_findings: 0\n')).errors).toEqual(['"review.max_findings" must be an integer from 1 to 100']);
+});
+
 test('sandbox defaults to unattended', () => {
   expect(loadConfig(emptyDir()).config.sandbox).toBe('unattended');
   expect(loadConfig(dirWith('.harness/config.yaml', 'sandbox: always\n')).config.sandbox).toBe('always');

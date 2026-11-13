@@ -59,7 +59,7 @@ function findDefault(git: GitRun, exists: (b: string) => boolean): { candidates:
 
 function failed(c: Ctx, cmd: string, r: { stderr?: string; stdout: string }): number {
   const err = (r.stderr || r.stdout).trim();
-  return c.out(NETWORK.test(err) ? `${cmd} failed: the sandbox or the network blocked it (${lines(err)}). ${ownCommand('git', [c.sub, ...c.rest])}` : `${cmd} failed: ${lines(err)}\nFix that, then run \`harness git ${c.sub}\` again.`), 1;
+  return c.out(NETWORK.test(err) ? `${cmd} failed: the sandbox or the network blocked it (${lines(err)}). ${ownCommand('git', [c.sub, ...c.rest], c.root)}` : `${cmd} failed: ${lines(err)}\nFix that, then run \`harness git ${c.sub}\` again.`), 1;
 }
 
 function stepBranch(c: Ctx): number {

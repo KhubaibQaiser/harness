@@ -53,7 +53,7 @@ const WHAT = {
   'decisions.expiry_days': 'A decision not confirmed for this long stops loading at the next sync.',
   'decisions.nudge': 'Stop suggests saving a decision when the session shows signals.',
   'review.max_findings': 'Most findings a PR review reports: the reviewer is asked for at most this many (read from the base branch), and the most severe are kept.',
-  'done.review_model': 'Not used yet (needs `checks.done`). The model that will review a task\'s diff: an alias such as `sonnet` or a full id. A contract\'s `review.model` sets it for that task.',
+  'done.review_model': 'The model that will review a task\'s diff (the review needs `checks.done`, not usable yet): an alias such as `sonnet` or a full id. `harness task draft` puts it in a new contract\'s `review.model`, which sets it for that task.',
   'done.review_timeout_s': 'Not used yet (needs `checks.done`). Seconds the task review may take before it counts as failed.',
   'done.timeout_s': 'Not used yet (needs `checks.done`). Seconds that all the commands one verification of a task runs may take in total.',
   'unattended.multi_file_gate': 'What the multi-file gate does when no human is watching.',

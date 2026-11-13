@@ -89,6 +89,7 @@ const PREVIEW = (a: string[]): boolean => {
   }
   return preview;
 };
+export const TASK_PERSON_WHY = 'Only a person approves, edits or closes a task contract: ask them to run';
 const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string[]) => boolean; why: (run: (sub: string) => string) => string }> = {
   tdd: { kind: 'deny', allowed: (a) => ['on', 'status'].includes(a.filter((t) => !t.startsWith('-'))[0]), why: (run) => `Only a person can pause TDD: run ${run('tdd off')} in your own terminal.` },
   uninstall: { kind: 'ask', allowed: (a) => a.includes('--dry-run') && a.every((t) => t === '--dry-run' || t === '--global'), why: () => 'the agent is uninstalling the harness, which removes every gate' },
@@ -103,6 +104,7 @@ const PERSON_ONLY: Record<string, { kind: 'deny' | 'ask'; allowed: (args: string
   report: { kind: 'ask', allowed: (a) => a.includes('--help'), why: () => "the agent is running the usage and adherence report, which reads this repo's session transcripts" },
   remember: { kind: 'ask', allowed: rememberReadOnly, why: () => REMEMBER_WHY },
   eval: { kind: 'deny', allowed: (a) => a.includes('--help'), why: (run) => `Only a person can run paid evals: run ${run('eval')} in your own terminal.` },
+  task: { kind: 'deny', allowed: (a) => a[0] === 'draft', why: (run) => `${TASK_PERSON_WHY} ${run('task approve <file> --yes')}.` },
 };
 const isPersonOnly = (t: string | undefined): t is string => t !== undefined && Object.hasOwn(PERSON_ONLY, t);
 // The shell can turn such a word into any subcommand or flag, so no preview test passes it; `next` is the separator after

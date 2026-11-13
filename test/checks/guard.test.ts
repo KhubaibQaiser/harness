@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { readCliPath, recordCliPath } from '../../src/core/cli-path.js';
-import { canonicalText, decideCommand, decidePaths, fileWriteTargets, guard, withoutHeredocBodies } from '../../src/checks/guard.js';
+import { canonicalText, decideCommand, decidePaths, fileWriteTargets, guard, TASK_PERSON_WHY, withoutHeredocBodies } from '../../src/checks/guard.js';
 import { protect } from '../../src/checks/protect.js';
 import { loadConfig } from '../../src/core/config.js';
 import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
@@ -1337,6 +1337,16 @@ test('harness report asks, harness eval is denied, --help is allowed', async () 
   const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'harness report --days 7' } });
   expect(JSON.parse(await dispatch(raw, registry, {})).hookSpecificOutput.permissionDecision).toBe('ask');
   expect(JSON.parse(await dispatch(raw, registry, { CI: 'true' })).hookSpecificOutput.permissionDecision).toBe('deny');
+});
+
+test('guard: the agent may draft a task contract but never approve, edit or close one', () => {
+  expect(kind('harness task draft .harness/tmp/w/task.json')).toBe('allow');
+  for (const c of ['harness task approve x --yes', 'harness task approve x', 'npx @khubaibqaiser/harness task edit t1 --from f', 'node dist/cli.mjs task close t1',
+    'harness task close t1 --dry-run', 'harness task --yes draft f', 'harness task draft $F']) {
+    const d = decideCommand(c, ctx());
+    expect(d, c).toMatchObject({ kind: 'deny', reason: expect.stringContaining(TASK_PERSON_WHY) });
+    expect(reason(d), c).toContain('task approve <file> --yes');
+  }
 });
 
 test('a shell eval next to a harness word stays denied; harness eval keeps its own verdicts', () => {

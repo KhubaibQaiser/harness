@@ -20,7 +20,7 @@ describe('dispatch.mjs --workdir', () => {
     mkdirSync(join(root, 'src'), { recursive: true });
     const a = run(join(root, 'src'), '--workdir');
     expect(a.code).toBe(0);
-    expect(dirname(a.out)).toBe(join(realpathSync(root), '.harness', 'tmp'));
+    expect(dirname(realpathSync.native(a.out))).toBe(realpathSync.native(join(root, '.harness', 'tmp'))); // native: Windows 8.3 short paths (RUNNER~1) vs git's long path
     expect(existsSync(a.out)).toBe(true);
     expect(existsSync(join(root, '.harness/tmp/.gitignore'))).toBe(true);
     expect(run(root, '--workdir').out).not.toBe(a.out);
@@ -29,7 +29,7 @@ describe('dispatch.mjs --workdir', () => {
   test('--clean removes only that folder; other paths and extra words are refused with exit 2', () => {
     const root = fresh();
     const a = run(root, '--workdir').out, b = run(root, '--workdir').out;
-    for (const p of [a, b]) expect(dirname(p)).toBe(join(root, '.harness', 'tmp')); // before any write, so a failure never writes into the cwd
+    for (const p of [a, b]) expect(dirname(realpathSync.native(p))).toBe(realpathSync.native(join(root, '.harness', 'tmp'))); // before any write, so a failure never writes into the cwd
     writeFileSync(join(a, 'body.md'), 'x');
     expect(run(root, '--workdir', '--clean', a).code).toBe(0);
     expect(existsSync(a)).toBe(false);

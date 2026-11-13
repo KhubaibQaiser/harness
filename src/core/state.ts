@@ -8,6 +8,7 @@ export interface SessionState {
   startedAt: number;
   files: string[];
   approved: boolean;
+  askNoted?: true; // the multi-file note was shown this turn
   reasonDenied?: string[]; // files already denied for a missing reason this turn
   redTests: string[];
   lockedTests: string[];
@@ -78,7 +79,7 @@ export function writeState(root: string, session: string, s: SessionState): void
 export { renameWithRetry }; // kept for existing importers
 
 export function clearTurn(root: string, session: string): void {
-  writeState(root, session, { ...readState(root, session), files: [], approved: false, reasonDenied: [], stopAttempts: 0 });
+  writeState(root, session, { ...readState(root, session), files: [], approved: false, askNoted: undefined, reasonDenied: [], stopAttempts: 0 });
 }
 
 const readOwner = (lock: string): { pid?: number; nonce?: string } | null => {

@@ -7,6 +7,7 @@ import { isAnyTestFile, matches, pairKey, toRepoPath } from '../core/paths.js';
 import { clearTurn, readState, withSessionLock, writeState } from '../core/state.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import { editTarget } from '../hooks/edit-target.js';
+import { shown } from '../hooks/io.js';
 
 const LOCKS = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb'];
 
@@ -158,9 +159,16 @@ export const multiFile: Check = {
     if (event === 'PostToolUse') {
       units.add(pairKey(rel));
       const next = files.includes(rel) ? files : [...files, rel];
-      ctx.save({ ...ctx.state, files: next, approved: approved || units.size >= 2 });
+      // Claude Code shows its own dialog for an Edit ask, not our reason: say it here, once a turn, before the ask comes.
+      const note = !approved && !ctx.unattended && !ctx.state.askNoted && units.size === 1;
+      ctx.save({ ...ctx.state, files: next, approved: approved || units.size >= 2, ...(note ? { askNoted: true as const } : {}) });
       // Attended, a second unit only gets here after the user approved the ask; unattended runs log allow-log instead.
       if (!approved && units.size >= 2 && !ctx.unattended) appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'approved', files: next });
+      if (note) {
+        const name = `\`${shown(rel).replace(/[\n\r\t]/g, (c) => (c === '\n' ? '\\n' : c === '\r' ? '\\r' : '\\t'))}\``; // a newline in a file name must not add lines to the agent's text
+        const why = `This turn has touched ${name}. The next edit to a different source file will ask you once; your yes covers the rest of the turn.`;
+        return { kind: 'context', check: 'multi-file', notice: `harness: ${why}`, text: `Multi-file gate: ${why} Before editing another file, explain to the person why it is needed, or ask with AskUserQuestion.` };
+      }
       return { kind: 'allow' };
     }
     // PreToolUse only decides; afterAllow records once the whole call is allowed, PostToolUse otherwise.

@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it, test } from 'vitest';
 import { BETA_GROUPS, betaSettings } from './helpers.js';
 import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeEslintHarnessRules, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, pinsAt, pinsMismatch, pinsName, settingsPins, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig, mergeTsconfigOptions, STRUCTURAL } from '../../src/install/merge.js';
 import { TELEMETRY_ENV, type LoadedPreset } from '../../src/catalog/presets.js';
+import { denyWritePaths } from '../../src/checks/protect.js';
 import { guardedView } from '../../src/core/harness-files.js';
 
 const fx = (p: string) => readFileSync(`test/fixtures/install-repo/${p}`, 'utf8');
@@ -332,27 +333,30 @@ test('removeBlocks tolerates a CRLF checkout of an LF block, and the reverse', a
 });
 
 describe('mergeSettings sandbox', () => {
-  const SB = { enabled: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false };
+  // `always` keys (owner ruling 2026-11-13: failIfUnavailable too), plus the denyWrite paths every mode writes.
+  const SB = { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false };
+  const FS = { filesystem: { denyWrite: denyWritePaths() } };
   const sets = (blocks: string[]) => blocks.filter((b) => b.startsWith('{"set"'));
   const run = (before: string | null, sandbox: 'unattended' | 'always' | 'off', recorded?: string[]) => mergeSettings(before, { sandbox, recorded });
 
   it('always adds the sandbox block and records each key', () => {
     const r = run('{}\n', 'always');
-    expect(JSON.parse(r.after).sandbox).toEqual(SB);
+    expect(JSON.parse(r.after).sandbox).toEqual({ ...SB, ...FS });
     expect(sets(r.blocks)).toEqual([
       '{"set":["sandbox"],"value":{}}',
       '{"set":["sandbox","enabled"],"value":true}',
+      '{"set":["sandbox","failIfUnavailable"],"value":true}',
       '{"set":["sandbox","allowUnsandboxedCommands"],"value":false}',
       '{"set":["sandbox","autoAllowBashIfSandboxed"],"value":false}',
     ]);
-    expect(r.notes).toEqual([]);
+    expect(r.notes).toEqual([expect.stringMatching(/sandbox\.network\.allowedDomains/)]);
   });
 
   it('always leaves a key the person set, with a note', () => {
     const r = run(JSON.stringify({ sandbox: { autoAllowBashIfSandboxed: true } }), 'always');
-    expect(JSON.parse(r.after).sandbox).toEqual({ ...SB, autoAllowBashIfSandboxed: true });
-    expect(r.notes).toEqual(['.claude/settings.json: sandbox.autoAllowBashIfSandboxed is already true; left as is (harness would set false).']);
-    expect(sets(r.blocks)).toEqual(['{"set":["sandbox","enabled"],"value":true}', '{"set":["sandbox","allowUnsandboxedCommands"],"value":false}']);
+    expect(JSON.parse(r.after).sandbox).toEqual({ ...SB, autoAllowBashIfSandboxed: true, ...FS });
+    expect(r.notes).toEqual([expect.stringMatching(/allowedDomains/), '.claude/settings.json: sandbox.autoAllowBashIfSandboxed is already true; left as is (harness would set false).']);
+    expect(sets(r.blocks)).toEqual(['{"set":["sandbox","enabled"],"value":true}', '{"set":["sandbox","failIfUnavailable"],"value":true}', '{"set":["sandbox","allowUnsandboxedCommands"],"value":false}']);
   });
 
   it('a non-object sandbox is an error under always', () => {
@@ -360,35 +364,36 @@ describe('mergeSettings sandbox', () => {
     expect(() => run(JSON.stringify({ sandbox: true }), 'always')).toThrow('"sandbox" must be an object');
   });
 
-  it('unattended and off add no sandbox key', () => {
+  it('unattended and off add no sandbox key but the denyWrite paths', () => {
     for (const m of ['unattended', 'off'] as const) {
       const r = run('{}\n', m);
-      expect(JSON.parse(r.after).sandbox).toBeUndefined();
+      expect(JSON.parse(r.after).sandbox).toEqual(FS);
       expect(sets(r.blocks)).toEqual([]);
     }
   });
 
-  it('failIfUnavailable is never written', () => {
-    for (const m of ['unattended', 'always', 'off'] as const) expect(run(null, m).after).not.toContain('failIfUnavailable');
+  it('failIfUnavailable is written only under always', () => {
+    expect(run(null, 'always').after).toContain('"failIfUnavailable": true');
+    for (const m of ['unattended', 'off'] as const) expect(run(null, m).after).not.toContain('failIfUnavailable');
   });
 
   it('leaving always removes the recorded keys', () => {
     const init = run('{"model":"x"}\n', 'always');
     const rec = sets(init.blocks);
     const r = run(init.after, 'unattended', init.blocks);
-    expect(JSON.parse(r.after)).not.toHaveProperty('sandbox');
+    expect(JSON.parse(r.after).sandbox).toEqual(FS); // the always keys go; the denyWrite paths stay in every mode
     expect([...r.dropped].sort()).toEqual([...rec].sort());
     expect(r.notes).toEqual([]);
     const off = run(init.after, 'off', init.blocks);
     expect(off.after).toBe(r.after);
-    expect(JSON.parse(off.after)).not.toHaveProperty('sandbox');
+    expect(JSON.parse(off.after).sandbox).toEqual(FS);
     expect([...off.dropped].sort()).toEqual([...rec].sort());
     expect(off.notes).toEqual([]);
 
     const edited = JSON.parse(init.after);
     edited.sandbox.enabled = false;
     const r2 = run(JSON.stringify(edited, null, 2), 'off', init.blocks);
-    expect(JSON.parse(r2.after).sandbox).toEqual({ enabled: false });
+    expect(JSON.parse(r2.after).sandbox).toEqual({ enabled: false, ...FS });
     expect(r2.notes).toEqual(['`.claude/settings.json`: `sandbox.enabled` was changed; left as is.']);
     expect([...r2.dropped].sort()).toEqual([...rec].sort());
   });
@@ -839,7 +844,7 @@ describe('preset merge kinds', () => {
     const rec = [...al.blocks, ...p.blocks];
     for (const sandbox of ['unattended', 'off'] as const) {
       const m = mergeSettings(al.after, { sandbox, recorded: rec });
-      expect(JSON.parse(m.after)).not.toHaveProperty('sandbox');
+      expect(JSON.parse(m.after).sandbox).toEqual({ filesystem: { denyWrite: denyWritePaths() } }); // only the denyWrite paths every mode writes
       expect(JSON.parse(m.after).attribution).toBe(false);
       expect(envOf(m.after)).toEqual({ DO_NOT_TRACK: '1', B_OFF: 'x' });
       expect(m.dropped.filter((b) => b.startsWith('{"set"')).every((b) => b.includes('"sandbox"'))).toBe(true);

@@ -43,7 +43,7 @@ export type Preset = {
 export type Which = (cmd: string) => string | null;
 const pathWhich: Which = (cmd) => findOnPath(cmd, process.env, process.platform);
 
-export function preset(f: Facts, which: Which = pathWhich): Preset {
+export function preset(f: Facts, which: Which = pathWhich, platform: NodeJS.Platform = process.platform): Preset {
   const config = defaults();
   const reasons: Record<string, string> = {};
   const root = f.packages.find((p) => p.dir === '.' || p.dir === '');
@@ -110,9 +110,16 @@ export function preset(f: Facts, which: Which = pathWhich): Preset {
   reasons['stop.base_ref'] = `Changes are compared with \`origin/${f.defaultBranch}\`, your default branch.`;
   reasons['stop.package_manager'] = f.packageManager === 'none' ? 'No package manager was found, so scripts run as plain commands.' : `Detected \`${f.packageManager}\` from your lockfile or \`package.json\`.`;
 
+  // Claude Code's sandbox on by default where it runs (owner ruling, 2026-11-13): macOS, and Linux or WSL2 with bwrap and socat.
+  const sandboxWhy = platform === 'win32' ? 'native Windows has no Claude Code sandbox, so it is required for unattended runs only (sandbox: unattended)'
+    : platform !== 'darwin' && !(which('bwrap') && which('socat')) ? 'the Linux sandbox needs bwrap and socat, which are not on PATH; install them, then set sandbox: always and run /harness:update' : '';
+  config.sandbox = sandboxWhy ? 'unattended' : 'always';
+  reasons.sandbox = sandboxWhy ? `Required for unattended runs only: ${sandboxWhy}.` : 'Claude Code\'s sandbox is on in every session, so a Bash write to a harness file fails at the OS level. Its network allowlist starts empty: allow hosts under sandbox.network.allowedDomains.';
+
   const why = unsafe.length ? unsafe.join(' ') : OFF_WHY;
   const off = tdd
     ? [...unsafe.map((w) => ({ gate: 'TDD', why: w })), ...noCov.map((p) => ({ gate: 'coverage', why: coverageWhy(p) }))]
     : [{ gate: 'TDD', why }, { gate: 'coverage', why }];
+  if (sandboxWhy) off.push({ gate: 'sandbox', why: sandboxWhy });
   return { config, reasons, off, tddOff, skippedSteps };
 }

@@ -14,8 +14,19 @@ import { SAFE_GIT } from '../core/git-safe.js';
 import { type OptTable, readOptions, valuesOf } from '../core/options.js';
 import { globGuardAsk, guardedPaths, plainHeads, wrapperForms } from '../core/command-head.js';
 
-const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
+export const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
+/**
+ * Protected paths the sandbox leaves writable, because the agent's own Bash writes them through harness: the skills'
+ * work folders (`harness workdir`), the event log every harness command appends to, and the TDD reporter's results,
+ * which the test runner writes.
+ */
+export const DENY_WRITE_SKIPPED = ['.harness/tmp', '.harness/logs', '.harness/results'];
+/** Claude Code's `sandbox.filesystem.denyWrite` for harness, from protect's table: each protected path (a `/**` folder
+ *  as the folder), `./`-relative, minus DENY_WRITE_SKIPPED. A path added to PROTECTED is denied by the sandbox too. */
+export const denyWritePaths = (table: readonly string[] = PROTECTED): string[] => [
+  ...new Set(table.map((g) => g.replace(/\/\*\*$/, '')).filter((p) => !DENY_WRITE_SKIPPED.some((s) => p === s || p.startsWith(`${s}/`))).map((p) => `./${p}`)),
+];
 const REASON = 'Harness files and Claude settings are changed by a person, not the agent.';
 const NM_REASON = 'node_modules is managed by the package manager, not edited by hand: change package.json and run an install instead.';
 const INLINE_WHY = 'Inline code (node -e, python -c and the like) that names';
@@ -492,7 +503,10 @@ export const protect: Check = {
 // dispatcher denies.
 const unbudgeted = protect.run;
 // Commands whose writes protect reads: a path to one after a wrapper no table knows still heads its own segment.
-const WRITE_HEADS: ReadonlySet<string> = new Set([...WRITERS, ...DELETERS, 'sed', 'perl', 'git', 'curl', 'wget', 'sort', 'time', 'tar', 'unzip', 'find', 'openssl', 'patch', 'xxd', 'sudoedit', 'ex', 'vim', 'nvim', ...Object.keys(WRITER_ALIAS)]);
+// Built on first use, not at load: install/merge imports this module (denyWritePaths) from inside guard's own import
+// graph, so guard's WRITER_ALIAS may not be initialized yet when this module loads.
+let writeHeads: ReadonlySet<string> | undefined;
+const WRITE_HEADS = (): ReadonlySet<string> => (writeHeads ??= new Set([...WRITERS, ...DELETERS, 'sed', 'perl', 'git', 'curl', 'wget', 'sort', 'time', 'tar', 'unzip', 'find', 'openssl', 'patch', 'xxd', 'sudoedit', 'ex', 'vim', 'nvim', ...Object.keys(WRITER_ALIAS)]));
 const rank = (d: Decision): number => (d.kind === 'deny' ? 2 : d.kind === 'ask' ? 1 : 0);
 const GUARDED_ASK = 'A path that names a writer (`./bin/tee`) was reduced to that writer and then names a protected path, but protect cannot tell a read from a write here. Confirm the command.';
 const GLOB_ASK = 'A glob in a command path could match a writer and a protected path, so protect cannot tell what it writes. Confirm the command.';
@@ -507,9 +521,9 @@ function withPlainHeads(ctx: Parameters<Check['run']>[0]): Decision {
   let worst = d;
   const take = (r: Decision) => { if (rank(r) > rank(worst)) worst = r; };
   for (const command of wrapperForms(cmd).texts) take(run(command));
-  const gp = guardedPaths(cmd, WRITE_HEADS);
+  const gp = guardedPaths(cmd, WRITE_HEADS());
   if (gp) { const r = run(gp); if (r.kind !== 'allow') take({ kind: 'ask', reason: GUARDED_ASK, check: 'protect' }); } // deny capped to ask
-  if (globGuardAsk(cmd, WRITE_HEADS)) take({ kind: 'ask', reason: GLOB_ASK, check: 'protect' });
+  if (globGuardAsk(cmd, WRITE_HEADS())) take({ kind: 'ask', reason: GLOB_ASK, check: 'protect' });
   return worst;
 }
 protect.run = (ctx) => withWorkBudget(() => withPlainHeads(ctx));

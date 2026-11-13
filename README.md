@@ -6,7 +6,7 @@ A line in `CLAUDE.md` saying "write the test first" or "never read `.env`" is a 
 
 Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, and in every session with `sandbox: always`. Elsewhere, and on native Windows always, the guard and protect checks are a seatbelt.
 
-In plain terms: with the sandbox on, the operating system enforces the guard. Without it, the guard is a best-effort text check that catches mistakes but can be bypassed.
+**Safety model, in two layers.** The first is Claude Code's sandbox, at the OS level. Init turns it on for every session on macOS, and on Linux and WSL2 when `bwrap` and `socat` are installed (`sandbox: always`). Harness also lists its own protected files in the sandbox's `denyWrite`. With the sandbox on, any Bash write to them fails, however it is spelled (`echo >`, `tee`, `/bin/cp`, `sh -c`, Python). The second layer is harness's text checks, guard and protect, which read every command and edit. They cover the Edit and Write tools, which the sandbox doesn't, and every platform. On native Windows there is no sandbox, so the text checks are the only layer: a seatbelt that catches mistakes and can be bypassed. See [Sandbox](docs/reference.md#sandbox).
 
 **Status:** beta, version `0.2.0-beta.2`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. Release notes: [docs/release-notes/0.2.0-beta.2.md](docs/release-notes/0.2.0-beta.2.md).
 

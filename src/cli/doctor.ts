@@ -27,6 +27,8 @@ import { LEGACY_PINS, PINS_NAME, STRUCTURAL, contentPins, pinnedPlugins, pinsMis
 import { pluginList } from '../install/plugin-install.js';
 import { reconcile } from '../install/reconcile.js';
 import { selectedIds } from '../install/plan.js';
+import { effective, type Layer } from '../core/settings-layers.js';
+import { denyWritePaths } from '../checks/protect.js';
 
 export type DoctorDeps = { claudeVersion?: () => string | null; platform?: NodeJS.Platform; pluginList?: typeof pluginList; gh?: Gh };
 
@@ -165,6 +167,18 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   if (mode !== 'off' && platform === 'win32') note('no sandbox on native Windows', 'hooks, permission rules and text checks only');
   const missing = mode !== 'off' && platform === 'linux' ? ['bwrap', 'socat'].filter((c) => !findOnPath(c, env, platform)) : [];
   if (missing.length) (mode === 'always' ? fix : note)(`the Linux sandbox needs bwrap and socat (missing: ${missing.join(', ')})`, 'install them');
+  // The sandbox as this repo's settings files set it (local over project): harness's primary defense for Bash writes.
+  const layer = (rel: string, name: 'local' | 'project'): Layer => { try { return { name, json: JSON.parse(readFileSync(join(root, rel), 'utf8')) }; } catch { return { name, json: undefined }; } };
+  const layers = [layer('.claude/settings.local.json', 'local'), layer('.claude/settings.json', 'project')];
+  const sb = (...p: string[]) => effective(layers, ['sandbox', ...p]);
+  if (platform !== 'win32' && sb('enabled') !== true) note("Claude Code's sandbox is off in interactive sessions", 'set `sandbox: always` in `.harness/config.yaml` and run /harness:update');
+  const dw = sb('filesystem', 'denyWrite'), have = Array.isArray(dw) ? dw : [];
+  const gone = denyWritePaths().filter((p) => !have.includes(p) && !have.includes(p.slice(2)));
+  if (gone.length) fix(`\`sandbox.filesystem.denyWrite\` is missing ${gone.join(', ')}`, 'run /harness:update');
+  if (sb('allowUnsandboxedCommands') === true) note('`sandbox.allowUnsandboxedCommands` is true, so a command can ask to run outside the sandbox', 'set it to false');
+  const ex = sb('excludedCommands');
+  if (Array.isArray(ex) && ex.length) fix(`\`sandbox.excludedCommands\` lists ${ex.join(', ')}, which run outside the sandbox and can write harness's files`, 'remove them, or accept that only the text checks guard those commands');
+  if (sb('filesystem', 'disabled') === true) fix("`sandbox.filesystem.disabled` is true, which turns off the sandbox's write rules", 'remove it');
 
   const whereOf = (dir: string) => (dir === '.' ? 'the root package' : `\`${dir}\``);
   // resultsRename, not hasResultsOutput: a Jest script with the harness reporter counts as set up for any folder.

@@ -162,9 +162,22 @@ With `unattended.require_reason`, an extra file without a reason line is denied 
 
 Hooks run with the user's permissions, so they are a seatbelt, not a sandbox. Use CI and branch protection to enforce rules for everyone.
 
+## Sandbox
+
+Claude Code's sandbox is harness's primary defense for shell commands (owner ruling, 2026-11-13). Checked live on Claude Code 2.1.322: with the sandbox on and harness's files in `sandbox.filesystem.denyWrite`, every spelling of a Bash write to them failed at the OS level (`echo >`, `tee`, `/bin/cp`, a wrapped `sh -c`, Python), while `.harness/tmp` stayed writable. The text checks (guard and protect) are the second layer: they also cover the Edit and Write tools and every platform.
+
+- **denyWrite.** In every `sandbox` mode, init, update and sync write `sandbox.filesystem.denyWrite` into `.claude/settings.json`. The list holds every path protect guards, taken from protect's own table so the two can't drift: `.harness/config.yaml`, `.harness/manifest.json`, `.harness/hooks`, `.harness/state`, `.harness/backup`, `.harness/apply.lock`, `.claude/settings.json` and `.claude/settings.local.json`. A path protect adds later is added too.
+  - Left writable on purpose: `.harness/tmp` (the skills' work folders), `.harness/logs` (every harness command appends an event there), and `.harness/results` (the TDD reporter writes there from your test run).
+  - Each path is recorded like the deny rules. One you remove comes back on the next update, a path of your own stays, uninstall removes harness's paths and the containers it made, and a non-array `denyWrite` is left as is with a note.
+- **On by default where it runs.** Init sets `sandbox: always` on macOS, and on Linux and WSL2 when `bwrap` and `socat` are on PATH. Elsewhere it sets `sandbox: unattended` and says why: native Windows has no sandbox, and Linux needs those two tools. `always` writes `sandbox.enabled: true`, `failIfUnavailable: true`, `allowUnsandboxedCommands: false` and `autoAllowBashIfSandboxed: false`, so interactive sessions run sandboxed too, and Claude Code refuses to run rather than fall back to running unsandboxed. An install made before this keeps its `sandbox:` value; set `sandbox: always` in `.harness/config.yaml` and run `/harness:update` to turn it on.
+- **Network.** The sandbox's network allowlist starts empty. A package install or an HTTPS `git push` asks the first time, some tools fail inside it, and on macOS `git push` over SSH fails. Allow a host under `sandbox.network.allowedDomains` in `.claude/settings.json`, outside a session.
+- **A teammate without a sandbox.** `.claude/settings.json` is shared, and `failIfUnavailable` makes Claude Code refuse to run where the sandbox can't start (native Windows, Linux without `bwrap`/`socat`). Such a teammate turns it off for themselves in `.claude/settings.local.json` with `{"sandbox": {"enabled": false}}`, which their harness then reports as a note.
+- **When the sandbox blocks harness itself.** A harness command the agent runs in Bash that writes a denied file (`init`, `update`, `sync`, `remember`, `tdd on`, …) fails. It prints the command for you to run with Claude Code's `!` prefix, which runs outside the sandbox.
+- **doctor** reports the sandbox off in interactive sessions (a note with the fix), a denyWrite path missing (a fix), `allowUnsandboxedCommands: true` (a note), and an `excludedCommands` list or `filesystem.disabled: true` (a fix: both undo the protection for the commands they cover). It reads `.claude/settings.local.json` over `.claude/settings.json`.
+
 ## Start unattended runs in the sandbox
 
-With the default `sandbox: unattended`, an unattended shell command is denied unless Claude Code's sandbox is on. Start the run like this:
+With `sandbox: unattended` (or `always`), an unattended shell command is denied unless Claude Code's sandbox is on. Under `always` the repo's settings already turn it on; under `unattended`, start the run like this:
 
 ```sh
 HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false}}'
@@ -174,7 +187,7 @@ HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{"enabled":true,"failIf
 
 Without the variable, harness also accepts the sandbox when the settings files (managed, local, project, user) turn on `sandbox.enabled` with `allowUnsandboxedCommands: false`, and on Linux `bwrap` and `socat` are on the hooks' PATH. It reads the local, project and user files as they were when the session started, so a change made mid-session counts from the next session. Native Windows has no sandbox, so its unattended runs keep the text checks. To run unattended without the sandbox, set `sandbox: off` in `.harness/config.yaml`.
 
-In an interactive session under `unattended`, the sandbox is off unless you turn it on. Turn it on before you start the session: set `sandbox.enabled: true` and `allowUnsandboxedCommands: false` in your settings, or launch with the `--settings` above. A sandbox change made mid-session, including with `/sandbox`, is blocked by the `ConfigChange` hook and takes effect in the next session. With `sandbox: always`, `update` writes the sandbox block into `.claude/settings.json` for everyone. Its network allowlist starts empty, so the first `npm install` or HTTPS `git push` prompts, and on macOS `git push` over SSH fails inside the sandbox. To allow a host, add it to `sandbox.network.allowedDomains` in `.claude/settings.json` yourself, outside a session.
+In an interactive session under `unattended`, the sandbox is off unless you turn it on. `sandbox: always` turns it on for everyone (see [Sandbox](#sandbox)). Or turn it on before you start the session: set `sandbox.enabled: true` and `allowUnsandboxedCommands: false` in your settings, or launch with the `--settings` above. A sandbox change made mid-session, including with `/sandbox`, is blocked by the `ConfigChange` hook and takes effect in the next session. The denyWrite paths are in `.claude/settings.json` in every mode, so they apply whenever the sandbox runs.
 
 ## Windows
 
@@ -587,6 +600,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 
 ## Known limits
 
+- The sandbox covers Bash only. The Edit, Write and MultiEdit tools aren't sandboxed: the permission deny rules harness writes and the protect check guard them. A `!` command you type in Claude Code runs outside the sandbox, and so do the commands in `sandbox.excludedCommands`; doctor flags such a list as a fix. Native Windows has no sandbox, so there the text checks are the only layer. The network allowlist starts empty and can block tools; see [Sandbox](#sandbox). The denyWrite check in doctor reads the repo's settings files only, not managed or user settings. It wasn't verified live whether Claude Code honours `sandbox.filesystem.disabled`; doctor treats it as undoing the protection. The live check was a `-p` run on macOS: interactive mode and Linux bubblewrap weren't tested.
 - `init`, `update`, `uninstall` and `context-optimize` start only from their slash commands, not from plain words.
 - When harness asks before an Edit, Write or MultiEdit (the PR-size pause, the multi-file gate, a protected path), Claude Code 2.1.322 shows only its own "Do you want to make this edit to …?" dialog, without harness's reason; Bash dialogs do show it (live check, 2026-11-12). A `systemMessage` sent with the ask is not shown either. For PR size, the size note after the previous edit says why the next edit asks; for the multi-file gate, the note after the first file edited in a turn does the same (once per turn). A protected-path ask has no such note; its reason is in `harness report` and `.harness/logs/events.jsonl`.
 - The guard recognises the commands `harness` and `cli.mjs` by name. A renamed copy or symlink of the CLI (`node h.mjs add x --yes`) isn't recognised, so it doesn't ask first.

@@ -13,3 +13,6 @@ export function ownCommand(cmd: string, args: string[]): string {
 /** One shell word: bare when plain, else single-quoted (embedded quotes the POSIX way); control characters are escaped first so they never reach the terminal. */
 export const shq = (a: string): string => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${(/[\u0000-\u001f\u007f-\u009f]/.test(a) ? esc(a) : a).replace(/'/g, `'\\''`)}'`);
 export const isDenied = (e: unknown): boolean => ['EPERM', 'EACCES'].includes((((e as Error)?.cause ?? e) as NodeJS.ErrnoException)?.code ?? '');
+/** For any harness command the sandbox blocks (its denyWrite covers harness's files): the person's own `!` line, or null. */
+export const deniedHint = (argv: string[], e: unknown): string | null =>
+  (isDenied(e) ? `Claude Code's sandbox blocks harness's own files. ${ownCommand(argv[0] ?? '', argv.slice(1))}` : null);

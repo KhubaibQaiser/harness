@@ -1,10 +1,10 @@
 // Owner ruling 2026-11-13: Claude Code's sandbox is harness's primary defense. init/update/sync write
 // sandbox.filesystem.denyWrite for every protected harness path (derived from protect's table), with the same
 // record / replace / uninstall rules as the other harness settings blocks.
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { DENY_WRITE_SKIPPED, denyWritePaths, PROTECTED } from '../../src/checks/protect.js';
-import { HARNESS_LOCAL } from '../../src/core/paths.js';
-import { TASKS_DIR } from '../../src/done/contract.js';
+import { HARNESS_LOCAL, TASKS_DIR } from '../../src/core/paths.js';
+import { TASKS_DIR as CONTRACT_TASKS_DIR } from '../../src/done/contract.js';
 import { mergeSettings, removeFromSettings } from '../../src/install/merge.js';
 
 const FILE = (blocks: string[], kind = 'update') => ({ rel: '.claude/settings.json', kind, hash: 'x', blocks }) as never;
@@ -74,4 +74,12 @@ test('`always` turns the sandbox on for interactive sessions too, failIfUnavaila
   expect(sb).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false });
   expect(m.notes.join('\n')).toMatch(/sandbox\.network\.allowedDomains/);
   expect(mergeSettings(null, { sandbox: 'unattended' }).notes.join('\n')).not.toMatch(/allowedDomains/);
+});
+
+test('protect loaded on its own lists the task contracts folder (TASKS_DIR comes from a leaf module, never undefined)', async () => {
+  vi.resetModules();
+  const fresh = await import('../../src/checks/protect.js');
+  expect(fresh.PROTECTED).toContain('.harness/tasks/**');
+  expect(fresh.PROTECTED.join()).not.toMatch(/undefined/);
+  expect(CONTRACT_TASKS_DIR).toBe(TASKS_DIR); // contract.ts re-exports the one constant
 });

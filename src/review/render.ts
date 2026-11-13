@@ -7,23 +7,25 @@ export const CODE_ONLY = 'Code-only review: the app was not run.';
 export const NEEDS_HUMAN = 'Needs human action before merge; do not auto-merge.';
 const STEERING_MAX = 5;
 
-const github = (url: string) => { try { return new URL(url).hostname === 'github.com'; } catch { return false; } };
-/** Each part of `s` outside `code spans`, transformed; code spans stay as they are. */
-const outsideCode = (s: string, f: (t: string) => string) => s.split(/(`[^`\n]*`)/).map((p, i) => (i % 2 ? p : f(p))).join('');
+const ZW = '​';
+// Every ASCII punctuation character CommonMark can start markup with: escaped, no link, image, HTML, emphasis, heading,
+// list, table or code span can form, nor a reference definition that a later field could use.
+const MARKUP = /[\\`*_{}[\]()<>#+\-.!|~&]/g;
+/** Numeric entities decode first (not to a control character), so `&#64;` can't reassemble an `@` after escaping. */
+const decode = (s: string) => s.replace(/&#(x[0-9a-f]{1,6}|\d{1,7});/gi, (m, n: string) => {
+  const cp = n[0] === 'x' || n[0] === 'X' ? parseInt(n.slice(1), 16) : Number(n);
+  return cp >= 0x20 && cp <= 0x10ffff && !(cp >= 0x7f && cp <= 0x9f) && !(cp >= 0xd800 && cp <= 0xdfff) ? String.fromCodePoint(cp) : m;
+});
+/** U+200B after `@`, after a scheme or `www`, and before `#<digit>`: GitHub makes no mention, team ping, cross-reference or autolink. */
+const unlink = (s: string) => s.replace(/@/g, `@${ZW}`).replace(/([a-z][a-z0-9+.-]*):\/\//gi, `$1${ZW}://`).replace(/\bwww\./gi, `www${ZW}.`).replace(/#(?=\d)/g, `${ZW}#`);
 
-/** Spec §9 R6: comment text can't ping people, load images, carry raw HTML or link off github.com; then secrets are redacted. */
+/** Spec §9 R6, as the controller ruled: reviewer and PR text is shown as plain text, never markup; secrets are redacted. */
 export function renderText(s: string): string {
-  const linked = outsideCode(s, (t) => t
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/<\/?[A-Za-z][^>]*>/g, '')
-    .replace(/\[([^\]]*)\]\(([^)\s]+)\)/g, (m, text: string, url: string) => (github(url) ? m : `${text} (${url})`))
-    .replace(/(?<![\w`])https?:\/\/[^\s<>()`]+/g, (u) => (github(u) ? u : `\`${u}\``)));
-  return redactSecrets(outsideCode(linked, (t) => t.replace(/(^|[^\w`/])@([A-Za-z0-9][\w-]*(?:\/[\w.-]+)?)/g, '$1`@$2`')));
+  return unlink(redactSecrets(decode(s))).replace(MARKUP, '\\$&');
 }
 
 /** PR text shown as code: backticks inside can't end the span early. */
-const asCode = (s: string) => `\`${redactSecrets(s).replace(/`/g, "'")}\``;
+const asCode = (s: string) => `\`${unlink(redactSecrets(decode(s))).replace(/`/g, "'")}\``;
 
 export const verdict = (kept: PrFinding[]): 'Request changes' | 'Comment' => (kept.some((f) => f.severity === 'critical') ? 'Request changes' : 'Comment');
 

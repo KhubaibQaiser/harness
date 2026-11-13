@@ -145,6 +145,12 @@ test('N5: a config that cannot be read is reported as a read error, not as inval
   }
 });
 
+test('unattended.review defaults to code-only; skip loads; other values are errors', () => {
+  expect(loadConfig(emptyDir()).config.unattended.review).toBe('code-only');
+  expect(loadConfig(dirWith('.harness/config.yaml', 'unattended:\n  review: skip\n')).config.unattended.review).toBe('skip');
+  expect(loadConfig(dirWith('.harness/config.yaml', 'unattended:\n  review: other\n')).errors).toEqual(['"unattended.review" must be one of skip, code-only']);
+});
+
 test('sandbox defaults to unattended', () => {
   expect(loadConfig(emptyDir()).config.sandbox).toBe('unattended');
   expect(loadConfig(dirWith('.harness/config.yaml', 'sandbox: always\n')).config.sandbox).toBe('always');

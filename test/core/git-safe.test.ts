@@ -149,6 +149,7 @@ function gitSpawns(code: string): { at: number; safe: boolean }[] {
 function diffArgs(code: string): { at: number; safe: boolean }[] {
   return [...code.matchAll(/(?:'diff'|"diff"|`diff`)(\s*[,\]]\s*(?:\.\.\.SAFE_DIFF\b)?)?/g)]
     .filter((m) => !/new\s+Set\(\s*$/.test(code.slice(0, code.lastIndexOf('[', m.index!))))
+    .filter((m) => !/\benv\(\s*$/.test(code.slice(0, m.index!))) // the review's data-envelope kind (context.ts), not a git argument
     .map((m) => ({ at: m.index!, safe: /^\s*,\s*\.\.\.SAFE_DIFF\b/.test(m[1] ?? '') }));
 }
 

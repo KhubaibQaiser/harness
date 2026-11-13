@@ -35,9 +35,9 @@ test('permissions.deny is the spec section 2 list, in order', () => {
   expect(s.permissions.deny).toEqual([
     'Read(./.env)', 'Read(./.env.*)', 'Read(./**/.env)', 'Read(./**/.env.*)',
     'Edit(./.harness/hooks/**)', 'Edit(./.harness/state/**)', 'Edit(./.harness/logs/**)', 'Edit(./.harness/backup/**)',
-    'Edit(./.harness/config.yaml)', 'Edit(./.harness/manifest.json)',
+    'Edit(./.harness/config.yaml)', 'Edit(./.harness/manifest.json)', 'Edit(./.harness/reviews/**)',
     'Edit(./.claude/settings.json)', 'Edit(./.claude/settings.local.json)',
     ...push('Bash'), ...push('PowerShell'),
   ]);
-  expect(s.permissions.deny).toHaveLength(34);
+  expect(s.permissions.deny).toHaveLength(35);
 });

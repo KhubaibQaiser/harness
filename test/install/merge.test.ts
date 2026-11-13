@@ -34,10 +34,10 @@ describe('mergeSettings', () => {
     expect(s.hooks.Stop).toHaveLength(2);
     expect(s.hooks.Stop[1].hooks[0].args).toEqual(ARGS);
     expect(s.hooks.SessionEnd).toHaveLength(1);
-    // blocks: 9 hook groups (AskUserQuestion has its own Pre and Post group) + deny rules not already present (33 of 34)
+    // blocks: 9 hook groups (AskUserQuestion has its own Pre and Post group) + deny rules not already present (34 of 35)
     const parsed = blocks.map((b) => JSON.parse(b));
     expect(parsed.filter((b) => b.event)).toHaveLength(9);
-    expect(parsed.filter((b) => b.deny)).toHaveLength(33);
+    expect(parsed.filter((b) => b.deny)).toHaveLength(34);
     expect(parsed.find((b) => b.event === 'Stop').group.hooks[0].args).toEqual(ARGS);
   });
 
@@ -54,11 +54,11 @@ describe('mergeSettings', () => {
     expect(again.blocks).toEqual([]);
   });
 
-  it('a fresh file gets 9 group blocks and 34 deny blocks, nothing dropped', () => {
+  it('a fresh file gets 9 group blocks and 35 deny blocks, nothing dropped', () => {
     const { after, blocks, dropped } = merge(null);
     const parsed = blocks.map((b) => JSON.parse(b));
     expect(parsed.filter((b) => b.event)).toHaveLength(9);
-    expect(parsed.filter((b) => b.deny)).toHaveLength(34);
+    expect(parsed.filter((b) => b.deny)).toHaveLength(35);
     expect(dropped).toEqual([]);
     expect(JSON.parse(after).hooks.Stop[0].hooks[0]).toEqual({ type: 'command', command: 'node', args: ARGS, timeout: 600 });
   });
@@ -84,7 +84,7 @@ describe('mergeSettings', () => {
     expect(dropped).toEqual(Object.entries(BETA_GROUPS).map(([event, group]) => JSON.stringify({ event, group })));
     const parsed = blocks.map((b) => JSON.parse(b));
     expect(parsed.filter((b) => b.event).map((b) => b.event)).toEqual(Object.entries<any[]>(frag.hooks).flatMap(([ev, gs]) => gs.map(() => ev)));
-    expect(parsed.filter((b) => b.deny)).toHaveLength(26);
+    expect(parsed.filter((b) => b.deny)).toHaveLength(27);
     expect(merge(after, [...beta.blocks.filter((b) => !dropped.includes(b)), ...blocks])).toMatchObject({ after, blocks: [], dropped: [] });
   });
 
@@ -210,24 +210,24 @@ describe('mergeClaudeMd', () => {
 describe('mergeGitignore / mergeIgnoreFile', () => {
   it('appends the six lines, once', () => {
     const { after, blocks } = mergeGitignore(fx('.gitignore'));
-    expect(after).toBe('node_modules/\ndist/\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n');
-    expect(blocks).toEqual(['.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n']);
+    expect(after).toBe('node_modules/\ndist/\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n.harness/reviews/\n');
+    expect(blocks).toEqual(['.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n.harness/reviews/\n']);
     expect(mergeGitignore(after)).toEqual({ after, blocks: [] });
   });
   it('null creates; missing newline and CRLF handled; partial adds only missing', () => {
-    expect(mergeGitignore(null).after).toBe('.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n');
+    expect(mergeGitignore(null).after).toBe('.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n.harness/reviews/\n');
     expect(mergeGitignore('a').blocks[0].startsWith('\n')).toBe(true);
-    expect(mergeGitignore('a').after).toBe('a\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n');
-    expect(mergeGitignore('a\r\n').after).toBe('a\r\n.harness/state/\r\n.harness/logs/\r\n.harness/backup/\r\n.harness/results/\r\n.harness/debug/\r\n.harness/reports/\r\n');
-    expect(mergeGitignore('.harness/logs/\n').blocks).toEqual(['.harness/state/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n']);
+    expect(mergeGitignore('a').after).toBe('a\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n.harness/reviews/\n');
+    expect(mergeGitignore('a\r\n').after).toBe('a\r\n.harness/state/\r\n.harness/logs/\r\n.harness/backup/\r\n.harness/results/\r\n.harness/debug/\r\n.harness/reports/\r\n.harness/reviews/\r\n');
+    expect(mergeGitignore('.harness/logs/\n').blocks).toEqual(['.harness/state/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n.harness/reviews/\n']);
   });
   it('mergeGitignore adds .harness/results/', () => {
     const r = mergeGitignore('.harness/state/\n.harness/logs/\n.harness/backup/\n');
-    expect(r.blocks).toEqual(['.harness/results/\n.harness/debug/\n.harness/reports/\n']);
+    expect(r.blocks).toEqual(['.harness/results/\n.harness/debug/\n.harness/reports/\n.harness/reviews/\n']);
   });
-  it('an existing install gets only the reports line on update', () => {
+  it('an existing install gets only the missing lines on update (reports, reviews)', () => {
     const old = '.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n';
-    expect(mergeGitignore(old)).toEqual({ after: old + '.harness/reports/\n', blocks: ['.harness/reports/\n'] });
+    expect(mergeGitignore(old)).toEqual({ after: old + '.harness/reports/\n.harness/reviews/\n', blocks: ['.harness/reports/\n.harness/reviews/\n'] });
   });
   it('ignore file gets .harness/', () => {
     expect(mergeIgnoreFile('dist\n', '.harness/')).toEqual({ after: 'dist\n.harness/\n', blocks: ['.harness/\n'] });
@@ -418,7 +418,7 @@ describe('plugins, marketplace and MCP blocks', () => {
         { name: 'beta', source: { source: 'git-subdir', url: 'o/mono', path: 'plugins/beta', sha: 'b'.repeat(40) } },
       ),
     });
-    expect(s.permissions.deny).toHaveLength(34);
+    expect(s.permissions.deny).toHaveLength(35);
     expect(s.hooks.Stop[0].hooks[0].args).toEqual(ARGS);
     const parsed = r.blocks.map((b) => JSON.parse(b));
     expect(parsed.filter((b) => b.plugin)).toEqual([{ plugin: `alpha@${M}`, item: 'plugin-alpha' }, { plugin: `beta@${M}`, item: 'plugin-beta' }]);

@@ -69,7 +69,7 @@ export function preset(f: Facts, which: Which = pathWhich): Preset {
   config.tdd.coverage_skip = noCov.map((p) => srcGlob(p.dir));
   config.tdd.exempt = EXEMPT;
   config.tdd.diff_coverage = 80;
-  config.unattended = { multi_file_gate: 'block', require_reason: false };
+  config.unattended = { multi_file_gate: 'block', require_reason: false, review: 'code-only' };
 
   const steps: StopStep[] = [];
   const first = (...names: string[]) => names.find((n) => n in scripts);
@@ -103,6 +103,7 @@ export function preset(f: Facts, which: Which = pathWhich): Preset {
   reasons['checks.multiFile'] = 'Asks you once per turn before an agent edits a second source file (test files never count); your approval covers the rest of that turn.';
   reasons['unattended.multi_file_gate'] = 'With no human watching, a multi-file edit is blocked.';
   reasons['unattended.require_reason'] = 'Only used when the unattended gate is allow-log: extra files then need a one-line reason. It has no effect while the gate is block.';
+  reasons['unattended.review'] = 'With no human watching, a PR review is gathered and kept local, never posted.';
   const skipped = skippedSteps.length ? ` Left out because their tool is not on PATH: ${skippedSteps.map((s) => `\`${s.name}\``).join(', ')}.` : '';
   reasons['stop.steps'] = (config.stop.steps.length
     ? 'These are the checks your repo already defines, in a fixed order.'

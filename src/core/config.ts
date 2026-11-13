@@ -57,7 +57,7 @@ export interface HarnessConfig {
   multi_file_gate: { generated: string[] };
   pr_size: { target_lines: number; max_lines: number; max_files: number; exclude: string[] };
   decisions: { max_lines: number; expiry_days: number; nudge: boolean };
-  unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean };
+  unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean; review: 'skip' | 'code-only' };
   stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
   /** Absent until init records a chosen preset. */
   preset?: { id: string; version: string; items: string[]; git: PresetGit };
@@ -86,7 +86,7 @@ export const defaults = (): HarnessConfig => ({
   multi_file_gate: { generated: [] },
   pr_size: { target_lines: 200, max_lines: 400, max_files: 20, exclude: [...PR_SIZE_EXCLUDE] },
   decisions: { max_lines: 20, expiry_days: 90, nudge: true },
-  unattended: { multi_file_gate: 'block', require_reason: false },
+  unattended: { multi_file_gate: 'block', require_reason: false, review: 'code-only' },
   stop: {
     steps: ['format:check', 'lint', 'typecheck', 'test'],
     package_manager: 'pnpm',
@@ -197,6 +197,7 @@ const RULES: Record<string, Rule> = {
   'stop.timeout_s': num(30, 550, true), // 550 fits the 600 s Stop hook timeout
   'tdd.diff_coverage': num(0, 100, false),
   'unattended.multi_file_gate': oneOf('block', 'allow-log', 'off'),
+  'unattended.review': oneOf('skip', 'code-only'),
   'stop.package_manager': oneOf('npm', 'pnpm', 'yarn', 'bun', 'none'),
   'stop.steps': stepsRule,
   sandbox: oneOf('unattended', 'always', 'off'),

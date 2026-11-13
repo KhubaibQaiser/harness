@@ -52,6 +52,7 @@ const WHAT = {
   'decisions.nudge': 'Stop suggests saving a decision when the session shows signals.',
   'unattended.multi_file_gate': 'What the multi-file gate does when no human is watching.',
   'unattended.require_reason': 'With `allow-log`, extra files need a one-line reason. No effect while the gate is `block`.',
+  'unattended.review': '`code-only`: an unattended `harness review` gathers the PR for a code-only review that is never posted; `skip`: it does nothing.',
   'stop.steps': 'Commands that must pass before the agent may stop.',
   'stop.package_manager': 'Used to run script-name steps.',
   'stop.max_attempts': 'How many times the Stop gate blocks before it gives up and lets the agent stop.',

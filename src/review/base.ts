@@ -65,7 +65,6 @@ const hooksOf = (t: string | null) => {
   if (t === null) return null;
   try { return { v: (JSON.parse(t) as { hooks?: unknown })?.hooks ?? null }; } catch { return { unparsable: t }; }
 };
-const same = (a: Buffer | null, b: Buffer | null) => (a === null || b === null ? a === b : a.equals(b));
 
 export interface BaseCommit { sha: string; blobs: Record<string, string | null> }
 
@@ -75,18 +74,7 @@ export interface BaseCommit { sha: string; blobs: Record<string, string | null> 
 export function driftCheck(root: string, exec: ExecBytes, base: string, commits: BaseCommit[]): { blobs: Record<string, string | null> } | { error: string } {
   const shas = [...new Set(commits.map((c) => c.sha.slice(0, 7)))].join(' and ');
   const differs = (rel: string) => ({ error: `review: ${rel} differs from ${base} (${shas}); run the review from ${base} or a clean worktree of it` });
-  const buf = (t: string | null | undefined) => (t == null ? null : Buffer.from(t, 'utf8'));
-  const blobs = { ...commits[0]!.blobs };
-  for (const f of DRIFT_FILES) {
-    const w = readOrNull(root, f), c = commits.find((x) => same(w, buf(x.blobs[f])));
-    if (!c) return differs(f);
-    blobs[f] = c.blobs[f] ?? null;
-  }
-  const s = '.claude/settings.json', w = hooksOf(readOrNull(root, s)?.toString('utf8') ?? null);
-  const cs = commits.find((x) => isDeepStrictEqual(w, hooksOf(x.blobs[s] ?? null)));
-  if (!cs) return differs(s);
-  blobs[s] = cs.blobs[s] ?? null;
-  const trees = commits.map((c) => new Map(lsTree(exec, root, c.sha, ['.harness/hooks/']).map((e) => [e.path, e.sha])));
+  const trees = commits.map((c) => new Map(lsTree(exec, root, c.sha, [...DRIFT_FILES, '.harness/hooks/']).map((e) => [e.path, e.sha])));
   let work: string[] = [];
   try {
     work = readdirSync(join(root, '.harness', 'hooks'), { recursive: true, withFileTypes: true }).filter((d) => !d.isDirectory())
@@ -94,9 +82,31 @@ export function driftCheck(root: string, exec: ExecBytes, base: string, commits:
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
-  const ids = [...new Set(trees.flatMap((t) => [...t.values()]))];
-  const got = new Map(catFile(exec, root, ids).map((b, k) => [ids[k]!, b]));
-  const bad = [...new Set([...trees.flatMap((t) => [...t.keys()]), ...work])].sort()
-    .find((p) => { const wb = readOrNull(root, p); return !trees.some((t) => same(wb, t.has(p) ? got.get(t.get(p)!) ?? null : null)); });
+  const hooks = [...new Set([...trees.flatMap((t) => [...t.keys()].filter((p) => p.startsWith('.harness/hooks/'))), ...work])].sort();
+  const hashes = worktreeHashes(exec, root, [...DRIFT_FILES, ...hooks]);
+  // The commit whose blob equals the working-tree file (both absent counts), compared by object id after git's eol and clean normalization.
+  const match = (p: string) => commits.findIndex((_, k) => (trees[k]!.get(p) ?? null) === (hashes.get(p) ?? null));
+  const blobs = { ...commits[0]!.blobs };
+  for (const f of DRIFT_FILES) {
+    const k = match(f);
+    if (k < 0) return differs(f);
+    blobs[f] = commits[k]!.blobs[f] ?? null;
+  }
+  const s = '.claude/settings.json', w = hooksOf(readOrNull(root, s)?.toString('utf8') ?? null);
+  const cs = commits.find((x) => isDeepStrictEqual(w, hooksOf(x.blobs[s] ?? null)));
+  if (!cs) return differs(s);
+  blobs[s] = cs.blobs[s] ?? null;
+  const bad = hooks.find((p) => match(p) < 0);
   return bad === undefined ? { blobs } : differs(bad);
+}
+
+/** `git hash-object` of each working-tree file that exists: the blob id git would store, after eol conversion (autocrlf, .gitattributes) and clean filters. */
+function worktreeHashes(exec: ExecBytes, root: string, paths: string[]): Map<string, string> {
+  const present = paths.filter((p) => readOrNull(root, p) !== null);
+  if (!present.length) return new Map();
+  const r = exec('git', [...SAFE_GIT, '-C', root, 'hash-object', '--', ...present], BIG);
+  if (r.status !== 0 || r.tooBig || r.missing) throw failed('hash-object', r);
+  const ids = r.stdout.toString('utf8').split('\n').filter(Boolean);
+  if (ids.length !== present.length) throw new Error('review: git hash-object gave an unexpected reply');
+  return new Map(present.map((p, k) => [p, ids[k]!]));
 }

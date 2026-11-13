@@ -1,11 +1,12 @@
 import { stringify } from 'yaml';
-import { crossKeyErrors, DEFAULT_RESULTS_DIR, defaults, type HarnessConfig, type Issue, overlay } from './config.js';
+import { crossKeyErrors, DEFAULT_RESULTS_DIR, defaults, type HarnessConfig, inheritPrBody, type Issue, overlay } from './config.js';
 
 export function validateConfig(raw: unknown): { ok: true; config: HarnessConfig } | { ok: false; errors: string[] } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, errors: ['config: must be a mapping'] };
   const config = defaults();
   const issues: Issue[] = [];
   overlay(config as unknown as Record<string, unknown>, raw as Record<string, unknown>, '', issues);
+  inheritPrBody(config, raw as Record<string, unknown>);
   const cross = crossKeyErrors(config).map(({ path, detail }) => `${path}: ${detail}`);
   if (issues.length === 0 && cross.length === 0) return { ok: true, config };
   const text = ({ path, kind, detail }: Issue) => `${path}: ${kind === 'unknown' ? 'unknown key' : kind === 'mapping' ? 'must be a mapping' : detail}`;

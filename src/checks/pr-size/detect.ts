@@ -39,16 +39,17 @@ const PUSH_DELETE_FLAGS = new Set(['--delete', '-d']);
 const BUNDLED_DELETE = /^-[A-Za-z]*d[A-Za-z]*$/;
 const PUSH_ALL_FLAGS = new Set(['--all', '--branches', '--mirror']);
 
-/** The words after `pr create`, or null when `rest` (the words after gh) is not `pr create`; -R/--repo may come between. */
-function afterPrCreate(rest: string[]): string[] | null {
+/** The words after `pr <sub>`, or null when `rest` (the words after gh) is not `pr <sub>`; -R/--repo may come between. */
+export function afterPr(rest: string[], sub: string): string[] | null {
   const words: string[] = [];
   let i = 0;
   for (; i < rest.length && !words[1]; i++) {
     if (rest[i] === '-R' || rest[i] === '--repo') i++;
     else if (!rest[i].startsWith('-')) words.push(rest[i]);
   }
-  return words[0] === 'pr' && words[1] === 'create' ? rest.slice(i) : null;
+  return words[0] === 'pr' && words[1] === sub ? rest.slice(i) : null;
 }
+const afterPrCreate = (rest: string[]) => afterPr(rest, 'create') ?? afterPr(rest, 'new'); // `pr new` is gh's alias
 
 function createTarget(args: string[]): PrTarget {
   const t: { kind: 'create'; base?: string; head?: string } = { kind: 'create' };
@@ -110,7 +111,7 @@ function visitSeg(out: PrTarget[]) {
 export function prTargets(command: string, w: Where): PrTarget[] {
   const out: PrTarget[] = [];
   walkCommands<never>(command, w, visitSeg(out), {
-    whole: (words) => (['eval', 'gh', 'pr', 'create'].every((x) => words.includes(x)) ? (out.push({ kind: 'create' }), null) : null),
+    whole: (words) => (['eval', 'gh', 'pr'].every((x) => words.includes(x)) && (words.includes('create') || words.includes('new')) ? (out.push({ kind: 'create' }), null) : null),
   });
   return [...new Map(out.map((t) => [JSON.stringify(t), t])).values()];
 }

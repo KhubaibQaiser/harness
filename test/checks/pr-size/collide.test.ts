@@ -29,6 +29,8 @@ test('a pending pause and a second-file edit: one ask that names both, and appro
 test('a guard ask and a PR-size ask on one Bash command: one ask that names both', async () => {
   const root = repo();
   commit(root, { 'a.ts': lines(512) });
+  mkdirSync(join(root, '.harness'), { recursive: true });
+  writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  prBody: false\n'); // the body check would deny this bare create first
   const o = (await hook(root, 'PreToolUse', { tool_name: 'Bash', tool_input: { command: 'git reset --hard HEAD~1 && gh pr create' } })).hookSpecificOutput!;
   expect(o.permissionDecision).toBe('ask');
   const [first, second] = o.permissionDecisionReason!.split('\nAlso: ');

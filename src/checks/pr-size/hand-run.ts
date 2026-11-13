@@ -4,11 +4,11 @@ import { posix } from 'node:path';
 import { runnerName, type Seg, walkCommands, type Where } from '../guard.js';
 
 // dispatch.ts's entry flags: with one of them the dispatcher never reads stdin as a hook event.
-const ENTRY_FLAGS = new Set(['--pr-size', '--pr-size-raise', '--self-test']);
+const ENTRY_FLAGS = new Set(['--pr-size', '--pr-size-raise', '--self-test', '--workdir']);
 const COPIERS = new Set(['cp', 'mv', 'ln', 'rsync', 'install', 'ditto', 'dd', 'scp', 'tee', 'copy', 'copy-item', 'move-item']);
 // A redirect word, spaced or not (`>`, `>>x`, `2>`, `<<<`).
 const REDIRECT = /^\d*(<{1,3}|>{1,2}\|?|&>)/;
-export const HAND_RUN = "Blocked by pr-size: hook events come only from Claude Code. Run a hook dispatcher (`.harness/hooks/dispatch.mjs`, or the package's `dist/hooks/dispatch.mjs`) by hand only with `--pr-size`, `--pr-size-raise` or `--self-test`, and don't copy, move or link hook files, or pipe or redirect them, even to read them.";
+export const HAND_RUN = "Blocked by pr-size: hook events come only from Claude Code. Run a hook dispatcher (`.harness/hooks/dispatch.mjs`, or the package's `dist/hooks/dispatch.mjs`) by hand only with `--pr-size`, `--pr-size-raise`, `--workdir` or `--self-test`, and don't copy, move or link hook files, or pipe or redirect them, even to read them.";
 
 // One spelling per path: quotes dropped, `\` read as `/`, and `//`, `./` and `..` collapsed (`.harness//hooks/./x`).
 const norm = (t: string) => posix.normalize(t.replace(/['"]/g, '').replace(/\\/g, '/'));

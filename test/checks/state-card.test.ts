@@ -26,7 +26,7 @@ describe('card lines', () => {
   test('golden: fresh state', () => {
     expect(stateCard(mk())).toBe([
       LINE1,
-      'Gates: guard on, protect on, dep-verify on, multi-file off, tdd on, stop on, pr-size on, decisions on',
+      'Gates: guard on, protect on, dep-verify on, multi-file off, tdd on, stop on, pr-size on, pr-body on, decisions on',
       'TDD: on; test files written this session: 0',
       'Locked tests (failed this session, not yet passing; fix the code, not the test): none',
       'Pending: none',

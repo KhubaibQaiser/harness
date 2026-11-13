@@ -3,7 +3,7 @@ kind: own-skill
 title: PR ship
 source:
   type: own
-  checks: [prSize]
+  checks: [prSize, prBody]
   files:
     - from: skills/pr-ship/SKILL.md
       to: .claude/skills/pr-ship/SKILL.md

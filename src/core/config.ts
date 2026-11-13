@@ -31,7 +31,7 @@ export interface Selected {
 
 export interface HarnessConfig {
   version: 1;
-  checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop' | 'prSize' | 'decisions', boolean>;
+  checks: Record<'guard' | 'protect' | 'depVerify' | 'multiFile' | 'tdd' | 'stop' | 'prSize' | 'prBody' | 'decisions', boolean>;
   sandbox: SandboxMode;
   /** 0 means no catalog. */
   catalog_version: number;
@@ -74,7 +74,7 @@ export const PR_SIZE_EXCLUDE: string[] = [
 
 export const defaults = (): HarnessConfig => ({
   version: 1,
-  checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true, prSize: true, decisions: true },
+  checks: { guard: true, protect: true, depVerify: true, multiFile: false, tdd: false, stop: true, prSize: true, prBody: true, decisions: true },
   sandbox: 'unattended',
   catalog_version: 0,
   project: { type: '', domain: '', compliance: [], data_handling: '', team_size: 0, open_source: false, codeowners: [], deploy_target: '', run_budget_usd: 0, named_items: [], scope_paths: [] },
@@ -232,6 +232,12 @@ export function crossKeyErrors(c: HarnessConfig): { path: string; detail: string
 
 export type Issue = { path: string; kind: 'unknown' | 'mapping' | 'invalid'; detail?: string };
 
+/** A config written before `checks.prBody` existed takes pr-ship's other check, `prSize`: no install without pr-ship turns it on. */
+export function inheritPrBody(config: HarnessConfig, user: Record<string, unknown>): void {
+  const c = user.checks;
+  if (!isObj(c) || !Object.hasOwn(c, 'prBody')) config.checks.prBody = config.checks.prSize;
+}
+
 // Overlay `user` onto `base` in place; unknown, mistyped or out-of-range keys keep the default and are reported.
 export function overlay(base: Record<string, unknown>, user: Record<string, unknown>, path: string, issues: Issue[]): void {
   for (const [k, v] of Object.entries(user)) {
@@ -288,6 +294,7 @@ export function loadConfig(root: string, read: (p: string, e: 'utf8') => string 
   }
   const issues: Issue[] = [];
   overlay(config as unknown as Record<string, unknown>, user, '', issues);
+  inheritPrBody(config, user);
   for (const { path: p, kind, detail } of issues) {
     if (kind === 'unknown') fail(`config: unknown key "${p}" ignored`, `unknown key "${p}"`);
     else if (kind === 'mapping') fail(`config: "${p}" must be a mapping; using default`, `"${p}" must be a mapping`);

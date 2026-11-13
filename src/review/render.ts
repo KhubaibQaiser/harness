@@ -1,5 +1,6 @@
 import type { PrFinding, PrReview } from '../ai/pr-review.js';
 import { redactSecrets } from '../core/secrets.js';
+import { escPath } from './context.js';
 import type { GatherJson } from './gather.js';
 
 export const CODE_ONLY = 'Code-only review: the app was not run.';
@@ -43,9 +44,9 @@ export function summaryBody(p: SummaryParams): string {
     ...(g.fork ? [`From a fork: ${renderText(g.fork)}`] : []),
     ...(human ? [NEEDS_HUMAN] : []),
     ...(g.body_template && g.body_problems.length ? [`PR body check: ${g.body_problems.join('; ')}`] : []),
-    ...(p.inSummary.length ? [p.inSummary.map((f) => `- ${renderText(f.file)}:${f.line} [${f.severity}] ${renderText(f.title)}`).join('\n')] : []),
+    ...(p.inSummary.length ? [p.inSummary.map((f) => `- ${renderText(escPath(f.file))}:${f.line} [${f.severity}] ${renderText(f.title)}`).join('\n')] : []),
     ...(p.collapsed ? [`${p.collapsed} more findings not shown (review.max_findings is ${p.maxFindings})`] : []),
-    ...(g.omitted.length ? [g.omitted.map((o) => `- ${renderText(o.path)}: ${o.why}`).join('\n')] : []),
+    ...(g.omitted.length ? [g.omitted.map((o) => `- ${renderText(escPath(o.path))}: ${o.why}`).join('\n')] : []),
     ...(steering.length ? [`Text in this PR that addresses the reviewer:\n${steering.map((s) => `- ${asCode(s.text)}`).join('\n')}`] : []),
     renderText(review.summary),
     renderText(review.limits),

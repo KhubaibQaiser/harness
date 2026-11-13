@@ -1,12 +1,12 @@
 import { esc } from '../core/config.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 
-const PINS = 'harness-pins';
 // Matches the marketplace being unknown, never the id alone. Claude Code 2.1.322 (live check A1, 2026-11-12) says
 // `Plugin "x" not found in marketplace "harness-pins"` when no trusted session has registered the project's marketplace yet,
-// and its "marketplace update" hint fails too. Every harness id comes from harness-pins, so that wording means "not registered".
-const NO_MARKET = /marketplace\b.*harness-pins.*(not found|unknown|not registered)|harness-pins.*marketplace.*(not found|unknown|not registered)|not found in marketplace\W+harness-pins\b/i;
-const NOT_REGISTERED = `Claude Code hasn't registered \`${PINS}\` yet. Restart Claude Code in this folder (trust it if asked), then run /harness:sync.`;
+// and its "marketplace update" hint fails too. Every harness id comes from its pins marketplace, so that wording means "not registered".
+const P = 'harness-pins(?:-[0-9a-f]+)?';
+const NO_MARKET = new RegExp(`marketplace\\b.*${P}.*(not found|unknown|not registered)|${P}.*marketplace.*(not found|unknown|not registered)|not found in marketplace\\W+${P}\\b`, 'i');
+const notRegistered = (market: string) => `Claude Code hasn't registered \`${market}\` yet. Restart Claude Code in this folder (trust it if asked), then run /harness:sync.`;
 
 /** The last stdout line that parses as a JSON object (the CLI may print progress lines before it). */
 function lastJson(stdout: string): Record<string, unknown> | null {
@@ -36,7 +36,7 @@ export function installPlugins(ids: string[], exec: Exec = defaultExec): { ok: s
     }
     // The CLI's own words are untrusted text: escaped before they reach the terminal.
     const raw = r.missing ? 'Claude Code CLI not found on PATH' : esc(String(j?.message || r.stderr?.trim().split('\n')[0] || `exit ${r.status}`));
-    failed.push({ id, message: !r.missing && NO_MARKET.test(raw) ? NOT_REGISTERED : raw });
+    failed.push({ id, message: !r.missing && NO_MARKET.test(raw) ? notRegistered(id.slice(id.lastIndexOf('@') + 1)) : raw });
   }
   return { ok, failed };
 }

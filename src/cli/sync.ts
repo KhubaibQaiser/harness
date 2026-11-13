@@ -81,7 +81,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   changes.push(...rules.changes);
   const ruleFix = manifestWork(rules) > 0;
 
-  const wanted = pinnedPlugins(cat.items.filter((i) => have.includes(i.id))).map((p) => `${p.name}@harness-pins`);
+  const wanted = pinnedPlugins(cat.items.filter((i) => have.includes(i.id))).map((p) => `${p.name}@${planned.market}`);
   let present: string[] = [];
   let missing: string[] = [];
   if (wanted.length) {

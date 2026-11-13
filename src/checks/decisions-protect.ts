@@ -1,4 +1,5 @@
 // Team decisions and their generated rules change only through `harness remember` (spec §6.2). No deny rule (C9).
+import { type OptTable, readOptions } from '../core/options.js';
 import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, posix, relative, resolve } from 'node:path';
 import picomatch from 'picomatch';
@@ -197,13 +198,21 @@ export function becomesDecision(root: string, config: HarnessConfig, o: { tool: 
 }
 
 // Programs that write the file they are given themselves (re-review): protect can't read what they change.
-const EDITORS = new Set(['ex', 'vi', 'vim', 'nvim', 'view', 'ed', 'red', 'nano', 'pico']);
+const EDITORS = new Set(['ex', 'vi', 'vim', 'nvim', 'view', 'ed', 'red', 'nano', 'pico', 'emacs', 'vimdiff', 'gvim', 'mvim', 'micro', 'hx', 'kak', 'joe', 'mcedit']);
+// sudo's options, so `sudo -u x -e FILE` and `sudo --user=x --edit FILE` are read as sudoedit.
+const SUDO_OPTS: OptTable = { v: 'ugCDhprtUTR', lv: ['user', 'group', 'close-from', 'chdir', 'host', 'prompt', 'role', 'type', 'other-user', 'command-timeout', 'chroot'], lf: ['edit', 'login', 'shell', 'non-interactive', 'preserve-env', 'set-home', 'background', 'stdin', 'askpass'], prefix: true };
 const WRAPS = /^(sudo|command|builtin|exec|env|nohup|nice|time)$|^\w+=/;
 /** The file words of an editor run in each segment (after the wrappers above); its `-c`/`+` commands count too, harmlessly. */
 export const editorFiles = (segs: string[][]): string[] => segs.flatMap((toks) => {
+  const files = (from: number) => toks.slice(from).filter((t) => !/^[-+]/.test(t));
+  if (base(toks[0] ?? '') === 'sudoedit') return files(1); // sudoedit FILE edits via $EDITOR
+  if (base(toks[0] ?? '') === 'sudo') { // sudo [options] -e FILE
+    const p = readOptions(toks.slice(1), SUDO_OPTS);
+    if (p.flags.includes('-e') || p.flags.includes('--edit')) return p.pos.filter((t) => !/^[-+]/.test(t));
+  }
   let i = 0;
   while (toks[i] !== undefined && WRAPS.test(toks[i]!)) i++;
-  return EDITORS.has(base(toks[i] ?? '')) ? toks.slice(i + 1).filter((t) => !/^[-+]/.test(t)) : [];
+  return EDITORS.has(base(toks[i] ?? '')) ? files(i + 1) : [];
 });
 export const EDITOR_REASON = 'An editor run by the agent writes the file itself, and this file is a team decision, a new file in docs/decisions/ or a generated rule. Decisions change through harness remember; approve only if the person asked for this edit.';
 /** An editor's file that is a decision path, or a dated plain file there it could turn into one: ask. */

@@ -8,9 +8,10 @@ import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import { becomesDecision, codeNames, decisionRoutes, decisionsDeny, editorAsk, editorFiles, globHits } from './decisions-protect.js';
 import type { Decision } from '../hooks/types.js';
-import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
+import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, targetDir, withoutHeredocBodies, WRITER_ALIAS } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
 import { SAFE_GIT } from '../core/git-safe.js';
+import { type OptTable, readOptions, valuesOf } from '../core/options.js';
 import { globGuardAsk, guardedPaths, plainHeads, wrapperForms } from '../core/command-head.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
@@ -57,6 +58,7 @@ function cdDirs(cmds: string[]): string[] | null {
   return out;
 }
 const CD_REASON = "The command changes to a folder protect can't resolve ($X, -, ~ or no folder), so it can't tell where its writes land. Confirm the command.";
+const EDITOR_PROTECTED_REASON = 'An editor run by the agent writes the file itself, and this is a harness file or a Claude settings file. Confirm only if the person asked for this edit.';
 const relative = (ps: string[]): string[] => ps.filter((p) => p && !nodePath.isAbsolute(p));
 const fromDirs = (dirs: string[], ps: string[]): string[] => [...ps, ...dirs.flatMap((d) => relative(ps).map((p) => nodePath.posix.join(d, p)))];
 
@@ -64,11 +66,15 @@ const fromDirs = (dirs: string[], ps: string[]): string[] => [...ps, ...dirs.fla
 function moveCopyTargets(cmds: string[]): { mv: string[]; cp: string[] } {
   const r = { mv: [] as string[], cp: [] as string[] };
   for (const toks of cmds.flatMap(segTokens)) {
-    const i = toks.findIndex((t) => t === 'mv' || t === 'cp');
+    const named = (t: string) => WRITER_ALIAS[t] ?? t; // gcp/gmv; a path-qualified /bin/cp is read by the plain-head reading, not here
+    const i = toks.findIndex((t) => named(t) === 'mv' || named(t) === 'cp');
     if (i < 0) continue;
+    const bucket = named(toks[i]) === 'mv' ? r.mv : r.cp;
+    const dir = targetDir(toks.slice(i + 1)); // -t DIR / --target-directory: that folder is written
+    if (dir !== null) { bucket.push(dir); continue; }
     const args = toks.slice(i + 1).filter((t) => !t.startsWith('-'));
-    if (toks[i] === 'mv') r.mv.push(...args);
-    else r.cp.push(...args.slice(-1));
+    if (named(toks[i]) === 'mv') bucket.push(...args);
+    else bucket.push(...args.slice(-1));
   }
   return r;
 }
@@ -124,6 +130,13 @@ function switchAsk(cmds: string[], cwd: string): Decision | null {
 
 const base = (t: string) => t.split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, '');
 const RSYNC_VALUE = new Set(['-e', '--rsh', '--exclude', '--include', '--filter', '-f', '--exclude-from', '--include-from', '--files-from', '--log-file', '--partial-dir', '-T', '--temp-dir', '--backup-dir', '--compare-dest', '--copy-dest', '--link-dest', '--chmod', '--chown', '--port', '--password-file', '--bwlimit', '--timeout', '--max-size', '--min-size', '-B', '--block-size', '--suffix', '-M', '--remote-option', '--rsync-path']);
+// tar's options for the getopt reader: value letters and long names (GNU tar takes an unambiguous long prefix).
+const TAR_OPTS: OptTable = {
+  v: 'CfTXbHKLNVgFI', lv: ['directory', 'file', 'files-from', 'exclude-from', 'blocking-factor', 'format', 'starting-file', 'tape-length', 'newer', 'label', 'listed-incremental', 'info-script', 'use-compress-program', 'exclude', 'transform', 'owner', 'group', 'mode', 'strip-components', 'to-command'],
+  lo: ['one-top-level', 'backup', 'checkpoint'],
+  lf: ['extract', 'get', 'create', 'append', 'update', 'list', 'compare', 'delete', 'verbose', 'gzip', 'gunzip', 'bzip2', 'xz', 'zstd', 'lzma', 'keep-old-files', 'overwrite', 'preserve-permissions', 'same-owner', 'no-same-owner', 'absolute-names', 'wildcards', 'no-recursion', 'totals', 'auto-compress', 'ignore-zeros', 'skip-old-files', 'unlink-first', 'recursive-unlink'],
+  prefix: true,
+};
 const DELETERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'truncate', 'mv']);
 /**
  * Targets of touch, find -delete/-exec rm (its start paths), tar extract (-C/--directory) and create (-f), unzip -d
@@ -132,10 +145,11 @@ const DELETERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'truncate', 'mv']);
 function moreWriteTargets(cmds: string[]): string[] {
   const out: string[] = [];
   for (const toks of cmds.flatMap(segTokens)) {
-    const i = toks.findIndex((t) => ['touch', 'find', 'tar', 'unzip', 'rsync'].includes(base(t)));
+    const named = (t: string) => WRITER_ALIAS[base(t)] ?? base(t); // gtar, bsdtar read as tar
+    const i = toks.findIndex((t) => ['touch', 'find', 'tar', 'unzip', 'rsync'].includes(named(t)));
     if (i < 0) continue;
     const args = toks.slice(i + 1);
-    const name = base(toks[i]);
+    const name = named(toks[i]);
     // `-C DIR`, `--directory DIR` or `--directory=DIR`. ponytail: an attached `-CDIR` is not read.
     const valueOf = (short: string, long: string): string[] =>
       args.flatMap((t, j) => (t === short || t === long ? [args[j + 1] ?? ''] : t.startsWith(long + '=') ? [t.slice(long.length + 1)] : []));
@@ -149,14 +163,19 @@ function moreWriteTargets(cmds: string[]): string[] {
       const starts = args.slice(0, Math.max(0, args.findIndex((t) => /^[-(!]/.test(t)))).filter(Boolean);
       if (deletes) out.push(...(starts.length ? starts : ['.']));
     } else if (name === 'tar') {
-      const key = args[0] ?? '';
-      const keyLetters = /^-?[a-zA-Z]+$/.test(key) && !key.startsWith('--') ? key.replace(/^-/, '') : '';
-      const has = (letter: string, long: string) => keyLetters.includes(letter) || args.includes('-' + letter) || args.includes(long);
-      if (has('x', '--extract') || args.includes('--get')) out.push(...valueOf('-C', '--directory'));
-      if (has('c', '--create') || has('r', '--append') || has('u', '--update')) {
-        out.push(...valueOf('-f', '--file'));
-        if (keyLetters.includes('f')) out.push(args[1] ?? ''); // tar -czf OUT …
+      // Read the getopt way, in any order (-C.harness, -zxC DIR, --dir=, --direc). An old-style key (`xC DIR -f a.tar`)
+      // hands each value letter the next word, as tar does. Extract writes into -C/--one-top-level and writes each member
+      // named; create/append/update write the -f archive.
+      let a = args;
+      if (/^[a-zA-Z]+$/.test(a[0] ?? '')) {
+        const key: string[] = [];
+        let r = 1;
+        for (const c of a[0]) { key.push(`-${c}`); if (TAR_OPTS.v!.includes(c)) key.push(a[r++] ?? ''); }
+        a = [...key, ...a.slice(r)];
       }
+      const p = readOptions(a, TAR_OPTS), has = (s: string, l: string) => p.flags.includes(s) || p.flags.includes(l);
+      if (has('-x', '--extract') || has('--get', '--get')) out.push(...valuesOf(p, ['-C', '--directory', '--one-top-level']), ...p.pos);
+      if (has('-c', '--create') || has('-r', '--append') || has('-u', '--update')) out.push(...valuesOf(p, ['-f', '--file']));
     } else if (name === 'unzip') out.push(...valueOf('-d', '--directory'));
     else if (name === 'rsync') {
       // Options may follow the paths, and some take the next word (--exclude node_modules, -e ssh).
@@ -456,6 +475,8 @@ export const protect: Check = {
       const hit = paths.filter((p) => p && isProtected(root, p, exempt));
       // Protected only because the exemption is off: ask. tmp itself, its .gitignore or a protected name below it: deny.
       if (hit.length) return !exempt && hit.every((p) => inWorkdir(root, p)) ? { kind: 'ask', reason: LINK_REASON, check: 'protect' } : { kind: 'deny', reason: REASON, check: 'protect' }; // before the cd ask (re-review 2, N1)
+      // An editor (vim, ex, sudoedit, …) writes the file itself; on a protected path the agent confirms rather than being denied.
+      if (edited.some((p) => p && isProtected(root, p, exempt))) return { kind: 'ask', reason: EDITOR_PROTECTED_REASON, check: 'protect' };
       if (cdDirs(cmds) === null && relative([...paths, ...dr.writes, ...dr.removed, ...edited]).length) return { kind: 'ask', reason: CD_REASON, check: 'protect' };
       const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
@@ -471,7 +492,7 @@ export const protect: Check = {
 // dispatcher denies.
 const unbudgeted = protect.run;
 // Commands whose writes protect reads: a path to one after a wrapper no table knows still heads its own segment.
-const WRITE_HEADS: ReadonlySet<string> = new Set([...WRITERS, ...DELETERS, 'sed', 'perl', 'git', 'curl', 'wget', 'sort', 'time', 'tar', 'unzip', 'find']);
+const WRITE_HEADS: ReadonlySet<string> = new Set([...WRITERS, ...DELETERS, 'sed', 'perl', 'git', 'curl', 'wget', 'sort', 'time', 'tar', 'unzip', 'find', 'openssl', 'patch', 'xxd', 'sudoedit', 'ex', 'vim', 'nvim', ...Object.keys(WRITER_ALIAS)]);
 const rank = (d: Decision): number => (d.kind === 'deny' ? 2 : d.kind === 'ask' ? 1 : 0);
 const GUARDED_ASK = 'A path that names a writer (`./bin/tee`) was reduced to that writer and then names a protected path, but protect cannot tell a read from a write here. Confirm the command.';
 const GLOB_ASK = 'A glob in a command path could match a writer and a protected path, so protect cannot tell what it writes. Confirm the command.';

@@ -246,6 +246,7 @@ test('approve --replace shows the diff against the committed contract and needs 
   s.write(f, { ...JSON.parse(s.read(f)), title: 'Replaced' });
   expect(await task(['approve', '--replace', f], s.cli)).toBe(2); // a TTY yes is not enough
   const preview = s.text();
+  expect(preview).toContain('Baseline: the version approved in this checkout');
   expect(preview).toMatch(/^-\s+"title": "Add login",$/m);
   expect(preview).toMatch(/^\+\s+"title": "Replaced",$/m);
   expect(preview).toContain(`task approve --replace ${f} --yes`);
@@ -255,12 +256,33 @@ test('approve --replace shows the diff against the committed contract and needs 
   expect(s.loaded().title).toBe('Replaced');
   expect(readTaskHashes(s.root).t1).toBe(contractHash(s.loaded()));
   expect(activeTaskId(s.root, {})).toBe('t1');
-  // a contract with no committed version is "new"
+  // no trusted copy: the whole replacement is shown
   const g = drafted(s, { id: 't9' });
   s.text();
   expect(await task(['approve', '--replace', g], s.cli)).toBe(2);
-  expect(s.text()).toContain('new: t9 has no committed contract');
+  const full = s.text();
+  expect(full).toContain('no trusted copy of t9 to diff against; showing the full replacement');
+  expect(full).toContain('"id": "t9"');
   expect(await task(['approve', '--replace', '--replace', g, '--yes'], s.cli)).toBe(2);
+});
+
+test('approve --replace diffs against the default branch, not a contract the agent forged at HEAD', async () => {
+  const { clone, cli, lines } = await committedClone();
+  for (const [k, v] of [['user.name', 'agent'], ['user.email', 'a@example.com'], ['commit.gpgsign', 'false']]) git(clone, 'config', k!, v!);
+  const p = join(clone, '.harness/tasks/t1.json');
+  const forged = { ...(JSON.parse(readFileSync(p, 'utf8')) as Contract), title: 'Forged' };
+  git(clone, 'checkout', '-q', '-b', 'agent');
+  commit(clone, { '.harness/tasks/t1.json': JSON.stringify({ ...forged, sha256: contractHash(forged) }, null, 2) + '\n' }, 'forge');
+  // a draft equal to the forgery: against HEAD it would look like no change
+  const f = `${wd}/task.json`;
+  mkdirSync(join(clone, wd), { recursive: true });
+  writeFileSync(join(clone, f), JSON.stringify({ ...forged, approved_by: null, approved_at: null, closed_at: null, sha256: null }));
+  expect(await task(['approve', '--replace', f], cli)).toBe(2);
+  const out = lines.join('\n');
+  expect(out).toContain('Baseline: the contract on the default branch (refs/remotes/origin/main)');
+  expect(out).toMatch(/^-\s+"title": "Add login",$/m);
+  expect(out).toMatch(/^\+\s+"title": "Forged",$/m);
+  expect(out).not.toContain('no change');
 });
 
 test('bad arguments print the usage and exit 2', async () => {

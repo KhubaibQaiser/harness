@@ -9,7 +9,7 @@ import { appendEvent } from '../core/events.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { SAFE_DIFF, SAFE_GIT } from '../core/git-safe.js';
 import { unattendedEnv } from '../core/unattended.js';
-import { type Contract, type Criterion, activeTaskId, contractHash, featuresCriteria, loadContract, setActiveTask, TASKS_DIR, validateContract, writeContract } from '../done/contract.js';
+import { type Contract, type Criterion, activeTaskId, contractHash, featuresCriteria, loadContract, originDefault, setActiveTask, TASKS_DIR, validateContract, writeContract } from '../done/contract.js';
 import { detect } from '../install/detect.js';
 import { hasResultsOutput } from '../install/test-config.js';
 import { insideClaude } from './claude-only.js';
@@ -126,18 +126,29 @@ function draft(file: string, cli: TaskEnv, cfg: HarnessConfig): number {
   return 0;
 }
 
-/** `git diff` from the contract committed at HEAD to `next`, or a "new" line when none is committed. */
-function replaceDiff(cli: TaskEnv, id: string, next: string): string {
+/** The copy loadContract trusts, to diff a replacement against: origin's default branch, else the version approved here. */
+function baseline(cli: TaskEnv, id: string): { label: string; text: string } | null {
   const g = cli.git ?? defaultExec;
-  const old = g('git', [...SAFE_GIT, 'cat-file', 'blob', `HEAD:${TASKS_DIR}/${id}.json`], { cwd: cli.root });
-  if (old.status !== 0) return `new: ${id} has no committed contract`;
+  const rel = `${TASKS_DIR}/${id}.json`;
+  const ref = originDefault(cli.root, g);
+  const r = ref ? g('git', [...SAFE_GIT, 'cat-file', 'blob', `${ref}:${rel}`], { cwd: cli.root }) : null;
+  if (r && r.status === 0) return { label: `the contract on the default branch (${ref})`, text: r.stdout };
+  // task-hashes.json holds only a hash: the working-tree file is that version when loadContract still trusts it.
+  if (existsSync(resolve(cli.root, rel)) && !('error' in loadContract(cli.root, id, { git: g }))) return { label: `the version approved in this checkout (${rel})`, text: readFileSync(resolve(cli.root, rel), 'utf8') };
+  return null;
+}
+
+/** `git diff` from the trusted copy to `next`, labelled; the whole of `next` when there is no trusted copy. */
+function replaceDiff(cli: TaskEnv, id: string, next: string): string {
+  const base = baseline(cli, id);
+  if (!base) return `Baseline: none (no trusted copy of ${id} to diff against; showing the full replacement)\n${next.trimEnd()}`;
   const d = mkdtempSync(join(tmpdir(), 'harness-task-'));
   try {
-    writeFileSync(join(d, 'committed.json'), old.stdout);
+    writeFileSync(join(d, 'trusted.json'), base.text);
     writeFileSync(join(d, 'replacement.json'), next);
-    const r = g('git', [...SAFE_GIT, 'diff', ...SAFE_DIFF, '--no-index', '--no-color', '--', 'committed.json', 'replacement.json'], { cwd: d });
+    const r = (cli.git ?? defaultExec)('git', [...SAFE_GIT, 'diff', ...SAFE_DIFF, '--no-index', '--no-color', '--', 'trusted.json', 'replacement.json'], { cwd: d });
     if (r.status !== 0 && r.status !== 1) throw new Error(`harness task: git diff failed (${esc((r.stderr ?? '').trim().split('\n')[0] ?? '')})`);
-    return r.stdout.trimEnd() || `no change from the committed ${TASKS_DIR}/${id}.json`;
+    return `Baseline: ${base.label}\n${r.stdout.trimEnd() || 'identical to the baseline'}`;
   } finally {
     rmSync(d, { recursive: true, force: true });
   }

@@ -94,7 +94,29 @@ test('a contract on the remote default branch loads in any clone; one only on HE
   const calls: string[][] = [];
   loadContract(root, 'add-login', { git: (cmd, args) => (calls.push([cmd, ...args]), args.includes('symbolic-ref') ? { status: 0, stdout: 'refs/remotes/origin/main\n' } : { status: 128, stdout: '' }) });
   for (const call of calls) expect(call).toContain('core.hooksPath=/dev/null/harness-no-hooks');
-  expect(calls.map((x) => x.slice(-3))).toEqual([['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], ['cat-file', 'blob', 'refs/remotes/origin/main:.harness/tasks/add-login.json']]);
+  expect(calls.map((x) => x.slice(-3))).toEqual([['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], ['--verify', '--quiet', 'refs/remotes/origin/main:.harness/tasks/add-login.json']]);
+});
+
+test('a Windows autocrlf clone (CRLF in the working tree) still matches the default branch', () => {
+  const good = { ...c, sha256: contractHash(c) };
+  const { root: origin } = repoWith({ '.harness/tasks/add-login.json': JSON.stringify(good, null, 2) + '\n' }, {});
+  const d = mkdtempSync(join(tmpdir(), 'h-done-crlf-'));
+  git(d, 'clone', '-q', '-c', 'core.autocrlf=true', origin, 'c');
+  const root = join(d, 'c');
+  expect(readFileSync(join(root, '.harness/tasks/add-login.json'), 'utf8')).toContain('\r\n');
+  expect(loadContract(root, 'add-login')).toEqual({ contract: good });
+});
+
+test('with origin/HEAD unset, the refusal tells the person to run git remote set-head origin --auto', () => {
+  const good = { ...c, sha256: contractHash(c) };
+  const { root: origin } = repoWith({ '.harness/tasks/add-login.json': JSON.stringify(good, null, 2) + '\n' }, {});
+  const d = mkdtempSync(join(tmpdir(), 'h-done-nohead-'));
+  git(d, 'clone', '-q', origin, 'c');
+  const root = join(d, 'c');
+  git(root, 'remote', 'set-head', 'origin', '-d');
+  expect(loadContract(root, 'add-login')).toEqual({ error: expect.stringContaining('git remote set-head origin --auto') });
+  git(root, 'remote', 'set-head', 'origin', 'main');
+  expect(loadContract(root, 'add-login')).toEqual({ contract: good });
 });
 
 test('(c) with no remote, a committed contract loads only when task-hashes.json records it', () => {

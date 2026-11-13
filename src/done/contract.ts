@@ -162,19 +162,30 @@ export function loadContract(root: string, id: string, o: { ref?: string; git?: 
   } catch (e) {
     return { error: `${label}: ${(e as Error).message}` };
   }
-  // Approved here (task-hashes.json), or byte-equal to the contract on origin's default branch, which a person merged.
+  // Approved here (task-hashes.json), or the same blob as the contract on origin's default branch, which a person merged.
   // HEAD or a local branch never vouches: the agent can commit a self-consistent contract and check it out.
+  const g = o.git ?? defaultExec;
+  const ref = v.contract.sha256 === hash && recorded !== hash ? originDefault(root, g) : null;
   const onDefault = () => {
-    const g = o.git ?? defaultExec;
-    const h = g('git', [...SAFE_GIT, 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], { cwd: root });
-    const ref = h.stdout.trim();
-    if (h.status !== 0 || !/^refs\/remotes\/origin\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)) return false;
-    const r = g('git', [...SAFE_GIT, 'cat-file', 'blob', `${ref}:${label}`], { cwd: root });
-    return r.status === 0 && r.stdout === text;
+    if (!ref) return false;
+    const want = g('git', [...SAFE_GIT, 'rev-parse', '--verify', '--quiet', `${ref}:${label}`], { cwd: root });
+    if (want.status !== 0) return false;
+    // hash-object applies the path's eol rules (autocrlf, .gitattributes), so a CRLF checkout of the same blob matches.
+    const got = g('git', [...SAFE_GIT, 'hash-object', `--path=${label}`, '--', label], { cwd: root });
+    return got.status === 0 && SHA.test(got.stdout.trim()) && got.stdout.trim() === want.stdout.trim();
   };
-  if (v.contract.sha256 !== hash || (recorded !== hash && !onDefault()))
-    return { error: `${label} changed since it was approved: it matches neither the contract on the default branch (origin/HEAD) nor an approval recorded here. Restore it with git checkout origin/HEAD -- ${label}, or have a person run harness task approve --replace <file>.` };
+  if (v.contract.sha256 !== hash || (recorded !== hash && !onDefault())) {
+    const unset = v.contract.sha256 === hash && !ref ? ' origin/HEAD is not set here, so the default branch could not vouch for it: a person runs git remote set-head origin --auto, then tries again.' : '';
+    return { error: `${label} changed since it was approved: it matches neither the contract on the default branch (origin/HEAD) nor an approval recorded here.${unset} Restore it with git checkout origin/HEAD -- ${label}, or have a person run harness task approve --replace <file>.` };
+  }
   return { contract: v.contract };
+}
+
+/** origin's default branch (`refs/remotes/origin/<branch>`, from `refs/remotes/origin/HEAD`), or null when that is not set. */
+export function originDefault(root: string, git: Exec = defaultExec): string | null {
+  const h = git('git', [...SAFE_GIT, 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], { cwd: root });
+  const ref = h.stdout.trim();
+  return h.status === 0 && /^refs\/remotes\/origin\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref) ? ref : null;
 }
 
 /** HARNESS_TASK from the launch environment, else `.harness/state/active-task`, else null. A HARNESS_TASK that is not a task id throws: callers deny. */

@@ -186,12 +186,15 @@ describe('secret-scan', () => {
   });
 
   test('which config programs run: by key pattern, the editor only when it opens, gpg only when the commit signs', () => {
-    const none: Use = { editor: false, signFlag: null }, ed: Use = { editor: true, signFlag: null }, signs: Use = { editor: false, signFlag: true }, noSign: Use = { editor: false, signFlag: false };
+    const none: Use = { editor: false, signFlag: null, verboseFlag: null }, ed: Use = { ...none, editor: true }, signs: Use = { ...none, signFlag: true }, noSign: Use = { ...none, signFlag: false };
+    const edV: Use = { ...ed, verboseFlag: true }, v: Use = { ...none, verboseFlag: true }; // -v shows a diff only in the editor
     const cases: [key: string, value: string, use: Use, runs: boolean][] = [
       ['core.fsmonitor', './.fsmon', none, true], ['core.fsmonitor', 'true', none, false], ['core.fsmonitor', 'false', none, false],
       ['filter.x.clean', 'sh x.sh', none, true], ['filter.x.smudge', 'cat', none, true], ['filter.x.process', 'p', none, true],
       ['filter.lfs.clean', 'git-lfs clean -- %f', none, false], ['filter.lfs.smudge', 'git-lfs smudge -- %f', none, false], ['filter.lfs.process', 'git-lfs filter-process', none, false], ['filter.lfs.clean', 'git-lfs clean -- %f; sh x', none, true],
-      ['diff.x.textconv', 'cat', none, true], ['diff.external', './d', none, true], ['interactive.difffilter', './f', none, true], ['future.thing.program', './p', none, true], ['foo.command', './c', none, true], ['foo.editor', './e', none, true],
+      // textconv and diff.external run only for the verbose diff in the commit editor; Git for Windows ships diff.astextplain.textconv.
+      ['diff.x.textconv', 'cat', none, false], ['diff.external', './d', none, false], ['diff.astextplain.textconv', 'astextplain', none, false], ['diff.x.textconv', 'cat', ed, false], ['diff.x.textconv', 'cat', v, false],
+      ['diff.x.textconv', 'cat', edV, true], ['diff.external', './d', edV, true], ['interactive.difffilter', './f', none, true], ['future.thing.program', './p', none, true], ['foo.command', './c', none, true], ['foo.editor', './e', none, true],
       ['credential.helper', 'osxkeychain', none, false], ['difftool.x.cmd', 'opendiff', none, false], ['mergetool.x.cmd', 'x', none, false],
       ['core.editor', 'vim', none, false], ['core.editor', 'vim', ed, true], ['core.editor', 'true', ed, false], ['core.editor', ':', ed, false], ['sequence.editor', 'vim', ed, false],
       ...['gpg.program', 'gpg.ssh.program', 'gpg.x509.program', 'gpg.ssh.defaultkeycommand'].flatMap((k): [string, string, Use, boolean][] => [[k, './s', none, false], [k, './s', signs, true], [k, './s', noSign, false]]),
@@ -200,6 +203,10 @@ describe('secret-scan', () => {
     // commit.gpgsign true in any scope turns signing on, unless --no-gpg-sign.
     expect(runningPrograms([['commit.gpgsign', 'false'], ['commit.gpgsign', 'true'], ['gpg.program', './s']], none, {})).toEqual(['gpg.program']);
     expect(runningPrograms([['commit.gpgsign', 'true'], ['gpg.program', './s']], noSign, {})).toEqual([]);
+    // commit.verbose true (or a level) in any scope shows the diff, unless --no-verbose.
+    for (const level of ['true', '1', '2']) expect(runningPrograms([['commit.verbose', level], ['diff.x.textconv', 'cat']], ed, {}), level).toEqual(['diff.x.textconv']);
+    expect(runningPrograms([['commit.verbose', 'false'], ['diff.x.textconv', 'cat']], ed, {})).toEqual([]);
+    expect(runningPrograms([['commit.verbose', 'true'], ['diff.x.textconv', 'cat']], { ...ed, verboseFlag: false }, {})).toEqual([]);
     for (const v of ['GIT_EDITOR', 'VISUAL', 'EDITOR']) {
       expect(runningPrograms([], ed, { [v]: './ed.sh' }), v).toEqual([v]);
       expect(runningPrograms([], none, { [v]: './ed.sh' }), v).toEqual([]);
@@ -208,7 +215,7 @@ describe('secret-scan', () => {
   });
 
   test('commitUse: when the commit opens the editor and when it signs', () => {
-    const cases: [cmd: string, editor: boolean, signFlag: boolean | null][] = [
+    const cases: [cmd: string, editor: boolean, signFlag: boolean | null, verboseFlag?: boolean | null][] = [
       ['git commit -m x', false, null], ['git commit -F msg.txt', false, null], ['git commit -C HEAD', false, null], ['git commit --no-edit', false, null], ['git commit -am x', false, null],
       ['git commit --message=x', false, null], ['git commit --amend --no-edit', false, null], ['git commit -m "-e"', false, null], ['git commit --fixup=abc', false, null], ['git commit --fixup abc', false, null],
       ['git commit', true, null], ['git commit -m x -e', true, null], ['git commit -em x', true, null], ['git commit --edit -m x', true, null], ['git commit --amend', true, null],
@@ -217,9 +224,10 @@ describe('secret-scan', () => {
       ['git commit -S -m x', false, true], ['git commit --gpg-sign -m x', false, true], ['git commit -Sabc -m x', false, true], ['git commit --gpg-sign=abc -m x', false, true], ['git commit --no-gpg-sign -m x', false, false],
       // Known options with values or none; an unknown one fails closed: the editor may open and the commit may sign.
       ['git commit -m y --author="A <a@b>" --no-verify -q', false, null], ['git commit -m y --untracked-files', false, null], ['git commit -s -m y --trailer "x: y" --cleanup strip', false, null],
-      ['git commit --frobnicate x -m y', true, true], ['git commit -Zq -m y', true, true], ['git stash', false, false],
+      ['git commit -v', true, null, true], ['git commit --verbose -m x', false, null, true], ['git commit -qv', true, null, true], ['git commit --no-verbose', true, null, false],
+      ['git commit --frobnicate x -m y', true, true, true], ['git commit -Zq -m y', true, true, true], ['git stash', false, false, false],
     ];
-    for (const [cmd, editor, signFlag] of cases) expect(commitUse(cmd), cmd).toEqual({ editor, signFlag });
+    for (const [cmd, editor, signFlag, verboseFlag = cmd === 'git stash' ? false : null] of cases) expect(commitUse(cmd), cmd).toEqual({ editor, signFlag, verboseFlag });
   });
 
   test('end to end: config programs ask only when this commit runs them', () => {
@@ -229,6 +237,9 @@ describe('secret-scan', () => {
     expect(run(ctx(root, 'git commit --allow-empty', withStub())).reason).toContain('core.editor');
     expect(run(ctx(root, 'git commit --allow-empty -S -m x', withStub())).reason).toContain('gpg.program');
     expect(run(ctx(root, 'git commit --allow-empty', { ...withStub(), GIT_EDITOR: 'true' })).reason).not.toContain('GIT_EDITOR');
+    git(root, 'config', 'diff.astextplain.textconv', 'astextplain'); // Git for Windows' system default
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).kind).toBe('allow');
+    expect(run(ctx(root, 'git commit --allow-empty -v', withStub())).reason).toContain('diff.astextplain.textconv');
     git(root, 'config', 'filter.x.clean', 'sh x.sh');
     expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).reason).toContain('filter.x.clean');
   });

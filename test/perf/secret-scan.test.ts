@@ -34,7 +34,10 @@ test('a full scan before git commit stays well inside the hook budget', () => {
   git('commit', '-q', '-m', 'init');
   writeFileSync(join(root, 'f1.txt'), 'staged\n');
   git('add', 'f1.txt');
-  const env = { ...process.env, PATH: `${stub()}${delimiter}${process.env.PATH ?? ''}` };
+  // No system or global git config: this measures speed, not config policy (Git for Windows' system config sets a textconv).
+  const empty = join(temp('scan-perf-cfg-'), 'empty');
+  writeFileSync(empty, '');
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: empty, PATH: `${stub()}${delimiter}${process.env.PATH ?? ''}` };
   const time = (command: string) => {
     const ms: number[] = [];
     for (let n = 0; n < RUNS; n++) {

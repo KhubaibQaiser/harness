@@ -128,26 +128,27 @@ function hookFiles(dir: string, platform: NodeJS.Platform): string[] {
 // lines (`git lfs install`) and true/false fsmonitor run nothing of the repo's. Namespaces git never reads during a commit
 // or stash (credential helpers, diff and merge tools, mail, browsers, help) are left out: a credential helper is in most
 // installs' system config, and asking on every commit for it would only teach people to say yes.
-const PROGRAM_KEYS = '^commit\\.gpgsign$|(^|\\.)(program|command|cmd|editor|fsmonitor|helper|defaultkeycommand)$|^filter\\..*\\.(clean|smudge|process)$|^diff\\..*\\.textconv$|^diff\\.external$|^interactive\\.difffilter$';
+const PROGRAM_KEYS = '^commit\\.(gpgsign|verbose)$|(^|\\.)(program|command|cmd|editor|fsmonitor|helper|defaultkeycommand)$|^filter\\..*\\.(clean|smudge|process)$|^diff\\..*\\.textconv$|^diff\\.external$|^interactive\\.difffilter$';
 const NOT_IN_COMMIT = /^(credential|difftool|mergetool|sendemail|browser|web|man|instaweb|gui|guitool)\./;
 const LFS: Record<string, string> = { 'filter.lfs.clean': 'git-lfs clean -- %f', 'filter.lfs.smudge': 'git-lfs smudge -- %f', 'filter.lfs.process': 'git-lfs filter-process' };
 const BOOL = /^(true|false|yes|no|on|off|1|0)$/i;
 /** What this command makes git run: the editor, and signing. Stash opens no editor and signs nothing. */
-/** signFlag: -S (true), --no-gpg-sign (false), or neither (null, commit.gpgsign decides). */
-export type Use = { editor: boolean; signFlag: boolean | null };
+/** signFlag: -S (true), --no-gpg-sign (false), or neither (null, commit.gpgsign decides); verboseFlag likewise for -v,
+ *  --no-verbose and commit.verbose. */
+export type Use = { editor: boolean; signFlag: boolean | null; verboseFlag: boolean | null };
 const MSG_LONG = /^--(message|file|reuse-message)(=|$)/;
 // git commit's other options, so anything else is unknown. VALUE ones take the next word unless given as --x=v.
 const VALUE_LONG = /^--(template|author|date|cleanup|trailer|pathspec-from-file)(=|$)/;
-const FLAG_LONG = /^--(all|include|only|patch|interactive|quiet|verbose|no-verify|verify|signoff|no-signoff|allow-empty|allow-empty-message|amend|dry-run|short|branch|porcelain|long|null|reset-author|status|no-status|pathspec-file-nul|no-post-rewrite|untracked-files(=.*)?)$/;
-const FLAG_SHORT = 'aiopqvnsz';
+const FLAG_LONG = /^--(all|include|only|patch|interactive|quiet|no-verify|verify|signoff|no-signoff|allow-empty|allow-empty-message|amend|dry-run|short|branch|porcelain|long|null|reset-author|status|no-status|pathspec-file-nul|no-post-rewrite|untracked-files(=.*)?)$/;
+const FLAG_SHORT = 'aiopqnsz';
 /** From a plain `git commit` line: the editor opens unless a message comes from -m, -F, -C or --no-edit, and always with
  *  -e, --edit, -c or --reedit-message; -S or --gpg-sign signs, --no-gpg-sign doesn't, otherwise commit.gpgsign decides.
  *  An option it doesn't know fails closed: the editor may open and the commit may sign. */
 export function commitUse(command: string): Use {
   const ws = words(pieces(messages(command))[0]?.text ?? '').map(unquote);
   const { i } = gitSub(ws, 0);
-  if (ws[i] !== 'commit') return { editor: false, signFlag: false };
-  let msg = false, edit = false, noEdit = false, unknown = false, signFlag: boolean | null = null;
+  if (ws[i] !== 'commit') return { editor: false, signFlag: false, verboseFlag: false };
+  let msg = false, edit = false, noEdit = false, unknown = false, signFlag: boolean | null = null, verboseFlag: boolean | null = null;
   for (let j = i + 1; j < ws.length; j++) {
     const w = ws[j]!;
     if (w === '--') break;
@@ -163,6 +164,8 @@ export function commitUse(command: string): Use {
       else if (/^--reedit-message(=|$)/.test(w)) { edit = true; if (!w.includes('=')) j++; }
       else if (/^--gpg-sign(=|$)/.test(w)) signFlag = true;
       else if (w === '--no-gpg-sign') signFlag = false;
+      else if (w === '--verbose') verboseFlag = true;
+      else if (w === '--no-verbose') verboseFlag = false;
       else if (VALUE_LONG.test(w)) { if (!w.includes('=')) j++; }
       else if (!FLAG_LONG.test(w)) unknown = true;
       continue;
@@ -173,6 +176,7 @@ export function commitUse(command: string): Use {
       if (ch === 'S') { signFlag = true; break; } // -S[<keyid>]: the rest is the key id
       if (ch === 'u') break; // -u[<mode>]: the rest is the mode
       if (ch === 'e') edit = true;
+      else if (ch === 'v') verboseFlag = true;
       else if ('mFCct'.includes(ch)) {
         if (ch === 'c') edit = true; else if (ch !== 't') msg = true;
         if (c === w.length - 1) j++; // the value is the next word
@@ -180,7 +184,7 @@ export function commitUse(command: string): Use {
       } else if (!FLAG_SHORT.includes(ch)) unknown = true;
     }
   }
-  return unknown ? { editor: true, signFlag: true } : { editor: edit || (!msg && !noEdit), signFlag };
+  return unknown ? { editor: true, signFlag: true, verboseFlag: true } : { editor: edit || (!msg && !noEdit), signFlag, verboseFlag };
 }
 
 /** The program keys of the effective config (every scope, includes followed), or null when git config fails.
@@ -198,9 +202,13 @@ function programRows(ctx: Ctx): [string, string][] | null {
 export function runningPrograms(rows: [string, string][], use: Use, env: NodeJS.ProcessEnv): string[] {
   // Signing is on with -S, or with commit.gpgsign true in any scope (stricter than git's last-wins) unless --no-gpg-sign.
   const sign = use.signFlag ?? rows.some(([k, v]) => k === 'commit.gpgsign' && /^(true|yes|on|1)$/i.test(v));
+  // textconv and diff.external run only when git renders a diff: for a commit, the verbose diff in its editor (-v or
+  // commit.verbose, true or a level, in any scope, unless --no-verbose). Git for Windows ships diff.astextplain.textconv.
+  const diff = use.editor && (use.verboseFlag ?? rows.some(([k, v]) => k === 'commit.verbose' && /^(true|yes|on|[1-9]\d*)$/i.test(v)));
   const runs = ([key, value]: [string, string]): boolean => {
-    if (key === 'commit.gpgsign' || NOT_IN_COMMIT.test(key) || LFS[key] === value || (key === 'core.fsmonitor' && BOOL.test(value))) return false;
+    if (key === 'commit.gpgsign' || key === 'commit.verbose' || NOT_IN_COMMIT.test(key) || LFS[key] === value || (key === 'core.fsmonitor' && BOOL.test(value))) return false;
     if (key === 'sequence.editor') return false; // rebase -i only
+    if (/^diff\.(.*\.textconv|external)$/.test(key)) return diff;
     if (key === 'core.editor') return use.editor && !/^\s*(true|:)\s*$/.test(value);
     if (/^gpg\.(.*\.)?(program|defaultkeycommand)$/.test(key)) return sign;
     return true;
@@ -362,7 +370,7 @@ export const secretScan: Check = {
     const k = kinds(command, ctx);
     if (k.has('commit') || k.has('stash')) {
       const why = notPlain(command);
-      const d = why ? deny(why + '.') : scan(ctx, k.has('commit') ? commitUse(command) : { editor: false, signFlag: false });
+      const d = why ? deny(why + '.') : scan(ctx, k.has('commit') ? commitUse(command) : { editor: false, signFlag: false, verboseFlag: false });
       if (d.kind !== 'allow') return d;
     }
     if (k.has('ask')) return ask('This git command makes commits from content harness can\'t scan for secrets before they are made (a merge, rebase, cherry-pick, revert, am, pull, commit-tree, a stash create, a git alias or a git named at run time). Confirm it.');

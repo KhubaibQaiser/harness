@@ -27,7 +27,7 @@ function inert(s: string) {
 describe('renderText: total escaping (controller ruling)', () => {
   const vectors = [
     'see ![x][1] here', '[1]: //evil.example/p.png', '[click](https://evil.example/x)', '//evil.example', 'a`@team', '``@team`', '&#64;team', '&#x40;team', 'www.evil.example/phish',
-    'HTTPS://EVIL.example', 'Fixes #12', 'o/other#3', '<img src=x onerror=1>', '<!-- hidden -->', '# heading', '1. list', '| a | b |', '**bold** _em_ ~~del~~', 'https://github.com/o/r', '@org/devs',
+    'HTTPS://EVIL.example', 'Fixes #12', 'o/other#3', 'see GH-12 and gh-3', 'math $x^2$ and $$y$$', '<img src=x onerror=1>', '<!-- hidden -->', '# heading', '1. list', '| a | b |', '**bold** _em_ ~~del~~', 'https://github.com/o/r', '@org/devs',
   ];
   test.each(vectors)('%s renders inert', (v) => inert(renderText(v)));
   test('a reference image and its definition split across fields stay text', () => {
@@ -42,6 +42,14 @@ describe('renderText: total escaping (controller ruling)', () => {
     expect(renderText('Fixes #12, o/other#3')).toBe(`Fixes ${Z}\\#12, o/other${Z}\\#3`);
     expect(renderText('1. a')).toBe('1\\. a');
     expect(renderText(`token ghp_${'a'.repeat(36)}`)).toBe('token \\[redacted\\]');
+  });
+  test('GH-<n> and $ math stay text', () => {
+    expect(renderText('GH-12, gh-3, $x$')).toBe(`GH${Z}\\-12, gh${Z}\\-3, \\$x\\$`);
+  });
+  test('an omitted file\'s why is rendered too: it can hold PR file names', () => {
+    const body = sum({ g: { ...G, omitted: [{ path: 'a.md', why: 'name collides with @team.md, [x](https://evil.example)' }] } });
+    expect(body).toContain(`a\\.md: name collides with @${Z}team\\.md, \\[x\\]\\(https${Z}://evil\\.example\\)`);
+    inert(body.split('\n').find((l) => l.includes('collides'))!.replace(/^- /, ''));
   });
   test('an entity for a control character is not decoded', () => {
     expect(renderText('a&#10;# b')).toBe(`a\\&${Z}\\#10;\\# b`);

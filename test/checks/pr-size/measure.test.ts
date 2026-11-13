@@ -296,14 +296,13 @@ describe('working tree', () => {
     expect(measure(root, wt, cfg())).toMatchObject({ lines: 0, files: 1 });
   });
 
-  test('3,000 untracked one-line files: files >= 3000, only 2000 read, under 2 s', () => {
+  test('3,000 untracked one-line files: files >= 3000, only 2000 read', () => {
     const root = repo();
     for (let i = 0; i < 3000; i++) writeFileSync(join(root, `f${i}.txt`), 'x\n');
-    const t = Date.now();
-    const s = measure(root, wt, cfg());
+    // A frozen clock: the 6 s budget must not trip on a loaded runner. Speed is asserted by the perf project, not here.
+    const s = measure(root, wt, cfg(), { now: () => 0 });
     expect(s).toMatchObject({ lines: 2000 });
     expect((s as { files: number }).files).toBeGreaterThanOrEqual(3000);
-    expect(Date.now() - t).toBeLessThan(2000);
   });
 
   test('reading untracked files counts toward the total budget', () => {

@@ -163,12 +163,7 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
       files: files.map((x) => ({ path: x.path, ...(x.old_path !== undefined && { old_path: x.old_path }), status: x.status, binary: x.binary, ...(skipped.has(x.path) && { skipped: true as const }) })),
       lines: commentable(cap.sent), map: snap.map, omitted,
     };
-    const json = JSON.stringify(g, null, 2) + '\n';
-    writeAtomic(join(dir, 'gather.json'), json);
-    const state = readState(root);
-    state[dir] = sha256(json);
-    mkdirSync(join(root, '.harness', 'state'), { recursive: true });
-    writeAtomic(join(root, ...STATE.split('/')), JSON.stringify(state, null, 2) + '\n');
+    writeGather(root, dir, g);
 
     const lines = cap.sent.reduce((s, x) => s + x.lines, 0), sha7 = headSha.slice(0, 7);
     appendEvent(root, { ts: new Date().toISOString(), session: 'cli', check: 'review', decision: 'review-gathered', reason: `pr ${n} ${sha7} files ${cap.sent.length} lines ${lines} omitted ${omitted.length}` });
@@ -177,6 +172,16 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
   } catch (e) {
     return fail((e as Error).message.startsWith('review: ') ? (e as Error).message : `review: ${esc((e as Error).message)}`);
   }
+}
+
+/** Writes `<dir>/gather.json` and records its hash in protected state (Review Focus 1). */
+export function writeGather(root: string, dir: string, g: GatherJson): void {
+  const json = JSON.stringify(g, null, 2) + '\n', abs = resolve(root, dir);
+  writeAtomic(join(abs, 'gather.json'), json);
+  const state = readState(root);
+  state[abs] = sha256(json);
+  mkdirSync(join(root, '.harness', 'state'), { recursive: true });
+  writeAtomic(join(root, ...STATE.split('/')), JSON.stringify(state, null, 2) + '\n');
 }
 
 function readState(root: string): Record<string, string> {

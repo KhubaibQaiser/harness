@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
+import { writeGather, type GatherJson } from '../../src/review/gather.js';
 import { defaults } from '../../src/core/config.js';
 import { serializeConfig } from '../../src/core/config-io.js';
 import { run } from '../../src/cli/index.js';
@@ -200,4 +201,34 @@ test('validate preset-answers: ok, one error per line, bad JSON, usage', () => {
   expect(go(['validate', 'preset-answers', file('a.json', JSON.stringify({ ...ok, target: 'x', extra: 1 }))], root)).toEqual({ code: 2, lines: ['extra: unknown key', 'target: must be repo or global'] });
   expect(go(['validate', 'preset-answers', file('a.json', '{nope')], root)).toEqual({ code: 2, lines: ['preset-answers: not valid JSON'] });
   expect(go(['validate', 'preset-answers'], root).lines[0]).toMatch(/^Usage:/);
+});
+
+describe('validate pr-review', () => {
+  // Synthetic gather written the way gather writes it, so its hash is in state.
+  const dir = '.harness/tmp/w-1';
+  const repo = () => { const t = makeRepo({ 'package.json': '{}' }, { git: false }); mkdirSync(join(t, dir, 'head/src'), { recursive: true }); return t; };
+  const g = {
+    repo: 'o/r', pr: 7, base: 'main', base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), merge_base: 'a'.repeat(40), nonce: 'f'.repeat(32), fork: null, labels: [], body_template: false,
+    files: [{ path: 'src/a.ts', status: 'modified', binary: false }], lines: { 'src/a.ts': { RIGHT: [1], LEFT: [] } }, map: { 'src/a.ts': 'src/a.ts.pr-snapshot', 'src/b.ts': 'src/b.ts.pr-snapshot' }, omitted: [],
+  };
+  const f1 = { id: 'f1', severity: 'nit', category: 'design', file: 'src/a.ts', line: 1, side: 'RIGHT', title: 't', evidence: { kind: 'quote', text: 'a' }, fix: 'x' };
+  const good = JSON.stringify({ findings: [f1, { ...f1, id: 'f2', file: 'src/b.ts' }], steering: [], summary: 's', limits: 'l' });
+  test('ok, an unchanged-file finding in the snapshot, invalid replies, usage', () => {
+    const r = repo();
+    writeGather(r, dir, g as GatherJson);
+    writeFileSync(join(r, dir, 'head/src/b.ts.pr-snapshot'), 'b\n');
+    const gj = join(r, dir, 'gather.json');
+    expect(go(['validate', 'pr-review', file('f.json', good), '--gather', gj], r)).toEqual({ code: 0, lines: ['ok'] });
+    expect(go(['validate', 'pr-review', file('f.json', '{nope'), '--gather', gj], r)).toEqual({ code: 2, lines: ['pr-review: not valid JSON'] });
+    expect(go(['validate', 'pr-review', file('f.json', JSON.stringify({ findings: [{ ...f1, file: 'src/c.ts' }], steering: [], summary: 's', limits: 'l' })), '--gather', gj], r))
+      .toEqual({ code: 2, lines: ['findings[0].file: "src/c.ts" is not in this PR or its snapshot'] });
+    expect(go(['validate', 'pr-review', 'x'], r).code).toBe(2);
+  });
+  test('Review Focus 1: a changed gather.json is refused', () => {
+    const t = repo();
+    writeGather(t, dir, g as GatherJson);
+    const p = join(t, dir, 'gather.json');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('"pr": 7', '"pr": 8'));
+    expect(go(['validate', 'pr-review', file('f.json', good), '--gather', p], t)).toEqual({ code: 2, lines: [`review: ${join(t, dir)}/gather.json changed since gather; run the review again`] });
+  });
 });

@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { validatePrReview } from '../ai/pr-review.js';
+import { gatherHash, type GatherJson } from '../review/gather.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { esc, loadConfig } from '../core/config.js';
 import { configToAnswers, validateAnswers } from '../ai/answers.js';
@@ -18,7 +20,7 @@ import { validateProduct } from '../ai/product.js';
 import { detect } from '../install/detect.js';
 import type { CliEnv } from './index.js';
 
-const USAGE = 'Usage: harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]\n       harness validate preset-answers <file>';
+const USAGE = 'Usage: harness validate answers <file> [--merge-config]\n       harness validate product <file>\n       harness validate picks <file> --answers <file> [--merge-config] [--attempt 1|2]\n       harness validate report <file> --picks <file> [--attempt 1|2]\n       harness validate vet-review <file> --scan <file> [--attempt 1|2]\n       harness validate pr-review <file> --gather <dir>/gather.json [--attempt 1|2]\n       harness validate preset-answers <file>';
 
 /** Checks what the interview wrote. Exit 0 prints ok; exit 2 prints one error per line. Safe in a plain terminal and in Claude Code. */
 export function validate(argv: string[], { root, out }: CliEnv): number {
@@ -30,7 +32,7 @@ export function validate(argv: string[], { root, out }: CliEnv): number {
     if (typeof c === 'number') return c;
     merge = (raw) => (raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? overlayAnswers(configToAnswers(c), raw as Record<string, unknown>) : raw);
   }
-  if (args[0] === 'picks' || args[0] === 'report' || args[0] === 'vet-review') return recommend(args, root, out, merge);
+  if (args[0] === 'picks' || args[0] === 'report' || args[0] === 'vet-review' || args[0] === 'pr-review') return recommend(args, root, out, merge);
   const [what, file] = args;
   if (args.length !== 2 || (what !== 'answers' && what !== 'product' && what !== 'preset-answers')) return out(USAGE), 2;
   let text: string;
@@ -79,15 +81,20 @@ const json = (t: string): unknown => {
 };
 
 /** picks/report: exit 0 ok, 2 invalid (a retry is left), 1 invalid on attempt 2 (raw output saved, stop). */
-type Kind = 'picks' | 'report' | 'vet-review';
+type Kind = 'picks' | 'report' | 'vet-review' | 'pr-review';
+const LABEL: Record<Kind, string> = { picks: 'Recommend output', report: 'Recommend output', 'vet-review': 'Vet review', 'pr-review': 'PR review' };
 type Merge = (raw: unknown) => unknown;
 function recommend(args: string[], root: string, out: (l: string) => void, merge: Merge): number {
   const [what, file, flag, other, ...tail] = args as [Kind, ...string[]];
-  const f2 = what === 'picks' ? '--answers' : what === 'report' ? '--picks' : '--scan';
+  const f2 = what === 'picks' ? '--answers' : what === 'report' ? '--picks' : what === 'pr-review' ? '--gather' : '--scan';
   let attempt = 1;
   if (tail.length === 2 && tail[0] === '--attempt' && (tail[1] === '1' || tail[1] === '2')) attempt = Number(tail[1]);
   else if (tail.length) return out(USAGE), 2;
   if (!file || flag !== f2 || !other) return out(USAGE), 2;
+  // Review Focus 1: the agent can write <dir>; gather.json must be the bytes gather wrote. Never counts as an attempt.
+  const gdir = what === 'pr-review' ? dirname(resolve(other)) : '';
+  const h = gdir ? gatherHash(root, gdir) : 'ok';
+  if (h !== 'ok') return out(h), 2;
   const text = read(file);
   const side = read(other);
   for (const t of [text, side]) if (typeof t !== 'string') return out(`${what}: ${t.error}`), 2;
@@ -112,6 +119,15 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
       const r = validateVetReview(raw, sideRaw as ScanResult, installedIds(root));
       errors = r.ok ? [] : r.errors;
     }
+  } else if (what === 'pr-review') {
+    const raw = json(text as string);
+    const g = sideRaw as GatherJson;
+    const inSnapshot = (f: string) => Object.hasOwn(g.map, f) && existsSync(join(gdir, 'head', ...g.map[f]!.split('/')));
+    if (raw === undefined) errors = ['pr-review: not valid JSON'];
+    else {
+      const r = validatePrReview(raw, g, inSnapshot);
+      errors = r.ok ? [] : r.errors;
+    }
   } else {
     const fs = (sideRaw as Picks | undefined)?.findings;
     if (!Array.isArray(fs) || !fs.every((x) => typeof x?.id === 'string')) errors = ['picks: the picks file is not valid; run harness validate picks first'];
@@ -121,7 +137,7 @@ function recommend(args: string[], root: string, out: (l: string) => void, merge
   for (const e of errors) out(e);
   if (attempt < 2) return 2;
   // Only an installed repo gets a .harness/ folder; anywhere else the raw output is printed.
-  if (!existsSync(join(root, MANIFEST_REL))) return out(`${what === 'vet-review' ? 'Vet review' : 'Recommend'} output failed validation twice. Raw output follows. Stopping.\n${(text as string).split(/\r?\n/).map(esc).join('\n')}`), 1;
-  out(`${what === 'vet-review' ? 'Vet review' : 'Recommend output'} failed validation twice. Raw output is in \`${saveDebug(root, what, text as string)}\`. Stopping.`);
+  if (!existsSync(join(root, MANIFEST_REL))) return out(`${LABEL[what].replace(/ output$/, '')} output failed validation twice. Raw output follows. Stopping.\n${(text as string).split(/\r?\n/).map(esc).join('\n')}`), 1;
+  out(`${LABEL[what]} failed validation twice. Raw output is in \`${saveDebug(root, what, text as string)}\`. Stopping.`);
   return 1;
 }

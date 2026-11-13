@@ -14,6 +14,7 @@ checks:
   prSize: true
   prBody: true
   decisions: true
+  secretScan: false
 
 # Claude Code's sandbox: required for unattended runs (unattended), on for everyone (always), or not used (off).
 sandbox: unattended

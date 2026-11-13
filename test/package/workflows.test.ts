@@ -192,6 +192,8 @@ test('gitleaks runs as a checksum-verified binary over full history', () => {
   expect(ci.steps.some((s: any) => /gitleaks git --redact/.test(s.run ?? ''))).toBe(true);
   expect(ci.steps[0].with['fetch-depth']).toBe(0);
   expect(raw('ci.yml')).not.toContain('gitleaks-action');
+  // Hardened as the gitleaks-ci template: the repo's allowlists, gitleaks:allow comments and attributes can't hide a finding.
+  for (const s of ['--ignore-gitleaks-allow', '--config "$RUNNER_TEMP/gitleaks.toml"', '--gitleaks-ignore-path', "printf '* diff\\n' | git hash-object -w --stdin", 'git mktree', 'export GIT_ATTR_SOURCE=', 'if [ -e .gitleaksignore ]; then']) expect(raw('ci.yml'), s).toContain(s);
 });
 
 test('every checkout sets persist-credentials: false', () => {
@@ -268,4 +270,15 @@ test('re-running a release is safe: each publish step checks for the version fir
   const rel = jobs['github-release'].steps.find((s: any) => /gh release create/.test(s.run ?? ''));
   expect(rel.run).toContain('gh release view "$GITHUB_REF_NAME"');
   expect(rel.run.indexOf('gh release view')).toBeLessThan(rel.run.indexOf('gh release create'));
+});
+
+test('the CI catalog-pin allowlist is anchored, matches .gitleaks.toml, and covers every pin line', () => {
+  const res = (t: string) => [...t.matchAll(/'''(\^\\s\*[^']*\$)'''/g)].map((m) => m[1]!); // the line regexes, not the path one
+  const ci = res(raw('ci.yml'));
+  expect(ci).toHaveLength(2);
+  expect(ci).toEqual(res(readFileSync('.gitleaks.toml', 'utf8')));
+  const sg = /\b[a-fA-F0-9]{40}\b(?:[`'"\s;]|$)/; // the shape the sourcegraph-access-token rule flags
+  for (const f of readdirSync('catalog/items')) for (const line of readFileSync(`catalog/items/${f}`, 'utf8').split('\n'))
+    if (/(^|\W)"?sha"?\s*:/.test(line) && sg.test(line)) expect(ci.some((r) => new RegExp(r).test(line)), `${f}: ${line}`).toBe(true);
+  expect(ci.some((r) => new RegExp(r).test(`sha: ${'a'.repeat(40)} token=x`))).toBe(false);
 });

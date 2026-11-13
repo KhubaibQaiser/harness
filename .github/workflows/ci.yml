@@ -49,8 +49,30 @@ jobs:
           curl -sSfL -o "$f" "https://github.com/gitleaks/gitleaks/releases/download/v$v/$f"
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $f" | sha256sum -c -
           tar -xzf "$f" gitleaks
+      # Rules from this step, not .gitleaks.toml (the same allowlist, copied so a change there can't widen CI); inline
+      # gitleaks:allow comments ignored; a repo .gitleaksignore fails the job, since gitleaks always reads it.
       - name: Scan full history
-        run: ./gitleaks git --redact --verbose .
+        run: |
+          if [ -e .gitleaksignore ]; then echo "::error::.gitleaksignore is in the repo; gitleaks always reads it, so it can hide a finding. Remove it." >&2; exit 1; fi
+          cat > "$RUNNER_TEMP/gitleaks.toml" <<'TOML'
+          [extend]
+          useDefault = true
+
+          [[allowlists]]
+          description = "catalog commit pins (public git SHAs)"
+          condition = "AND"
+          paths = ['''^catalog/items/[a-z0-9-]+\.yaml$''']
+          regexTarget = "line"
+          regexes = [
+            '''^\s*"?sha"?\s*:\s*"?[0-9a-f]{40}"?\s*$''',
+            '''^\s*source:\s*\{\s*"type"\s*:\s*"(github|git-subdir)"(\s*,\s*"(repo|path|plugin)"\s*:\s*"[A-Za-z0-9._/-]+")*\s*,\s*"sha"\s*:\s*"[0-9a-f]{40}"\s*\}\s*$''',
+          ]
+          TOML
+          : > "$RUNNER_TEMP/gitleaksignore"
+          # Every file diffs as text: an attribute source whose only line is `* diff`, so neither .gitattributes nor a NUL byte hides one.
+          t="$(printf '100644 blob %s\t.gitattributes\n' "$(printf '* diff\n' | git hash-object -w --stdin)" | git mktree)"
+          export GIT_ATTR_SOURCE="$t" GIT_ATTR_NOSYSTEM=1
+          ./gitleaks git --redact --verbose --ignore-gitleaks-allow --config "$RUNNER_TEMP/gitleaks.toml" --gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore" .
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

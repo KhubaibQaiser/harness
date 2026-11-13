@@ -17,6 +17,7 @@ const WHAT = {
   'checks.prSize': 'PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`. It also turns the size warnings, the pause ask, the raise and the hand-run dispatcher deny on or off.',
   'checks.prBody': 'PR body: every agent `gh pr create` (or `gh pr new`), and every `gh pr edit` that sets a body, must carry a filled pr-ship template in `--body-file`; `gh pr merge --auto` and `--admin` and removing the `needs-human` label are denied. Separate from `checks.prSize`; when the key is missing it takes `checks.prSize`\'s value. It belongs to the `pr-ship` item.',
   'checks.decisions': 'Turns on team decisions and the `decisions.*` keys. It belongs to the `agents-md` item: with a catalog, `update` sets it from the selected items, so unticking `agents-md` turns it off. `doctor` and `status` report on decisions whatever this is set to.',
+  'checks.secretScan': 'Secret scan: before an agent `git commit` or `git stash`, gitleaks scans what it could take and a finding blocks it, showing rule, file and line but never the value; merges, rebases and similar commands ask. Needs gitleaks on PATH and git 2.40 or newer; without them every agent commit is blocked. It belongs to the `gitleaks-commit` item.',
   catalog_version: 'Version of the catalog the recommendations came from. `0` means no catalog.',
   'project.type': 'What kind of project this is. Empty until the interview sets it.',
   'project.domain': 'What the project is about, in a few words.',

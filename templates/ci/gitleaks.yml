@@ -1,0 +1,38 @@
+# Written by harness (the gitleaks-ci item): scans the whole git history for secrets on pull requests and pushes to main.
+# gitleaks v8.30.1, tag commit 83d9cd684c87d95d656c1458ef04895a7f1cbd8e. The tarball sha256 below is from the release's
+# gitleaks_8.30.1_checksums.txt. Findings print with --redact, so a matched value never reaches the log.
+name: harness-gitleaks
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The binary, not the gitleaks GitHub action: the action needs pull-requests: read and only scans the event's commit range.
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          v=8.30.1
+          f=gitleaks_${v}_linux_x64.tar.gz
+          curl -sSfL -o "$f" "https://github.com/gitleaks/gitleaks/releases/download/v$v/$f"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $f" | sha256sum -c -
+          tar -xzf "$f" gitleaks
+      # Harness's own rules (gitleaks's defaults) and inline gitleaks:allow comments ignored, so the repo's .gitleaks.toml
+      # and comments can't hide a finding. gitleaks always reads a repo .gitleaksignore, so one fails the job.
+      # To use your own rules, edit this step by hand.
+      - name: Scan full history
+        run: |
+          if [ -e .gitleaksignore ]; then echo "::error::.gitleaksignore is in the repo; gitleaks always reads it, so it can hide a finding. Remove it." >&2; exit 1; fi
+          printf '[extend]\nuseDefault = true\n' > "$RUNNER_TEMP/gitleaks.toml"
+          : > "$RUNNER_TEMP/gitleaksignore"
+          # Every file diffs as text: an attribute source whose only line is `* diff`, so neither .gitattributes nor a NUL byte hides one.
+          t="$(printf '100644 blob %s\t.gitattributes\n' "$(printf '* diff\n' | git hash-object -w --stdin)" | git mktree)"
+          export GIT_ATTR_SOURCE="$t" GIT_ATTR_NOSYSTEM=1
+          ./gitleaks git --redact --verbose --ignore-gitleaks-allow --config "$RUNNER_TEMP/gitleaks.toml" --gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore" .

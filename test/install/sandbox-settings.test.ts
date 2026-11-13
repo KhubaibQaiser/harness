@@ -54,6 +54,10 @@ test('a hand edit is kept and noted; a removed harness path comes back on the ne
   s.sandbox.filesystem.denyWrite = s.sandbox.filesystem.denyWrite.filter((p: string) => p !== './.harness/config.yaml');
   const back = mergeSettings(JSON.stringify(s), { sandbox: 'unattended', recorded: m.blocks });
   expect(dw(back.after)).toContain('./.harness/config.yaml');
+  // Not silently: the person removed it, so the render says it is back and why.
+  expect(back.notes).toContain(".claude/settings.json: harness's sandbox.filesystem.denyWrite path ./.harness/config.yaml was removed by hand and is added back: harness needs it to protect its files.");
+  // A first install adds every path without that note.
+  expect(m.notes.join('\n')).not.toMatch(/removed by hand/);
 });
 
 test('`always` turns the sandbox on for interactive sessions too, failIfUnavailable included, and says how to allow hosts', () => {

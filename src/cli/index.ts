@@ -216,6 +216,6 @@ try {
   }
 } catch (e) {
   // The sandbox's denyWrite on harness's files makes a harness command the agent runs fail with EPERM: name the `!` line.
-  console.error(deniedHint(process.argv.slice(2), e) ?? `harness: ${(e as Error).message}`);
+  console.error(deniedHint(process.argv.slice(2), e, repoRoot(process.cwd())) ?? `harness: ${(e as Error).message}`);
   process.exitCode = 1;
 }

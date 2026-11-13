@@ -204,7 +204,7 @@ function commit(r: Run, cs: Change[], manifest: Manifest): string | null {
     applyChanges(r.root, cs, r.cli.version, () => r.at, r.cli.fs, { manifest, manifestBefore: rawOf(r.m) });
     return null;
   } catch (e) {
-    if (e instanceof ApplyError) return isDenied(e) ? sandboxLine('update', r.args) : e.message;
+    if (e instanceof ApplyError) return isDenied(e) ? sandboxLine('update', r.args, r.root) : e.message;
     throw e;
   }
 }

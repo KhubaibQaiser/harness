@@ -189,7 +189,7 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
     dropped.push(...r.sets);
     for (const p of r.changed) notes.push(`\`${SETTINGS}\`: \`${p}\` was changed; left as is.`);
   }
-  mergeDenyWrite(s, blocks, notes);
+  mergeDenyWrite(s, opts.recorded ?? [], blocks, notes);
   const market = pinsName(opts.plugins ?? []);
   mergePlugins(s, opts.plugins ?? [], market, opts.recorded ?? [], blocks, dropped, notes);
   return { after: dump(s, before), blocks, dropped, notes, market };
@@ -202,7 +202,7 @@ export function mergeSettings(before: string | null, opts: { sandbox: SandboxMod
  * a removed one comes back, and uninstall drops the paths and the containers it made. A non-object or non-array on the
  * way is a hand edit: left as is, with a note.
  */
-function mergeDenyWrite(s: any, blocks: string[], notes: string[]): void {
+function mergeDenyWrite(s: any, recorded: string[], blocks: string[], notes: string[]): void {
   const skip = (what: string): void => void notes.push(`${SETTINGS}: ${what}; left as is and harness's sandbox.filesystem.denyWrite was not added.`);
   if (s.sandbox !== undefined && !isObj(s.sandbox)) return skip('"sandbox" is not an object');
   s.sandbox ??= {};
@@ -214,6 +214,8 @@ function mergeDenyWrite(s: any, blocks: string[], notes: string[]): void {
     if (list.includes(p)) continue;
     list.push(p);
     blocks.push(JSON.stringify({ denyWrite: p }));
+    // Recorded before and now gone: the person removed it, so say it is back rather than restore it silently.
+    if (recorded.some((b) => (parse(b) as any)?.denyWrite === p)) notes.push(`${SETTINGS}: harness's sandbox.filesystem.denyWrite path ${p} was removed by hand and is added back: harness needs it to protect its files.`);
   }
 }
 

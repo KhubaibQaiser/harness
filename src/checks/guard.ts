@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
-import { plainHeads } from '../core/command-head.js';
+import { globRegex, plainHeads } from '../core/command-head.js';
+import { type OptTable, type Parsed, readOptions, valuesOf, withoutRedirects } from '../core/options.js';
 import { commandName, cPayloads, pieces, remember, SHELLS, stdinPrograms, unquote as shellUnquote, withWorkBudget, words as shellWords } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
@@ -446,7 +447,8 @@ const ASK: [RegExp, string][] = [
 /** A subshell or substitution closing right after a word: `(rm -rf /)`, `(git push origin main)`. Not `}`: it ends a brace word. */
 const CLOSERS = /[)`]+$/;
 export const rmTargets = (cmd: string): { recursive: boolean; targets: string[]; fed: boolean }[] =>
-  [...cmd.matchAll(/(?:^|[;&|(`]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => { // a backtick opens a command too: `rm -rf /`
+  // A backtick opens a command too (`rm -rf /`), and rm may be spelled as a path (`xargs /bin/rm -rf`).
+  [...cmd.matchAll(/(?:^|[;&|(`]\s*|\s)(?:[\w.~-]*\/)*rm\s+([^;&|\n]*)/g)].map((m) => {
     const toks = m[1].trim().split(/\s+/).filter(Boolean);
     const flags = toks.filter((t) => t.startsWith('-')).join('');
     const before = cmd.slice(0, m.index + m[0].length - m[1].length);
@@ -460,7 +462,10 @@ export const rmTargets = (cmd: string): { recursive: boolean; targets: string[];
 
 // rimraf and del-cli delete recursively, like rm -rf: run through a package runner (npx, pnpm/yarn dlx, bunx, bun x,
 // npm exec/x, pnpx) anywhere, or as the command word itself (a path to it reads as its name in the plain-head reading).
-const RIMRAF_RUN = /(?:^|(?<=[\s;&|(`]))(?:npx|bunx|pnpx|(?:pnpm|yarn)\s+dlx|bun\s+x|npm\s+(?:exec|x))(?:\s+-{1,2}[\w-]+(?:=\S*)?)*\s+(?:rimraf|del-cli)(?:@\S*)?(?=\s|$)/g;
+// Runner options may come before the subcommand too (`pnpm -s dlx`, `yarn --silent dlx`, `bun --bun x`), and pnpm and
+// yarn run a local bin with `exec` or by its bare name (`pnpm rimraf`, `yarn rimraf`).
+const RUN_OPT = String.raw`(?:\s+-{1,2}[\w-]+(?:=\S*)?)*`;
+const RIMRAF_RUN = new RegExp(String.raw`(?:^|(?<=[\s;&|(` + '`' + String.raw`]))(?:npx|bunx|pnpx|(?:pnpm|yarn)${RUN_OPT}(?:\s+(?:dlx|exec))?|bun${RUN_OPT}\s+x|npm${RUN_OPT}\s+(?:exec|x))${RUN_OPT}(?:\s+--)?\s+['"]?(?:rimraf|del-cli)(?:@[^\s'"]*)?['"]?(?=\s|$)`, 'g');
 const RIMRAF_HEAD = /(^|[;&|(`]\s*)rimraf(?:@\S*)?(?=\s|$)/g;
 const rimrafAsRm = (t: string): string => (/rimraf|del-cli/.test(t) ? t.replace(RIMRAF_RUN, ' rm -rf').replace(RIMRAF_HEAD, '$1rm -rf') : t);
 const checkRm = (cmd: string): Verdict | undefined => {
@@ -532,48 +537,62 @@ export function gitArgs(toks: string[]): string[] {
   return i > 0 ? toks.slice(i) : [];
 }
 
-// Options whose value is a file or folder the command writes: git diff/log/show --output, curl -o, wget -O, sort -o, GNU time -o.
-const OUTPUT_FLAGS: Record<string, string[]> = {
-  git: ['--output', '--output-directory'],
-  curl: ['-o', '--output', '--output-dir', '-D', '--dump-header', '-c', '--cookie-jar', '--trace', '--trace-ascii', '--stderr', '--etag-save'],
-  wget: ['-O', '--output-document', '-o', '--output-file', '-a', '--append-output', '-P', '--directory-prefix'],
-  sort: ['-o', '--output'],
-  time: ['-o', '--output'],
+// The writers whose options name a file or folder they write, each read with the one getopt reader (core/options.ts):
+// clusters, stuck values, `--name=v`, GNU long prefixes where the tool accepts them, single-dash long names.
+const CP_OPTS: OptTable = {
+  v: 'tSmog', lv: ['target-directory', 'suffix', 'mode', 'owner', 'group', 'strip-program'], lo: ['backup', 'preserve', 'no-preserve', 'sparse', 'reflink', 'context', 'update'],
+  lf: ['no-target-directory', 'archive', 'force', 'interactive', 'link', 'dereference', 'no-clobber', 'recursive', 'symbolic-link', 'verbose', 'parents', 'remove-destination', 'strip', 'compare', 'directory', 'relative', 'logical', 'physical', 'no-dereference', 'one-file-system', 'attributes-only', 'copy-contents', 'debug', 'strip-trailing-slashes', 'exchange', 'keep-directory-symlink'],
+  prefix: true,
 };
-// getopt_long tools accept an unambiguous prefix of a long option; git and curl take only the exact spelling.
-const OUTPUT_PREFIX = new Set(['wget', 'sort', 'time']);
-/** The values of `name`'s output options in `toks` (quotes removed before matching): `--output=F`, `--output F`, `-o F`,
- *  a stuck `-oF`, a cluster `-sSo F`, and for getopt tools an unambiguous long prefix (`--out`, `--output-doc`).
- *  ponytail: a cluster letter that takes a value before the output letter (-to) is not told apart: the next word is read as the target, stricter only. */
-function outputTargets(name: string | undefined, toks: string[]): string[] {
-  const flags = name === 'git' && /^(format-patch|archive)$/.test(gitArgs(toks)[0] ?? '') ? [...OUTPUT_FLAGS.git, '-o'] : Object.hasOwn(OUTPUT_FLAGS, name ?? '') ? OUTPUT_FLAGS[name!] : null;
-  if (!flags) return [];
-  const longs = flags.filter((f) => f.startsWith('--')), prefix = OUTPUT_PREFIX.has(name!);
-  const longMatch = (n: string): boolean => longs.includes(n) || (prefix && longs.filter((f) => f.startsWith(n)).length === 1);
-  const out: string[] = [];
-  for (let i = 1; i < toks.length; i++) {
-    const t = shellUnquote(toks[i]), eq = t.indexOf('='); // the shell's reading: '--output'=F and --output="F" are --output=F
-    if (t.startsWith('--')) {
-      if (longMatch(eq < 0 ? t : t.slice(0, eq))) out.push(eq < 0 ? shellUnquote(toks[++i] ?? '') : t.slice(eq + 1));
-    } else if (/^-[a-zA-Z]/.test(t)) {
-      const j = [...t.slice(1)].findIndex((ch) => flags.includes(`-${ch}`));
-      if (j >= 0) out.push(j === t.length - 2 ? shellUnquote(toks[++i] ?? '') : t.slice(j + 2));
-    }
+const TARGET_DIR = ['-t', '--target-directory'];
+/** GNU coreutils and tar under another name (Homebrew's g-prefix, bsdtar): read as the plain tool. */
+export const WRITER_ALIAS: Record<string, string> = { gcp: 'cp', gmv: 'mv', gln: 'ln', ginstall: 'install', gtar: 'tar', bsdtar: 'tar', gpatch: 'patch', gsort: 'sort' };
+type Writer = { opts: OptTable; out: readonly string[]; pos?: (p: Parsed) => string[] };
+const WRITERS: Record<string, Writer> = {
+  curl: { opts: { v: 'oDcdHuxXeAEKbmrTUwYyzt', lv: ['output', 'output-dir', 'dump-header', 'cookie-jar', 'trace', 'trace-ascii', 'stderr', 'etag-save', 'data', 'header', 'user', 'proxy', 'request', 'referer', 'user-agent', 'cookie', 'config', 'max-time', 'range', 'upload-file', 'write-out', 'connect-timeout'] }, // curl takes no abbreviations (curl 8.7)
+    out: ['-o', '--output', '--output-dir', '-D', '--dump-header', '-c', '--cookie-jar', '--trace', '--trace-ascii', '--stderr', '--etag-save'] },
+  wget: { opts: { v: 'OoaPeUTtQwlAR', lv: ['output-document', 'output-file', 'append-output', 'directory-prefix', 'user-agent', 'tries', 'timeout', 'execute', 'header', 'level', 'accept', 'reject', 'user', 'password'], prefix: true },
+    out: ['-O', '--output-document', '-o', '--output-file', '-a', '--append-output', '-P', '--directory-prefix'] },
+  sort: { opts: { v: 'oTktS', lv: ['output', 'key', 'field-separator', 'temporary-directory', 'buffer-size', 'parallel', 'files0-from', 'random-source', 'batch-size', 'compress-program'], lo: ['sort', 'check'], lf: ['reverse', 'unique', 'numeric-sort', 'general-numeric-sort', 'human-numeric-sort', 'ignore-case', 'merge', 'stable', 'zero-terminated'], prefix: true }, out: ['-o', '--output'] },
+  time: { opts: { v: 'of', lv: ['output', 'format'], lf: ['append', 'verbose', 'portability', 'quiet'], prefix: true }, out: ['-o', '--output'] },
+  cp: { opts: CP_OPTS, out: TARGET_DIR },
+  mv: { opts: CP_OPTS, out: TARGET_DIR },
+  ln: { opts: CP_OPTS, out: TARGET_DIR, pos: (p) => p.pos.slice(-1) }, // without -t, the last word is the link made
+  install: { opts: CP_OPTS, out: TARGET_DIR, pos: (p) => p.pos.slice(-1) },
+  // -o/-r/-d write; without -o the first positional is patched in place (-i only names the patch).
+  patch: { opts: { v: 'BDFiopVYzrdg', lv: ['prefix', 'ifdef', 'fuzz', 'input', 'output', 'strip', 'version-control', 'basename-prefix', 'suffix', 'reject-file', 'directory', 'get', 'quoting-style', 'reject-format'], lo: ['read-only', 'merge'],
+    lf: ['batch', 'force', 'silent', 'quiet', 'forward', 'reverse', 'dry-run', 'backup', 'posix', 'binary', 'ignore-whitespace', 'normal', 'context', 'unified', 'ed', 'remove-empty-files', 'set-time', 'set-utc', 'verbose', 'no-backup-if-mismatch', 'backup-if-mismatch', 'follow-symlinks'], prefix: true },
+    out: ['-o', '--output', '-r', '--reject-file', '-d', '--directory'], pos: (p) => (valuesOf(p, ['-o', '--output']).length ? [] : p.pos.slice(0, 1)) },
+  // xxd [options] [infile [outfile]]: its value options shift the positionals, so they are read, not counted.
+  xxd: { opts: { v: 'clsogn', single: ['cols', 'len', 'seek', 'groupsize', 'name', 'offset'], sf: ['ps', 'postscript', 'plain', 'bits', 'include', 'revert', 'autoskip', 'capitalize', 'EBCDIC', 'little-endian', 'uppercase', 'version', 'help'] },
+    out: [], pos: (p) => p.pos.slice(1, 2) },
+  openssl: { opts: { single: ['out', 'keyout', 'outdir', 'sess_out', 'certout', 'keylogfile', 'respout', 'reqout'], lv: ['out', 'keyout', 'outdir', 'sess_out', 'certout', 'keylogfile', 'respout', 'reqout'] },
+    out: ['-out', '-keyout', '-outdir', '-sess_out', '-certout', '-keylogfile', '-respout', '-reqout', '--out', '--keyout', '--outdir', '--sess_out', '--certout', '--keylogfile', '--respout', '--reqout'] },
+};
+// git: archive and format-patch use git's own parser, which takes an unambiguous long prefix; diff/log/show's --output is exact.
+const GIT_WRITERS: Record<string, Writer> = {
+  archive: { opts: { v: 'o', lv: ['output', 'format', 'prefix', 'remote', 'exec', 'add-file', 'add-virtual-file', 'mtime'], lf: ['list', 'verbose', 'worktree-attributes'], prefix: true }, out: ['-o', '--output'] },
+  'format-patch': { opts: { v: 'ov', lv: ['output-directory', 'start-number', 'subject-prefix', 'to', 'cc', 'in-reply-to', 'signature', 'signature-file', 'suffix', 'base', 'reroll-count', 'interdiff', 'range-diff', 'creation-factor', 'from', 'notes', 'cover-from-description'], prefix: true }, out: ['-o', '--output-directory'] },
+  bundle: { opts: { lv: ['version'], lf: ['progress', 'quiet', 'all', 'branches', 'tags'] }, out: [], pos: (p) => (p.pos[0] === 'create' ? p.pos.slice(1, 2) : []) },
+};
+const GIT_OUTPUT: Writer = { opts: { lv: ['output'] }, out: ['--output'] };
+
+/** The files and folders `name` (with its words, from the command name on, unquoted) writes through its options or the
+ *  positional the tool writes. */
+function writerTargets(name: string, words: string[]): string[] {
+  name = WRITER_ALIAS[name] ?? name;
+  let w = Object.hasOwn(WRITERS, name) ? WRITERS[name] : undefined, args = withoutRedirects(words.slice(1));
+  if (name === 'git') {
+    const [sub, ...rest] = gitArgs(words);
+    [w, args] = [Object.hasOwn(GIT_WRITERS, sub ?? '') ? GIT_WRITERS[sub!] : GIT_OUTPUT, withoutRedirects(rest)];
   }
-  return out.filter(Boolean);
+  if (!w) return [];
+  const p = readOptions(args, w.opts);
+  return [...valuesOf(p, w.out), ...(w.pos?.(p) ?? [])].filter(Boolean);
 }
 
-// The destination folder of cp/mv/install/ln's -t/--target-directory (`-t DIR`, `-tDIR`, `-atDIR`, `--target-directory[= ]DIR`,
-// the getopt prefix `--target-dir`); null when none. That folder is written, whatever order the sources come in.
-export function targetDir(args: string[]): string | null {
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (/^--target-dir/.test(a)) return a.includes('=') ? a.slice(a.indexOf('=') + 1) : (args[i + 1] ?? null);
-    const m = /^-[a-zA-Z]*t(.*)$/.exec(a); // a short cluster ending in -t, with the dir stuck on or the next word
-    if (m) return m[1] !== '' ? m[1] : (args[i + 1] ?? null);
-  }
-  return null;
-}
+/** The destination folder of cp/mv/install/ln's -t/--target-directory (any spelling the getopt reader knows); null when none. */
+export const targetDir = (args: string[]): string | null => valuesOf(readOptions(args, CP_OPTS), TARGET_DIR)[0] ?? null;
 
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
 // ponytail: splits on ; & | even inside quotes, and ignores here-docs and subshells; upgrade to a real shell parser if bypasses matter.
@@ -598,7 +617,7 @@ export function fileWriteTargets(cmd: string): string[] {
     }
     // The shell's words from the command name on, so a quoted flag name glued to its value ('--output'=F) is one word.
     const sw = shellWords(seg), at = sw.findIndex((w) => commandName(shellUnquote(w)) === name);
-    out.push(...outputTargets(name, at < 0 ? toks : sw.slice(at)));
+    out.push(...writerTargets(name, (at < 0 ? toks : sw.slice(at)).map(shellUnquote)));
     const c = toks.findIndex((t) => /^-[a-z]*c$/.test(t));
     if ((name === 'bash' || name === 'sh' || name === 'zsh') && c > 0 && toks[c + 1]) {
       out.push(...fileWriteTargets(unquote(toks[c + 1])));
@@ -621,10 +640,6 @@ export function fileWriteTargets(cmd: string): string[] {
         if (/^(-s|-r|--size|--reference)$/.test(toks[i])) i += 1;
         else if (!toks[i].startsWith('-')) out.push(unquote(toks[i]));
       }
-    } else if (name === 'ln' || name === 'install' || name === 'cp') {
-      const dir = targetDir(toks.slice(1).map(unquote)); // -t DIR, -tDIR, --target-directory[= ]DIR
-      if (dir !== null) out.push(dir);
-      else if (name !== 'cp') { const args = toks.slice(1).filter((t) => !t.startsWith('-')); if (args.length) out.push(unquote(args[args.length - 1])); }
     } else if (name === 'dd') {
       out.push(...toks.filter((t) => t.startsWith('of=')).map((t) => unquote(t.slice(3))));
     } else if (name === 'git') {
@@ -633,23 +648,6 @@ export function fileWriteTargets(cmd: string): string[] {
         const d = rest.indexOf('--');
         if (d >= 0) out.push(...rest.slice(d + 1).map(unquote));
       } else if (sub === 'restore') out.push(...rest.filter((t) => !t.startsWith('-')).map(unquote));
-      // `git bundle create <file> <git-rev>…`: the file right after `create` is written (-o/--output handled above).
-      else if (sub === 'bundle' && rest[0] === 'create') out.push(...rest.slice(1).filter((t) => !t.startsWith('-')).slice(0, 1).map(unquote));
-    } else if (name === 'openssl') {
-      // -out FILE and -keyout FILE write; openssl uses single-dash long options.
-      for (let i = 1; i < toks.length; i += 1) if (/^-(out|keyout)$/.test(toks[i]) && toks[i + 1]) out.push(unquote(toks[++i]));
-    } else if (name === 'patch') {
-      // -o/--output FILE, -r/--reject-file FILE, -d/--directory DIR, else the first positional is patched in place.
-      const pos: string[] = [];
-      for (let i = 1; i < toks.length; i += 1) {
-        const m = /^(?:-o|--output|-r|--reject-file|-d|--directory|-D|-B|-i|--input|-p|--strip|-F|--fuzz|-g|--get)(=(.*))?$/.exec(toks[i]);
-        if (m) { if (/^(-o|--output|-r|--reject-file|-d|--directory)/.test(toks[i])) out.push(unquote(m[2] ?? toks[++i] ?? '')); else if (m[2] === undefined) i += 1; }
-        else if (!toks[i].startsWith('-')) pos.push(unquote(toks[i]));
-      }
-      if (!toks.some((t) => /^(-o|--output|-i|--input)/.test(t)) && pos.length) out.push(pos[0]); // patch FILE [patchfile]
-    } else if (name === 'xxd') {
-      const pos = toks.slice(1).filter((t) => !t.startsWith('-')).map(unquote); // xxd [-r] INFILE OUTFILE
-      if (pos.length >= 2) out.push(pos[1]);
     }
   }
   return [...new Set(out)];
@@ -886,8 +884,10 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
   const spliced = splicedReading(command);
   if (spliced !== null && decideRead(spliced, ctx, depth).kind !== 'allow') rs.push(toDecision(['ask', SPLICE_WHY]));
   // `${x:-rm}` and the like hold a literal the shell may use: read with it, a ruled reading asks (the value is run-time).
-  const dflt = /\$\{\w+:?[-=+]/.test(command) ? command.replace(/\$\{\w+:?[-=+]([^{}$`]*)\}/g, '$1') : command;
-  if (dflt !== command && decideRead(dflt, ctx, depth).kind !== 'allow') rs.push(toDecision(['ask', DEFAULT_WHY]));
+  // Innermost first, a few levels deep (`${x:-${y:-rm}}`); read with every reading, so a path default (`/bin/rm`) and `${IFS}` count.
+  let dflt = command;
+  for (let n = 0; n < 4 && /\$\{\w+:?[-=+]/.test(dflt); n++) dflt = dflt.replace(/\$\{\w+:?[-=+]([^{}$`]*)\}/g, '$1');
+  if (dflt !== command && (depth < 3 ? decideAll(dflt, ctx, depth + 1) : decideRead(dflt, ctx, depth)).kind !== 'allow') rs.push(toDecision(['ask', DEFAULT_WHY]));
   if (shellFedPastHead(withoutHeredocBodies(command))) rs.push(toDecision(['ask', FED_SHELL_WHY]));
   return rs.find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
 }
@@ -903,16 +903,25 @@ const GLOB_CAP_WHY = `the command has more glob readings than the guard reads ($
 const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 const DEFAULT_WHY = 'a word built at run time (${x:-…}, ${x:=…}, ${x:+…}) holds a literal that, read in its place, hits a guard rule';
 const FED_SHELL_WHY = 'a download or a here-string reaches a shell behind a word the guard does not know, so it cannot read what the shell runs';
-/** A downloaded stream (curl or wget upstream in the pipeline) or a here-string reaching a word whose name is a shell,
- *  where that shell is not the command word the guard reads (an unknown wrapper in front: `curl x | zzwrap sh`). A shell
- *  that is the command word is already judged (the curl|sh rule, and here-string programs). */
+/** A downloaded stream (curl or wget upstream in the pipeline, or inside `<(…)`/`$(…)`) or a here-string reaching a shell
+ *  behind a word the guard does not know (`curl x | zzwrap sh`). The shell counts only as the word right after that head
+ *  (after a `--`), a plain command word or a glob that can match a shell, so `curl url | grep -c bash` and
+ *  `grep -q zsh <<< "$SHELL"` stay allowed. A shell that is the command word is judged already (curl|sh, here-strings). */
 function shellFedPastHead(cmd: string): boolean {
-  if (!/\b(?:curl|wget)\b|<<</.test(cmd) || ![...SHELLS].some((s) => cmd.includes(s))) return false;
+  if (!/\b(?:curl|wget)\b|<<</.test(cmd) || !([...SHELLS].some((s) => cmd.includes(s)) || /[*?[]/.test(cmd))) return false;
+  const isShell = (w: string): boolean => {
+    const u = shellUnquote(w), n = commandName(u);
+    if (SHELLS.has(n)) return /^[\w./+-]+$/.test(u);
+    const re = globRegex(n);
+    return re !== null && [...SHELLS].some((s) => re.test(s));
+  };
+  const substituted = /(?:<\(|\$\()[^()]*\b(?:curl|wget)\b/.test(cmd); // `sh < <(curl …)`, `sh -c "$(curl …)"`
   let stream = false;
   for (const p of pieces(cmd)) {
     const ws = shellWords(p.text), names = ws.map((w) => commandName(shellUnquote(w)));
     const k = commandStart(ws.map(shellUnquote), (n) => SHELLS.has(n));
-    if ((stream || ws.some((w) => w.startsWith('<<<'))) && names.some((n, j) => j !== k && SHELLS.has(n) && !ws[j].startsWith('-'))) return true;
+    const next = ws[k + 1] === '--' ? k + 2 : k + 1;
+    if ((stream || substituted || ws.some((w) => w.startsWith('<<<'))) && ws[next] !== undefined && isShell(ws[next])) return true;
     stream = (stream || names.some((n) => n === 'curl' || n === 'wget')) && p.sep === '|';
   }
   return false;

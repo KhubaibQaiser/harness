@@ -1,3 +1,4 @@
+import { type OptTable, readOptions, valuesOf } from './options.js';
 // A small, quote-aware reading of a shell command line, shared by the guard and protect. A seatbelt, not a parser:
 // no expansions. Quoting: '…', "…" (only \" \\ \$ \` escape), $'…' (\' and \\ escape), and \x outside quotes.
 // When the quoting doesn't balance, callers check more, not less (see `balanced`).
@@ -163,6 +164,16 @@ export function envSplit(str: string): string {
   return out.map((w) => `'${w.replace(/'/g, "'\\''")}'`).join(' ');
 }
 
+// Commands that run a -c/--command string with a shell, read with the getopt reader (clusters `-lc`, glued `-c'…'`,
+// prefixes `--comm`), with the option names whose value is that string.
+const SU_LONG = ['command', 'session-command', 'shell', 'group', 'supp-group', 'whitelist-environment', 'user'];
+const RUNS_C: Record<string, [OptTable, string[]]> = {
+  su: [{ v: 'csgGwu', lv: SU_LONG, lf: ['login', 'fast', 'preserve-environment', 'pty'], prefix: true }, ['-c', '--command', '--session-command']],
+  runuser: [{ v: 'csgGwu', lv: SU_LONG, lf: ['login', 'fast', 'preserve-environment', 'pty'], prefix: true }, ['-c', '--command', '--session-command']],
+  flock: [{ v: 'cwE', lv: ['command', 'timeout', 'wait', 'conflict-exit-code'], lf: ['shared', 'exclusive', 'unlock', 'nonblock', 'nb', 'close', 'no-fork', 'verbose'], prefix: true }, ['-c', '--command']],
+  npx: [{ v: 'cp', lv: ['call', 'package'], lf: ['yes', 'no', 'quiet'], prefix: true }, ['-c', '--call']],
+  npm: [{ v: 'cpw', lv: ['call', 'package', 'workspace', 'prefix'], lf: ['yes', 'no', 'quiet', 'silent', 'workspaces'], prefix: true }, ['-c', '--call']],
+};
 // Shell options whose value is the next word: bash -o pipefail, -O extglob, +o history, --rcfile F, --init-file F.
 const SHELL_VALUE = /^(?:[-+][oO]|--rcfile|--init-file)$/;
 /** The commands that `sh -c`, `bash -c`, `script -c` (and the like) and `env -S` run, unquoted, wherever they appear. */
@@ -186,11 +197,13 @@ function cPayloadsOf(cmd: string): string[] {
           if (attached) { out.push(envSplit(attached[1])); break; }
         }
       }
-      if (name === 'flock' || name === 'su' || name === 'runuser') { // -c/--command STR runs STR with a shell
-        const j = ws.findIndex((w, k) => k > i && /^(-c|--command)(=|$)/.test(unquote(w)));
-        const w = j >= 0 ? unquote(ws[j]) : '';
-        if (w.includes('=')) out.push(w.slice(w.indexOf('=') + 1));
-        else if (j >= 0 && ws[j + 1] !== undefined) out.push(unquote(ws[j + 1]));
+      if (Object.hasOwn(RUNS_C, name)) { // -c/--command STR (npx/npm exec: --call) runs STR with a shell
+        const [table, names] = RUNS_C[name];
+        const p = readOptions(ws.slice(i + 1).map(unquote), table);
+        if (name !== 'npm' || /^(exec|x)$/.test(p.pos[0] ?? '')) out.push(...valuesOf(p, names));
+        // su passes the words after `--` (or after the user) to the shell: `su root -- -c STR`
+        const k = p.pos.indexOf('-c');
+        if (name === 'su' && k >= 0 && p.pos[k + 1] !== undefined) out.push(p.pos[k + 1]);
       }
       if (!SHELLS.has(name)) continue;
       // A shell's payload is its first non-option word after -c (sh -c -x CMD, bash -c -o pipefail CMD); script's -c

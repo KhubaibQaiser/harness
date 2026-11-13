@@ -51,7 +51,7 @@ const WRAPPERS: Record<string, Spec> = {
 const LEADERS = new Set(['{', '}', '!', 'if', 'then', 'elif', 'else', 'do', 'while', 'until', 'function', '[[', '((', '&&', '||', ';', '|', '&', '`']);
 const nameOf = (w: string): string => commandName(unquote(w));
 /** A glob with a literal start (`n?ce`, `r[m]`) as an anchored regex; null otherwise (a bare `*` matches anything). */
-function globRegex(g: string): RegExp | null {
+export function globRegex(g: string): RegExp | null {
   if (!/[*?[]/.test(g) || !/^[a-z0-9][a-z0-9._+*?[\]-]*$/i.test(g)) return null;
   try {
     return new RegExp(`^${g.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);

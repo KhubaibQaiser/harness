@@ -60,14 +60,14 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
-      - name: Pin npm (trusted publishing needs 11.5.1 or newer)
-        run: npm install -g npm@11.5.1
+      - name: Pin npm (dist-tag over trusted publishing needs 11.21.0 or newer)
+        run: npm install -g npm@11.21.0
       # A guard, not a fix: it fails clearly if the pin above is ever lowered or removed.
       - name: Check npm is new enough for trusted publishing
         run: |
           v=$(npm --version)
-          if [ "$(printf '%s\n11.5.1\n' "$v" | sort -V | head -n1)" != "11.5.1" ]; then
-            echo "npm $v is older than 11.5.1, which trusted publishing needs." >&2
+          if [ "$(printf '%s\n11.21.0\n' "$v" | sort -V | head -n1)" != "11.21.0" ]; then
+            echo "npm $v is older than 11.21.0, which dist-tag over trusted publishing needs." >&2
             exit 1
           fi
       - run: pnpm install --frozen-lockfile
@@ -87,6 +87,23 @@ jobs:
             exit 1
           fi
           npm publish --access public --provenance --tag "$tag"
+      # Until the first stable release, `npm i` and `npx` with no tag get `latest`, so a prerelease moves it too.
+      # Runs on a re-run as well, so a refused tag move can be retried after the fix.
+      - name: Keep latest current while there is no stable release
+        run: |
+          name=$(node -p "require('./package.json').name")
+          v=$(node -p "require('./package.json').version")
+          case "$v" in *-*) ;; *) echo "stable $v was published as latest"; exit 0 ;; esac
+          cur=$(npm view "$name" dist-tags.latest)
+          if [ -z "$cur" ]; then echo "npm returned no latest tag for $name; refusing to guess" >&2; exit 1; fi
+          case "$cur" in *-*) ;; *) echo "latest is stable ($cur); leaving it"; exit 0 ;; esac
+          if [ "$cur" = "$v" ] || [ "$(printf '%s\n%s\n' "$cur" "$v" | sort -V | tail -n1)" != "$v" ]; then
+            echo "latest is $cur; not moving it to $v"; exit 0
+          fi
+          if ! npm dist-tag add "$name@$v" latest; then
+            echo "npm refused to move latest to $v. On npmjs.com > the package > Settings > Trusted publishing, enable 'Allow npm dist-tag' on this workflow's config, then re-run this job." >&2
+            exit 1
+          fi
   # The same version on GitHub Packages, so it shows under Packages on the repo page. Runs only after npm succeeded.
   github-packages:
     needs: publish

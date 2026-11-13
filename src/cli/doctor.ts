@@ -23,7 +23,7 @@ import type { CliEnv } from './index.js';
 import { dirtyPaths } from '../install/git-status.js';
 import { loadCatalog } from '../catalog/load.js';
 import { packageDir } from '../core/package-dir.js';
-import { LEGACY_PINS, STRUCTURAL, installPins, pinnedPlugins } from '../install/merge.js';
+import { LEGACY_PINS, PINS_NAME, STRUCTURAL, pinnedPlugins, settingsPins } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { reconcile } from '../install/reconcile.js';
 import { selectedIds } from '../install/plan.js';
@@ -248,8 +248,10 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
 }
 
 // Claude Code keeps the user-level copy until it is removed; only safe once no repo on the machine still uses the old name.
-const LEGACY_FIX = `when no repo on this machine still uses ${LEGACY_PINS}, run claude plugin marketplace remove ${LEGACY_PINS}`;
-const EDITED = /harness-pins(-[0-9a-f]{8})? marketplace was edited|^`\.mcp\.json`: .*(was edited|was changed)/;
+const LEGACY_FIX = `run /harness:update to rename it, then /harness:sync --install-plugins; when no repo on this machine still uses ${LEGACY_PINS}, run claude plugin marketplace remove ${LEGACY_PINS}`;
+const EDITED_PINS = /the (harness-pins(?:-[0-9a-f]+)?) marketplace was edited/;
+const EDITED_MCP = /^`\.mcp\.json`: .*(was edited|was changed)/;
+const pinsOfKey = (k: string) => k.slice(k.lastIndexOf('@') + 1);
 
 /** Catalog version, item drift (from reconcile, the same plan sync applies), plugin state and edited entries. Only for installs with an items list. */
 function itemChecks(
@@ -273,16 +275,25 @@ function itemChecks(
   const enabled: Record<string, unknown> = isObj(settings.enabledPlugins) ? settings.enabledPlugins : {};
   // The shared name lets the last-started repo's pins replace this repo's in Claude Code's user-level marketplace cache.
   const legacy = Object.hasOwn(settings.extraKnownMarketplaces ?? {}, LEGACY_PINS) || Object.keys(enabled).some((k) => k.endsWith(`@${LEGACY_PINS}`));
-  if (legacy) p.fix(`\`.claude/settings.json\` uses the shared \`${LEGACY_PINS}\` marketplace name, so another repo's pins can replace this repo's plugins`, `run /harness:update to give this install its own name, then ${LEGACY_FIX}`);
+  if (legacy) p.fix(`\`.claude/settings.json\` uses the shared \`${LEGACY_PINS}\` marketplace name, so another repo's pins can replace this repo's plugins`, LEGACY_FIX);
+  // A key the rename or a pin change would move is there under another pins name, so it is not missing.
+  const keyed = (id: string) => Object.keys(enabled).some((k) => k.split('@')[0] === id.split('@')[0] && PINS_NAME.test(pinsOfKey(k)));
   const seen = new Set<string>();
   const missing = (item: string, rel: string) => seen.has(item + rel) || (seen.add(item + rel), p.fix(`${item} is missing ${rel}`, 'run /harness:sync'));
   for (const c of planned.changes) {
     if (c.kind === 'create' && c.item) missing(c.item, c.rel);
     // A settings or .mcp.json block of an item that harness would add again is missing from the file.
-    if (c.kind !== 'delete' && STRUCTURAL.has(c.rel) && !(legacy && c.rel === '.claude/settings.json')) // the rename re-adds every plugin key
-      for (const b of c.blocks ?? []) try { const j = JSON.parse(b); if (typeof j?.item === 'string') missing(j.item, c.rel); } catch {}
+    if (c.kind !== 'delete' && STRUCTURAL.has(c.rel))
+      for (const b of c.blocks ?? []) try { const j = JSON.parse(b); if (typeof j?.item === 'string' && !(typeof j.plugin === 'string' && keyed(j.plugin))) missing(j.item, c.rel); } catch {}
   }
-  if (planned.notes.some((n) => EDITED.test(n))) p.note('the harness-pins marketplace or a harness MCP server differs from what harness installed', 'run /harness:sync');
+  const what = [...new Set(planned.notes.flatMap((n) => n.match(EDITED_PINS)?.[1] ?? []))].map((n) => `the ${n} marketplace`);
+  if (planned.notes.some((n) => EDITED_MCP.test(n))) what.push('a harness MCP server');
+  if (what.length) p.note(`${what.join(' and ')} ${what.length > 1 ? 'differ' : 'differs'} from what harness installed`, 'run /harness:sync');
+  const markets = isObj(settings.extraKnownMarketplaces) ? settings.extraKnownMarketplaces : {};
+  for (const k of Object.keys(enabled)) {
+    const m = pinsOfKey(k);
+    if (PINS_NAME.test(m) && !Object.hasOwn(markets, m)) p.note(`\`${k}\` names the ${m} marketplace, which this repo no longer has`, 'remove it from .claude/settings.json');
+  }
   const diff = (Object.keys(config.checks) as (keyof typeof config.checks)[]).filter((k) => config.checks[k] !== planned.config.checks[k]);
   if (diff.length) p.note(`config.yaml checks differ from the selected items (${diff.join(', ')}); the items win on the next update. Use /harness:add or harness remove to change gates.`);
 
@@ -290,7 +301,7 @@ function itemChecks(
   if (!pinned.length) return;
   const have = list(); // the one `claude plugin list` call
   if (!have) return p.note('claude is missing or its plugin list is unreadable, so plugin checks were skipped', 'install Claude Code or run harness doctor from a shell where claude works');
-  const market = installPins(manifest);
+  const market = settingsPins(settings);
   for (const pin of pinned) {
     const id = `${pin.name}@${market}`;
     const got = have.find((x) => x.id === id);

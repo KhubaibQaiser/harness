@@ -104,7 +104,7 @@ test('fake AI step through select, apply, update, remove, uninstall leaves the r
   for (const g of groups) expect(g.hooks[0]).toMatchObject({ type: 'command', command: 'node', args: [expect.stringContaining('dispatch.mjs')] });
   expect(settings.permissions.deny).toHaveLength(34);
   const pins = Object.keys(settings.extraKnownMarketplaces)[0];
-  expect(pins).toMatch(/^harness-pins-[0-9a-f]{8}$/);
+  expect(pins).toMatch(/^harness-pins-[0-9a-f]{12}$/);
   expect(settings.enabledPlugins).toHaveProperty([`e2e-plugin@${pins}`]);
   expect(JSON.parse(read('.mcp.json')).mcpServers).toHaveProperty('e2e-mcp');
   expect(calls()).toContain(`plugin install e2e-plugin@${pins} --scope project --json`);
@@ -141,7 +141,10 @@ test('fake AI step through select, apply, update, remove, uninstall leaves the r
   expect(upd.code, upd.out).toBe(0);
   expect(read('.harness/config.yaml')).toContain('2222222222222222222222222222222222222222');
   const markets = JSON.parse(read('.claude/settings.json')).extraKnownMarketplaces;
-  expect(Object.keys(markets)).toEqual([pins]); // the update keeps the install's name
+  const pins2 = Object.keys(markets)[0];
+  expect(Object.keys(markets)).toEqual([pins2]); // the new pins get a new name, in place of the old one
+  expect(pins2).not.toBe(pins);
+  expect(Object.keys(JSON.parse(read('.claude/settings.json')).enabledPlugins)).toEqual([`e2e-plugin@${pins2}`]);
   expect(JSON.stringify(markets)).toContain('2222222222222222222222222222222222222222');
   expect(JSON.stringify(markets)).not.toContain('1111111111111111111111111111111111111111');
   const blocks = JSON.parse(read('.harness/manifest.json')).files.flatMap((f: any) => (f.blocks ?? []) as string[]);

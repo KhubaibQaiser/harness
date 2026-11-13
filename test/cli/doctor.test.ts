@@ -566,28 +566,49 @@ test('items: the same plugin enabled from two marketplaces is a note', () => {
   expect(runItems(root, [cave(), cave({ id: 'caveman@other', enabled: false })]).out).not.toContain('enabled twice');
 });
 
-test('items: an edited harness-pins marketplace or MCP server is a note', () => {
-  const edited = 'note the harness-pins marketplace or a harness MCP server differs from what harness installed: run /harness:sync\n';
+test('items: an edited pins marketplace or MCP server is a note naming it', () => {
   const a = caveRepo(['caveman']);
-  expect(runItems(a, [cave()]).out).not.toContain(edited);
+  const edited = `note the ${pinsOf(a)} marketplace differs from what harness installed: run /harness:sync\n`;
+  expect(runItems(a, [cave()]).out).not.toContain('differs from what harness installed');
   editJson(a, '.claude/settings.json', (j) => { j.extraKnownMarketplaces[pinsOf(a)].source.plugins[0].source.sha = 'f'.repeat(40); });
   expect(runItems(a, [cave()]).out).toContain(edited);
   const b = itemsRepo(['mobile-mcp']);
   editJson(b, '.mcp.json', (j) => { j.mcpServers['mobile-mcp'].args = ['-y', 'evil']; });
-  expect(runItems(b, []).out).toContain(edited);
+  expect(runItems(b, []).out).toContain('note a harness MCP server differs from what harness installed: run /harness:sync\n');
 });
+
+// An install from before content names: the same files with the shared name.
+const toLegacy = (root: string) => {
+  const own = pinsOf(root);
+  for (const rel of ['.claude/settings.json', '.harness/manifest.json']) writeFileSync(join(root, rel), readFileSync(join(root, rel), 'utf8').replaceAll(own, 'harness-pins'));
+};
 
 test('items: the shared harness-pins name is a fix until update renames it', () => {
   const root = caveRepo(['caveman']);
-  const old = "fix `.claude/settings.json` uses the shared `harness-pins` marketplace name, so another repo's pins can replace this repo's plugins: run /harness:update to give this install its own name, then when no repo on this machine still uses harness-pins, run claude plugin marketplace remove harness-pins\n";
+  const old = "fix `.claude/settings.json` uses the shared `harness-pins` marketplace name, so another repo's pins can replace this repo's plugins: run /harness:update to rename it, then /harness:sync --install-plugins; when no repo on this machine still uses harness-pins, run claude plugin marketplace remove harness-pins\n";
   expect(runItems(root, [cave()]).out).not.toContain('shared `harness-pins`');
-  const own = pinsOf(root);
-  for (const rel of ['.claude/settings.json', '.harness/manifest.json']) writeFileSync(join(root, rel), readFileSync(join(root, rel), 'utf8').replaceAll(own, 'harness-pins'));
+  toLegacy(root);
   const r = runItems(root, [cave({ id: 'caveman@harness-pins' })]);
   expect(r.out).toContain(old);
   expect(r.code).toBe(1);
-  expect(r.out).not.toContain('is missing .claude/settings.json'); // the rename is not reported as missing entries
+  expect(r.out).not.toContain('caveman is missing .claude/settings.json'); // its key is there under the old name
   expect(r.out).not.toContain('enabled in this repo but not installed');
+});
+
+test('items: on a legacy install, a really missing plugin key and missing item files are still fixes', () => {
+  const root = caveRepo(['caveman', 'staff-reviewer']);
+  toLegacy(root);
+  editJson(root, '.claude/settings.json', (j) => { delete j.enabledPlugins['caveman@harness-pins']; });
+  rmSync(join(root, '.claude/agents/staff-reviewer.md'));
+  const r = runItems(root, []);
+  expect(r.out).toContain('fix caveman is missing .claude/settings.json: run /harness:sync\n');
+  expect(r.out).toContain('fix staff-reviewer is missing .claude/agents/staff-reviewer.md: run /harness:sync\n');
+});
+
+test('items: a plugin key naming a pins marketplace the repo no longer has is a note', () => {
+  const root = caveRepo(['caveman']);
+  editJson(root, '.claude/settings.json', (j) => { j.enabledPlugins['gamma@harness-pins-aaaaaaaaaaaa'] = false; });
+  expect(runItems(root, [cave()]).out).toContain('note `gamma@harness-pins-aaaaaaaaaaaa` names the harness-pins-aaaaaaaaaaaa marketplace, which this repo no longer has: remove it from .claude/settings.json\n');
 });
 
 test('items: config checks that differ from the selected items are a note', () => {

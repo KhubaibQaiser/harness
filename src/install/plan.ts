@@ -12,7 +12,7 @@ import type { Facts } from './detect.js';
 import type { Catalog } from '../catalog/schema.js';
 import { eolOf, withEol } from './text.js';
 import type { Manifest } from './manifest.js';
-import { STRUCTURAL, pinnedPlugins, type PinnedPlugin } from './merge.js';
+import { STRUCTURAL, pinnedPlugins, settingsPins, type PinnedPlugin } from './merge.js';
 import type { LoadedPreset } from '../catalog/presets.js';
 import { type McpServer, type Plan, newPlan, planAgents, planAi, planIgnores, planMcp, planOwnFiles, planPresetFiles, planSettings, planTests } from './plan-steps.js';
 
@@ -64,7 +64,7 @@ export function planChanges(
 ): { changes: Change[]; manual: string[]; notes: string[]; dropped: string[]; /** The config as written: checks follow the selection on the AI path. */ config: HarnessConfig; /** The install's pins marketplace name. */ market: string } {
   const templatesDir = ctx.templatesDir ?? packageDir('templates');
   const p = newPlan(root, ctx.recordedFiles);
-  const g = gateItems(config, ctx, p.notes);
+  const g = gateItems(config, ctx, p.notes, settingsPins((() => { try { return JSON.parse(p.read('.claude/settings.json') ?? '{}'); } catch { return {}; } })())); // a bad file fails in planSettings
   config = g.config;
   planConfig(p, config, ctx, g.catalog);
   // LF whatever the package checkout uses (a Windows clone may have CRLF), so the bytes and the manifest hash are the same everywhere.
@@ -87,12 +87,12 @@ export function planChanges(
 }
 
 /** The selection gates the own items. Without a catalog or items nothing is gated: the beta behaviour. */
-function gateItems(config: HarnessConfig, ctx: PlanCtx, notes: string[]): Gate {
+function gateItems(config: HarnessConfig, ctx: PlanCtx, notes: string[], current: string): Gate {
   const catalog = config.items.length ? ctx.catalog : undefined;
   const ids = new Set(selectedIds(config));
   const on = (id: string) => !catalog || ids.has(id);
   const chosen = catalog ? catalog.items.filter((i) => ids.has(i.id)) : [];
-  const kept = catalog ? keptItems(catalog, ids, ctx, notes) : { keepPlugins: [], keepServers: [] };
+  const kept = catalog ? keptItems(catalog, ids, ctx, notes, current) : { keepPlugins: [], keepServers: [] };
   return { catalog, on, chosen, config: catalog ? { ...config, checks: checksOf(chosen) } : config, ...kept };
 }
 
@@ -105,12 +105,12 @@ function checksOf(chosen: Catalog['items']): HarnessConfig['checks'] {
   return checks;
 }
 
-/** An id the catalog no longer has keeps its plugin or server: it is rebuilt from what the manifest recorded. */
-function keptItems(catalog: Catalog, ids: Set<string>, ctx: PlanCtx, notes: string[]): { keepPlugins: PinnedPlugin[]; keepServers: McpServer[] } {
+/** An id the catalog no longer has keeps its plugin or server: it is rebuilt from what the manifest recorded for the marketplace settings.json uses now (`current`). */
+function keptItems(catalog: Catalog, ids: Set<string>, ctx: PlanCtx, notes: string[], current: string): { keepPlugins: PinnedPlugin[]; keepServers: McpServer[] } {
   const keepPlugins: PinnedPlugin[] = [];
   const keepServers: McpServer[] = [];
   const parse = (bs: string[] = []) => bs.flatMap((b) => { try { return [JSON.parse(b)]; } catch { return []; } });
-  const market = parse(ctx.recorded).find((r) => r.marketplace)?.entry?.source?.plugins ?? [];
+  const market = parse(ctx.recorded).find((r) => r.marketplace === current)?.entry?.source?.plugins ?? [];
   for (const id of ids) {
     if (catalog.items.some((i) => i.id === id)) continue;
     notes.push(`Item "${id}" is not in this catalog; left as is.`);

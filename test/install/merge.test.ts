@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, describe, expect, it, test } from 'vitest';
 import { BETA_GROUPS, betaSettings } from './helpers.js';
-import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeEslintHarnessRules, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig, mergeTsconfigOptions, STRUCTURAL } from '../../src/install/merge.js';
+import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeEslintHarnessRules, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, pinsName, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig, mergeTsconfigOptions, STRUCTURAL } from '../../src/install/merge.js';
 import { TELEMETRY_ENV, type LoadedPreset } from '../../src/catalog/presets.js';
 import { guardedView } from '../../src/core/harness-files.js';
 
@@ -398,16 +398,20 @@ describe('plugins, marketplace and MCP blocks', () => {
   const SUB = { name: 'beta', item: 'plugin-beta', source: { source: 'git-subdir', url: 'o/mono', path: 'plugins/beta', sha: 'b'.repeat(40) } } as const;
   const GAMMA = { name: 'gamma', item: 'plugin-gamma', source: { source: 'github', repo: 'o/gamma', sha: 'c'.repeat(40) } } as const;
   const LSP = { name: 'typescript-lsp', item: 'plugin-ts-lsp', source: { source: 'github', repo: 'o/lsp', sha: 'd'.repeat(40) }, lspServers: { typescript: { command: 'tsls', args: ['--stdio'], extensionToLanguage: { '.ts': 'typescript' } } } } as const;
-  const M = 'harness-pins-0123abcd';
-  const plug = (before: string | null, plugins: any[], recorded?: string[], market = M) => mergeSettings(before, { sandbox: 'unattended', recorded, plugins, market });
-  const entryOf = (...ps: any[]) => ({ source: { source: 'settings', name: 'harness-pins-0123abcd', owner: { name: 'harness' }, plugins: ps } });
+  const plug = (before: string | null, plugins: any[], recorded?: string[]) => mergeSettings(before, { sandbox: 'unattended', recorded, plugins });
+  const N = (...ps: any[]) => pinsName(ps);
+  const entryOf = (name: string, ...ps: any[]) => ({ source: { source: 'settings', name, owner: { name: 'harness' }, plugins: ps } });
+  // A merge as the shared-name versions wrote it: the same content under `harness-pins`.
+  const legacy = (r: { after: string; blocks: string[]; market: string }) => ({ after: r.after.replaceAll(r.market, 'harness-pins'), blocks: r.blocks.map((b) => b.replaceAll(r.market, 'harness-pins')) });
 
-  it('plugins add enabledPlugins and the harness-pins-0123abcd marketplace', () => {
+  it('plugins add enabledPlugins and the content-named pins marketplace', () => {
     const r = plug(null, [GH, SUB]);
+    const M = N(GH, SUB);
+    expect(r.market).toBe(M);
     const s = JSON.parse(r.after);
-    expect(s.enabledPlugins).toEqual({ 'alpha@harness-pins-0123abcd': true, 'beta@harness-pins-0123abcd': true });
+    expect(s.enabledPlugins).toEqual({ [`alpha@${M}`]: true, [`beta@${M}`]: true });
     expect(s.extraKnownMarketplaces).toEqual({
-      'harness-pins-0123abcd': entryOf(
+      [M]: entryOf(M,
         { name: 'alpha', source: { source: 'github', repo: 'o/alpha', sha: 'a'.repeat(40) } },
         { name: 'beta', source: { source: 'git-subdir', url: 'o/mono', path: 'plugins/beta', sha: 'b'.repeat(40) } },
       ),
@@ -415,17 +419,17 @@ describe('plugins, marketplace and MCP blocks', () => {
     expect(s.permissions.deny).toHaveLength(34);
     expect(s.hooks.Stop[0].hooks[0].args).toEqual(ARGS);
     const parsed = r.blocks.map((b) => JSON.parse(b));
-    expect(parsed.filter((b) => b.plugin)).toEqual([{ plugin: 'alpha@harness-pins-0123abcd', item: 'plugin-alpha' }, { plugin: 'beta@harness-pins-0123abcd', item: 'plugin-beta' }]);
-    expect(parsed.filter((b) => b.marketplace)).toEqual([{ marketplace: 'harness-pins-0123abcd', entry: s.extraKnownMarketplaces['harness-pins-0123abcd'] }]);
+    expect(parsed.filter((b) => b.plugin)).toEqual([{ plugin: `alpha@${M}`, item: 'plugin-alpha' }, { plugin: `beta@${M}`, item: 'plugin-beta' }]);
+    expect(parsed.filter((b) => b.marketplace)).toEqual([{ marketplace: M, entry: s.extraKnownMarketplaces[M] }]);
   });
 
   it('an LSP plugin entry carries lspServers (golden)', () => {
-    const e = JSON.parse(plug(null, [LSP]).after).extraKnownMarketplaces['harness-pins-0123abcd'];
-    expect(e).toEqual(entryOf({ name: 'typescript-lsp', source: LSP.source, lspServers: LSP.lspServers }));
+    const e = JSON.parse(plug(null, [LSP]).after).extraKnownMarketplaces[N(LSP)];
+    expect(e).toEqual(entryOf(N(LSP), { name: 'typescript-lsp', source: LSP.source, lspServers: LSP.lspServers }));
   });
 
-  it('harness-pins-0123abcd entry has only documented fields', () => {
-    const e = JSON.parse(plug(null, [GH, SUB, LSP]).after).extraKnownMarketplaces['harness-pins-0123abcd'];
+  it('the pins entry has only documented fields', () => {
+    const e = JSON.parse(plug(null, [GH, SUB, LSP]).after).extraKnownMarketplaces[N(GH, SUB, LSP)];
     expect(Object.keys(e)).toEqual(['source']);
     expect(Object.keys(e.source).sort()).toEqual(['name', 'owner', 'plugins', 'source']);
     for (const p of e.plugins ?? e.source.plugins) expect(Object.keys(p).every((k) => ['name', 'source', ...(p.name === 'typescript-lsp' ? ['lspServers'] : [])].includes(k))).toBe(true);
@@ -436,11 +440,15 @@ describe('plugins, marketplace and MCP blocks', () => {
     const first = plug(null, [GH, SUB, GAMMA]);
     const r = plug(first.after, [GH, SUB], first.blocks);
     const s = JSON.parse(r.after);
-    expect(Object.keys(s.enabledPlugins)).toEqual(['alpha@harness-pins-0123abcd', 'beta@harness-pins-0123abcd']);
-    expect(s.extraKnownMarketplaces['harness-pins-0123abcd'].source.plugins.map((p: any) => p.name)).toEqual(['alpha', 'beta']);
+    const M = N(GH, SUB);
+    expect(Object.keys(s.enabledPlugins)).toEqual([`alpha@${M}`, `beta@${M}`]);
+    expect(Object.keys(s.extraKnownMarketplaces)).toEqual([M]);
+    expect(s.extraKnownMarketplaces[M].source.plugins.map((p: any) => p.name)).toEqual(['alpha', 'beta']);
     const oldMarket = first.blocks.find((b) => b.includes('"marketplace"'))!;
-    const gammaBlock = first.blocks.find((b) => b.includes('gamma@harness-pins-0123abcd'))!;
-    expect([...r.dropped].sort()).toEqual([oldMarket, gammaBlock].sort());
+    const gammaBlock = first.blocks.find((b) => b.includes('gamma@'))!;
+    // the name follows the pins, so every plugin key is re-recorded under it
+    expect([...r.dropped].sort()).toEqual(first.blocks.filter((b) => b.includes('"marketplace"') || b.includes('"plugin"')).sort());
+    expect(r.dropped).toEqual(expect.arrayContaining([oldMarket, gammaBlock]));
     expect(r.blocks.map((b) => JSON.parse(b)).filter((b) => b.marketplace)).toHaveLength(1);
     expect(r.notes).toEqual([]);
   });
@@ -460,13 +468,16 @@ describe('plugins, marketplace and MCP blocks', () => {
     expect(s).not.toHaveProperty('extraKnownMarketplaces');
   });
 
-  it('a user-edited harness-pins-0123abcd entry is left and reported', () => {
+  it('a user-edited pins entry is left with its keys, no second entry is added, and it is reported', () => {
     const first = plug(null, [GH]);
     const edited = JSON.parse(first.after);
-    edited.extraKnownMarketplaces['harness-pins-0123abcd'].source.owner.name = 'me';
+    edited.extraKnownMarketplaces[N(GH)].source.owner.name = 'me';
     const r = plug(JSON.stringify(edited, null, 2), [GH, SUB], first.blocks);
-    expect(JSON.parse(r.after).extraKnownMarketplaces['harness-pins-0123abcd'].source.owner.name).toBe('me');
-    expect(r.notes).toEqual(['`.claude/settings.json`: the harness-pins-0123abcd marketplace was edited; left as is. harness doctor checks it.']);
+    const s = JSON.parse(r.after);
+    expect(Object.keys(s.extraKnownMarketplaces)).toEqual([N(GH)]);
+    expect(s.extraKnownMarketplaces[N(GH)].source.owner.name).toBe('me');
+    expect(s.enabledPlugins).toEqual({ [`alpha@${N(GH)}`]: true });
+    expect(r.notes).toEqual([`\`.claude/settings.json\`: the ${N(GH)} marketplace was edited; left as is. harness doctor checks it.`]);
   });
 
   // Folds a merge into the recorded blocks the way update.ts does: drop the dropped, add the new.
@@ -510,24 +521,25 @@ describe('plugins, marketplace and MCP blocks', () => {
   it('a recorded plugin the person set to false is left with a note, stays recorded, and uninstall notes it too', () => {
     const first = plug(null, [GH, GAMMA]);
     const edited = JSON.parse(first.after);
-    edited.enabledPlugins['gamma@harness-pins-0123abcd'] = false;
+    const G = `gamma@${N(GH, GAMMA)}`;
+    edited.enabledPlugins[G] = false;
     const r = plug(JSON.stringify(edited, null, 2), [GH], first.blocks);
-    const gamma = first.blocks.find((b) => b.includes('gamma@harness-pins-0123abcd'))!;
-    expect(JSON.parse(r.after).enabledPlugins['gamma@harness-pins-0123abcd']).toBe(false);
-    expect(r.notes).toContain('`.claude/settings.json`: `gamma@harness-pins-0123abcd` was changed; left as is.');
+    const gamma = first.blocks.find((b) => b.includes(G))!;
+    expect(JSON.parse(r.after).enabledPlugins[G]).toBe(false);
+    expect(r.notes).toContain(`\`.claude/settings.json\`: \`${G}\` was changed; left as is.`);
     expect(r.dropped).not.toContain(gamma);
     const notes: string[] = [];
     const out = removeFromSettings(r.after, FILE('.claude/settings.json', fold(first.blocks, r)), null, notes)!;
-    expect(JSON.parse(out.after).enabledPlugins).toEqual({ 'gamma@harness-pins-0123abcd': false });
-    expect(notes).toContain('`.claude/settings.json`: `gamma@harness-pins-0123abcd` was changed; left as is.');
+    expect(JSON.parse(out.after).enabledPlugins).toEqual({ [G]: false });
+    expect(notes).toContain(`\`.claude/settings.json\`: \`${G}\` was changed; left as is.`);
   });
 
   it('a recorded plugin the person removed is dropped without a note', () => {
     const first = plug(null, [GH, GAMMA]);
     const edited = JSON.parse(first.after);
-    delete edited.enabledPlugins['gamma@harness-pins-0123abcd'];
+    delete edited.enabledPlugins[`gamma@${N(GH, GAMMA)}`];
     const r = plug(JSON.stringify(edited), [GH], first.blocks);
-    expect(r.dropped).toContain(first.blocks.find((b) => b.includes('gamma@harness-pins-0123abcd')));
+    expect(r.dropped).toContain(first.blocks.find((b) => b.includes('gamma@')));
     expect(r.notes).toEqual([]);
   });
 
@@ -536,31 +548,56 @@ describe('plugins, marketplace and MCP blocks', () => {
     expect(guardedView(plug(base, [GH, SUB, LSP]).after, null)).toEqual(guardedView(base, null));
   });
 
-  it('each new install gets its own marketplace name; a re-merge keeps the recorded one', () => {
-    const a = mergeSettings(null, { sandbox: 'unattended', plugins: [GH] });
-    const b = mergeSettings(null, { sandbox: 'unattended', plugins: [GH] });
-    expect(a.market).toMatch(/^harness-pins-[0-9a-f]{8}$/);
-    expect(b.market).not.toBe(a.market);
-    expect(Object.keys(JSON.parse(a.after).extraKnownMarketplaces)).toEqual([a.market]);
-    const again = mergeSettings(a.after, { sandbox: 'unattended', plugins: [GH], recorded: a.blocks });
-    expect(again.market).toBe(a.market);
-    expect(again.after).toBe(a.after);
+  it('the name is a hash of the pins: same pins, same name in any order; different pins, different names', () => {
+    expect(N(GH, SUB)).toMatch(/^harness-pins-[0-9a-f]{12}$/);
+    expect(N(SUB, GH)).toBe(N(GH, SUB));
+    expect(N(GH)).not.toBe(N(GH, SUB));
+    expect(N({ ...GH, source: { ...GH.source, sha: 'e'.repeat(40) } })).not.toBe(N(GH));
+    expect(N({ ...LSP, item: 'other-id' })).toBe(N(LSP)); // the catalog id is not part of the pins
+    const flipped = { ...LSP, lspServers: { typescript: { extensionToLanguage: { '.ts': 'typescript' }, args: ['--stdio'], command: 'tsls' } } };
+    expect(N(flipped)).toBe(N(LSP)); // key order does not change the name
   });
 
-  it('an install on the shared harness-pins name moves to its own name in place; uninstall removes the new names', () => {
+  it('a re-merge with the same pins changes nothing', () => {
+    const a = plug(null, [GH, SUB]);
+    const again = plug(a.after, [GH, SUB], a.blocks);
+    expect(again.market).toBe(a.market);
+    expect(again.after).toBe(a.after);
+    expect(again.blocks).toEqual([]);
+    expect(again.dropped).toEqual([]);
+  });
+
+  it('a pin change renames the entry and every key in place, with nothing left of the old name', () => {
+    const before = canon({ enabledPlugins: { 'foo@other': true } });
+    const first = plug(before, [GH, SUB]);
+    const s0 = JSON.parse(first.after);
+    s0.enabledPlugins = { [`alpha@${first.market}`]: true, 'foo@other': true, [`beta@${first.market}`]: true };
+    const GH2 = { ...GH, source: { ...GH.source, sha: 'e'.repeat(40) } };
+    const r = plug(canon(s0), [GH2, SUB], first.blocks);
+    const M = N(GH2, SUB);
+    const s = JSON.parse(r.after);
+    expect(Object.keys(s.enabledPlugins)).toEqual([`alpha@${M}`, 'foo@other', `beta@${M}`]);
+    expect(Object.keys(s.extraKnownMarketplaces)).toEqual([M]);
+    expect(r.after).not.toContain(first.market);
+    const rec = fold(first.blocks, r);
+    expect(rec.join()).not.toContain(first.market);
+    expect(r.notes).toEqual([]);
+  });
+
+  it('an install on the shared harness-pins name moves to the content name in place; uninstall removes the new names', () => {
     const before = canon({ enabledPlugins: { 'foo@other': true }, extraKnownMarketplaces: { other: { source: { source: 'github', repo: 'x/y' } } } });
-    const old = plug(before, [GH, SUB], undefined, 'harness-pins');
+    const old = legacy(plug(before, [GH, SUB]));
     const s0 = JSON.parse(old.after);
     s0.enabledPlugins = { 'alpha@harness-pins': true, 'foo@other': true, 'beta@harness-pins': true }; // harness's keys around the person's
     const r = plug(canon(s0), [GH, SUB], old.blocks);
+    const M = N(GH, SUB);
     const s = JSON.parse(r.after);
     expect(Object.keys(s.enabledPlugins)).toEqual([`alpha@${M}`, 'foo@other', `beta@${M}`]);
     expect(Object.keys(s.extraKnownMarketplaces)).toEqual(['other', M]);
     expect(s.extraKnownMarketplaces[M].source.name).toBe(M);
     expect(r.notes).toEqual([]);
     expect([...r.dropped].sort()).toEqual(old.blocks.filter((b) => b.includes('"harness-pins"') || b.includes('@harness-pins"')).sort());
-    expect(r.after).not.toContain('"harness-pins"');
-    expect(r.after).not.toContain('@harness-pins"');
+    expect(r.after).not.toMatch(/"harness-pins"|@harness-pins"/);
     const notes: string[] = [];
     const out = removeFromSettings(r.after, FILE('.claude/settings.json', fold(old.blocks, r)), null, notes)!;
     expect(JSON.parse(out.after).enabledPlugins).toEqual({ 'foo@other': true });
@@ -568,19 +605,37 @@ describe('plugins, marketplace and MCP blocks', () => {
     expect(notes).toEqual([]);
   });
 
-  it('migration leaves an edited old entry and a changed old key as they are, with notes', () => {
-    const old = plug(null, [GH, GAMMA], undefined, 'harness-pins');
+  it('migration run twice changes nothing the second time', () => {
+    const old = legacy(plug(null, [GH, GAMMA]));
+    const once = plug(old.after, [GH, GAMMA], old.blocks);
+    const twice = plug(once.after, [GH, GAMMA], fold(old.blocks, once));
+    expect(twice.after).toBe(once.after);
+    expect(twice.blocks).toEqual([]);
+    expect(twice.dropped).toEqual([]);
+    expect(twice.notes).toEqual([]);
+  });
+
+  it('an edited shared harness-pins entry stays with its keys; no new-name entry is added', () => {
+    const old = legacy(plug(null, [GH, GAMMA]));
     const s0 = JSON.parse(old.after);
     s0.extraKnownMarketplaces['harness-pins'].source.owner.name = 'me';
-    s0.enabledPlugins['gamma@harness-pins'] = false;
     const r = plug(JSON.stringify(s0, null, 2), [GH, GAMMA], old.blocks);
     const s = JSON.parse(r.after);
+    expect(Object.keys(s.extraKnownMarketplaces)).toEqual(['harness-pins']);
     expect(s.extraKnownMarketplaces['harness-pins'].source.owner.name).toBe('me');
-    expect(s.enabledPlugins).toEqual({ [`alpha@${M}`]: true, 'gamma@harness-pins': false });
-    expect(r.notes).toEqual([
-      '`.claude/settings.json`: the harness-pins marketplace was edited; left as is. harness doctor checks it.',
-      '`.claude/settings.json`: `gamma@harness-pins` was changed; left as is.',
-    ]);
+    expect(s.enabledPlugins).toEqual({ 'alpha@harness-pins': true, 'gamma@harness-pins': true });
+    expect(r.notes).toEqual(['`.claude/settings.json`: the harness-pins marketplace was edited; left as is. harness doctor checks it.']);
+    expect(r.dropped).toEqual([]);
+  });
+
+  it('a changed old key of a still-picked plugin moves to the new name with its value', () => {
+    const old = legacy(plug(null, [GH, GAMMA]));
+    const s0 = JSON.parse(old.after);
+    s0.enabledPlugins['gamma@harness-pins'] = false;
+    const r = plug(JSON.stringify(s0, null, 2), [GH, GAMMA], old.blocks);
+    const M = N(GH, GAMMA);
+    expect(JSON.parse(r.after).enabledPlugins).toEqual({ [`alpha@${M}`]: true, [`gamma@${M}`]: false });
+    expect(r.notes).toEqual([]);
   });
 
   it('pinnedPlugins reads catalog items', () => {

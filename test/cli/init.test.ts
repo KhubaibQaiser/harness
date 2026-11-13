@@ -439,7 +439,7 @@ test('a write the OS refuses rolls back and prints the person\'s command', async
 });
 
 // The install's own pins marketplace name, read from what init wrote.
-const pinsOf = (root: string): string => Object.keys(JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).extraKnownMarketplaces).find((k) => /^harness-pins-[0-9a-f]{8}$/.test(k))!;
+const pinsOf = (root: string): string => Object.keys(JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).extraKnownMarketplaces).find((k) => /^harness-pins-[0-9a-f]{12}$/.test(k))!;
 
 test('--install-plugins installs the pinned ids after apply, and rehashes settings', async () => {
   const root = makeRepo(NPM_VITEST);

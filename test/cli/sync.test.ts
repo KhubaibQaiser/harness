@@ -188,7 +188,7 @@ test('sync moves an install on the shared harness-pins name to its own name, in 
   const r = await run(root, ['--yes'], CLAUDE, listing([]));
   expect(r.code, r.out).toBe(0);
   const now = pinsOf(root);
-  expect(now).toMatch(/^harness-pins-[0-9a-f]{8}$/);
+  expect(now).toMatch(/^harness-pins-[0-9a-f]{12}$/);
   const text = readFileSync(join(root, SETTINGS), 'utf8');
   expect(text).not.toMatch(/"harness-pins"|@harness-pins"/);
   expect(JSON.parse(text).enabledPlugins).toEqual({ [`impeccable@${now}`]: true });

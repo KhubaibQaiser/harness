@@ -112,11 +112,12 @@ test('plugins, external skills and mcp servers install with the selection and ar
   const m = install(root, plan(root, ids).changes);
   const settings = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'));
   const market = Object.keys(settings.extraKnownMarketplaces)[0];
-  expect(market).toMatch(/^harness-pins-[0-9a-f]{8}$/);
+  expect(market).toMatch(/^harness-pins-[0-9a-f]{12}$/);
   expect(Object.keys(settings.enabledPlugins).sort()).toEqual([`impeccable@${market}`, `shadcn@${market}`]);
-  // a second repo gets its own name; re-planning this one keeps its name and changes nothing in settings
+  // another repo (a fork, a branch) with the same pins gets the same name; different pins get another one
   const other = makeRepo(REPO);
-  expect(plan(other, ids).market).not.toBe(market);
+  expect(plan(other, ids).market).toBe(market);
+  expect(plan(other, [...OWN, 'impeccable']).market).not.toBe(market);
   const again = plan(root, ids, { recorded: blocksOf(m, '.claude/settings.json'), mcpRecorded: blocksOf(m, '.mcp.json') });
   expect(again.market).toBe(market);
   expect(get(again.changes, '.claude/settings.json')).toBeUndefined();
@@ -208,6 +209,21 @@ test('an id missing from the catalog keeps its plugin and server', () => {
   expect(p.dropped).toEqual([]);
   expect(get(p.changes, '.claude/settings.json')).toBeUndefined();
   expect(get(p.changes, '.mcp.json')).toBeUndefined();
+});
+
+test('an item gone from the catalog keeps the pin of the current marketplace record, not a stale one', () => {
+  const root = makeRepo(REPO);
+  const m = install(root, plan(root, [...OWN, 'impeccable']).changes);
+  const rec = blocksOf(m, '.claude/settings.json')!;
+  const cur = JSON.parse(rec.find((b) => JSON.parse(b).marketplace)!);
+  const staleEntry = structuredClone(cur.entry);
+  staleEntry.source.name = 'harness-pins';
+  staleEntry.source.plugins[0].source.sha = '0'.repeat(40);
+  const small = { ...catalog, items: catalog.items.filter((i) => i.id !== 'impeccable') };
+  const p = plan(root, [...OWN, 'impeccable'], { cat: small, recorded: [JSON.stringify({ marketplace: 'harness-pins', entry: staleEntry }), ...rec], files: m.files });
+  expect(p.market).toBe(cur.marketplace);
+  const after = JSON.parse(text(get(p.changes, '.claude/settings.json')) || readFileSync(join(root, '.claude/settings.json'), 'utf8'));
+  expect(after.extraKnownMarketplaces[cur.marketplace]).toEqual(cur.entry);
 });
 
 test('deselecting agents-md removes the AGENTS.md block and the CLAUDE.md import', () => {

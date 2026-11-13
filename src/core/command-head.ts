@@ -89,18 +89,22 @@ function pastOptions(ws: string[], i: number, spec: Spec, name: string, valueMod
   return i;
 }
 
-/** One segment with its wrappers split off by `;` and the command head reduced to its name, or null when nothing changes. */
-function plainSegment(seg: string, valueMode: boolean, out: { unsure: boolean }): string | null {
+/** One segment with its wrappers handled and the command head reduced to its name, or null when nothing changes. In
+ *  `cut` mode each wrapper's options end a segment (`nice ; rm …`); in `strip` mode the wrappers are removed in place
+ *  with no separator (`curl x | nice /bin/sh` → `curl x | sh`), which keeps a pipe into a shell intact. */
+function plainSegment(seg: string, valueMode: boolean, strip: boolean, out: { unsure: boolean }): string | null {
   const ws = words(seg);
-  let i = 0;
+  let i = 0, wrapStart = -1;
   const cuts: number[] = []; // word indices where a wrapper's options ended: a `;` goes before the head after each
   for (;;) {
     while (i < ws.length && (LEADERS.has(ws[i]) || /^\w+=/.test(ws[i]))) i += ws[i] === 'function' ? 2 : 1; // `function NAME {`: skip NAME too
     const name = i < ws.length ? nameOf(ws[i]) : '';
     if (!Object.hasOwn(WRAPPERS, name)) break;
+    if (wrapStart < 0) wrapStart = i;
     cuts.push((i = pastOptions(ws, i, WRAPPERS[name], name, valueMode, out)));
   }
   if (i >= ws.length) return null;
+  if (strip && wrapStart < 0) return null; // strip only matters when a wrapper was removed; cut mode covers a bare path head
   const head = ws[i];
   // The head: a path or quoted spelling is reduced to its name; a word the shell builds at run time is left as written.
   const name = /[/\\'"]/.test(head) && !/[$`*?[{]/.test(unquote(head)) ? nameOf(head) : head;
@@ -108,6 +112,7 @@ function plainSegment(seg: string, valueMode: boolean, out: { unsure: boolean })
   // Word offsets in order: only whitespace lies between two words, so each indexOf lands on its own word.
   const offs: number[] = [];
   for (let j = 0; j <= i; j++) offs.push(seg.indexOf(ws[j], j ? offs[j - 1] + ws[j - 1].length : 0));
+  if (strip) return seg.slice(0, offs[wrapStart]) + name + seg.slice(offs[i] + head.length); // wrappers dropped, no separator
   let text = '', from = 0;
   for (const c of cuts) [text, from] = [`${text}${seg.slice(from, offs[c]).replace(/\s+$/, '')} ; `, offs[c]];
   return text + seg.slice(from, offs[i]) + name + seg.slice(offs[i] + head.length);
@@ -122,21 +127,52 @@ function plainSegment(seg: string, valueMode: boolean, out: { unsure: boolean })
  * more reading comes back: see guardedPaths.
  * ponytail: with two unknown options, mixed readings (one with a value, one without) are not tried.
  */
-export function plainHeads(cmd: string, guarded: ReadonlySet<string> = NONE): { texts: string[]; unsure: boolean } {
+export function plainHeads(cmd: string, guarded: ReadonlySet<string> = NONE): { texts: string[]; unsure: boolean; ask: boolean } {
+  const r = wrapperForms(cmd);
   const g = guardedPaths(cmd, guarded);
-  const r = plainReadings(cmd);
-  return g === null ? r : { texts: [...r.texts, g], unsure: r.unsure };
+  return { texts: g === null ? r.texts : [...r.texts, g], unsure: r.unsure, ask: globGuardAsk(cmd, guarded) };
 }
 const NONE: ReadonlySet<string> = new Set();
 const PATH_WORD = (w: string): boolean => { const u = unquote(w); return /[/\\'"]/.test(w) && !/[$`*?[{=]/.test(u) && !/^[-<>&|]/.test(u) && !/^\d*[<>]/.test(w); };
+// A cheap gate: no word can become a wrapper segment, a path head or a guarded path without a `/`, `\`, quote, or a
+// wrapper name here, so nothing changes and the extra readings are skipped (perf, re-review round 3, item 5).
+const WRAPPER_RE = new RegExp(`(?:^|[^\\w./-])(?:${Object.keys(WRAPPERS).join('|')})(?![\\w./-])`);
+const mayChange = (cmd: string): boolean => /[/\\'"]/.test(cmd) || WRAPPER_RE.test(cmd);
+
+/** The wrapper readings: the cut reading(s) (`nice ; rm …`) and the strip reading (`curl x | sh`, wrappers removed in place). */
+export function wrapperForms(cmd: string): { texts: string[]; unsure: boolean } {
+  if (!mayChange(cmd)) return { texts: [], unsure: false };
+  const r = plainReadings(cmd);
+  const strip = render(cmd, (p, out) => plainSegment(p, false, true, out)).text;
+  return strip === null || r.texts.includes(strip) ? r : { texts: [...r.texts, strip], unsure: r.unsure };
+}
+
+/** `true` when a path word's glob basename (`/bin/r[m]`, `/bin/r?`) could match a guarded command: the caller asks,
+ *  since the command the shell would run can't be read. */
+export function globGuardAsk(cmd: string, guarded: ReadonlySet<string>): boolean {
+  if (!guarded.size || !/[*?[]/.test(cmd)) return false;
+  for (const p of pieces(cmd)) for (const w of words(p.text)) {
+    const u = unquote(w);
+    if (!/[/\\]/.test(w) || /[$`]/.test(u)) continue; // path-like only; a word the shell builds is left alone
+    const bn = u.split(/[/\\]/).pop() ?? '';
+    // A clean command token that starts with a literal letter or digit and holds a glob: `r[m]`, `r?`, `g?t`. A leading
+    // or lone `*`/`?`/`[` matches anything and is no command hint; junk from an escape (`**n`, `[n---`) is skipped too.
+    if (!/[*?[]/.test(bn) || !/^[a-z0-9][a-z0-9._+*?[\]-]*$/i.test(bn)) continue;
+    try {
+      const re = new RegExp(`^${bn.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+      for (const g of guarded) if (re.test(g)) return true;
+    } catch { return true; } // a malformed glob we can't read: ask
+  }
+  return false;
+}
 /**
  * The command with each path or quoted word that names a guarded command (`/bin/rm`, `"/usr/bin/npm"`) reduced to that
  * name and started as a segment of its own, so a wrapper no table knows (`zzwrap -q /bin/rm -rf ~`) hides nothing.
  * Every other word, an argument path included, is left whole. A `cd`/`pushd` folder is never cut (`cd /src/git`).
  * Null when no word changes.
  */
-function guardedPaths(cmd: string, guarded: ReadonlySet<string>): string | null {
-  if (!guarded.size) return null;
+export function guardedPaths(cmd: string, guarded: ReadonlySet<string>): string | null {
+  if (!guarded.size || !/[/\\'"]/.test(cmd)) return null;
   let text = '', from = 0, changed = false;
   for (const p of pieces(cmd)) {
     const k = cmd.indexOf(p.text, from); // pieces are trimmed and in order; only separators lie between them
@@ -155,20 +191,22 @@ function guardedPaths(cmd: string, guarded: ReadonlySet<string>): string | null 
   return changed ? text + cmd.slice(from) : null;
 }
 
-function plainReadings(cmd: string): { texts: string[]; unsure: boolean } {
+/** Rebuilds `cmd` with each segment replaced by `fn`'s result (null keeps it), preserving the separators between them. */
+function render(cmd: string, fn: (seg: string, out: { unsure: boolean }) => string | null): { text: string | null; unsure: boolean } {
   const out = { unsure: false };
-  const read = (valueMode: boolean): string | null => {
-    let text = '', from = 0, changed = false;
-    for (const p of pieces(cmd)) {
-      const k = cmd.indexOf(p.text, from); // pieces are trimmed and in order; only separators lie between them
-      const plain = plainSegment(p.text, valueMode, out);
-      if (plain !== null) [text, changed] = [text + cmd.slice(from, k) + plain, true];
-      else text += cmd.slice(from, k + p.text.length);
-      from = k + p.text.length;
-    }
-    return changed ? text + cmd.slice(from) : null;
-  };
-  const a = read(false);
-  if (a === null || !out.unsure) return { texts: a === null ? [] : [a], unsure: false };
-  return { texts: [a, read(true) ?? cmd], unsure: true };
+  let text = '', from = 0, changed = false;
+  for (const p of pieces(cmd)) {
+    const k = cmd.indexOf(p.text, from); // pieces are trimmed and in order; only separators lie between them
+    const plain = fn(p.text, out);
+    if (plain !== null) [text, changed] = [text + cmd.slice(from, k) + plain, true];
+    else text += cmd.slice(from, k + p.text.length);
+    from = k + p.text.length;
+  }
+  return { text: changed ? text + cmd.slice(from) : null, unsure: out.unsure };
+}
+
+function plainReadings(cmd: string): { texts: string[]; unsure: boolean } {
+  const a = render(cmd, (p, out) => plainSegment(p, false, false, out));
+  if (a.text === null || !a.unsure) return { texts: a.text === null ? [] : [a.text], unsure: false };
+  return { texts: [a.text, render(cmd, (p, out) => plainSegment(p, true, false, out)).text ?? cmd], unsure: true };
 }

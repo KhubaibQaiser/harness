@@ -837,11 +837,15 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
   // unknown, two readings bracket what it might consume; the strictest wins, so either reading's deny is a deny and a
   // disagreement that is allow-vs-ask asks. Depth 3: the payloads inside are the same strings the reading as written
   // already judges (with their own plain heads), so they are not re-opened here.
-  for (const t of plainHeads(command, GUARDED_HEADS).texts) {
+  // Read on the text without its data heredoc bodies: a body nobody runs holds no command, and reading it costs (perf).
+  const ph = plainHeads(withoutHeredocBodies(command), GUARDED_HEADS);
+  for (const t of ph.texts) {
     const r = decideRead(t, ctx, 3);
     if (r.kind === 'deny') return r;
     rs.push(r);
   }
+  if (ph.ask) rs.push(toDecision(['ask', GLOB_HEAD_WHY])); // a glob head that could be a guarded command
+
   // git runs its editor or pager on the message, so a message built by $(…) or a heredoc may run: ask at least.
   if (EDITOR_SET.test(command) && /\bgit\b/.test(command) && /\$\(|`|<</.test(command)) rs.push(toDecision(['ask', EDITOR_WHY]));
   // A substitution glued inside a word prints what the guard cannot know: read without it, a ruled reading asks.
@@ -856,6 +860,7 @@ const EDITOR_WHY = 'the command sets an editor or pager for git (GIT_EDITOR, EDI
 // path rule), and not a shell or eval: a re-runner counts only where the shell runs it (`git -C /tmp/sh commit -m "…"`
 // runs no shell), and a `-c` payload is found wherever it sits.
 const GUARDED_HEADS: ReadonlySet<string> = new Set(RULED.filter((n) => !/^(harness|cli\.m?js|eval)$/.test(n) && !SHELLS.has(n)));
+const GLOB_HEAD_WHY = 'a glob in a command path could match a guarded command (rm, git, …), so the guard cannot tell what runs';
 const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
 const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 

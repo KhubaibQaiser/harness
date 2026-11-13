@@ -3,8 +3,9 @@
 // .gitignore; PreToolUse runs before the command, so `commit -a` or a pathspec has not staged anything yet). The commit
 // must be the only, plain command on the line, so nothing on it writes or stages after the scan. Commands that make
 // commits from content harness can't scan first (merge, rebase, …) ask. Fails closed: no gitleaks, an error or a
-// timeout denies. gitleaks runs with harness's own rules, no ignore file, inline allows ignored, no repo or user
-// attributes and no global or system git config, so the repo can't hide a finding. Only rule, file and line are shown.
+// timeout denies. gitleaks runs with harness's own rules, inline allows ignored, every file diffed as text, no user
+// attributes, no global or system git config and a plain diff format; a repo .gitleaksignore blocks, since gitleaks
+// always reads it. So the repo can't hide a finding. Only rule, file and line are shown.
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -73,11 +74,14 @@ function kinds(command: string, ctx: Ctx): Set<Kind> {
 }
 
 // The one message idiom Claude Code writes: -m "$(cat <<'EOF' … EOF )". The delimiter is quoted, so the body runs nothing.
-const QUOTED_CAT = /"\$\(cat <<-?'(\w+)'\n[\s\S]*?\n\1\n\s*\)"/g;
+// Bash closes the heredoc at the FIRST line equal to the delimiter, so a body holding one is code after it: not the idiom.
+const QUOTED_CAT = /"\$\(cat <<(-?)'(\w+)'\n([\s\S]*?)\n\2\n\s*\)"/g;
+const messages = (cmd: string): string =>
+  cmd.replace(QUOTED_CAT, (m, dash: string, d: string, body: string) => (body.split('\n').some((l) => (dash ? l.replace(/^\t+/, '') : l) === d) ? m : '"msg"'));
 
 /** Why the line is not one plain `git commit`/`git stash` harness can scan as it will run, or null. */
 function notPlain(command: string): string | null {
-  const t = command.replace(QUOTED_CAT, '"msg"');
+  const t = messages(command);
   if (/\$\(|`|<\(|>\(|<</.test(t)) return 'part of this line is built at run time (a `$(…)`, backtick, process substitution or heredoc), so harness can\'t tell what it stages; write the message with -m "…", -m "$(cat <<\'EOF\' … EOF)" or -F <file>';
   const ps = pieces(t);
   if (ps.length !== 1) return 'a git commit must be the only command on the line, so nothing else on it can write or stage a file after the scan; run the other commands first, in their own call';
@@ -88,6 +92,15 @@ function notPlain(command: string): string | null {
   if (opts.some((o) => o.startsWith('-c=') && !SAFE_C.test(o.slice(3)))) return 'a git -c setting other than user.name, user.email, user.signingkey or commit.gpgsign can change what is committed';
   return null;
 }
+
+// Command-line level git config for gitleaks's own git: a plain, uncoloured diff with the usual a/ b/ paths, whatever
+// the repo's .git/config says (color.ui=always would put escape codes in the diff gitleaks parses), and no fsmonitor.
+const SEALED_CONFIG: [string, string][] = [
+  ['core.fsmonitor', 'false'], ['color.ui', 'never'], ['color.diff', 'never'], ['diff.colorMoved', 'no'], ['diff.noprefix', 'false'], ['diff.mnemonicPrefix', 'false'],
+  ['diff.relative', 'false'], ['diff.srcPrefix', 'a/'], ['diff.dstPrefix', 'b/'], ['core.quotePath', 'true'],
+];
+const configEnv = (pairs: [string, string][]): Record<string, string> =>
+  Object.fromEntries([['GIT_CONFIG_COUNT', String(pairs.length)], ...pairs.flatMap(([k, v], i) => [[`GIT_CONFIG_KEY_${i}`, k], [`GIT_CONFIG_VALUE_${i}`, v]])]);
 
 /** Git 2.40 added GIT_ATTR_SOURCE, which the scan needs so .gitattributes can't mark a file binary and hide it. */
 export function gitTooOld(version: string): boolean {
@@ -127,8 +140,15 @@ function scan(ctx: Ctx): Decision {
   const [real, attrs] = where.stdout.trim().split('\n').map((p) => resolve(ctx.root, p));
   // GIT_ATTR_SOURCE and an empty core.attributesFile cover .gitattributes and user attributes; info/attributes has no off switch.
   if (existsSync(attrs!) && /diff|binary/.test(readFileSync(attrs!, 'utf8'))) return deny(`.git/info/attributes has a diff or binary line, which would hide files from the secret scan. Ask the person to remove it, ${OFF}.`);
-  const tree = git(['hash-object', '-t', 'tree', '--stdin'], ctx.env, '');
-  if (tree.status !== 0) return failed('git hash-object', tree);
+  // An attribute source whose only line is `* diff`: every file diffs as text, so neither .gitattributes nor a NUL byte hides it.
+  const blob = git(['hash-object', '-w', '--stdin'], ctx.env, '* diff\n');
+  if (blob.status !== 0) return failed('git hash-object', blob);
+  const tree = git(['mktree'], ctx.env, `100644 blob ${blob.stdout.trim()}\t.gitattributes\n`);
+  if (tree.status !== 0) return failed('git mktree', tree);
+  // gitleaks always reads <repo>/.gitleaksignore, whatever --gitleaks-ignore-path says; the index copy would be committed.
+  const staged = git(['ls-files', '--cached', '--', ':(icase).gitleaksignore']);
+  if (staged.status !== 0) return failed('git ls-files', staged);
+  if (existsSync(join(ctx.root, '.gitleaksignore')) || staged.stdout.trim()) return deny(`a .gitleaksignore file is in the repo (worktree or index). gitleaks always reads it from the repo root, so it can hide a finding from this scan. Remove it (\`git rm --cached\` too if it is staged), or stop and ask the person, ${OFF}.`);
   const dir = mkdtempSync(join(tmpdir(), 'harness-gitleaks-'));
   try {
     const f = (name: string, text = '') => (writeFileSync(join(dir, name), text), join(dir, name));
@@ -142,7 +162,7 @@ function scan(ctx: Ctx): Decision {
     // No attributes but harness's (none), no global or system config: no textconv driver, binary mark or fsmonitor from the repo's setup.
     const sealed = {
       ...ctx.env, GIT_ATTR_SOURCE: tree.stdout.trim(), GIT_ATTR_NOSYSTEM: '1', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: empty, HOME: home, XDG_CONFIG_HOME: home,
-      GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.attributesFile', GIT_CONFIG_VALUE_0: empty, GIT_CONFIG_KEY_1: 'core.fsmonitor', GIT_CONFIG_VALUE_1: 'false',
+      ...configEnv([['core.attributesFile', empty], ...SEALED_CONFIG]),
     };
     const config = f('gitleaks.toml', RULES);
     const ignore = f('gitleaksignore');
@@ -166,9 +186,12 @@ function scan(ctx: Ctx): Decision {
   }
 }
 
-// The person's allowlists: harness's scans ignore them, but the person's own gitleaks runs read them.
-const ALLOWLIST = /(^|[\\/\s'"=<>])\.gitleaks(\.toml|ignore)(?![\w.-])/;
-const ALLOWLIST_ASK = 'This changes a gitleaks allowlist (.gitleaks.toml or .gitleaksignore), which can hide a secret from gitleaks. Confirm the change.';
+// The person's allowlists. Harness's scans ignore .gitleaks.toml, but gitleaks always reads <repo>/.gitleaksignore, so the
+// scan itself blocks while one exists: that is the real control. This ask only flags a change early; a name built at
+// run time (`.gitleaksig${n}nore`) or a checkout that restores the file is not seen here.
+const ALLOWLIST = /(^|[\\/\s=<>])\.gitleaks(\.toml|ignore)(?![\w.-])/i;
+const mentionsAllowlist = (text: string): boolean => ALLOWLIST.test(text) || ALLOWLIST.test(text.replace(/['"\\]/g, ''));
+const ALLOWLIST_ASK = 'This changes a gitleaks allowlist (.gitleaks.toml or .gitleaksignore), which can hide a secret from gitleaks; while a .gitleaksignore exists, harness blocks agent commits. Confirm the change.';
 
 export const secretScan: Check = {
   name: 'secret-scan',
@@ -177,7 +200,7 @@ export const secretScan: Check = {
   run(ctx) {
     if (!ctx.config?.checks.secretScan) return { kind: 'allow' };
     const target = editTarget(ctx.input);
-    if (target !== null) return ALLOWLIST.test(target) ? ask(ALLOWLIST_ASK) : { kind: 'allow' };
+    if (target !== null) return mentionsAllowlist(target) ? ask(ALLOWLIST_ASK) : { kind: 'allow' };
     if (!isShell(ctx.input.tool_name)) return { kind: 'allow' };
     const command = String(ctx.input.tool_input?.command ?? '');
     const k = kinds(command, ctx);
@@ -187,6 +210,6 @@ export const secretScan: Check = {
       if (d.kind !== 'allow') return d;
     }
     if (k.has('ask')) return ask('This git command makes commits from content harness can\'t scan for secrets before they are made (a merge, rebase, cherry-pick, revert, am, pull, commit-tree, a stash create, a git alias or a git named at run time). Confirm it.');
-    return ALLOWLIST.test(command) ? ask(ALLOWLIST_ASK) : { kind: 'allow' };
+    return mentionsAllowlist(command) ? ask(ALLOWLIST_ASK) : { kind: 'allow' };
   },
 };

@@ -11,7 +11,8 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 
 - New catalog item `gitleaks-ci` (kind `ci`): a GitHub workflow that scans the full git history with gitleaks 8.30.1, checksum-verified, with `--redact`. `/harness:init` recommends it for `api` and `infra` repos.
 - New catalog item `gitleaks-commit`: a new check, `checks.secretScan`, scans what an agent `git commit` or `git stash` could take (staged changes, and unstaged and untracked files that are not ignored) and blocks on a finding, naming the rule, file and line, never the value. The commit must be the only, plain command on its line. Merges, rebases and similar commands ask. Editing `.gitleaks.toml` or `.gitleaksignore` asks. It needs gitleaks on PATH and git 2.40 or newer; without them every agent commit is blocked until you install them or remove the item.
-- Both items scan with harness's own rules, so a repo's allowlists, `gitleaks:allow` comments and `.gitattributes` can't hide a finding.
+- Both items scan with harness's own rules, so a repo's `.gitleaks.toml`, `gitleaks:allow` comments, `.gitattributes` and NUL bytes can't hide a finding. A `.gitleaksignore`, which gitleaks always reads, blocks agent commits and fails the CI job.
+- This repo's own CI gitleaks job is hardened the same way.
 
 ## Catalog
 

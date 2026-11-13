@@ -192,6 +192,8 @@ test('gitleaks runs as a checksum-verified binary over full history', () => {
   expect(ci.steps.some((s: any) => /gitleaks git --redact/.test(s.run ?? ''))).toBe(true);
   expect(ci.steps[0].with['fetch-depth']).toBe(0);
   expect(raw('ci.yml')).not.toContain('gitleaks-action');
+  // Hardened as the gitleaks-ci template: the repo's allowlists, gitleaks:allow comments and attributes can't hide a finding.
+  for (const s of ['--ignore-gitleaks-allow', '--config "$RUNNER_TEMP/gitleaks.toml"', '--gitleaks-ignore-path', "printf '* diff\\n' | git hash-object -w --stdin", 'git mktree', 'export GIT_ATTR_SOURCE=', 'if [ -e .gitleaksignore ]; then']) expect(raw('ci.yml'), s).toContain(s);
 });
 
 test('every checkout sets persist-credentials: false', () => {

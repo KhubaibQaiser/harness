@@ -24,12 +24,15 @@ jobs:
           curl -sSfL -o "$f" "https://github.com/gitleaks/gitleaks/releases/download/v$v/$f"
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $f" | sha256sum -c -
           tar -xzf "$f" gitleaks
-      # Harness's own rules, an empty ignore file and inline gitleaks:allow comments ignored, so the repo's
-      # .gitleaks.toml, .gitleaksignore and comments can't hide a finding. An empty attribute source, so a
-      # .gitattributes `-diff` or `binary` line can't hide a file. To use your own rules, edit this step by hand.
+      # Harness's own rules (gitleaks's defaults) and inline gitleaks:allow comments ignored, so the repo's .gitleaks.toml
+      # and comments can't hide a finding. gitleaks always reads a repo .gitleaksignore, so one fails the job.
+      # To use your own rules, edit this step by hand.
       - name: Scan full history
         run: |
+          if [ -e .gitleaksignore ]; then echo "::error::.gitleaksignore is in the repo; gitleaks always reads it, so it can hide a finding. Remove it." >&2; exit 1; fi
           printf '[extend]\nuseDefault = true\n' > "$RUNNER_TEMP/gitleaks.toml"
           : > "$RUNNER_TEMP/gitleaksignore"
-          export GIT_ATTR_SOURCE="$(git hash-object -t tree /dev/null)" GIT_ATTR_NOSYSTEM=1
+          # Every file diffs as text: an attribute source whose only line is `* diff`, so neither .gitattributes nor a NUL byte hides one.
+          t="$(printf '100644 blob %s\t.gitattributes\n' "$(printf '* diff\n' | git hash-object -w --stdin)" | git mktree)"
+          export GIT_ATTR_SOURCE="$t" GIT_ATTR_NOSYSTEM=1
           ./gitleaks git --redact --verbose --ignore-gitleaks-allow --config "$RUNNER_TEMP/gitleaks.toml" --gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore" .

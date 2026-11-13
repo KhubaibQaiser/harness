@@ -16,6 +16,7 @@ const templatesDir = join(pkgDir, 'templates');
 const WF = '.github/workflows/harness-gitleaks.yml';
 const tpl = readFileSync(join(templatesDir, 'ci/gitleaks.yml'), 'utf8');
 const ci = readFileSync(join(pkgDir, '.github/workflows/ci.yml'), 'utf8');
+const HARDENED = ['--ignore-gitleaks-allow', '--config', '--gitleaks-ignore-path', "printf '* diff\\n' | git hash-object -w --stdin", 'git mktree', 'export GIT_ATTR_SOURCE=', 'if [ -e .gitleaksignore ]; then'];
 const AI = { picks: '{"catalog_version":1,"findings":[],"items":[]}', report: '# R\n\n## Limits\n\nx\n', product: '# P\n' };
 
 function plan(root: string, ids: string[]) {
@@ -36,7 +37,8 @@ test('the workflow pins the same gitleaks version and checksum as this repo\'s C
   expect(tpl).toContain('persist-credentials: false');
   expect(tpl).toContain('fetch-depth: 0');
   expect(tpl).toContain('./gitleaks git --redact');
-  for (const s of ['--ignore-gitleaks-allow', '--config "$RUNNER_TEMP/gitleaks.toml"', '--gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore"', 'GIT_ATTR_SOURCE="$(git hash-object -t tree /dev/null)"', 'GIT_ATTR_NOSYSTEM=1', "printf '[extend]\\nuseDefault = true\\n'"]) expect(tpl, s).toContain(s);
+  for (const s of HARDENED) expect(tpl, s).toContain(s);
+  for (const s of ['--ignore-gitleaks-allow', '--config "$RUNNER_TEMP/gitleaks.toml"', '--gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore"', 'GIT_ATTR_NOSYSTEM=1', "printf '[extend]\\nuseDefault = true\\n'"]) expect(tpl, s).toContain(s);
   expect(tpl).toMatch(/permissions:\n {2}contents: read\n/);
   for (const u of tpl.matchAll(/uses: (\S+)/g)) expect(u[1]).toMatch(/@[0-9a-f]{40}$/);
 });

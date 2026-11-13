@@ -4,25 +4,25 @@ import { isAbsolute } from 'node:path';
 import { findOnPath, syncCommand } from '../checks/stop/runner.js';
 
 // Not checks/stop's Exec (async, timeout, merged output): this one is a sync, argv-only call that reports a missing binary.
-export interface ExecOpts { timeoutMs?: number; cwd?: string; env?: NodeJS.ProcessEnv }
+export interface ExecOpts { timeoutMs?: number; cwd?: string; env?: NodeJS.ProcessEnv; input?: string }
 export type Exec = (cmd: string, args: string[], opts?: ExecOpts) => { status: number; stdout: string; stderr?: string; missing?: true; timedOut?: true };
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 export const defaultExec: Exec = (cmd, args, o = {}) => {
   if (isAbsolute(cmd) ? !existsSync(cmd) : !findOnPath(cmd, process.env, process.platform)) return { status: 127, stdout: '', missing: true };
   const [file, a, opts] = syncCommand(cmd, args);
-  const r = spawnSync(file, a, { ...opts, ...(o.cwd && { cwd: o.cwd }), ...(o.env && { env: o.env }), encoding: 'utf8', timeout: o.timeoutMs ?? 30_000, maxBuffer: MAX_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] });
+  const r = spawnSync(file, a, { ...opts, ...(o.cwd && { cwd: o.cwd }), ...(o.env && { env: o.env }), encoding: 'utf8', timeout: o.timeoutMs ?? 30_000, maxBuffer: MAX_BUFFER, stdio: [o.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], ...(o.input !== undefined && { input: o.input }) });
   const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr || r.error?.message || '', ...(timedOut && { timedOut: true as const }) };
 };
 
-export type ExecBytes = (cmd: string, args: string[], maxBytes: number) => { status: number; stdout: Buffer; stderr?: string; missing?: true; tooBig?: true };
+export type ExecBytes = (cmd: string, args: string[], maxBytes: number, input?: string) => { status: number; stdout: Buffer; stderr?: string; missing?: true; tooBig?: true };
 
 /** Like defaultExec but stdout stays binary and is capped at maxBytes (for tarballs). */
-export const defaultExecBytes: ExecBytes = (cmd, args, maxBytes) => {
+export const defaultExecBytes: ExecBytes = (cmd, args, maxBytes, input) => {
   if (!isAbsolute(cmd) && !findOnPath(cmd, process.env, process.platform)) return { status: 127, stdout: Buffer.alloc(0), missing: true };
   const [file, a, opts] = syncCommand(cmd, args);
-  const r = spawnSync(file, a, { ...opts, encoding: 'buffer', maxBuffer: maxBytes, timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  const r = spawnSync(file, a, { ...opts, encoding: 'buffer', maxBuffer: maxBytes, timeout: 120_000, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], ...(input !== undefined && { input: Buffer.from(input) }) }); // a string input would be decoded with encoding 'buffer'
   const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
   if (code === 'ENOENT') return { status: 127, stdout: Buffer.alloc(0), missing: true };
   const tooBig = code === 'ENOBUFS';

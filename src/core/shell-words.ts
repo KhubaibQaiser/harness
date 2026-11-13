@@ -186,9 +186,11 @@ function cPayloadsOf(cmd: string): string[] {
           if (attached) { out.push(envSplit(attached[1])); break; }
         }
       }
-      if (name === 'flock') { // flock -c/--command STR runs STR with $SHELL -c
-        const j = ws.findIndex((w, k) => k > i && /^(-c|--command)$/.test(unquote(w)));
-        if (j >= 0 && ws[j + 1] !== undefined) out.push(unquote(ws[j + 1]));
+      if (name === 'flock' || name === 'su' || name === 'runuser') { // -c/--command STR runs STR with a shell
+        const j = ws.findIndex((w, k) => k > i && /^(-c|--command)(=|$)/.test(unquote(w)));
+        const w = j >= 0 ? unquote(ws[j]) : '';
+        if (w.includes('=')) out.push(w.slice(w.indexOf('=') + 1));
+        else if (j >= 0 && ws[j + 1] !== undefined) out.push(unquote(ws[j + 1]));
       }
       if (!SHELLS.has(name)) continue;
       // A shell's payload is its first non-option word after -c (sh -c -x CMD, bash -c -o pipefail CMD); script's -c

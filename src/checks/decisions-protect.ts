@@ -201,9 +201,13 @@ const EDITORS = new Set(['ex', 'vi', 'vim', 'nvim', 'view', 'ed', 'red', 'nano',
 const WRAPS = /^(sudo|command|builtin|exec|env|nohup|nice|time)$|^\w+=/;
 /** The file words of an editor run in each segment (after the wrappers above); its `-c`/`+` commands count too, harmlessly. */
 export const editorFiles = (segs: string[][]): string[] => segs.flatMap((toks) => {
+  const files = (from: number) => toks.slice(from).filter((t) => !/^[-+]/.test(t));
+  if (base(toks[0] ?? '') === 'sudoedit') return files(1); // sudoedit FILE edits via $EDITOR
   let i = 0;
+  const sudo = base(toks[0] ?? '') === 'sudo';
   while (toks[i] !== undefined && WRAPS.test(toks[i]!)) i++;
-  return EDITORS.has(base(toks[i] ?? '')) ? toks.slice(i + 1).filter((t) => !/^[-+]/.test(t)) : [];
+  if (sudo && /^(-e|--edit)$/.test(toks[i] ?? '')) return files(i + 1); // sudo -e FILE
+  return EDITORS.has(base(toks[i] ?? '')) ? files(i + 1) : [];
 });
 export const EDITOR_REASON = 'An editor run by the agent writes the file itself, and this file is a team decision, a new file in docs/decisions/ or a generated rule. Decisions change through harness remember; approve only if the person asked for this edit.';
 /** An editor's file that is a decision path, or a dated plain file there it could turn into one: ask. */

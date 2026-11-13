@@ -8,7 +8,7 @@ import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import { becomesDecision, codeNames, decisionRoutes, decisionsDeny, editorAsk, editorFiles, globHits } from './decisions-protect.js';
 import type { Decision } from '../hooks/types.js';
-import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
+import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, targetDir, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
 import { SAFE_GIT } from '../core/git-safe.js';
 import { globGuardAsk, guardedPaths, plainHeads, wrapperForms } from '../core/command-head.js';
@@ -57,6 +57,7 @@ function cdDirs(cmds: string[]): string[] | null {
   return out;
 }
 const CD_REASON = "The command changes to a folder protect can't resolve ($X, -, ~ or no folder), so it can't tell where its writes land. Confirm the command.";
+const EDITOR_PROTECTED_REASON = 'An editor run by the agent writes the file itself, and this is a harness file or a Claude settings file. Confirm only if the person asked for this edit.';
 const relative = (ps: string[]): string[] => ps.filter((p) => p && !nodePath.isAbsolute(p));
 const fromDirs = (dirs: string[], ps: string[]): string[] => [...ps, ...dirs.flatMap((d) => relative(ps).map((p) => nodePath.posix.join(d, p)))];
 
@@ -64,11 +65,14 @@ const fromDirs = (dirs: string[], ps: string[]): string[] => [...ps, ...dirs.fla
 function moveCopyTargets(cmds: string[]): { mv: string[]; cp: string[] } {
   const r = { mv: [] as string[], cp: [] as string[] };
   for (const toks of cmds.flatMap(segTokens)) {
-    const i = toks.findIndex((t) => t === 'mv' || t === 'cp');
+    const i = toks.findIndex((t) => t === 'mv' || t === 'cp'); // a path-qualified /bin/cp is read by the plain-head reading, not here
     if (i < 0) continue;
+    const bucket = toks[i] === 'mv' ? r.mv : r.cp;
+    const dir = targetDir(toks.slice(i + 1)); // -t DIR / --target-directory: that folder is written
+    if (dir !== null) { bucket.push(dir); continue; }
     const args = toks.slice(i + 1).filter((t) => !t.startsWith('-'));
-    if (toks[i] === 'mv') r.mv.push(...args);
-    else r.cp.push(...args.slice(-1));
+    if (toks[i] === 'mv') bucket.push(...args);
+    else bucket.push(...args.slice(-1));
   }
   return r;
 }
@@ -149,13 +153,14 @@ function moreWriteTargets(cmds: string[]): string[] {
       const starts = args.slice(0, Math.max(0, args.findIndex((t) => /^[-(!]/.test(t)))).filter(Boolean);
       if (deletes) out.push(...(starts.length ? starts : ['.']));
     } else if (name === 'tar') {
-      const key = args[0] ?? '';
-      const keyLetters = /^-?[a-zA-Z]+$/.test(key) && !key.startsWith('--') ? key.replace(/^-/, '') : '';
-      const has = (letter: string, long: string) => keyLetters.includes(letter) || args.includes('-' + letter) || args.includes(long);
+      // The mode letters in the bundled key (first arg, `xf`/`-xf`) and in every later short cluster: option order doesn't matter.
+      const key0 = /^-?[a-zA-Z]+$/.test(args[0] ?? '') && !args[0].startsWith('--') ? args[0].replace(/^-/, '') : '';
+      const shorts = key0 + args.slice(1).filter((t) => /^-[a-zA-Z]+$/.test(t)).map((t) => t.slice(1)).join('');
+      const has = (letter: string, long: string) => shorts.includes(letter) || args.includes(long);
       if (has('x', '--extract') || args.includes('--get')) out.push(...valueOf('-C', '--directory'));
       if (has('c', '--create') || has('r', '--append') || has('u', '--update')) {
         out.push(...valueOf('-f', '--file'));
-        if (keyLetters.includes('f')) out.push(args[1] ?? ''); // tar -czf OUT …
+        if (key0.includes('f')) out.push(args[1] ?? ''); // tar -czf OUT …
       }
     } else if (name === 'unzip') out.push(...valueOf('-d', '--directory'));
     else if (name === 'rsync') {
@@ -456,6 +461,8 @@ export const protect: Check = {
       const hit = paths.filter((p) => p && isProtected(root, p, exempt));
       // Protected only because the exemption is off: ask. tmp itself, its .gitignore or a protected name below it: deny.
       if (hit.length) return !exempt && hit.every((p) => inWorkdir(root, p)) ? { kind: 'ask', reason: LINK_REASON, check: 'protect' } : { kind: 'deny', reason: REASON, check: 'protect' }; // before the cd ask (re-review 2, N1)
+      // An editor (vim, ex, sudoedit, …) writes the file itself; on a protected path the agent confirms rather than being denied.
+      if (edited.some((p) => p && isProtected(root, p, exempt))) return { kind: 'ask', reason: EDITOR_PROTECTED_REASON, check: 'protect' };
       if (cdDirs(cmds) === null && relative([...paths, ...dr.writes, ...dr.removed, ...edited]).length) return { kind: 'ask', reason: CD_REASON, check: 'protect' };
       const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
@@ -471,7 +478,7 @@ export const protect: Check = {
 // dispatcher denies.
 const unbudgeted = protect.run;
 // Commands whose writes protect reads: a path to one after a wrapper no table knows still heads its own segment.
-const WRITE_HEADS: ReadonlySet<string> = new Set([...WRITERS, ...DELETERS, 'sed', 'perl', 'git', 'curl', 'wget', 'sort', 'time', 'tar', 'unzip', 'find']);
+const WRITE_HEADS: ReadonlySet<string> = new Set([...WRITERS, ...DELETERS, 'sed', 'perl', 'git', 'curl', 'wget', 'sort', 'time', 'tar', 'unzip', 'find', 'openssl', 'patch', 'xxd', 'sudoedit', 'ex', 'vim', 'nvim']);
 const rank = (d: Decision): number => (d.kind === 'deny' ? 2 : d.kind === 'ask' ? 1 : 0);
 const GUARDED_ASK = 'A path that names a writer (`./bin/tee`) was reduced to that writer and then names a protected path, but protect cannot tell a read from a write here. Confirm the command.';
 const GLOB_ASK = 'A glob in a command path could match a writer and a protected path, so protect cannot tell what it writes. Confirm the command.';

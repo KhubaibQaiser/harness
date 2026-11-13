@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { plainHeads } from '../core/command-head.js';
-import { commandName, cPayloads, remember, SHELLS, stdinPrograms, unquote as shellUnquote, withWorkBudget, words as shellWords } from '../core/shell-words.js';
+import { commandName, cPayloads, pieces, remember, SHELLS, stdinPrograms, unquote as shellUnquote, withWorkBudget, words as shellWords } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
 import { commandSkeleton, eachJoin, gitPlain, globReadings, joinAll, joinLines, joinVariant, MAX_READINGS, RULED, splicedReading, textRulesView } from './guard-readings.js';
@@ -445,19 +445,28 @@ const ASK: [RegExp, string][] = [
 
 /** A subshell or substitution closing right after a word: `(rm -rf /)`, `(git push origin main)`. Not `}`: it ends a brace word. */
 const CLOSERS = /[)`]+$/;
-export const rmTargets = (cmd: string): { recursive: boolean; targets: string[] }[] =>
+export const rmTargets = (cmd: string): { recursive: boolean; targets: string[]; fed: boolean }[] =>
   [...cmd.matchAll(/(?:^|[;&|(`]\s*|\s)rm\s+([^;&|\n]*)/g)].map((m) => { // a backtick opens a command too: `rm -rf /`
     const toks = m[1].trim().split(/\s+/).filter(Boolean);
     const flags = toks.filter((t) => t.startsWith('-')).join('');
+    const before = cmd.slice(0, m.index + m[0].length - m[1].length);
     // A closer ends a group opened before rm, as in `(rm -rf /)`; one in rm's own words (-$(cat tmp)) is part of a target.
     // A backtick is its own closer, so only an opener before the trailing closers counts as rm's own (`rm -rf /`).
-    const closesOuter = !/[(`]/.test(m[1].trimEnd().replace(CLOSERS, '')) && /[(`]/.test(cmd.slice(0, m.index + m[0].length - m[1].length));
-    return { recursive: /-[a-zA-Z]*[rR]|--recursive/.test(flags), targets: toks.filter((t) => !t.startsWith('-')).map((t) => unquote(closesOuter ? t.replace(CLOSERS, '') : t)) };
+    const closesOuter = !/[(`]/.test(m[1].trimEnd().replace(CLOSERS, '')) && /[(`]/.test(before);
+    // `xargs … rm` in the same simple command: rm's targets come from stdin.
+    const fed = /(?:^|[\s;&|(`])(?:xargs|parallel)(?![\w.-])[^;&|\n]*$/.test(before);
+    return { recursive: /-[a-zA-Z]*[rR]|--recursive/.test(flags), targets: toks.filter((t) => !t.startsWith('-')).map((t) => unquote(closesOuter ? t.replace(CLOSERS, '') : t)), fed };
   });
 
+// rimraf and del-cli delete recursively, like rm -rf: run through a package runner (npx, pnpm/yarn dlx, bunx, bun x,
+// npm exec/x, pnpx) anywhere, or as the command word itself (a path to it reads as its name in the plain-head reading).
+const RIMRAF_RUN = /(?:^|(?<=[\s;&|(`]))(?:npx|bunx|pnpx|(?:pnpm|yarn)\s+dlx|bun\s+x|npm\s+(?:exec|x))(?:\s+-{1,2}[\w-]+(?:=\S*)?)*\s+(?:rimraf|del-cli)(?:@\S*)?(?=\s|$)/g;
+const RIMRAF_HEAD = /(^|[;&|(`]\s*)rimraf(?:@\S*)?(?=\s|$)/g;
+const rimrafAsRm = (t: string): string => (/rimraf|del-cli/.test(t) ? t.replace(RIMRAF_RUN, ' rm -rf').replace(RIMRAF_HEAD, '$1rm -rf') : t);
 const checkRm = (cmd: string): Verdict | undefined => {
-  for (const { recursive, targets } of rmTargets(cmd)) {
+  for (const { recursive, targets, fed } of rmTargets(cmd)) {
     if (!recursive) continue;
+    if (fed && !targets.length) return ['ask', 'recursive delete of paths read from stdin (xargs), which the guard cannot see'];
     // Windows too: a drive root (C:\, C:/, Git Bash's /c/) and the user profile.
     if (targets.some((t) => /^(\/|~|\$HOME|\/\*|~\/\*|\.|\.\.|\*|\.\/\*|[a-zA-Z]:[\\/]?\*?|\/[a-zA-Z]\/?\*?|\$USERPROFILE|%USERPROFILE%)$/.test(t))) return ['deny', 'recursive delete of root, home, current or parent directory'];
     if (!targets.every((t) => SAFE_RM_TARGETS.test(t))) return ['ask', 'recursive delete outside build and cache folders'];
@@ -537,7 +546,7 @@ const OUTPUT_PREFIX = new Set(['wget', 'sort', 'time']);
  *  a stuck `-oF`, a cluster `-sSo F`, and for getopt tools an unambiguous long prefix (`--out`, `--output-doc`).
  *  ponytail: a cluster letter that takes a value before the output letter (-to) is not told apart: the next word is read as the target, stricter only. */
 function outputTargets(name: string | undefined, toks: string[]): string[] {
-  const flags = name === 'git' && gitArgs(toks)[0] === 'format-patch' ? [...OUTPUT_FLAGS.git, '-o'] : Object.hasOwn(OUTPUT_FLAGS, name ?? '') ? OUTPUT_FLAGS[name!] : null;
+  const flags = name === 'git' && /^(format-patch|archive)$/.test(gitArgs(toks)[0] ?? '') ? [...OUTPUT_FLAGS.git, '-o'] : Object.hasOwn(OUTPUT_FLAGS, name ?? '') ? OUTPUT_FLAGS[name!] : null;
   if (!flags) return [];
   const longs = flags.filter((f) => f.startsWith('--')), prefix = OUTPUT_PREFIX.has(name!);
   const longMatch = (n: string): boolean => longs.includes(n) || (prefix && longs.filter((f) => f.startsWith(n)).length === 1);
@@ -552,6 +561,18 @@ function outputTargets(name: string | undefined, toks: string[]): string[] {
     }
   }
   return out.filter(Boolean);
+}
+
+// The destination folder of cp/mv/install/ln's -t/--target-directory (`-t DIR`, `-tDIR`, `-atDIR`, `--target-directory[= ]DIR`,
+// the getopt prefix `--target-dir`); null when none. That folder is written, whatever order the sources come in.
+export function targetDir(args: string[]): string | null {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (/^--target-dir/.test(a)) return a.includes('=') ? a.slice(a.indexOf('=') + 1) : (args[i + 1] ?? null);
+    const m = /^-[a-zA-Z]*t(.*)$/.exec(a); // a short cluster ending in -t, with the dir stuck on or the next word
+    if (m) return m[1] !== '' ? m[1] : (args[i + 1] ?? null);
+  }
+  return null;
 }
 
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
@@ -600,14 +621,10 @@ export function fileWriteTargets(cmd: string): string[] {
         if (/^(-s|-r|--size|--reference)$/.test(toks[i])) i += 1;
         else if (!toks[i].startsWith('-')) out.push(unquote(toks[i]));
       }
-    } else if (name === 'ln' || name === 'install') {
-      const args = toks.slice(1).filter((t) => !t.startsWith('-'));
-      const tf = toks.indexOf('-t');
-      if (name === 'install' && tf > 0 && toks[tf + 1]) out.push(unquote(toks[tf + 1]));
-      else if (args.length) out.push(unquote(args[args.length - 1]));
-    } else if (name === 'cp') {
-      const tf = toks.indexOf('-t');
-      if (tf > 0 && toks[tf + 1]) out.push(unquote(toks[tf + 1]));
+    } else if (name === 'ln' || name === 'install' || name === 'cp') {
+      const dir = targetDir(toks.slice(1).map(unquote)); // -t DIR, -tDIR, --target-directory[= ]DIR
+      if (dir !== null) out.push(dir);
+      else if (name !== 'cp') { const args = toks.slice(1).filter((t) => !t.startsWith('-')); if (args.length) out.push(unquote(args[args.length - 1])); }
     } else if (name === 'dd') {
       out.push(...toks.filter((t) => t.startsWith('of=')).map((t) => unquote(t.slice(3))));
     } else if (name === 'git') {
@@ -616,6 +633,23 @@ export function fileWriteTargets(cmd: string): string[] {
         const d = rest.indexOf('--');
         if (d >= 0) out.push(...rest.slice(d + 1).map(unquote));
       } else if (sub === 'restore') out.push(...rest.filter((t) => !t.startsWith('-')).map(unquote));
+      // `git bundle create <file> <git-rev>…`: the file right after `create` is written (-o/--output handled above).
+      else if (sub === 'bundle' && rest[0] === 'create') out.push(...rest.slice(1).filter((t) => !t.startsWith('-')).slice(0, 1).map(unquote));
+    } else if (name === 'openssl') {
+      // -out FILE and -keyout FILE write; openssl uses single-dash long options.
+      for (let i = 1; i < toks.length; i += 1) if (/^-(out|keyout)$/.test(toks[i]) && toks[i + 1]) out.push(unquote(toks[++i]));
+    } else if (name === 'patch') {
+      // -o/--output FILE, -r/--reject-file FILE, -d/--directory DIR, else the first positional is patched in place.
+      const pos: string[] = [];
+      for (let i = 1; i < toks.length; i += 1) {
+        const m = /^(?:-o|--output|-r|--reject-file|-d|--directory|-D|-B|-i|--input|-p|--strip|-F|--fuzz|-g|--get)(=(.*))?$/.exec(toks[i]);
+        if (m) { if (/^(-o|--output|-r|--reject-file|-d|--directory)/.test(toks[i])) out.push(unquote(m[2] ?? toks[++i] ?? '')); else if (m[2] === undefined) i += 1; }
+        else if (!toks[i].startsWith('-')) pos.push(unquote(toks[i]));
+      }
+      if (!toks.some((t) => /^(-o|--output|-i|--input)/.test(t)) && pos.length) out.push(pos[0]); // patch FILE [patchfile]
+    } else if (name === 'xxd') {
+      const pos = toks.slice(1).filter((t) => !t.startsWith('-')).map(unquote); // xxd [-r] INFILE OUTFILE
+      if (pos.length >= 2) out.push(pos[1]);
     }
   }
   return [...new Set(out)];
@@ -851,6 +885,10 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
   // A substitution glued inside a word prints what the guard cannot know: read without it, a ruled reading asks.
   const spliced = splicedReading(command);
   if (spliced !== null && decideRead(spliced, ctx, depth).kind !== 'allow') rs.push(toDecision(['ask', SPLICE_WHY]));
+  // `${x:-rm}` and the like hold a literal the shell may use: read with it, a ruled reading asks (the value is run-time).
+  const dflt = /\$\{\w+:?[-=+]/.test(command) ? command.replace(/\$\{\w+:?[-=+]([^{}$`]*)\}/g, '$1') : command;
+  if (dflt !== command && decideRead(dflt, ctx, depth).kind !== 'allow') rs.push(toDecision(['ask', DEFAULT_WHY]));
+  if (shellFedPastHead(withoutHeredocBodies(command))) rs.push(toDecision(['ask', FED_SHELL_WHY]));
   return rs.find((x) => x.kind === 'ask') ?? (buildsGuardedWords(command, ctx) ? toDecision(['ask', BUILDS_WHY]) : d);
 }
 const GIT_OUTPUT_RUN_WHY = 'the command writes git output (log, show, rev-parse or cat-file) to a file and runs a file, so an earlier commit message could become the script';
@@ -863,6 +901,22 @@ const GUARDED_HEADS: ReadonlySet<string> = new Set(RULED.filter((n) => !/^(harne
 const GLOB_HEAD_WHY = 'a glob in a command path could match a guarded command (rm, git, …), so the guard cannot tell what runs';
 const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
 const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
+const DEFAULT_WHY = 'a word built at run time (${x:-…}, ${x:=…}, ${x:+…}) holds a literal that, read in its place, hits a guard rule';
+const FED_SHELL_WHY = 'a download or a here-string reaches a shell behind a word the guard does not know, so it cannot read what the shell runs';
+/** A downloaded stream (curl or wget upstream in the pipeline) or a here-string reaching a word whose name is a shell,
+ *  where that shell is not the command word the guard reads (an unknown wrapper in front: `curl x | zzwrap sh`). A shell
+ *  that is the command word is already judged (the curl|sh rule, and here-string programs). */
+function shellFedPastHead(cmd: string): boolean {
+  if (!/\b(?:curl|wget)\b|<<</.test(cmd) || ![...SHELLS].some((s) => cmd.includes(s))) return false;
+  let stream = false;
+  for (const p of pieces(cmd)) {
+    const ws = shellWords(p.text), names = ws.map((w) => commandName(shellUnquote(w)));
+    const k = commandStart(ws.map(shellUnquote), (n) => SHELLS.has(n));
+    if ((stream || ws.some((w) => w.startsWith('<<<'))) && names.some((n, j) => j !== k && SHELLS.has(n) && !ws[j].startsWith('-'))) return true;
+    stream = (stream || names.some((n) => n === 'curl' || n === 'wget')) && p.sep === '|';
+  }
+  return false;
+}
 
 const ANSI_C: Record<string, string> = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v' };
 /** The body of a bash `$'…'` string, decoded: \xHH, \NNN, \uHHHH, \UHHHHHHHH, \n and the other letters. */
@@ -915,7 +969,8 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   for (const { targets } of rmTargets(command)) {
     if (targets.some((t) => { const rel = inTdd(t); return rel !== null && isTestFile(rel); })) return deny('deleting a test file in a TDD path');
   }
-  const early = checkRm(view) ?? checkPushToMain(view) ?? checkPushToMain(vUnq) ?? checkPushToMain(git);
+  // The quote-free view too: an env -S string's words come back quoted ('rm' '-rf' '/'), and $'\x72m' decodes to rm.
+  const early = checkRm(rimrafAsRm(view)) ?? checkRm(rimrafAsRm(vUnq)) ?? checkPushToMain(view) ?? checkPushToMain(vUnq) ?? checkPushToMain(git);
   if (early) return toDecision(early);
   for (const [re, why] of DENY) if (texts.some((t) => re.test(t))) return deny(why);
   if (fileWriteTargets(command).some((t) => inTdd(t) !== null)) {

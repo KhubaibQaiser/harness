@@ -43,7 +43,7 @@ What the owner decided on 2026-11-01:
 
 | Gate | Any repo | JS/TS (npm, pnpm, yarn, bun; Vitest or Jest) |
 |---|---|---|
-| Guard: secret reads, force-push, pushing to main, installs | yes | yes |
+| Guard: secret reads, force-push, pushing to main, installs; asks on GitHub writes (gh, hub, gh api, MCP write tools) | yes | yes |
 | Protected paths: `.harness/`, `.claude/settings*.json` | yes | yes |
 | Multi-file gate, including the unattended reason requirement | yes | yes |
 | Stop gate with the commands the user confirms | yes | yes |

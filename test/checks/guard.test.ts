@@ -813,7 +813,9 @@ test('file writes and -F - bodies are data; the $(cat <<EOF) message idiom is co
   all(["git commit -m \"$(cat <<'EOF'\nfix: x\n\nWhy (git push -f) is bad\nEOF\n)\"", "gh pr create --title \"fix: x\" --body \"$(cat <<'EOF'\n## Summary\n- blocks git push -f\nEOF\n)\""], 'deny');
   all(["cat > src/x.test.ts <<'EOF'\nexpect(kind('git push -f')).toBe('deny');\nexpect(kind('rm -rf /')).toBe('deny');\nEOF", "git commit -F - <<'EOF'\nfix: never git push -f\nEOF",
     "gh pr create --title x --body-file - <<'EOF'\nBlocks git push -f and rm -rf ~\nEOF", "cat <<'EOF' > docs/x.md\ngit push -f\nEOF", "cat >> docs/x.md <<'EOF'\ngit push -f\nEOF",
-    "tee docs/x.md >/dev/null <<'EOF'\ngit push -f\nEOF", "git tag -a v1 -F - <<'EOF'\nno git push -f\nEOF", "gh release create v1 --notes-file - <<'EOF'\nno git push -f\nEOF"], 'allow');
+    "tee docs/x.md >/dev/null <<'EOF'\ngit push -f\nEOF", "git tag -a v1 -F - <<'EOF'\nno git push -f\nEOF"], 'allow');
+  // The body is still data (no deny); gh release create itself is a gh write, which asks (owner ruling 2026-11-13).
+  all(["gh release create v1 --notes-file - <<'EOF'\nno git push -f\nEOF"], 'ask');
   expect(kind("git commit -m \"$(cat <<EOF\n$(git push -f)\nEOF\n)\"")).toBe('deny'); // an unquoted delimiter still runs $(…)
 });
 test('tee copies its input to stdout, so it is a sink only when its stdout goes to a file too', () => {
@@ -1160,8 +1162,9 @@ test('gh lines get a per-subcommand option allowlist, rejecting unknown options 
   const m = 'git commit -m "a; rm -rf ~"';
   all([`${m}; gh api --input x /repos`, `${m}; gh pr create --body b --frobnicate 'git log -1 --format=%B|sh'`, `${m}; gh issue create --title t --body b -i x`,
     `${m}; gh pr create --body b --exec 'git log -1 --format=%B|sh'`, `${m}; gh pr create --body x -- -c y`], 'deny'); // unknown or passthrough option
-  all([`${m}; gh pr create --title t --body b`, `${m}; gh pr view 1 --json title`, `${m}; gh pr merge --squash`, `${m}; gh run rerun 1`,
-    `${m}; gh pr view --json body -q .body`, `${m}; gh release create v1 --notes n`, `${m}; gh api -X GET /repos`], 'allow');
+  all([`${m}; gh pr create --title t --body b`, `${m}; gh pr view 1 --json title`, `${m}; gh pr view --json body -q .body`, `${m}; gh api -X GET /repos`], 'allow');
+  // Known options, so not denied here; each is a gh write, which asks (owner ruling 2026-11-13).
+  all([`${m}; gh pr merge --squash`, `${m}; gh run rerun 1`, `${m}; gh release create v1 --notes n`], 'ask');
 });
 test('gh lines reject -- pass-through and gh repo clone/fork on a message line (round 13)', () => {
   const m = 'git commit -m "a; rm -rf ~"';

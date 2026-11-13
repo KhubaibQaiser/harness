@@ -18,6 +18,7 @@ import type { Decision } from '../hooks/types.js';
 import { REMEMBER_WHY, rememberAsk } from './remember.js';
 import { rememberReadOnly } from '../core/remember-args.js';
 import { suggestBranches } from '../core/branch-prefix.js';
+import { ghWriteWhy, hubWriteWhy, pushOptionWhy } from './gh-writes.js';
 
 type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { startedAt?: number; lookup?: VerifyOpts['lookup'] }; // lookup: test seam
 type Verdict = ['allow'] | ['deny' | 'ask', string];
@@ -989,9 +990,19 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   if (install) return install;
   const preset = ctx.config?.preset && /\bgit\b/.test(command) ? walkCommands(command, ctx, presetVisit(command, ctx.config.preset)) : null;
   if (preset) return toDecision(['ask', preset.reason]);
+  // gh/hub writes and GitLab push options: found past wrappers and path heads by the walk, read with the getopt reader.
+  const gw = /\b(?:gh|hub)\b|merge_request/.test(command) ? walkCommands(command, ctx, ghWriteVisit) : null;
+  if (gw) return toDecision(['ask', gw.reason]);
   for (const [re, why] of ASK) if (texts.some((t) => re.test(t))) return toDecision(['ask', why]);
   return { kind: 'allow' };
 }
+
+/** A gh or hub command that changes shared state, or a git push with a GitLab merge-request option: the reason to ask. */
+const ghWriteVisit: Visit<Hit> = ({ toks, k }) => {
+  const name = runnerName(toks[k] ?? ''), args = toks.slice(k + 1).map((t) => shellUnquote(t).replace(/\u0001/g, ' '));
+  const why = name === 'gh' ? ghWriteWhy(args) : name === 'hub' ? hubWriteWhy(args) : name === 'git' && gitArgs(['git', ...args])[0] === 'push' ? pushOptionWhy(gitArgs(['git', ...args]).slice(1)) : null;
+  return why ? { kind: 'ask', reason: why } : null;
+};
 
 const NEW_BRANCH_FLAGS: Record<string, string[]> = {
   checkout: ['-b', '-B', '--orphan'], switch: ['-c', '-C', '--create', '--force-create', '--orphan'], worktree: ['-b', '-B'], // worktree's --orphan is a switch

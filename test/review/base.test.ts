@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest';
 import { defaultExecBytes, type ExecBytes } from '../../src/core/exec.js';
 import { SAFE_GIT } from '../../src/core/git-safe.js';
 import { BASE_PATHS, baseBlobs, driftCheck } from '../../src/review/base.js';
-import { commit, repoWith } from './repo.js';
+import { commit, git, repoWith } from './repo.js';
 
 const AGENT = '.claude/agents/staff-reviewer.md';
 const SETTINGS = (hooks: unknown, permissions: unknown = {}) => JSON.stringify({ hooks, permissions });
@@ -67,6 +67,25 @@ describe('driftCheck', () => {
   });
   test('missing on one side is a difference', () => {
     expect(drift((root) => { mkdirSync(join(root, '.claude/agents'), { recursive: true }); writeFileSync(join(root, '.claude/agents/review-judge.md'), 'j\n'); })).toMatch(/review-judge\.md differs/);
+  });
+
+  // Git for Windows checks out with core.autocrlf=true: CRLF on disk is the same file, compared through git's own normalization.
+  test('CRLF line endings from autocrlf are not drift; a real change in CRLF still is', () => {
+    const r = repoWith(BASE, {});
+    git(r.root, 'config', 'core.autocrlf', 'true');
+    writeFileSync(join(r.root, AGENT), 'agent v1\r\n');
+    writeFileSync(join(r.root, '.harness/hooks/dispatch.mjs'), 'x\r\n');
+    expect(err(check(r.root, r.base))).toBeNull();
+    writeFileSync(join(r.root, AGENT), 'agent from the PR\r\n');
+    expect(err(check(r.root, r.base))).toMatch(/^review: \.claude\/agents\/staff-reviewer\.md differs from main /);
+    writeFileSync(join(r.root, AGENT), 'agent v1\r\n');
+    writeFileSync(join(r.root, '.harness/hooks/dispatch.mjs'), 'y\r\n');
+    expect(err(check(r.root, r.base))).toMatch(/^review: \.harness\/hooks\/dispatch\.mjs differs/);
+  });
+  test('a .gitattributes eol=crlf checkout is not drift', () => {
+    const r = repoWith({ ...BASE, '.gitattributes': '*.md text eol=crlf\n' }, {});
+    writeFileSync(join(r.root, AGENT), 'agent v1\r\n');
+    expect(err(check(r.root, r.base))).toBeNull();
   });
 
   // The base branch moved past the PR's base commit: a checkout of its tip is a base-branch commit too.

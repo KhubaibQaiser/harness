@@ -20,9 +20,9 @@ export function sandboxBlocker(platform: NodeJS.Platform, probe: MachineProbe): 
   if (platform === 'win32') return { why: 'native Windows has no Claude Code sandbox', fix: '' };
   if (platform === 'darwin') return null;
   const read = probe.read ?? readProc;
-  // WSL1's kernel string says "Microsoft" with no WSL2 marker; WSL2 says "microsoft-standard-WSL2".
+  // WSL1's kernel string says "Microsoft"; WSL2's says "microsoft-standard" (older kernels have no "WSL2" after it).
   const version = read('/proc/version') ?? '';
-  if (/microsoft/i.test(version) && !/wsl2/i.test(version)) return { why: 'WSL1 has no Claude Code sandbox', fix: 'move to WSL2' };
+  if (/microsoft/i.test(version) && !/microsoft-standard|wsl2/i.test(version)) return { why: 'WSL1 has no Claude Code sandbox', fix: 'move to WSL2' };
   const missing = ['bwrap', 'socat'].filter((c) => !probe.which(c));
   if (missing.length) return { why: `the Linux sandbox needs bwrap and socat (missing: ${missing.join(', ')})`, fix: 'install bwrap and socat' };
   if (read(AA)?.trim() === '1') {

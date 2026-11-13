@@ -11,6 +11,8 @@ test('macOS, and Linux/WSL2 with bwrap, socat and user namespaces: no blocker', 
   expect(sandboxBlocker('darwin', ok)).toBeNull();
   expect(sandboxBlocker('linux', ok)).toBeNull();
   expect(sandboxBlocker('linux', { ...ok, read: files({ '/proc/version': 'Linux version 5.15.153.1-microsoft-standard-WSL2 (root@x)' }) })).toBeNull();
+  // Older WSL2 kernels say only "microsoft-standard", with no WSL2 string.
+  expect(sandboxBlocker('linux', { ...ok, read: files({ '/proc/version': 'Linux version 4.19.128-microsoft-standard (oe-user@oe-host)' }) })).toBeNull();
   expect(sandboxBlocker('linux', { ...ok, read: files({ '/proc/sys/kernel/apparmor_restrict_unprivileged_userns': '0\n' }) })).toBeNull();
 });
 

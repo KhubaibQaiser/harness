@@ -18,11 +18,12 @@ export function ownCommand(cmd: string, args: string[], root: string): string {
 }
 /** One shell word: bare when plain, else single-quoted (embedded quotes the POSIX way); control characters are escaped first so they never reach the terminal. */
 export const shq = (a: string): string => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${(/[\u0000-\u001f\u007f-\u009f]/.test(a) ? esc(a) : a).replace(/'/g, `'\\''`)}'`);
-export const isDenied = (e: unknown): boolean => ['EPERM', 'EACCES'].includes((((e as Error)?.cause ?? e) as NodeJS.ErrnoException)?.code ?? '');
-/** EPERM on a path under harness's denyWrite list (a rename's `dest` counts): the sandbox's denial, not any other. */
+// Linux bwrap mounts denied paths read-only, so a denied write there fails with EROFS.
+export const isDenied = (e: unknown): boolean => ['EPERM', 'EACCES', 'EROFS'].includes((((e as Error)?.cause ?? e) as NodeJS.ErrnoException)?.code ?? '');
+/** EPERM (macOS) or EROFS (Linux bwrap) on a path under harness's denyWrite list (a rename's `dest` counts): the sandbox's denial, not any other. */
 export function deniedWrite(e: unknown, root: string): boolean {
   const x = ((e as Error)?.cause ?? e) as NodeJS.ErrnoException & { dest?: string };
-  if (x?.code !== 'EPERM') return false;
+  if (x?.code !== 'EPERM' && x?.code !== 'EROFS') return false;
   const under = (p: unknown) => {
     if (typeof p !== 'string') return false;
     const rel = relative(root, resolve(root, p)).replace(/\\/g, '/');

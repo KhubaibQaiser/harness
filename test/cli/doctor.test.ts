@@ -566,15 +566,36 @@ test('items: the same plugin enabled from two marketplaces is a note', () => {
   expect(runItems(root, [cave(), cave({ id: 'caveman@other', enabled: false })]).out).not.toContain('enabled twice');
 });
 
-test('items: an edited pins marketplace or MCP server is a note naming it', () => {
+test('items: a pins entry whose content no longer matches its name is a fix; an edited MCP server is a note', () => {
   const a = caveRepo(['caveman']);
-  const edited = `note the ${pinsOf(a)} marketplace differs from what harness installed: run /harness:sync\n`;
-  expect(runItems(a, [cave()]).out).not.toContain('differs from what harness installed');
-  editJson(a, '.claude/settings.json', (j) => { j.extraKnownMarketplaces[pinsOf(a)].source.plugins[0].source.sha = 'f'.repeat(40); });
-  expect(runItems(a, [cave()]).out).toContain(edited);
+  const name = pinsOf(a);
+  const fix = `fix the ${name} marketplace was edited, so its name no longer matches its pins and can clash with other repos on this machine: undo the edit, or delete that entry and run /harness:sync\n`;
+  expect(runItems(a, [cave()]).out).not.toContain('was edited');
+  editJson(a, '.claude/settings.json', (j) => { j.extraKnownMarketplaces[name].source.plugins[0].source.sha = 'f'.repeat(40); });
+  const r = runItems(a, [cave()]);
+  expect(r.out).toContain(fix);
+  expect(r.code).toBe(1);
+  expect(r.out).not.toContain(`note the ${name} marketplace differs`);
   const b = itemsRepo(['mobile-mcp']);
   editJson(b, '.mcp.json', (j) => { j.mcpServers['mobile-mcp'].args = ['-y', 'evil']; });
   expect(runItems(b, []).out).toContain('note a harness MCP server differs from what harness installed: run /harness:sync\n');
+});
+
+test('items: two content-named pins entries are a fix naming both, and the plugin checks are skipped', () => {
+  const root = caveRepo(['caveman']);
+  const name = pinsOf(root);
+  editJson(root, '.claude/settings.json', (j) => { j.extraKnownMarketplaces['harness-pins-aaaaaaaaaaaa'] = j.extraKnownMarketplaces[name]; });
+  const r = runItems(root, []);
+  expect(r.out).toMatch(new RegExp(`fix \`\\.claude/settings\\.json\` has two harness pins marketplaces, (${name} and harness-pins-aaaaaaaaaaaa|harness-pins-aaaaaaaaaaaa and ${name}); keep the one your plugin keys use and delete the other: run /harness:sync\n`));
+  expect(r.out).not.toContain('enabled in this repo but not installed');
+});
+
+test('items: settings keys are escaped in doctor output', () => {
+  const root = caveRepo(['caveman']);
+  editJson(root, '.claude/settings.json', (j) => { j.enabledPlugins['x\u001b[31m\r\nfix fake@harness-pins-aaaaaaaaaaaa'] = false; });
+  const r = runItems(root, [cave()]);
+  expect(r.out).toContain('x\\u001b[31m\\r\\nfix fake@harness-pins-aaaaaaaaaaaa');
+  expect(r.out).not.toMatch(/[\u001b\r]/);
 });
 
 // An install from before content names: the same files with the shared name.

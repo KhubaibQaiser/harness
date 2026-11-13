@@ -115,7 +115,7 @@ Native Windows has no sandbox and keeps the text checks. More: [docs/reference.m
 - Hooks run with your permissions. Turn on branch protection: it is the real stop for force-pushes.
 - TDD and coverage gates are for JS/TS only. Other repos get every other gate.
 - Windows: unit tests run in CI, but live Claude Code use is untested.
-- Plugin pins live in a marketplace named after its content, so the name changes with the pins; teammates run `/harness:sync --install-plugins` after a pin change. Installs from before this share the name `harness-pins`, so another repo can replace their pins: run `/harness:update` (`harness doctor` flags it).
+- Plugin pins live in a marketplace named after its content, so the name changes with the pins; teammates run `/harness:sync --install-plugins` after a pin change. Don't hand-edit that entry: its name would stop matching its pins. Installs from before this share the name `harness-pins`, so another repo can replace their pins: run `/harness:update` (`harness doctor` flags it).
 - The skills read and write only inside the repo, so `blockReadsOutsideWorkingDirectories` doesn't stop them. `/harness:vet`'s reviewer is the exception: it reads the fetched plugin from the OS temp folder.
 
 The full list: [docs/reference.md](docs/reference.md#known-limits).

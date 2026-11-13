@@ -494,6 +494,17 @@ test('a failed plugin install prints the per-plugin command and the sync line; a
   expect(other.out).not.toContain('Restart Claude Code');
 });
 
+test('installSelected refuses when settings.json cannot be read', async () => {
+  const { installSelected } = await import('../../src/cli/init.js');
+  const { loadCatalog } = await import('../../src/catalog/load.js');
+  const root = makeRepo({ '.claude/settings.json': '{ nope' });
+  let out = '';
+  const calls: string[][] = [];
+  expect(installSelected({ root, chosen: ['impeccable'], cat: loadCatalog().catalog, exec: (_c, a) => (calls.push(a), { status: 0, stdout: '' }), out: (s) => (out += s + '\n') })).toBe(1);
+  expect(out).toMatch(/`.claude\/settings.json` could not be read .*No plugins were installed./);
+  expect(calls).toEqual([]);
+});
+
 test('plugin or budget flags without the AI flags are a usage error', async () => {
   const root = makeRepo(NPM_VITEST);
   for (const f of ['--install-plugins', '--over-budget']) expect((await go(root, ['--dry-run', f])).code).toBe(2);

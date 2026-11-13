@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, describe, expect, it, test } from 'vitest';
 import { BETA_GROUPS, betaSettings } from './helpers.js';
-import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeEslintHarnessRules, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, pinsName, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig, mergeTsconfigOptions, STRUCTURAL } from '../../src/install/merge.js';
+import { MergeError, mergeAgents, mergeAgentsPreset, mergePresetSettings, presetSets, PRESET_END, PRESET_START, mergeClaudeMd, mergeEslintFlatIgnores, mergeEslintHarnessRules, mergeGitignore, mergeIgnoreFile, mergeSettings, mergeMcp, pinnedPlugins, pinsAt, pinsMismatch, pinsName, settingsPins, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig, mergeTsconfigOptions, STRUCTURAL } from '../../src/install/merge.js';
 import { TELEMETRY_ENV, type LoadedPreset } from '../../src/catalog/presets.js';
 import { guardedView } from '../../src/core/harness-files.js';
 
@@ -468,16 +470,13 @@ describe('plugins, marketplace and MCP blocks', () => {
     expect(s).not.toHaveProperty('extraKnownMarketplaces');
   });
 
-  it('a user-edited pins entry is left with its keys, no second entry is added, and it is reported', () => {
+  it('a pin change over a user-edited pins entry refuses, naming it and the fix', () => {
     const first = plug(null, [GH]);
     const edited = JSON.parse(first.after);
     edited.extraKnownMarketplaces[N(GH)].source.owner.name = 'me';
-    const r = plug(JSON.stringify(edited, null, 2), [GH, SUB], first.blocks);
-    const s = JSON.parse(r.after);
-    expect(Object.keys(s.extraKnownMarketplaces)).toEqual([N(GH)]);
-    expect(s.extraKnownMarketplaces[N(GH)].source.owner.name).toBe('me');
-    expect(s.enabledPlugins).toEqual({ [`alpha@${N(GH)}`]: true });
-    expect(r.notes).toEqual([`\`.claude/settings.json\`: the ${N(GH)} marketplace was edited; left as is. harness doctor checks it.`]);
+    expect(() => plug(JSON.stringify(edited, null, 2), [GH, SUB], first.blocks)).toThrow(new MergeError(`\`.claude/settings.json\`: the ${N(GH)} marketplace was edited, so harness can't change the plugin pins. Undo the edit, or delete that entry, then run /harness:sync.`));
+    // with the same pins nothing changes, so the edit is only noted
+    expect(plug(JSON.stringify(edited, null, 2), [GH], first.blocks).notes).toEqual([`\`.claude/settings.json\`: the ${N(GH)} marketplace was edited; left as is. harness doctor checks it.`]);
   });
 
   // Folds a merge into the recorded blocks the way update.ts does: drop the dropped, add the new.
@@ -615,17 +614,30 @@ describe('plugins, marketplace and MCP blocks', () => {
     expect(twice.notes).toEqual([]);
   });
 
-  it('an edited shared harness-pins entry stays with its keys; no new-name entry is added', () => {
+  it('an edited shared harness-pins entry refuses the move; nothing is changed', () => {
     const old = legacy(plug(null, [GH, GAMMA]));
     const s0 = JSON.parse(old.after);
     s0.extraKnownMarketplaces['harness-pins'].source.owner.name = 'me';
-    const r = plug(JSON.stringify(s0, null, 2), [GH, GAMMA], old.blocks);
-    const s = JSON.parse(r.after);
-    expect(Object.keys(s.extraKnownMarketplaces)).toEqual(['harness-pins']);
-    expect(s.extraKnownMarketplaces['harness-pins'].source.owner.name).toBe('me');
-    expect(s.enabledPlugins).toEqual({ 'alpha@harness-pins': true, 'gamma@harness-pins': true });
-    expect(r.notes).toEqual(['`.claude/settings.json`: the harness-pins marketplace was edited; left as is. harness doctor checks it.']);
-    expect(r.dropped).toEqual([]);
+    expect(() => plug(JSON.stringify(s0, null, 2), [GH, GAMMA], old.blocks)).toThrow(/the harness-pins marketplace was edited, so harness can't change the plugin pins/);
+  });
+
+  it('settingsPins names the one content-named entry; two of them, or an unreadable settings file, refuse', () => {
+    const one = JSON.parse(plug(null, [GH]).after);
+    expect(settingsPins(one)).toBe(N(GH));
+    expect(settingsPins({})).toBe('harness-pins');
+    const two = { extraKnownMarketplaces: { [N(GH)]: {}, [N(SUB)]: {} } };
+    expect(() => settingsPins(two)).toThrow(new MergeError(`\`.claude/settings.json\` has two harness pins marketplaces, ${N(GH)} and ${N(SUB)}; keep the one your plugin keys use and delete the other, then run /harness:sync.`));
+    const root = mkdtempSync(join(tmpdir(), 'pins-'));
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, '.claude/settings.json'), '{ nope');
+    expect(() => pinsAt(root)).toThrow(/`.claude\/settings.json` could not be read/);
+  });
+
+  it('pinsMismatch lists content-named entries whose name no longer matches their pins', () => {
+    const s = JSON.parse(plug(null, [GH]).after);
+    expect(pinsMismatch(s)).toEqual([]);
+    s.extraKnownMarketplaces[N(GH)].source.plugins[0].source.sha = 'f'.repeat(40);
+    expect(pinsMismatch(s)).toEqual([N(GH)]);
   });
 
   it('a changed old key of a still-picked plugin moves to the new name with its value', () => {

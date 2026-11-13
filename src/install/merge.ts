@@ -257,16 +257,26 @@ export function pinsName(plugins: PinnedPlugin[]): string {
   const list = plugins.map((p) => ({ name: p.name, source: p.source, ...(p.lspServers ? { lspServers: p.lspServers } : {}) })).sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
   return `${LEGACY_PINS}-${createHash('sha256').update(canonical(list)).digest('hex').slice(0, 12)}`;
 }
-/** settingsPins of the repo's settings file; an unreadable file gives the old name, and the caller's own checks report the file. */
+/** settingsPins of the repo's settings file; throws MergeError when it can't be read, so no install guesses a name. */
 export function pinsAt(root: string): string {
   let s: unknown;
-  try { s = JSON.parse(readFileSync(join(root, SETTINGS), 'utf8')); } catch { return LEGACY_PINS; }
+  try { s = JSON.parse(readFileSync(join(root, SETTINGS), 'utf8')); } catch (e) { throw new MergeError(`\`${SETTINGS}\` could not be read (${(e as Error).message.split('\n')[0]}).`); }
   return settingsPins(s);
 }
-/** The pins marketplace a parsed settings file uses now: its content-named entry, else the old shared name. */
+/** The content-named pins entries in a parsed settings file, in key order. */
+export const contentPins = (s: unknown): string[] => (isObj(s) && isObj(s.extraKnownMarketplaces) ? Object.keys(s.extraKnownMarketplaces).filter((k) => CONTENT_PINS.test(k)) : []);
+/** The pins marketplace a parsed settings file uses now: its content-named entry, else the old shared name. Two entries refuse: neither is safe to pick. */
 export function settingsPins(s: unknown): string {
-  const m = isObj(s) && isObj(s.extraKnownMarketplaces) ? Object.keys(s.extraKnownMarketplaces) : [];
-  return m.find((k) => CONTENT_PINS.test(k)) ?? LEGACY_PINS;
+  const m = contentPins(s);
+  if (m.length > 1) throw new MergeError(`\`${SETTINGS}\` has two harness pins marketplaces, ${m.join(' and ')}; keep the one your plugin keys use and delete the other, then run /harness:sync.`);
+  return m[0] ?? LEGACY_PINS;
+}
+/** Content-named entries whose pins no longer hash to their name: an edit that would let another repo's copy stand in for them. */
+export function pinsMismatch(s: unknown): string[] {
+  return contentPins(s).filter((k) => {
+    const e = (s as any).extraKnownMarketplaces[k];
+    return !Array.isArray(e?.source?.plugins) || pinsName(e.source.plugins) !== k;
+  });
 }
 
 export interface PinnedPlugin {
@@ -298,17 +308,14 @@ const renameKey = (o: Record<string, unknown>, from: string, to: string, v: unkn
 
 /**
  * Moves harness's keys and entry from an older pins name (the shared `harness-pins`, or the name of older pins) to `market`,
- * in place. A key keeps its value. Returns the records still to merge, or null when an old entry was edited: then the
- * entry and its keys stay as they are, with a note, and nothing else is changed.
+ * in place. A key keeps its value. Returns the records still to merge; throws MergeError when an old entry was edited.
  */
-function migratePins(s: any, plugins: PinnedPlugin[], market: string, recorded: string[], blocks: string[], dropped: string[], notes: string[]): string[] | null {
+function migratePins(s: any, plugins: PinnedPlugin[], market: string, recorded: string[], blocks: string[], dropped: string[]): string[] {
   const recs = recorded.map((b) => [b, parse(b)] as [string, any]);
   const old = (n: unknown): n is string => typeof n === 'string' && n !== market && PINS_NAME.test(n);
   const edited = recs.filter(([, r]) => isObj(r) && old(r.marketplace) && s.extraKnownMarketplaces?.[r.marketplace] !== undefined && !isDeepStrictEqual(s.extraKnownMarketplaces[r.marketplace], r.entry));
-  if (edited.length) {
-    for (const [, r] of edited) notes.push(`\`${SETTINGS}\`: the ${r.marketplace} marketplace was edited; left as is. harness doctor checks it.`);
-    return null;
-  }
+  // Merging past it would record picks that are never enabled, so the whole plan stops here.
+  if (edited.length) throw new MergeError(`\`${SETTINGS}\`: the ${edited[0][1].marketplace} marketplace was edited, so harness can't change the plugin pins. Undo the edit, or delete that entry, then run /harness:sync.`);
   const rest: string[] = [];
   for (const [b, r] of recs) {
     const at = isObj(r) && typeof r.plugin === 'string' ? r.plugin.lastIndexOf('@') : -1;
@@ -338,8 +345,7 @@ function migratePins(s: any, plugins: PinnedPlugin[], market: string, recorded: 
 
 /** enabledPlugins keys and the one inline pins marketplace; the same replace-in-place and drop rules as the hook groups. */
 function mergePlugins(s: any, plugins: PinnedPlugin[], market: string, recorded: string[], blocks: string[], dropped: string[], notes: string[]): void {
-  const left = migratePins(s, plugins, market, recorded, blocks, dropped, notes);
-  if (!left) return;
+  const left = migratePins(s, plugins, market, recorded, blocks, dropped);
   const recs = left.map((b) => [b, parse(b)] as [string, any]);
   const want = new Set(plugins.map((p) => `${p.name}@${market}`));
   for (const [b, r] of recs) {

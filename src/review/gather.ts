@@ -21,7 +21,7 @@ import { issueView, parsePr, preflight, prView, reviewComments } from './gh.js';
 import { writeSnapshot } from './snapshot.js';
 
 export interface GatherJson {
-  repo: string; pr: number; base: string; base_sha: string; head_sha: string; merge_base: string; nonce: string; fork: string | null; labels: string[]; body_template: boolean; body_problems: string[];
+  repo: string; pr: number; base: string; base_sha: string; head_sha: string; merge_base: string; nonce: string; fork: string | null; labels: string[]; body_template: boolean; body_problems: string[]; max_findings: number;
   files: { path: string; old_path?: string; status: string; binary: boolean; skipped?: true }[];
   lines: Record<string, { RIGHT: number[]; LEFT: number[] }>; map: Record<string, string>; omitted: { path: string; why: string }[];
 }
@@ -165,6 +165,7 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
     const g: GatherJson = {
       repo, pr: n, base, base_sha: baseSha, head_sha: headSha, merge_base: mergeBase, nonce, fork: view.isCrossRepository ? view.headRepository || DELETED_FORK : null, labels: view.labels,
       body_template: view.body.includes(MARKER), body_problems: bodyProblems(view.body, view.labels), // never PR text: bodyProblems names sections only
+      max_findings: cfg.config.review.max_findings,
       files: files.map((x) => ({ path: x.path, ...(x.old_path !== undefined && { old_path: x.old_path }), status: x.status, binary: x.binary, ...(skipped.has(x.path) && { skipped: true as const }) })),
       lines: commentable(cap.sent), map: snap.map, omitted,
     };

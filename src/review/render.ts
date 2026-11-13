@@ -46,7 +46,7 @@ export function summaryBody(p: SummaryParams): string {
     ...(g.fork ? [`From a fork: ${renderText(g.fork)}`] : []),
     ...(human ? [NEEDS_HUMAN] : []),
     ...(g.body_template && g.body_problems.length ? [`PR body check: ${g.body_problems.join('; ')}`] : []),
-    ...(p.inSummary.length ? [p.inSummary.map((f) => `- ${renderText(f.file)}:${f.line} [${f.severity}] ${renderText(f.title)}`).join('\n')] : []),
+    ...(p.inSummary.length ? [p.inSummary.map((f) => `- ${renderText(escPath(f.file))}:${f.line} [${f.severity}] ${renderText(f.title)}`).join('\n')] : []),
     ...(p.collapsed ? [`${p.collapsed} more findings not shown (review.max_findings is ${p.maxFindings})`] : []),
     ...(g.omitted.length ? [g.omitted.map((o) => `- ${renderText(escPath(o.path))}: ${renderText(escPath(o.why))}`).join('\n')] : []),
     ...(steering.length ? [`Text in this PR that addresses the reviewer:\n${steering.map((s) => `- ${asCode(s.text)}`).join('\n')}`] : []),

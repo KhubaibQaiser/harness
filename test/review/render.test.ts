@@ -6,7 +6,7 @@ import { commentBody, renderText, summaryBody, verdict } from '../../src/review/
 // Synthetic findings and gather, made up here.
 const F: PrFinding = { id: 'f1', severity: 'medium', category: 'correctness', file: 'src/a.ts', line: 3, side: 'RIGHT', title: 'Off by one', evidence: { kind: 'quote', text: 'for (i = 0; i <= n; i++)' }, fix: 'Use i < n.' };
 const G = {
-  repo: 'o/r', pr: 7, base: 'main', base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), merge_base: 'a'.repeat(40), nonce: 'f'.repeat(32), fork: null, labels: [], body_template: false, body_problems: [],
+  repo: 'o/r', pr: 7, base: 'main', base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), merge_base: 'a'.repeat(40), nonce: 'f'.repeat(32), fork: null, labels: [], body_template: false, body_problems: [], max_findings: 15,
   files: [], lines: {}, map: {}, omitted: [],
 } as GatherJson;
 const R: PrReview = { findings: [F], steering: [], summary: 'One bug in the loop.', limits: 'Did not run the app.' };
@@ -89,6 +89,11 @@ describe('summaryBody', () => {
     expect(sum({ kept: [{ ...F, severity: 'critical', category: 'pr-description' }] })).toContain('Needs human action before merge; do not auto-merge.');
     const plain = sum();
     for (const t of ['From a fork', 'Needs human', 'PR body check', 'more findings', 'addresses the reviewer']) expect(plain).not.toContain(t);
+  });
+  test('file names with control characters stay on one line', () => {
+    const s = sum({ inSummary: [{ ...F, file: 'evil\nname.ts' }], g: { ...G, omitted: [{ path: 'x\u2028y', why: 'binary, not read' }] } });
+    expect(s).toContain('evil\\\\nname\\.ts:3');
+    expect(s).toContain('x\\\\u2028y: binary, not read');
   });
   test('at most 5 steering lines; PR text is rendered', () => {
     const s = sum({ review: { ...R, summary: 'thanks @team', steering: Array.from({ length: 7 }, (_, i) => ({ source: 'body' as const, text: `s${i}` })) } });

@@ -7,7 +7,7 @@
 // attributes, no global or system git config and a plain diff format; a repo .gitleaksignore blocks, since gitleaks
 // always reads it. So the repo can't hide a finding. Only rule, file and line are shown.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { esc } from '../core/config.js';
@@ -102,8 +102,8 @@ const SEALED_CONFIG: [string, string][] = [
 const configEnv = (pairs: [string, string][]): Record<string, string> =>
   Object.fromEntries([['GIT_CONFIG_COUNT', String(pairs.length)], ...pairs.flatMap(([k, v], i) => [[`GIT_CONFIG_KEY_${i}`, k], [`GIT_CONFIG_VALUE_${i}`, v]])]);
 
-// The hooks git runs during a commit, before it is made. Git skips one that is not executable (Windows: any file).
-const COMMIT_HOOKS = ['pre-commit', 'prepare-commit-msg', 'commit-msg'];
+// Any hook git may run around a commit or stash (pre-commit, post-commit, post-rewrite, reference-transaction, …) runs
+// after the scan, so any runnable file counts, not a name list. Git skips one that is not executable (Windows: any file).
 const runnable = (p: string, platform: NodeJS.Platform): boolean => {
   try {
     const st = statSync(p);
@@ -112,6 +112,33 @@ const runnable = (p: string, platform: NodeJS.Platform): boolean => {
     return false;
   }
 };
+
+function hookFiles(dir: string, platform: NodeJS.Platform): string[] {
+  try {
+    return readdirSync(dir).filter((n) => !n.endsWith('.sample') && runnable(join(dir, n), platform)).sort();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw e; // failClosed: an unreadable hooks folder denies
+  }
+}
+
+// git-lfs's own filter lines (`git lfs install`); any other clean, smudge or process program runs during the commit and can
+// tell the scan's throwaway index from the commit's (GIT_INDEX_FILE), so it could stage something else.
+const LFS: Record<string, string> = { 'filter.lfs.clean': 'git-lfs clean -- %f', 'filter.lfs.smudge': 'git-lfs smudge -- %f', 'filter.lfs.process': 'git-lfs filter-process' };
+const BOOL = /^(true|false|yes|no|on|off|1|0)$/i;
+/** The git config that runs programs during the commit which could act differently from the scan: an fsmonitor program
+ *  and clean, smudge or process filters other than git-lfs's. SAFE_GIT_USER: SAFE_GIT turns fsmonitor off. */
+function programsInConfig(ctx: Ctx): string[] | null {
+  const r = spawnSync('git', [...SAFE_GIT_USER, 'config', '--get-regexp', '^(core\\.fsmonitor|filter\\..*\\.(clean|smudge|process))$'], { cwd: ctx.root, env: ctx.env, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+  if (r.status === 1) return []; // no such key
+  if (r.status !== 0) return null;
+  return [...new Set(r.stdout.split('\n').filter(Boolean).flatMap((l) => {
+    const i = l.indexOf(' ');
+    const [key, value] = i < 0 ? [l, ''] : [l.slice(0, i), l.slice(i + 1)];
+    if (key === 'core.fsmonitor') return BOOL.test(value) ? [] : ['core.fsmonitor'];
+    return LFS[key] === value ? [] : [esc(key)];
+  }))];
+}
 
 /** Git 2.40 added GIT_ATTR_SOURCE, which the scan needs so .gitattributes can't mark a file binary and hide it. */
 export function gitTooOld(version: string): boolean {
@@ -134,7 +161,7 @@ function found(report: string): string {
   return `gitleaks found ${list.length} likely secret${list.length > 1 ? 's' : ''} in what this command could commit (the staged changes, and the unstaged and untracked files that are not ignored): ${shown.join('; ')}${more}. Values are not shown. Remove the secret, and rotate it if it was ever pushed. If it is a false positive, stop and ask the person: they can commit it from their own terminal or remove the gitleaks-commit item`;
 }
 
-function scan(ctx: Ctx, commit: boolean): Decision {
+function scan(ctx: Ctx): Decision {
   const platform = ctx.platform ?? process.platform;
   const bin = findOnPath('gitleaks', ctx.env, platform);
   if (!bin) return deny(MISSING);
@@ -149,8 +176,8 @@ function scan(ctx: Ctx, commit: boolean): Decision {
   const where = git(['rev-parse', '--git-path', 'index', '--git-path', 'info/attributes']);
   if (where.status !== 0) return failed('git rev-parse', where);
   const [real, attrs] = where.stdout.trim().split('\n').map((p) => resolve(ctx.root, p));
-  const hooks = commit ? hooksDir(ctx) : null;
-  if (commit && !hooks) return deny(`could not scan this commit for secrets: git could not name the repo's hooks folder, ${OFF}.`);
+  const hooks = hooksDir(ctx);
+  if (!hooks) return deny(`could not scan this commit for secrets: git could not name the repo's hooks folder, ${OFF}.`);
   // GIT_ATTR_SOURCE and an empty core.attributesFile cover .gitattributes and user attributes; info/attributes has no off switch.
   if (existsSync(attrs!) && /diff|binary/.test(readFileSync(attrs!, 'utf8'))) return deny(`.git/info/attributes has a diff or binary line, which would hide files from the secret scan. Ask the person to remove it, ${OFF}.`);
   // An attribute source whose only line is `* diff`: every file diffs as text, so neither .gitattributes nor a NUL byte hides it.
@@ -193,8 +220,14 @@ function scan(ctx: Ctx, commit: boolean): Decision {
       const why = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' ? 'gitleaks timed out' : `gitleaks exited ${r.status ?? r.signal ?? 'abnormally'}`;
       return deny(`could not scan this commit for secrets: ${why}. Run \`gitleaks git --pre-commit --staged --redact\` in your terminal to see why, ${OFF}.`);
     }
-    const run = commit ? COMMIT_HOOKS.filter((h) => runnable(join(hooks!, h), platform)) : [];
-    return run.length ? ask(`The repo has a ${run.join(', ')} hook (in ${esc(hooks!)}), which runs after this secret scan and can change or stage files, so harness can't vouch for what gets committed. Confirm the commit.`) : { kind: 'allow' };
+    const progs = programsInConfig(ctx);
+    if (progs === null) return deny(`could not scan this commit for secrets: git config could not be read, ${OFF}.`);
+    const run = hookFiles(hooks!, platform);
+    const why = [
+      ...(run.length ? [`hooks (${run.map(esc).join(', ')} in ${esc(hooks!)})`] : []),
+      ...(progs.length ? [`git config that runs programs (${progs.join(', ')})`] : []),
+    ];
+    return why.length ? ask(`The repo has ${why.join(' and ')}. Git runs them after this secret scan, and they can change or stage files, so harness can't vouch for what gets committed. Confirm the command.`) : { kind: 'allow' };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -207,8 +240,8 @@ const ALLOWLIST = /(^|[\\/\s=<>])\.gitleaks(\.toml|ignore)(?![\w.-])/i;
 const mentionsAllowlist = (text: string): boolean => ALLOWLIST.test(text) || ALLOWLIST.test(text.replace(/['"\\]/g, ''));
 // Commit hooks run after the scan, so a new or changed hook (or hooks folder) is asked about. Early warning only, as above:
 // the commit itself asks while a runnable hook exists. The configured hooks folder is read only when a hook name shows.
-const HOOKS_TEXT = /(^|[\\/\s=<>])(\.git[\\/]hooks|\.husky|\.githooks)([\\/\s]|$)|core\.hookspath/i;
-const HOOKS_ASK = 'This changes a git commit hook or core.hooksPath. A commit hook runs after harness\'s secret scan and can stage files. Confirm the change.';
+const HOOKS_TEXT = /(^|[\\/\s=<>])(\.git[\\/](hooks|config)|\.husky|\.githooks)([\\/\s]|$)|core\.(hookspath|fsmonitor)|filter\.\S*\.(clean|smudge|process)/i;
+const HOOKS_ASK = 'This changes a git hook, core.hooksPath, core.fsmonitor, a filter or .git/config. Git runs those after harness\'s secret scan, and they can stage files. Confirm the change.';
 function hooksDir(ctx: Ctx): string | null {
   // SAFE_GIT_USER: SAFE_GIT's own core.hooksPath override would hide the repo's.
   const r = spawnSync('git', [...SAFE_GIT_USER, 'rev-parse', '--git-path', 'hooks'], { cwd: ctx.root, env: ctx.env, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
@@ -242,7 +275,7 @@ export const secretScan: Check = {
     const k = kinds(command, ctx);
     if (k.has('commit') || k.has('stash')) {
       const why = notPlain(command);
-      const d = why ? deny(why + '.') : scan(ctx, k.has('commit'));
+      const d = why ? deny(why + '.') : scan(ctx);
       if (d.kind !== 'allow') return d;
     }
     if (k.has('ask')) return ask('This git command makes commits from content harness can\'t scan for secrets before they are made (a merge, rebase, cherry-pick, revert, am, pull, commit-tree, a stash create, a git alias or a git named at run time). Confirm it.');

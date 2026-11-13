@@ -148,7 +148,7 @@ describe('secret-scan', () => {
 
   test('a repo commit hook asks, since it runs after the scan and can stage files; core.hooksPath is followed', () => {
     const hook = (root: string, rel: string, mode = 0o755) => { mkdirSync(join(root, rel, '..'), { recursive: true }); writeFileSync(join(root, rel), '#!/bin/sh\n', { mode }); };
-    for (const name of ['pre-commit', 'prepare-commit-msg', 'commit-msg']) {
+    for (const name of ['pre-commit', 'prepare-commit-msg', 'commit-msg', 'post-commit', 'post-rewrite', 'reference-transaction', 'anything']) {
       const root = makeRepo({ 'README.md': 'hi\n' });
       hook(root, `.git/hooks/${name}`);
       const d = run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin())));
@@ -159,7 +159,7 @@ describe('secret-scan', () => {
     git(root, 'config', 'core.hooksPath', '.husky/_');
     hook(root, '.husky/_/pre-commit');
     expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('ask');
-    expect(run(ctx(root, 'git stash', withStub(stubBin()))).kind).toBe('allow'); // stash runs no commit hook
+    expect(run(ctx(root, 'git stash', withStub(stubBin()))).kind).toBe('ask'); // stash runs hooks too (reference-transaction)
     const plain = makeRepo({ 'README.md': 'hi\n' });
     if (process.platform !== 'win32') {
       hook(plain, '.git/hooks/pre-commit', 0o644); // git skips a hook that is not executable
@@ -170,14 +170,35 @@ describe('secret-scan', () => {
     expect(run(ctx(root, 'git commit -m x', withStub(stubBin()))).kind).toBe('deny'); // a finding still wins
   });
 
+  test('sample hooks and folders in the hooks folder do not ask', () => {
+    const root = makeRepo({ 'README.md': 'hi\n' });
+    writeFileSync(join(root, '.git/hooks/pre-commit.sample'), '#!/bin/sh\n', { mode: 0o755 });
+    mkdirSync(join(root, '.git/hooks/lib'));
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('allow');
+  });
+
+  test('an fsmonitor program or a clean, smudge or process filter in git config asks; git-lfs\'s own filter does not', () => {
+    const cases: [string, string, string][] = [['core.fsmonitor', './.fsmon', 'ask'], ['core.fsmonitor', 'true', 'allow'], ['core.fsmonitor', 'false', 'allow'],
+      ['filter.x.clean', 'sh x.sh', 'ask'], ['filter.x.smudge', 'cat', 'ask'], ['filter.x.process', 'p', 'ask'],
+      ['filter.lfs.clean', 'git-lfs clean -- %f', 'allow'], ['filter.lfs.smudge', 'git-lfs smudge -- %f', 'allow'], ['filter.lfs.process', 'git-lfs filter-process', 'allow'], ['filter.lfs.clean', 'git-lfs clean -- %f; sh x', 'ask']];
+    for (const [key, value, want] of cases) {
+      const root = makeRepo({ 'README.md': 'hi\n' });
+      git(root, 'config', key, value);
+      const d = run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin())));
+      expect(d.kind, `${key}=${value}`).toBe(want);
+      if (want === 'ask') expect(d.reason).toContain(key.startsWith('core') ? 'core.fsmonitor' : 'filter');
+    }
+  });
+
   test('writing commit hooks or changing core.hooksPath asks', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     git(root, 'config', 'core.hooksPath', 'tools/hk');
     const env = { ...process.env }; // git on PATH to read core.hooksPath; nothing here commits
     for (const file_path of [join(root, '.git/hooks/pre-commit'), '.git/hooks/commit-msg', join(root, 'tools/hk/pre-commit'), '.husky/pre-commit'])
       expect(run(ctx(root, '', env, { tool: 'Write', input: { file_path } })).kind, file_path).toBe('ask');
-    for (const cmd of ['echo x > .git/hooks/pre-commit', 'cp x tools/hk/pre-commit', 'git config core.hooksPath h', 'git config --local core.hookspath h', 'chmod +x .husky/pre-commit'])
+    for (const cmd of ['echo x > .git/hooks/pre-commit', 'cp x tools/hk/pre-commit', 'git config core.hooksPath h', 'git config --local core.hookspath h', 'chmod +x .husky/pre-commit', 'git config filter.x.clean ./x', 'git config core.fsmonitor ./m', 'echo x >> .git/config'])
       expect(run(ctx(root, cmd, env)).kind, cmd).toBe('ask');
+    expect(run(ctx(root, '', env, { tool: 'Edit', input: { file_path: join(root, '.git/config') } })).kind).toBe('ask');
     expect(run(ctx(root, '', env, { tool: 'Write', input: { file_path: join(root, 'src/hooks.ts') } })).kind).toBe('allow');
   });
 

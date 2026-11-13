@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
+import { plainHeads } from '../core/command-head.js';
 import { cPayloads, remember, SHELLS, stdinPrograms, withWorkBudget } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import { isShell } from '../hooks/edit-target.js';
@@ -521,6 +522,33 @@ export function gitArgs(toks: string[]): string[] {
   return i > 0 ? toks.slice(i) : [];
 }
 
+// Options whose value is a file or folder the command writes: git diff/log/show --output, curl -o, wget -O, sort -o, GNU time -o.
+const OUTPUT_FLAGS: Record<string, string[]> = {
+  git: ['--output', '--output-directory'],
+  curl: ['-o', '--output', '--output-dir', '-D', '--dump-header', '-c', '--cookie-jar', '--trace', '--trace-ascii', '--stderr', '--etag-save'],
+  wget: ['-O', '--output-document', '-o', '--output-file', '-a', '--append-output', '-P', '--directory-prefix'],
+  sort: ['-o', '--output'],
+  time: ['-o', '--output'],
+};
+/** The values of `name`'s output options in `toks`: `--output=F`, `--output F`, `-o F`, a stuck `-oF` and a cluster `-sSo F`.
+ *  ponytail: a cluster letter that takes a value before the output letter (-to) is not told apart: the next word is read as the target, stricter only. */
+function outputTargets(name: string | undefined, toks: string[]): string[] {
+  const flags = name === 'git' && gitArgs(toks)[0] === 'format-patch' ? [...OUTPUT_FLAGS.git, '-o'] : Object.hasOwn(OUTPUT_FLAGS, name ?? '') ? OUTPUT_FLAGS[name!] : null;
+  if (!flags) return [];
+  const out: string[] = [];
+  for (let i = 1; i < toks.length; i++) {
+    const t = toks[i], eq = t.indexOf('=');
+    if (t.startsWith('--')) {
+      if (eq > 0 && flags.includes(t.slice(0, eq))) out.push(t.slice(eq + 1));
+      else if (flags.includes(t)) out.push(toks[++i] ?? '');
+    } else if (/^-[a-zA-Z]/.test(t)) {
+      const j = [...t.slice(1)].findIndex((ch) => flags.includes(`-${ch}`));
+      if (j >= 0) out.push(j === t.length - 2 ? (toks[++i] ?? '') : t.slice(j + 2));
+    }
+  }
+  return out.filter(Boolean).map(unquote);
+}
+
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
 // ponytail: splits on ; & | even inside quotes, and ignores here-docs and subshells; upgrade to a real shell parser if bypasses matter.
 export function fileWriteTargets(cmd: string): string[] {
@@ -542,6 +570,7 @@ export function fileWriteTargets(cmd: string): string[] {
       const t = m[1].replace(/^['"]+/, '').replace(/['"`)}]+$/, ''); // `)`, a backtick or quote ends a substitution ("$(… > f)")
       if (!t.startsWith('&') && t !== '/dev/null') out.push(t);
     }
+    out.push(...outputTargets(name, toks));
     const c = toks.findIndex((t) => /^-[a-z]*c$/.test(t));
     if ((name === 'bash' || name === 'sh' || name === 'zsh') && c > 0 && toks[c + 1]) {
       out.push(...fileWriteTargets(unquote(toks[c + 1])));
@@ -797,6 +826,12 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
     rs.push(r);
   }
   if (globs.some((g) => g.capped)) rs.push(toDecision(['ask', GLOB_CAP_WHY]));
+  // The plain-head reading: wrappers split off, /usr/bin/git read as git. Two readings that disagree mean an unknown wrapper option decides.
+  // Depth 3: the payloads inside are the same strings, which the reading as written already judges (with their own plain heads).
+  const heads = plainHeads(command), hs = heads.texts.map((t) => decideRead(t, ctx, 3));
+  if (heads.unsure && hs[0].kind !== hs[1].kind) rs.push(toDecision(['ask', WRAPPER_WHY]));
+  else if (hs[0]?.kind === 'deny') return hs[0];
+  else if (hs[0]) rs.push(hs[0]);
   // git runs its editor or pager on the message, so a message built by $(…) or a heredoc may run: ask at least.
   if (EDITOR_SET.test(command) && /\bgit\b/.test(command) && /\$\(|`|<</.test(command)) rs.push(toDecision(['ask', EDITOR_WHY]));
   // A substitution glued inside a word prints what the guard cannot know: read without it, a ruled reading asks.
@@ -807,6 +842,7 @@ function decideAll(command: string, ctx: GuardCtx, depth: number): Decision {
 const GIT_OUTPUT_RUN_WHY = 'the command writes git output (log, show, rev-parse or cat-file) to a file and runs a file, so an earlier commit message could become the script';
 const GIT_OUTPUT_CONFIG_WHY = 'the command writes git output (log, show, rev-parse or cat-file) into .git/, a gitconfig or a hook, so an earlier commit message could become git config or a hook';
 const EDITOR_WHY = 'the command sets an editor or pager for git (GIT_EDITOR, EDITOR, core.editor, …) and builds its message at run time, and git may run that program on the message';
+const WRAPPER_WHY = 'a wrapper (sudo, env, timeout, xargs, …) has an option the guard does not know, so it cannot tell which word is the command';
 const GLOB_CAP_WHY = `the command has more glob readings than the guard reads (${MAX_READINGS}), so it cannot tell what runs`;
 const SPLICE_WHY = 'a command substitution spliced into a word builds it at run time, and read without it the command hits a guard rule';
 

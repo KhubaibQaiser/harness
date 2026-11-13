@@ -11,6 +11,7 @@ import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, withoutHeredocBodies } from './guard.js';
 import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
 import { SAFE_GIT } from '../core/git-safe.js';
+import { plainHeads } from '../core/command-head.js';
 
 const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
@@ -469,4 +470,15 @@ export const protect: Check = {
 // One work budget per run, the nested runs above included (re-review 21, P1b): past it WorkBudget is thrown and the
 // dispatcher denies.
 const unbudgeted = protect.run;
-protect.run = (ctx) => withWorkBudget(() => unbudgeted(ctx));
+const WRAPPER_REASON = 'A wrapper (sudo, env, timeout, xargs, …) has an option protect does not know, so it cannot tell which word is the command. Confirm the command.';
+const rank = (d: Decision): number => (d.kind === 'deny' ? 2 : d.kind === 'ask' ? 1 : 0);
+/** The command as written and its plain-head reading (wrappers split off, /bin/cp read as cp), the stricter winning. */
+function withPlainHeads(ctx: Parameters<Check['run']>[0]): Decision {
+  const d = unbudgeted(ctx) as Decision;
+  if (d.kind === 'deny' || !isShell(ctx.input.tool_name)) return d;
+  const heads = plainHeads(String(ctx.input.tool_input?.command ?? ''));
+  const hs = heads.texts.map((command) => unbudgeted({ ...ctx, input: { ...ctx.input, tool_input: { ...ctx.input.tool_input, command } } }) as Decision);
+  if (heads.unsure && hs[0].kind !== hs[1].kind) return d.kind === 'ask' ? d : { kind: 'ask', reason: WRAPPER_REASON, check: 'protect' };
+  return hs[0] && rank(hs[0]) > rank(d) ? hs[0] : d;
+}
+protect.run = (ctx) => withWorkBudget(() => withPlainHeads(ctx));

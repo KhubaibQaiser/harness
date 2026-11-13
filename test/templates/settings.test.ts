@@ -7,7 +7,7 @@ const BLOCK = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange'];
 
 test('hooks: events, matchers, exec form, timeouts and onFailure (spec section 2)', () => {
   expect(Object.keys(s.hooks)).toEqual(['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd', 'SessionStart']);
-  expect(s.hooks.PreToolUse[0].matcher).toBe('Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit');
+  expect(s.hooks.PreToolUse[0].matcher).toBe('Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit|mcp__.*');
   expect(s.hooks.PostToolUse[0].matcher).toBe('Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit');
   expect(s.hooks.SessionStart[0].matcher).toBe('compact');
   for (const e of ['UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd']) expect(s.hooks[e][0]).not.toHaveProperty('matcher');
@@ -22,6 +22,8 @@ test('hooks: events, matchers, exec form, timeouts and onFailure (spec section 2
   for (const event of ['PreToolUse', 'PostToolUse']) {
     expect(s.hooks[event][1]).toEqual({ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: 'node', args: ARGS, timeout: 10 }] });
   }
+  // MCP tools reach the dispatcher through the main, fail-closed group (mcp-writes: auto-merge denied, GitHub/GitLab writes ask).
+  expect(new RegExp(`^(?:${s.hooks.PreToolUse[0].matcher})$`).test('mcp__github__merge_pull_request')).toBe(true);
 });
 
 test('permissions.deny is the spec section 2 list, in order', () => {

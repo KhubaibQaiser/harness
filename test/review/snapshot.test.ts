@@ -69,11 +69,18 @@ describe('writeSnapshot', () => {
     expect(existsSync(join(dir, '.git'))).toBe(false);
   });
   test('hostile names: a leading dash and a colon', () => {
-    const s = snap({ '-rf': 'dash\n', 'a:b.ts': { indexOnly: 'colon\n' }, 'sp é.txt': 'u\n' });
-    expect(s.read('-rf')).toBe('dash\n');
-    expect(s.read('sp é.txt')).toBe('u\n');
+    // `a:b.ts` goes in with git mktree + commit-tree: Git for Windows refuses it on disk and in the index, never in a tree
+    const r = repoWith({ 'k.txt': 'k\n' }, { '-rf': 'dash\n', 'sp é.txt': 'u\n' });
+    const g = (args: string[], input = '') => execFileSync('git', args, { cwd: r.root, input, encoding: 'utf8' }).trim();
+    const tree = g(['mktree'], `${g(['ls-tree', r.head])}\n100644 blob ${g(['hash-object', '-w', '--stdin'], 'colon\n')}\ta:b.ts\n`);
+    const sha = g(['commit-tree', tree, '-p', r.head, '-m', 'colon']);
+    const dir = join(mkdtempSync(join(tmpdir(), 'h-snap-')), 'head');
+    const s = writeSnapshot(defaultExecBytes, r.root, sha, dir, { ignore: harnessIgnoreText('') });
+    const read = (p: string) => readFileSync(join(dir, ...s.map[p]!.split('/')), 'utf8');
+    expect(read('-rf')).toBe('dash\n');
+    expect(read('sp é.txt')).toBe('u\n');
     if (process.platform === 'win32') expect(s.omitted).toContainEqual({ path: 'a:b.ts', why: 'name not valid on Windows' });
-    else expect(s.read('a:b.ts')).toBe('colon\n');
+    else expect(read('a:b.ts')).toBe('colon\n');
   });
   test('only limits the files written', () => {
     const s = snap({ 'a/x.ts': 'x\n', 'b/y.ts': 'y\n' }, { only: new Set(['a/x.ts']) });

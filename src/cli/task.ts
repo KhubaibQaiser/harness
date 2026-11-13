@@ -1,14 +1,15 @@
 // `harness task` (done-contract spec §4.1): the agent drafts a contract in its work folder; only a person approves, edits or closes it.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { inWorkdir } from '../checks/protect.js';
 import { resolveStep } from '../checks/stop/runner.js';
 import { esc, type HarnessConfig, isObj, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
 import { defaultExec, type Exec } from '../core/exec.js';
-import { SAFE_GIT } from '../core/git-safe.js';
+import { SAFE_DIFF, SAFE_GIT } from '../core/git-safe.js';
 import { unattendedEnv } from '../core/unattended.js';
-import { type Contract, type Criterion, activeTaskId, featuresCriteria, loadContract, setActiveTask, TASKS_DIR, validateContract, writeContract } from '../done/contract.js';
+import { type Contract, type Criterion, activeTaskId, contractHash, featuresCriteria, loadContract, setActiveTask, TASKS_DIR, validateContract, writeContract } from '../done/contract.js';
 import { detect } from '../install/detect.js';
 import { hasResultsOutput } from '../install/test-config.js';
 import { insideClaude } from './claude-only.js';
@@ -18,7 +19,7 @@ import type { CliEnv } from './index.js';
 
 export type TaskEnv = CliEnv & { prompt: Prompt; git?: Exec; now?: () => Date };
 
-export const TASK_USAGE = 'harness task draft <file> | approve <file> [--yes] | edit <id> --from <file> [--yes] | close <id> [--yes]';
+export const TASK_USAGE = 'harness task draft <file> | approve <file> [--replace] [--yes] | edit <id> --from <file> [--yes] | close <id> [--yes]';
 const UNATTENDED = 'harness task does not approve, edit or close in unattended runs (CI, cloud or no-prompt sessions): a person must say yes.';
 const GUARD_OFF = "harness task won't approve, edit or close from inside Claude Code while checks.guard is off, because the agent could run it. Run it in your own terminal.";
 const NOT_WORKDIR = 'harness task: the draft must be inside a harness workdir folder (.harness/tmp/<id>/); run harness workdir to make one.';
@@ -125,21 +126,45 @@ function draft(file: string, cli: TaskEnv, cfg: HarnessConfig): number {
   return 0;
 }
 
-async function approve(file: string, flag: boolean, cli: TaskEnv, cfg: HarnessConfig): Promise<number> {
+/** `git diff` from the contract committed at HEAD to `next`, or a "new" line when none is committed. */
+function replaceDiff(cli: TaskEnv, id: string, next: string): string {
+  const g = cli.git ?? defaultExec;
+  const old = g('git', [...SAFE_GIT, 'cat-file', 'blob', `HEAD:${TASKS_DIR}/${id}.json`], { cwd: cli.root });
+  if (old.status !== 0) return `new: ${id} has no committed contract`;
+  const d = mkdtempSync(join(tmpdir(), 'harness-task-'));
+  try {
+    writeFileSync(join(d, 'committed.json'), old.stdout);
+    writeFileSync(join(d, 'replacement.json'), next);
+    const r = g('git', [...SAFE_GIT, 'diff', ...SAFE_DIFF, '--no-index', '--no-color', '--', 'committed.json', 'replacement.json'], { cwd: d });
+    if (r.status !== 0 && r.status !== 1) throw new Error(`harness task: git diff failed (${esc((r.stderr ?? '').trim().split('\n')[0] ?? '')})`);
+    return r.stdout.trimEnd() || `no change from the committed ${TASKS_DIR}/${id}.json`;
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+}
+
+async function approve(file: string, flag: boolean, replace: boolean, cli: TaskEnv, cfg: HarnessConfig): Promise<number> {
   const no = (reason: string, msg: string) => (log(cli.root, 'task-approve-refused', reason), cli.out(msg), 1);
   const gate = writeGate(cli, cfg);
   if (gate) return no(gate === UNATTENDED ? 'unattended' : 'guard-off', gate);
   const c = readDraft(cli, cfg, file);
   if (Array.isArray(c)) return no('invalid', c.join('\n'));
-  if (existsSync(resolve(cli.root, TASKS_DIR, `${c.id}.json`))) return no(c.id, `harness task: ${c.id} already exists; use harness task edit ${c.id} --from ${file} to change it.`);
+  if (!replace && existsSync(resolve(cli.root, TASKS_DIR, `${c.id}.json`)))
+    return no(c.id, `harness task: ${c.id} already exists; use harness task edit ${c.id} --from ${file} to change it, or harness task approve --replace ${file} to replace it.`);
+  const base = head(cli);
+  if (!base) return no(c.id, 'harness task: no commit to use as the base. Commit once, then run it again.');
+  const next: Contract = { ...c, approved_by: 'person', approved_at: (cli.now ?? (() => new Date()))().toISOString(), base, closed_at: null };
   describe(cli, cfg, c).forEach((l) => cli.out(l));
+  if (replace) {
+    cli.out(replaceDiff(cli, c.id, JSON.stringify({ ...next, sha256: contractHash(next) }, null, 2) + '\n'));
+    // A replacement overrides the lock, so only an explicit --yes approves it, never a prompt answered in passing.
+    if (!flag) return cli.out(`Nothing written. To replace it: ${ownCommand('task', ['approve', '--replace', file, '--yes'], cli.root)}`), 2;
+  }
   cli.out(`Will write ${TASKS_DIR}/${c.id}.json and make it the active task.`);
   const stop = await yes(cli, flag, `Approve task ${c.id}?`, ['approve', file]);
   if (stop === 1) log(cli.root, 'task-approve-refused', c.id);
   if (stop !== null) return stop;
-  const base = head(cli);
-  if (!base) return no(c.id, 'harness task: no commit to use as the base. Commit once, then run it again.');
-  writeContract(cli.root, { ...c, approved_by: 'person', approved_at: (cli.now ?? (() => new Date()))().toISOString(), base, closed_at: null });
+  writeContract(cli.root, next);
   setActiveTask(cli.root, c.id);
   cli.out(`Approved ${c.id}; it is the active task.`);
   cli.out(LAND(c.id));
@@ -156,12 +181,12 @@ function open(cli: TaskEnv, id: string): Contract | number {
 }
 
 function changes(a: Contract, b: Contract): string[] {
-  const old = new Map(a.criteria.map((c) => [c.id, JSON.stringify(c)]));
-  const now = new Map(b.criteria.map((c) => [c.id, JSON.stringify(c)]));
+  const old = new Map(a.criteria.map((c) => [c.id, c]));
+  const now = new Map(b.criteria.map((c) => [c.id, c]));
   return [
     ...b.criteria.filter((c) => !old.has(c.id)).map((c) => `added ${line(c)}`),
     ...a.criteria.filter((c) => !now.has(c.id)).map((c) => `removed ${line(c)}`),
-    ...b.criteria.filter((c) => old.has(c.id) && old.get(c.id) !== now.get(c.id)).map((c) => `changed ${line(c)}`),
+    ...b.criteria.filter((c) => old.has(c.id) && JSON.stringify(old.get(c.id)) !== JSON.stringify(c)).map((c) => `changed ${line(old.get(c.id)!)} -> ${line(c)}`),
     ...(a.title !== b.title ? [`title: ${a.title} -> ${b.title}`] : []),
     ...(a.checks.join() !== b.checks.join() ? [`checks: ${a.checks.join(', ') || 'none'} -> ${b.checks.join(', ') || 'none'}`] : []),
     ...(a.review.model !== b.review.model ? [`review model: ${a.review.model} -> ${b.review.model}`] : []),
@@ -210,9 +235,10 @@ async function close(id: string, flag: boolean, cli: TaskEnv, cfg: HarnessConfig
 export async function task(args: string[], cli: TaskEnv): Promise<number> {
   const [sub, ...rest] = args;
   const flags = rest.filter((a) => a === '--yes').length;
-  const pos = rest.filter((a) => a !== '--yes');
+  const replace = rest.filter((a) => a === '--replace').length;
+  const pos = rest.filter((a) => a !== '--yes' && a !== '--replace');
   const plain = (i: number) => pos[i] !== undefined && !pos[i]!.startsWith('-');
-  const ok = flags <= (sub === 'draft' ? 0 : 1) && (
+  const ok = flags <= (sub === 'draft' ? 0 : 1) && replace <= (sub === 'approve' ? 1 : 0) && (
     sub === 'draft' || sub === 'approve' ? pos.length === 1 && plain(0)
       : sub === 'edit' ? pos.length === 3 && plain(0) && pos[1] === '--from' && plain(2)
         : sub === 'close' && pos.length === 1 && plain(0));
@@ -221,7 +247,7 @@ export async function task(args: string[], cli: TaskEnv): Promise<number> {
   const cfg = config(cli);
   if (typeof cfg === 'number') return cfg;
   if (sub === 'draft') return draft(pos[0]!, cli, cfg);
-  if (sub === 'approve') return approve(pos[0]!, flags === 1, cli, cfg);
+  if (sub === 'approve') return approve(pos[0]!, flags === 1, replace === 1, cli, cfg);
   if (sub === 'edit') return edit(pos[0]!, pos[2]!, flags === 1, cli, cfg);
   return close(pos[0]!, flags === 1, cli, cfg);
 }

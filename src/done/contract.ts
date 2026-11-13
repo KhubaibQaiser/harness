@@ -129,7 +129,7 @@ export function writeContract(root: string, c: Contract): Contract {
 }
 
 /**
- * An approved contract, from the working tree (its hash must equal both the embedded `sha256` and task-hashes.json),
+ * An approved contract, from the working tree (its hash must equal the embedded `sha256`, and task-hashes.json or the file must equal its blob at HEAD),
  * or with `ref` from that commit (embedded `sha256` only: CI has no state, and the base branch is person-merged).
  */
 export function loadContract(root: string, id: string, o: { ref?: string; git?: Exec } = {}): { contract: Contract } | { error: string } {
@@ -155,15 +155,20 @@ export function loadContract(root: string, id: string, o: { ref?: string; git?: 
   if (!v.ok) return { error: `${label}: ${v.errors.join('; ')}` };
   if (v.contract.id !== id) return { error: `${label}: id ${q(v.contract.id)} does not match the file name` };
   const hash = contractHash(v.contract);
-  let recorded: string | undefined = hash;
-  if (o.ref === undefined) {
-    try {
-      recorded = readTaskHashes(root)[id];
-    } catch (e) {
-      return { error: `${label}: ${(e as Error).message}` };
-    }
+  if (o.ref !== undefined) return v.contract.sha256 === hash ? { contract: v.contract } : { error: `${label} changed since it was approved; a person must approve it again` };
+  let recorded: string | undefined;
+  try {
+    recorded = readTaskHashes(root)[id];
+  } catch (e) {
+    return { error: `${label}: ${(e as Error).message}` };
   }
-  if (v.contract.sha256 !== hash || recorded !== hash) return { error: `${label} changed since it was approved; a person must approve it again` };
+  // Approved here (task-hashes.json), or committed and unchanged, so a fresh clone or worktree trusts it too.
+  const committed = () => {
+    const r = (o.git ?? defaultExec)('git', [...SAFE_GIT, 'cat-file', 'blob', `HEAD:${label}`], { cwd: root });
+    return r.status === 0 && r.stdout === text;
+  };
+  if (v.contract.sha256 !== hash || (recorded !== hash && !committed()))
+    return { error: `${label} changed since it was approved: it matches neither its commit at HEAD nor an approval recorded here. Restore it with git checkout -- ${label}, or have a person run harness task approve --replace <file>.` };
   return { contract: v.contract };
 }
 

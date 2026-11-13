@@ -58,5 +58,5 @@ test('report and eval keep exit 2 on bad arguments through the router', () => {
 });
 
 test('usage lists harness task', () => {
-  expect(usage()).toContain('harness task draft <file> | approve <file> [--yes] | edit <id> --from <file> [--yes] | close <id> [--yes]');
+  expect(usage()).toContain('harness task draft <file> | approve <file> [--replace] [--yes] | edit <id> --from <file> [--yes] | close <id> [--yes]');
 });

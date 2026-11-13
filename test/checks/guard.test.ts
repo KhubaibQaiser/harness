@@ -1341,7 +1341,7 @@ test('harness report asks, harness eval is denied, --help is allowed', async () 
 
 test('guard: the agent may draft a task contract but never approve, edit or close one', () => {
   expect(kind('harness task draft .harness/tmp/w/task.json')).toBe('allow');
-  for (const c of ['harness task approve x --yes', 'harness task approve x', 'npx @khubaibqaiser/harness task edit t1 --from f', 'node dist/cli.mjs task close t1',
+  for (const c of ['harness task approve x --yes', 'harness task approve x', 'harness task approve --replace x --yes', 'npx @khubaibqaiser/harness task edit t1 --from f', 'node dist/cli.mjs task close t1',
     'harness task close t1 --dry-run', 'harness task --yes draft f', 'harness task draft $F']) {
     const d = decideCommand(c, ctx());
     expect(d, c).toMatchObject({ kind: 'deny', reason: expect.stringContaining(TASK_PERSON_WHY) });

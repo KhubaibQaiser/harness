@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import type { Prompt } from '../../src/cli/prompt.js';
@@ -152,7 +154,7 @@ test('edit lists changed criteria and re-hashes; close clears the active task', 
   const preview = s.text();
   expect(preview).toContain('added C3');
   expect(preview).toContain('removed C2');
-  expect(preview).toContain('changed C1');
+  expect(preview).toContain('changed C1: old test passes (test test/old.test.ts::works) -> C1: old test still passes (test test/old.test.ts::works)');
   expect(await task(['edit', 't1', '--from', f, '--yes'], s.cli)).toBe(0);
   const after = s.loaded();
   expect(after.base).toBe(before.base);
@@ -185,6 +187,66 @@ test('edit and close refuse a contract changed since approval, and unattended ru
   expect(await task(['close', 't1', '--yes'], s.cli)).toBe(1);
   expect(s.text()).toContain('changed since it was approved');
   expect(await task(['edit', 't1', '--from', f, '--yes'], s.cli)).toBe(1);
+  expect(s.text()).toContain('git checkout -- .harness/tasks/t1.json');
+});
+
+/** t1 approved and committed (only the contract), and a fresh clone of that repo. */
+async function committedClone() {
+  const s = setup();
+  const f = drafted(s);
+  expect(await task(['approve', f, '--yes'], s.cli)).toBe(0);
+  git(s.root, 'add', '.harness/tasks/t1.json');
+  git(s.root, 'commit', '-q', '-m', 'contract');
+  const clone = join(mkdtempSync(join(tmpdir(), 'h-task-clone-')), 'c');
+  execFileSync('git', ['clone', '-q', s.root, clone]);
+  const lines: string[] = [];
+  const cli = { ...s.cli, root: clone, out: (l: string) => lines.push(l) };
+  return { s, f, clone, cli, lines };
+}
+
+test('a committed contract can be edited and closed in a fresh clone; an uncommitted change there is refused', async () => {
+  const { f, clone, cli, lines, s } = await committedClone();
+  expect(existsSync(join(clone, '.harness/state/task-hashes.json'))).toBe(false);
+  const draft = JSON.parse(s.read(f));
+  mkdirSync(join(clone, wd), { recursive: true });
+  writeFileSync(join(clone, f), JSON.stringify({ ...draft, title: 'Add login, v2' }));
+  expect(await task(['edit', 't1', '--from', f, '--yes'], cli)).toBe(0);
+  expect(readTaskHashes(clone).t1).toBe(contractHash(JSON.parse(readFileSync(join(clone, '.harness/tasks/t1.json'), 'utf8'))));
+  // the edit is approved here (task-hashes.json) though not committed yet: close still works
+  expect(await task(['close', 't1', '--yes'], cli)).toBe(0);
+  // a self-consistent but uncommitted rewrite in a checkout with no record of it is refused
+  const { clone: c2, cli: cli2, lines: l2 } = await committedClone();
+  const p = join(c2, '.harness/tasks/t1.json');
+  const forged = { ...(JSON.parse(readFileSync(p, 'utf8')) as Contract), title: 'Sneaky' };
+  writeFileSync(p, JSON.stringify({ ...forged, sha256: contractHash(forged) }));
+  expect(await task(['close', 't1', '--yes'], cli2)).toBe(1);
+  const out = l2.join('\n');
+  expect(out).toContain('git checkout -- .harness/tasks/t1.json');
+  expect(out).toContain('harness task approve --replace <file>');
+  expect(lines.length).toBeGreaterThan(0);
+});
+
+test('approve --replace shows the diff against the committed contract and needs --yes', async () => {
+  const { s, f } = await committedClone();
+  s.text();
+  s.write(f, { ...JSON.parse(s.read(f)), title: 'Replaced' });
+  expect(await task(['approve', '--replace', f], s.cli)).toBe(2); // a TTY yes is not enough
+  const preview = s.text();
+  expect(preview).toMatch(/^-\s+"title": "Add login",$/m);
+  expect(preview).toMatch(/^\+\s+"title": "Replaced",$/m);
+  expect(preview).toContain(`task approve --replace ${f} --yes`);
+  expect(s.loaded().title).toBe('Add login');
+  expect(await task(['approve', '--replace', f, '--yes'], { ...s.cli, env: { CI: 'true' } })).toBe(1);
+  expect(await task(['approve', '--replace', f, '--yes'], s.cli)).toBe(0);
+  expect(s.loaded().title).toBe('Replaced');
+  expect(readTaskHashes(s.root).t1).toBe(contractHash(s.loaded()));
+  expect(activeTaskId(s.root, {})).toBe('t1');
+  // a contract with no committed version is "new"
+  const g = drafted(s, { id: 't9' });
+  s.text();
+  expect(await task(['approve', '--replace', g], s.cli)).toBe(2);
+  expect(s.text()).toContain('new: t9 has no committed contract');
+  expect(await task(['approve', '--replace', '--replace', g, '--yes'], s.cli)).toBe(2);
 });
 
 test('bad arguments print the usage and exit 2', async () => {

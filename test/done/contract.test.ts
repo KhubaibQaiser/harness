@@ -70,6 +70,28 @@ test('writeContract records the hash; loadContract refuses a file whose bytes no
   expect(loadContract(root, 'add-login')).toEqual({ error: expect.stringContaining('changed since it was approved') });
 });
 
+test('a committed, unchanged contract loads in any checkout; task-hashes.json is extra evidence only', () => {
+  const good = { ...c, sha256: contractHash(c) };
+  const text = JSON.stringify(good, null, 2) + '\n';
+  const { root } = repoWith({ '.harness/tasks/add-login.json': text }, {});
+  expect(loadContract(root, 'add-login')).toEqual({ contract: good }); // a fresh clone: no task-hashes.json
+  mkdirSync(join(root, '.harness/state'), { recursive: true });
+  writeFileSync(join(root, TASK_HASHES), JSON.stringify({ 'add-login': 'f'.repeat(64) }));
+  expect(loadContract(root, 'add-login')).toEqual({ contract: good }); // stale local state, file as committed
+  // a self-consistent edit that is not committed is refused, naming both repairs
+  const forged = { ...c, criteria: [crit('C1')] };
+  writeFileSync(join(root, '.harness/tasks/add-login.json'), JSON.stringify({ ...forged, sha256: contractHash(forged) }, null, 2) + '\n');
+  const r = loadContract(root, 'add-login');
+  expect(r).toEqual({ error: expect.stringContaining('changed since it was approved') });
+  expect(r).toEqual({ error: expect.stringContaining('git checkout -- .harness/tasks/add-login.json') });
+  expect(r).toEqual({ error: expect.stringContaining('harness task approve --replace <file>') });
+  // the git call uses SAFE_GIT
+  const calls: string[][] = [];
+  loadContract(root, 'add-login', { git: (cmd, args) => (calls.push([cmd, ...args]), { status: 128, stdout: '' }) });
+  expect(calls[0]).toContain('core.hooksPath=/dev/null/harness-no-hooks');
+  expect(calls[0]?.slice(-3)).toEqual(['cat-file', 'blob', 'HEAD:.harness/tasks/add-login.json']);
+});
+
 test('loadContract names the file for a missing, unparsable, invalid or misnamed contract, and refuses a bad id', () => {
   const root = dir();
   expect(loadContract(root, 'nope')).toEqual({ error: '.harness/tasks/nope.json: no such task contract' });

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { gitTooOld, secretScan } from '../../src/checks/secret-scan.js';
+import { commitUse, gitTooOld, runningPrograms, secretScan, type Use } from '../../src/checks/secret-scan.js';
 import { defaults } from '../../src/core/config.js';
 import { registry } from '../../src/hooks/dispatch.js';
 import type { Ctx } from '../../src/hooks/dispatch.js';
@@ -15,12 +15,14 @@ const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd
 
 type Call = { args: string[]; index: string | undefined; attrSource: string | undefined; home: string | undefined; config: string; ignore: string };
 /** A stand-in gitleaks on PATH. It runs the git command gitleaks runs for `--pre-commit --staged` (so GIT_INDEX_FILE and
- *  the attribute settings apply), "finds" TOKEN, writes an unredacted report (file name `file`) and prints the value,
- *  so a test proves the check never repeats either. Each call is logged with its env and config. */
-function stubBin(file = 'config/leak.txt'): { dir: string; calls: () => Call[] } {
+ *  the attribute settings apply), "finds" TOKEN, writes an unredacted report (file name STUB_FILE) and prints the value,
+ *  so a test proves the check never repeats either. STUB_CRASH makes it fail. Each call is logged with its env and config.
+ *  One per file: a newly written executable is slow to start the first time (macOS and Windows scan it). */
+function stubBin(): { dir: string; calls: () => Call[]; reset: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'harness-gitleaks-stub-'));
   const log = join(dir, 'calls.jsonl');
   const js = `const { execFileSync } = require('node:child_process'); const fs = require('node:fs');
+if (process.env.STUB_CRASH) { console.error('boom'); process.exit(1); }
 const a = process.argv.slice(2); const at = (f) => a[a.indexOf(f) + 1];
 const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return 'unreadable'; } };
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: a, index: process.env.GIT_INDEX_FILE, attrSource: process.env.GIT_ATTR_SOURCE, home: process.env.HOME, config: read(at('--config')), ignore: read(at('--gitleaks-ignore-path')) }) + '\\n');
@@ -28,14 +30,14 @@ const diff = execFileSync('git', ['-C', a[a.length - 1], 'diff', '-U0', '--no-ex
 if (diff.includes('\\x1b[')) process.exit(0); // as gitleaks: a coloured diff does not parse, so nothing is found
 const m = /ghp_[A-Za-z0-9]{36}/.exec(diff);
 if (!m) process.exit(0);
-fs.writeFileSync(at('--report-path'), JSON.stringify([{ RuleID: 'github-pat', File: ${JSON.stringify(file)}, StartLine: 1, Secret: m[0], Match: m[0] }]));
+fs.writeFileSync(at('--report-path'), JSON.stringify([{ RuleID: 'github-pat', File: process.env.STUB_FILE || 'config/leak.txt', StartLine: 1, Secret: m[0], Match: m[0] }]));
 console.log('leak ' + m[0]); console.error('leak ' + m[0]);
 process.exit(Number(at('--exit-code')));
 `;
   writeFileSync(join(dir, 'gitleaks.js'), js);
   if (process.platform === 'win32') writeFileSync(join(dir, 'gitleaks.cmd'), '@node "%~dp0gitleaks.js" %*\r\n');
   else writeFileSync(join(dir, 'gitleaks'), `#!/bin/sh\nexec node "${join(dir, 'gitleaks.js')}" "$@"\n`, { mode: 0o755 });
-  return { dir, calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Call) : []) };
+  return { dir, calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Call) : []), reset: () => rmSync(log, { force: true }) };
 }
 
 function ctx(root: string, command: string, env: NodeJS.ProcessEnv, o: { on?: boolean; tool?: string; input?: Record<string, unknown> } = {}): Ctx {
@@ -47,7 +49,8 @@ function ctx(root: string, command: string, env: NodeJS.ProcessEnv, o: { on?: bo
 const run = (c: Ctx) => secretScan.run(c) as { kind: string; reason?: string };
 // No system or global git config: this machine's own (a credential helper, a difftool) must not change what a test sees.
 const NO_USER_CONFIG = (() => { const f = join(mkdtempSync(join(tmpdir(), 'harness-gitcfg-')), 'empty'); writeFileSync(f, ''); return { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: f }; })();
-const withStub = (s: { dir: string }) => ({ ...process.env, ...NO_USER_CONFIG, PATH: `${s.dir}${delimiter}${process.env.PATH ?? ''}` });
+const S = stubBin();
+const withStub = (extra: NodeJS.ProcessEnv = {}) => ({ ...process.env, ...NO_USER_CONFIG, PATH: `${S.dir}${delimiter}${process.env.PATH ?? ''}`, ...extra });
 const noGitleaks = () => ({ PATH: mkdtempSync(join(tmpdir(), 'harness-nopath-')) });
 const leak = (root: string, rel = 'leak.txt') => writeFileSync(join(root, rel), `token = ${TOKEN}\n`);
 
@@ -62,8 +65,9 @@ describe('secret-scan', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     leak(root);
     git(root, 'add', 'leak.txt');
-    const s = stubBin();
-    const d = run(ctx(root, 'git commit -m "add config"', withStub(s)));
+    const s = S;
+    s.reset();
+    const d = run(ctx(root, 'git commit -m "add config"', withStub()));
     expect(d.kind).toBe('deny');
     expect(d.reason).toContain('github-pat in `config/leak.txt` line 1');
     expect(d.reason).not.toContain(TOKEN);
@@ -75,15 +79,16 @@ describe('secret-scan', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     leak(root);
     git(root, 'add', 'leak.txt');
-    const d = run(ctx(root, 'git commit -m x', withStub(stubBin(`keys/${TOKEN}.txt`))));
+    const d = run(ctx(root, 'git commit -m x', withStub({ STUB_FILE: `keys/${TOKEN}.txt` })));
     expect(d.kind).toBe('deny');
     expect(d.reason).not.toContain(TOKEN);
   });
 
   test('runs gitleaks with harness rules, an empty ignore file, inline allows ignored, and a sealed git config', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
-    const s = stubBin();
-    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(s))).kind).toBe('allow');
+    const s = S;
+    s.reset();
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).kind).toBe('allow');
     const c = s.calls();
     expect(c.length).toBeGreaterThan(0);
     for (const x of c) {
@@ -101,13 +106,13 @@ describe('secret-scan', () => {
     leak(root, 'f.txt');
     git(root, 'add', 'f.txt');
     writeFileSync(join(root, 'f.txt'), 'clean\n');
-    expect(run(ctx(root, 'git commit -m x', withStub(stubBin()))).kind).toBe('deny');
+    expect(run(ctx(root, 'git commit -m x', withStub())).kind).toBe('deny');
   });
 
   test('scans what commit -a or a pathspec takes from the worktree, and leaves the real index alone', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     writeFileSync(join(root, 'README.md'), `hi ${TOKEN}\n`);
-    for (const cmd of ['git commit -am x', 'git commit -m x README.md']) expect(run(ctx(root, cmd, withStub(stubBin()))).kind, cmd).toBe('deny');
+    for (const cmd of ['git commit -am x', 'git commit -m x README.md']) expect(run(ctx(root, cmd, withStub())).kind, cmd).toBe('deny');
     expect(git(root, 'diff', '--cached', '--name-only')).toBe('');
   });
 
@@ -115,14 +120,14 @@ describe('secret-scan', () => {
     const root = makeRepo({ 'README.md': 'hi\n', '.gitattributes': '*.txt -diff\n' });
     leak(root);
     git(root, 'add', 'leak.txt');
-    expect(run(ctx(root, 'git commit -m x', withStub(stubBin()))).kind).toBe('deny');
+    expect(run(ctx(root, 'git commit -m x', withStub())).kind).toBe('deny');
   });
 
   test('a NUL byte does not make a file binary and hide it', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     writeFileSync(join(root, 'leak.txt'), Buffer.from(`k=${TOKEN}\n\0`));
     git(root, 'add', 'leak.txt');
-    expect(run(ctx(root, 'git commit -m x', withStub(stubBin()))).kind).toBe('deny');
+    expect(run(ctx(root, 'git commit -m x', withStub())).kind).toBe('deny');
   });
 
   test('color.ui=always in the repo config does not colour the diff gitleaks reads', () => {
@@ -131,114 +136,101 @@ describe('secret-scan', () => {
     git(root, 'config', 'color.diff', 'always');
     leak(root);
     git(root, 'add', 'leak.txt');
-    expect(run(ctx(root, 'git commit -m x', withStub(stubBin()))).kind).toBe('deny');
+    expect(run(ctx(root, 'git commit -m x', withStub())).kind).toBe('deny');
   });
 
   test('a .gitleaksignore in the worktree or the index blocks: gitleaks always reads it from the repo root', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     writeFileSync(join(root, '.gitleaksignore'), 'x:github-pat:1\n');
-    const d = run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin())));
+    const d = run(ctx(root, 'git commit --allow-empty -m x', withStub()));
     expect(d.kind).toBe('deny');
     expect(d.reason).toContain('.gitleaksignore');
     expect(d.reason).toContain('ask the person');
     git(root, 'add', '.gitleaksignore');
     rmSync(join(root, '.gitleaksignore'));
-    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('deny');
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).kind).toBe('deny');
     git(root, 'rm', '-q', '--cached', '.gitleaksignore');
-    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('allow');
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).kind).toBe('allow');
   });
 
   test('a repo commit hook asks, since it runs after the scan and can stage files; core.hooksPath is followed', () => {
     const hook = (root: string, rel: string, mode = 0o755) => { mkdirSync(join(root, rel, '..'), { recursive: true }); writeFileSync(join(root, rel), '#!/bin/sh\n', { mode }); };
+    const one = makeRepo({ 'README.md': 'hi\n' });
     for (const name of ['pre-commit', 'prepare-commit-msg', 'commit-msg', 'post-commit', 'post-rewrite', 'reference-transaction', 'anything']) {
-      const root = makeRepo({ 'README.md': 'hi\n' });
-      hook(root, `.git/hooks/${name}`);
-      const d = run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin())));
+      hook(one, `.git/hooks/${name}`);
+      const d = run(ctx(one, 'git commit --allow-empty -m x', withStub()));
       expect(d.kind, name).toBe('ask');
       expect(d.reason).toContain(name);
+      rmSync(join(one, `.git/hooks/${name}`));
     }
     const root = makeRepo({ 'README.md': 'hi\n' });
     git(root, 'config', 'core.hooksPath', '.husky/_');
     hook(root, '.husky/_/pre-commit');
-    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('ask');
-    expect(run(ctx(root, 'git stash', withStub(stubBin()))).kind).toBe('ask'); // stash runs hooks too (reference-transaction)
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).kind).toBe('ask');
+    expect(run(ctx(root, 'git stash', withStub())).kind).toBe('ask'); // stash runs hooks too (reference-transaction)
     const plain = makeRepo({ 'README.md': 'hi\n' });
     if (process.platform !== 'win32') {
       hook(plain, '.git/hooks/pre-commit', 0o644); // git skips a hook that is not executable
-      expect(run(ctx(plain, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('allow');
+      expect(run(ctx(plain, 'git commit --allow-empty -m x', withStub())).kind).toBe('allow');
     }
     leak(root);
     git(root, 'add', 'leak.txt');
-    expect(run(ctx(root, 'git commit -m x', withStub(stubBin()))).kind).toBe('deny'); // a finding still wins
+    expect(run(ctx(root, 'git commit -m x', withStub())).kind).toBe('deny'); // a finding still wins
   });
 
   test('sample hooks and folders in the hooks folder do not ask', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     writeFileSync(join(root, '.git/hooks/pre-commit.sample'), '#!/bin/sh\n', { mode: 0o755 });
     mkdirSync(join(root, '.git/hooks/lib'));
-    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('allow');
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).kind).toBe('allow');
   });
 
-  test('an fsmonitor program or a clean, smudge or process filter in git config asks; git-lfs\'s own filter does not', () => {
-    const cases: [string, string, string][] = [['core.fsmonitor', './.fsmon', 'ask'], ['core.fsmonitor', 'true', 'allow'], ['core.fsmonitor', 'false', 'allow'],
-      ['filter.x.clean', 'sh x.sh', 'ask'], ['filter.x.smudge', 'cat', 'ask'], ['filter.x.process', 'p', 'ask'],
-      ['filter.lfs.clean', 'git-lfs clean -- %f', 'allow'], ['filter.lfs.smudge', 'git-lfs smudge -- %f', 'allow'], ['filter.lfs.process', 'git-lfs filter-process', 'allow'], ['filter.lfs.clean', 'git-lfs clean -- %f; sh x', 'ask'],
-      // Any key that names a program git may run during the commit, by pattern: gpg signing, editors, textconv, a future *.program.
-      // Signing and the editor are off for `-m x` with no gpgsign, so their programs don't run (see the next tests).
-      ['gpg.program', './sign.sh', 'allow'], ['gpg.ssh.program', './s', 'allow'], ['gpg.x509.program', './s', 'allow'], ['gpg.ssh.defaultKeyCommand', './k', 'allow'],
-      ['core.editor', 'vim', 'allow'], ['sequence.editor', 'vim', 'allow'], ['foo.editor', './e', 'ask'], ['diff.x.textconv', 'cat', 'ask'], ['diff.external', './d', 'ask'], ['future.thing.program', './p', 'ask'], ['foo.command', './c', 'ask'],
-      // Namespaces git never runs during a commit or stash.
-      ['credential.helper', 'osxkeychain', 'allow'], ['difftool.x.cmd', 'opendiff', 'allow'], ['mergetool.x.cmd', 'x', 'allow']];
-    for (const [key, value, want] of cases) {
-      const root = makeRepo({ 'README.md': 'hi\n' });
-      git(root, 'config', key, value);
-      const d = run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin())));
-      expect(d.kind, `${key}=${value}`).toBe(want);
-      if (want === 'ask') expect(d.reason).toContain(key.toLowerCase());
-    }
-  });
-
-  test('the editor asks only when this commit opens it', () => {
-    const cases: [string, string][] = [
-      ['git commit --allow-empty -m x', 'allow'], ['git commit --allow-empty -F msg.txt', 'allow'], ['git commit --allow-empty -C HEAD', 'allow'], ['git commit --allow-empty --no-edit', 'allow'],
-      ['git commit -am x', 'allow'], ['git commit --allow-empty --message=x', 'allow'], ['git commit --amend --no-edit', 'allow'], ['git commit --allow-empty -m "-e"', 'allow'],
-      ['git commit --allow-empty', 'ask'], ['git commit --allow-empty -m x -e', 'ask'], ['git commit --allow-empty -em x', 'ask'], ['git commit --allow-empty --edit -m x', 'ask'],
-      ['git commit --amend', 'ask'], ['git commit --allow-empty -c HEAD', 'ask'], ['git commit --allow-empty --reedit-message=HEAD', 'ask'],
+  test('which config programs run: by key pattern, the editor only when it opens, gpg only when the commit signs', () => {
+    const none: Use = { editor: false, signFlag: null }, ed: Use = { editor: true, signFlag: null }, signs: Use = { editor: false, signFlag: true }, noSign: Use = { editor: false, signFlag: false };
+    const cases: [key: string, value: string, use: Use, runs: boolean][] = [
+      ['core.fsmonitor', './.fsmon', none, true], ['core.fsmonitor', 'true', none, false], ['core.fsmonitor', 'false', none, false],
+      ['filter.x.clean', 'sh x.sh', none, true], ['filter.x.smudge', 'cat', none, true], ['filter.x.process', 'p', none, true],
+      ['filter.lfs.clean', 'git-lfs clean -- %f', none, false], ['filter.lfs.smudge', 'git-lfs smudge -- %f', none, false], ['filter.lfs.process', 'git-lfs filter-process', none, false], ['filter.lfs.clean', 'git-lfs clean -- %f; sh x', none, true],
+      ['diff.x.textconv', 'cat', none, true], ['diff.external', './d', none, true], ['interactive.difffilter', './f', none, true], ['future.thing.program', './p', none, true], ['foo.command', './c', none, true], ['foo.editor', './e', none, true],
+      ['credential.helper', 'osxkeychain', none, false], ['difftool.x.cmd', 'opendiff', none, false], ['mergetool.x.cmd', 'x', none, false],
+      ['core.editor', 'vim', none, false], ['core.editor', 'vim', ed, true], ['core.editor', 'true', ed, false], ['core.editor', ':', ed, false], ['sequence.editor', 'vim', ed, false],
+      ...['gpg.program', 'gpg.ssh.program', 'gpg.x509.program', 'gpg.ssh.defaultkeycommand'].flatMap((k): [string, string, Use, boolean][] => [[k, './s', none, false], [k, './s', signs, true], [k, './s', noSign, false]]),
     ];
-    const root = makeRepo({ 'README.md': 'hi\n', 'msg.txt': 'm\n' });
-    git(root, 'config', 'core.editor', './ed.sh');
-    for (const [cmd, want] of cases) expect(run(ctx(root, cmd, withStub(stubBin()))).kind, cmd).toBe(want);
-    expect(run(ctx(root, 'git stash', withStub(stubBin()))).kind).toBe('allow');
-    const bare = makeRepo({ 'README.md': 'hi\n' });
+    for (const [key, value, use, runs] of cases) expect(runningPrograms([[key, value]], use, {}), `${key}=${value} ${JSON.stringify(use)}`).toEqual(runs ? [key] : []);
+    // commit.gpgsign true in any scope turns signing on, unless --no-gpg-sign.
+    expect(runningPrograms([['commit.gpgsign', 'false'], ['commit.gpgsign', 'true'], ['gpg.program', './s']], none, {})).toEqual(['gpg.program']);
+    expect(runningPrograms([['commit.gpgsign', 'true'], ['gpg.program', './s']], noSign, {})).toEqual([]);
     for (const v of ['GIT_EDITOR', 'VISUAL', 'EDITOR']) {
-      expect(run(ctx(bare, 'git commit --allow-empty', { ...withStub(stubBin()), [v]: './ed.sh' })).reason, v).toContain(v);
-      expect(run(ctx(bare, 'git commit --allow-empty -m x', { ...withStub(stubBin()), [v]: './ed.sh' })).kind, v).toBe('allow');
+      expect(runningPrograms([], ed, { [v]: './ed.sh' }), v).toEqual([v]);
+      expect(runningPrograms([], none, { [v]: './ed.sh' }), v).toEqual([]);
+      for (const skip of ['true', ':', ' true ']) expect(runningPrograms([], ed, { [v]: skip }), `${v}=${skip}`).toEqual([]);
     }
   });
 
-  test('a gpg program asks only when this commit signs', () => {
-    for (const key of ['gpg.program', 'gpg.ssh.program', 'gpg.x509.program', 'gpg.ssh.defaultKeyCommand']) {
-      const root = makeRepo({ 'README.md': 'hi\n' });
-      git(root, 'config', key, './s');
-      expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind, key).toBe('allow');
-      for (const cmd of ['git commit --allow-empty -S -m x', 'git commit --allow-empty --gpg-sign -m x', 'git commit --allow-empty -Sabc -m x', 'git commit --allow-empty --gpg-sign=abc -m x'])
-        expect(run(ctx(root, cmd, withStub(stubBin()))).kind, `${key}: ${cmd}`).toBe('ask');
-      git(root, 'config', 'commit.gpgsign', 'true');
-      expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind, key).toBe('ask');
-      expect(run(ctx(root, 'git commit --allow-empty --no-gpg-sign -m x', withStub(stubBin()))).kind, key).toBe('allow');
-      expect(run(ctx(root, 'git stash', withStub(stubBin()))).kind, key).toBe('allow'); // stash commits are not signed
-    }
+  test('commitUse: when the commit opens the editor and when it signs', () => {
+    const cases: [cmd: string, editor: boolean, signFlag: boolean | null][] = [
+      ['git commit -m x', false, null], ['git commit -F msg.txt', false, null], ['git commit -C HEAD', false, null], ['git commit --no-edit', false, null], ['git commit -am x', false, null],
+      ['git commit --message=x', false, null], ['git commit --amend --no-edit', false, null], ['git commit -m "-e"', false, null], ['git commit --fixup=abc', false, null], ['git commit --fixup abc', false, null],
+      ['git commit', true, null], ['git commit -m x -e', true, null], ['git commit -em x', true, null], ['git commit --edit -m x', true, null], ['git commit --amend', true, null],
+      ['git commit -c HEAD', true, null], ['git commit --reedit-message=HEAD', true, null], ['git commit --squash=abc', true, null], ['git commit --squash abc', true, null],
+      ['git commit --fixup=amend:abc', true, null], ['git commit --fixup=reword:abc', true, null], ['git commit --fixup amend:abc', true, null],
+      ['git commit -S -m x', false, true], ['git commit --gpg-sign -m x', false, true], ['git commit -Sabc -m x', false, true], ['git commit --gpg-sign=abc -m x', false, true], ['git commit --no-gpg-sign -m x', false, false],
+      // Known options with values or none; an unknown one fails closed: the editor may open and the commit may sign.
+      ['git commit -m y --author="A <a@b>" --no-verify -q', false, null], ['git commit -m y --untracked-files', false, null], ['git commit -s -m y --trailer "x: y" --cleanup strip', false, null],
+      ['git commit --frobnicate x -m y', true, true], ['git commit -Zq -m y', true, true], ['git stash', false, false],
+    ];
+    for (const [cmd, editor, signFlag] of cases) expect(commitUse(cmd), cmd).toEqual({ editor, signFlag });
   });
 
-  test('an option commitUse does not know counts as opening the editor and signing (fail closed)', () => {
-    for (const key of ['core.editor', 'gpg.program']) {
-      const root = makeRepo({ 'README.md': 'hi\n' });
-      git(root, 'config', key, './p');
-      for (const cmd of ['git commit --allow-empty --frobnicate x -m y', 'git commit --allow-empty -Zq -m y'])
-        expect(run(ctx(root, cmd, withStub(stubBin()))).kind, `${key}: ${cmd}`).toBe('ask');
-      for (const cmd of ['git commit --allow-empty -m y --author="A <a@b>" --no-verify -q', 'git commit --allow-empty -m y --untracked-files', 'git commit --allow-empty -s -m y --trailer "x: y" --cleanup strip'])
-        expect(run(ctx(root, cmd, withStub(stubBin()))).kind, `${key}: ${cmd}`).toBe('allow');
-    }
+  test('end to end: config programs ask only when this commit runs them', () => {
+    const root = makeRepo({ 'README.md': 'hi\n' });
+    for (const [k, v] of [['credential.helper', 'osxkeychain'], ['difftool.x.cmd', 'opendiff'], ['filter.lfs.clean', 'git-lfs clean -- %f'], ['core.editor', './ed.sh'], ['gpg.program', './s']]) git(root, 'config', k!, v!);
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).kind).toBe('allow');
+    expect(run(ctx(root, 'git commit --allow-empty', withStub())).reason).toContain('core.editor');
+    expect(run(ctx(root, 'git commit --allow-empty -S -m x', withStub())).reason).toContain('gpg.program');
+    expect(run(ctx(root, 'git commit --allow-empty', { ...withStub(), GIT_EDITOR: 'true' })).reason).not.toContain('GIT_EDITOR');
+    git(root, 'config', 'filter.x.clean', 'sh x.sh');
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).reason).toContain('filter.x.clean');
   });
 
   test('gpg signing with a gpg.program asks: the program runs after the scan and could make a commit of its own', () => {
@@ -246,7 +238,7 @@ describe('secret-scan', () => {
     writeFileSync(join(root, 'sign.sh'), `#!/bin/sh\necho k=${'$'}T > x.txt; git add x.txt; git commit -qm nested --no-verify\n`, { mode: 0o755 });
     git(root, 'config', 'gpg.program', './sign.sh');
     git(root, 'config', 'commit.gpgsign', 'true');
-    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('ask');
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).kind).toBe('ask');
   });
 
   test('writing commit hooks or changing core.hooksPath asks', () => {
@@ -265,7 +257,7 @@ describe('secret-scan', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     mkdirSync(join(root, '.git/info'), { recursive: true });
     writeFileSync(join(root, '.git/info/attributes'), '*.txt binary\n');
-    const d = run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin())));
+    const d = run(ctx(root, 'git commit --allow-empty -m x', withStub()));
     expect(d.kind).toBe('deny');
     expect(d.reason).toContain('.git/info/attributes');
   });
@@ -273,7 +265,7 @@ describe('secret-scan', () => {
   test('a secret in an ignored file does not block', () => {
     const root = makeRepo({ 'README.md': 'hi\n', '.gitignore': '.env\n' });
     writeFileSync(join(root, '.env'), `TOKEN=${TOKEN}\n`);
-    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('allow');
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub())).kind).toBe('allow');
   });
 
   test('passes clean changes, with the usual message forms and -c user settings', () => {
@@ -282,18 +274,18 @@ describe('secret-scan', () => {
     git(root, 'add', 'a.txt');
     const heredoc = `git commit -m "$(cat <<'EOF'\nfeat: x; y && z\n\nbody | more\nEOF\n)"`;
     for (const cmd of ['git commit -m clean', 'git commit -m "fix: a; b && c"', heredoc, 'git -c user.name=a -c user.email=b@c commit -m x', 'git -c commit.gpgsign=false commit -m x', '/usr/bin/git commit -m x 2>&1', 'git stash'])
-      expect(run(ctx(root, cmd, withStub(stubBin()))).kind, cmd).toBe('allow');
+      expect(run(ctx(root, cmd, withStub())).kind, cmd).toBe('allow');
   });
 
   test('git stash is scanned too', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     writeFileSync(join(root, 'README.md'), `hi ${TOKEN}\n`);
-    for (const cmd of ['git stash', 'git stash push -m x']) expect(run(ctx(root, cmd, withStub(stubBin()))).kind, cmd).toBe('deny');
+    for (const cmd of ['git stash', 'git stash push -m x']) expect(run(ctx(root, cmd, withStub())).kind, cmd).toBe('deny');
   });
 
   test('a commit must be the only, plain command on the line', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
-    const env = withStub(stubBin());
+    const env = withStub();
     for (const cmd of ['echo k > k && git add k && git commit -m x', 'git add -f .env && git commit -m x', 'git commit -m x; echo done', 'git commit -m x | cat'])
       expect(run(ctx(root, cmd, env)).reason, cmd).toContain('must be the only command');
     for (const cmd of ['GIT_INDEX_FILE=/tmp/i git commit -m x', 'env A=1 git commit -m x', 'sh -c "git commit -m x"', 'eval "git commit -m x"'])
@@ -325,9 +317,7 @@ describe('secret-scan', () => {
 
   test('a gitleaks error or crash blocks too', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
-    const s = stubBin();
-    writeFileSync(join(s.dir, 'gitleaks.js'), 'console.error("boom"); process.exit(1);\n');
-    const d = run(ctx(root, 'git commit -m x', withStub(s)));
+    const d = run(ctx(root, 'git commit -m x', withStub({ STUB_CRASH: '1' })));
     expect(d.kind).toBe('deny');
     expect(d.reason).toContain('could not scan');
   });
@@ -362,8 +352,9 @@ describe('secret-scan', () => {
 
   test('leaves no temp folder behind', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
-    const s = stubBin();
-    run(ctx(root, 'git commit --allow-empty -m x', withStub(s)));
+    const s = S;
+    s.reset();
+    run(ctx(root, 'git commit --allow-empty -m x', withStub()));
     for (const c of s.calls()) expect(existsSync(c.args[c.args.indexOf('--report-path') + 1])).toBe(false);
   });
 });

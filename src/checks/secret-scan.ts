@@ -7,6 +7,7 @@
 // attributes, no global or system git config and a plain diff format; a repo .gitleaksignore blocks, since gitleaks
 // always reads it. So the repo can't hide a finding. Only rule, file and line are shown.
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -127,14 +128,14 @@ function hookFiles(dir: string, platform: NodeJS.Platform): string[] {
 // lines (`git lfs install`) and true/false fsmonitor run nothing of the repo's. Namespaces git never reads during a commit
 // or stash (credential helpers, diff and merge tools, mail, browsers, help) are left out: a credential helper is in most
 // installs' system config, and asking on every commit for it would only teach people to say yes.
-const PROGRAM_KEYS = '^commit\\.gpgsign$|(^|\\.)(program|command|cmd|editor|fsmonitor|helper|defaultkeycommand)$|^filter\\..*\\.(clean|smudge|process)$|^diff\\..*\\.textconv$|^diff\\.external$';
+const PROGRAM_KEYS = '^commit\\.gpgsign$|(^|\\.)(program|command|cmd|editor|fsmonitor|helper|defaultkeycommand)$|^filter\\..*\\.(clean|smudge|process)$|^diff\\..*\\.textconv$|^diff\\.external$|^interactive\\.difffilter$';
 const NOT_IN_COMMIT = /^(credential|difftool|mergetool|sendemail|browser|web|man|instaweb|gui|guitool)\./;
 const LFS: Record<string, string> = { 'filter.lfs.clean': 'git-lfs clean -- %f', 'filter.lfs.smudge': 'git-lfs smudge -- %f', 'filter.lfs.process': 'git-lfs filter-process' };
 const BOOL = /^(true|false|yes|no|on|off|1|0)$/i;
 /** What this command makes git run: the editor, and signing. Stash opens no editor and signs nothing. */
 /** signFlag: -S (true), --no-gpg-sign (false), or neither (null, commit.gpgsign decides). */
-type Use = { editor: boolean; signFlag: boolean | null };
-const MSG_LONG = /^--(message|file|reuse-message|fixup|squash)(=|$)/;
+export type Use = { editor: boolean; signFlag: boolean | null };
+const MSG_LONG = /^--(message|file|reuse-message)(=|$)/;
 // git commit's other options, so anything else is unknown. VALUE ones take the next word unless given as --x=v.
 const VALUE_LONG = /^--(template|author|date|cleanup|trailer|pathspec-from-file)(=|$)/;
 const FLAG_LONG = /^--(all|include|only|patch|interactive|quiet|verbose|no-verify|verify|signoff|no-signoff|allow-empty|allow-empty-message|amend|dry-run|short|branch|porcelain|long|null|reset-author|status|no-status|pathspec-file-nul|no-post-rewrite|untracked-files(=.*)?)$/;
@@ -152,6 +153,11 @@ export function commitUse(command: string): Use {
     if (w === '--') break;
     if (w.startsWith('--')) {
       if (MSG_LONG.test(w)) { msg = true; if (!w.includes('=')) j++; }
+      else if (/^--(fixup|squash)(=|$)/.test(w)) {
+        const v = w.includes('=') ? w.slice(w.indexOf('=') + 1) : (ws[++j] ?? '');
+        // Only a plain --fixup=<commit> writes the message itself; --squash and --fixup=amend:/reword: open the editor.
+        if (w.startsWith('--fixup') && !/^(amend|reword):/.test(v)) msg = true; else edit = true;
+      }
       else if (w === '--edit') edit = true;
       else if (w === '--no-edit') noEdit = true;
       else if (/^--reedit-message(=|$)/.test(w)) { edit = true; if (!w.includes('=')) j++; }
@@ -177,26 +183,39 @@ export function commitUse(command: string): Use {
   return unknown ? { editor: true, signFlag: true } : { editor: edit || (!msg && !noEdit), signFlag };
 }
 
-/** The program keys of the effective config (every scope, includes followed) git would run for this command, or null
- *  when git config fails. SAFE_GIT_USER: SAFE_GIT turns fsmonitor off. */
-function programsInConfig(ctx: Ctx, use: Use): string[] | null {
+/** The program keys of the effective config (every scope, includes followed), or null when git config fails.
+ *  SAFE_GIT_USER: SAFE_GIT turns fsmonitor off. */
+function programRows(ctx: Ctx): [string, string][] | null {
   const r = spawnSync('git', [...SAFE_GIT_USER, 'config', '--get-regexp', PROGRAM_KEYS], { cwd: ctx.root, env: ctx.env, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
   if (r.status !== 0 && r.status !== 1) return null; // 1: no such key
-  const rows = r.stdout.split('\n').filter(Boolean).map((l) => {
+  return r.stdout.split('\n').filter(Boolean).map((l) => {
     const i = l.indexOf(' ');
     return i < 0 ? [l, ''] : [l.slice(0, i), l.slice(i + 1)];
   });
+}
+
+/** Of those rows, and the editor variables in `env`, the ones git would run for this command. */
+export function runningPrograms(rows: [string, string][], use: Use, env: NodeJS.ProcessEnv): string[] {
   // Signing is on with -S, or with commit.gpgsign true in any scope (stricter than git's last-wins) unless --no-gpg-sign.
-  const sign = use.signFlag ?? rows.some(([k, v]) => k === 'commit.gpgsign' && /^(true|yes|on|1)$/i.test(v!));
-  const runs = ([key, value]: string[]): boolean => {
-    if (key === 'commit.gpgsign' || NOT_IN_COMMIT.test(key!) || LFS[key!] === value || (key === 'core.fsmonitor' && BOOL.test(value!))) return false;
+  const sign = use.signFlag ?? rows.some(([k, v]) => k === 'commit.gpgsign' && /^(true|yes|on|1)$/i.test(v));
+  const runs = ([key, value]: [string, string]): boolean => {
+    if (key === 'commit.gpgsign' || NOT_IN_COMMIT.test(key) || LFS[key] === value || (key === 'core.fsmonitor' && BOOL.test(value))) return false;
     if (key === 'sequence.editor') return false; // rebase -i only
-    if (key === 'core.editor') return use.editor;
-    if (/^gpg\.(.*\.)?(program|defaultkeycommand)$/.test(key!)) return sign;
+    if (key === 'core.editor') return use.editor && !/^\s*(true|:)\s*$/.test(value);
+    if (/^gpg\.(.*\.)?(program|defaultkeycommand)$/.test(key)) return sign;
     return true;
   };
-  const env = use.editor ? ['GIT_EDITOR', 'VISUAL', 'EDITOR'].filter((v) => ctx.env[v]) : [];
-  return [...new Set([...rows.filter(runs).map(([k]) => esc(k!)), ...env])];
+  // An editor of `true` or `:` runs nothing (the usual way to skip the editor).
+  const editors = use.editor ? ['GIT_EDITOR', 'VISUAL', 'EDITOR'].filter((v) => env[v] && !/^\s*(true|:)\s*$/.test(env[v]!)) : [];
+  return [...new Set([...rows.filter(runs).map(([k]) => esc(k)), ...editors])];
+}
+
+const ATTRS = '* diff\n';
+/** The ids of the `* diff` blob and of the tree holding it as .gitattributes, as git would compute them. */
+function attrTree(algo: 'sha1' | 'sha256'): { blob: string; tree: string } {
+  const id = (type: string, body: Buffer) => createHash(algo).update(Buffer.concat([Buffer.from(`${type} ${body.length}\0`), body])).digest();
+  const blob = id('blob', Buffer.from(ATTRS));
+  return { blob: blob.toString('hex'), tree: id('tree', Buffer.concat([Buffer.from('100644 .gitattributes\0'), blob])).toString('hex') };
 }
 
 /** Git 2.40 added GIT_ATTR_SOURCE, which the scan needs so .gitattributes can't mark a file binary and hide it. */
@@ -231,19 +250,25 @@ function scan(ctx: Ctx, use: Use): Decision {
   const ver = git(['version']);
   if (ver.status !== 0) return failed('git version', ver);
   if (gitTooOld(ver.stdout)) return deny(`could not scan this commit for secrets: git ${first(ver.stdout.replace(/^git version /, ''))} is older than 2.40, which the scan needs to ignore .gitattributes. Update git, ${OFF}.`);
-  // The index and info/attributes the commit itself uses (a GIT_INDEX_FILE in the session's env included).
-  const where = git(['rev-parse', '--git-path', 'index', '--git-path', 'info/attributes']);
-  if (where.status !== 0) return failed('git rev-parse', where);
-  const [real, attrs] = where.stdout.trim().split('\n').map((p) => resolve(ctx.root, p));
-  const hooks = hooksDir(ctx);
-  if (!hooks) return deny(`could not scan this commit for secrets: git could not name the repo's hooks folder, ${OFF}.`);
+  // One call for the paths the commit itself uses (a GIT_INDEX_FILE in the session's env included) and the object format.
+  // SAFE_GIT_USER: SAFE_GIT's own core.hooksPath override would hide the repo's hooks folder; rev-parse runs no hook.
+  const where = spawnSync('git', [...SAFE_GIT_USER, 'rev-parse', '--git-path', 'index', '--git-path', 'info/attributes', '--git-path', 'hooks', '--git-path', 'objects', '--show-object-format'], { cwd: ctx.root, env: ctx.env, encoding: 'utf8', timeout: Math.max(1, left()), stdio: ['ignore', 'pipe', 'pipe'] });
+  const out = where.stdout?.trim().split('\n') ?? [];
+  if (where.status !== 0 || out.length !== 5) return failed('git rev-parse', where);
+  const [real, attrs, hooks, objects] = out.slice(0, 4).map((p) => resolve(ctx.root, p));
   // GIT_ATTR_SOURCE and an empty core.attributesFile cover .gitattributes and user attributes; info/attributes has no off switch.
   if (existsSync(attrs!) && /diff|binary/.test(readFileSync(attrs!, 'utf8'))) return deny(`.git/info/attributes has a diff or binary line, which would hide files from the secret scan. Ask the person to remove it, ${OFF}.`);
   // An attribute source whose only line is `* diff`: every file diffs as text, so neither .gitattributes nor a NUL byte hides it.
-  const blob = git(['hash-object', '-w', '--stdin'], ctx.env, '* diff\n');
-  if (blob.status !== 0) return failed('git hash-object', blob);
-  const tree = git(['mktree'], ctx.env, `100644 blob ${blob.stdout.trim()}\t.gitattributes\n`);
-  if (tree.status !== 0) return failed('git mktree', tree);
+  // Its ids are computed here; git writes the two objects only when they aren't already in the repo as loose objects.
+  const ids = attrTree(out[4] === 'sha256' ? 'sha256' : 'sha1');
+  const loose = (id: string) => existsSync(join(objects!, id.slice(0, 2), id.slice(2)));
+  if (!loose(ids.blob) || !loose(ids.tree)) {
+    const blob = git(['hash-object', '-w', '--stdin'], ctx.env, ATTRS);
+    if (blob.status !== 0) return failed('git hash-object', blob);
+    const tree = git(['mktree'], ctx.env, `100644 blob ${blob.stdout.trim()}\t.gitattributes\n`);
+    if (tree.status !== 0) return failed('git mktree', tree);
+    if (blob.stdout.trim() !== ids.blob || tree.stdout.trim() !== ids.tree) return deny(`could not scan this commit for secrets: git wrote the attribute tree under an unexpected id, ${OFF}.`);
+  }
   // gitleaks always reads <repo>/.gitleaksignore, whatever --gitleaks-ignore-path says; the index copy would be committed.
   const staged = git(['ls-files', '--cached', '--', ':(icase).gitleaksignore']);
   if (staged.status !== 0) return failed('git ls-files', staged);
@@ -260,12 +285,14 @@ function scan(ctx: Ctx, use: Use): Decision {
     const empty = f('empty');
     // No attributes but harness's (none), no global or system config: no textconv driver, binary mark or fsmonitor from the repo's setup.
     const sealed = {
-      ...ctx.env, GIT_ATTR_SOURCE: tree.stdout.trim(), GIT_ATTR_NOSYSTEM: '1', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: empty, HOME: home, XDG_CONFIG_HOME: home,
+      ...ctx.env, GIT_ATTR_SOURCE: ids.tree, GIT_ATTR_NOSYSTEM: '1', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: empty, HOME: home, XDG_CONFIG_HOME: home,
       ...configEnv([['core.attributesFile', empty], ...SEALED_CONFIG]),
     };
     const config = f('gitleaks.toml', RULES);
     const ignore = f('gitleaksignore');
-    for (const [n, index] of [real, worktree].entries()) {
+    // git add skips writing an index it didn't change, so identical bytes mean the worktree adds nothing: one scan does.
+    const same = existsSync(real!) && existsSync(worktree) && readFileSync(real!).equals(readFileSync(worktree));
+    for (const [n, index] of (same ? [real] : [real, worktree]).entries()) {
       if (!existsSync(index!)) continue; // a repo with nothing ever staged has no index yet
       const report = join(dir, `report-${n}.json`);
       const args = ['git', '--pre-commit', '--staged', '--redact', '--no-banner', '--ignore-gitleaks-allow', '--config', config, '--gitleaks-ignore-path', ignore, '--exit-code', String(LEAK_EXIT), '--report-format', 'json', '--report-path', report, ctx.root];
@@ -279,8 +306,9 @@ function scan(ctx: Ctx, use: Use): Decision {
       const why = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' ? 'gitleaks timed out' : `gitleaks exited ${r.status ?? r.signal ?? 'abnormally'}`;
       return deny(`could not scan this commit for secrets: ${why}. Run \`gitleaks git --pre-commit --staged --redact\` in your terminal to see why, ${OFF}.`);
     }
-    const progs = programsInConfig(ctx, use);
-    if (progs === null) return deny(`could not scan this commit for secrets: git config could not be read, ${OFF}.`);
+    const rows = programRows(ctx);
+    if (rows === null) return deny(`could not scan this commit for secrets: git config could not be read, ${OFF}.`);
+    const progs = runningPrograms(rows, use, ctx.env);
     const run = hookFiles(hooks!, platform);
     const why = [
       ...(run.length ? [`hooks (${run.map(esc).join(', ')} in ${esc(hooks!)})`] : []),

@@ -8,4 +8,8 @@ description = "catalog commit pins (public git SHAs)"
 condition = "AND"
 paths = ['''^catalog/items/[a-z0-9-]+\.yaml$''']
 regexTarget = "line"
-regexes = ['''"?sha"?\s*:\s*"?[0-9a-f]{40}"?''']
+# Anchored, so the allowlist covers a pin line and nothing else on it: a whole `sha:` line, or a one-line source map.
+regexes = [
+  '''^\s*"?sha"?\s*:\s*"?[0-9a-f]{40}"?\s*$''',
+  '''^\s*source:\s*\{\s*"type"\s*:\s*"(github|git-subdir)"(\s*,\s*"(repo|path|plugin)"\s*:\s*"[A-Za-z0-9._/-]+")*\s*,\s*"sha"\s*:\s*"[0-9a-f]{40}"\s*\}\s*$''',
+]

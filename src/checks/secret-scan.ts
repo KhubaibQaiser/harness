@@ -7,11 +7,11 @@
 // attributes, no global or system git config and a plain diff format; a repo .gitleaksignore blocks, since gitleaks
 // always reads it. So the repo can't hide a finding. Only rule, file and line are shown.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { esc } from '../core/config.js';
-import { SAFE_GIT } from '../core/git-safe.js';
+import { SAFE_GIT, SAFE_GIT_USER } from '../core/git-safe.js';
 import { redactSecrets } from '../core/secrets.js';
 import { pieces, unquote, words } from '../core/shell-words.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
@@ -34,7 +34,6 @@ const first = (s: string | undefined) => esc((s ?? '').trim().split('\n')[0] ?? 
 const GLOBAL_VALUE = /^(-[Cc]|--(git-dir|work-tree|namespace|exec-path|super-prefix|config-env|attr-source|list-cmds))$/;
 const ELSEWHERE = /^(-C|--(git-dir|work-tree|namespace|exec-path|super-prefix|config-env|attr-source))(=|$)/;
 const SAFE_C = /^(user\.(name|email|signingkey)|commit\.gpgsign)=/; // -c keys that can't change what is committed
-const SCANNED = new Set(['commit', 'stash']);
 const UNSCANNED = new Set(['merge', 'cherry-pick', 'rebase', 'revert', 'am', 'commit-tree', 'pull']);
 const STASH_SCANNED = /^(push|save|-.*)?$/; // `git stash` alone pushes; list/show/apply/pop/drop make no commit
 const COMMIT_WORD = /^(commit|stash|merge|cherry-pick|rebase|revert|am|commit-tree|pull)$/;
@@ -49,7 +48,7 @@ function gitSub(ws: string[], k: number): { i: number; opts: string[] } {
   return { i, opts };
 }
 
-type Kind = 'scan' | 'ask';
+type Kind = 'commit' | 'stash' | 'ask';
 /** What one segment is: a commit harness scans, one it must ask about, or neither. */
 function kindOf({ toks, k, prev }: Seg): Kind | null {
   const head = toks[k] ?? '';
@@ -59,8 +58,8 @@ function kindOf({ toks, k, prev }: Seg): Kind | null {
   const { i, opts } = gitSub(toks, k);
   const sub = toks[i] ?? '';
   if (opts.some((o) => /^-c=alias\./.test(o)) || sub.startsWith('$')) return 'ask';
-  if (sub === 'stash') return STASH_SCANNED.test(toks[i + 1] ?? '') ? 'scan' : toks[i + 1] === 'create' || toks[i + 1] === 'store' ? 'ask' : null;
-  return SCANNED.has(sub) ? 'scan' : UNSCANNED.has(sub) ? 'ask' : null;
+  if (sub === 'stash') return STASH_SCANNED.test(toks[i + 1] ?? '') ? 'stash' : toks[i + 1] === 'create' || toks[i + 1] === 'store' ? 'ask' : null;
+  return sub === 'commit' ? 'commit' : UNSCANNED.has(sub) ? 'ask' : null;
 }
 
 function kinds(command: string, ctx: Ctx): Set<Kind> {
@@ -69,15 +68,16 @@ function kinds(command: string, ctx: Ctx): Set<Kind> {
     const k = kindOf(seg);
     if (k) found.add(k);
     return null;
-  }, { whole: (w) => (w.includes('eval') && w.some((t) => COMMIT_WORD.test(t)) ? (found.add('scan'), null) : null) });
+  }, { whole: (w) => (w.includes('eval') && w.some((t) => COMMIT_WORD.test(t)) ? (found.add('commit'), null) : null) });
   return found;
 }
 
 // The one message idiom Claude Code writes: -m "$(cat <<'EOF' … EOF )". The delimiter is quoted, so the body runs nothing.
-// Bash closes the heredoc at the FIRST line equal to the delimiter, so a body holding one is code after it: not the idiom.
+// Bash closes the heredoc at the FIRST line equal to the delimiter (bash 3.2 also at one that starts with it, `EOF)`), so a
+// body holding such a line is code after it: not the idiom.
 const QUOTED_CAT = /"\$\(cat <<(-?)'(\w+)'\n([\s\S]*?)\n\2\n\s*\)"/g;
 const messages = (cmd: string): string =>
-  cmd.replace(QUOTED_CAT, (m, dash: string, d: string, body: string) => (body.split('\n').some((l) => (dash ? l.replace(/^\t+/, '') : l) === d) ? m : '"msg"'));
+  cmd.replace(QUOTED_CAT, (m, dash: string, d: string, body: string) => (body.split('\n').some((l) => (dash ? l.replace(/^\t+/, '') : l).startsWith(d)) ? m : '"msg"'));
 
 /** Why the line is not one plain `git commit`/`git stash` harness can scan as it will run, or null. */
 function notPlain(command: string): string | null {
@@ -102,6 +102,17 @@ const SEALED_CONFIG: [string, string][] = [
 const configEnv = (pairs: [string, string][]): Record<string, string> =>
   Object.fromEntries([['GIT_CONFIG_COUNT', String(pairs.length)], ...pairs.flatMap(([k, v], i) => [[`GIT_CONFIG_KEY_${i}`, k], [`GIT_CONFIG_VALUE_${i}`, v]])]);
 
+// The hooks git runs during a commit, before it is made. Git skips one that is not executable (Windows: any file).
+const COMMIT_HOOKS = ['pre-commit', 'prepare-commit-msg', 'commit-msg'];
+const runnable = (p: string, platform: NodeJS.Platform): boolean => {
+  try {
+    const st = statSync(p);
+    return st.isFile() && (platform === 'win32' || (st.mode & 0o111) !== 0);
+  } catch {
+    return false;
+  }
+};
+
 /** Git 2.40 added GIT_ATTR_SOURCE, which the scan needs so .gitattributes can't mark a file binary and hide it. */
 export function gitTooOld(version: string): boolean {
   const m = /(\d+)\.(\d+)/.exec(version);
@@ -123,7 +134,7 @@ function found(report: string): string {
   return `gitleaks found ${list.length} likely secret${list.length > 1 ? 's' : ''} in what this command could commit (the staged changes, and the unstaged and untracked files that are not ignored): ${shown.join('; ')}${more}. Values are not shown. Remove the secret, and rotate it if it was ever pushed. If it is a false positive, stop and ask the person: they can commit it from their own terminal or remove the gitleaks-commit item`;
 }
 
-function scan(ctx: Ctx): Decision {
+function scan(ctx: Ctx, commit: boolean): Decision {
   const platform = ctx.platform ?? process.platform;
   const bin = findOnPath('gitleaks', ctx.env, platform);
   if (!bin) return deny(MISSING);
@@ -138,6 +149,8 @@ function scan(ctx: Ctx): Decision {
   const where = git(['rev-parse', '--git-path', 'index', '--git-path', 'info/attributes']);
   if (where.status !== 0) return failed('git rev-parse', where);
   const [real, attrs] = where.stdout.trim().split('\n').map((p) => resolve(ctx.root, p));
+  const hooks = commit ? hooksDir(ctx) : null;
+  if (commit && !hooks) return deny(`could not scan this commit for secrets: git could not name the repo's hooks folder, ${OFF}.`);
   // GIT_ATTR_SOURCE and an empty core.attributesFile cover .gitattributes and user attributes; info/attributes has no off switch.
   if (existsSync(attrs!) && /diff|binary/.test(readFileSync(attrs!, 'utf8'))) return deny(`.git/info/attributes has a diff or binary line, which would hide files from the secret scan. Ask the person to remove it, ${OFF}.`);
   // An attribute source whose only line is `* diff`: every file diffs as text, so neither .gitattributes nor a NUL byte hides it.
@@ -180,7 +193,8 @@ function scan(ctx: Ctx): Decision {
       const why = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' ? 'gitleaks timed out' : `gitleaks exited ${r.status ?? r.signal ?? 'abnormally'}`;
       return deny(`could not scan this commit for secrets: ${why}. Run \`gitleaks git --pre-commit --staged --redact\` in your terminal to see why, ${OFF}.`);
     }
-    return { kind: 'allow' };
+    const run = commit ? COMMIT_HOOKS.filter((h) => runnable(join(hooks!, h), platform)) : [];
+    return run.length ? ask(`The repo has a ${run.join(', ')} hook (in ${esc(hooks!)}), which runs after this secret scan and can change or stage files, so harness can't vouch for what gets committed. Confirm the commit.`) : { kind: 'allow' };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -191,6 +205,28 @@ function scan(ctx: Ctx): Decision {
 // run time (`.gitleaksig${n}nore`) or a checkout that restores the file is not seen here.
 const ALLOWLIST = /(^|[\\/\s=<>])\.gitleaks(\.toml|ignore)(?![\w.-])/i;
 const mentionsAllowlist = (text: string): boolean => ALLOWLIST.test(text) || ALLOWLIST.test(text.replace(/['"\\]/g, ''));
+// Commit hooks run after the scan, so a new or changed hook (or hooks folder) is asked about. Early warning only, as above:
+// the commit itself asks while a runnable hook exists. The configured hooks folder is read only when a hook name shows.
+const HOOKS_TEXT = /(^|[\\/\s=<>])(\.git[\\/]hooks|\.husky|\.githooks)([\\/\s]|$)|core\.hookspath/i;
+const HOOKS_ASK = 'This changes a git commit hook or core.hooksPath. A commit hook runs after harness\'s secret scan and can stage files. Confirm the change.';
+function hooksDir(ctx: Ctx): string | null {
+  // SAFE_GIT_USER: SAFE_GIT's own core.hooksPath override would hide the repo's.
+  const r = spawnSync('git', [...SAFE_GIT_USER, 'rev-parse', '--git-path', 'hooks'], { cwd: ctx.root, env: ctx.env, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+  return r.status === 0 && r.stdout.trim() ? resolve(ctx.root, r.stdout.trim()) : null; // writes: a failure leaves the fixed patterns; a commit denies
+}
+const inside = (dir: string, p: string): boolean => {
+  const rel = relative(dir, p);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+};
+const touchesHooks = (ctx: Ctx, text: string, path?: string): boolean => {
+  if (HOOKS_TEXT.test(text) || HOOKS_TEXT.test(text.replace(/['"\\]/g, ''))) return true;
+  if (!/pre-commit|commit-msg|hook/i.test(text)) return false; // no hook name: skip the git call (it runs on every tool call)
+  const dir = hooksDir(ctx);
+  if (!dir) return false;
+  if (path !== undefined) return inside(dir, resolve(ctx.root, path));
+  const rel = relative(ctx.root, dir).replace(/\\/g, '/');
+  return !!rel && !rel.startsWith('..') && text.replace(/['"\\]/g, '').includes(rel);
+};
 const ALLOWLIST_ASK = 'This changes a gitleaks allowlist (.gitleaks.toml or .gitleaksignore), which can hide a secret from gitleaks; while a .gitleaksignore exists, harness blocks agent commits. Confirm the change.';
 
 export const secretScan: Check = {
@@ -200,16 +236,16 @@ export const secretScan: Check = {
   run(ctx) {
     if (!ctx.config?.checks.secretScan) return { kind: 'allow' };
     const target = editTarget(ctx.input);
-    if (target !== null) return mentionsAllowlist(target) ? ask(ALLOWLIST_ASK) : { kind: 'allow' };
+    if (target !== null) return mentionsAllowlist(target) ? ask(ALLOWLIST_ASK) : touchesHooks(ctx, target, target) ? ask(HOOKS_ASK) : { kind: 'allow' };
     if (!isShell(ctx.input.tool_name)) return { kind: 'allow' };
     const command = String(ctx.input.tool_input?.command ?? '');
     const k = kinds(command, ctx);
-    if (k.has('scan')) {
+    if (k.has('commit') || k.has('stash')) {
       const why = notPlain(command);
-      const d = why ? deny(why + '.') : scan(ctx);
+      const d = why ? deny(why + '.') : scan(ctx, k.has('commit'));
       if (d.kind !== 'allow') return d;
     }
     if (k.has('ask')) return ask('This git command makes commits from content harness can\'t scan for secrets before they are made (a merge, rebase, cherry-pick, revert, am, pull, commit-tree, a stash create, a git alias or a git named at run time). Confirm it.');
-    return mentionsAllowlist(command) ? ask(ALLOWLIST_ASK) : { kind: 'allow' };
+    return mentionsAllowlist(command) ? ask(ALLOWLIST_ASK) : touchesHooks(ctx, command) ? ask(HOOKS_ASK) : { kind: 'allow' };
   },
 };

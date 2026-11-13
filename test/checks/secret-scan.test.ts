@@ -146,6 +146,41 @@ describe('secret-scan', () => {
     expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('allow');
   });
 
+  test('a repo commit hook asks, since it runs after the scan and can stage files; core.hooksPath is followed', () => {
+    const hook = (root: string, rel: string, mode = 0o755) => { mkdirSync(join(root, rel, '..'), { recursive: true }); writeFileSync(join(root, rel), '#!/bin/sh\n', { mode }); };
+    for (const name of ['pre-commit', 'prepare-commit-msg', 'commit-msg']) {
+      const root = makeRepo({ 'README.md': 'hi\n' });
+      hook(root, `.git/hooks/${name}`);
+      const d = run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin())));
+      expect(d.kind, name).toBe('ask');
+      expect(d.reason).toContain(name);
+    }
+    const root = makeRepo({ 'README.md': 'hi\n' });
+    git(root, 'config', 'core.hooksPath', '.husky/_');
+    hook(root, '.husky/_/pre-commit');
+    expect(run(ctx(root, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('ask');
+    expect(run(ctx(root, 'git stash', withStub(stubBin()))).kind).toBe('allow'); // stash runs no commit hook
+    const plain = makeRepo({ 'README.md': 'hi\n' });
+    if (process.platform !== 'win32') {
+      hook(plain, '.git/hooks/pre-commit', 0o644); // git skips a hook that is not executable
+      expect(run(ctx(plain, 'git commit --allow-empty -m x', withStub(stubBin()))).kind).toBe('allow');
+    }
+    leak(root);
+    git(root, 'add', 'leak.txt');
+    expect(run(ctx(root, 'git commit -m x', withStub(stubBin()))).kind).toBe('deny'); // a finding still wins
+  });
+
+  test('writing commit hooks or changing core.hooksPath asks', () => {
+    const root = makeRepo({ 'README.md': 'hi\n' });
+    git(root, 'config', 'core.hooksPath', 'tools/hk');
+    const env = { ...process.env }; // git on PATH to read core.hooksPath; nothing here commits
+    for (const file_path of [join(root, '.git/hooks/pre-commit'), '.git/hooks/commit-msg', join(root, 'tools/hk/pre-commit'), '.husky/pre-commit'])
+      expect(run(ctx(root, '', env, { tool: 'Write', input: { file_path } })).kind, file_path).toBe('ask');
+    for (const cmd of ['echo x > .git/hooks/pre-commit', 'cp x tools/hk/pre-commit', 'git config core.hooksPath h', 'git config --local core.hookspath h', 'chmod +x .husky/pre-commit'])
+      expect(run(ctx(root, cmd, env)).kind, cmd).toBe('ask');
+    expect(run(ctx(root, '', env, { tool: 'Write', input: { file_path: join(root, 'src/hooks.ts') } })).kind).toBe('allow');
+  });
+
   test('a diff or binary line in .git/info/attributes blocks, since it would hide files', () => {
     const root = makeRepo({ 'README.md': 'hi\n' });
     mkdirSync(join(root, '.git/info'), { recursive: true });
@@ -186,7 +221,9 @@ describe('secret-scan', () => {
     for (const cmd of ['git -C . commit -m x', 'git --git-dir=.git commit -m x', 'git -c core.attributesFile=/x commit -m x'])
       expect(run(ctx(root, cmd, env)).kind, cmd).toBe('deny');
     const smuggled = `git commit -m "$(cat <<'EOF'\nx\nEOF\necho k > f; git add f\ncat <<'EOF'\ny\nEOF\n)"`;
-    for (const cmd of ['git commit -m "$(echo k > f)"', 'git commit -m `id`', 'git commit -F - <<EOF\nx\nEOF', smuggled])
+    // bash 3.2 also ends a heredoc at a line that starts with the delimiter (`EOF)`).
+    const prefixed = `git commit -m "$(cat <<'EOF'\nx\nEOF)\necho k > f; git add f\ncat <<'EOF'\ny\nEOF\n)"`;
+    for (const cmd of ['git commit -m "$(echo k > f)"', 'git commit -m `id`', 'git commit -F - <<EOF\nx\nEOF', smuggled, prefixed])
       expect(run(ctx(root, cmd, env)).reason, cmd).toContain('at run time');
   });
 

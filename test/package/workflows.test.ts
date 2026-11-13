@@ -271,3 +271,14 @@ test('re-running a release is safe: each publish step checks for the version fir
   expect(rel.run).toContain('gh release view "$GITHUB_REF_NAME"');
   expect(rel.run.indexOf('gh release view')).toBeLessThan(rel.run.indexOf('gh release create'));
 });
+
+test('the CI catalog-pin allowlist is anchored, matches .gitleaks.toml, and covers every pin line', () => {
+  const res = (t: string) => [...t.matchAll(/'''(\^\\s\*[^']*\$)'''/g)].map((m) => m[1]!); // the line regexes, not the path one
+  const ci = res(raw('ci.yml'));
+  expect(ci).toHaveLength(2);
+  expect(ci).toEqual(res(readFileSync('.gitleaks.toml', 'utf8')));
+  const sg = /\b[a-fA-F0-9]{40}\b(?:[`'"\s;]|$)/; // the shape the sourcegraph-access-token rule flags
+  for (const f of readdirSync('catalog/items')) for (const line of readFileSync(`catalog/items/${f}`, 'utf8').split('\n'))
+    if (/(^|\W)"?sha"?\s*:/.test(line) && sg.test(line)) expect(ci.some((r) => new RegExp(r).test(line)), `${f}: ${line}`).toBe(true);
+  expect(ci.some((r) => new RegExp(r).test(`sha: ${'a'.repeat(40)} token=x`))).toBe(false);
+});

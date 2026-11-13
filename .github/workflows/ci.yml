@@ -63,7 +63,10 @@ jobs:
           condition = "AND"
           paths = ['''^catalog/items/[a-z0-9-]+\.yaml$''']
           regexTarget = "line"
-          regexes = ['''"?sha"?\s*:\s*"?[0-9a-f]{40}"?''']
+          regexes = [
+            '''^\s*"?sha"?\s*:\s*"?[0-9a-f]{40}"?\s*$''',
+            '''^\s*source:\s*\{\s*"type"\s*:\s*"(github|git-subdir)"(\s*,\s*"(repo|path|plugin)"\s*:\s*"[A-Za-z0-9._/-]+")*\s*,\s*"sha"\s*:\s*"[0-9a-f]{40}"\s*\}\s*$''',
+          ]
           TOML
           : > "$RUNNER_TEMP/gitleaksignore"
           # Every file diffs as text: an attribute source whose only line is `* diff`, so neither .gitattributes nor a NUL byte hides one.

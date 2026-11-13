@@ -7,6 +7,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
 4. After npm succeeds, two jobs run, both using GitHub's built-in token (no stored secrets):
    - one publishes the same version to GitHub Packages, so it shows under Packages on the repo page;
    - one creates a GitHub release from the release notes, marked as a pre-release for versions with `-`.
+5. Until the first stable version, a prerelease also moves npm's `latest` tag, because `npm i` and `npx` with no tag install `latest`. It never moves `latest` backwards or off a stable version. If npm refuses, the job fails and says to enable "Allow npm dist-tag" (setup step 5).
 
 ## One-time setup (owner)
 
@@ -14,13 +15,13 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
 2. Under Required reviewers, add yourself. Leave "Prevent self-review" off: you push the tag and are the only reviewer, so turning it on would lock you out.
 3. Optional: under Deployment branches and tags, add a tag rule `v*`, so only release tags can deploy to this environment. (Environments need a public repo or a paid plan.)
 4. On npmjs.com, open the package's Settings, then Trusted publisher. npm can't edit an existing connection: delete the old one and create a new one for GitHub Actions with this repository, the workflow `release.yml`, and the environment `npm-release`. The name must match exactly; npm doesn't check it when you save.
-5. Under allowed actions, tick `npm publish`. The release job runs that command.
+5. Under allowed actions, tick `npm publish` and "Allow npm dist-tag". The release job runs both. Moving a dist-tag over trusted publishing needs npm 11.21.0 or newer; the job pins it.
 6. A new trusted-publisher config expires if no publish succeeds within 2 days. Push the first release tag, and approve it, within that time, or create the config again.
 
 ## Each release
 
 1. Merge the version bump to main. The same PR adds `docs/release-notes/<version>.md` and updates the README status line.
-2. Tag that commit `vX.Y.Z` (a version with `-` publishes under the `beta` tag, otherwise `latest`) and push the tag. A tag that is not on main fails in the first job, before the approval step.
+2. Tag that commit `vX.Y.Z` (a version with `-` publishes under the `beta` tag, and also moves `latest` while there is no stable version; otherwise `latest`) and push the tag. A tag that is not on main fails in the first job, before the approval step.
 3. When the run reaches `publish`, approve it in the Actions tab.
 
 ## If publish fails

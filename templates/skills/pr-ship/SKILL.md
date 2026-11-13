@@ -19,10 +19,10 @@ description: Splits a large change into stacked PRs. Use before opening a PR, or
 
 ## PR description
 
-Every `gh pr create` needs this body; the pr-body check denies one without it. Write it for a reviewer who has not seen this session: copy the template into `.harness/tmp/pr/body.md`, keep its first line, fill every section, and pass `--body-file .harness/tmp/pr/body.md` from the repo root (no `cd`, `--fill`, stdin or `$(…)`).
+Every `gh pr create` needs this body; the pr-body check denies one without it. Write it for a reviewer who has not seen this session. Run `harness workdir` (it prints a git-ignored folder), copy the template into `<folder>/body.md`, keep its first line and fill every section. Then run `gh pr create … --body-file <folder>/body.md` as the only command on the line (no `&&`, `cd`, `--fill`, `--body`, stdin or `$(…)`), and afterwards `harness workdir --clean <folder>`.
 
 - Never invent a result: each number, pass or screenshot names the command or capture you ran in this session. Label an estimate "estimate". A section with no evidence says `not run: <reason>` or `n/a: <reason>`, never a guess.
-- Human steps: when there are any, add `--label needs-human` (if gh says it is missing, run `gh label create needs-human` once) and tell the person. Never run `gh pr merge --auto`, enable auto-merge or start a deploy for such a PR.
+- Human steps: when there are any, add `--label needs-human` (only a person removes it) (if gh says it is missing, run `gh label create needs-human` once) and tell the person. Never run `gh pr merge --auto`, enable auto-merge or start a deploy for such a PR.
 
 ```markdown
 <!-- harness:pr-body -->
@@ -31,7 +31,7 @@ Every `gh pr create` needs this body; the pr-body check denies one without it. W
 ## Alternatives considered <!-- Each option weighed and why it lost, or "None: <why the choice was clear>". -->
 ## How to review <!-- The order to read files, and the risky spots as file:line. -->
 ## How to verify <!-- Exact commands and manual steps, each with the expected result and the result you saw. -->
-## Screenshots <!-- Web app: each changed screen at each breakpoint the project defines. Harness can't capture yet: "not captured: M2b not built". Not a web app: "n/a: <reason>". -->
+## Screenshots <!-- Web app: each changed screen at each breakpoint the project defines. Until it is set up: "not captured: browser capture isn't set up for this repo yet". Not a web app: "n/a: <reason>". -->
 ## Performance <!-- Checks run and their numbers, or "not run: <reason>" or "n/a: <reason>". -->
 ## Security <!-- Checks run and their results, then every known hole or risk, stated plainly. -->
 ## Human steps before merge or deploy <!-- Migrations, secrets, config, feature flags, data backfills: each step, who, when. Exactly "None." when there are none. -->

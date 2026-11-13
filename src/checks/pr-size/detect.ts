@@ -49,7 +49,7 @@ export function afterPr(rest: string[], sub: string): string[] | null {
   }
   return words[0] === 'pr' && words[1] === sub ? rest.slice(i) : null;
 }
-const afterPrCreate = (rest: string[]) => afterPr(rest, 'create');
+const afterPrCreate = (rest: string[]) => afterPr(rest, 'create') ?? afterPr(rest, 'new'); // `pr new` is gh's alias
 
 function createTarget(args: string[]): PrTarget {
   const t: { kind: 'create'; base?: string; head?: string } = { kind: 'create' };
@@ -111,7 +111,7 @@ function visitSeg(out: PrTarget[]) {
 export function prTargets(command: string, w: Where): PrTarget[] {
   const out: PrTarget[] = [];
   walkCommands<never>(command, w, visitSeg(out), {
-    whole: (words) => (['eval', 'gh', 'pr', 'create'].every((x) => words.includes(x)) ? (out.push({ kind: 'create' }), null) : null),
+    whole: (words) => (['eval', 'gh', 'pr'].every((x) => words.includes(x)) && (words.includes('create') || words.includes('new')) ? (out.push({ kind: 'create' }), null) : null),
   });
   return [...new Map(out.map((t) => [JSON.stringify(t), t])).values()];
 }

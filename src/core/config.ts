@@ -232,6 +232,12 @@ export function crossKeyErrors(c: HarnessConfig): { path: string; detail: string
 
 export type Issue = { path: string; kind: 'unknown' | 'mapping' | 'invalid'; detail?: string };
 
+/** A config written before `checks.prBody` existed takes pr-ship's other check, `prSize`: no install without pr-ship turns it on. */
+export function inheritPrBody(config: HarnessConfig, user: Record<string, unknown>): void {
+  const c = user.checks;
+  if (!isObj(c) || !Object.hasOwn(c, 'prBody')) config.checks.prBody = config.checks.prSize;
+}
+
 // Overlay `user` onto `base` in place; unknown, mistyped or out-of-range keys keep the default and are reported.
 export function overlay(base: Record<string, unknown>, user: Record<string, unknown>, path: string, issues: Issue[]): void {
   for (const [k, v] of Object.entries(user)) {
@@ -288,6 +294,7 @@ export function loadConfig(root: string, read: (p: string, e: 'utf8') => string 
   }
   const issues: Issue[] = [];
   overlay(config as unknown as Record<string, unknown>, user, '', issues);
+  inheritPrBody(config, user);
   for (const { path: p, kind, detail } of issues) {
     if (kind === 'unknown') fail(`config: unknown key "${p}" ignored`, `unknown key "${p}"`);
     else if (kind === 'mapping') fail(`config: "${p}" must be a mapping; using default`, `"${p}" must be a mapping`);

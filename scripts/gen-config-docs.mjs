@@ -15,7 +15,7 @@ const WHAT = {
   'checks.tdd': 'Red-first TDD, test-lock and tamper check.',
   'checks.stop': 'Stop gate.',
   'checks.prSize': 'PR size: asks before `gh pr create`, or a push to a PR branch harness recorded, goes over `pr_size.max_lines` or `pr_size.max_files`. It also turns the size warnings, the pause ask, the raise and the hand-run dispatcher deny on or off.',
-  'checks.prBody': 'PR body: every agent `gh pr create`, and every `gh pr edit` that sets a body, must carry a filled pr-ship template, and `gh pr merge --auto` is denied. Separate from `checks.prSize`. It belongs to the `pr-ship` item.',
+  'checks.prBody': 'PR body: every agent `gh pr create` (or `gh pr new`), and every `gh pr edit` that sets a body, must carry a filled pr-ship template in `--body-file`; `gh pr merge --auto` and `--admin` and removing the `needs-human` label are denied. Separate from `checks.prSize`; when the key is missing it takes `checks.prSize`\'s value. It belongs to the `pr-ship` item.',
   'checks.decisions': 'Turns on team decisions and the `decisions.*` keys. It belongs to the `agents-md` item: with a catalog, `update` sets it from the selected items, so unticking `agents-md` turns it off. `doctor` and `status` report on decisions whatever this is set to.',
   catalog_version: 'Version of the catalog the recommendations came from. `0` means no catalog.',
   'project.type': 'What kind of project this is. Empty until the interview sets it.',

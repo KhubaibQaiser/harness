@@ -12,7 +12,7 @@ describe('gh pr create', () => {
   test.each([
     'gh pr create', '/usr/local/bin/gh pr create', 'C:/x/gh.exe pr create', 'timeout 60 gh pr create', 'env GH_TOKEN=x gh pr create',
     'cd x && gh pr create', 'bash -c "gh pr create --fill"', "echo 'gh pr create' | sh", '$GH pr create', '$(which gh) pr create',
-    'eval "gh pr create"', 'gh pr -R o/r create',
+    'eval "gh pr create"', 'gh pr -R o/r create', 'gh pr new', 'eval "gh pr new"',
   ])('%s is one create', (c) => {
     expect(creates(c)).toHaveLength(1);
     expect(creates(c)[0]).toEqual({ kind: 'create' });

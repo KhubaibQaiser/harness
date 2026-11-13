@@ -29,6 +29,7 @@ describe('dispatch.mjs --workdir', () => {
   test('--clean removes only that folder; other paths and extra words are refused with exit 2', () => {
     const root = fresh();
     const a = run(root, '--workdir').out, b = run(root, '--workdir').out;
+    for (const p of [a, b]) expect(dirname(p)).toBe(join(root, '.harness', 'tmp')); // before any write, so a failure never writes into the cwd
     writeFileSync(join(a, 'body.md'), 'x');
     expect(run(root, '--workdir', '--clean', a).code).toBe(0);
     expect(existsSync(a)).toBe(false);

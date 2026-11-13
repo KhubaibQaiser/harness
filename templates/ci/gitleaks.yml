@@ -24,5 +24,12 @@ jobs:
           curl -sSfL -o "$f" "https://github.com/gitleaks/gitleaks/releases/download/v$v/$f"
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $f" | sha256sum -c -
           tar -xzf "$f" gitleaks
+      # Harness's own rules, an empty ignore file and inline gitleaks:allow comments ignored, so the repo's
+      # .gitleaks.toml, .gitleaksignore and comments can't hide a finding. An empty attribute source, so a
+      # .gitattributes `-diff` or `binary` line can't hide a file. To use your own rules, edit this step by hand.
       - name: Scan full history
-        run: ./gitleaks git --redact --verbose .
+        run: |
+          printf '[extend]\nuseDefault = true\n' > "$RUNNER_TEMP/gitleaks.toml"
+          : > "$RUNNER_TEMP/gitleaksignore"
+          export GIT_ATTR_SOURCE="$(git hash-object -t tree /dev/null)" GIT_ATTR_NOSYSTEM=1
+          ./gitleaks git --redact --verbose --ignore-gitleaks-allow --config "$RUNNER_TEMP/gitleaks.toml" --gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore" .

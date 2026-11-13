@@ -16,7 +16,7 @@ cost:
 stance: optional
 side_effects: [downloads-binary]
 why: >-
-  Adds a GitHub workflow that scans the full git history for secrets with gitleaks 8.30.1 on pull requests and pushes to main, printing findings redacted. Nobody can skip it with --no-verify. The binary download is checksum-verified.
+  Adds a GitHub workflow that scans the full git history for secrets with gitleaks 8.30.1 on pull requests and pushes to main, printing findings redacted. It uses harness's own rules, so the repo's allowlists, gitleaks:allow comments and .gitattributes can't hide a finding, and nobody can skip it with --no-verify. It runs after a push, so a secret it finds must be rotated. The binary download is checksum-verified.
 evidence:
   - docs/research/2026-11-13-m4-backend-infra.md#4-gitleaks
   - "gitleaks v8.30.1: tag commit 83d9cd684c87d95d656c1458ef04895a7f1cbd8e (git ls-remote, 2026-11-13); linux_x64 tarball sha256 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb, the same as .github/workflows/ci.yml"

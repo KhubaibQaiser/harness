@@ -36,6 +36,7 @@ test('the workflow pins the same gitleaks version and checksum as this repo\'s C
   expect(tpl).toContain('persist-credentials: false');
   expect(tpl).toContain('fetch-depth: 0');
   expect(tpl).toContain('./gitleaks git --redact');
+  for (const s of ['--ignore-gitleaks-allow', '--config "$RUNNER_TEMP/gitleaks.toml"', '--gitleaks-ignore-path "$RUNNER_TEMP/gitleaksignore"', 'GIT_ATTR_SOURCE="$(git hash-object -t tree /dev/null)"', 'GIT_ATTR_NOSYSTEM=1', "printf '[extend]\\nuseDefault = true\\n'"]) expect(tpl, s).toContain(s);
   expect(tpl).toMatch(/permissions:\n {2}contents: read\n/);
   for (const u of tpl.matchAll(/uses: (\S+)/g)) expect(u[1]).toMatch(/@[0-9a-f]{40}$/);
 });

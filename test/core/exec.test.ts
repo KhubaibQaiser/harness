@@ -33,6 +33,10 @@ describe('defaultExec options', () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'exec-cwd-')));
     expect(defaultExec(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], { cwd: dir }).stdout).toBe(dir);
   });
+  it('feeds input to stdin', () => {
+    expect(defaultExec('node', ['-e', 'process.stdin.pipe(process.stdout)'], { input: 'x' }).stdout).toBe('x');
+    expect(defaultExecBytes(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], 10, 'yz').stdout.toString()).toBe('yz');
+  });
   it('reports a missing absolute path as missing, not as a failed run', () => {
     expect(defaultExec(join(tmpdir(), 'no-such-binary-xyz'), []).missing).toBe(true);
   });

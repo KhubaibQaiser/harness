@@ -178,7 +178,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     ...readManagedLayers(deps.managed ?? managedSettingsPath(platform)).map((l): [Layer, string] => [l, 'managed settings']),
     [file(join(root, '.claude/settings.local.json'), 'local'), '`.claude/settings.local.json`'],
     [file(join(root, '.claude/settings.json'), 'project'), '`.claude/settings.json`'],
-    [file(userPath, 'user'), `\`${userPath}\``],
+    [file(userPath, 'user'), `\`${userPath.replace(/\\/g, '/')}\``], // `/` as in the rest of doctor's paths
   ];
   const layers = named.map(([l]) => l);
   const sb = (...p: string[]) => effective(layers, ['sandbox', ...p]);

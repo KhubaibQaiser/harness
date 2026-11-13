@@ -102,7 +102,7 @@ test('fake AI step through select, apply, update, remove, uninstall leaves the r
   // One group per harness hook in the fragment, nothing else.
   expect(groups).toHaveLength(Object.values(settingsFragment().hooks as Record<string, unknown[]>).flat().length);
   for (const g of groups) expect(g.hooks[0]).toMatchObject({ type: 'command', command: 'node', args: [expect.stringContaining('dispatch.mjs')] });
-  expect(settings.permissions.deny).toHaveLength(35);
+  expect(settings.permissions.deny).toHaveLength(36);
   const pins = Object.keys(settings.extraKnownMarketplaces)[0];
   expect(pins).toMatch(/^harness-pins-[0-9a-f]{12}$/);
   expect(settings.enabledPlugins).toHaveProperty([`e2e-plugin@${pins}`]);

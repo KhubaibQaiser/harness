@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { mergeSettings, removeFromSettings } from '../../src/install/merge.js';
+import { denyWritePaths } from '../../src/checks/protect.js';
 
 const frag = JSON.parse(readFileSync('templates/settings.fragment.json', 'utf8'));
 const [MAIN, ASK] = frag.hooks.PreToolUse;
@@ -22,6 +23,8 @@ function install(original: object, hooks: Record<string, any[]> = OLD) {
   for (const [ev, gs] of Object.entries(hooks)) for (const g of gs) ((s.hooks[ev] ??= []).push(g), blocks.push(JSON.stringify({ event: ev, group: g })));
   s.permissions = { deny: [...frag.permissions.deny] };
   for (const d of frag.permissions.deny) blocks.push(JSON.stringify({ deny: d }));
+  s.sandbox = { filesystem: { denyWrite: denyWritePaths() } }; // the sandbox paths every install writes
+  for (const p of denyWritePaths()) blocks.push(JSON.stringify({ denyWrite: p }));
   return { s, blocks };
 }
 /** Merge, keep the manifest blocks as mergeManifestFiles does, then uninstall: the result must be `original` exactly. */

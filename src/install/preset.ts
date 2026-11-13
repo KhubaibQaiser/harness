@@ -2,6 +2,7 @@ import { defaults, type HarnessConfig, type StopStep } from '../core/config.js';
 import type { Facts, PackageFacts } from './detect.js';
 import { testConfigChange } from './test-config.js';
 import { findOnPath, resolveStep } from '../checks/stop/runner.js';
+import { sandboxBlocker, type MachineProbe } from '../core/sandbox-machine.js';
 
 const EXEMPT = ['**/*.tsx', '**/*.stories.*', '**/index.ts', '**/generated/**', '**/migrations/**'];
 export const OFF_WHY = 'TDD and coverage support JS/TS (Vitest or Jest) only in this beta.';
@@ -43,7 +44,7 @@ export type Preset = {
 export type Which = (cmd: string) => string | null;
 const pathWhich: Which = (cmd) => findOnPath(cmd, process.env, process.platform);
 
-export function preset(f: Facts, which: Which = pathWhich): Preset {
+export function preset(f: Facts, which: Which = pathWhich, platform: NodeJS.Platform = process.platform, read?: MachineProbe['read']): Preset {
   const config = defaults();
   const reasons: Record<string, string> = {};
   const root = f.packages.find((p) => p.dir === '.' || p.dir === '');
@@ -111,9 +112,16 @@ export function preset(f: Facts, which: Which = pathWhich): Preset {
   reasons['stop.base_ref'] = `Changes are compared with \`origin/${f.defaultBranch}\`, your default branch.`;
   reasons['stop.package_manager'] = f.packageManager === 'none' ? 'No package manager was found, so scripts run as plain commands.' : `Detected \`${f.packageManager}\` from your lockfile or \`package.json\`.`;
 
+  // Claude Code's sandbox on by default where it runs (owner ruling, 2026-11-13): macOS, and Linux or WSL2 that can run it.
+  const block = sandboxBlocker(platform, { which, read });
+  const sandboxWhy = !block ? '' : `${block.why}, so it is required for unattended runs only (sandbox: unattended)${block.fix ? `; ${block.fix}, then set sandbox: always and run /harness:update` : ''}`;
+  config.sandbox = sandboxWhy ? 'unattended' : 'always';
+  reasons.sandbox = sandboxWhy ? `Required for unattended runs only: ${sandboxWhy}.` : 'Claude Code\'s sandbox is on in every session, so a Bash write to a harness file fails at the OS level. Its network allowlist starts empty: allow hosts under sandbox.network.allowedDomains.';
+
   const why = unsafe.length ? unsafe.join(' ') : OFF_WHY;
   const off = tdd
     ? [...unsafe.map((w) => ({ gate: 'TDD', why: w })), ...noCov.map((p) => ({ gate: 'coverage', why: coverageWhy(p) }))]
     : [{ gate: 'TDD', why }, { gate: 'coverage', why }];
+  if (sandboxWhy) off.push({ gate: 'sandbox', why: sandboxWhy });
   return { config, reasons, off, tddOff, skippedSteps };
 }

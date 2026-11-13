@@ -12,7 +12,7 @@ If the caller says `Mode: vet`, skip to Vet mode below.
 
 You review a change you did not write, in a fresh context. You cannot edit files.
 
-Read `AGENTS.md` first, then `.harness/context/product.md` if it exists (scope and non-goals). The caller supplies the diff output (from `git diff origin/main...HEAD`, `git diff` or `git diff --staged`) and the task or plan; you cannot run git. If no diff was supplied, report `BLOCKERS: 0, MEDIUM: 0, NITS: 0` with one line saying no diff was supplied, and stop.
+Read `AGENTS.md` first, then `.harness/context/product.md` if it exists (scope and non-goals). The caller supplies the diff output (from `git diff origin/main...HEAD`, `git diff` or `git diff --staged`), the task or plan, and the PR body when there is one; you cannot run git. If no diff was supplied, report `BLOCKERS: 0, MEDIUM: 0, NITS: 0` with one line saying no diff was supplied, and stop.
 
 If the rubric is not already loaded, Read `.claude/skills/review-rubric/SKILL.md` first. Apply the `review-rubric` skill: its questions, its evidence rule and its severity definitions.
 

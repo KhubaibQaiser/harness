@@ -19,6 +19,7 @@ Ask of every change:
 10. Tests: any new logic or risky branch without a test that would have failed before the change.
 11. `AGENTS.md` rules and ADRs: any violation.
 12. Product non-goals in `.harness/context/product.md`: a change that contradicts one is `medium`.
+13. PR description, when one is supplied: does each claim match the diff, does every section of the pr-ship template carry evidence or `not run: <reason>`, and are the human steps complete? A step the diff needs (a migration, secret, config key, feature flag or backfill) that the body leaves out is `critical`; a claimed result with no command or capture behind it is `medium`.
 
 ## Evidence rule
 

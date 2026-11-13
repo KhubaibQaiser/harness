@@ -99,14 +99,16 @@ test('10 parallel dispatcher processes for one session: no lost state updates', 
   writeFileSync(join(repo, '.harness/config.yaml'), 'checks:\n  multiFile: true\n');
   const run = (i: number) =>
     new Promise<string>((res) => {
-      const p = spawn(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs')]);
+      const p = spawn(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs')], { env: { ...process.env, CI: '' } }); // attended: the multi-file note needs it
       let out = '';
       p.stdout.on('data', (d) => (out += d));
       p.on('close', () => res(out));
       p.stdin.end(JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'par', cwd: repo, tool_name: 'Edit', tool_input: { file_path: `f${i}.ts` } }));
     });
   const outs = await Promise.all(Array.from({ length: 10 }, (_, i) => run(i)));
-  expect(outs).toEqual(Array(10).fill(''));
+  const noted = outs.filter(Boolean); // only the process that records the first unit says the multi-file note
+  expect(noted).toHaveLength(1);
+  expect(noted[0]).toContain('This turn has touched');
   expect(readState(repo, 'par').files.sort()).toEqual(Array.from({ length: 10 }, (_, i) => `f${i}.ts`).sort());
 }, 30000);
 

@@ -49,9 +49,11 @@ const execWith = (r: ReturnType<Exec>): Exec => (_cmd, [bin = '']) => (bin.endsW
 async function installed(eslint: Record<string, string>) {
   const root = makeRepo(NEXT(eslint));
   const original = Object.fromEntries(Object.keys(eslint).map((f) => [f, readFileSync(join(root, f), 'utf8')]));
-  await init(['--yes'], { ...base, root, out: () => {}, prompt: prompt() });
+  const lines: string[] = [];
+  // A failed init writes nothing, which once surfaced only as git's "nothing to commit"; say why instead.
+  expect(await init(['--yes'], { ...base, root, out: (s) => lines.push(s), prompt: prompt() }), lines.join('\n')).toBe(0);
   git(root, 'add', '-A');
-  git(root, 'commit', '-q', '-m', 'harness');
+  git(root, 'commit', '-q', '--allow-empty', '-m', 'harness');
   fakeEslint(root);
   return { root, original };
 }

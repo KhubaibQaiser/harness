@@ -64,6 +64,7 @@ test('ungated PreToolUse: harness overhead over a bare node spawn', () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toBe('');
   });
+  report('ungated-pretooluse', m);
   expect(m.overhead, `overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
   expect(m.total, `total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
@@ -80,6 +81,7 @@ test('unattended Bash (sandbox-required reads managed settings): harness overhea
     if (process.platform === 'win32') expect(r.stdout).toBe('');
     else expect(JSON.parse(String(r.stdout)).hookSpecificOutput.permissionDecision).toBe('deny');
   });
+  report('unattended-bash', m);
   expect(m.overhead, `unattended overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
   expect(m.total, `unattended total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
@@ -105,6 +107,7 @@ test('gated PreToolUse with 40 result files: harness overhead over a bare node s
     expect(r.status).toBe(0);
     expect(r.stdout).toBe(''); // allowed: fresh failing related result
   });
+  report('gated-40-results', m);
   expect(m.overhead, `gated overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
   expect(m.total, `gated total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
   // Control: a passing related result must deny, proving the gate ran on this path.
@@ -134,7 +137,7 @@ test('counted PostToolUse Edit in a 20-file repo with checks.prSize on: harness 
   });
   // Control: the edit was measured, so the progress file holds this branch's size.
   expect(JSON.parse(readFileSync(join(repo, '.harness/state/pr-progress.json'), 'utf8')).feat).toMatchObject({ lines: 50, files: 1 });
-  console.log(`pr-size counted edit: overhead median ${m.overhead.toFixed(1)} ms, total median ${m.total.toFixed(1)} ms`);
+  report('counted-edit', m);
   expect(m.overhead, `counted edit overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(COUNTED_EDIT_OVERHEAD_MS);
   expect(m.total, `counted edit total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);

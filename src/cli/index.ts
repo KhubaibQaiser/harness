@@ -41,6 +41,9 @@ export interface CliEnv {
   root: string;
   /** The folder the command runs in; process.cwd() when unset. */
   cwd?: string;
+  /** Test seams: the home folder and the managed settings file; homedir() and the platform's path when unset. */
+  home?: string;
+  managed?: string;
   env: NodeJS.ProcessEnv;
   out(line: string): void;
   /** The platform init picks the sandbox default for; process.platform when unset (tests pin it). */

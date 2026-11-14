@@ -17,7 +17,7 @@ const contract: Contract = {
 const HOOK = { type: 'command', command: 'node', args: ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'] };
 const WIRED = { hooks: { PostToolUse: [{ matcher: 'Bash|PowerShell|Edit', hooks: [HOOK] }] } };
 
-function setup(o: { on?: boolean; active?: boolean; settings?: unknown; local?: unknown; user?: unknown } = {}) {
+function setup(o: { on?: boolean; active?: boolean; settings?: unknown; local?: unknown; user?: unknown; managed?: unknown; dropIn?: unknown; mirror?: boolean; rawLocal?: string } = {}) {
   const { root } = repoWith({ 'README.md': 'x\n', 'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }) }, {});
   mkdirSync(join(root, '.harness'), { recursive: true });
   writeFileSync(join(root, '.harness/config.yaml'), `checks:\n  done: ${o.on ?? true}\n`);
@@ -26,10 +26,16 @@ function setup(o: { on?: boolean; active?: boolean; settings?: unknown; local?: 
   if (o.local) writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify(o.local));
   const home = mkdtempSync(join(tmpdir(), 'home-'));
   if (o.user) writeFileSync(join(home, 'settings.json'), JSON.stringify(o.user));
+  const mdir = mkdtempSync(join(tmpdir(), 'mng-'));
+  const managed = join(mdir, 'managed-settings.json');
+  if (o.managed) writeFileSync(managed, JSON.stringify(o.managed));
+  if (o.dropIn) (mkdirSync(join(mdir, 'managed-settings.d')), writeFileSync(join(mdir, 'managed-settings.d/10.json'), JSON.stringify(o.dropIn)));
+  if (o.rawLocal !== undefined) writeFileSync(join(root, '.claude/settings.local.json'), o.rawLocal);
+  const env: NodeJS.ProcessEnv = o.mirror ? { HARNESS_CLAUDE_CONFIG_DIR: home } : { CLAUDE_CONFIG_DIR: home };
   const c = writeContract(root, contract);
   if (o.active ?? true) setActiveTask(root, c.id);
   const lines: string[] = [];
-  const call = (args: string[], cwd = root) => ({ code: done(args, { root, cwd, env: { CLAUDE_CONFIG_DIR: home }, out: (l) => lines.push(l) }), text: lines.splice(0).join('\n') });
+  const call = (args: string[], cwd = root) => ({ code: done(args, { root, cwd, env, managed, home: mkdtempSync(join(tmpdir(), 'nohome-')), out: (l) => lines.push(l) }), text: lines.splice(0).join('\n') });
   return { root, call };
 }
 
@@ -85,6 +91,20 @@ test('an unwired or disabled evidence hook exits 1', () => {
     expect(r.text).toContain(msg);
   }
   expect(setup({ user: WIRED, settings: {} }).call(['--blocked', 'x']).code).toBe(0); // a user-level hook counts
+});
+
+test('managed layers, unreadable layers, the repo mirror and match-all matchers', () => {
+  const x = (o: Parameters<typeof setup>[0]) => setup(o).call(['--blocked', 'x']).code;
+  expect(x({ managed: { disableAllHooks: true } }), 'managed disableAllHooks').toBe(1);
+  expect(x({ dropIn: { disableAllHooks: true } }), 'managed drop-in disableAllHooks').toBe(1);
+  expect(x({ managed: { allowManagedHooksOnly: true } }), 'managed-only, wiring not managed').toBe(1);
+  expect(x({ managed: { allowManagedHooksOnly: true, ...WIRED } }), 'managed-only, wiring managed').toBe(0);
+  expect(x({ managed: WIRED, settings: {} }), 'managed wiring counts').toBe(0);
+  expect(x({ rawLocal: '{ nope' }), 'malformed local layer').toBe(1);
+  // The repo's own settings name a wired dir as the user layer: Claude Code ignores that, so must the check.
+  const m = setup({ mirror: true, user: WIRED, settings: { env: { HARNESS_CLAUDE_CONFIG_DIR: '/x' } } });
+  expect(m.call(['--blocked', 'x']).code).toBe(1);
+  for (const matcher of ['', '*']) expect(x({ settings: { hooks: { PostToolUse: [{ matcher, hooks: [HOOK] }] } } }), `matcher ${JSON.stringify(matcher)}`).toBe(0);
 });
 
 test('a valid call prints the failing criteria and the hook note, and writes no ledger', () => {

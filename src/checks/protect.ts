@@ -32,6 +32,9 @@ export const DENY_WRITE_SKIPPED = ['.harness/tmp', '.harness/logs', '.harness/re
 export const denyWritePaths = (table: readonly string[] = PROTECTED): string[] => [
   ...new Set(table.map((g) => g.replace(/\/\*\*$/, '')).filter((p) => !DENY_WRITE_SKIPPED.some((s) => p === s || p.startsWith(`${s}/`))).map((p) => `./${p}`)),
 ];
+/** Extra paths the Stop gate's srt fence denies writes to, beyond protect's table (P5 extends this). */
+export const STOP_PROTECTED_EXTRA = ['.claude/hooks', '.claude/skills', '.devcontainer', 'CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS'];
+export const stopDenyWritePaths = (): string[] => [...new Set([...denyWritePaths(), ...STOP_PROTECTED_EXTRA.map((p) => `./${p}`)])];
 const REASON = 'Harness files and Claude settings are changed by a person, not the agent.';
 const NM_REASON = 'node_modules is managed by the package manager, not edited by hand: change package.json and run an install instead.';
 const INLINE_WHY = 'Inline code (node -e, python -c and the like) that names';

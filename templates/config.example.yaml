@@ -124,3 +124,6 @@ stop:
   base_ref: origin/main
   coverage_globs:
     - "**/coverage/coverage-final.json"
+  allowed_domains: []
+  allow_write: []
+  allow_local: false

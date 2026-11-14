@@ -27,6 +27,9 @@ test('missing config yields defaults, a warning, and tdd/multiFile disabled', ()
     timeout_s: 540,
     base_ref: 'origin/main',
     coverage_globs: ['**/coverage/coverage-final.json'],
+    allowed_domains: [],
+    allow_write: [],
+    allow_local: false,
   });
   expect(config.tdd).toEqual({ paths: [], exempt: [], diff_coverage: 80, coverage_skip: [], test_lock: true, results_dir: '.harness/results' });
   expect(config.multi_file_gate.generated).toEqual([]);
@@ -335,4 +338,32 @@ test('config: checks.done defaults false; done.review_model sonnet; review_timeo
     '"done.timeout_s" must be an integer from 60 to 21600',
   ]);
   expect(bad.config.done).toEqual(defaults().done);
+});
+
+const stopErrors = (stop: string) => loadConfig(dirWith('.harness/config.yaml', `stop:\n${stop}`)).errors;
+
+test('stop.allowed_domains refuses GitHub, example.com and covering wildcards, accepts npm hosts', () => {
+  for (const h of ['github.com', 'api.github.com', '*.github.com', 'githubusercontent.com', 'objects.githubusercontent.com', '*', '*.com', 'example.com', '*.example.com']) {
+    const e = stopErrors(`  allowed_domains: ["${h}"]\n`);
+    expect(e[0], h).toMatch(/^"stop\.allowed_domains\[0\]" can't list /);
+  }
+  const ok = loadConfig(dirWith('.harness/config.yaml', 'stop:\n  allowed_domains: [registry.npmjs.org, "*.npmjs.org"]\n'));
+  expect(ok.errors).toEqual([]);
+  expect(ok.config.stop.allowed_domains).toEqual(['registry.npmjs.org', '*.npmjs.org']);
+});
+
+test('stop.allow_write accepts /abs and ~/x, and refuses relative paths, ~user and a NUL', () => {
+  const ok = loadConfig(dirWith('.harness/config.yaml', 'stop:\n  allow_write: [/abs, ~/x]\n'));
+  expect(ok.errors).toEqual([]);
+  for (const v of ['rel/x', '"~user/x"', '"~"', '"/a\\0b"']) {
+    expect(stopErrors(`  allow_write: [${v}]\n`)[0], v).toBe('"stop.allow_write[0]" must be an absolute path or a path starting with ~/');
+  }
+});
+
+test('stop.allowed_domains refuses odd shapes with a host-name message', () => {
+  for (const h of ['github.com:443', 'https://github.com', 'github.com/x', 'github\u3002com', '*.*', '**.com', 'a b']) {
+    expect(stopErrors(`  allowed_domains: ["${h}"]\n`)[0], h).toBe('"stop.allowed_domains[0]" must be a host name such as registry.npmjs.org');
+  }
+  expect(stopErrors('  allowed_domains: ["github.com."]\n')[0]).toMatch(/can't list github\.com\./);
+  expect(stopErrors('  allowed_domains: [xn--bcher-kva.example, "Registry.NpmJS.org."]\n')).toEqual([]);
 });

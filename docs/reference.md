@@ -682,6 +682,9 @@ Run `harness doctor` after editing. The table below is generated from `src/core/
 | `stop.timeout_s` | `540` | Seconds the Stop steps may run in total. Value must be an integer from 30 to 550. |
 | `stop.base_ref` | `"origin/main"` | Git ref that changed lines are compared with. |
 | `stop.coverage_globs` | `["**/coverage/coverage-final.json"]` | Globs for the coverage files that diff coverage reads. |
+| `stop.allowed_domains` | `[]` | Hosts Stop steps (and verify's command runs) may reach inside `srt`. Empty means no network. GitHub hosts and wildcards matching `example.com` are refused. Value must be a list of hosts. |
+| `stop.allow_write` | `[]` | Extra writable paths for Stop steps inside `srt`, such as a tool cache outside the repo. Stop and doctor refuse: a protected path; the home folder itself; `~/.claude`; login-start folders (`~/Library/LaunchAgents`, `~/.config/systemd/user`, `~/.config/autostart`); any folder on `PATH` or above one; `srt`'s own install prefix; and the token base. Value must be a list of paths. |
+| `stop.allow_local` | `false` | Person-only (protected config; update asks interactively before setting it, and an unattended update leaves it unchanged). `true` sets `allowLocalBinding` for Stop steps. On macOS that opens every service on the host's loopback, Claude Code's sandbox proxy included. On Linux it has no effect. Doctor and status show it when on. |
 <!-- config:end -->
 
 `preset` is not in the table because it has no default: the key is absent until init records a chosen preset. It is a mapping of `id` (a shipped or repo preset id), `version`, `items` (the item ids it chose) and `git` (`branch_prefixes`, each matching `^[a-z0-9-]+/$`, plus `no_ai_trailer` and `pr_size_warning`). Any other key under it is an error.

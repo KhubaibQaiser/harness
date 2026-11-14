@@ -65,6 +65,9 @@ const WHAT = {
   'stop.timeout_s': 'Seconds the Stop steps may run in total.',
   'stop.base_ref': 'Git ref that changed lines are compared with.',
   'stop.coverage_globs': 'Globs for the coverage files that diff coverage reads.',
+  'stop.allowed_domains': 'Hosts Stop steps (and verify\'s command runs) may reach inside `srt`. Empty means no network. GitHub hosts and wildcards matching `example.com` are refused.',
+  'stop.allow_write': 'Extra writable paths for Stop steps inside `srt`, such as a tool cache outside the repo. Stop and doctor refuse: a protected path; the home folder itself; `~/.claude`; login-start folders (`~/Library/LaunchAgents`, `~/.config/systemd/user`, `~/.config/autostart`); any folder on `PATH` or above one; `srt`\'s own install prefix; and the token base.',
+  'stop.allow_local': 'Person-only (protected config; update asks interactively before setting it, and an unattended update leaves it unchanged). `true` sets `allowLocalBinding` for Stop steps. On macOS that opens every service on the host\'s loopback, Claude Code\'s sandbox proxy included. On Linux it has no effect. Doctor and status show it when on.',
 };
 
 const out = await build({

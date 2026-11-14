@@ -142,5 +142,6 @@ test('ANTHROPIC_API_KEY is read only in count-api.ts', () => {
     }
   };
   walk(join(__dirname, '../../src'));
-  expect(hits.map((h) => basename(h))).toEqual(['count-api.ts']);
+  expect(hits.filter((h) => basename(h) !== 'credentials.ts').map((h) => basename(h)).sort()).toEqual(['count-api.ts']);
+  expect(readFileSync(join(__dirname, '../../src/core/credentials.ts'), 'utf8')).not.toMatch(/env\.ANTHROPIC_API_KEY|process\.env|env\[/);
 });

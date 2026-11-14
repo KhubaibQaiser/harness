@@ -107,7 +107,9 @@ describe('fixture repos', () => {
       expect(blocked.reason).toContain('broken-check failed');
       rmSync(join(root, 'BROKEN'));
       if (f.tdd) mkdirSync(join(root, 'coverage'), { recursive: true }), writeFileSync(join(root, 'coverage/coverage-final.json'), '{}');
-      expect(stop().decision).toBe('allow');
+      const out = hook(root, { hook_event_name: 'Stop' }); // an allow with the visible unwrapped note
+      expect(out?.decision).toBeUndefined();
+      expect(JSON.stringify(out)).toContain('Stop steps ran without the sandbox (sandbox: off)');
       // R15: these Stops run with sandbox: off (the wrapped e2e needs srt); the choice is logged once per session.
       const log = readFileSync(join(root, '.harness/logs/events.jsonl'), 'utf8').split('\n').filter((l) => l.includes('"stop-unwrapped"'));
       expect(log).toHaveLength(1);

@@ -516,24 +516,58 @@ const wrapped = (s: ReturnType<typeof setup>, probe?: SrtProbe, which: (c: strin
 const stopEvents = (root: string, decision: string) => readEvents(root).filter((e) => e.decision === decision);
 const winSkip = process.platform === 'win32';
 
-test('sandbox off: unwrapped, stop-unwrapped logged once per session', async () => {
+const NOPROBE: SrtProbe = { which: () => { throw new Error('srt looked up'); }, version: () => '' };
+const OFF = 'Stop steps ran without the sandbox (sandbox: off).';
+
+test('sandbox off in the session baseline: unwrapped, a visible note every Stop, stop-unwrapped logged once per session', async () => {
   const s = setup({ yaml: 'sandbox: off\n' });
-  const probe: SrtProbe = { which: () => { throw new Error('srt looked up'); }, version: () => '' };
-  expect(await wrapped(s, probe)(s.exec(SRC))).toEqual({ kind: 'allow' });
-  expect(s.steps()).toEqual(ALL);
-  await wrapped(s, probe)(s.exec(SRC));
+  s.ctx.state = { ...s.ctx.state, sandboxBase: 'off' };
+  for (let i = 0; i < 2; i++) expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'context', text: OFF, check: 'stop' });
+  expect(s.steps()).toEqual([...ALL, ...ALL]);
   expect(stopEvents(s.root, 'stop-unwrapped')).toHaveLength(1);
 });
 
-test('win32 runs unwrapped', async () => {
+test('a failing unwrapped step still blocks, and the block carries the note', async () => {
+  const s = setup({ yaml: 'sandbox: off\n' });
+  s.ctx.state = { ...s.ctx.state, sandboxBase: 'off' };
+  const d = await wrapped(s, NOPROBE)(s.exec(SRC, 'lint'));
+  expect(d).toMatchObject({ kind: 'block' });
+  expect((d as { reason: string }).reason).toContain(OFF);
+});
+
+test.skipIf(winSkip)('sandbox off set during the session (baseline unattended, or none) stays wrapped: refusal event and note once', async () => {
+  for (const base of ['unattended', undefined]) {
+    const s = setup({ yaml: 'sandbox: off\n' });
+    s.ctx.state = { ...s.ctx.state, ...(base ? { sandboxBase: base } : {}) };
+    s.ctx.env = { PATH: '/nonexistent-dir' };
+    const d = await wrapped(s)(s.exec(SRC));
+    expect(d).toMatchObject({ kind: 'block' });
+    expect((d as { reason: string }).reason).toContain('sandbox-runtime (srt)');
+    expect((d as { reason: string }).reason).toContain('sandbox: off was set during this session, so the Stop steps still run inside srt. Start a new session to apply it.');
+    const again = await wrapped(s)(s.exec(SRC));
+    expect((again as { reason: string }).reason).not.toContain('was set during this session');
+    expect(stopEvents(s.root, 'stop-unwrapped-refused'), String(base)).toHaveLength(1);
+    expect(stopEvents(s.root, 'stop-unwrapped')).toHaveLength(0);
+    expect(s.steps()).toEqual([]);
+  }
+});
+
+test('win32 runs unwrapped with a visible note', async () => {
   const s = setup();
   s.ctx.platform = 'win32';
-  const probe: SrtProbe = { which: () => { throw new Error('srt looked up'); }, version: () => '' };
-  expect(await wrapped(s, probe)(s.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'context', text: 'Stop steps ran without the sandbox (native Windows).', check: 'stop' });
   expect(s.steps()).toEqual(ALL);
 });
 
-test.skipIf(winSkip).each(['linux', 'darwin', 'freebsd'] as const)('%s: HARNESS_CONTAINER=1, HARNESS_SANDBOX=1 and an srt-looking env still wrap (never from a probe)', async (platform) => {
+test.skipIf(winSkip)('no .harness/config.yaml and no srt: wrapped, blocks', async () => {
+  const s = setup();
+  s.ctx.env = { PATH: '/nonexistent-dir' };
+  expect(s.ctx.config.sandbox).toBe('unattended');
+  expect(await wrapped(s)(s.exec(SRC))).toMatchObject({ kind: 'block', check: 'stop' });
+  expect(s.steps()).toEqual([]);
+});
+
+test.skipIf(winSkip).each(['linux', 'darwin', 'freebsd', 'cygwin', 'android'] as const)('%s: HARNESS_CONTAINER=1, HARNESS_SANDBOX=1 and an srt-looking env still wrap (never from a probe)', async (platform) => {
   const s = setup();
   Object.assign(s.ctx, { platform, env: { HARNESS_CONTAINER: '1', HARNESS_SANDBOX: '1', SRT_SETTINGS: '/x', PATH: '/nonexistent-dir' } });
   const d = await wrapped(s)(s.exec(SRC));
@@ -542,13 +576,13 @@ test.skipIf(winSkip).each(['linux', 'darwin', 'freebsd'] as const)('%s: HARNESS_
   expect(s.steps()).toEqual([]);
 });
 
-test.skipIf(winSkip)('srt unavailable blocks with the message, logs stop-srt-unavailable with the failed check, counts toward max_attempts, gives up at max+1', async () => {
+test.skipIf(winSkip)('srt unavailable blocks with the message and (attempt N of M), logs stop-srt-unavailable with the failed check, counts toward max_attempts, gives up at max+1', async () => {
   const s = setup({ yaml: 'stop:\n  max_attempts: 2\n' });
   const run = wrapped(s);
   for (const n of [1, 2]) {
     const d = await run(s.exec(SRC));
     expect(d).toMatchObject({ kind: 'block', check: 'stop' });
-    expect((d as { reason: string }).reason).toMatch(/^Stop gate: the checks run inside sandbox-runtime \(srt\), and srt is not installed\./);
+    expect((d as { reason: string }).reason).toMatch(/^Stop gate: the checks run inside sandbox-runtime \(srt\), and srt is not installed\..*\(attempt \d of 2\)$/);
     expect(s.ctx.state.stopAttempts).toBe(n);
   }
   expect(stopEvents(s.root, 'stop-srt-unavailable').map((e) => e.reason)).toEqual(['missing', 'missing']);

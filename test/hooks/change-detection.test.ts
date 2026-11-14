@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ruleRel } from '../../src/core/decision-rule.js';
+import { readState } from '../../src/core/state.js';
 import { snapshotHarnessFiles } from '../../src/core/harness-files.js';
 import { dispatch } from '../../src/hooks/dispatch.js';
 import { decision, installedRepo, syncNow, writeDecision } from '../core/decisions-helpers.js';
@@ -45,4 +46,13 @@ test('a commitDecisions write is not reported', async () => {
   syncNow(root); // adds B's rule and rewrites the manifest, then stamps
   expect(await hook(root, 'UserPromptSubmit')).toBe('');
   expect(await hook(root, 'Stop')).toBe('');
+});
+
+test('the session baseline keeps the `sandbox` value from the first hook, whatever config.yaml says later', async () => {
+  const root = await installedRepo();
+  await hook(root, 'PreToolUse');
+  expect(readState(root, 's').sandboxBase).toBe('always');
+  writeFileSync(join(root, '.harness/config.yaml'), 'sandbox: off\n');
+  await hook(root, 'UserPromptSubmit');
+  expect(readState(root, 's').sandboxBase).toBe('always');
 });

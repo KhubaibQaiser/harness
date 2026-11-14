@@ -83,7 +83,7 @@ export const tail = (text: string) => {
 
 const realWhich = (cmd: string) => (/[\\/]/.test(cmd) ? cmd : findOnPath(cmd, process.env, process.platform));
 
-export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now, which: (cmd: string) => string | null = realWhich, run: RunSteps): Promise<Decision> {
+export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now, which: (cmd: string) => string | null = realWhich, run: RunSteps | NotedRun): Promise<Decision> {
   const { root, config, input } = ctx;
   const { steps, package_manager: pm, max_attempts: max, timeout_s } = config.stop;
   const log = (decision: string, reason?: string) => {
@@ -130,6 +130,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     changed.push('(unknown)'); // fail closed: treat as code changed
   }
   const scripts = scriptsOf(root);
+  const runNotes: string[] = []; // lines the runner wants shown (unwrapped, or a refused sandbox: off)
   const stepsStart = now(); // the step budget starts after the git calls
   // Every failure path shares one attempt counter: block, or give up and allow once max is exceeded.
   const failStep = (reason: string): Decision => {
@@ -140,7 +141,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       return done(allow);
     }
     setAttempts(attempts);
-    return { kind: 'block', reason: reason.replace('{n}', `${attempts} of ${max}`), check: 'stop' };
+    return { kind: 'block', reason: [reason, ...runNotes].join('\n').replace('{n}', `${attempts} of ${max}`), check: 'stop' };
   };
   let ran = 0;
   // A missing tool is the user's setup, not the agent's work: skip the step and warn once per session, never block.
@@ -160,7 +161,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       const who = ran === 0 && cmds.length === 1 && labels.length === resolved ? 'Every Stop step was' : `Stop step${labels.length > 1 ? 's' : ''} ${labels.join(', ')} ${labels.length > 1 ? 'were' : 'was'}`;
       return `${who} skipped: \`${cmd}\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). Install it there, or edit stop.steps in \`.harness/config.yaml\`.`;
     });
-    const all = [...text, ...notes];
+    const all = [...text, ...runNotes, ...notes];
     return all.length ? { kind: 'context', text: all.join('\n'), check: 'stop' } : d;
   };
   // Docs-only goes through done(), so the team-decision nudge still shows (spec §8).
@@ -192,11 +193,12 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     return done(allow);
   }
   const res = await run(plan, stepsStart + timeout_s * 1000);
+  runNotes.push(...((run as Partial<NotedRun>).notes ?? []));
   const timeoutText = `Stop gate timed out after ${timeout_s}s; checks did not finish.`;
   if (res.kind === 'timeout') return { kind: 'context', text: timeoutText, check: 'stop' };
   if (res.kind === 'unavailable') {
     log('stop-srt-unavailable', res.reason);
-    return failStep(res.message); // counts toward max_attempts like any failing step
+    return failStep(`${res.message} (attempt {n})`); // counts toward max_attempts like any failing step
   }
   for (const r of res.results) {
     appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: r.label, outcome: r.timedOut ? 'timeout' : r.status === 0 ? 'allow' : 'block', ms: Math.max(0, r.ms) });
@@ -222,23 +224,48 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   return done(allow);
 }
 
-/** Wrapped in srt unless `sandbox: off` or native Windows (R10). Never chosen from an env var, file or probe (R9). */
-export function pickRunner(ctx: Ctx, exec: Exec, now: () => number, srt: SrtProbe = realSrtProbe(ctx.env, ctx.platform)): RunSteps {
-  const unwrapped = runUnwrapped(exec, now);
-  if (ctx.config.sandbox === 'off')
-    return (steps, deadline) => {
-      if (!ctx.state.stopUnwrappedLogged) {
-        try {
-          appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'stop', decision: 'stop-unwrapped' });
-        } catch {
-          // event log is best effort
-        }
+/** A runner that may add visible lines to the Stop's decision; `notes` is refilled on each call. */
+export type NotedRun = RunSteps & { notes: string[] };
+const REFUSED = 'sandbox: off was set during this session, so the Stop steps still run inside srt. Start a new session to apply it.';
+
+/** Wrapped in srt unless native Windows, or `sandbox: off` that was already in force when the session began (R9, R10).
+ *  Never chosen from an env var, file or probe; an `off` set mid-session (branch switch, pull) is refused. */
+export function pickRunner(ctx: Ctx, exec: Exec, now: () => number, srt: SrtProbe = realSrtProbe(ctx.env, ctx.platform)): NotedRun {
+  const log = (decision: string) => {
+    try {
+      appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'stop', decision });
+    } catch {
+      // event log is best effort
+    }
+  };
+  const noted = (inner: RunSteps, before: (notes: string[]) => void): NotedRun => {
+    const notes: string[] = [];
+    const f = ((steps, deadline) => {
+      notes.length = 0;
+      before(notes);
+      return inner(steps, deadline);
+    }) as NotedRun;
+    f.notes = notes;
+    return f;
+  };
+  const off = ctx.config.sandbox === 'off';
+  const honoured = off && ctx.state.sandboxBase === 'off';
+  if (honoured || ctx.platform === 'win32')
+    return noted(runUnwrapped(exec, now), (notes) => {
+      if (honoured && !ctx.state.stopUnwrappedLogged) {
+        log('stop-unwrapped');
         ctx.save({ ...ctx.state, stopUnwrappedLogged: true });
       }
-      return unwrapped(steps, deadline);
-    };
-  if (ctx.platform === 'win32') return unwrapped;
-  return runWrapped({ root: ctx.root, stop: ctx.config.stop, exec, now, srt, home: ctx.home, platform: ctx.platform, env: ctx.env, tokenBase: () => tokenBase(ctx.platform, ctx.env), node: process.execPath });
+      notes.push(`Stop steps ran without the sandbox (${honoured ? 'sandbox: off' : 'native Windows'}).`);
+    });
+  const wrapped = runWrapped({ root: ctx.root, stop: ctx.config.stop, exec, now, srt, home: ctx.home, platform: ctx.platform, env: ctx.env, tokenBase: () => tokenBase(ctx.platform, ctx.env), node: process.execPath });
+  return noted(wrapped, (notes) => {
+    if (off && !ctx.state.stopOffRefusedLogged) {
+      log('stop-unwrapped-refused');
+      ctx.save({ ...ctx.state, stopOffRefusedLogged: true });
+      notes.push(REFUSED);
+    }
+  });
 }
 
 export const stopGate: Check = {

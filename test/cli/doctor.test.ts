@@ -942,7 +942,7 @@ test('doctor: an unreadable managed file is a note, a missing one is not', async
   const dropin = join(home, 'managed-settings.d', '10-x.json');
   mkdirSync(join(home, 'managed-settings.d'));
   writeFileSync(dropin, '{oops');
-  expect(go().out).toContain(`managed settings ${dropin} exists but can't be read or parsed`);
+  expect(go().out).toContain(`managed settings ${dropin.replace(/\\/g, "/")} exists but can't be read or parsed`);
 });
 
 test('doctor: allowManagedHooksOnly without harness hooks in managed settings is a fix', async () => {

@@ -3,7 +3,7 @@ import { linkSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { isWholeTree, protect } from '../../src/checks/protect.js';
+import { denyWritePaths, isWholeTree, protect, STOP_PROTECTED_EXTRA, stopDenyWritePaths } from '../../src/checks/protect.js';
 import { posix, win32 } from 'node:path';
 import { loadConfig } from '../../src/core/config.js';
 import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
@@ -572,4 +572,13 @@ describe("git's refs, packed-refs, config and HEAD", () => {
 test('>| (noclobber override) is a write the shared parser reads', () => {
   expect(bash('echo x >| .harness/config.yaml')).toBe('deny');
   expect(bash('echo x 2>| .claude/settings.json')).toBe('deny');
+});
+
+test('stopDenyWritePaths includes denyWritePaths and the six extras, keeps scratch folders writable', () => {
+  const got = stopDenyWritePaths();
+  for (const p of denyWritePaths()) expect(got).toContain(p);
+  for (const e of STOP_PROTECTED_EXTRA) expect(got).toContain(`./${e}`);
+  expect(STOP_PROTECTED_EXTRA).toHaveLength(6);
+  expect(new Set(got).size).toBe(got.length);
+  for (const w of ['.harness/results', '.harness/tmp', '.harness/logs', '.harness/reviews']) expect(got).not.toContain(`./${w}`);
 });

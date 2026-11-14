@@ -132,7 +132,7 @@ test('prototype keys in the count record are not counts', async () => {
   expect(r.method).toBe('estimate');
 });
 
-test('ANTHROPIC_API_KEY is read only in count-api.ts', () => {
+test('ANTHROPIC_API_KEY is read only in count-api.ts (credentials.ts only names it in the deny list)', () => {
   const hits: string[] = [];
   const walk = (d: string): void => {
     for (const n of readdirSync(d)) {
@@ -142,5 +142,5 @@ test('ANTHROPIC_API_KEY is read only in count-api.ts', () => {
     }
   };
   walk(join(__dirname, '../../src'));
-  expect(hits.map((h) => basename(h))).toEqual(['count-api.ts']);
+  expect(hits.map((h) => basename(h))).toEqual(['count-api.ts', 'credentials.ts']);
 });

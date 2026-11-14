@@ -68,8 +68,15 @@ test('the documented launch is one valid --settings JSON, the same in README and
   expect(launch(reference)).toBe(cmd);
   // The whole JSON is one POSIX single-quoted word, so it can't hold a single quote of its own.
   // The env scrub keeps credential-looking variables out of Bash, hooks and MCP servers (and /proc on Linux).
-  const m = /^HARNESS_SANDBOX=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p "…" --settings '([^']*)'$/.exec(cmd);
-  expect(m, 'the scrub prefix and one single-quoted --settings argument').not.toBeNull();
+  // The scrub forces the permission mode to default (live, 2.1.322): -p then refuses any tool not named in --allowedTools,
+  // and harness sees no dontAsk/bypassPermissions, so HARNESS_UNATTENDED marks the run unattended outside CI.
+  const m = /^HARNESS_SANDBOX=1 HARNESS_UNATTENDED=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p "…" --allowedTools "Bash,Edit,Write" --settings '([^']*)'$/.exec(cmd);
+  expect(m, 'the prefix, the allowed tools and one single-quoted --settings argument').not.toBeNull();
+  for (const doc of [readme, reference]) {
+    expect(doc).toContain('forces the permission mode to `default`, so `bypassPermissions` is ignored');
+    expect(doc).toContain('add the tools your run needs');
+  }
+  expect(notes).toContain('--allowedTools "Bash,Edit,Write"');
   // The scrub strips CLAUDE_CONFIG_DIR from the hooks too, so both docs say how to pass the mirror.
   for (const doc of [readme, reference]) expect(doc).toContain('HARNESS_CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"');
   const sb = JSON.parse(m![1]).sandbox;

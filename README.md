@@ -113,7 +113,7 @@ When the team agrees on a rule for some paths, ask Claude to remember it (`/harn
 A run is unattended when `CI` is `true` or `1`, `HARNESS_UNATTENDED` is `1` or `true`, `CLAUDE_CODE_REMOTE` is `true`, or the permission mode is `dontAsk` or `bypassPermissions`. Every question then becomes a deny. Shell commands are denied unless Claude Code's sandbox is on. Start the run like this:
 
 ```sh
-HARNESS_SANDBOX=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p "…" --settings '{"sandbox":{
+HARNESS_SANDBOX=1 HARNESS_UNATTENDED=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p "…" --allowedTools "Bash,Edit,Write" --settings '{"sandbox":{
   "enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false,
   "network":{"strictAllowlist":true,"allowedDomains":[]},
   "credentials":{
@@ -129,6 +129,7 @@ HARNESS_SANDBOX=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p "…" --settings 
       {"name":"GITHUB_ENTERPRISE_TOKEN","mode":"deny"}]}}}'
 ```
 
+- **Allowed tools.** `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` forces the permission mode to `default`, so `bypassPermissions` is ignored, and `-p` refuses any tool that needs approval. `--allowedTools` lets the run use Bash, Edit and Write (reads need no approval); add the tools your run needs, such as `WebFetch` or an MCP tool. `HARNESS_UNATTENDED=1` keeps harness treating the run as unattended outside CI.
 - **List the hosts your run needs** in `allowedDomains`, for example `"registry.npmjs.org"`. Every other host is refused unless your own user or managed settings allow it; the repo's list doesn't count with these settings.
 - **`CLAUDE_CONFIG_DIR`.** `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` strips credential-looking variables from Bash, the hooks and the Stop gate's test commands, and `CLAUDE_CONFIG_DIR` too. If you use it, add `HARNESS_CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"` to the same launch.
 - **Credentials.** The shell can't read the listed files or see the listed variables, so `gh`, `aws`, `npm publish` and HTTPS `git push` can't sign in. For a run that must push, remove the `GH_TOKEN` and `GITHUB_TOKEN` entries (and `~/.config/gh` if `gh` keeps its token there), and add `github.com` and `api.github.com` to `allowedDomains`. That also gives data a way out.

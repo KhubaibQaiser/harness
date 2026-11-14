@@ -29,7 +29,7 @@ export function allowWriteProblem(entry: string, sys: AllowWriteSys): string | n
   const inside = (dir: string) => [e, realish(e)].some((p) => w(p, dir)); // equal or inside
   const above = (dir: string) => [e, realish(e)].some((p) => w(dir, p)); // equal or above
   const forms = (p: string) => [p, realish(p)];
-  const sep = sys.platform === 'win32' ? ';' : ':';
+  const sep = ':';
   const pathDirs = (sys.env.PATH ?? '').split(sep).filter((s) => s && isAbsolute(s)).flatMap(forms);
   const srtRoots = sys.srtReal ? forms(pkgRoot(sys.srtReal)) : [];
   const protectedDirs = forms(sys.root).flatMap((r) => stopDenyWritePaths().map((q) => join(r, q)));

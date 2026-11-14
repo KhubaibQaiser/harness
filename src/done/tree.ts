@@ -33,10 +33,13 @@ export function filterOffs(listing: string): [string, string][] {
   return out;
 }
 
-/** Unborn means HEAD names a branch and that branch doesn't exist (a fresh repo, `checkout --orphan`). A garbage ref or a detached HEAD at a missing object is an error, not an empty tree. */
+/** Unborn means HEAD names a branch that doesn't exist in a repo with no refs at all (a fresh repo). A garbage ref or a detached HEAD at a missing object is an error, not an empty tree. */
 function unborn(run: (args: string[], env: NodeJS.ProcessEnv, ok?: number[]) => { status: number; stdout: string }, env: NodeJS.ProcessEnv): boolean {
   const sym = run(['symbolic-ref', '-q', 'HEAD'], env, [0, 1]); // 1: detached; a broken HEAD exits 128 and throws
-  return sym.status === 0 && run(['show-ref', '--verify', '-q', sym.stdout.trim()], env, [0, 1]).status === 1;
+  if (sym.status !== 0 || run(['show-ref', '--verify', '-q', sym.stdout.trim()], env, [0, 1]).status !== 1) return false;
+  // On an orphan branch no HEAD supplies the tracked files, so .git/info/exclude could hide edits to them: fail closed.
+  if (run(['for-each-ref', '--count=1'], env).stdout.trim()) throw new Error("the tree hash can't be computed on an orphan branch; commit first");
+  return true;
 }
 
 // The temp index is seeded from HEAD (read-tree leaves stat data zeroed and sets no assume-unchanged or skip-worktree bit), so

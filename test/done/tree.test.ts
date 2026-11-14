@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { filterOffs, TREE_EXCLUDES, treeHash } from '../../src/done/tree.js';
 import { commit, git, repoWith } from '../review/repo.js';
@@ -74,7 +74,7 @@ test('the real index is left byte-for-byte unchanged', () => {
   expect(git(root, 'status', '--porcelain')).toContain('?? untracked.txt');
 });
 
-test('an unborn repo (no index) hashes', () => {
+test('a fresh repo (no refs, no index) hashes', () => {
   const root = mkdtempSync(join(tmpdir(), 'h-tree-'));
   dirs.push(root);
   git(root, 'init', '-q');
@@ -230,9 +230,41 @@ test('a detached HEAD at a missing object throws', () => {
   expect(() => treeHash(root)).toThrow(/git/);
 });
 
-test('an orphan branch hashes the files on disk', () => {
+const orphanMsg = /can't be computed on an orphan branch; commit first/;
+
+test('an orphan branch in a repo with commits throws', () => {
   const root = mk({ 'a.txt': 'a\n' });
   git(root, 'checkout', '-q', '--orphan', 'fresh');
   put(root, 'new.txt', 'n\n');
-  expect(treeHash(root)).toBe(truth(root));
+  expect(() => treeHash(root)).toThrow(orphanMsg);
+});
+
+test('an orphan branch with .git/info/exclude hiding a tracked edit still throws, never a stale hash', () => {
+  const root = mk({ 'src/s.txt': 's\n' });
+  git(root, 'checkout', '-q', '--orphan', 'fresh');
+  writeFileSync(join(root, '.git', 'info', 'exclude'), 'src/\n');
+  put(root, 'src/s.txt', 'edited\n');
+  expect(() => treeHash(root)).toThrow(orphanMsg);
+});
+
+// Exercises the real `git config --get-regexp` listing: git keeps the subsection's case, so `Lfs.Extension.E` lists as `lfs.Extension.E`.
+test.skipIf(process.platform === 'win32')('stock lfs plus an lfs extension spelled Lfs.Extension never runs git-lfs (POSIX: the fake git-lfs is a sh script)', () => {
+  const root = mk();
+  const bin = mkdtempSync(join(tmpdir(), 'h-lfs-'));
+  dirs.push(bin);
+  const marker = join(bin, 'ran');
+  writeFileSync(join(bin, 'git-lfs'), `#!/bin/sh\n: > '${marker}'\nexit 1\n`, { mode: 0o755 });
+  git(root, 'config', 'filter.lfs.clean', 'git-lfs clean -- %f');
+  git(root, 'config', 'filter.lfs.process', 'git-lfs filter-process');
+  git(root, 'config', 'Lfs.Extension.E.clean', 'x');
+  put(root, '.gitattributes', '* filter=lfs\n');
+  put(root, 'a.txt', 'edited\n');
+  const savedPath = process.env.PATH;
+  let err: unknown;
+  try {
+    process.env.PATH = `${bin}${delimiter}${savedPath ?? ''}`;
+    treeHash(root);
+  } catch (e) { err = e; } finally { process.env.PATH = savedPath; }
+  expect(existsSync(marker)).toBe(false);
+  expect(err).toBeUndefined();
 });

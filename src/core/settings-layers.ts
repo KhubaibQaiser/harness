@@ -20,7 +20,8 @@ const readJson = (f: string): unknown => {
 
 const managedLayer = (f: string): Layer => {
   try {
-    return { name: 'managed', json: JSON.parse(readFileSync(f, 'utf8')) };
+    const json: unknown = JSON.parse(readFileSync(f, 'utf8'));
+    return { name: 'managed', json, ...(typeof json === 'object' && json !== null && !Array.isArray(json) ? {} : { unreadable: f }) };
   } catch (e) {
     return { name: 'managed', json: null, ...(['ENOENT', 'ENOTDIR'].includes((e as NodeJS.ErrnoException).code ?? '') ? {} : { unreadable: f }) };
   }

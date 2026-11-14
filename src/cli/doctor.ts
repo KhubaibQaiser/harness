@@ -164,6 +164,15 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   else if (parseErr) fix(`\`.harness/config.yaml\` is not valid YAML (${parseErr})`, 'fix the YAML, then run harness doctor');
   else if (!v!.ok) fix(`\`.harness/config.yaml\` is invalid (${(v as { errors: string[] }).errors.join('; ')})`, 'fix those keys, then run harness doctor');
   else ok('`.harness/config.yaml` is valid');
+  // Claude Code skips a managed file it can't read, so its policy (and any hooks it carries) is not applied.
+  const managedLayers = readManagedLayers(deps.managed ?? managedSettingsPath(platform));
+  for (const l of managedLayers) if (l.unreadable) note(`managed settings ${l.unreadable.replace(/\\/g, '/')} exists but can't be read or parsed; Claude Code skips it, so its policy is not applied. Ask your admin to fix it.`);
+  // allowManagedHooksOnly (the winning managed layer's value) makes Claude Code drop every user, project and local hook: managed settings must carry them.
+  if (effective(managedLayers, ['allowManagedHooksOnly']) === true) {
+    const has = (ev: string) => managedLayers.some((l) => { const g = (l.json as any)?.hooks?.[ev]; return Array.isArray(g) && g.some((x: any) => Array.isArray(x?.hooks) && x.hooks.some(isHarnessHook)); });
+    const missing = EVENTS.filter((ev) => !has(ev));
+    if (missing.length) fix(`managed settings set allowManagedHooksOnly, so the harness hooks for ${missing.join(', ')} (guards, ledger, Stop gate) are dropped`, 'ask your admin to add the harness hooks to managed settings, or unset allowManagedHooksOnly');
+  }
   if (!v || !v.ok) return out(`${bad} problem${bad === 1 ? '' : 's'} found.`), 1;
   const config = v.config;
   const facts = detect(root);
@@ -176,20 +185,12 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   // The agent's Bash carries the repo's settings env, which can't name the user config dir (as in the hooks).
   const userPath = userSettingsPath(deps.home ?? homedir(), withoutRepoMirror(root, env));
   const named: [Layer, string][] = [
-    ...readManagedLayers(deps.managed ?? managedSettingsPath(platform)).map((l): [Layer, string] => [l, 'managed settings']),
+    ...managedLayers.map((l): [Layer, string] => [l, 'managed settings']),
     [file(join(root, '.claude/settings.local.json'), 'local'), '`.claude/settings.local.json`'],
     [file(join(root, '.claude/settings.json'), 'project'), '`.claude/settings.json`'],
     [file(userPath, 'user'), `\`${userPath.replace(/\\/g, '/')}\``], // `/` as in the rest of doctor's paths
   ];
   const layers = named.map(([l]) => l);
-  // Claude Code skips a managed file it can't read, so its policy (and any hooks it carries) is not applied.
-  for (const l of layers) if (l.unreadable) note(`managed settings ${l.unreadable.replace(/\\/g, '/')} exists but can't be read or parsed; Claude Code skips it, so its policy is not applied. Ask your admin to fix it.`);
-  // allowManagedHooksOnly makes Claude Code drop every user, project and local hook: the managed layers must carry them all.
-  const managedHooks = layers.filter((l) => l.name === 'managed').map((l) => (l.json as any)?.hooks);
-  if (layers.some((l) => l.name === 'managed' && effective([l], ['allowManagedHooksOnly']) === true)
-    && EVENTS.some((ev) => !managedHooks.some((h) => (Array.isArray(h?.[ev]) ? h[ev] : []).some((g: any) => Array.isArray(g?.hooks) && g.hooks.some(isHarnessHook))))) {
-    fix('managed settings set allowManagedHooksOnly, so every harness hook (guards, ledger, Stop gate) is dropped', 'ask your admin to add the harness hooks to managed settings, or unset allowManagedHooksOnly');
-  }
   const sb = (...p: string[]) => effective(layers, ['sandbox', ...p]);
   const union = (...p: string[]) => [...new Set(layers.flatMap((l) => { const v = effective([l], ['sandbox', ...p]); return Array.isArray(v) ? v : []; }))];
   // The shared settings commit the strict sandbox (owner ruling): on a machine that can't run it, Claude Code then won't run Bash.

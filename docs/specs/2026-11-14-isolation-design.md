@@ -47,7 +47,7 @@
 | R2-I3 | An `srt` that degrades with a warning, for example with no seccomp helper, fails the preflight. | §4.4 |
 | R2-I6 | `harness-refs` binds only App-created refs. Dependabot, `gh-pages` and release-please are exempt by actor or pattern. Narrowed by R3-C1 and R3-I2 below. | §5.3 |
 | R3-C1 | No bot branch patterns in `harness-refs`. Bots are exempt by app identity only (bypass actors), so the App and everyone else are bound on `gh-pages`, `dependabot/**`, `renovate/**` and release branches. | §5.3 |
-| R3-I1 | The publish job never copies a file the agent wrote through the filesystem. `pr-body.md` comes from the bundle's tree after verify; a symlink or non-regular blob is refused, and the size is capped. | §6.6 |
+| R3-I1 | The publish job never copies a file the agent wrote through the filesystem without checks. Ruling, revised: `pr-body.md` travels as an artifact, not in the PR diff, and the publish job reads it once, safely (`O_RDONLY\|O_NOFOLLOW`, every path component's `realpath` inside the artifact folder, `fstat` showing a regular file of at most 64 KB), as data only. | §6.6 |
 | R3-I2 | No `github-actions` bypass. A workflow that must push protected refs uses a protected environment with required reviewers. Doctor flags `contents: write` workflows that can run on agent pushes. | §5.3 |
 | Q1 (rev 3) | Accept that an agent-run `harness verify` inside the sandbox exits not done and asks the person to run it. | §4.2 |
 | R2-I7 | Detect headless `-p` if Claude Code exposes a hook-visible signal (such as `CLAUDE_CODE_ENTRYPOINT`, to verify live); otherwise it is a documented limit. A follow-up to #231. | §10.5, L0 |
@@ -590,7 +590,11 @@ HARNESS_UNATTENDED=1 HARNESS_SANDBOX=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 \
 
 The key and the token never enter a job that runs repo or agent code.
 
-**After the agent step, the workspace is hostile.** Every later step follows no symlink, reads no file the agent wrote, and runs git only after checking that the repo's config and hooks are unchanged. Nothing the agent wrote travels except git objects in the bundle (R3-I1).
+**After the agent step, the workspace is hostile.** Every later step follows no symlink, reads no file the agent wrote, and runs git only after checking that the repo's config and hooks are unchanged. Two things the agent wrote travel to the publish job (R3-I1):
+- git objects, in the bundle;
+- the PR body, read through the safe-read rule below.
+
+Nothing else crosses.
 
 ```yaml
 jobs:
@@ -612,9 +616,10 @@ jobs:
           out=$(mktemp -d "$RUNNER_TEMP/agent-out.XXXXXX")
           git -c core.hooksPath=/dev/null -c core.fsmonitor= bundle create "$out/agent.bundle" \
             "${{ steps.base.outputs.sha }}..HEAD"
+          harness github stage-body --from .harness/tmp/pr-body.md --root "$PWD" --to "$out/pr-body.md"   # safe read, below
           echo "OUT=$out" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@<sha>
-        with: { name: agent-out, path: "${{ env.OUT }}/agent.bundle", retention-days: 1 }
+        with: { name: agent-out, path: "${{ env.OUT }}/", retention-days: 1 }
   publish:                                # runs no repo code
     needs: agent
     permissions: {}
@@ -626,10 +631,22 @@ jobs:
         run: |
           printf '%s' "$HARNESS_APP_KEY" | env -u HARNESS_APP_KEY harness github publish \
             --repo "$GITHUB_REPOSITORY" --branch "agent/run-${{ github.run_id }}" \
-            --base "${{ needs.agent.outputs.base }}" --bundle in/agent.bundle --key-stdin
+            --base "${{ needs.agent.outputs.base }}" --bundle in/agent.bundle --body in/pr-body.md --key-stdin
 ```
 
-**The PR body travels in git.** The agent commits it as `.harness/pr-body.md` on its branch, and publish reads it from the verified commit (step 6). No file is copied through the filesystem. The file lands in the PR diff, under the `/.harness/` CODEOWNERS line, and each later PR overwrites it. This is a spec point the owner can overrule (§15).
+**The PR body travels as an artifact, not in the PR diff** (ruling). A body file in every PR would be noise for reviewers, and later PRs would overwrite it. The agent writes it to `.harness/tmp/pr-body.md`, which is git-ignored.
+
+**The safe-read rule.** Harness reads the file twice, each time by its own code, never by `cp`, the shell or `upload-artifact` following a path:
+- once, in the agent job, by `harness github stage-body` from the workspace;
+- once, in the publish job, by `publish` from the downloaded artifact.
+
+Each read must:
+- open the file with `O_RDONLY|O_NOFOLLOW`;
+- check that the `realpath` of every path component stays inside the expected folder (the workspace for `stage-body`, the downloaded artifact folder `in/` for `publish`);
+- check, with `fstat` on the open descriptor, that it is a regular file of at most 64 KB;
+- check that the content is valid UTF-8.
+
+Any failure refuses the run. The content is data only: it is never executed, never passed to a shell, and never expanded. It reaches `gh` through `--body-file` from a file harness writes itself, after sanitising (step 9). `stage-body` writes its copy into the fresh `$RUNNER_TEMP` output folder, so the artifact holds only the bundle and that copy.
 
 **What `harness github publish` does.** It is person-only, like every `harness github` subcommand, and the publish job runs it directly, not through an agent.
 1. **Mint.** One token, as the broker does, with the same installation check.
@@ -647,10 +664,7 @@ jobs:
 5. **Fetch** only that ref into `refs/harness/incoming`, then check:
    - `refs/harness/incoming^{commit}` resolves, so a tag-only bundle fails clearly;
    - `git merge-base --is-ancestor <base> refs/harness/incoming` passes.
-6. **Read the body from the tree (R3-I1 ruling).**
-   - `git ls-tree refs/harness/incoming -- .harness/pr-body.md` must show one blob of mode `100644`. A symlink (`120000`), a submodule or any other mode is refused.
-   - Its size, from `git cat-file -s`, must be under 64 KB.
-   - Its content, from `git cat-file blob`, must be valid UTF-8.
+6. **Read the body once,** by the safe-read rule, from `--body` inside `in/`.
 7. **Check the branch name** starts with `github.agent_prefix`.
 8. **Push** `<incoming commit sha>:refs/heads/<branch>`, an explicit refspec over HTTPS. Never `--tags`, `--mirror` or `--follow-tags`.
 9. **Open or update the PR.**
@@ -662,16 +676,16 @@ jobs:
 - **Hooks:** a bundle carries none, and publish never checks out.
 - **Workflow files:** the server refuses them, because the App has no Workflows permission.
 - **Tags, and branches outside the prefix:** `harness-refs` refuses them.
-- **Files the agent wrote outside git:** only the bundle file crosses jobs, and it is created in a fresh `$RUNNER_TEMP` folder after the config and hooks checks.
+- **Files the agent wrote outside git:** only the bundle and the staged body cross jobs. Both are created in a fresh `$RUNNER_TEMP` folder after the config and hooks checks, and the body only through the safe-read rule.
 
 **Costs.** A CI agent can't push mid-run or read PR comments. There is no token in the agent job, so there is nothing to refresh.
 
-**The artifact** is readable by anyone who can read the repo's Actions. It holds only the agent's commits, which are about to be public on the PR anyway.
+**The artifact** is readable by anyone who can read the repo's Actions. It holds only the agent's commits and the PR body, which are about to be public on the PR anyway.
 
 **Doctor flags:**
 - a workflow that runs `claude` after a checkout without `persist-credentials: false`, read from the workflow's `with:`;
 - a workflow that passes `HARNESS_APP_KEY` to a job that checks out code;
-- a step after the agent step that reads workspace files, other than the documented bundle step;
+- a step after the agent step that reads workspace files, other than the documented bundle and `stage-body` steps;
 - `actions/cache`, or a setup action's `cache:`, in a job that runs `claude` (R2-M8).
 
 **Tested by** an e2e that fetches a range bundle into an empty repo through these steps (§12.2), and by L7.
@@ -963,7 +977,8 @@ The generated table in `docs/reference.md` picks these up from `src/core/config.
 | `harness github app create [--org <org>]` | Person only | §6.1 |
 | `harness github app store-key` | Person only | §6.2 (key on stdin) |
 | `harness github broker [--repo <o/r>] [--env] [--check]` | Person only | §6.3 |
-| `harness github publish --repo --branch --base --bundle --key-stdin` | Person, or the CI publish job (never through an agent) | §6.6 |
+| `harness github publish --repo --branch --base --bundle --body --key-stdin` | Person, or the CI publish job (never through an agent) | §6.6 |
+| `harness github stage-body --from --root --to` | The CI agent job's post-agent step (never through an agent) | §6.6 safe-read rule |
 | `harness doctor --launch-hosts` | Anyone (print only) | §8.4 |
 | `/harness:init --container` | Through the skill | §7.1 |
 | `harness-run [--push] -- <claude args>` | Person, inside the container | §7.3 |
@@ -1128,7 +1143,8 @@ Container: required; this session: proved                (or: available | off; n
   - a bundle prerequisite other than the base, zero prerequisites, and two;
   - two refs in the bundle, and a single tag ref;
   - an incoming head the base isn't an ancestor of;
-  - `.harness/pr-body.md` as a symlink blob, a submodule, missing, over 64 KB, and not UTF-8;
+  - the body (in `stage-body` and in `publish`) as a symlink, as a regular file behind a symlinked folder, as a FIFO or device, missing, over 64 KB, or not UTF-8; and a `realpath` outside the expected folder;
+  - the body never passed to a shell (asserted on spawned commands);
   - the token never in argv or a URL (asserted on spawned commands);
   - the explicit refspec, and no tags pushed;
   - `fsckObjects` on;
@@ -1200,7 +1216,7 @@ They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch 
 | L4 container and `srt` | Docker Desktop on macOS; Docker on Linux (host uid 1000 and not 1000) | `srt` runs in the unprivileged container, recording whether `enableWeakerNestedSandbox` is needed under Docker's seccomp and AppArmor profiles (I16), and that doctor and status report it; the Stop gate skips its second wrap only on the proved verdict; `.git/hooks`, `.devcontainer` and user settings writes fail; `example.com` is refused; a `--push` run pushes with the App token; a run without push can't reach `github.com` or read the token; the VS Code setting names turn off git config copying and helper forwarding; `git credential fill` returns nothing and `ssh-add -l` fails; the read block's denial rate in `-p` with the sandbox off; `updateRemoteUserUID` and a re-created token folder keep the mount readable; Claude Code starts and finishes a run with the user-config `denyWrite` entries (plugins, settings) in place | P17, P18 |
 | L5 end to end | Container, unattended `-p` | With the done contract on: the run pushes and opens a PR; before approval the App can't merge (`gh api -X PUT …/merge` is refused) or push a tag, a workflow change, or a branch outside `agent/`; it can't post a `harness-verify` status; after the owner approves, the App *can* merge, which is documented; the owner merges through the bypass | Release |
 | L6 protect | Scratch public repo (personal), and one org repo | See below | P6, P7, P8 |
-| L7 CI | Public scratch repo, GitHub-hosted | The agent job runs with the `sysctl` and no key; agent code (Bash, a Stop step and a hook) finds no key or token in env, files or processes; the publish job fetches the base, verifies and fetches the one-ref range bundle, and pushes with the explicit refspec; a bundle with a second ref, a tag or a wrong prerequisite is refused; a hook file planted in the bundle doesn't run; closing keywords in the body are stripped; **`.harness/pr-body.md` committed as a symlink to `~/.claude/.credentials.json` is refused, and nothing from outside git reaches the artifact (R3-I1)**; a `.git/config` change by the agent fails the bundle step; doctor flags a workflow without `persist-credentials: false` and a `cache:` in the agent job | P13 |
+| L7 CI | Public scratch repo, GitHub-hosted | The agent job runs with the `sysctl` and no key; agent code (Bash, a Stop step and a hook) finds no key or token in env, files or processes; the publish job fetches the base, verifies and fetches the one-ref range bundle, and pushes with the explicit refspec; a bundle with a second ref, a tag or a wrong prerequisite is refused; a hook file planted in the bundle doesn't run; closing keywords in the body are stripped; **a `.harness/tmp/pr-body.md` symlinked to `~/.claude/.credentials.json`, or inside a symlinked folder, is refused by `stage-body`, and the artifact holds only the bundle and the staged body (R3-I1)**; a `.git/config` change by the agent fails the bundle step; doctor flags a workflow without `persist-credentials: false` and a `cache:` in the agent job | P13 |
 | L8 Windows | Native Windows, if the owner has a machine | An unattended PowerShell call is denied with the message; `off` allows and logs; attended Stop runs unwrapped with the doctor warning; the read block's roots and prompt rate | P1 (with no machine: CI only, and a known limit) |
 
 **LS in full:**
@@ -1336,7 +1352,7 @@ PS1 and PS2 ship in the same release, so no release has the wrap without the beh
 21. `harness-refs` exempts bots by app identity only, detected from the default branch (`dependabot.yml`, Renovate config), with ids from `GET /apps/<slug>`, plus `github.protect.exempt` actors. Deploy keys are bypass actors, for workflows that push protected refs from a protected environment.
 22. Publish trusts no input from the agent job: the base is checked through the compare API, and the bundle must have exactly that prerequisite and one ref.
 23. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` in a hook's environment counts as unattended, even in a session a person watches.
-24. The PR body is committed as `.harness/pr-body.md` on the agent branch, so it is in the PR diff and is overwritten by each later PR.
+24. The PR body travels as an artifact (`.harness/tmp/pr-body.md`, staged by `harness github stage-body`), never in the PR diff, and is read only through the safe-read rule (§6.6).
 
 ## 16. Open questions
 
@@ -1420,7 +1436,7 @@ Revision 3's Q1 (agent-run verify with the sandbox on) is ruled: accept it. An a
 | Finding | Fix |
 |---|---|
 | R3-C1 bot branch patterns | Patterns removed; bots exempt by app identity only, detected from the default branch; auto-merge keyed on the PR author is a doctor fix (§5.3, §10.1); L6 |
-| R3-I1 post-agent paths | Body from the bundle tree, mode and size checked; no filesystem copy; hostile-workspace rule, config and hooks check before the bundle step (§6.6); L7 |
+| R3-I1 post-agent paths | Ruling, revised: the body travels as an artifact and is read by the safe-read rule in both jobs (`O_NOFOLLOW`, every component's `realpath` inside its folder, `fstat` regular file of at most 64 KB, data only). Hostile-workspace rule, and a config and hooks check before the bundle step (§6.6); L7 |
 | R3-I2 `github-actions` bypass | Removed; deploy keys in protected environments; `contents: write` workflows on agent-reachable events are a doctor fix (§5.3, §14); L6 |
 | R3-M1 bundle checks | Exactly one prerequisite, ancestor check, `^{commit}`, token through `GIT_CONFIG_*` only (§6.6) |
 | R3-M2 closing keywords | Full keyword list and `owner/repo#n` (§6.6) |

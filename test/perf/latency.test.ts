@@ -103,6 +103,27 @@ test('counted PostToolUse Edit in a 20-file repo with checks.prSize on: harness 
   expect(m.total, `counted edit total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 
+// protect diffs a ref move against the protected paths: a plain git status and a checkout with no protected change stay in the plain budget.
+test.each(['git status', 'git checkout feat'])('attended Bash `%s`: harness overhead over a bare node spawn', (command) => {
+  const repo = mkdtempSync(join(tmpdir(), 'h-lat-ref-'));
+  const g = (...a: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: repo });
+  g('init', '-q', '-b', 'main');
+  mkdirSync(join(repo, '.harness/hooks'), { recursive: true });
+  writeFileSync(join(repo, '.harness/hooks/dispatch.mjs'), '');
+  writeFileSync(join(repo, '.harness/config.yaml'), 'checks:\n  guard: true\n  protect: true\n');
+  g('add', '.');
+  g('commit', '-q', '-m', 'base');
+  g('branch', 'feat');
+  const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'lat', cwd: repo, tool_name: 'Bash', tool_input: { command } });
+  const m = measure(input, (r) => {
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('');
+  }, true);
+  report(`ref-move-${command.replace(/\W+/g, '-')}`, m);
+  expect(m.overhead, `overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.total, `total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
+}, 60000);
+
 // Team-decision nudge: with no stored hit, an attended Stop with no last_assistant_message reads the transcript's
 // last 1 MiB for the A signals. A 50 MB transcript must stay inside the plain ceilings.
 test('attended Stop with a 50 MB transcript and no stored hit: harness overhead over a bare node spawn', () => {

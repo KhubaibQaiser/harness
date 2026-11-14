@@ -7,7 +7,7 @@ import { findOnPath } from './stop/runner.js';
 
 const MSG = "Unattended run without Claude Code's sandbox. Start it with the command in the README (Unattended runs and CI), or set `sandbox: off` in `.harness/config.yaml`.";
 const STRICT_MSG =
-  "Unattended `bypassPermissions` run without `sandbox.network.strictAllowlist: true`, so sandboxed commands can reach any host. Start it with the command in the README (Unattended runs and CI), or set the key in your user or managed settings (a repo's settings can't).";
+  "Unattended `bypassPermissions` or plan-mode run without `sandbox.network.strictAllowlist: true`, so sandboxed commands can reach any host. Start it with the command in the README (Unattended runs and CI), or set the key in your user or managed settings (a repo's settings can't).";
 
 // Spec 3.4, in its order. Native Windows has no sandbox (D2): it runs with the text checks only.
 export function sandboxVerdict(i: {
@@ -28,10 +28,15 @@ export function sandboxVerdict(i: {
     effective(i.layers, ['sandbox', 'allowUnsandboxedCommands']) === false &&
     (i.platform !== 'linux' || (!!findOnPath('bwrap', i.env, i.platform) && !!findOnPath('socat', i.env, i.platform)));
   if (!confirmed) return 'deny';
-  // bypassPermissions lets a host outside the allowlist through unless strictAllowlist is on. Claude Code honours it
-  // only from user, managed or --settings, and any of them set to true wins.
-  if (i.permissionMode !== 'bypassPermissions') return 'allow';
-  const strict = i.layers.some((l) => (l.name === 'managed' || l.name === 'user') && effective([l], ['sandbox', 'network', 'strictAllowlist']) === true);
+  // bypassPermissions (and plan mode with bypass available, which the hook can't tell apart) lets a host outside the
+  // allowlist through unless strictAllowlist is on; a missing mode is judged the same, fail-closed. Claude Code honours
+  // strictAllowlist only from user, managed or --settings, any of them true wins; allowManagedDomainsOnly is managed-only.
+  if (i.permissionMode !== undefined && i.permissionMode !== 'bypassPermissions' && i.permissionMode !== 'plan') return 'allow';
+  const strict = i.layers.some(
+    (l) =>
+      ((l.name === 'managed' || l.name === 'user') && effective([l], ['sandbox', 'network', 'strictAllowlist']) === true) ||
+      (l.name === 'managed' && effective([l], ['sandbox', 'network', 'allowManagedDomainsOnly']) === true),
+  );
   return strict ? 'allow' : 'no-strict';
 }
 

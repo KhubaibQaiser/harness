@@ -58,7 +58,9 @@ test('the reference carries the context-budget known limits, verbatim', () => {
 const launch = (s: string) => /```sh\n(HARNESS_SANDBOX=1 claude -p [\s\S]+?)\n```/.exec(s)?.[1];
 
 test('README carries the unattended launch command', () => {
-  expect(readme).toContain(launch(between(pe, '### 3.4', '### 3.5')));
+  const cmd = launch(between(pe, '### 3.4', '### 3.5'));
+  expect(cmd, 'spec 3.4 has the launch block').toBeDefined();
+  expect(readme).toContain(cmd);
 });
 
 test('the documented launch is one valid --settings JSON, the same in README and reference', () => {
@@ -70,10 +72,17 @@ test('the documented launch is one valid --settings JSON, the same in README and
   const sb = JSON.parse(m![1]).sandbox;
   expect(sb).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false });
   expect(sb.network).toEqual({ strictAllowlist: true, allowedDomains: [] });
+  // The whole lists: dropping one entry must fail.
   const files = sb.credentials.files.map((f: { path: string; mode: string }) => (expect(f.mode).toBe('deny'), f.path));
-  expect(files).toEqual(expect.arrayContaining(['~/.ssh', '~/.aws', '~/.config/gh', '~/.git-credentials', '~/.npmrc']));
+  expect(files).toEqual([
+    '~/.ssh', '~/.aws', '~/.config/gcloud', '~/.azure', '~/.kube', '~/.docker/config.json', '~/.npmrc', '~/.pypirc', '~/.netrc',
+    '~/.git-credentials', '~/.config/git/credentials', '~/.config/gh', '~/.claude/.credentials.json',
+  ]);
   const vars = sb.credentials.envVars.map((e: { name: string; mode: string }) => (expect(e.mode).toBe('deny'), e.name));
-  expect(vars).toEqual(expect.arrayContaining(['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN', 'GH_TOKEN', 'ANTHROPIC_API_KEY']));
+  expect(vars).toEqual([
+    'NPM_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+    'CLAUDE_CODE_OAUTH_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN',
+  ]);
 });
 
 test('README carries the enforcement line', () => {

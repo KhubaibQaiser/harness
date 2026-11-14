@@ -10,14 +10,14 @@ import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
 
 const MSG = "Unattended run without Claude Code's sandbox. Start it with the command in the README (Unattended runs and CI), or set `sandbox: off` in `.harness/config.yaml`.";
 const STRICT_MSG =
-  "Unattended `bypassPermissions` run without `sandbox.network.strictAllowlist: true`, so sandboxed commands can reach any host. Start it with the command in the README (Unattended runs and CI), or set the key in your user or managed settings (a repo's settings can't).";
+  "Unattended `bypassPermissions` or plan-mode run without `sandbox.network.strictAllowlist: true`, so sandboxed commands can reach any host. Start it with the command in the README (Unattended runs and CI), or set the key in your user or managed settings (a repo's settings can't).";
 const CONFIRMED = { sandbox: { enabled: true, allowUnsandboxedCommands: false } };
 const STRICT = { sandbox: { network: { strictAllowlist: true } } };
 const CONFIRMED_STRICT = { sandbox: { ...CONFIRMED.sandbox, ...STRICT.sandbox } };
 const layers = (l: Partial<Record<Layer['name'], unknown>>): Layer[] =>
   (['managed', 'local', 'project', 'user'] as const).map((name) => ({ name, json: l[name] ?? null }));
 const v = (o: { mode?: SandboxMode; unattended?: boolean; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; layers?: Layer[]; permissionMode?: string }) =>
-  sandboxVerdict({ mode: 'unattended', unattended: true, platform: 'darwin', env: {}, layers: layers({}), ...o });
+  sandboxVerdict({ mode: 'unattended', unattended: true, platform: 'darwin', env: {}, layers: layers({}), permissionMode: 'dontAsk', ...o });
 
 describe('sandboxVerdict', () => {
   test('attended allows', () => expect(v({ unattended: false })).toBe('allow'));
@@ -59,8 +59,19 @@ describe('bypassPermissions needs strictAllowlist', () => {
   test('HARNESS_SANDBOX=1 stands for the documented --settings, strictAllowlist included', () =>
     expect(bp({ env: { HARNESS_SANDBOX: '1' } })).toBe('allow'));
   test('no sandbox at all is the plain deny', () => expect(bp({ layers: layers({ user: STRICT }) })).toBe('deny'));
-  test.each(['dontAsk', 'default', 'acceptEdits', undefined])('permission mode %s is unchanged', (permissionMode) =>
+  test.each(['dontAsk', 'default', 'acceptEdits', 'auto'])('permission mode %s is unchanged', (permissionMode) =>
     expect(v({ permissionMode, layers: layers({ project: CONFIRMED }) })).toBe('allow'));
+  // plan mode can carry bypass, which the hook can't see; a missing mode fails closed like the check itself.
+  test.each(['plan', undefined])('permission mode %s also needs strictAllowlist', (permissionMode) => {
+    expect(v({ permissionMode, layers: layers({ project: CONFIRMED }) })).toBe('no-strict');
+    expect(v({ permissionMode, layers: layers({ project: CONFIRMED, user: STRICT }) })).toBe('allow');
+  });
+  test('a managed allowManagedDomainsOnly counts; a user or repo one does not', () => {
+    const only = { sandbox: { network: { allowManagedDomainsOnly: true } } };
+    expect(bp({ layers: layers({ project: CONFIRMED, managed: only }) })).toBe('allow');
+    expect(bp({ layers: layers({ project: CONFIRMED, user: only }) })).toBe('no-strict');
+    expect(bp({ layers: layers({ project: CONFIRMED_STRICT, local: only }) })).toBe('no-strict');
+  });
 });
 
 describe('precedence', () => {

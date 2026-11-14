@@ -16,6 +16,12 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 - The commit check is a seatbelt against honest mistakes and casual bypasses; `gitleaks-ci` and the done-contract CI verdict are the backstops.
 - This repo's own CI gitleaks job is hardened the same way, and its catalog-pin allowlist is anchored to whole pin lines.
 
+### Unattended launch
+
+- An unattended `bypassPermissions` or plan-mode run whose sandbox is confirmed from settings files (including every `sandbox: always` repo run with `--dangerously-skip-permissions`) now has its shell commands denied unless your user or managed settings set `sandbox.network.strictAllowlist: true`. Without it, the sandbox lets such a run reach any host.
+- The documented launch command now carries `strictAllowlist`, its own `allowedDomains` (empty) and `credentials` deny entries. A run that installs packages or pushes fails until you list the hosts it needs, and `gh`, cloud CLIs and `npm publish` can't sign in from the shell. The README says how to allow pushing.
+- If your scripts copy the old command, replace it: `HARNESS_SANDBOX=1` now stands for the full one.
+
 ## Catalog
 
 Catalog version 1, 92 items: 72 plugin, 6 external-skill, 5 own-hook, 3 mcp, 1 rule, 1 settings, 2 own-skill, 1 own-agent, 1 ci.

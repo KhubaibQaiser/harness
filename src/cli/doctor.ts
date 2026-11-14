@@ -39,7 +39,7 @@ export type DoctorDeps = {
 };
 
 const DISPATCH = '.harness/hooks/dispatch.mjs';
-const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
+const EVENTS = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];
 export const BLOCKING = ['PreToolUse', 'UserPromptSubmit', 'ConfigChange']; // the events whose hook carries onFailure "block"
 const SANDBOX_WHY = { unattended: 'required for unattended runs', always: 'on in every session', off: 'text checks only' };
 const GH_TIMEOUT_MS = 5000;

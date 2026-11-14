@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -228,4 +229,29 @@ test('plainArgv', () => {
   expect(plainArgv("pnpm run 'test'")).toEqual(['pnpm', 'run', 'test']);
   expect(plainArgv('  npx vitest run "test/a b.test.ts"  ')).toEqual(['npx', 'vitest', 'run', 'test/a b.test.ts']);
   for (const bad of ['a && b', 'a | b', 'a > f', 'X=1 a', 'a $(b)', 'a `b`', 'a\nb', '', 'a; b', 'a &', 'a < f', "a 'open", 'a *.ts', 'a ~/x', 'a # c', 'a {b,c}']) expect(plainArgv(bad), bad).toBeNull();
+});
+
+test('loadContract refuses a task file that is a symlink or over 256 KiB, before reading it', () => {
+  const root = dir();
+  const written = writeContract(root, c);
+  const p = join(root, '.harness/tasks/add-login.json');
+  const text = readFileSync(p, 'utf8');
+  writeFileSync(join(root, 'elsewhere.json'), text);
+  rmSync(p);
+  symlinkSync(join(root, 'elsewhere.json'), p);
+  expect(loadContract(root, 'add-login')).toEqual({ error: '.harness/tasks/add-login.json: not a regular file' });
+  rmSync(p);
+  writeFileSync(p, text + ' '.repeat(256 * 1024));
+  expect(loadContract(root, 'add-login')).toEqual({ error: '.harness/tasks/add-login.json: over 256 KiB' });
+  writeFileSync(p, text);
+  expect(loadContract(root, 'add-login')).toEqual({ contract: written });
+});
+
+test.skipIf(process.platform === 'win32')('loadContract refuses a FIFO task file without blocking on it', () => {
+  const root = dir();
+  writeContract(root, c);
+  const p = join(root, '.harness/tasks/add-login.json');
+  rmSync(p);
+  execFileSync('mkfifo', [p]);
+  expect(loadContract(root, 'add-login')).toEqual({ error: '.harness/tasks/add-login.json: not a regular file' });
 });

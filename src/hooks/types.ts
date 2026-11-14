@@ -1,6 +1,7 @@
 export type HookEvent =
   | 'PreToolUse'
   | 'PostToolUse'
+  | 'PostToolUseFailure'
   | 'UserPromptSubmit'
   | 'Stop'
   | 'SessionStart'
@@ -24,6 +25,8 @@ export interface HookInput {
   source?: string;
   file_path?: string;
   last_assistant_message?: string;
+  error?: string; // PostToolUseFailure: its first line is `Exit code N` for a Bash exit
+  duration_ms?: number;
 }
 
 export type Decision =

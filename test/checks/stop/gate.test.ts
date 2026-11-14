@@ -623,3 +623,20 @@ test.skipIf(winSkip)('a wrapped step failure blocks like today and keeps the srt
   expect(reason).toContain('sandbox proxy: denied registry.npmjs.org:443');
   expect(s.ctx.state.stopAttempts).toBe(1);
 });
+
+test('a coverage block after unwrapped steps carries the unwrapped note', async () => {
+  const s = setup({ yaml: 'checks:\n  tdd: true\n' });
+  s.ctx.platform = 'win32';
+  const base = s.exec(SRC);
+  const d = await wrapped(s, NOPROBE)((cmd, args, ms) => (cmd === 'git' && args.includes('diff') ? { status: 128, output: 'fatal', timedOut: false } : base(cmd, args, ms)));
+  expect(d).toMatchObject({ kind: 'block' });
+  expect((d as { reason: string }).reason).toContain('Diff coverage could not read git diff');
+  expect((d as { reason: string }).reason).toContain('Stop steps ran without the sandbox (native Windows).');
+});
+
+test('a timeout carries the notes, and a refusal note is not lost to it', async () => {
+  const s = setup();
+  s.ctx.platform = 'win32';
+  const d = await wrapped(s, NOPROBE)(s.exec(SRC, '', 'lint'));
+  expect(d).toEqual({ kind: 'context', text: 'Stop gate timed out after 540s; checks did not finish.\nStop steps ran without the sandbox (native Windows).', check: 'stop' });
+});

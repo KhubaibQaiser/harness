@@ -194,7 +194,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   }
   const res = await run(plan, stepsStart + timeout_s * 1000);
   runNotes.push(...((run as Partial<NotedRun>).notes ?? []));
-  const timeoutText = `Stop gate timed out after ${timeout_s}s; checks did not finish.`;
+  const timeoutText = [`Stop gate timed out after ${timeout_s}s; checks did not finish.`, ...runNotes].join('\n');
   if (res.kind === 'timeout') return { kind: 'context', text: timeoutText, check: 'stop' };
   if (res.kind === 'unavailable') {
     log('stop-srt-unavailable', res.reason);
@@ -218,6 +218,8 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       }
       setAttempts(attempts);
     }
+    if (d.kind === 'block') return { ...d, reason: [d.reason, ...runNotes].join('\n') };
+    if (d.kind === 'context') return { ...d, text: [d.text, ...runNotes].join('\n') };
     if (d.kind !== 'allow') return d;
   }
   setAttempts(0);

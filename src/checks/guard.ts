@@ -36,7 +36,7 @@ const REDIRECTION = /\d*[<>]+&?\d*\s*[^\s;&|]*/g;
 const RUNNERS = new Set(['npx', 'npm', 'pnpm', 'dlx', 'exec', 'yarn', 'bun', 'bunx', 'node', 'sudo', 'env', 'eval', 'bash', 'sh', 'zsh', 'command', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'pnpx', 'x', 'stdbuf', 'script']);
 // Matched on text whose backslashes became slashes (see personOnlyInvocation). Windows shims (harness.cmd) and any case
 // count: Windows and macOS file systems ignore case.
-const HARNESS_CMD = /(^=?|\/)harness(@\S+)?(\.(cmd|ps1|bat|exe))?$|(^=?|\/)cli\.m?js$/i; // zsh =cmd expands to the path of cmd
+export const HARNESS_CMD = /(^=?|\/)harness(@\S+)?(\.(cmd|ps1|bat|exe))?$|(^=?|\/)cli\.m?js$/i; // zsh =cmd expands to the path of cmd
 /** True when a wrapper's flag takes the next word as its value: the flag itself (-u, --unset), or a short-option
  *  cluster whose first value flag is its last letter (-iu NAME, -vs KILL), for every wrapper in WRAPPER_VALUE_FLAGS.
  *  As in getopt, a value flag earlier in the cluster takes the rest of it as its value (-uC: unset C). */

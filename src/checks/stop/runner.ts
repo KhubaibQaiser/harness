@@ -1,9 +1,18 @@
 // Turns a configured stop step into a command, and finds binaries without a shell.
-import { accessSync, constants, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { HarnessConfig, StopStep } from '../../core/config.js';
 
 export type Resolved = { cmd: string; args: string[]; label: string };
+
+export const scriptsOf = (root: string): Record<string, unknown> => {
+  try {
+    const f = join(root, 'package.json');
+    return existsSync(f) ? (JSON.parse(readFileSync(f, 'utf8')).scripts ?? {}) : {};
+  } catch {
+    return {};
+  }
+};
 
 // Own-property check: a script named "toString" must not match the prototype.
 export function resolveStep(

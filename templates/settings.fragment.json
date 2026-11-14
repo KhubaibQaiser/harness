@@ -8,6 +8,8 @@
       "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] },
       { "matcher": "AskUserQuestion",
       "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] }],
+    "PostToolUseFailure": [{ "matcher": "Bash|PowerShell",
+      "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10, "onFailure": "block" }] }],
     "ConfigChange": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10, "onFailure": "block" }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 600 }] }],

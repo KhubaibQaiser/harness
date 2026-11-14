@@ -65,7 +65,7 @@ test('healthy install: all ok, exit 0', async () => {
   expect(r.out).not.toMatch(/^fix /m);
   expect(r.lines.every((l) => l.startsWith('ok ') || l.startsWith('note '))).toBe(true);
   expect(r.lines.length).toBeGreaterThanOrEqual(7);
-  expect(r.out).toMatch(/^ok settings run the dispatcher for all 7 hook events$/m);
+  expect(r.out).toMatch(/^ok settings run the dispatcher for all 8 hook events$/m);
   expect(r.code).toBe(0);
 });
 

@@ -1,14 +1,12 @@
 // Stop gate: run the repo's own steps before the agent may finish. Ported from fitness-app stop-check.mjs.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { appendEvent } from '../../core/events.js';
 import { appendTiming } from '../../core/timing.js';
 import { decisionNotes } from '../decisions-stop.js';
 import type { Check, Ctx } from '../../hooks/dispatch.js';
 import type { Decision } from '../../hooks/types.js';
 import { coverageGate } from './coverage-gate.js';
-import { findOnPath, resolveStep, winCmdLine } from './runner.js';
+import { findOnPath, resolveStep, scriptsOf, winCmdLine } from './runner.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
 export type ExecResult = { status: number | null; output: string; timedOut: boolean };
@@ -72,15 +70,6 @@ export const defaultExec = (root: string): Exec => (cmd, args, timeout) =>
 const tail = (text: string) => {
   const t = text.replace(/\s+$/u, '');
   return t.length <= MAX_LOG ? t : `…(truncated)\n${t.slice(-MAX_LOG)}`;
-};
-
-const scriptsOf = (root: string): Record<string, unknown> => {
-  try {
-    const f = join(root, 'package.json');
-    return existsSync(f) ? (JSON.parse(readFileSync(f, 'utf8')).scripts ?? {}) : {};
-  } catch {
-    return {};
-  }
 };
 
 const realWhich = (cmd: string) => (/[\\/]/.test(cmd) ? cmd : findOnPath(cmd, process.env, process.platform));

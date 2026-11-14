@@ -512,3 +512,15 @@ test('a throwing timing writer leaves the decision unchanged', async () => {
   expect(decisionOf(await dispatch(pre({ cwd: r, tool_name: 'Bash', tool_input: { command: secretCat } }), [guard], {}, { timing }))).toBe('deny');
   expect(await dispatch(pre({ cwd: r, tool_name: 'Read' }), [], {}, { timing })).toBe('');
 });
+
+test('dispatch accepts PostToolUseFailure; the fragment registers it for Bash|PowerShell', async () => {
+  let seen = '';
+  const rec: Check = { name: 'rec', events: ['PostToolUseFailure'], run: (ctx) => ((seen = String(ctx.input.error)), { kind: 'allow' }) };
+  expect(await dispatch(payload({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: { command: 'ls' }, error: 'Exit code 1' }), [rec], {})).toBe('');
+  expect(seen).toBe('Exit code 1');
+  const names = registry.map((c) => c.name);
+  expect(names.indexOf('evidence-ledger')).toBeGreaterThan(-1);
+  expect(names.indexOf('evidence-ledger')).toBeLessThan(names.indexOf('stopGate'));
+  const frag = JSON.parse(readFileSync('templates/settings.fragment.json', 'utf8'));
+  expect(frag.hooks.PostToolUseFailure).toEqual([{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: 'node', args: ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'], timeout: 10 }] }]);
+});

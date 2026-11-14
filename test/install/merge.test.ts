@@ -35,9 +35,9 @@ describe('mergeSettings', () => {
     expect(s.hooks.Stop).toHaveLength(2);
     expect(s.hooks.Stop[1].hooks[0].args).toEqual(ARGS);
     expect(s.hooks.SessionEnd).toHaveLength(1);
-    // blocks: 9 hook groups (AskUserQuestion has its own Pre and Post group) + deny rules not already present (35 of 36)
+    // blocks: 10 hook groups (AskUserQuestion has its own Pre and Post group) + deny rules not already present (35 of 36)
     const parsed = blocks.map((b) => JSON.parse(b));
-    expect(parsed.filter((b) => b.event)).toHaveLength(9);
+    expect(parsed.filter((b) => b.event)).toHaveLength(10);
     expect(parsed.filter((b) => b.deny)).toHaveLength(35);
     expect(parsed.find((b) => b.event === 'Stop').group.hooks[0].args).toEqual(ARGS);
   });
@@ -55,10 +55,10 @@ describe('mergeSettings', () => {
     expect(again.blocks).toEqual([]);
   });
 
-  it('a fresh file gets 9 group blocks and 36 deny blocks, nothing dropped', () => {
+  it('a fresh file gets 10 group blocks and 36 deny blocks, nothing dropped', () => {
     const { after, blocks, dropped } = merge(null);
     const parsed = blocks.map((b) => JSON.parse(b));
-    expect(parsed.filter((b) => b.event)).toHaveLength(9);
+    expect(parsed.filter((b) => b.event)).toHaveLength(10);
     expect(parsed.filter((b) => b.deny)).toHaveLength(36);
     expect(dropped).toEqual([]);
     expect(JSON.parse(after).hooks.Stop[0].hooks[0]).toEqual({ type: 'command', command: 'node', args: ARGS, timeout: 600 });

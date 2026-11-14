@@ -50,8 +50,9 @@ function logCandidates(ctx: Ctx, hits: Hit[]): void {
   }
 }
 
-// ponytail: the Bash tool_response shape for a failed command isn't pinned; unknown shapes count as success (plan).
-const failed = (res: unknown): boolean => {
+// ponytail: the Bash tool_response shape for a failed command isn't pinned; unknown shapes are not failures here (plan).
+// The evidence ledger never reads that as a pass: it records them as exit null (F4).
+export const toolFailed = (res: unknown): boolean => {
   if (typeof res !== 'object' || res === null) return false;
   const r = res as Record<string, unknown>;
   const code = r.exitCode ?? r.exit_code;
@@ -63,7 +64,7 @@ const STOP_TAIL = 1024 * 1024;
 
 // Last assistant text: the Stop input's field, else the transcript tail's last record when it is this turn's answer.
 // `read`: it came from the transcript, so only the signal ids are kept (D1, C2: nothing from it is stored or logged).
-function lastAssistant(ctx: Ctx): { text: string; read: boolean } {
+export function lastAssistant(ctx: Ctx): { text: string; read: boolean } {
   const { last_assistant_message: m, transcript_path: t } = ctx.input;
   if (typeof m === 'string') return { text: m, read: false };
   const last = readTranscript(t, STOP_TAIL)?.findLast((r) => r.prompt || r.texts.length); // tool output is neither
@@ -89,7 +90,7 @@ export const decisionSignals: Check = {
     if (!config.checks.decisions) return ALLOW;
     if (input.hook_event_name === 'PostToolUse') {
       const cmd = input.tool_name === 'Bash' ? input.tool_input?.command : undefined;
-      if (!state.rememberAdded && typeof cmd === 'string' && realAdd(cmd) && !failed(input.tool_response)) ctx.save({ ...state, rememberAdded: true });
+      if (!state.rememberAdded && typeof cmd === 'string' && realAdd(cmd) && !toolFailed(input.tool_response)) ctx.save({ ...state, rememberAdded: true });
       return ALLOW;
     }
     const stop = input.hook_event_name === 'Stop';

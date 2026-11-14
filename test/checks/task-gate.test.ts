@@ -38,6 +38,8 @@ function cloneWithContract(c = contract()) {
   const origin = repoWith({ 'README.md': 'x' }, { [`.harness/tasks/${c.id}.json`]: sealed(c) });
   const d = mkdtempSync(join(tmpdir(), 'h-tg-'));
   git(d, 'clone', '-q', origin.root, 'c');
+  // a clone has no identity of its own; CI runners have no global one (Windows failed here)
+  for (const [k, v] of [['user.name', 'test'], ['user.email', 'test@example.com'], ['commit.gpgsign', 'false'], ['core.autocrlf', 'false']]) git(join(d, 'c'), 'config', k!, v!);
   return { root: configured(join(d, 'c')), before: origin.base, head: origin.head };
 }
 

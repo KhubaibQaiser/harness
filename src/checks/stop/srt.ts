@@ -66,6 +66,10 @@ function chain(p: string): string[] | null {
     } catch {
       return out;
     }
+    // Text-collapsing `sub/../x` would miss the hop the kernel takes when `sub` is a link; only a leading ../ is safe (npm bin links).
+    const segs = t.split(/[\\/]/).filter((x) => x && x !== '.');
+    const k = segs.findIndex((x) => x !== '..');
+    if ((k >= 0 && segs.slice(k).includes('..')) || (isAbsolute(t) && segs.includes('..'))) return null;
     cur = resolve(realish(dirname(cur)), t);
   }
   return null;

@@ -160,3 +160,21 @@ describe('round 2', () => {
     expect(loc(probe(join(tools, 'sub/srt')))).toEqual({ why: { kind: 'writable', path: join(repo, 'stuff/sub') } });
   });
 });
+
+describe('round 3: dot-dot after a segment', () => {
+  test('sub/../x where sub is a link is a launcher failure, relative and absolute', () => {
+    const tr = join(base, 'tr'); mkdirSync(tr);
+    symlinkSync(join(out, 'dist'), join(tr, 'sub'));
+    symlinkSync('sub/../x', join(tr, 'srt'));
+    expect(loc(probe(join(tr, 'srt')))).toMatchObject({ why: { kind: 'check', check: 'launcher' } });
+    const ab = join(base, 'tr2'); mkdirSync(ab);
+    symlinkSync(`${tr}/sub/../x`, join(ab, 'srt'));
+    expect(loc(probe(join(ab, 'srt')))).toMatchObject({ why: { kind: 'check', check: 'launcher' } });
+  });
+  test('an npm-style leading ../ link still passes', () => {
+    const lib = join(base, 'n7/lib/node_modules/@anthropic-ai/sandbox-runtime/dist'); mkdirSync(lib, { recursive: true });
+    file(join(lib, 'cli.js'), 'x'); mkdirSync(join(base, 'n7/bin'));
+    symlinkSync('../lib/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js', join(base, 'n7/bin/srt'));
+    expect(loc(probe(join(base, 'n7/bin/srt')))).toMatchObject({ version: '0.0.83' });
+  });
+});

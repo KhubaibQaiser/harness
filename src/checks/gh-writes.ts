@@ -144,7 +144,7 @@ const isLocal = (w: string) => w === '.' || /^file:/i.test(w) || (!/^[a-z][a-z0-
 const toRemote = (spec: string) => REMOTE_REF.test(spec.slice(spec.lastIndexOf(':') + 1).replace(/^\+/, '').replace(/\/+/g, '/'));
 /** Why a git command may repoint refs/remotes/*, or null. `globals` are the words before the subcommand; `head`: git is
  *  the command word (not a word found later); `fed`: xargs or parallel hands it more words. */
-export function remoteRefWhy(globals: string[], sub: string | undefined, rest: string[], o: { head?: boolean; fed?: boolean; envConfig?: boolean; root?: string } = {}): string | null {
+export function remoteRefWhy(globals: string[], sub: string | undefined, rest: string[], o: { head?: boolean; fed?: boolean; elsewhere?: boolean; root?: string } = {}): string | null {
   const why = (what: string) => `${what} ${REF_WHY}`;
   for (let i = 0; i < globals.length; i++) {
     const g = globals[i], kv = g === '-c' || g === '--config-env' ? (globals[i + 1] ?? '') : /^-c./.test(g) ? g.slice(2) : g.startsWith('--config-env=') ? g.slice(13) : '';
@@ -155,7 +155,7 @@ export function remoteRefWhy(globals: string[], sub: string | undefined, rest: s
   const dyn = (w: string | undefined) => /[$`]/.test(w ?? ''), built = why(`git ${sub} with words built at run time`);
   if (dyn(sub) || (REF_SUBS.has(sub) && o.fed)) return built;
   if (PLUMBING.has(sub)) return why(`git ${sub}`);
-  if (o.head !== false && !GIT_CMDS.has(sub) && (o.envConfig || aliasOrUnknown(sub, o.root))) return why(`git ${sub} (an alias, or a name harness could not look up, that)`);
+  if (o.head !== false && !GIT_CMDS.has(sub) && (o.elsewhere || aliasOrUnknown(sub, o.root))) return why(`git ${sub} (an alias, or a name harness could not look up, that)`);
   if (['update-ref', 'symbolic-ref', 'remote', 'replace'].includes(sub) && rest.some(dyn)) return built;
   if (sub === 'update-ref' || sub === 'symbolic-ref') {
     const p = readOptions(rest, { v: 'm' });

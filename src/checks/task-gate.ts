@@ -17,7 +17,8 @@ const CI_DECIDES = "CI decides; this checkout can't vouch for the contract (orig
 // `cd DIR && …` with only && (and pipes) after it, no other cd, popd or subshell: every later write runs in DIR or not at all.
 // Anything looser (`;`, `||`, `&`, a subshell) may run a write where the cd failed, so protect's union reading applies.
 const LEADING_CD = /^\s*(?:cd|pushd)\s+([^\s;&|()<>$`~*?[{\\'"]+)\s*&&([^]*)$/;
-const LOOSE = /\|\||[;\n()`]|(?<![&>])&(?![&>])|(?:^|[\s&|])(?:cd|pushd|popd)(?:\s|$)/;
+// git's -C, --git-dir, --work-tree and GIT_DIR/GIT_WORK_TREE move where git writes, away from DIR.
+const LOOSE = /\|\||[;\n()`]|(?<![&>])&(?![&>])|(?:^|[\s&|])(?:cd|pushd|popd)(?:\s|$)|(?:^|\s)(?:-C|--git-dir|--work-tree)(?:[=\s]|$)|\bGIT_(?:DIR|WORK_TREE)=/;
 function writesOf(cmd: string): { paths: string[]; unresolved: boolean } {
   const m = LEADING_CD.exec(withoutHeredocBodies(cmd).trimEnd());
   if (!m || LOOSE.test(m[2])) return shellWritePaths(cmd);

@@ -484,8 +484,12 @@ const checkRm = (cmd: string): Verdict | undefined => {
 
 const checkPushToMain = (cmd: string): Verdict | undefined => {
   for (const m of cmd.matchAll(/\bgit\s+push\b([^;&|\n]*)/g)) {
-    const refs = m[1].trim().split(/\s+/).filter((t) => t && !t.startsWith('-')).flatMap((t) => t.replace(CLOSERS, '').split(':'));
+    const words = m[1].trim().split(/\s+/).map((t) => t.replace(/^['"]+|['"]+$/g, ''));
+    // A word that starts like an option but follows a substitution (`--show-current):main`) still carries its `:dst`.
+    const refs = words.flatMap((t) => (!t || t.startsWith('-') ? (/[)`]:/.test(t) ? [t.slice(t.lastIndexOf(':') + 1)] : []) : t.replace(CLOSERS, '').split(':'))).map((r) => r.replace(/^\+/, ''));
     if (refs.some((r) => /^(refs\/heads\/)?(main|master)$/.test(r))) return ['deny', 'pushing to main or master (open a pull request from a branch instead)'];
+    // A refspec with a leading + forces that ref, as --force does.
+    if (words.some((t) => t.startsWith('+'))) return ['deny', 'force push with a + refspec (use --force-with-lease, and only on your own branch)'];
   }
   return undefined;
 };
@@ -1046,7 +1050,8 @@ const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
   // Once per line: a GraphQL query on it may be built at run time. A `$` inside single quotes is literal (GraphQL's own
   // `query($o:String!)`); one outside them (`"$Q"`, `$'…'`, `-F o=$O`), a backtick there, or a newline anywhere is not.
   const built = /\n/.test(raw) || expandsOutsideSingleQuotes(raw);
-  const envConfig = /\bGIT_CONFIG(?:_[A-Z0-9_]+)?=/.test(raw); // the line sets git config through the environment
+  // The alias lookup reads this repo's config with the hook's environment: a line that may point git at other config can't be checked.
+  const elsewhere = /(?:^|[\s;&|(])(?:HOME|XDG_CONFIG_HOME|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CONFIG\w*)=|(?:^|[\s;&|(])(?:cd|pushd)(?:\s|$)/.test(raw);
   return ({ toks, k, next, after }) => {
   let at = k, name = runnerName(plainWord(toks[k] ?? ''));
   // A head the guard doesn't know may run gh or hub later in its words (`op run -- gh …`, `direnv exec . gh …`, `zzwrap -q gh …`).
@@ -1067,7 +1072,7 @@ const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
     const all = [...args, ...subst], [sub, ...rest] = gitArgs(['git', ...all]);
     const globals = sub === undefined ? all : all.slice(0, all.length - rest.length - 1);
     const fed = toks.slice(0, at).some((t) => /^(xargs|parallel)$/.test(runnerName(plainWord(t))));
-    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest) ?? remoteRefWhy(globals, sub, rest, { head: at === k, fed, envConfig, root: ctx.root }));
+    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest) ?? remoteRefWhy(globals, sub, rest, { head: at === k, fed, elsewhere: elsewhere || globals.some((g) => /^(-C|--git-dir|--work-tree)(=|$)/.test(g)), root: ctx.root }));
   }
   return null;
   };

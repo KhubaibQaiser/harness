@@ -67,8 +67,10 @@ test('review round 2: a leading cd DIR && chain resolves writes in DIR; anything
   for (const c of ['cd .harness/tmp/ab12 && echo x > d.json', "cd .harness/tmp/ab12 && cat > d.json <<'EOF'\n{}\nEOF", 'cd /tmp && echo x > y', 'cd .harness/tmp/ab12 && pnpm x 2>&1 | tee log.txt'])
     expect(run(root, bash(c)), c).toEqual({ kind: 'allow' });
   for (const c of ['cd .harness/tmp/ab12; echo x > d.json', 'cd .harness/tmp/ab12 || echo x > d.json', 'cd .harness/tmp/ab12 && true || echo x > d.json', '(cd .harness/tmp/ab12) && echo x > d.json',
-    'cd .harness/tmp/ab12 && cd ../../.. && echo x > src/a.ts', 'cd .harness/tmp/ab12 && popd && echo x > d.json', 'cd .harness/tmp/ab12 & echo x > d.json', `cd /tmp && echo x > ${root}/src/a.ts`])
-    expect(run(root, bash(c)), c).toEqual(deny(NO_CONTRACT));
+    'cd .harness/tmp/ab12 && cd ../../.. && echo x > src/a.ts', 'cd .harness/tmp/ab12 && popd && echo x > d.json', 'cd .harness/tmp/ab12 & echo x > d.json', `cd /tmp && echo x > ${root}/src/a.ts`,
+    // round 3: git's -C, --git-dir and --work-tree (or GIT_WORK_TREE) move where git writes, so the cd folder doesn't apply
+    'cd /tmp && git -C ROOT restore src/a.ts', 'cd /tmp && git -C ROOT checkout -- src/a.ts', 'cd /tmp && git --git-dir=ROOT/.git --work-tree=ROOT restore src/a.ts', 'cd /tmp && GIT_WORK_TREE=ROOT git restore src/a.ts'])
+    expect(run(root, bash(c.replaceAll('ROOT', root))), c).toEqual(deny(NO_CONTRACT));
 });
 
 test('writes into a workdir are allowed without a contract (drafting)', () => {

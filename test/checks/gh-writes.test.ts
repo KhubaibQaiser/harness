@@ -119,7 +119,7 @@ describe('commands that can repoint refs/remotes/* ask', () => {
   });
   test('review round 1: push into this repo or onto refs/remotes, fetch --stdin, replace, ref plumbing', () => {
     all(['git push . HEAD:refs/remotes/origin/main', 'git push ./ HEAD:x', 'git push file:///p HEAD:x', 'git push ../wt HEAD:x', 'git push --mirror .', 'git push --mirror origin',
-      'git push origin HEAD:refs/remotes/origin/main', 'git push origin +HEAD:Refs//Remotes/origin/main', 'git push --repo=. HEAD:x', 'git send-pack . HEAD:refs/remotes/origin/main', 'git send-pack ./ x',
+      'git push origin HEAD:refs/remotes/origin/main', 'git push origin HEAD:Refs//Remotes/origin/main', 'git push --repo=. HEAD:x', 'git send-pack . HEAD:refs/remotes/origin/main', 'git send-pack ./ x',
       'git fetch --stdin origin', 'git fetch origin --stdin', 'git replace abc def', 'git replace -d abc', 'git fast-import', 'git filter-branch -- --all', 'git receive-pack .'], 'ask');
   });
   test('review round 1: spaced global values, dynamic refs, xargs, aliases, includes and unknown subcommands', () => {
@@ -145,6 +145,19 @@ describe('commands that can repoint refs/remotes/* ask', () => {
     expect(at("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.lfs GIT_CONFIG_VALUE_0='update-ref x y' git lfs pull")).toBe('ask');
     expect(at('export GIT_CONFIG_PARAMETERS=x; git lfs pull')).toBe('ask');
     expect(guard('git lfs pull')).toEqual(expect.objectContaining({ kind: 'ask' })); // root /p: the lookup fails, so it asks
+    // round 3: the lookup reads this repo with the hook's environment; a line that points git elsewhere skips it and asks
+    for (const c of ['HOME=/tmp/h git zzq', 'XDG_CONFIG_HOME=/tmp/x git zzq', 'export HOME=/tmp/h; git zzq', 'git -C /tmp/other zzq', 'cd /tmp/other && git zzq', 'pushd /tmp/o; git zzq',
+      'git --git-dir=/tmp/o/.git zzq', 'git --git-dir /tmp/o/.git zzq', 'git --work-tree=/tmp/o zzq', 'GIT_DIR=/tmp/o/.git git zzq', 'export GIT_WORK_TREE=/tmp/o; git zzq', 'GIT_COMMON_DIR=/tmp/o git zzq',
+      'GIT_CONFIG_GLOBAL=/tmp/g git zzq', 'env HOME=/tmp/h git zzq']) expect(at(c), c).toBe('ask');
+    expect(at('git zzq')).toBe('allow'); // not an alias here
+  });
+  test('round 3: a run-time source with a main destination is a push to main; a + refspec is a force push', () => {
+    for (const c of ['git push origin $(git branch --show-current):main', 'git push origin "$X:refs/heads/master"', 'git push origin +main', 'git push origin +HEAD:refs/heads/main'])
+      expect(guard(c), c).toEqual(expect.objectContaining({ kind: 'deny', reason: expect.stringContaining('main or master') }));
+    for (const c of ['git push origin "+$X"', 'git push origin +feat', 'git push origin +HEAD:feat', "git push origin '+feat'", 'git push -u origin +$(git branch --show-current)'])
+      expect(guard(c), c).toEqual(expect.objectContaining({ kind: 'deny', reason: expect.stringContaining('force push') }));
+    expect(guard('git push origin `git rev-parse HEAD`:main').kind).toBe('deny'); // an older backtick rule denies first
+    all(['git push origin feat:feat', 'git push -o ci.skip origin feat', 'git push --force-with-lease origin feat'], 'allow');
   });
   test('ordinary fetch, pull and remote reads stay allowed', () => {
     all(['git fetch', 'git fetch origin', 'git fetch --all --prune', 'git fetch origin main', 'git fetch -q origin', 'git fetch --depth 1 origin', 'git fetch -j 4 origin', 'git pull', 'git pull origin main',

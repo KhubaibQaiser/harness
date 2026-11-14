@@ -152,3 +152,62 @@ test('a timeout throws and leaves no temp folder behind', () => {
   expect(() => treeHash(root, { timeoutMs: 1 })).toThrow();
   expect(left()).toBe(before);
 });
+
+const headTree = (root: string) => git(root, 'rev-parse', 'HEAD^{tree}').trim();
+
+test('a tracked file that matches an ignore rule is hashed, and an edit to it moves the hash', () => {
+  const root = mk({ '.gitignore': 'dist/\n' });
+  put(root, 'dist/app.js', 'v1\n');
+  git(root, 'add', '-f', 'dist/app.js');
+  git(root, 'commit', '-q', '-m', 'dist');
+  const h = treeHash(root);
+  expect(h).toBe(headTree(root));
+  put(root, 'dist/app.js', 'v2\n');
+  expect(treeHash(root)).not.toBe(h);
+});
+
+test('editing a tracked file listed in .git/info/exclude changes the hash', () => {
+  const root = mk({ 'src/a.txt': 'a\n' });
+  writeFileSync(join(root, '.git', 'info', 'exclude'), 'src/\n');
+  const h = treeHash(root);
+  expect(h).toBe(headTree(root));
+  put(root, 'src/a.txt', 'edited\n');
+  expect(treeHash(root)).not.toBe(h);
+});
+
+test.skipIf(process.platform === 'win32')('core.fileMode=false keeps an executable file at 100755 on a clean checkout', () => {
+  const { root } = repoWith({ 'README.md': 'r\n' }, { 'run.sh': { exec: '#!/bin/sh\n' } });
+  dirs.push(root);
+  git(root, 'config', 'core.fileMode', 'false');
+  expect(treeHash(root)).toBe(headTree(root));
+});
+
+test('core.symlinks=false with the link checked out as a plain file equals HEAD', () => {
+  const { root } = repoWith({ 'README.md': 'r\n', 'a.txt': 'a\n' }, { 'ln': { link: 'a.txt' } });
+  dirs.push(root);
+  git(root, 'config', 'core.symlinks', 'false');
+  rmSync(join(root, 'ln'), { force: true });
+  put(root, 'ln', 'a.txt');
+  expect(treeHash(root)).toBe(headTree(root));
+});
+
+test('an uninitialised submodule (gitlink, empty dir) equals HEAD', () => {
+  const { root } = repoWith({ 'README.md': 'r\n' }, { sub: { gitlink: '1234567890123456789012345678901234567890' } });
+  dirs.push(root);
+  mkdirSync(join(root, 'sub'), { recursive: true });
+  expect(treeHash(root)).toBe(headTree(root));
+});
+
+test('a filter name containing = is blanked too', () => {
+  const root = mk();
+  const out = mkdtempSync(join(tmpdir(), 'h-filter-'));
+  dirs.push(out);
+  const marker = join(out, 'ran').replace(/\\/g, '/');
+  const script = join(out, 'clean.js').replace(/\\/g, '/');
+  writeFileSync(script, `require('fs').writeFileSync(${JSON.stringify(marker)}, 'x'); process.stdout.write('const');`);
+  writeFileSync(join(root, '.git', 'info', 'attributes'), '*.txt filter=x=y\n');
+  git(root, 'config', 'filter.x=y.clean', `node "${script}"`);
+  put(root, 'a.txt', 'one\n');
+  treeHash(root);
+  expect(existsSync(marker)).toBe(false);
+});

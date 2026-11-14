@@ -1,5 +1,5 @@
-// The working-tree hash (spec §4.2): what a ledger row or verdict is stamped with. Built over a throwaway copy of the
-// index, so the real index is never written, and over the whole tree minus harness's own writes.
+// The working-tree hash (spec §4.2): what a ledger row or verdict is stamped with. Built over a throwaway index, so the real
+// index is never read or written, and over the whole tree minus harness's own writes.
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,52 +11,59 @@ export const TREE_EXCLUDES = [...HARNESS_LOCAL.map((p) => p.replace(/\/$/, '')),
 
 const STOCK_LFS = { clean: 'git-lfs clean -- %f', process: 'git-lfs filter-process' };
 
-/** `-c` pairs that stop every configured clean/process filter from running; stock git-lfs stays, or every LFS repo reads dirty. */
-function filterOffs(listing: string): string[] {
+/** [key, value] config overrides that stop every configured clean/process filter from running; stock git-lfs stays, or every LFS repo reads dirty. */
+function filterOffs(listing: string): [string, string][] {
   const filters = new Map<string, { clean?: string; process?: string }>();
+  let lfsExtension = false; // lfs.extension.<n>.clean programs run inside git-lfs, so LFS is no longer stock
   for (const entry of listing.split('\0').filter(Boolean)) {
     const nl = entry.indexOf('\n');
     const key = nl < 0 ? entry : entry.slice(0, nl);
+    if (/^lfs\.extension\./i.test(key)) { lfsExtension = true; continue; }
     const m = /^filter\.(.+)\.([^.]+)$/.exec(key);
     if (!m) continue;
     const f = filters.get(m[1]!) ?? {};
     if (m[2] === 'clean' || m[2] === 'process') f[m[2]] = nl < 0 ? '' : entry.slice(nl + 1);
     filters.set(m[1]!, f);
   }
-  const out: string[] = [];
+  const out: [string, string][] = [];
   for (const [n, f] of filters) {
-    if (n === 'lfs' && (f.clean === undefined || f.clean === STOCK_LFS.clean) && (f.process === undefined || f.process === STOCK_LFS.process)) continue;
-    out.push('-c', `filter.${n}.clean=`, '-c', `filter.${n}.process=`, '-c', `filter.${n}.required=false`);
+    if (n === 'lfs' && !lfsExtension && (f.clean === undefined || f.clean === STOCK_LFS.clean) && (f.process === undefined || f.process === STOCK_LFS.process)) continue;
+    out.push([`filter.${n}.clean`, ''], [`filter.${n}.process`, ''], [`filter.${n}.required`, 'false']);
   }
   return out;
 }
 
-// The index starts empty, so git has no stat cache to trust: every file is hashed from disk. That makes the result immune to a
-// racy-clean entry, assume-unchanged, skip-worktree, core.ignoreStat and forged stat data in the real index, which is never read.
-// ponytail: ignore rules outside the tree (.git/info/exclude, core.excludesFile) still hide untracked files; documented in Known limits.
+// The temp index is seeded from HEAD (read-tree leaves stat data zeroed and sets no assume-unchanged or skip-worktree bit), so
+// `add -A` still hashes every file from disk: a racy-clean entry, assume-unchanged, skip-worktree, core.ignoreStat and forged stat
+// data in the real index (never read) can't hide an edit. HEAD supplies what disk can't: modes under core.fileMode=false, symlinks
+// under core.symlinks=false, gitlinks of uninitialised submodules, tracked files that match an ignore rule.
+// Config overrides go through GIT_CONFIG_* env, not -c, because -c splits a key at its first `=` (a filter named `x=y`).
+// ponytail: ignore rules outside the tree (.git/info/exclude, core.excludesFile) still hide NEW untracked files, and git-lfs is
+// found on PATH; both in Known limits. A new `git add -f` of an ignored file that isn't committed yet is not counted.
 export function treeHash(root: string, o: { timeoutMs?: number } = {}): string {
   const deadline = Date.now() + (o.timeoutMs ?? 5000); // one budget for all git calls
   // An agent-set GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE or GIT_CONFIG_* must not redirect the hash.
   const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('GIT_')));
-  const git = (args: string[], env: NodeJS.ProcessEnv, pre: string[] = []): string => {
+  const run = (args: string[], env: NodeJS.ProcessEnv, ok: number[] = [0]): { status: number; stdout: string } => {
     const left = deadline - Date.now();
     const what = `git ${args[0]}`;
     if (left <= 0) throw new Error(`tree hash: timed out before ${what}`);
-    const r = spawnSync('git', [...SAFE_GIT, ...pre, ...args], { cwd: root, env, timeout: left, encoding: 'utf8', windowsHide: true });
+    const r = spawnSync('git', [...SAFE_GIT, ...args], { cwd: root, env, timeout: left, encoding: 'utf8', windowsHide: true });
     if (r.error) throw new Error(`tree hash: ${what} failed: ${r.error.message}`);
-    if (r.status !== 0) throw new Error(`tree hash: ${what} exited ${r.status}: ${String(r.stderr).trim()}`);
-    return String(r.stdout);
+    if (r.status === null || !ok.includes(r.status)) throw new Error(`tree hash: ${what} exited ${r.status}: ${String(r.stderr).trim()}`);
+    return { status: r.status, stdout: String(r.stdout) };
   };
   const tmp = mkdtempSync(join(tmpdir(), 'harness-tree-'));
   try {
-    // exit 1 = no filter lines; any other failure must not pass as "no filters"
-    const lst = spawnSync('git', [...SAFE_GIT, 'config', '-z', '--get-regexp', '^filter\\.'], { cwd: root, env: base, timeout: Math.max(1, deadline - Date.now()), encoding: 'utf8', windowsHide: true });
-    if (lst.error || (lst.status !== 0 && lst.status !== 1)) throw new Error(`tree hash: git config failed: ${lst.error?.message ?? String(lst.stderr).trim()}`);
-    const env = { ...base, GIT_INDEX_FILE: join(tmp, 'index') };
-    // write-tree too: it rewrites the index and re-hashes racily clean entries through the clean filter.
-    const pre = ['-c', 'core.sparseCheckout=false', ...filterOffs(String(lst.stdout))];
-    git(['add', '-A', '--', ':/', ...TREE_EXCLUDES.map((p) => `:(top,exclude)${p}`)], env, pre);
-    const hash = git(['write-tree'], env, pre).trim();
+    const lst = run(['config', '-z', '--get-regexp', '^(filter|lfs\\.extension)\\.'], base, [0, 1]); // 1 = no such keys
+    const pairs: [string, string][] = [['core.sparseCheckout', 'false'], ['core.ignoreStat', 'false'], ...filterOffs(lst.stdout)];
+    const env: NodeJS.ProcessEnv = { ...base, GIT_INDEX_FILE: join(tmp, 'index'), GIT_CONFIG_COUNT: String(pairs.length) };
+    pairs.forEach(([k, v], i) => { env[`GIT_CONFIG_KEY_${i}`] = k; env[`GIT_CONFIG_VALUE_${i}`] = v; });
+    // exit 1 from rev-parse --verify -q: HEAD is unborn
+    if (run(['rev-parse', '--verify', '-q', 'HEAD'], env, [0, 1]).status === 0) run(['read-tree', 'HEAD'], env);
+    // write-tree runs the filters too: it rewrites the index and re-hashes racily clean entries through the clean filter.
+    run(['add', '-A', '--', ':/', ...TREE_EXCLUDES.map((p) => `:(top,exclude)${p}`)], env);
+    const hash = run(['write-tree'], env).stdout.trim();
     if (!/^[0-9a-f]{40,64}$/.test(hash)) throw new Error(`tree hash: write-tree printed ${JSON.stringify(hash)}`);
     return hash;
   } finally {

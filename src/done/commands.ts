@@ -45,3 +45,12 @@ export function checkArgvs(root: string, config: HarnessConfig): Map<string, str
 
 /** The argv the stop step labelled `name` runs, e.g. ['pnpm', 'run', 'test']; null when no configured step resolves to it. */
 export const checkArgv = (root: string, config: HarnessConfig, name: string): string[] | null => checkArgvs(root, config).get(name) ?? null;
+
+/** What the hook records from `harness done --blocked "<reason>"`: the row keeps this many characters. */
+export const MAX_BLOCKED_REASON = 500;
+
+/** The reason of a command line that is exactly `harness done --blocked "<reason>"` with a non-blank reason; else null. The CLI and the hook share it. */
+export function blockedReason(command: string): string | null {
+  const a = harnessArgs(command);
+  return a?.length === 3 && a[0] === 'done' && a[1] === '--blocked' && a[2]!.trim() ? a[2]! : null;
+}

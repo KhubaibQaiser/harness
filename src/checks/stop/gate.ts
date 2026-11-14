@@ -11,7 +11,7 @@ import { realish } from '../../core/paths.js';
 import { type PlanStep, type RunSteps, runUnwrapped } from './steps.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
-export type ExecResult = { status: number | null; output: string; timedOut: boolean };
+export type ExecResult = { status: number | null; output: string; timedOut: boolean; stdout?: string; stderr?: string };
 export type Exec = (cmd: string, args: string[], timeoutMs: number) => ExecResult | Promise<ExecResult>;
 
 const DOCS_ONLY = /\.(md|mdx|txt)$|^docs\/|^LICENSE$/;
@@ -56,7 +56,7 @@ export const defaultExec = (root: string): Exec => (cmd, args, timeout) =>
       clearTimeout(grace);
       c.stdout?.destroy();
       c.stderr?.destroy();
-      resolve({ status, output: `${out}\n${err}${extra}`, timedOut });
+      resolve({ status, output: `${out}\n${err}${extra}`, timedOut, stdout: out, stderr: err });
     };
     c.stdout?.on('data', (d) => (out = (out + d).slice(-KEEP)));
     c.stderr?.on('data', (d) => (err = (err + d).slice(-KEEP)));

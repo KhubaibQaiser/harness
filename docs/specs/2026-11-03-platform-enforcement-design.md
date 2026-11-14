@@ -107,10 +107,25 @@ Otherwise it denies: "Unattended run without Claude Code's sandbox. Start it wit
 The documented unattended launch (README):
 
 ```sh
-HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false}}'
+HARNESS_SANDBOX=1 HARNESS_UNATTENDED=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p "…" --allowedTools "Bash,Edit,Write" --settings '{"sandbox":{
+  "enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false,
+  "network":{"strictAllowlist":true,"allowedDomains":[]},
+  "credentials":{
+    "files":[{"path":"~/.ssh","mode":"deny"},{"path":"~/.aws","mode":"deny"},{"path":"~/.config/gcloud","mode":"deny"},
+      {"path":"~/.azure","mode":"deny"},{"path":"~/.kube","mode":"deny"},{"path":"~/.docker/config.json","mode":"deny"},
+      {"path":"~/.npmrc","mode":"deny"},{"path":"~/.pypirc","mode":"deny"},{"path":"~/.netrc","mode":"deny"},
+      {"path":"~/.git-credentials","mode":"deny"},{"path":"~/.config/git/credentials","mode":"deny"},{"path":"~/.config/gh","mode":"deny"},
+      {"path":"~/.claude/.credentials.json","mode":"deny"}],
+    "envVars":[{"name":"NPM_TOKEN","mode":"deny"},{"name":"AWS_ACCESS_KEY_ID","mode":"deny"},
+      {"name":"AWS_SECRET_ACCESS_KEY","mode":"deny"},{"name":"AWS_SESSION_TOKEN","mode":"deny"},
+      {"name":"ANTHROPIC_API_KEY","mode":"deny"},{"name":"ANTHROPIC_AUTH_TOKEN","mode":"deny"},{"name":"CLAUDE_CODE_OAUTH_TOKEN","mode":"deny"},
+      {"name":"GITHUB_TOKEN","mode":"deny"},{"name":"GH_TOKEN","mode":"deny"},{"name":"GH_ENTERPRISE_TOKEN","mode":"deny"},
+      {"name":"GITHUB_ENTERPRISE_TOKEN","mode":"deny"}]}}}'
 ```
 
 `--settings` sits above project and local settings, and `failIfUnavailable` makes the run exit instead of running unsandboxed (R§4 B).
+
+Amended 2026-11-14 (isolation decision I1): the launch also carries `network.strictAllowlist`, its own `allowedDomains` and `credentials` deny entries, and under `bypassPermissions` or `plan`, or with no permission mode in the hook input, the check also requires `sandbox.network.strictAllowlist: true` from user or managed settings (or a managed `allowManagedDomainsOnly: true`), or `HARNESS_SANDBOX=1`, which now stands for the full `--settings` above. Otherwise it denies with "Unattended `bypassPermissions` or plan-mode run without `sandbox.network.strictAllowlist: true`, so sandboxed commands can reach any host. Start it with the command in the README (Unattended runs and CI), or set the key in your user or managed settings (a repo's settings can't)." The launch also sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` (I10); it strips `CLAUDE_CONFIG_DIR` from the hooks, so harness reads the user config dir from `CLAUDE_CONFIG_DIR`, else the launcher's `HARNESS_CLAUDE_CONFIG_DIR`, else `~/.claude`, and ignores a mirror that a repo's settings `env` sets. Live on 2.1.322, the scrub forces the permission mode to `default`, so the launch passes `--allowedTools` and `HARNESS_UNATTENDED=1`; `default` mode prompts for an outside host and `-p` refuses it, so the strictAllowlist rule stays limited to `bypassPermissions`, `plan` and a missing mode. See docs/reference.md (Start unattended runs in the sandbox).
 
 ### 3.5 Guard (SEC-4)
 

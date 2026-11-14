@@ -34,8 +34,28 @@ export function readManagedLayers(managed: string): Layer[] {
   return [...dropIns(dir).map((f): Layer => ({ name: 'managed', json: readJson(join(dir, f)) })), { name: 'managed', json: readJson(managed) }];
 }
 
-/** Claude Code's user settings file: `$CLAUDE_CONFIG_DIR/settings.json` when that is set. */
-export const userSettingsPath = (home: string, env: NodeJS.ProcessEnv): string => join(env.CLAUDE_CONFIG_DIR || join(home, '.claude'), 'settings.json');
+/**
+ * Claude Code's config dir: `CLAUDE_CONFIG_DIR`, else `HARNESS_CLAUDE_CONFIG_DIR` (the launcher's mirror: the subprocess
+ * env scrub strips `CLAUDE_CONFIG_DIR` from hooks), else `~/.claude`.
+ */
+export const claudeConfigDir = (home: string, env: NodeJS.ProcessEnv): string =>
+  env.CLAUDE_CONFIG_DIR || env.HARNESS_CLAUDE_CONFIG_DIR || join(home, '.claude');
+
+/** Claude Code's user settings file in `claudeConfigDir`. */
+export const userSettingsPath = (home: string, env: NodeJS.ProcessEnv): string => join(claudeConfigDir(home, env), 'settings.json');
+
+/**
+ * `env` without a `HARNESS_CLAUDE_CONFIG_DIR` that the repo's project or local settings set in their `env`: Claude Code
+ * ignores `CLAUDE_CONFIG_DIR` there, so the repo can't name the mirror either. Files are read only when it is set.
+ */
+export function withoutRepoMirror(root: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!env.HARNESS_CLAUDE_CONFIG_DIR) return env;
+  const set = ['settings.json', 'settings.local.json'].some((f) => {
+    const e = (readJson(join(root, '.claude', f)) as { env?: unknown } | null)?.env;
+    return typeof e === 'object' && e !== null && 'HARNESS_CLAUDE_CONFIG_DIR' in e;
+  });
+  return set ? { ...env, HARNESS_CLAUDE_CONFIG_DIR: undefined } : env;
+}
 
 /** The value at `path` from the first layer that defines it. */
 export function effective(layers: Layer[], path: string[]): unknown {

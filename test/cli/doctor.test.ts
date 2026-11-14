@@ -48,9 +48,9 @@ const bin = (name: string) => {
 // The machine probes and the user/managed settings never come from this host: CI's Ubuntu restricts user namespaces.
 const HOME = mkdtempSync(join(tmpdir(), 'h-home-'));
 const hermetic = (o: { read?: (p: string) => string | null; home?: string; managed?: string } = {}) => ({ read: o.read ?? (() => null), home: o.home ?? HOME, managed: o.managed ?? join(HOME, 'no-managed.json') });
-const run = (root: string, o: { claude?: string | null; path?: string; platform?: NodeJS.Platform; read?: (p: string) => string | null; home?: string; managed?: string } = {}) => {
+const run = (root: string, o: { claude?: string | null; path?: string; platform?: NodeJS.Platform; read?: (p: string) => string | null; home?: string; managed?: string; env?: NodeJS.ProcessEnv } = {}) => {
   let out = '';
-  const code = doctor([], { root, env: { PATH: withNode(o.path) }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => (o.claude === undefined ? MIN_CLAUDE_CODE : o.claude), platform: o.platform, ...hermetic(o) });
+  const code = doctor([], { root, env: { PATH: withNode(o.path), ...o.env }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => (o.claude === undefined ? MIN_CLAUDE_CODE : o.claude), platform: o.platform, ...hermetic(o) });
   return { code, out, lines: out.trim().split('\n') };
 };
 const setConfig = (root: string, edit: (s: string) => string) => {
@@ -516,6 +516,15 @@ test('doctor: user and managed settings count, and sandbox filesystem arrays mer
   // Scalars keep precedence: a user `enabled: false` loses to the project's `true`.
   user({ sandbox: { enabled: false, filesystem: { denyWrite: config } } });
   expect(mac().out).not.toMatch(/sandbox is off/);
+  // R-2: the launcher's HARNESS_CLAUDE_CONFIG_DIR mirror names the user file; one a repo's settings env sets doesn't count.
+  user({ sandbox: { filesystem: { denyWrite: config } } });
+  const mirror = mkdtempSync(join(tmpdir(), 'h-mirror-'));
+  writeFileSync(join(mirror, 'settings.json'), JSON.stringify({ sandbox: { filesystem: { denyWrite: config, disabled: true } } }));
+  const viaMirror = () => run(root, { path: bin('npm'), platform: 'darwin', home, env: { HARNESS_CLAUDE_CONFIG_DIR: mirror } }).out;
+  expect(viaMirror()).toMatch(/^fix `sandbox\.filesystem\.disabled` is true in `.*h-mirror-/m);
+  writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify({ env: { HARNESS_CLAUDE_CONFIG_DIR: mirror } }));
+  expect(viaMirror()).not.toMatch(/filesystem\.disabled/);
+  rmSync(join(root, '.claude/settings.local.json'));
 });
 
 test('doctor: WSL1 and the AppArmor user-namespace restriction are machines that cannot run the sandbox', async () => {

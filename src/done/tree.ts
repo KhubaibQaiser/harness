@@ -12,7 +12,7 @@ export const TREE_EXCLUDES = [...HARNESS_LOCAL.map((p) => p.replace(/\/$/, '')),
 const STOCK_LFS = { clean: 'git-lfs clean -- %f', process: 'git-lfs filter-process' };
 
 /** [key, value] config overrides that stop every configured clean/process filter from running; stock git-lfs stays, or every LFS repo reads dirty. */
-function filterOffs(listing: string): [string, string][] {
+export function filterOffs(listing: string): [string, string][] {
   const filters = new Map<string, { clean?: string; process?: string }>();
   let lfsExtension = false; // lfs.extension.<n>.clean programs run inside git-lfs, so LFS is no longer stock
   for (const entry of listing.split('\0').filter(Boolean)) {
@@ -31,6 +31,12 @@ function filterOffs(listing: string): [string, string][] {
     out.push([`filter.${n}.clean`, ''], [`filter.${n}.process`, ''], [`filter.${n}.required`, 'false']);
   }
   return out;
+}
+
+/** Unborn means HEAD names a branch and that branch doesn't exist (a fresh repo, `checkout --orphan`). A garbage ref or a detached HEAD at a missing object is an error, not an empty tree. */
+function unborn(run: (args: string[], env: NodeJS.ProcessEnv, ok?: number[]) => { status: number; stdout: string }, env: NodeJS.ProcessEnv): boolean {
+  const sym = run(['symbolic-ref', '-q', 'HEAD'], env, [0, 1]); // 1: detached; a broken HEAD exits 128 and throws
+  return sym.status === 0 && run(['show-ref', '--verify', '-q', sym.stdout.trim()], env, [0, 1]).status === 1;
 }
 
 // The temp index is seeded from HEAD (read-tree leaves stat data zeroed and sets no assume-unchanged or skip-worktree bit), so
@@ -55,12 +61,12 @@ export function treeHash(root: string, o: { timeoutMs?: number } = {}): string {
   };
   const tmp = mkdtempSync(join(tmpdir(), 'harness-tree-'));
   try {
-    const lst = run(['config', '-z', '--get-regexp', '^(filter|lfs\\.extension)\\.'], base, [0, 1]); // 1 = no such keys
+    const lst = run(['config', '-z', '--get-regexp', '^(filter|lfs)\\.'], base, [0, 1]); // 1 = no such keys
     const pairs: [string, string][] = [['core.sparseCheckout', 'false'], ['core.ignoreStat', 'false'], ...filterOffs(lst.stdout)];
     const env: NodeJS.ProcessEnv = { ...base, GIT_INDEX_FILE: join(tmp, 'index'), GIT_CONFIG_COUNT: String(pairs.length) };
     pairs.forEach(([k, v], i) => { env[`GIT_CONFIG_KEY_${i}`] = k; env[`GIT_CONFIG_VALUE_${i}`] = v; });
-    // exit 1 from rev-parse --verify -q: HEAD is unborn
     if (run(['rev-parse', '--verify', '-q', 'HEAD'], env, [0, 1]).status === 0) run(['read-tree', 'HEAD'], env);
+    else if (!unborn(run, env)) throw new Error('tree hash: HEAD does not resolve to a commit');
     // write-tree runs the filters too: it rewrites the index and re-hashes racily clean entries through the clean filter.
     run(['add', '-A', '--', ':/', ...TREE_EXCLUDES.map((p) => `:(top,exclude)${p}`)], env);
     const hash = run(['write-tree'], env).stdout.trim();

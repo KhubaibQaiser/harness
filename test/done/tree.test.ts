@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
-import { TREE_EXCLUDES, treeHash } from '../../src/done/tree.js';
+import { filterOffs, TREE_EXCLUDES, treeHash } from '../../src/done/tree.js';
 import { commit, git, repoWith } from '../review/repo.js';
 
 const dirs: string[] = [];
@@ -210,4 +210,29 @@ test('a filter name containing = is blanked too', () => {
   put(root, 'a.txt', 'one\n');
   treeHash(root);
   expect(existsSync(marker)).toBe(false);
+});
+
+test('an lfs extension makes stock LFS non-stock, whatever the case of its subsection', () => {
+  const stock = 'filter.lfs.clean\ngit-lfs clean -- %f\0';
+  expect(filterOffs(stock)).toEqual([]);
+  expect(filterOffs(`${stock}lfs.Extension.E.clean\nx\0`).map(([k]) => k)).toContain('filter.lfs.clean');
+});
+
+test('a garbage HEAD ref throws instead of reading as unborn', () => {
+  const root = mk();
+  writeFileSync(join(root, '.git', 'refs', 'heads', 'main'), 'garbage\n');
+  expect(() => treeHash(root)).toThrow(/git/);
+});
+
+test('a detached HEAD at a missing object throws', () => {
+  const root = mk();
+  writeFileSync(join(root, '.git', 'HEAD'), '1234567890123456789012345678901234567890\n');
+  expect(() => treeHash(root)).toThrow(/git/);
+});
+
+test('an orphan branch hashes the files on disk', () => {
+  const root = mk({ 'a.txt': 'a\n' });
+  git(root, 'checkout', '-q', '--orphan', 'fresh');
+  put(root, 'new.txt', 'n\n');
+  expect(treeHash(root)).toBe(truth(root));
 });

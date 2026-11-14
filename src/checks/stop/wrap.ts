@@ -13,7 +13,7 @@ import type { CheckName, Plan, ResultLine, RunSteps, StepResult, StepsRun } from
 export interface WrapDeps { root: string; stop: HarnessConfig['stop']; exec: Exec; now: () => number; srt: SrtProbe; home: string; platform: NodeJS.Platform; env: NodeJS.ProcessEnv; tokenBase: () => string | null; node: string; nonce?: () => string }
 export type Expected = { kind: 'check'; name: CheckName } | { kind: 'step'; label: string };
 
-export const srtArgv = (settings: string, node: string, runner: string, plan: string, nonce: string): string[] => ['--settings', settings, node, runner, '--stop-steps', plan, nonce];
+export const srtArgv = (settings: string, node: string, runner: string, plan: string, nonce: string): string[] => ['--settings', settings, node, '--no-warnings', runner, '--stop-steps', plan, nonce];
 
 const PROXY = 'sandbox proxy:';
 const MAX_PROXY = 1024;
@@ -120,7 +120,9 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
     const last = results.at(-1);
     const failed = !!last && (last.timedOut || last.status !== 0);
     if (!failed && r.stderrRolled) return fail('srt warning', 'stderr overflow'); // the dropped head may have held a warning
-    const proxy = errLines.join('\n').slice(-MAX_PROXY);
+    const all = errLines.join('\n');
+    const cut = all.slice(-MAX_PROXY);
+    const proxy = all.length > MAX_PROXY && all[all.length - MAX_PROXY - 1] !== '\n' ? cut.slice(cut.indexOf('\n') + 1) : cut; // start at a line boundary
     if (failed && proxy) last.output += `\n${proxy}`; // srt's own denial lines explain a step that needed the network
     return { kind: 'ran', results };
   } catch (e) {

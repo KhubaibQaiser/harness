@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { defaultExec, type Exec, killTree, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
+import { defaultExec, type Exec, killTree, pickRunner, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
 import { runUnwrapped } from '../../../src/checks/stop/steps.js';
 import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
@@ -28,7 +28,7 @@ const setup = (o: Opts = {}) => {
   const saved: number[] = [];
   const ctx = {
     input: { session_id: 's', cwd: root, hook_event_name: 'Stop', ...(o.hookActive === undefined ? {} : { stop_hook_active: o.hookActive }) },
-    root, config: loadConfig(root).config, state, unattended: false, env: {},
+    root, config: loadConfig(root).config, state, unattended: false, env: {}, home: tmpdir(), platform: process.platform,
     save(s) { ctx.state = s; saved.push(s.stopAttempts); },
   } as Ctx;
   const calls: { cmd: string; args: string[]; ms: number }[] = [];
@@ -42,6 +42,8 @@ const setup = (o: Opts = {}) => {
   return { root, ctx, calls, exec, steps, saved };
 };
 import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import type { SrtProbe } from '../../../src/checks/stop/srt.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../../src/core/git-safe.js';
 const require_mkdir = (root: string) => mkdirSync(join(root, '.harness'), { recursive: true });
 const SRC = ' M src/a.ts\0';
@@ -507,4 +509,83 @@ test('a team-decision warning is a note: the gate allows with context, never blo
   expect(d).toMatchObject({ kind: 'context', check: 'stop' });
   expect((d as { text: string }).text).toContain('team decision `2026-11-01-w`');
   expect(s.ctx.state.stopAttempts).toBe(0); // the pass resets it, as for any allow
+});
+
+// pickRunner: wrapped unless `sandbox: off` or native Windows (R9, R10). Never chosen from an env var, file or probe.
+const wrapped = (s: ReturnType<typeof setup>, probe?: SrtProbe, which: (c: string) => string | null = (c) => c) => (e: Exec) => runStopReal(s.ctx, e, Date.now, which, pickRunner(s.ctx, e, Date.now, probe));
+const stopEvents = (root: string, decision: string) => readEvents(root).filter((e) => e.decision === decision);
+const winSkip = process.platform === 'win32';
+
+test('sandbox off: unwrapped, stop-unwrapped logged once per session', async () => {
+  const s = setup({ yaml: 'sandbox: off\n' });
+  const probe: SrtProbe = { which: () => { throw new Error('srt looked up'); }, version: () => '' };
+  expect(await wrapped(s, probe)(s.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(s.steps()).toEqual(ALL);
+  await wrapped(s, probe)(s.exec(SRC));
+  expect(stopEvents(s.root, 'stop-unwrapped')).toHaveLength(1);
+});
+
+test('win32 runs unwrapped', async () => {
+  const s = setup();
+  s.ctx.platform = 'win32';
+  const probe: SrtProbe = { which: () => { throw new Error('srt looked up'); }, version: () => '' };
+  expect(await wrapped(s, probe)(s.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(s.steps()).toEqual(ALL);
+});
+
+test.skipIf(winSkip).each(['linux', 'darwin', 'freebsd'] as const)('%s: HARNESS_CONTAINER=1, HARNESS_SANDBOX=1 and an srt-looking env still wrap (never from a probe)', async (platform) => {
+  const s = setup();
+  Object.assign(s.ctx, { platform, env: { HARNESS_CONTAINER: '1', HARNESS_SANDBOX: '1', SRT_SETTINGS: '/x', PATH: '/nonexistent-dir' } });
+  const d = await wrapped(s)(s.exec(SRC));
+  expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+  expect((d as { reason: string }).reason).toContain('sandbox-runtime (srt)');
+  expect(s.steps()).toEqual([]);
+});
+
+test.skipIf(winSkip)('srt unavailable blocks with the message, logs stop-srt-unavailable with the failed check, counts toward max_attempts, gives up at max+1', async () => {
+  const s = setup({ yaml: 'stop:\n  max_attempts: 2\n' });
+  const run = wrapped(s);
+  for (const n of [1, 2]) {
+    const d = await run(s.exec(SRC));
+    expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+    expect((d as { reason: string }).reason).toMatch(/^Stop gate: the checks run inside sandbox-runtime \(srt\), and srt is not installed\./);
+    expect(s.ctx.state.stopAttempts).toBe(n);
+  }
+  expect(stopEvents(s.root, 'stop-srt-unavailable').map((e) => e.reason)).toEqual(['missing', 'missing']);
+  expect(await run(s.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(s.ctx.state.stopAttempts).toBe(0);
+  expect(stopEvents(s.root, 'stop-gave-up')).toHaveLength(1);
+  expect(s.steps()).toEqual([]);
+});
+
+test('docs-only and nothing-to-run Stops never look up srt', async () => {
+  let looked = 0;
+  const probe: SrtProbe = { which: () => (looked++, null), version: () => '' };
+  const docs = setup();
+  expect(await wrapped(docs, probe)(docs.exec(' M README.md\0'))).toEqual({ kind: 'allow' });
+  const none = setup({ scripts: [] });
+  expect(await wrapped(none, probe)(none.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(looked).toBe(0);
+});
+
+test.skipIf(winSkip)('a wrapped step failure blocks like today and keeps the srt lines in the tail', async () => {
+  const s = setup();
+  mkdirSync(join(s.root, '.harness/hooks'), { recursive: true });
+  writeFileSync(join(s.root, '.harness/hooks/dispatch.mjs'), '');
+  const srtJs = fileURLToPath(new URL('../../../build.mjs', import.meta.url)); // outside every writable root; a .mjs is a node launch
+  const probe: SrtProbe = { which: () => srtJs, version: () => '0.0.83' };
+  const e: Exec = (cmd, args, ms) => {
+    if (cmd === 'git') return s.exec(SRC)(cmd, args, ms);
+    const nonce = args.at(-1)!;
+    const plan = JSON.parse(readFileSync(args.at(-2)!, 'utf8')) as { steps: { label: string }[] };
+    const out = plan.steps.slice(0, 2).map((st, i) => JSON.stringify({ nonce, kind: 'step', label: st.label, status: i, timedOut: false, ms: 1, ...(i ? { output: 'boom in lint' } : {}) }));
+    return { status: 0, output: '', timedOut: false, stdout: out.join('\n'), stderr: 'sandbox proxy: denied registry.npmjs.org:443\n' };
+  };
+  const d = await wrapped(s, probe)(e);
+  expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+  const reason = (d as { reason: string }).reason;
+  expect(reason).toMatch(/^lint failed \(attempt 1 of 3\)/);
+  expect(reason).toContain('boom in lint');
+  expect(reason).toContain('sandbox proxy: denied registry.npmjs.org:443');
+  expect(s.ctx.state.stopAttempts).toBe(1);
 });

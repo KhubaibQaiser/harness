@@ -60,8 +60,8 @@ suite('runWrapped', () => {
   test('argv is exactly the launch prefix, --settings <abs settings>, <node>, <abs runner>, --stop-steps <abs plan>, <nonce>', async () => {
     const { calls, run } = setup();
     await run();
-    expect(srtArgv('/s', '/n', '/r', '/p', N)).toEqual(['--settings', '/s', '/n', '/r', '--stop-steps', '/p', N]);
-    expect([calls[0]!.cmd, ...calls[0]!.args]).toEqual([node, srtJs, '--settings', settingsAt(), node, runner, '--stop-steps', planAt(), N]);
+    expect(srtArgv('/s', '/n', '/r', '/p', N)).toEqual(['--settings', '/s', '/n', '--no-warnings', '/r', '--stop-steps', '/p', N]);
+    expect([calls[0]!.cmd, ...calls[0]!.args]).toEqual([node, srtJs, '--settings', settingsAt(), node, '--no-warnings', runner, '--stop-steps', planAt(), N]);
     expect(calls[0]!.ms).toBe(1000);
   });
 
@@ -120,12 +120,14 @@ suite('runWrapped', () => {
     const failOut = [line('format:check'), line('lint', { status: 1, output: 'npm ERR! network' })].join('\n');
     const r = await setup({ stdout: failOut, stderr }).run();
     expect(r).toEqual({ kind: 'ran', results: [{ label: 'format:check', status: 0, timedOut: false, ms: 5, output: '' }, { label: 'lint', status: 1, timedOut: false, ms: 5, output: 'npm ERR! network\nsandbox proxy: denied registry.npmjs.org:443' }] });
-    const many = Array.from({ length: 100 }, (_, i) => `sandbox proxy: denied host${i}.example:443`).join('\n');
+    const many = Array.from({ length: 100 }, (_, i) => `sandbox proxy: denied host${i}.example:443${'x'.repeat(i % 7)}`).join('\n');
     const capped = await setup({ stdout: failOut, stderr: many }).run();
     const out = capped.kind === 'ran' ? capped.results[1]!.output : '';
     expect(out.startsWith('npm ERR! network\n')).toBe(true);
-    expect(out.length - 'npm ERR! network\n'.length).toBe(1024);
-    expect(out.endsWith('host99.example:443')).toBe(true);
+    const tail = out.slice('npm ERR! network\n'.length);
+    expect(tail.length).toBeLessThanOrEqual(1024);
+    expect(tail.split('\n').every((l) => l.startsWith('sandbox proxy: denied host'))).toBe(true); // starts at a line boundary, never mid-line
+    expect(out.endsWith(`host99.example:443${'x'.repeat(99 % 7)}`)).toBe(true);
     expect(await setup({ stdout: pass, stderr }).run()).toMatchObject({ kind: 'ran' });
     const warn = stderr + 'warning: seccomp filter not applied\n';
     expect(await setup({ stdout: pass, stderr: warn }).run()).toEqual(unavailable('srt warning', 'warning: seccomp filter not applied'));

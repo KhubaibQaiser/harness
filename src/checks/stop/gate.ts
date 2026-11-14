@@ -9,6 +9,9 @@ import { coverageGate } from './coverage-gate.js';
 import { findOnPath, resolveStep, scriptsOf, winCmdLine } from './runner.js';
 import { realish } from '../../core/paths.js';
 import { type PlanStep, type RunSteps, runUnwrapped } from './steps.js';
+import { realSrtProbe, type SrtProbe } from './srt.js';
+import { tokenBase } from '../../core/token-base.js';
+import { runWrapped } from './wrap.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
 export type ExecResult = { status: number | null; output: string; timedOut: boolean; stdout?: string; stderr?: string; stderrRolled?: boolean };
@@ -191,7 +194,10 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   const res = await run(plan, stepsStart + timeout_s * 1000);
   const timeoutText = `Stop gate timed out after ${timeout_s}s; checks did not finish.`;
   if (res.kind === 'timeout') return { kind: 'context', text: timeoutText, check: 'stop' };
-  if (res.kind === 'unavailable') return { kind: 'block', reason: res.message, check: 'stop' }; // not reached until the wrapped runner lands
+  if (res.kind === 'unavailable') {
+    log('stop-srt-unavailable', res.reason);
+    return failStep(res.message); // counts toward max_attempts like any failing step
+  }
   for (const r of res.results) {
     appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: r.label, outcome: r.timedOut ? 'timeout' : r.status === 0 ? 'allow' : 'block', ms: Math.max(0, r.ms) });
     if (r.timedOut) return { kind: 'context', text: timeoutText, check: 'stop' };
@@ -216,8 +222,27 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   return done(allow);
 }
 
+/** Wrapped in srt unless `sandbox: off` or native Windows (R10). Never chosen from an env var, file or probe (R9). */
+export function pickRunner(ctx: Ctx, exec: Exec, now: () => number, srt: SrtProbe = realSrtProbe(ctx.env, ctx.platform)): RunSteps {
+  const unwrapped = runUnwrapped(exec, now);
+  if (ctx.config.sandbox === 'off')
+    return (steps, deadline) => {
+      if (!ctx.state.stopUnwrappedLogged) {
+        try {
+          appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'stop', decision: 'stop-unwrapped' });
+        } catch {
+          // event log is best effort
+        }
+        ctx.save({ ...ctx.state, stopUnwrappedLogged: true });
+      }
+      return unwrapped(steps, deadline);
+    };
+  if (ctx.platform === 'win32') return unwrapped;
+  return runWrapped({ root: ctx.root, stop: ctx.config.stop, exec, now, srt, home: ctx.home, platform: ctx.platform, env: ctx.env, tokenBase: () => tokenBase(ctx.platform, ctx.env), node: process.execPath });
+}
+
 export const stopGate: Check = {
   name: 'stopGate',
   events: ['Stop'],
-  run: (ctx) => (ctx.config.checks.stop ? (() => { const exec = defaultExec(ctx.root); return runStop(ctx, exec, Date.now, realWhich, runUnwrapped(exec, Date.now)); })() : allow),
+  run: (ctx) => (ctx.config.checks.stop ? (() => { const exec = defaultExec(ctx.root); return runStop(ctx, exec, Date.now, realWhich, pickRunner(ctx, exec, Date.now)); })() : allow),
 };

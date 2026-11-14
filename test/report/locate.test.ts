@@ -28,6 +28,7 @@ const run = (root: string, extra: Partial<Parameters<typeof locateSessions>[1]> 
 describe('names', () => {
   it('projectsDir honours CLAUDE_CONFIG_DIR', () => {
     expect(projectsDir({ CLAUDE_CONFIG_DIR: '/x' }, '/h')).toBe(join('/x', 'projects'));
+    expect(projectsDir({ HARNESS_CLAUDE_CONFIG_DIR: '/m' }, '/h')).toBe(join('/m', 'projects'));
     expect(projectsDir({}, '/h')).toBe(join('/h', '.claude', 'projects'));
   });
   it('encodes every non-alphanumeric as a dash', () => {

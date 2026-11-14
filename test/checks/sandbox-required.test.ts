@@ -150,6 +150,23 @@ describe('the check', () => {
     expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, { CLAUDE_CONFIG_DIR: cfg }, { home, managed, platform: 'darwin' })).toBe('');
   });
 
+  test('the user layer is read from the HARNESS_CLAUDE_CONFIG_DIR mirror', async () => {
+    const { root, home, managed } = setup();
+    const cfg = mkdtempSync(join(tmpdir(), 'h-sb-mirror-'));
+    writeFileSync(join(cfg, 'settings.json'), JSON.stringify(CONFIRMED_STRICT));
+    expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, { HARNESS_CLAUDE_CONFIG_DIR: cfg }, { home, managed, platform: 'darwin' })).toBe('');
+  });
+
+  test.each(['settings.json', 'settings.local.json'])('a mirror that the repo %s sets in env is ignored', async (file) => {
+    const { root, home, managed } = setup();
+    const cfg = mkdtempSync(join(tmpdir(), 'h-sb-mirror-'));
+    writeFileSync(join(cfg, 'settings.json'), JSON.stringify(CONFIRMED_STRICT));
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, '.claude', file), JSON.stringify({ env: { HARNESS_CLAUDE_CONFIG_DIR: cfg } }));
+    const out = await dispatch(call(root, 'Bash', { command: 'ls' }), registry, { HARNESS_CLAUDE_CONFIG_DIR: cfg }, { home, managed, platform: 'darwin' });
+    expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+
   test('HARNESS_SANDBOX is ignored when a settings file sets it in env', async () => {
     const { root, home, managed } = setup();
     mkdirSync(join(root, '.claude'));

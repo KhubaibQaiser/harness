@@ -86,6 +86,17 @@ test('with CLAUDE_CONFIG_DIR set, disableAllHooks in that dir\'s settings is blo
   expect(parsed(await go(FIXTURE.user_settings)).reason).toContain(`this change to \`${join(cfg, 'settings.json')}\` (disableAllHooks)`);
 });
 
+test('with only the HARNESS_CLAUDE_CONFIG_DIR mirror set (the env scrub strips CLAUDE_CONFIG_DIR), that dir is watched', async () => {
+  const r = repo();
+  const cfg = mkdtempSync(join(tmpdir(), 'h-cc-mirror-'));
+  write(join(cfg, 'settings.json'), {});
+  const go = (input: Record<string, unknown>) =>
+    dispatch(JSON.stringify({ ...input, session_id: 's', cwd: r.root }), registry, { HARNESS_CLAUDE_CONFIG_DIR: cfg }, { home: r.home });
+  await go({ hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+  write(join(cfg, 'settings.json'), { disableAllHooks: true });
+  expect(parsed(await go(FIXTURE.user_settings)).reason).toContain(`this change to \`${join(cfg, 'settings.json')}\` (disableAllHooks)`);
+});
+
 test('an env change in the user file is blocked', async () => {
   const r = repo();
   await prompt(r);

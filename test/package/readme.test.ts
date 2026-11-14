@@ -55,7 +55,7 @@ test('the reference carries the context-budget known limits, verbatim', () => {
   for (const l of limits) expect(reference).toContain(l + '\n');
 });
 
-const launch = (s: string) => /```sh\n(HARNESS_SANDBOX=1 claude -p [\s\S]+?)\n```/.exec(s)?.[1];
+const launch = (s: string) => /```sh\n(HARNESS_SANDBOX=1 [^\n]*claude -p [\s\S]+?)\n```/.exec(s)?.[1];
 
 test('README carries the unattended launch command', () => {
   const cmd = launch(between(pe, '### 3.4', '### 3.5'));
@@ -67,8 +67,11 @@ test('the documented launch is one valid --settings JSON, the same in README and
   const cmd = launch(readme)!;
   expect(launch(reference)).toBe(cmd);
   // The whole JSON is one POSIX single-quoted word, so it can't hold a single quote of its own.
-  const m = /^HARNESS_SANDBOX=1 claude -p "…" --settings '([^']*)'$/.exec(cmd);
-  expect(m, 'one single-quoted --settings argument').not.toBeNull();
+  // The env scrub keeps credential-looking variables out of Bash, hooks and MCP servers (and /proc on Linux).
+  const m = /^HARNESS_SANDBOX=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p "…" --settings '([^']*)'$/.exec(cmd);
+  expect(m, 'the scrub prefix and one single-quoted --settings argument').not.toBeNull();
+  // The scrub strips CLAUDE_CONFIG_DIR from the hooks too, so both docs say how to pass the mirror.
+  for (const doc of [readme, reference]) expect(doc).toContain('HARNESS_CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"');
   const sb = JSON.parse(m![1]).sandbox;
   expect(sb).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false });
   expect(sb.network).toEqual({ strictAllowlist: true, allowedDomains: [] });

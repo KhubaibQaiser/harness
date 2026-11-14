@@ -1,5 +1,5 @@
 // Task 6: the evidence ledger hook. Only an exact check, criterion or test-runner call records a row; a blocked call records a blocked row.
-import { mkdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { loadConfig } from '../../src/core/config.js';
@@ -9,6 +9,7 @@ import { type Contract, setActiveTask, writeContract } from '../../src/done/cont
 import { readLedger, type RunRow } from '../../src/done/ledger.js';
 import { evidenceLedger } from '../../src/done/ledger-hook.js';
 import { treeHash } from '../../src/done/tree.js';
+import type { Ctx } from '../../src/hooks/check.js';
 import { dispatch } from '../../src/hooks/dispatch.js';
 import { git, repoWith } from '../review/repo.js';
 
@@ -48,7 +49,8 @@ test('a matched check records a row with tree, contract hash and passing criteri
   const rows = await rowsAfter(root, post('node build.mjs'));
   expect(rows[1]).toMatchObject({ command: 'node build.mjs', exit: 0, criteria: ['C2'] });
   // PowerShell runs the same commands; Monitor and other tools are not runs.
-  expect(await rowsAfter(root, post('node build.mjs', { tool: 'PowerShell' }))).toHaveLength(3);
+  // PowerShell's response shape is unverified (I2): its row records exit null until a live Windows check.
+  expect((await rowsAfter(root, post('node build.mjs', { tool: 'PowerShell' }))).at(-1)).toMatchObject({ exit: null, criteria: [] });
   expect(await rowsAfter(root, post('node build.mjs', { tool: 'Monitor' }))).toHaveLength(3);
 });
 
@@ -58,13 +60,15 @@ test('PostToolUseFailure records the exit from "Exit code 2"', async () => {
   // A failed run criterion is not passing evidence; an error with no exit line is an unknown exit.
   expect((await rowsAfter(root, failure('node build.mjs', 'Exit code 1')))[1]).toMatchObject({ exit: 1, criteria: [] });
   expect((await rowsAfter(root, failure('pnpm run test', 'Command timed out\nExit code 0')))[2]!.exit).toBeNull();
+  // A failure event never reads as exit 0 (M2).
+  expect((await rowsAfter(root, failure('node build.mjs', 'Exit code 0')))[3]).toMatchObject({ exit: null, criteria: [] });
 });
 
 test('F4: a PostToolUse response with no success or failure signal records exit null, never a pass', async () => {
   const { root } = setup();
-  for (const res of [undefined, null, 'done', {}, { stdout: '' }, { ...OK, interrupted: true }, { ...OK, is_error: true }]) await rowsAfter(root, post('node build.mjs', { res }));
+  for (const res of [undefined, null, 'done', {}, { stdout: '' }, { ...OK, interrupted: true }, { ...OK, is_error: true }, { ...OK, exitCode: '0' }, { ...OK, exit_code: null }]) await rowsAfter(root, post('node build.mjs', { res }));
   const rows = readLedger(root);
-  expect(rows.map((r) => (r.kind === 'run' ? [r.exit, r.criteria] : null))).toEqual(Array(7).fill([null, []]));
+  expect(rows.map((r) => (r.kind === 'run' ? [r.exit, r.criteria] : null))).toEqual(Array(9).fill([null, []])); // a non-numeric exit field is unknown too (M1)
   // An explicit exit code is used as it is.
   expect((await rowsAfter(root, post('node build.mjs', { res: { exitCode: 3 } }))).at(-1)).toMatchObject({ exit: 3, criteria: [] });
   expect((await rowsAfter(root, post('node build.mjs', { res: { exit_code: 0 } }))).at(-1)).toMatchObject({ exit: 0, criteria: ['C2'] });
@@ -156,4 +160,90 @@ test('harnessArgs, isTestRunner and checkArgv read commands exactly', () => {
   expect(checkArgv(root, config, 'lint')).toBeNull(); // no such script
   config.stop.steps = [{ name: 'unit', run: ['make', 'unit'] }];
   expect(checkArgv(root, config, 'unit')).toEqual(['make', 'unit']);
+});
+
+test('C1: a run from any folder but the repo root records nothing', async () => {
+  const { root } = setup();
+  mkdirSync(join(root, 'packages/web'), { recursive: true });
+  expect(await rowsAfter(root, { ...post('pnpm run test'), cwd: join(root, 'packages/web') })).toEqual([]);
+  // A workdir package.json would run its own "test" script; .harness/tmp is outside the tree hash.
+  mkdirSync(join(root, '.harness/tmp/x'), { recursive: true });
+  writeFileSync(join(root, '.harness/tmp/x/package.json'), JSON.stringify({ scripts: { test: 'true' } }));
+  expect(await rowsAfter(root, { ...post('pnpm run test'), cwd: join(root, '.harness/tmp/x') })).toEqual([]);
+  // No cwd at all: no row.
+  const { config } = loadConfig(root);
+  const input = { ...post('pnpm run test'), cwd: '' } as unknown as Ctx['input'];
+  evidenceLedger.run({ input, root, config, env: {}, state: {}, unattended: false, save() {} } as unknown as Ctx);
+  expect(readLedger(root)).toEqual([]);
+  expect(await rowsAfter(root, post('pnpm run test'))).toHaveLength(1); // the root still records
+});
+
+test('I1: a results file dated in the future never counts, and never hides a fresh failure', async () => {
+  const { root } = setup();
+  const results = (status: 'passed' | 'failed', name: string, mtime?: Date) => {
+    mkdirSync(join(root, '.harness/results'), { recursive: true });
+    const p = join(root, '.harness/results', name);
+    writeFileSync(p, JSON.stringify({ testResults: [{ name: join(root, 'test/a.test.ts'), status, assertionResults: [{ fullName: 'a works', status }] }] }));
+    if (mtime) utimesSync(p, mtime, mtime);
+  };
+  const vitest = { ...post('npx vitest run'), duration_ms: 5000 };
+  results('passed', 'future.json', new Date(Date.now() + 3_600_000));
+  expect((await rowsAfter(root, vitest)).at(-1)!.criteria).toEqual([]);
+  results('failed', 'now.json');
+  expect((await rowsAfter(root, vitest)).at(-1)!.criteria).toEqual([]);
+});
+
+test('I3: a plain call that matches nothing prints no warning, even when the contract would not load', async () => {
+  const { root } = setup();
+  writeFileSync(join(root, '.harness/tasks/add-login.json'), '{}');
+  const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    for (const command of ['ls', 'git status', 'cat README.md']) expect(await rowsAfter(root, post(command))).toEqual([]);
+    expect(err.mock.calls.flat().join('')).toBe('');
+    expect(readEvents(root).filter((e) => e.check === 'done')).toEqual([]);
+  } finally {
+    err.mockRestore();
+  }
+});
+
+test('I3: the verified contract gates every row, whatever the unverified parse matched', async () => {
+  const { root } = setup();
+  // A stop step the contract does not check: matched loosely, then refused by the verified contract.
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run', lint: 'eslint .' } }));
+  expect(await rowsAfter(root, post('pnpm run lint'))).toEqual([]);
+  // An edited contract claims `ls` as a run criterion: the parse matches it, the load refuses it, nothing is written.
+  const p = join(root, '.harness/tasks/add-login.json');
+  const raw = JSON.parse(readFileSync(p, 'utf8'));
+  raw.criteria[1].check.run = 'ls';
+  writeFileSync(p, JSON.stringify(raw));
+  const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    expect(await rowsAfter(root, post('ls'))).toEqual([]);
+    expect(err.mock.calls.flat().join('')).toContain('changed since it was approved');
+  } finally {
+    err.mockRestore();
+  }
+});
+
+test('M3: a blocked call needs a reason, and the row keeps at most 200 characters of it', async () => {
+  const { root } = setup();
+  expect(await rowsAfter(root, post('harness done --blocked ""'))).toEqual([]);
+  expect(await rowsAfter(root, post('harness done --blocked "   "'))).toEqual([]);
+  const [row] = await rowsAfter(root, post(`harness done --blocked "${'r'.repeat(300)}"`));
+  expect(row).toMatchObject({ kind: 'blocked', reason: 'r'.repeat(200) });
+});
+
+test('M4: a failure after a match is logged as done ledger-failed, redacted and capped', async () => {
+  const { root } = setup();
+  const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    const token = `ghp_${'a'.repeat(36)}`;
+    expect(await rowsAfter(root, post('pnpm run test'), { HARNESS_TASK: `${token}${'x'.repeat(300)}` })).toEqual([]);
+    const [e] = readEvents(root).filter((x) => x.decision === 'ledger-failed');
+    expect(e).toMatchObject({ check: 'done', reason: expect.stringContaining('HARNESS_TASK') });
+    expect(e!.reason).not.toContain('ghp_');
+    expect(e!.reason!.length).toBeLessThanOrEqual(200);
+  } finally {
+    err.mockRestore();
+  }
 });

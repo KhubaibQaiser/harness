@@ -1,15 +1,21 @@
 // Done-contract costs, measured on a real temp repo. Runs in the `perf` project (no file parallelism). No retries: a slow result is real.
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, onTestFinished, test } from 'vitest';
-import { type Contract, setActiveTask, writeContract } from '../../src/done/contract.js';
+import { type Contract, contractHash, setActiveTask, writeContract } from '../../src/done/contract.js';
 import { readLedger } from '../../src/done/ledger.js';
 import { treeHash } from '../../src/done/tree.js';
 import { commit, git } from '../review/repo.js';
-import { CEILING_MS, COUNTED_EDIT_OVERHEAD_MS, measure, OVERHEAD_MS, report as reportOverhead } from './overhead.js';
+import { CEILING_MS, COUNTED_EDIT_OVERHEAD_MS, DISPATCH, measure, OVERHEAD_MS, report as reportOverhead } from './overhead.js';
 
 const report = (name: string, ms: number) => writeSync(2, `[perf] ${name} ${process.platform}: ${ms.toFixed(1)} ms\n`);
+
+const PERF_CONTRACT: Contract = {
+  id: 'perf', title: 'Perf', base: 'a'.repeat(40), approved_by: 'person', approved_at: '2026-11-14T00:00:00Z', closed_at: null,
+  criteria: [{ id: 'C1', text: 'builds', check: { run: 'node build.mjs', expect_exit: 0 } }], checks: ['test'], review: { model: 'sonnet' }, sha256: null,
+};
 
 /** A committed 500-file repo plus one untracked file; with `done`, checks.done on and an approved active contract checking `test`. */
 function repo500(done = false): string {
@@ -23,13 +29,7 @@ function repo500(done = false): string {
   commit(root, files);
   mkdirSync(join(root, 'src/new'), { recursive: true });
   writeFileSync(join(root, 'src/new/untracked.ts'), 'x');
-  if (done) {
-    const c: Contract = {
-      id: 'perf', title: 'Perf', base: 'a'.repeat(40), approved_by: 'person', approved_at: '2026-11-14T00:00:00Z', closed_at: null,
-      criteria: [{ id: 'C1', text: 'builds', check: { run: 'node build.mjs', expect_exit: 0 } }], checks: ['test'], review: { model: 'sonnet' }, sha256: null,
-    };
-    setActiveTask(root, writeContract(root, c).id);
-  }
+  if (done) setActiveTask(root, writeContract(root, PERF_CONTRACT).id);
   return root;
 }
 const bashPost = (root: string, command: string) =>
@@ -64,4 +64,22 @@ test('a matched check PostToolUse on a 500-file repo: tree hash plus ledger row'
   reportOverhead('ledger-matched-check-500', m);
   expect(m.overhead, `matched check overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(COUNTED_EDIT_OVERHEAD_MS);
   expect(m.total, `matched check total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
+}, 60000);
+
+// A fresh clone or an unattended run has no task-hashes.json: origin's default branch vouches, which costs git calls, so a
+// call that matches nothing must not load the contract at all (I3).
+test('a non-check Bash PostToolUse with no local approval record (origin/HEAD vouches) stays within the plain hook overhead', () => {
+  const root = repo500();
+  commit(root, { '.harness/config.yaml': 'checks:\n  done: true\n', '.harness/tasks/perf.json': JSON.stringify({ ...PERF_CONTRACT, sha256: contractHash(PERF_CONTRACT) }, null, 2) + '\n' });
+  git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(root, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  setActiveTask(root, 'perf');
+  const m = measure(bashPost(root, 'ls'), (r) => expect([r.status, r.stdout, r.stderr]).toEqual([0, '', '']));
+  reportOverhead('ledger-non-check-bash-no-approval-record', m);
+  expect(readLedger(root)).toEqual([]);
+  // Control: the contract is trusted through origin/HEAD, so a matched call records.
+  expect(spawnSync(process.execPath, [DISPATCH], { input: bashPost(root, 'node build.mjs'), encoding: 'utf8' }).status).toBe(0);
+  expect(readLedger(root)[0]).toMatchObject({ command: 'node build.mjs', exit: 0, criteria: ['C1'] });
+  expect(m.overhead, `no-record overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.total, `no-record total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);

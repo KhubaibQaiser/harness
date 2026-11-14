@@ -33,12 +33,15 @@ export function isTestRunner(argv: string[]): boolean {
   return ['npm', 'pnpm', 'yarn', 'bun'].includes(a) && (b === 'test' || (b === 'run' && c === 'test'));
 }
 
-/** The argv the stop step labelled `name` runs, e.g. ['pnpm', 'run', 'test']; null when no configured step resolves to it. */
-export function checkArgv(root: string, config: HarnessConfig, name: string): string[] | null {
-  const scripts = scriptsOf(root);
+/** Every configured stop step that resolves here, label -> argv (the first step per label), reading package.json once. */
+export function checkArgvs(root: string, config: HarnessConfig): Map<string, string[]> {
+  const scripts = scriptsOf(root), out = new Map<string, string[]>();
   for (const step of config.stop.steps) {
     const r = resolveStep(step, config.stop.package_manager, scripts);
-    if (r?.label === name) return [r.cmd, ...r.args];
+    if (r && !out.has(r.label)) out.set(r.label, [r.cmd, ...r.args]);
   }
-  return null;
+  return out;
 }
+
+/** The argv the stop step labelled `name` runs, e.g. ['pnpm', 'run', 'test']; null when no configured step resolves to it. */
+export const checkArgv = (root: string, config: HarnessConfig, name: string): string[] | null => checkArgvs(root, config).get(name) ?? null;

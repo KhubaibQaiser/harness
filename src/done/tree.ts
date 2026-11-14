@@ -34,11 +34,15 @@ export function filterOffs(listing: string): [string, string][] {
 }
 
 /** Unborn means HEAD names a branch that doesn't exist in a repo with no refs at all (a fresh repo). A garbage ref or a detached HEAD at a missing object is an error, not an empty tree. */
-function unborn(run: (args: string[], env: NodeJS.ProcessEnv, ok?: number[]) => { status: number; stdout: string }, env: NodeJS.ProcessEnv): boolean {
+type Run = (args: string[], env: NodeJS.ProcessEnv, ok?: number[]) => { status: number; stdout: string; stderr: string };
+function unborn(run: Run, env: NodeJS.ProcessEnv): boolean {
   const sym = run(['symbolic-ref', '-q', 'HEAD'], env, [0, 1]); // 1: detached; a broken HEAD exits 128 and throws
   if (sym.status !== 0 || run(['show-ref', '--verify', '-q', sym.stdout.trim()], env, [0, 1]).status !== 1) return false;
   // On an orphan branch no HEAD supplies the tracked files, so .git/info/exclude could hide edits to them: fail closed.
-  if (run(['for-each-ref', '--count=1'], env).stdout.trim()) throw new Error("the tree hash can't be computed on an orphan branch; commit first");
+  const refs = run(['for-each-ref', '--count=1'], env);
+  // for-each-ref skips a broken ref with only a warning: a repo whose refs are all broken is not a fresh repo.
+  if (refs.stderr.trim()) throw new Error(`tree hash: broken ref: ${refs.stderr.trim()}`);
+  if (refs.stdout.trim()) throw new Error("the tree hash can't be computed on an orphan branch; commit first");
   return true;
 }
 
@@ -53,14 +57,14 @@ export function treeHash(root: string, o: { timeoutMs?: number } = {}): string {
   const deadline = Date.now() + (o.timeoutMs ?? 5000); // one budget for all git calls
   // An agent-set GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE or GIT_CONFIG_* must not redirect the hash.
   const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('GIT_')));
-  const run = (args: string[], env: NodeJS.ProcessEnv, ok: number[] = [0]): { status: number; stdout: string } => {
+  const run: Run = (args, env, ok = [0]) => {
     const left = deadline - Date.now();
     const what = `git ${args[0]}`;
     if (left <= 0) throw new Error(`tree hash: timed out before ${what}`);
     const r = spawnSync('git', [...SAFE_GIT, ...args], { cwd: root, env, timeout: left, encoding: 'utf8', windowsHide: true });
     if (r.error) throw new Error(`tree hash: ${what} failed: ${r.error.message}`);
     if (r.status === null || !ok.includes(r.status)) throw new Error(`tree hash: ${what} exited ${r.status}: ${String(r.stderr).trim()}`);
-    return { status: r.status, stdout: String(r.stdout) };
+    return { status: r.status, stdout: String(r.stdout), stderr: String(r.stderr) };
   };
   const tmp = mkdtempSync(join(tmpdir(), 'harness-tree-'));
   try {

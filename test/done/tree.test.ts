@@ -247,6 +247,16 @@ test('an orphan branch with .git/info/exclude hiding a tracked edit still throws
   expect(() => treeHash(root)).toThrow(orphanMsg);
 });
 
+test('an orphan branch whose only other ref is broken throws, never reads as a fresh repo', () => {
+  // for-each-ref skips a broken ref (with a warning), so without the warning check this looked like a repo with no refs
+  const root = mk({ 'src/s.txt': 's\n' });
+  git(root, 'checkout', '-q', '--orphan', 'fresh');
+  writeFileSync(join(root, '.git', 'refs', 'heads', 'main'), 'garbage\n');
+  writeFileSync(join(root, '.git', 'info', 'exclude'), 'src/\n');
+  put(root, 'src/s.txt', 'edited\n');
+  expect(() => treeHash(root)).toThrow(/broken ref/);
+});
+
 // Exercises the real `git config --get-regexp` listing: git keeps the subsection's case, so `Lfs.Extension.E` lists as `lfs.Extension.E`.
 test.skipIf(process.platform === 'win32')('stock lfs plus an lfs extension spelled Lfs.Extension never runs git-lfs (POSIX: the fake git-lfs is a sh script)', () => {
   const root = mk();

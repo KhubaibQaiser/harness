@@ -7,15 +7,17 @@ import { allowWriteMessage, allowWriteProblem, type AllowWriteSys } from '../../
 const win = process.platform === 'win32';
 const suite = describe.skipIf(win);
 
-const base = realpathSync(mkdtempSync(join(tmpdir(), 'aw-')));
+const base = win ? join(tmpdir(), 'unused') : realpathSync(mkdtempSync(join(tmpdir(), 'aw-'))); // a skipped file never runs its cleanup, so win32 touches no disk
 const home = join(base, 'home');
 const root = join(base, 'repo');
 const bin = join(home, '.local/bin');
 const pkg = join(base, 'srt/node_modules/@x/srt');
 const tok = join(base, 'tok/harness/gh');
-for (const d of [home, root, bin, join(pkg, 'dist'), tok, join(home, 'cache')]) mkdirSync(d, { recursive: true });
-writeFileSync(join(pkg, 'package.json'), '{"name":"@anthropic-ai/sandbox-runtime"}');
-writeFileSync(join(pkg, 'dist/cli.js'), '');
+if (!win) {
+  for (const d of [home, root, bin, join(pkg, 'dist'), tok, join(home, 'cache')]) mkdirSync(d, { recursive: true });
+  writeFileSync(join(pkg, 'package.json'), '{"name":"@anthropic-ai/sandbox-runtime"}');
+  writeFileSync(join(pkg, 'dist/cli.js'), '');
+}
 const sys: AllowWriteSys = { root, home, env: { PATH: `${bin}::/usr/bin` }, platform: 'linux', srtReal: join(pkg, 'dist/cli.js'), tokenBase: tok };
 const p = (e: string, s: Partial<AllowWriteSys> = {}) => allowWriteProblem(e, { ...sys, ...s });
 

@@ -11,7 +11,7 @@ import { within } from '../../../src/core/paths.js';
 const win = process.platform === 'win32';
 const suite = describe.skipIf(win);
 
-const home = realpathSync(mkdtempSync(join(tmpdir(), 'srt-home-')));
+const home = win ? join(tmpdir(), 'unused') : realpathSync(mkdtempSync(join(tmpdir(), 'srt-home-'))); // a skipped file never runs its cleanup, so win32 touches no disk
 const mk = (o: Partial<SrtInputs> = {}, stop: Partial<SrtInputs['stop']> = {}, h = home): SrtInputs => ({
   root: '/repo', stop: { ...defaults().stop, ...stop }, home: h, tmp: ['/tmp'], tokenBase: null, denyWrite: [], denyRead: [], ...o,
 });

@@ -7,13 +7,13 @@ import { locateSrt, realSrtProbe, srtMessage, SRT_MIN, STOP_WIN_UNATTENDED, WIN_
 const win = process.platform === 'win32';
 const suite = describe.skipIf(win);
 
-const base = realpathSync(mkdtempSync(join(tmpdir(), 'srt-')));
+const base = win ? join(tmpdir(), 'unused') : realpathSync(mkdtempSync(join(tmpdir(), 'srt-'))); // a skipped file never runs its cleanup, so win32 touches no disk
 const repo = join(base, 'repo');
 const out = join(base, 'out');
 const node = join(base, 'nodebin/node');
-for (const d of [repo, out, join(base, 'nodebin'), join(out, 'dist')]) mkdirSync(d, { recursive: true });
-writeFileSync(node, '');
-const file = (p: string, s: string) => (writeFileSync(p, s), p);
+if (!win) for (const d of [repo, out, join(base, 'nodebin'), join(out, 'dist')]) mkdirSync(d, { recursive: true });
+if (!win) writeFileSync(node, '');
+const file = (p: string, s: string) => (win || writeFileSync(p, s), p);
 const envNode = file(join(out, 'srt-env'), '#!/usr/bin/env node\nx');
 const js = file(join(out, 'cli.js'), 'x');
 const bin = file(join(out, 'srt'), '\x7fELF');

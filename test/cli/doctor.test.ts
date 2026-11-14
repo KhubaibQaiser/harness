@@ -936,7 +936,7 @@ test('doctor: an unreadable managed file is a note, a missing one is not', async
   expect(go().out).not.toMatch(/can't be read/);
   writeFileSync(managed, 'not json');
   const r = go();
-  expect(r.out).toContain(`note managed settings ${managed} exists but can't be read or parsed; Claude Code skips it, so its policy is not applied. Ask your admin to fix it.`);
+  expect(r.out).toContain(`note managed settings ${managed.replace(/\\/g, "/")} exists but can't be read or parsed; Claude Code skips it, so its policy is not applied. Ask your admin to fix it.`);
   expect(r.code).toBe(0);
   writeFileSync(managed, '{}');
   const dropin = join(home, 'managed-settings.d', '10-x.json');
@@ -984,5 +984,5 @@ test('doctor: allowManagedHooksOnly follows precedence, names the missing events
   expect(r.out).toMatch(/is invalid/);
   expect(r.out).toMatch(/^fix managed settings set allowManagedHooksOnly/m);
   writeFileSync(managed, '[]');
-  expect(go().out).toContain(`note managed settings ${managed} exists but can't be read or parsed`);
+  expect(go().out).toContain(`note managed settings ${managed.replace(/\\/g, "/")} exists but can't be read or parsed`);
 });

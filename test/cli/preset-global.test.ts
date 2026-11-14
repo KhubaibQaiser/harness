@@ -133,6 +133,8 @@ test('CLAUDE_CONFIG_DIR set elsewhere is refused; set to ~/.claude it is fine', 
   const r = await run([copyTiny(), '--global', '--dry-run'], home, { env: { CLAUDE_CONFIG_DIR: '/elsewhere' } });
   expect(r).toMatchObject({ code: 1, out: 'CLAUDE_CONFIG_DIR is set to /elsewhere, so Claude Code would not read ~/.claude. Unset it, or install the preset at repo level.' });
   expect((await run([copyTiny(), '--global', '--dry-run'], home, { env: { CLAUDE_CONFIG_DIR: join(home, '.claude') } })).code).toBe(0);
+  const m = await run([copyTiny(), '--global', '--dry-run'], home, { env: { HARNESS_CLAUDE_CONFIG_DIR: '/elsewhere' } });
+  expect(m).toMatchObject({ code: 1, out: "HARNESS_CLAUDE_CONFIG_DIR is set to /elsewhere (the launcher's copy of `CLAUDE_CONFIG_DIR`), so this Claude Code session reads /elsewhere, not ~/.claude. Unset it, or install the preset at repo level." });
 });
 
 test('a symlinked ~/.claude is refused, naming the path, and nothing is written', async () => {

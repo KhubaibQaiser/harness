@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { sandboxVerdict } from '../../src/checks/sandbox-required.js';
-import { effective, managedSettingsPath, readManagedLayers, userSettingsPath } from '../../src/core/settings-layers.js';
+import { claudeConfigDir, effective, managedSettingsPath, readManagedLayers, userSettingsPath } from '../../src/core/settings-layers.js';
 
 const put = (f: string, text: string) => {
   mkdirSync(join(f, '..'), { recursive: true });
@@ -29,6 +29,13 @@ test('readManagedLayers gives null for non-JSON or missing files', () => {
 test('userSettingsPath honours CLAUDE_CONFIG_DIR', () => {
   expect(userSettingsPath('/h', {})).toBe(join('/h', '.claude/settings.json'));
   expect(userSettingsPath('/h', { CLAUDE_CONFIG_DIR: '/cfg' })).toBe(join('/cfg', 'settings.json'));
+  expect(userSettingsPath('/h', { HARNESS_CLAUDE_CONFIG_DIR: '/m' })).toBe(join('/m', 'settings.json'));
+});
+
+test('claudeConfigDir: CLAUDE_CONFIG_DIR, else the HARNESS_CLAUDE_CONFIG_DIR mirror, else ~/.claude', () => {
+  expect(claudeConfigDir('/h', { CLAUDE_CONFIG_DIR: '/cfg', HARNESS_CLAUDE_CONFIG_DIR: '/m' })).toBe('/cfg');
+  expect(claudeConfigDir('/h', { HARNESS_CLAUDE_CONFIG_DIR: '/m' })).toBe('/m');
+  expect(claudeConfigDir('/h', { CLAUDE_CONFIG_DIR: '', HARNESS_CLAUDE_CONFIG_DIR: '' })).toBe(join('/h', '.claude'));
 });
 
 test('effective takes the first layer that defines the path, even a false one', () => {

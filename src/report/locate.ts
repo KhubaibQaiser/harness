@@ -1,5 +1,6 @@
 import { closeSync, constants, lstatSync, opendirSync, openSync, readSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { claudeConfigDir, withoutRepoMirror } from '../core/settings-layers.js';
 import { isSafeSessionId } from '../core/state.js';
 
 export type GitRun = (args: string[]) => { status: number | null; stdout: string };
@@ -13,8 +14,7 @@ const MAX_ENTRIES = 20_000; // bounds every directory listing
 const buf = Buffer.alloc(MAX_BYTES); // reused: locateSessions is synchronous inside
 
 // ponytail: UNVERIFIED (spec 3.1) that CLAUDE_CONFIG_DIR is the variable name; verify when a real run is allowed.
-export const projectsDir = (env: NodeJS.ProcessEnv, home: string): string =>
-  env.CLAUDE_CONFIG_DIR ? join(env.CLAUDE_CONFIG_DIR, 'projects') : join(home, '.claude', 'projects');
+export const projectsDir = (env: NodeJS.ProcessEnv, home: string): string => join(claudeConfigDir(home, env), 'projects');
 
 // ponytail: UNVERIFIED (spec 3.1) folder-name rule; it only picks candidates, the cwd check decides.
 export const encodeProjectDir = (p: string): string => p.replace(/[^A-Za-z0-9]/g, '-');
@@ -89,7 +89,7 @@ function firstCwd(file: string, open: typeof openSync): string | undefined | nul
 
 export async function locateSessions(root: string, opts: { env: NodeJS.ProcessEnv; home: string; sinceMs: number; git: GitRun; platform?: NodeJS.Platform; open?: typeof openSync; maxEntries?: number }): Promise<Located> {
   const platform = opts.platform ?? process.platform;
-  const dir = projectsDir(opts.env, opts.home);
+  const dir = projectsDir(withoutRepoMirror(root, opts.env), opts.home); // as in doctor: the repo can't name the mirror
   const skipped: Located['skipped'] = {};
   const skip = (r: SkipReason): void => { skipped[r] = (skipped[r] ?? 0) + 1; };
   const paths = repoPaths(root, opts.git);

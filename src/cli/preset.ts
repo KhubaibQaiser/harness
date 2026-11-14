@@ -7,6 +7,7 @@ import { checkPreset, identityProblems, listPresets, loadPreset, presetContext }
 import type { Catalog } from '../catalog/schema.js';
 import { CONTROL, esc } from '../core/config.js';
 import { packageDir } from '../core/package-dir.js';
+import { claudeConfigDir } from '../core/settings-layers.js';
 import { ApplyError, LOCK_RECOVERY, applyChanges, type Change } from '../install/apply.js';
 import { unifiedDiff } from '../install/diff.js';
 import { readManifest, statePaths } from '../install/manifest.js';
@@ -75,9 +76,13 @@ export async function presetInstall(args: string[], cli: PresetEnv): Promise<num
   if (global) {
     if (yes && take === undefined) return out('--yes needs --take <path,...>: name each global write you approved.'), 2;
     const home = cli.home ?? homedir();
-    const ccd = cli.env.CLAUDE_CONFIG_DIR;
+    const ccd = claudeConfigDir(home, cli.env);
+    // Claude Code never reads the mirror itself; it means this session's CLAUDE_CONFIG_DIR, which the env scrub hid.
+    const why = cli.env.CLAUDE_CONFIG_DIR
+      ? `CLAUDE_CONFIG_DIR is set to ${esc(ccd)}, so Claude Code would not read ~/.claude`
+      : `HARNESS_CLAUDE_CONFIG_DIR is set to ${esc(ccd)} (the launcher's copy of \`CLAUDE_CONFIG_DIR\`), so this Claude Code session reads ${esc(ccd)}, not ~/.claude`;
     // ponytail: refused rather than followed; write to CLAUDE_CONFIG_DIR when someone asks for it.
-    if (ccd && resolve(home, ccd.replace(/^~(?=[\\/]|$)/, home)) !== resolve(home, '.claude')) return out(`CLAUDE_CONFIG_DIR is set to ${esc(ccd)}, so Claude Code would not read ~/.claude. Unset it, or install the preset at repo level.`), 1;
+    if (resolve(home, ccd.replace(/^~(?=[\\/]|$)/, home)) !== resolve(home, '.claude')) return out(`${why}. Unset it, or install the preset at repo level.`), 1;
     if (existsSync(join(home, GLOBAL_STATE.lock))) return out(GLOBAL_LOCK_RECOVERY), 1;
     // ponytail: one global preset at a time; a second one needs per-preset manifests.
     if (existsSync(join(home, GLOBAL_STATE.manifest))) {

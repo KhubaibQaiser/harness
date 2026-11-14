@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -30,7 +30,8 @@ const repo = () => {
 };
 type Repo = ReturnType<typeof repo>;
 const run = (r: Repo, input: Record<string, unknown>) => dispatch(JSON.stringify({ ...input, session_id: 's', cwd: r.root }), registry, {}, { home: r.home });
-const change = (r: Repo, source: string) => run(r, FIXTURE[source]);
+const userFile = (dir: string) => ({ ...FIXTURE.user_settings, file_path: join(dir, 'settings.json') });
+const change = (r: Repo, source: string) => run(r, source === 'user_settings' ? userFile(join(r.home, '.claude')) : FIXTURE[source]);
 const prompt = (r: Repo) => run(r, { hook_event_name: 'UserPromptSubmit', prompt: 'go' });
 const parsed = (s: string) => (s ? JSON.parse(s) : null);
 const write = (p: string, v: unknown) => writeFileSync(p, typeof v === 'string' ? v : JSON.stringify(v));
@@ -83,7 +84,51 @@ test('with CLAUDE_CONFIG_DIR set, disableAllHooks in that dir\'s settings is blo
   const go = (input: Record<string, unknown>) => dispatch(JSON.stringify({ ...input, session_id: 's', cwd: r.root }), registry, env, { home: r.home });
   await go({ hook_event_name: 'UserPromptSubmit', prompt: 'go' });
   write(join(cfg, 'settings.json'), { disableAllHooks: true });
-  expect(parsed(await go(FIXTURE.user_settings)).reason).toContain(`this change to \`${join(cfg, 'settings.json')}\` (disableAllHooks)`);
+  expect(parsed(await go(userFile(cfg))).reason).toContain(`this change to \`${join(cfg, 'settings.json')}\` (disableAllHooks)`);
+});
+
+test('with only the HARNESS_CLAUDE_CONFIG_DIR mirror set (the env scrub strips CLAUDE_CONFIG_DIR), that dir is watched', async () => {
+  const r = repo();
+  const cfg = mkdtempSync(join(tmpdir(), 'h-cc-mirror-'));
+  write(join(cfg, 'settings.json'), {});
+  const go = (input: Record<string, unknown>) =>
+    dispatch(JSON.stringify({ ...input, session_id: 's', cwd: r.root }), registry, { HARNESS_CLAUDE_CONFIG_DIR: cfg }, { home: r.home });
+  await go({ hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+  write(join(cfg, 'settings.json'), { disableAllHooks: true });
+  expect(parsed(await go(userFile(cfg))).reason).toContain(`this change to \`${join(cfg, 'settings.json')}\` (disableAllHooks)`);
+});
+
+test('R-1: a user-settings change in a file harness does not watch is blocked, naming both paths', async () => {
+  const r = repo();
+  await prompt(r);
+  const other = mkdtempSync(join(tmpdir(), 'h-cc-other-')); // a CLAUDE_CONFIG_DIR the scrub hid from the hooks
+  const out = parsed(await run(r, userFile(other)));
+  expect(out.decision).toBe('block');
+  expect(out.reason).toContain(`this change to \`${join(other, 'settings.json')}\` (not the watched \`~/.claude/settings.json\`: launch with HARNESS_CLAUDE_CONFIG_DIR set)`);
+});
+
+test('R-1: an unguarded change in the watched user file, or one reported without file_path, is still judged by its diff', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.home, '.claude/settings.json'), { theme: 'dark' });
+  expect(await change(r, 'user_settings')).toBe('');
+  const { file_path: _, ...bare } = FIXTURE.user_settings;
+  expect(await run(r, bare)).toBe('');
+});
+
+test('S-1: a reported ~/.claude/settings.json is the watched file in the default setup', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.home, '.claude/settings.json'), { theme: 'dark' });
+  expect(await run(r, { ...FIXTURE.user_settings, file_path: '~/.claude/settings.json' })).toBe('');
+});
+
+test('S-2: a reported path that differs only in case is the watched file on a case-insensitive filesystem', async ({ skip }) => {
+  const r = repo();
+  if (!existsSync(join(r.home, '.CLAUDE'))) skip(); // case-sensitive filesystem: the two names are different files
+  await prompt(r);
+  write(join(r.home, '.claude/settings.json'), { theme: 'dark' });
+  expect(await run(r, userFile(join(r.home, '.CLAUDE')))).toBe('');
 });
 
 test('an env change in the user file is blocked', async () => {

@@ -230,12 +230,14 @@ test('I3: the verified contract gates every row, whatever the unverified parse m
   }
 });
 
-test('M3: a blocked call needs a reason, and the row keeps at most 200 characters of it', async () => {
+test('M3: a blocked call needs a reason, and the row keeps at most 500 characters of it, the event 200', async () => {
   const { root } = setup();
   expect(await rowsAfter(root, post('harness done --blocked ""'))).toEqual([]);
   expect(await rowsAfter(root, post('harness done --blocked "   "'))).toEqual([]);
   const [row] = await rowsAfter(root, post(`harness done --blocked "${'r'.repeat(300)}"`));
-  expect(row).toMatchObject({ kind: 'blocked', reason: 'r'.repeat(200) });
+  expect(row).toMatchObject({ kind: 'blocked', reason: 'r'.repeat(300) });
+  const [, long] = await rowsAfter(root, post(`harness done --blocked "${'s'.repeat(600)}"`));
+  expect(long).toMatchObject({ kind: 'blocked', reason: 's'.repeat(500) });
 });
 
 test('M4: a failure after a match is logged as done ledger-failed, redacted and capped', async () => {

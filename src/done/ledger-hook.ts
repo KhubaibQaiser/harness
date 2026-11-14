@@ -11,7 +11,7 @@ import { appendEvent } from '../core/events.js';
 import { redactSecrets } from '../core/secrets.js';
 import type { Check, Ctx } from '../hooks/check.js';
 import { warn } from '../hooks/event-log.js';
-import { checkArgvs, harnessArgs, isTestRunner, plainArgv } from './commands.js';
+import { blockedReason, checkArgvs, isTestRunner, MAX_BLOCKED_REASON, plainArgv } from './commands.js';
 import { activeTaskId, type Contract, loadContract, taskFileProblem, TASKS_DIR } from './contract.js';
 import { appendRow, freshEvidence, readLedger, sameArgv } from './ledger.js';
 import { treeHash } from './tree.js';
@@ -64,7 +64,7 @@ function looseRunArgvs(root: string, env: NodeJS.ProcessEnv): string[][] {
   }
 }
 
-const atRoot = (cwd: string | undefined, root: string): boolean => {
+export const atRoot = (cwd: string | undefined, root: string): boolean => {
   try {
     return !!cwd && real(cwd) === real(root); // native: true case and long names, as git reports the root
   } catch {
@@ -88,7 +88,7 @@ function record(ctx: Ctx, command: string, argv: string[], reason: string | null
     const tree = treeHash(root);
     const failing = freshEvidence(c, readLedger(root), tree, argvOf).gaps.filter((g) => g.kind === 'criterion').map((g) => g.id);
     const r = redactSecrets(reason);
-    appendRow(root, { kind: 'blocked', ts, session, task: c.id, reason: r.slice(0, MAX_REASON), failing_criteria: failing, tree, contract });
+    appendRow(root, { kind: 'blocked', ts, session, task: c.id, reason: r.slice(0, MAX_BLOCKED_REASON), failing_criteria: failing, tree, contract });
     try {
       appendEvent(root, { ts, session, check: 'done', decision: 'task-blocked', reason: esc(r).slice(0, MAX_REASON) });
     } catch (e) {
@@ -114,8 +114,7 @@ export const evidenceLedger: Check = {
     if (!atRoot(input.cwd, root)) return ALLOW;
     const argv = plainArgv(command);
     if (!argv) return ALLOW;
-    const args = harnessArgs(command);
-    const reason = args?.length === 3 && args[0] === 'done' && args[1] === '--blocked' && args[2]!.trim() ? args[2]! : null;
+    const reason = blockedReason(command);
     const steps = checkArgvs(root, config);
     // Match before any contract load, so a call that matches nothing costs no git call and prints nothing.
     const matched = reason !== null || isTestRunner(argv) || [...steps.values()].some((a) => sameArgv(a, argv)) || looseRunArgvs(root, ctx.env).some((a) => sameArgv(a, argv));

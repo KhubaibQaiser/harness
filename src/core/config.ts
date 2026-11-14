@@ -198,6 +198,7 @@ const presetRule = objRule({
   }),
 });
 // Shape only (R5): the protected-path classes are checked at Stop and by doctor.
+const HOST_SHAPE = /^(\*|(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.?)$/i; // ASCII only (punycode passes); a bare * passes so hostProblem names it
 const WRITE_PATH = /^(\/|~\/)[^\0]*$/;
 const MODEL_RE = /^claude-[a-z0-9-]{1,60}$/;
 // Passed to `claude --model` unchanged, so it allows ids like claude-opus-5[1m]; no leading dash, no spaces.
@@ -214,7 +215,7 @@ const RULES: Record<string, Rule> = {
   'unattended.review': oneOf('skip', 'code-only'),
   'stop.package_manager': oneOf('npm', 'pnpm', 'yarn', 'bun', 'none'),
   'stop.steps': stepsRule,
-  'stop.allowed_domains': listOf('hosts', (v) => (typeof v === 'string' && v !== '' && !/\s/.test(v) ? hostProblem(v) : 'must be a host name such as registry.npmjs.org')),
+  'stop.allowed_domains': listOf('hosts', (v) => (typeof v === 'string' && HOST_SHAPE.test(v) ? hostProblem(v) : 'must be a host name such as registry.npmjs.org')),
   'stop.allow_write': listOf('paths', (v) => (typeof v === 'string' && WRITE_PATH.test(v) ? null : 'must be an absolute path or a path starting with ~/')),
   sandbox: oneOf('unattended', 'always', 'off'),
   'project.type': (v) => (v === '' ? null : oneOf(...PROJECT_TYPES)(v)), // '' means not set yet

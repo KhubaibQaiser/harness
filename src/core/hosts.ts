@@ -5,7 +5,7 @@ const covers = (entry: string, h: string): boolean => entry === '*' || entry ===
 
 /** Why a host can't go in stop.allowed_domains, or null. */
 export function hostProblem(host: string): string | null {
-  const e = host.toLowerCase();
+  const e = host.trim().toLowerCase().replace(/\.+$/, '');
   const base = e.replace(/^\*\./, '');
   const bad = MUST_STAY.some((h) => covers(e, h)) || GITHUB.some((g) => base.endsWith(`.${g}`));
   return bad ? `can't list ${host}: GitHub is reachable only in runs that push (harness-run --push), and example.com must stay unreachable for the container check` : null;

@@ -359,3 +359,11 @@ test('stop.allow_write accepts /abs and ~/x, and refuses relative paths, ~user a
     expect(stopErrors(`  allow_write: [${v}]\n`)[0], v).toBe('"stop.allow_write[0]" must be an absolute path or a path starting with ~/');
   }
 });
+
+test('stop.allowed_domains refuses odd shapes with a host-name message', () => {
+  for (const h of ['github.com:443', 'https://github.com', 'github.com/x', 'github\u3002com', '*.*', '**.com', 'a b']) {
+    expect(stopErrors(`  allowed_domains: ["${h}"]\n`)[0], h).toBe('"stop.allowed_domains[0]" must be a host name such as registry.npmjs.org');
+  }
+  expect(stopErrors('  allowed_domains: ["github.com."]\n')[0]).toMatch(/can't list github\.com\./);
+  expect(stopErrors('  allowed_domains: [xn--bcher-kva.example, "Registry.NpmJS.org."]\n')).toEqual([]);
+});

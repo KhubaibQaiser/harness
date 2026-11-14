@@ -12,3 +12,13 @@ test('hostProblem refuses GitHub hosts, *, and wildcards covering example.com or
 test('hostProblem accepts ordinary hosts', () => {
   for (const h of ['registry.npmjs.org', '*.npmjs.org', 'notgithub.com', 'github.com.evil.org', 'www.example.com']) expect(hostProblem(h), h).toBeNull();
 });
+
+test('hostProblem refuses trailing-dot and padded forms', () => {
+  for (const h of ['github.com.', '*.github.com.', 'example.com.', ' github.com']) {
+    expect(hostProblem(h), h).not.toBeNull();
+  }
+});
+
+test('hostProblem allows look-alikes', () => {
+  for (const h of ['api.github.com.evil.com', 'evilgithub.com']) expect(hostProblem(h), h).toBeNull();
+});

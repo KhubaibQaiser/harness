@@ -42,6 +42,10 @@ test('src file, outside-root path, other tools are allowed', () => {
   expect(run('Read', { file_path: '.harness/config.yaml' }).kind).toBe('allow');
   expect(run('Edit', {}).kind).toBe('allow');
 });
+test('an agent Edit, MultiEdit or Write turning sandbox off in .harness/config.yaml is denied (the Stop gate runs wrapped unless it is off)', () => {
+  for (const tool of ['Edit', 'MultiEdit', 'Write']) expect(run(tool, { file_path: '.harness/config.yaml', new_string: 'sandbox: off', content: 'sandbox: off\n' }).kind, tool).toBe('deny');
+  expect(bash("sed -i 's/unattended/off/' .harness/config.yaml")).toBe('deny');
+});
 test('checks.protect false turns it off', () => expect(run('Write', { file_path: '.harness/config.yaml' }, { protect: false }).kind).toBe('allow'));
 
 test('shell redirect to tdd-pause.json is denied (pause comes only from the CLI)', () => {

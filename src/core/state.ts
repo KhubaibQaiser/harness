@@ -14,6 +14,9 @@ export interface SessionState {
   lockedTests: string[];
   stopAttempts: number;
   stopNoGitLogged?: boolean; // stop-no-git already logged this session
+  stopUnwrappedLogged?: boolean; // stop-unwrapped already logged this session
+  stopOffRefusedLogged?: boolean; // stop-unwrapped-refused already logged this session
+  sandboxBase?: string; // config `sandbox` at the session's first hook: only this value can unwrap the Stop steps
   stopNothingLogged?: boolean; // stop-nothing-to-run already logged this session
   sandboxUnavailableLogged?: true; // sandbox-unavailable already logged this session
   lateReasons?: { ts: string; rel: string }[]; // allow-logs with "no reason given", looked up again at the next Stop or prompt

@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { defaultExec, type Exec, killTree, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
+import { defaultExec, type Exec, killTree, pickRunner, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
+import { runUnwrapped } from '../../../src/checks/stop/steps.js';
 import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
 import { readTiming } from '../../../src/core/timing.js';
@@ -12,7 +13,7 @@ import { decision, writeDecision } from '../../core/decisions-helpers.js';
 import { type Ctx, detectBaseHead, dispatch, registry } from '../../../src/hooks/dispatch.js';
 
 // Existing tests fake the exec; pretend every binary is on PATH (found as itself: on Windows the gate execs the found path).
-const runStop = (c: Ctx, e: Exec, now?: () => number) => runStopReal(c, e, now, (cmd) => cmd);
+const runStop = (c: Ctx, e: Exec, now?: () => number) => runStopReal(c, e, now, (cmd) => cmd, runUnwrapped(e, now ?? Date.now));
 const ALL = ['format:check', 'lint', 'typecheck', 'test'];
 type Opts = { baseHead?: string; scripts?: string[]; yaml?: string; attempts?: number; hookActive?: boolean };
 const setup = (o: Opts = {}) => {
@@ -27,7 +28,7 @@ const setup = (o: Opts = {}) => {
   const saved: number[] = [];
   const ctx = {
     input: { session_id: 's', cwd: root, hook_event_name: 'Stop', ...(o.hookActive === undefined ? {} : { stop_hook_active: o.hookActive }) },
-    root, config: loadConfig(root).config, state, unattended: false, env: {},
+    root, config: loadConfig(root).config, state, unattended: false, env: {}, home: tmpdir(), platform: process.platform,
     save(s) { ctx.state = s; saved.push(s.stopAttempts); },
   } as Ctx;
   const calls: { cmd: string; args: string[]; ms: number }[] = [];
@@ -41,6 +42,8 @@ const setup = (o: Opts = {}) => {
   return { root, ctx, calls, exec, steps, saved };
 };
 import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import type { SrtProbe } from '../../../src/checks/stop/srt.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../../src/core/git-safe.js';
 const require_mkdir = (root: string) => mkdirSync(join(root, '.harness'), { recursive: true });
 const SRC = ' M src/a.ts\0';
@@ -367,17 +370,17 @@ const MISSING = `Every Stop step was skipped: \`ruff\` is not on the PATH Claude
 
 test('missing command does not block: one warning and one stop-tool-missing event per session per step', async () => {
   const s = setup({ yaml: PY });
-  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now));
   expect(d).toEqual({ kind: 'context', check: 'stop', text: MISSING });
   expect(s.steps()).toEqual([]);
   expect(s.ctx.state.stopAttempts).toBe(0);
-  expect(await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null)).toEqual({ kind: 'allow' });
+  expect(await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now))).toEqual({ kind: 'allow' });
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing').map((e) => e.reason)).toEqual(['lint: ruff']);
 });
 
 test('missing tool reaches the user as a Stop systemMessage, not a block', async () => {
   const s = setup({ yaml: PY });
-  const out = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  const out = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now));
   const { emit } = await import('../../../src/hooks/io.js');
   expect(JSON.parse(emit('Stop', out))).toEqual({ systemMessage: MISSING });
 });
@@ -385,20 +388,20 @@ test('missing tool reaches the user as a Stop systemMessage, not a block', async
 test('missing package manager binary is skipped the same way; other steps still run and can block', async () => {
   const s = setup({ yaml: 'stop:\n  steps:\n    - lint\n    - name: own\n      run: [node, -e, x]\n' });
   const which = (cmd: string) => (cmd === 'pnpm' ? null : cmd);
-  const d = await runStopReal(s.ctx, s.exec(SRC, 'x'), Date.now, which);
+  const d = await runStopReal(s.ctx, s.exec(SRC, 'x'), Date.now, which, runUnwrapped(s.exec(SRC, 'x'), Date.now));
   expect(d).toMatchObject({ kind: 'block' });
   expect((d as { reason: string }).reason).toContain('own failed (attempt 1 of');
   // The block wins and the warning was not shown, so the step is not marked: the next Stop that passes warns.
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing')).toEqual([]);
   expect(s.ctx.state.stopToolMissing ?? []).toEqual([]);
-  const ok = await runStopReal(s.ctx, s.exec(SRC), Date.now, which);
+  const ok = await runStopReal(s.ctx, s.exec(SRC), Date.now, which, runUnwrapped(s.exec(SRC), Date.now));
   expect(ok).toEqual({ kind: 'context', check: 'stop', text: `Stop step \`lint\` was skipped: \`pnpm\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). ${HINT}` });
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing').map((e) => e.reason)).toEqual(['lint: pnpm']);
 });
 
 test('package manager missing for every step: one warning that says every step was skipped', async () => {
   const s = setup();
-  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now));
   expect(d).toEqual({ kind: 'context', check: 'stop', text: `Every Stop step was skipped: \`pnpm\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). ${HINT}` });
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing')).toHaveLength(4);
 });
@@ -465,7 +468,7 @@ test('nudge: a session that changed only docs/decisions/ still gets it', async (
 test('nudge: joined with the tool-missing warning in one note', async () => {
   const s = setup({ yaml: PY });
   s.ctx.state = { ...s.ctx.state, ...HIT };
-  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now));
   expect(text(d).split('\n')).toHaveLength(2);
   expect(text(d)).toMatch(new RegExp(`^${MISSING.slice(0, 20)}`));
   expect(text(d)).toMatch(NUDGE);
@@ -506,4 +509,134 @@ test('a team-decision warning is a note: the gate allows with context, never blo
   expect(d).toMatchObject({ kind: 'context', check: 'stop' });
   expect((d as { text: string }).text).toContain('team decision `2026-11-01-w`');
   expect(s.ctx.state.stopAttempts).toBe(0); // the pass resets it, as for any allow
+});
+
+// pickRunner: wrapped unless `sandbox: off` or native Windows (R9, R10). Never chosen from an env var, file or probe.
+const wrapped = (s: ReturnType<typeof setup>, probe?: SrtProbe, which: (c: string) => string | null = (c) => c) => (e: Exec) => runStopReal(s.ctx, e, Date.now, which, pickRunner(s.ctx, e, Date.now, probe));
+const stopEvents = (root: string, decision: string) => readEvents(root).filter((e) => e.decision === decision);
+const winSkip = process.platform === 'win32';
+
+const NOPROBE: SrtProbe = { which: () => { throw new Error('srt looked up'); }, version: () => '' };
+const OFF = 'Stop steps ran without the sandbox (sandbox: off).';
+
+test('sandbox off in the session baseline: unwrapped, a visible note every Stop, stop-unwrapped logged once per session', async () => {
+  const s = setup({ yaml: 'sandbox: off\n' });
+  s.ctx.state = { ...s.ctx.state, sandboxBase: 'off' };
+  for (let i = 0; i < 2; i++) expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'context', text: OFF, check: 'stop' });
+  expect(s.steps()).toEqual([...ALL, ...ALL]);
+  expect(stopEvents(s.root, 'stop-unwrapped')).toHaveLength(1);
+});
+
+test('a failing unwrapped step still blocks, and the block carries the note', async () => {
+  const s = setup({ yaml: 'sandbox: off\n' });
+  s.ctx.state = { ...s.ctx.state, sandboxBase: 'off' };
+  const d = await wrapped(s, NOPROBE)(s.exec(SRC, 'lint'));
+  expect(d).toMatchObject({ kind: 'block' });
+  expect((d as { reason: string }).reason).toContain(OFF);
+});
+
+test.skipIf(winSkip)('sandbox off set during the session (baseline unattended, or none) stays wrapped: refusal event and note once', async () => {
+  for (const base of ['unattended', undefined]) {
+    const s = setup({ yaml: 'sandbox: off\n' });
+    s.ctx.state = { ...s.ctx.state, ...(base ? { sandboxBase: base } : {}) };
+    s.ctx.env = { PATH: '/nonexistent-dir' };
+    const d = await wrapped(s)(s.exec(SRC));
+    expect(d).toMatchObject({ kind: 'block' });
+    expect((d as { reason: string }).reason).toContain('sandbox-runtime (srt)');
+    expect((d as { reason: string }).reason).toContain('sandbox: off was set during this session, so the Stop steps still run inside srt. Start a new session to apply it.');
+    const again = await wrapped(s)(s.exec(SRC));
+    expect((again as { reason: string }).reason).not.toContain('was set during this session');
+    expect(stopEvents(s.root, 'stop-unwrapped-refused'), String(base)).toHaveLength(1);
+    expect(stopEvents(s.root, 'stop-unwrapped')).toHaveLength(0);
+    expect(s.steps()).toEqual([]);
+  }
+});
+
+test('win32 runs unwrapped with a visible note', async () => {
+  const s = setup();
+  s.ctx.platform = 'win32';
+  expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'context', text: 'Stop steps ran without the sandbox (native Windows).', check: 'stop' });
+  expect(s.steps()).toEqual(ALL);
+});
+
+test.skipIf(winSkip)('no .harness/config.yaml and no srt: wrapped, blocks', async () => {
+  const s = setup();
+  s.ctx.env = { PATH: '/nonexistent-dir' };
+  expect(s.ctx.config.sandbox).toBe('unattended');
+  expect(await wrapped(s)(s.exec(SRC))).toMatchObject({ kind: 'block', check: 'stop' });
+  expect(s.steps()).toEqual([]);
+});
+
+test.skipIf(winSkip).each(['linux', 'darwin', 'freebsd', 'cygwin', 'android'] as const)('%s: HARNESS_CONTAINER=1, HARNESS_SANDBOX=1 and an srt-looking env still wrap (never from a probe)', async (platform) => {
+  const s = setup();
+  Object.assign(s.ctx, { platform, env: { HARNESS_CONTAINER: '1', HARNESS_SANDBOX: '1', SRT_SETTINGS: '/x', PATH: '/nonexistent-dir' } });
+  const d = await wrapped(s)(s.exec(SRC));
+  expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+  expect((d as { reason: string }).reason).toContain('sandbox-runtime (srt)');
+  expect(s.steps()).toEqual([]);
+});
+
+test.skipIf(winSkip)('srt unavailable blocks with the message and (attempt N of M), logs stop-srt-unavailable with the failed check, counts toward max_attempts, gives up at max+1', async () => {
+  const s = setup({ yaml: 'stop:\n  max_attempts: 2\n' });
+  const run = wrapped(s);
+  for (const n of [1, 2]) {
+    const d = await run(s.exec(SRC));
+    expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+    expect((d as { reason: string }).reason).toMatch(/^Stop gate: the checks run inside sandbox-runtime \(srt\), and srt is not installed\..*\(attempt \d of 2\)$/);
+    expect(s.ctx.state.stopAttempts).toBe(n);
+  }
+  expect(stopEvents(s.root, 'stop-srt-unavailable').map((e) => e.reason)).toEqual(['missing', 'missing']);
+  expect(await run(s.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(s.ctx.state.stopAttempts).toBe(0);
+  expect(stopEvents(s.root, 'stop-gave-up')).toHaveLength(1);
+  expect(s.steps()).toEqual([]);
+});
+
+test('docs-only and nothing-to-run Stops never look up srt', async () => {
+  let looked = 0;
+  const probe: SrtProbe = { which: () => (looked++, null), version: () => '' };
+  const docs = setup();
+  expect(await wrapped(docs, probe)(docs.exec(' M README.md\0'))).toEqual({ kind: 'allow' });
+  const none = setup({ scripts: [] });
+  expect(await wrapped(none, probe)(none.exec(SRC))).toEqual({ kind: 'allow' });
+  expect(looked).toBe(0);
+});
+
+test.skipIf(winSkip)('a wrapped step failure blocks like today and keeps the srt lines in the tail', async () => {
+  const s = setup();
+  mkdirSync(join(s.root, '.harness/hooks'), { recursive: true });
+  writeFileSync(join(s.root, '.harness/hooks/dispatch.mjs'), '');
+  const srtJs = fileURLToPath(new URL('../../../build.mjs', import.meta.url)); // outside every writable root; a .mjs is a node launch
+  const probe: SrtProbe = { which: () => srtJs, version: () => '0.0.83' };
+  const e: Exec = (cmd, args, ms) => {
+    if (cmd === 'git') return s.exec(SRC)(cmd, args, ms);
+    const nonce = args.at(-1)!;
+    const plan = JSON.parse(readFileSync(args.at(-2)!, 'utf8')) as { steps: { label: string }[] };
+    const out = plan.steps.slice(0, 2).map((st, i) => JSON.stringify({ nonce, kind: 'step', label: st.label, status: i, timedOut: false, ms: 1, ...(i ? { output: 'boom in lint' } : {}) }));
+    return { status: 0, output: '', timedOut: false, stdout: out.join('\n'), stderr: 'sandbox proxy: denied registry.npmjs.org:443\n' };
+  };
+  const d = await wrapped(s, probe)(e);
+  expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+  const reason = (d as { reason: string }).reason;
+  expect(reason).toMatch(/^lint failed \(attempt 1 of 3\)/);
+  expect(reason).toContain('boom in lint');
+  expect(reason).toContain('sandbox proxy: denied registry.npmjs.org:443');
+  expect(s.ctx.state.stopAttempts).toBe(1);
+});
+
+test('a coverage block after unwrapped steps carries the unwrapped note', async () => {
+  const s = setup({ yaml: 'checks:\n  tdd: true\n' });
+  s.ctx.platform = 'win32';
+  const base = s.exec(SRC);
+  const d = await wrapped(s, NOPROBE)((cmd, args, ms) => (cmd === 'git' && args.includes('diff') ? { status: 128, output: 'fatal', timedOut: false } : base(cmd, args, ms)));
+  expect(d).toMatchObject({ kind: 'block' });
+  expect((d as { reason: string }).reason).toContain('Diff coverage could not read git diff');
+  expect((d as { reason: string }).reason).toContain('Stop steps ran without the sandbox (native Windows).');
+});
+
+test('a timeout carries the notes, and a refusal note is not lost to it', async () => {
+  const s = setup();
+  s.ctx.platform = 'win32';
+  const d = await wrapped(s, NOPROBE)(s.exec(SRC, '', 'lint'));
+  expect(d).toEqual({ kind: 'context', text: 'Stop gate timed out after 540s; checks did not finish.\nStop steps ran without the sandbox (native Windows).', check: 'stop' });
 });

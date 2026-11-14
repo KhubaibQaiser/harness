@@ -24,6 +24,12 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 - The launch also sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, which strips credential-looking variables from Bash, the hooks and the Stop gate's test commands, and on Linux blocks reading other processes' env through `/proc`. Tests that need such a variable must get it another way. The scrub also strips `CLAUDE_CONFIG_DIR`: if you use it, add `HARNESS_CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"` to the launch. Harness now reads the user config dir from `CLAUDE_CONFIG_DIR`, else `HARNESS_CLAUDE_CONFIG_DIR`, else `~/.claude`, and blocks a mid-session user-settings change that Claude Code reports in a file it doesn't watch.
 - The scrub forces the permission mode to `default` (checked live on Claude Code 2.1.322), so `bypassPermissions` is ignored and `claude -p` refuses every tool that needs approval. The launch now passes `--allowedTools "Bash,Edit,Write"` (add what your run needs) and `HARNESS_UNATTENDED=1`, without which harness would treat a non-CI run in `default` mode as attended.
 
+### Breaking
+
+- The Stop gate's steps now run inside Anthropic's sandbox-runtime (`srt`) by default, so attended macOS and Linux Stop gates need `srt` installed. Install `@anthropic-ai/sandbox-runtime@0.0.83` globally with npm, outside the repo. Linux also needs bubblewrap 0.8 or newer, socat and ripgrep; macOS needs ripgrep. Until `srt` is installed, Stop blocks with the fix. A Stop with nothing to run (a docs-only change, a clean tree) still passes without `srt`.
+- Steps get no network, no loopback and no Unix sockets, and can't write outside the repo and the temp folders. New keys: `stop.allowed_domains`, `stop.allow_write` and `stop.allow_local`. A suite that needs the network, a host service or testcontainers fails until you allow it, or set `sandbox: off` before the session starts (logged).
+- Native Windows keeps running steps unwrapped, with a note on every Stop, until a later release.
+
 ## Catalog
 
 Catalog version 1, 92 items: 72 plugin, 6 external-skill, 5 own-hook, 3 mcp, 1 rule, 1 settings, 2 own-skill, 1 own-agent, 1 ci.

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { stopDenyWritePaths } from '../protect.js';
 import { realish, within } from '../../core/paths.js';
@@ -8,10 +8,15 @@ export type AllowWriteSys = { root: string; home: string; env: NodeJS.ProcessEnv
 
 const LOGIN = ['.claude', 'Library/LaunchAgents', '.config/systemd/user', '.config/autostart'];
 
-const pkgRoot = (file: string): string | null => {
-  for (let d = dirname(file); ; d = dirname(d)) {
-    if (existsSync(join(d, 'package.json'))) return d;
-    if (dirname(d) === d) return null;
+const SRT_PKG = '@anthropic-ai/sandbox-runtime';
+// Nearest ancestor whose package.json names srt (a nested dist/package.json doesn't count); else the binary's own folder, never nothing.
+const pkgRoot = (file: string): string => {
+  const f = realish(file);
+  for (let d = dirname(f); ; d = dirname(d)) {
+    try {
+      if (JSON.parse(readFileSync(join(d, 'package.json'), 'utf8')).name === SRT_PKG) return d;
+    } catch { /* no readable package.json here */ }
+    if (dirname(d) === d) return dirname(f);
   }
 };
 
@@ -24,16 +29,16 @@ export function allowWriteProblem(entry: string, sys: AllowWriteSys): string | n
   const above = (dir: string) => [e, realish(e)].some((p) => w(dir, p)); // equal or above
   const forms = (p: string) => [p, realish(p)];
   const sep = sys.platform === 'win32' ? ';' : ':';
-  const pathDirs = (sys.env.PATH ?? '').split(sep).filter((s) => s && isAbsolute(s));
-  const srtRoot = sys.srtReal ? pkgRoot(sys.srtReal) : null;
+  const pathDirs = (sys.env.PATH ?? '').split(sep).filter((s) => s && isAbsolute(s)).flatMap(forms);
+  const srtRoots = sys.srtReal ? forms(pkgRoot(sys.srtReal)) : [];
   const protectedDirs = forms(sys.root).flatMap((r) => stopDenyWritePaths().map((q) => join(r, q)));
   const login = [...forms(sys.home)].flatMap((h) => LOGIN.map((l) => join(h, l)));
   if (protectedDirs.some(inside)) return 'it is a protected path';
   if (forms(sys.home).some(above)) return 'it is your home folder';
   if (login.some((d) => inside(d) || above(d))) return 'programs there run at login';
   if (pathDirs.some(above)) return 'it is on PATH';
-  if (srtRoot && (inside(srtRoot) || above(srtRoot))) return 'srt is installed there';
-  if (sys.tokenBase && inside(sys.tokenBase)) return 'it holds the GitHub token folder';
+  if (srtRoots.some((d) => inside(d) || above(d))) return 'srt is installed there';
+  if (sys.tokenBase && forms(sys.tokenBase).some(inside)) return 'it holds the GitHub token folder';
   return null;
 }
 

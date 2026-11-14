@@ -23,7 +23,7 @@ const runsHook = (s: any): boolean =>
 /**
  * The settings layers (managed, user, project, local) run the harness PostToolUse hook for Bash, and none turns hooks off.
  * Fails closed: an existing layer that can't be read or parsed is false. A missing file is an empty layer.
- * ponytail: readManagedLayers can't tell a missing managed file from an unreadable one; both count as empty.
+ * ponytail: an unreadable managed file counts as empty, as it does for Claude Code, which runs as the same user; harness doctor warns about it.
  */
 function hookWired(cli: CliEnv): boolean {
   const { root } = cli, env = withoutRepoMirror(root, cli.env);

@@ -927,3 +927,38 @@ test('an invalid decision makes doctor exit 1', async () => {
 test('no decisions folder: doctor prints the ok line', async () => {
   expect(run(await installed()).out).toContain('ok no team decisions yet');
 });
+
+test('doctor: an unreadable managed file is a note, a missing one is not', async () => {
+  const root = await installed();
+  const home = mkdtempSync(join(tmpdir(), 'h-home-'));
+  const managed = join(home, 'managed-settings.json');
+  const go = () => run(root, { path: bin('npm'), platform: 'darwin', home, managed });
+  expect(go().out).not.toMatch(/can't be read/);
+  writeFileSync(managed, 'not json');
+  const r = go();
+  expect(r.out).toContain(`note managed settings ${managed} exists but can't be read or parsed; Claude Code skips it, so its policy is not applied. Ask your admin to fix it.`);
+  expect(r.code).toBe(0);
+  writeFileSync(managed, '{}');
+  const dropin = join(home, 'managed-settings.d', '10-x.json');
+  mkdirSync(join(home, 'managed-settings.d'));
+  writeFileSync(dropin, '{oops');
+  expect(go().out).toContain(`managed settings ${dropin} exists but can't be read or parsed`);
+});
+
+test('doctor: allowManagedHooksOnly without harness hooks in managed settings is a fix', async () => {
+  const root = await installed();
+  const home = mkdtempSync(join(tmpdir(), 'h-home-'));
+  const managed = join(home, 'managed-settings.json');
+  const go = () => run(root, { path: bin('npm'), platform: 'darwin', home, managed });
+  writeFileSync(managed, JSON.stringify({ allowManagedHooksOnly: false }));
+  expect(go().out).not.toMatch(/allowManagedHooksOnly/);
+  writeFileSync(managed, JSON.stringify({ allowManagedHooksOnly: true }));
+  const r = go();
+  expect(r.out).toContain('fix managed settings set allowManagedHooksOnly, so every harness hook (guards, ledger, Stop gate) is dropped: ask your admin to add the harness hooks to managed settings, or unset allowManagedHooksOnly');
+  expect(r.code).toBe(1);
+  // The same hooks the project carries, now in a managed layer (a drop-in here), keep it healthy.
+  const hooks = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).hooks;
+  mkdirSync(join(home, 'managed-settings.d'));
+  writeFileSync(join(home, 'managed-settings.d', '10-h.json'), JSON.stringify({ hooks }));
+  expect(go().out).not.toMatch(/allowManagedHooksOnly/);
+});

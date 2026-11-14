@@ -182,6 +182,14 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     [file(userPath, 'user'), `\`${userPath.replace(/\\/g, '/')}\``], // `/` as in the rest of doctor's paths
   ];
   const layers = named.map(([l]) => l);
+  // Claude Code skips a managed file it can't read, so its policy (and any hooks it carries) is not applied.
+  for (const l of layers) if (l.unreadable) note(`managed settings ${l.unreadable.replace(/\\/g, '/')} exists but can't be read or parsed; Claude Code skips it, so its policy is not applied. Ask your admin to fix it.`);
+  // allowManagedHooksOnly makes Claude Code drop every user, project and local hook: the managed layers must carry them all.
+  const managedHooks = layers.filter((l) => l.name === 'managed').map((l) => (l.json as any)?.hooks);
+  if (layers.some((l) => l.name === 'managed' && effective([l], ['allowManagedHooksOnly']) === true)
+    && EVENTS.some((ev) => !managedHooks.some((h) => (Array.isArray(h?.[ev]) ? h[ev] : []).some((g: any) => Array.isArray(g?.hooks) && g.hooks.some(isHarnessHook))))) {
+    fix('managed settings set allowManagedHooksOnly, so every harness hook (guards, ledger, Stop gate) is dropped', 'ask your admin to add the harness hooks to managed settings, or unset allowManagedHooksOnly');
+  }
   const sb = (...p: string[]) => effective(layers, ['sandbox', ...p]);
   const union = (...p: string[]) => [...new Set(layers.flatMap((l) => { const v = effective([l], ['sandbox', ...p]); return Array.isArray(v) ? v : []; }))];
   // The shared settings commit the strict sandbox (owner ruling): on a machine that can't run it, Claude Code then won't run Bash.

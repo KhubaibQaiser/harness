@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-export type Layer = { name: 'managed' | 'local' | 'project' | 'user'; json: unknown };
+export type Layer = { name: 'managed' | 'local' | 'project' | 'user'; json: unknown; unreadable?: string }; // unreadable: the path of a file that exists but can't be read or parsed (json stays null)
 
 // https://code.claude.com/docs/en/managed-settings (file-based delivery).
 export function managedSettingsPath(platform: NodeJS.Platform): string {
@@ -18,6 +18,14 @@ const readJson = (f: string): unknown => {
   }
 };
 
+const managedLayer = (f: string): Layer => {
+  try {
+    return { name: 'managed', json: JSON.parse(readFileSync(f, 'utf8')) };
+  } catch (e) {
+    return { name: 'managed', json: null, ...(['ENOENT', 'ENOTDIR'].includes((e as NodeJS.ErrnoException).code ?? '') ? {} : { unreadable: f }) };
+  }
+};
+
 const dropIns = (dir: string): string[] => {
   try {
     return readdirSync(dir).filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort().reverse();
@@ -31,7 +39,7 @@ const dropIns = (dir: string): string[] => {
 export function readManagedLayers(managed: string): Layer[] {
   // Drop-ins merge alphabetically after managed-settings.json, so the last one wins: each is a layer, last first.
   const dir = join(dirname(managed), 'managed-settings.d');
-  return [...dropIns(dir).map((f): Layer => ({ name: 'managed', json: readJson(join(dir, f)) })), { name: 'managed', json: readJson(managed) }];
+  return [...dropIns(dir).map((f) => managedLayer(join(dir, f))), managedLayer(managed)];
 }
 
 /**

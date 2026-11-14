@@ -9,10 +9,14 @@ import type { Layer } from '../../src/core/settings-layers.js';
 import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
 
 const MSG = "Unattended run without Claude Code's sandbox. Start it with the command in the README (Unattended runs and CI), or set `sandbox: off` in `.harness/config.yaml`.";
+const STRICT_MSG =
+  "Unattended `bypassPermissions` run without `sandbox.network.strictAllowlist: true`, so sandboxed commands can reach any host. Start it with the command in the README (Unattended runs and CI), or set the key in your user or managed settings (a repo's settings can't).";
 const CONFIRMED = { sandbox: { enabled: true, allowUnsandboxedCommands: false } };
+const STRICT = { sandbox: { network: { strictAllowlist: true } } };
+const CONFIRMED_STRICT = { sandbox: { ...CONFIRMED.sandbox, ...STRICT.sandbox } };
 const layers = (l: Partial<Record<Layer['name'], unknown>>): Layer[] =>
   (['managed', 'local', 'project', 'user'] as const).map((name) => ({ name, json: l[name] ?? null }));
-const v = (o: { mode?: SandboxMode; unattended?: boolean; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; layers?: Layer[] }) =>
+const v = (o: { mode?: SandboxMode; unattended?: boolean; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; layers?: Layer[]; permissionMode?: string }) =>
   sandboxVerdict({ mode: 'unattended', unattended: true, platform: 'darwin', env: {}, layers: layers({}), ...o });
 
 describe('sandboxVerdict', () => {
@@ -40,6 +44,23 @@ describe('sandboxVerdict', () => {
     expect(v({ platform: 'linux', layers: l, env: { PATH: bin } })).toBe('allow');
   });
   test('enabled without allowUnsandboxedCommands false denies', () => expect(v({ layers: layers({ project: { sandbox: { enabled: true } } }) })).toBe('deny'));
+});
+
+describe('bypassPermissions needs strictAllowlist', () => {
+  const bp = (o: Parameters<typeof v>[0]) => v({ permissionMode: 'bypassPermissions', ...o });
+  test('a confirmed sandbox without strictAllowlist is no-strict', () => expect(bp({ layers: layers({ project: CONFIRMED }) })).toBe('no-strict'));
+  test('a repo strictAllowlist does not count', () =>
+    expect(bp({ layers: layers({ project: CONFIRMED_STRICT, local: STRICT }) })).toBe('no-strict'));
+  test('a user strictAllowlist allows', () => expect(bp({ layers: layers({ project: CONFIRMED, user: STRICT }) })).toBe('allow'));
+  test('a managed strictAllowlist allows, even over a user false', () =>
+    expect(bp({ layers: layers({ project: CONFIRMED, managed: STRICT, user: { sandbox: { network: { strictAllowlist: false } } } }) })).toBe('allow'));
+  test('a user true counts over a managed false', () =>
+    expect(bp({ layers: layers({ project: CONFIRMED, managed: { sandbox: { network: { strictAllowlist: false } } }, user: STRICT }) })).toBe('allow'));
+  test('HARNESS_SANDBOX=1 stands for the documented --settings, strictAllowlist included', () =>
+    expect(bp({ env: { HARNESS_SANDBOX: '1' } })).toBe('allow'));
+  test('no sandbox at all is the plain deny', () => expect(bp({ layers: layers({ user: STRICT }) })).toBe('deny'));
+  test.each(['dontAsk', 'default', 'acceptEdits', undefined])('permission mode %s is unchanged', (permissionMode) =>
+    expect(v({ permissionMode, layers: layers({ project: CONFIRMED }) })).toBe('allow'));
 });
 
 describe('precedence', () => {
@@ -104,7 +125,7 @@ describe('the check', () => {
   test('a sandbox confirmed at the session start allows; managed is still read from disk', async () => {
     const { root, home, managed } = setup();
     mkdirSync(join(home, '.claude'));
-    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(CONFIRMED));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(CONFIRMED_STRICT));
     const opts = { home, managed, platform: 'darwin' as const };
     expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)).toBe('');
     writeFileSync(managed, JSON.stringify({ sandbox: { enabled: false } }));
@@ -114,7 +135,7 @@ describe('the check', () => {
   test('the user layer is read from CLAUDE_CONFIG_DIR when it is set', async () => {
     const { root, home, managed } = setup();
     const cfg = mkdtempSync(join(tmpdir(), 'h-sb-cfg-'));
-    writeFileSync(join(cfg, 'settings.json'), JSON.stringify(CONFIRMED));
+    writeFileSync(join(cfg, 'settings.json'), JSON.stringify(CONFIRMED_STRICT));
     expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, { CLAUDE_CONFIG_DIR: cfg }, { home, managed, platform: 'darwin' })).toBe('');
   });
 
@@ -140,6 +161,28 @@ describe('the check', () => {
     const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'ls' } };
     const ctx = { input, root, home, managed, platform: 'darwin', env: {}, unattended: true, config: { sandbox: 'unattended' }, state: {}, save() {} } as unknown as Ctx;
     expect(await sandboxRequired.run(ctx)).toEqual({ kind: 'deny', reason: MSG, check: 'sandbox-required' });
+  });
+
+  test('bypassPermissions with a confirmed sandbox but no strictAllowlist is denied with the strict message', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(CONFIRMED));
+    const out = JSON.parse(await dispatch(call(root, 'Bash', { command: 'ls' }), [sandboxRequired], {}, { home, managed, platform: 'darwin' }));
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(out.hookSpecificOutput.permissionDecisionReason).toBe(STRICT_MSG);
+  });
+
+  test('dontAsk with the same settings is allowed', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(CONFIRMED));
+    const input = JSON.parse(call(root, 'Bash', { command: 'ls' }));
+    expect(await dispatch(JSON.stringify({ ...input, permission_mode: 'dontAsk' }), [sandboxRequired], {}, { home, managed, platform: 'darwin' })).toBe('');
+  });
+
+  test('bypassPermissions with HARNESS_SANDBOX=1 from the launcher is allowed', async () => {
+    const { root, home, managed } = setup();
+    expect(await dispatch(call(root, 'Bash', { command: 'ls' }), [sandboxRequired], { HARNESS_SANDBOX: '1' }, { home, managed, platform: 'darwin' })).toBe('');
   });
 
   test('two unattended win32 calls in one session log one sandbox-unavailable event', async () => {

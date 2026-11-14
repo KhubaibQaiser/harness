@@ -55,9 +55,25 @@ test('the reference carries the context-budget known limits, verbatim', () => {
   for (const l of limits) expect(reference).toContain(l + '\n');
 });
 
+const launch = (s: string) => /```sh\n(HARNESS_SANDBOX=1 claude -p [\s\S]+?)\n```/.exec(s)?.[1];
+
 test('README carries the unattended launch command', () => {
-  const cmd = /```sh\n(HARNESS_SANDBOX=1 claude -p [^\n]+)\n```/.exec(between(pe, '### 3.4', '### 3.5'))![1];
-  expect(readme).toContain(cmd);
+  expect(readme).toContain(launch(between(pe, '### 3.4', '### 3.5')));
+});
+
+test('the documented launch is one valid --settings JSON, the same in README and reference', () => {
+  const cmd = launch(readme)!;
+  expect(launch(reference)).toBe(cmd);
+  // The whole JSON is one POSIX single-quoted word, so it can't hold a single quote of its own.
+  const m = /^HARNESS_SANDBOX=1 claude -p "…" --settings '([^']*)'$/.exec(cmd);
+  expect(m, 'one single-quoted --settings argument').not.toBeNull();
+  const sb = JSON.parse(m![1]).sandbox;
+  expect(sb).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false });
+  expect(sb.network).toEqual({ strictAllowlist: true, allowedDomains: [] });
+  const files = sb.credentials.files.map((f: { path: string; mode: string }) => (expect(f.mode).toBe('deny'), f.path));
+  expect(files).toEqual(expect.arrayContaining(['~/.ssh', '~/.aws', '~/.config/gh', '~/.git-credentials', '~/.npmrc']));
+  const vars = sb.credentials.envVars.map((e: { name: string; mode: string }) => (expect(e.mode).toBe('deny'), e.name));
+  expect(vars).toEqual(expect.arrayContaining(['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN', 'GH_TOKEN', 'ANTHROPIC_API_KEY']));
 });
 
 test('README carries the enforcement line', () => {

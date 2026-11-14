@@ -113,8 +113,21 @@ When the team agrees on a rule for some paths, ask Claude to remember it (`/harn
 A run is unattended when `CI` is `true` or `1`, `HARNESS_UNATTENDED` is `1` or `true`, `CLAUDE_CODE_REMOTE` is `true`, or the permission mode is `dontAsk` or `bypassPermissions`. Every question then becomes a deny. Shell commands are denied unless Claude Code's sandbox is on. Start the run like this:
 
 ```sh
-HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false}}'
+HARNESS_SANDBOX=1 claude -p "…" --settings '{"sandbox":{
+  "enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false,
+  "network":{"strictAllowlist":true,"allowedDomains":[]},
+  "credentials":{
+    "files":[{"path":"~/.ssh","mode":"deny"},{"path":"~/.aws","mode":"deny"},{"path":"~/.config/gcloud","mode":"deny"},
+      {"path":"~/.azure","mode":"deny"},{"path":"~/.kube","mode":"deny"},{"path":"~/.docker/config.json","mode":"deny"},
+      {"path":"~/.npmrc","mode":"deny"},{"path":"~/.pypirc","mode":"deny"},{"path":"~/.netrc","mode":"deny"},
+      {"path":"~/.git-credentials","mode":"deny"},{"path":"~/.config/gh","mode":"deny"}],
+    "envVars":[{"name":"NPM_TOKEN","mode":"deny"},{"name":"AWS_ACCESS_KEY_ID","mode":"deny"},
+      {"name":"AWS_SECRET_ACCESS_KEY","mode":"deny"},{"name":"AWS_SESSION_TOKEN","mode":"deny"},
+      {"name":"ANTHROPIC_API_KEY","mode":"deny"},{"name":"GITHUB_TOKEN","mode":"deny"},{"name":"GH_TOKEN","mode":"deny"}]}}}'
 ```
+
+- **List the hosts your run needs** in `allowedDomains`, for example `"registry.npmjs.org"`. Every other host is refused, and the repo's own list doesn't count with these settings.
+- **Credentials.** The shell can't read the listed files or see the listed variables, so `gh`, `aws`, `npm publish` and HTTPS `git push` can't sign in. For a run that must push, remove the `GH_TOKEN` and `GITHUB_TOKEN` entries (and `~/.config/gh` if `gh` keeps its token there), and add `github.com` and `api.github.com` to `allowedDomains`. That also gives data a way out.
 
 Native Windows has no sandbox and keeps the text checks. More: [docs/reference.md](docs/reference.md#unattended-runs-and-ci).
 

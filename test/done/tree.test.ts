@@ -78,6 +78,8 @@ test('a fresh repo (no refs, no index) hashes', () => {
   const root = mkdtempSync(join(tmpdir(), 'h-tree-'));
   dirs.push(root);
   git(root, 'init', '-q');
+  // CI runners have no global git identity (Windows failed here); repoWith sets the same keys.
+  for (const [k, v] of [['user.name', 'test'], ['user.email', 'test@example.com'], ['commit.gpgsign', 'false'], ['core.autocrlf', 'false']]) git(root, 'config', k!, v!);
   put(root, 'a.txt', 'a');
   const h = treeHash(root);
   commit(root, {});

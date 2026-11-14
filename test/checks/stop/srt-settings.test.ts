@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
@@ -9,8 +9,8 @@ import { CREDENTIAL_ENV, credentialFiles } from '../../../src/core/credentials.j
 import { within } from '../../../src/core/paths.js';
 
 const home = realpathSync(mkdtempSync(join(tmpdir(), 'srt-home-')));
-const mk = (o: Partial<SrtInputs> = {}, stop: Partial<SrtInputs['stop']> = {}): SrtInputs => ({
-  root: '/repo', stop: { ...defaults().stop, ...stop }, home, tmp: ['/tmp'], tokenBase: null, denyWrite: [], denyRead: [], ...o,
+const mk = (o: Partial<SrtInputs> = {}, stop: Partial<SrtInputs['stop']> = {}, h = home): SrtInputs => ({
+  root: '/repo', stop: { ...defaults().stop, ...stop }, home: h, tmp: ['/tmp'], tokenBase: null, denyWrite: [], denyRead: [], ...o,
 });
 const keys = (v: unknown, out: string[] = []): string[] => {
   if (v && typeof v === 'object' && !Array.isArray(v)) for (const [k, x] of Object.entries(v)) { out.push(k); keys(x, out); }
@@ -82,6 +82,40 @@ describe('srt settings', () => {
     expect(() => renderSrtSettings(mk({ denyWrite: ['x'] }))).toThrow(/absolute/);
     expect(() => renderSrtSettings(mk({ denyRead: ['x'] }))).toThrow(/absolute/);
     expect(() => renderSrtSettings(mk({}, { allow_write: ['rel'] }))).toThrow(/absolute/);
+  });
+  test('deny paths are written in both spellings, deduped', () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), 'srt-ln-')));
+    mkdirSync(join(d, 'real'));
+    symlinkSync(join(d, 'real'), join(d, 'link'));
+    const s = renderSrtSettings(mk({ tokenBase: join(d, 'link', 'harness', 'gh') }));
+    const want = [{ path: join(d, 'link', 'harness', 'gh'), literal: true }, { path: join(d, 'real', 'harness', 'gh'), literal: true }];
+    expect(s.filesystem.denyRead).toEqual(want);
+    expect(s.filesystem.denyWrite.slice(-2)).toEqual(want);
+  });
+  test('a home with a trailing slash gives no doubled slash; a symlinked credential adds its target', () => {
+    const h = realpathSync(mkdtempSync(join(tmpdir(), 'srt-h-')));
+    mkdirSync(join(h, 'dots'));
+    symlinkSync(join(h, 'dots'), join(h, '.ssh'));
+    const f = renderSrtSettings(mk({}, {}, `${h}/`)).credentials.files.map((x) => x.path);
+    expect(f.some((p) => p.includes('//'))).toBe(false);
+    expect(f).toContain(join(h, '.ssh'));
+    expect(f).toContain(join(h, 'dots'));
+  });
+  test('a credential path that gains a glob character on resolve is left out', () => {
+    const h = realpathSync(mkdtempSync(join(tmpdir(), 'srt-g-')));
+    mkdirSync(join(h, 'a[1]'));
+    symlinkSync(join(h, 'a[1]'), join(h, '.aws'));
+    const f = renderSrtSettings(mk({}, {}, h)).credentials.files.map((x) => x.path);
+    expect(f).toContain(join(h, '.aws'));
+    expect(f.some((p) => p.includes('['))).toBe(false);
+  });
+  test('an allow_write symlink is written as its target', () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), 'srt-aw-')));
+    mkdirSync(join(d, 't'));
+    symlinkSync(join(d, 't'), join(d, 'l'));
+    const w = renderSrtSettings(mk({}, { allow_write: [join(d, 'l')] })).filesystem.allowWrite.map((x) => x.path);
+    expect(w).toContain(join(d, 't'));
+    expect(w).not.toContain(join(d, 'l'));
   });
   test('helpers', () => {
     expect(expandHome('~/x', '/h')).toBe('/h/x');

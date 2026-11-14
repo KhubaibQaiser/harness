@@ -1,8 +1,9 @@
 import { tmpdir } from 'node:os';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, normalize } from 'node:path';
 import { stopDenyWritePaths } from '../protect.js';
 import type { HarnessConfig } from '../../core/config.js';
 import { CREDENTIAL_ENV, credentialFiles } from '../../core/credentials.js';
+import { normHost } from '../../core/hosts.js';
 import { realish } from '../../core/paths.js';
 
 export type Lit = { path: string; literal: true };
@@ -24,19 +25,23 @@ const abs = (path: string): string => {
 export const writableRoots = (i: Pick<SrtInputs, 'root' | 'stop' | 'home' | 'tmp'>): string[] =>
   [...new Set([i.root, ...i.tmp, ...i.stop.allow_write.map((p) => realish(abs(expandHome(p, i.home))))])];
 
+// Both spellings, so a deny binds whether srt matches given or resolved paths.
+const both = (p: string): string[] => [...new Set([normalize(abs(p)), realish(abs(p))])];
+const GLOB = /[*?[\]{}]/;
+
 const lit = (path: string): Lit => ({ path: abs(path), literal: true });
 
 export function renderSrtSettings(i: SrtInputs): SrtSettings {
   const extra = i.tokenBase ? [i.tokenBase] : [];
   return {
-    network: { allowedDomains: [...new Set(i.stop.allowed_domains.map((d) => d.trim().toLowerCase().replace(/\.+$/, '')))], allowLocalBinding: i.stop.allow_local },
+    network: { allowedDomains: [...new Set(i.stop.allowed_domains.map(normHost))], allowLocalBinding: i.stop.allow_local },
     filesystem: {
       allowWrite: writableRoots(i).map(lit),
-      denyWrite: [...stopDenyWritePaths().map((p) => `${i.root}/${p.replace(/^\.\//, '')}`), ...extra, ...i.denyWrite].map(lit),
-      denyRead: [...extra, ...i.denyRead].map(lit),
+      denyWrite: [...new Set([...stopDenyWritePaths().map((p) => `${i.root}/${p.replace(/^\.\//, '')}`), ...extra, ...i.denyWrite].flatMap(both))].map(lit),
+      denyRead: [...new Set([...extra, ...i.denyRead].flatMap(both))].map(lit),
     },
     credentials: {
-      files: credentialFiles(i.home).files.map((path) => ({ path, mode: 'deny' as const })),
+      files: [...new Set(credentialFiles(i.home).files.flatMap(both).filter((p) => !GLOB.test(p)))].map((path) => ({ path, mode: 'deny' as const })),
       envVars: CREDENTIAL_ENV.map((name) => ({ name, mode: 'deny' as const })),
     },
   };

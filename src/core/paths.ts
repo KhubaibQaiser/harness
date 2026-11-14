@@ -11,6 +11,7 @@ export const real = (p: string): string => {
   }
 };
 
+// ponytail: any realpath error counts as missing, so a dangling final link returns its own path.
 // Realpath of the deepest existing ancestor, with the not-yet-existing remainder re-appended (new files don't exist yet).
 export function realish(p: string): string {
   const rest: string[] = [];

@@ -1,6 +1,10 @@
 // `harness done --blocked "<reason>"` (done-contract spec §4.2): the agent says it cannot finish. This only checks and reports;
 // the evidence-ledger hook writes the blocked row, so a reason the hook would not record is refused here.
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { loadConfig } from '../core/config.js';
+import { GUARDED, readGuarded } from '../core/harness-files.js';
+import { isHarnessHook } from '../install/merge.js';
 import { blockedReason, checkArgvs, MAX_BLOCKED_REASON } from '../done/commands.js';
 import { activeTaskId, loadContract } from '../done/contract.js';
 import { freshEvidence, readLedger } from '../done/ledger.js';
@@ -9,6 +13,19 @@ import { treeHash } from '../done/tree.js';
 import type { CliEnv } from './index.js';
 
 export const DONE_USAGE = 'harness done --blocked "<reason>"';
+
+/** The settings layers (user, project, local) run the harness PostToolUse hook for Bash, and none sets disableAllHooks. */
+function hookWired(root: string, env: NodeJS.ProcessEnv): boolean {
+  const layers = [GUARDED.user(homedir(), env), join(root, GUARDED.project), join(root, GUARDED.local)].map((p) => {
+    try {
+      return JSON.parse(readGuarded(p) ?? '{}');
+    } catch {
+      return null; // unreadable: it may be the layer that wires it, so it can't vouch
+    }
+  });
+  if (layers.some((s) => s?.disableAllHooks === true)) return false;
+  return layers.some((s) => (Array.isArray(s?.hooks?.PostToolUse) ? s.hooks.PostToolUse : []).some((g: any) => Array.isArray(g?.hooks) && g.hooks.some(isHarnessHook) && (g.matcher === undefined || new RegExp(`^(?:${g.matcher})$`).test('Bash'))));
+}
 
 export function done(args: string[], cli: CliEnv): number {
   const { root, env, out } = cli;
@@ -24,6 +41,7 @@ export function done(args: string[], cli: CliEnv): number {
   try {
     const { config } = loadConfig(root);
     if (!config.checks.done) return out('The done contract is off (checks.done); nothing would be recorded.'), 1;
+    if (!hookWired(root, env)) return out('The harness PostToolUse hook is not wired (or disableAllHooks is set); nothing would be recorded. Run harness doctor.'), 1;
     const id = activeTaskId(root, env);
     if (id === null) return out('No active task: nothing would be recorded. A person approves a contract with harness task approve.'), 1;
     const loaded = loadContract(root, id);
@@ -33,6 +51,6 @@ export function done(args: string[], cli: CliEnv): number {
   } catch (e) {
     return out(`harness done failed: ${(e as Error).message}`), 1;
   }
-  out('Blocked is recorded by the harness hook. harness verify now exits 3 (blocked) unless a tamper finding makes it not done.');
+  out('The harness hook records the blocked row when this Bash call completes (not for run_in_background or PowerShell). Confirm with harness verify: exit 3 means blocked, unless a tamper finding makes it not done.');
   return 0;
 }

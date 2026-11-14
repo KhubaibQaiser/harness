@@ -14,14 +14,22 @@ const contract: Contract = {
   checks: ['test'], review: { model: 'sonnet' }, sha256: null,
 };
 
-function setup(o: { on?: boolean; active?: boolean } = {}) {
+const HOOK = { type: 'command', command: 'node', args: ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'] };
+const WIRED = { hooks: { PostToolUse: [{ matcher: 'Bash|PowerShell|Edit', hooks: [HOOK] }] } };
+
+function setup(o: { on?: boolean; active?: boolean; settings?: unknown; local?: unknown; user?: unknown } = {}) {
   const { root } = repoWith({ 'README.md': 'x\n', 'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }) }, {});
   mkdirSync(join(root, '.harness'), { recursive: true });
   writeFileSync(join(root, '.harness/config.yaml'), `checks:\n  done: ${o.on ?? true}\n`);
+  mkdirSync(join(root, '.claude'), { recursive: true });
+  writeFileSync(join(root, '.claude/settings.json'), JSON.stringify(o.settings ?? WIRED));
+  if (o.local) writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify(o.local));
+  const home = mkdtempSync(join(tmpdir(), 'home-'));
+  if (o.user) writeFileSync(join(home, 'settings.json'), JSON.stringify(o.user));
   const c = writeContract(root, contract);
   if (o.active ?? true) setActiveTask(root, c.id);
   const lines: string[] = [];
-  const call = (args: string[], cwd = root) => ({ code: done(args, { root, cwd, env: {}, out: (l) => lines.push(l) }), text: lines.splice(0).join('\n') });
+  const call = (args: string[], cwd = root) => ({ code: done(args, { root, cwd, env: { CLAUDE_CONFIG_DIR: home }, out: (l) => lines.push(l) }), text: lines.splice(0).join('\n') });
   return { root, call };
 }
 
@@ -36,6 +44,7 @@ test('usage errors exit 2', () => {
 
 test('a reason the hook would not record exits 2 (round trip with the hook matcher)', () => {
   const { call } = setup();
+  // Covers only the double-quoted form the hook's matcher reads; single-quote and cli.mjs invocations reach the same argv.
   const accepted = ['the API key is missing', "can't reach the db", 'x'.repeat(500), 'tests need network, which is off'];
   const rejected = ['a "quoted" word', '$HOME', 'a`b`', 'a;b', 'a&b', 'a|b', 'a>b', 'a<b', '*.ts', '~/x', 'see #12', 'a\\b', '(x)', '{x}', '[x]', 'what?', 'a\tb\nc'];
   for (const r of [...accepted, ...rejected]) {
@@ -59,11 +68,31 @@ test('checks.done off, or no active contract, exits 1', () => {
   expect(setup({ active: false }).call(['--blocked', 'x']).code).toBe(1);
 });
 
+test('an unwired or disabled evidence hook exits 1', () => {
+  const msg = 'harness PostToolUse hook is not wired (or disableAllHooks is set); nothing would be recorded';
+  const other = { type: 'command', command: 'node', args: ['other.mjs'] };
+  const cases = [
+    { settings: {} },
+    { settings: { hooks: { PostToolUse: [{ matcher: 'Edit', hooks: [HOOK] }] } } },
+    { settings: { hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [other] }] } } },
+    { local: { disableAllHooks: true } },
+    { user: { disableAllHooks: true } },
+    { settings: { ...WIRED, disableAllHooks: true } },
+  ];
+  for (const c of cases) {
+    const r = setup(c).call(['--blocked', 'x']);
+    expect(r.code, JSON.stringify(c)).toBe(1);
+    expect(r.text).toContain(msg);
+  }
+  expect(setup({ user: WIRED, settings: {} }).call(['--blocked', 'x']).code).toBe(0); // a user-level hook counts
+});
+
 test('a valid call prints the failing criteria and the hook note, and writes no ledger', () => {
   const { root, call } = setup();
   const r = call(['--blocked', 'the API key is missing']);
   expect(r.code).toBe(0);
   expect(r.text).toContain('C1');
-  expect(r.text).toContain('Blocked is recorded by the harness hook. harness verify now exits 3 (blocked) unless a tamper finding makes it not done.');
+  expect(r.text).toContain('The harness hook records the blocked row when this Bash call completes (not for run_in_background or PowerShell). Confirm with harness verify: exit 3 means blocked, unless a tamper finding makes it not done.');
+  expect(r.text).not.toContain('is recorded');
   expect(() => readFileSync(join(root, LEDGER))).toThrow();
 });

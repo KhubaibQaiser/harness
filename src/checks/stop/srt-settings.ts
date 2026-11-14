@@ -31,7 +31,8 @@ const GLOB = /[*?[\]{}]/;
 
 const lit = (path: string): Lit => ({ path: abs(path), literal: true });
 
-export function renderSrtSettings(i: SrtInputs): SrtSettings {
+export function renderSrtSettings(i: SrtInputs, platform: NodeJS.Platform = process.platform): SrtSettings {
+  if (platform === 'win32') throw new Error('srt is not supported on native Windows');
   const extra = i.tokenBase ? [i.tokenBase] : [];
   return {
     network: { allowedDomains: [...new Set(i.stop.allowed_domains.map(normHost))], allowLocalBinding: i.stop.allow_local },

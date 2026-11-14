@@ -22,6 +22,7 @@ const pkgRoot = (file: string): string => {
 
 /** Why `entry` can't be a Stop-writable root (§11.2 fragment), or null. Each class is checked on the expanded path and on its realpath. */
 export function allowWriteProblem(entry: string, sys: AllowWriteSys): string | null {
+  if (sys.platform === 'win32') throw new Error('srt is not supported on native Windows');
   const e = expandHome(entry, sys.home);
   if (!isAbsolute(e)) throw new Error(`stop.allow_write entry is not absolute: ${entry}`);
   const w = (p: string, dir: string) => within(p, dir, sys.platform);

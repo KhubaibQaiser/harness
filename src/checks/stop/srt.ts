@@ -76,6 +76,7 @@ function chain(p: string): string[] | null {
 }
 
 export function locateSrt(probe: SrtProbe, writable: string[], platform: NodeJS.Platform, execPath: string = process.execPath): SrtFound | { why: SrtWhy } {
+  if (platform === 'win32') throw new Error('srt is not supported on native Windows');
   // A PATH symlink loop is dropped by findOnPath and reported as missing, which is closed.
   const found = probe.which('srt');
   if (!found) return { why: { kind: 'missing' } };

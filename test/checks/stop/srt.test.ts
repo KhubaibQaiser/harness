@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { locateSrt, realSrtProbe, srtMessage, SRT_MIN, STOP_WIN_UNATTENDED, WIN_STEPS_WARNING, type SrtProbe, type SrtWhy } from '../../../src/checks/stop/srt.js';
+// srt runs on macOS and Linux only; native Windows stays unwrapped (R10), and PS2 adds its handling.
+const win = process.platform === 'win32';
+const suite = describe.skipIf(win);
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'srt-')));
 const repo = join(base, 'repo');
@@ -15,13 +18,13 @@ const envNode = file(join(out, 'srt-env'), '#!/usr/bin/env node\nx');
 const js = file(join(out, 'cli.js'), 'x');
 const bin = file(join(out, 'srt'), '\x7fELF');
 const link = join(out, 'srt-link');
-symlinkSync(join(out, 'dist'), join(out, 'd2'));
+if (!win) symlinkSync(join(out, 'dist'), join(out, 'd2'));
 file(join(out, 'dist/cli.js'), 'x');
-symlinkSync(join(out, 'dist/cli.js'), link);
+if (!win) symlinkSync(join(out, 'dist/cli.js'), link);
 const probe = (path: string | null, ver: string | (() => string) = '0.0.83'): SrtProbe => ({ which: () => path, version: () => (typeof ver === 'function' ? ver() : ver) });
 const loc = (p: SrtProbe, w = [repo], ex = node) => locateSrt(p, w, 'linux', ex);
 
-describe('locateSrt', () => {
+suite('locateSrt', () => {
   test('missing', () => expect(loc(probe(null))).toEqual({ why: { kind: 'missing' } }));
   test('launch: env node shebang, .js and symlink to js run through execPath; other files run alone', () => {
     expect(loc(probe(envNode))).toMatchObject({ launch: [node, envNode] });
@@ -55,7 +58,7 @@ describe('locateSrt', () => {
   });
 });
 
-describe('messages', () => {
+suite('messages', () => {
   const tail = ` Install @anthropic-ai/sandbox-runtime@${SRT_MIN} globally, outside the repo (Linux also needs bubblewrap 0.8 or newer, socat and ripgrep; macOS needs ripgrep), then stop again. To run the checks unsandboxed instead, set sandbox: off in .harness/config.yaml (logged).`;
   const cases: [SrtWhy, string][] = [
     [{ kind: 'missing' }, 'is not installed'],
@@ -71,7 +74,7 @@ describe('messages', () => {
   });
 });
 
-describe('launcher classification and link walk', () => {
+suite('launcher classification and link walk', () => {
   const launcher = (first: string) => ({ why: { kind: 'check', check: 'launcher', first } });
   test('shell shim, nodejs shebang and foreign binaries are refused; version never called', () => {
     const version = vi.fn(() => '0.0.83');
@@ -107,7 +110,7 @@ describe('launcher classification and link walk', () => {
   });
 });
 
-describe('version parse', () => {
+suite('version parse', () => {
   test.each(['bwrap 0.9.0\nsrt 0.0.80', '0.0.83-beta', 'srt 0.0.83'])('%j fails version', (o) => expect(loc(probe(js, o))).toMatchObject({ why: { kind: 'check', check: 'version' } }));
   test('ANSI is stripped', () => expect(loc(probe(js, '\x1b[32m0.0.83\x1b[0m\n'))).toMatchObject({ version: '0.0.83' }));
   test('failure detail is stderr first line, else stdout', () => {
@@ -117,7 +120,7 @@ describe('version parse', () => {
   });
 });
 
-describe('realSrtProbe', () => {
+suite('realSrtProbe', () => {
   test('relative PATH entries are skipped', () => {
     const prev = process.cwd(); process.chdir(out); chmodSync(bin, 0o755);
     try { expect(realSrtProbe({ PATH: `.:${out}` }, 'linux').which('srt')).toBe(join(out, 'srt')); } finally { process.chdir(prev); }
@@ -130,14 +133,14 @@ describe('realSrtProbe', () => {
   });
 });
 
-test('realSrtProbe argv is [--version] with a 5 s timeout', () => {
+test.skipIf(win)('realSrtProbe argv is [--version] with a 5 s timeout', () => {
   const run = vi.fn(() => '0.0.83');
   const p = realSrtProbe({ PATH: out }, 'linux', run as never);
   expect(p.version(['/n', '/s.js'])).toBe('0.0.83');
   expect(run).toHaveBeenCalledWith('/n', ['/s.js', '--version'], expect.objectContaining({ timeout: 5000, encoding: 'utf8', killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: out } }));
 });
 
-describe('round 2', () => {
+suite('round 2', () => {
   test('a relative hop inside a symlinked PATH folder resolves from the real folder', () => {
     const real = join(base, 'n1/t1/t2'); mkdirSync(real, { recursive: true });
     symlinkSync(js, join(repo, 'x'));
@@ -161,7 +164,7 @@ describe('round 2', () => {
   });
 });
 
-describe('round 3: dot-dot after a segment', () => {
+suite('round 3: dot-dot after a segment', () => {
   test('sub/../x where sub is a link is a launcher failure, relative and absolute', () => {
     const tr = join(base, 'tr'); mkdirSync(tr);
     symlinkSync(join(out, 'dist'), join(tr, 'sub'));

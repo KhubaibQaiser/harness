@@ -7,6 +7,9 @@ import { expandHome, renderSrtSettings, type SrtInputs, tempRoots, writableRoots
 import { defaults } from '../../../src/core/config.js';
 import { CREDENTIAL_ENV, credentialFiles } from '../../../src/core/credentials.js';
 import { within } from '../../../src/core/paths.js';
+// srt runs on macOS and Linux only; native Windows stays unwrapped (R10), and PS2 adds its handling.
+const win = process.platform === 'win32';
+const suite = describe.skipIf(win);
 
 const home = realpathSync(mkdtempSync(join(tmpdir(), 'srt-home-')));
 const mk = (o: Partial<SrtInputs> = {}, stop: Partial<SrtInputs['stop']> = {}, h = home): SrtInputs => ({
@@ -18,7 +21,7 @@ const keys = (v: unknown, out: string[] = []): string[] => {
   return out;
 };
 
-describe('within', () => {
+suite('within', () => {
   test('equal, inside, and path boundary', () => {
     expect(within('/a/b', '/a/b', 'linux')).toBe(true);
     expect(within('/a/b/c', '/a/b', 'linux')).toBe(true);
@@ -32,7 +35,7 @@ describe('within', () => {
   });
 });
 
-describe('srt settings', () => {
+suite('srt settings', () => {
   test('every key name from the srt README, and no allowRead anywhere', () => {
     const s = renderSrtSettings(mk({ tokenBase: '/run/u/harness/gh' }, { allowed_domains: ['a.io'] }));
     const k = keys(s);

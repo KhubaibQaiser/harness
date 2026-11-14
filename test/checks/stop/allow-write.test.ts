@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { allowWriteMessage, allowWriteProblem, type AllowWriteSys } from '../../../src/checks/stop/allow-write.js';
+// srt runs on macOS and Linux only; native Windows stays unwrapped (R10), and PS2 adds its handling.
+const win = process.platform === 'win32';
+const suite = describe.skipIf(win);
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'aw-')));
 const home = join(base, 'home');
@@ -19,7 +22,7 @@ const p = (e: string, s: Partial<AllowWriteSys> = {}) => allowWriteProblem(e, { 
 const mkd = (...a: string[]) => { const d = join(base, ...a); mkdirSync(d, { recursive: true }); return d; };
 const other = join(base, 'other');
 
-describe('reference dirs compared in both forms', () => {
+suite('reference dirs compared in both forms', () => {
   test('PATH entry that is a symlink: its target is refused', () => {
     const real = mkd('pl-real');
     symlinkSync(real, join(base, 'pl-link'));
@@ -48,7 +51,7 @@ describe('reference dirs compared in both forms', () => {
   });
 });
 
-describe('srt root', () => {
+suite('srt root', () => {
   test('no package.json: falls back to the binary dir', () => {
     const d = mkd('nopkg/bin');
     writeFileSync(join(d, 'srt'), '');
@@ -65,7 +68,7 @@ describe('srt root', () => {
   });
 });
 
-describe('edges', () => {
+suite('edges', () => {
   test('darwin folds case', () => {
     expect(p(join(home, '.CLAUDE'), { platform: 'darwin' })).toBe('programs there run at login');
     expect(p(join(home, '.CLAUDE'))).toBeNull();
@@ -77,7 +80,7 @@ describe('edges', () => {
   });
 });
 
-describe('allowWriteProblem', () => {
+suite('allowWriteProblem', () => {
   test('protected: equal or inside', () => {
     expect(p(join(root, '.claude/hooks'))).toBe('it is a protected path');
     expect(p(join(root, '.claude/hooks/x'))).toBe('it is a protected path');

@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.js';
 import { GUARDED, readGuarded } from '../core/harness-files.js';
-import { managedSettingsPath, readManagedLayers, withoutRepoMirror } from '../core/settings-layers.js';
+import { effective, managedSettingsPath, readManagedLayers, withoutRepoMirror } from '../core/settings-layers.js';
 import { isHarnessHook } from '../install/merge.js';
 import { blockedReason, checkArgvs, MAX_BLOCKED_REASON } from '../done/commands.js';
 import { activeTaskId, loadContract } from '../done/contract.js';
@@ -23,11 +23,12 @@ const runsHook = (s: any): boolean =>
 /**
  * The settings layers (managed, user, project, local) run the harness PostToolUse hook for Bash, and none turns hooks off.
  * Fails closed: an existing layer that can't be read or parsed is false. A missing file is an empty layer.
- * ponytail: readManagedLayers can't tell a missing managed file from an unreadable one; both count as empty.
+ * ponytail: an unreadable managed file counts as empty, as it does for Claude Code, which runs as the same user; harness doctor warns about it.
  */
 function hookWired(cli: CliEnv): boolean {
   const { root } = cli, env = withoutRepoMirror(root, cli.env);
-  const managed = readManagedLayers(cli.managed ?? managedSettingsPath(cli.platform ?? process.platform)).map((l) => l.json ?? {});
+  const managedLayers = readManagedLayers(cli.managed ?? managedSettingsPath(cli.platform ?? process.platform));
+  const managed = managedLayers.map((l) => l.json ?? {});
   const files = [GUARDED.user(cli.home ?? homedir(), env), join(root, GUARDED.project), join(root, GUARDED.local)].map((p) => {
     try {
       const j = JSON.parse(readGuarded(p) ?? '{}');
@@ -38,7 +39,7 @@ function hookWired(cli: CliEnv): boolean {
   });
   if (files.includes(false)) return false;
   if ([...managed, ...files].some((s: any) => s.disableAllHooks === true)) return false;
-  return (managed.some((s: any) => s.allowManagedHooksOnly === true) ? managed : [...managed, ...files]).some(runsHook);
+  return (effective(managedLayers, ['allowManagedHooksOnly']) === true ? managed : [...managed, ...files]).some(runsHook);
 }
 
 export function done(args: string[], cli: CliEnv): number {

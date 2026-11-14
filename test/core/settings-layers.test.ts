@@ -16,14 +16,23 @@ test('managed settings path per platform', () => {
   expect(managedSettingsPath('linux')).toBe('/etc/claude-code/managed-settings.json');
 });
 
-test('readManagedLayers gives null for non-JSON or missing files', () => {
+test('readManagedLayers gives null json for non-JSON or missing files, and flags only the unreadable one', () => {
   const root = mkdtempSync(join(tmpdir(), 'h-sl-root-'));
   const managed = join(root, 'managed.json');
   expect(readManagedLayers(managed)).toEqual([{ name: 'managed', json: null }]);
   put(managed, 'not json');
-  expect(readManagedLayers(managed)).toEqual([{ name: 'managed', json: null }]);
+  expect(readManagedLayers(managed)).toEqual([{ name: 'managed', json: null, unreadable: managed }]);
   put(managed, '{"a":1}');
   expect(readManagedLayers(managed)).toEqual([{ name: 'managed', json: { a: 1 } }]);
+});
+
+test('readManagedLayers flags a file that parses to a non-object, keeping json', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-sl-root-'));
+  const managed = join(root, 'managed.json');
+  for (const [text, json] of [['[]', []], ['null', null], ['5', 5]] as const) {
+    put(managed, text);
+    expect(readManagedLayers(managed), text).toEqual([{ name: 'managed', json, unreadable: managed }]);
+  }
 });
 
 test('userSettingsPath honours CLAUDE_CONFIG_DIR', () => {

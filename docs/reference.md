@@ -295,7 +295,11 @@ The file goes at:
 - Linux and WSL2: `/etc/claude-code/managed-settings.json`
 - Windows: `C:\Program Files\ClaudeCode\managed-settings.json`
 
-Drop-in files in a `managed-settings.d/` folder next to it count too. Leave harness's hooks out of managed settings: a managed hook runs in every repo, and with `onFailure: "block"` it would block every repo without harness.
+Drop-in files in a `managed-settings.d/` folder next to it count too. `harness doctor` notes (exit 0) a managed file that exists but can't be read or parsed, or that isn't a JSON object: Claude Code skips it, so its policy is not applied.
+
+If the winning managed layer sets `allowManagedHooksOnly: true`, Claude Code drops every user, project and local hook. `harness doctor` then fails (exit 1), naming the hook events with no harness hook in managed settings; the admin adds the harness hooks there or unsets the key.
+
+Without `allowManagedHooksOnly`, leave harness's hooks out of managed settings: a managed hook runs in every repo, and with `onFailure: "block"` it would block every repo without harness.
 
 ## Allowing installs
 

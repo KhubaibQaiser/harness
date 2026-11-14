@@ -114,3 +114,13 @@ test('preset answer: absent, null, a repo preset; unknown rejected', () => {
   expect(configToAnswers({ ...defaults(), preset: { id: 'x', version: '1', items: [], git: { branch_prefixes: [], no_ai_trailer: false, pr_size_warning: false } } }).preset).toBe('x');
   expect(configToAnswers(defaults()).preset).toBe(null);
 });
+
+test('update carries stop.allow_local unchanged (R14: no answers key for it)', () => {
+  const base = defaults();
+  base.stop.allow_local = true;
+  const r = validateAnswers(answers(), facts);
+  if (!r.ok) throw new Error(r.errors.join());
+  expect(Object.keys(r.answers)).not.toContain('stop');
+  expect(answersToConfig(base, r.answers).stop.allow_local).toBe(true);
+  expect(errs({ ...answers(), stop: { allow_local: true } }).length).toBeGreaterThan(0);
+});

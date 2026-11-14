@@ -65,6 +65,9 @@ const WHAT = {
   'stop.timeout_s': 'Seconds the Stop steps may run in total.',
   'stop.base_ref': 'Git ref that changed lines are compared with.',
   'stop.coverage_globs': 'Globs for the coverage files that diff coverage reads.',
+  'stop.allowed_domains': 'Hosts Stop steps (and verify\'s command runs) may reach inside `srt`. Empty means no network. GitHub hosts and wildcards matching `example.com` are refused.',
+  'stop.allow_write': 'Extra writable paths for Stop steps inside `srt`, such as a tool cache outside the repo. Stop and doctor refuse protected paths, the home folder, login-start folders, PATH folders, the `srt` install prefix and the token folder.',
+  'stop.allow_local': 'Lets Stop steps bind and reach loopback (person-only; macOS: opens host loopback, Claude Code\'s sandbox proxy included; Linux: no effect).',
 };
 
 const out = await build({

@@ -3,6 +3,7 @@ import { retryTransient } from './atomic.js';
 import { join, posix, relative, resolve } from 'node:path';
 import { parse } from 'yaml';
 import { ID_RE, PROJECT_TYPES, type ProjectType } from '../catalog/schema.js';
+import { hostProblem } from './hosts.js';
 import { PREFIX_RE, type PresetGit } from './branch-prefix.js';
 
 export type StopStep = string | { name: string; run: string[] };
@@ -61,7 +62,7 @@ export interface HarnessConfig {
   /** The done contract (needs checks.done): the review model and the time budgets of harness verify. */
   done: { review_model: string; review_timeout_s: number; timeout_s: number };
   unattended: { multi_file_gate: 'block' | 'allow-log' | 'off'; require_reason: boolean; review: 'skip' | 'code-only' };
-  stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[] };
+  stop: { steps: StopStep[]; package_manager: PackageManager; max_attempts: number; timeout_s: number; base_ref: string; coverage_globs: string[]; allowed_domains: string[]; allow_write: string[]; allow_local: boolean };
   /** Absent until init records a chosen preset. */
   preset?: { id: string; version: string; items: string[]; git: PresetGit };
 }
@@ -99,6 +100,9 @@ export const defaults = (): HarnessConfig => ({
     timeout_s: 540,
     base_ref: 'origin/main',
     coverage_globs: ['**/coverage/coverage-final.json'],
+    allowed_domains: [],
+    allow_write: [],
+    allow_local: false,
   },
 });
 
@@ -193,6 +197,8 @@ const presetRule = objRule({
     pr_size_warning: bool,
   }),
 });
+// Shape only (R5): the protected-path classes are checked at Stop and by doctor.
+const WRITE_PATH = /^(\/|~\/)[^\0]*$/;
 const MODEL_RE = /^claude-[a-z0-9-]{1,60}$/;
 // Passed to `claude --model` unchanged, so it allows ids like claude-opus-5[1m]; no leading dash, no spaces.
 export const MODEL_RX = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,99}$/;
@@ -208,6 +214,8 @@ const RULES: Record<string, Rule> = {
   'unattended.review': oneOf('skip', 'code-only'),
   'stop.package_manager': oneOf('npm', 'pnpm', 'yarn', 'bun', 'none'),
   'stop.steps': stepsRule,
+  'stop.allowed_domains': listOf('hosts', (v) => (typeof v === 'string' && v !== '' && !/\s/.test(v) ? hostProblem(v) : 'must be a host name such as registry.npmjs.org')),
+  'stop.allow_write': listOf('paths', (v) => (typeof v === 'string' && WRITE_PATH.test(v) ? null : 'must be an absolute path or a path starting with ~/')),
   sandbox: oneOf('unattended', 'always', 'off'),
   'project.type': (v) => (v === '' ? null : oneOf(...PROJECT_TYPES)(v)), // '' means not set yet
   'project.team_size': num(0, 10000, true),

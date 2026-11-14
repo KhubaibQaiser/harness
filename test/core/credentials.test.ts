@@ -25,3 +25,8 @@ test('home with [ skips every file entry', () => {
   expect(r.skipped).toHaveLength(36);
   expect(r.files).toEqual(['/mnt/c/Users']);
 });
+
+test('credentialFiles rejects an empty or relative home', () => {
+  expect(() => credentialFiles('')).toThrow(/home/);
+  expect(() => credentialFiles('rel/home')).toThrow(/home/);
+});

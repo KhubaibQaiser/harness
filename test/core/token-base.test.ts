@@ -9,3 +9,9 @@ test('token base per platform, getconf failure throws, Linux without XDG is null
   expect(tokenBase('linux', {})).toBeNull();
   expect(tokenBase('win32', { XDG_RUNTIME_DIR: '/x' })).toBeNull();
 });
+
+test('token base must be absolute and is joined without a trailing slash', () => {
+  expect(tokenBase('darwin', {}, () => '/var/T')).toBe('/var/T/harness/gh');
+  expect(() => tokenBase('darwin', {}, () => 'T/')).toThrow(/absolute/);
+  expect(tokenBase('linux', { XDG_RUNTIME_DIR: 'run/user' })).toBeNull();
+});

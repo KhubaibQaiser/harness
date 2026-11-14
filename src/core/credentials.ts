@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 // The §8.3 credential lists, as the spec gives them. Paths are never opened here, only named.
 export const CREDENTIAL_FILES: readonly string[] = [
   '~/.ssh', '~/.aws', '~/.config/gcloud', '~/.azure', '~/.kube', '~/.docker/config.json',
@@ -22,6 +23,7 @@ export const CREDENTIAL_ENV: readonly string[] = [
 
 /** `~/` expanded against `home`. An expanded path with a glob character can't be a literal srt path, so it is skipped. */
 export function credentialFiles(home: string): { files: string[]; skipped: string[] } {
+  if (!home || !isAbsolute(home)) throw new Error('credentialFiles: home must be an absolute path');
   const files: string[] = [];
   const skipped: string[] = [];
   for (const f of CREDENTIAL_FILES) {

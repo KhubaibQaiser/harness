@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -114,6 +114,21 @@ test('R-1: an unguarded change in the watched user file, or one reported without
   expect(await change(r, 'user_settings')).toBe('');
   const { file_path: _, ...bare } = FIXTURE.user_settings;
   expect(await run(r, bare)).toBe('');
+});
+
+test('S-1: a reported ~/.claude/settings.json is the watched file in the default setup', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.home, '.claude/settings.json'), { theme: 'dark' });
+  expect(await run(r, { ...FIXTURE.user_settings, file_path: '~/.claude/settings.json' })).toBe('');
+});
+
+test('S-2: a reported path that differs only in case is the watched file on a case-insensitive filesystem', async ({ skip }) => {
+  const r = repo();
+  if (!existsSync(join(r.home, '.CLAUDE'))) skip(); // case-sensitive filesystem: the two names are different files
+  await prompt(r);
+  write(join(r.home, '.claude/settings.json'), { theme: 'dark' });
+  expect(await run(r, userFile(join(r.home, '.CLAUDE')))).toBe('');
 });
 
 test('an env change in the user file is blocked', async () => {

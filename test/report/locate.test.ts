@@ -170,6 +170,14 @@ describe('locateSessions', () => {
     expect(r.sessions.length).toBeLessThanOrEqual(2);
     expect(r.skipped.truncated).toBe(1);
   });
+  it('S-3: the HARNESS_CLAUDE_CONFIG_DIR mirror counts, unless the repo settings env sets it', async () => {
+    const mirror = join(home, 'mirror');
+    const repo = join(home, 'repo'); // a real folder: the repo settings are read from disk
+    expect((await run(repo, { env: { HARNESS_CLAUDE_CONFIG_DIR: mirror } })).projectsDir).toBe(join(mirror, 'projects'));
+    mkdirSync(join(repo, '.claude'), { recursive: true });
+    writeFileSync(join(repo, '.claude/settings.json'), JSON.stringify({ env: { HARNESS_CLAUDE_CONFIG_DIR: mirror } }));
+    expect((await run(repo, { env: { HARNESS_CLAUDE_CONFIG_DIR: mirror } })).projectsDir).toBe(proj);
+  });
   it('uses CLAUDE_CONFIG_DIR and tolerates a missing projects dir', async () => {
     expect((await run(root, { env: { CLAUDE_CONFIG_DIR: join(home, 'none') } })).sessions).toEqual([]);
   });

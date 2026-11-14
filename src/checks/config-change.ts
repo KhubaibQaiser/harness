@@ -9,11 +9,13 @@ import type { Check } from '../hooks/dispatch.js';
 // Source values from the hooks reference (ConfigChange input). policy_settings can't be blocked, and skills aren't guarded.
 const SOURCES: Record<string, 'user' | 'project' | 'local'> = { user_settings: 'user', project_settings: 'project', local_settings: 'local' };
 
-const real = (p: string): string => {
+// `~` expanded like preset does; the native realpath canonicalizes case on macOS and Windows. A missing file resolves as is.
+const real = (p: string, home: string): string => {
+  const abs = resolve(p.replace(/^~(?=[\\/]|$)/, home));
   try {
-    return realpathSync(p);
+    return realpathSync.native(abs);
   } catch {
-    return resolve(p);
+    return abs;
   }
 };
 
@@ -39,7 +41,7 @@ export const configChange: Check = {
     // The file Claude Code reports is not the one harness watches (say CLAUDE_CONFIG_DIR, stripped by the env scrub,
     // with no mirror): harness can't judge it, so it is blocked rather than passed on an unchanged file's diff.
     const reported = key === 'user' && typeof ctx.input.file_path === 'string' && ctx.input.file_path ? ctx.input.file_path : undefined;
-    const elsewhere = reported !== undefined && real(reported) !== real(user);
+    const elsewhere = reported !== undefined && real(reported, ctx.home) !== real(user, ctx.home);
     const parts = elsewhere
       ? [`not the watched \`${rel}\`: launch with HARNESS_CLAUDE_CONFIG_DIR set`]
       : base ? guardedDiff(base[key] ?? null, cur) : ['no session baseline'];

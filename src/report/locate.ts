@@ -1,6 +1,6 @@
 import { closeSync, constants, lstatSync, opendirSync, openSync, readSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { claudeConfigDir } from '../core/settings-layers.js';
+import { claudeConfigDir, withoutRepoMirror } from '../core/settings-layers.js';
 import { isSafeSessionId } from '../core/state.js';
 
 export type GitRun = (args: string[]) => { status: number | null; stdout: string };
@@ -89,7 +89,7 @@ function firstCwd(file: string, open: typeof openSync): string | undefined | nul
 
 export async function locateSessions(root: string, opts: { env: NodeJS.ProcessEnv; home: string; sinceMs: number; git: GitRun; platform?: NodeJS.Platform; open?: typeof openSync; maxEntries?: number }): Promise<Located> {
   const platform = opts.platform ?? process.platform;
-  const dir = projectsDir(opts.env, opts.home);
+  const dir = projectsDir(withoutRepoMirror(root, opts.env), opts.home); // as in doctor: the repo can't name the mirror
   const skipped: Located['skipped'] = {};
   const skip = (r: SkipReason): void => { skipped[r] = (skipped[r] ?? 0) + 1; };
   const paths = repoPaths(root, opts.git);

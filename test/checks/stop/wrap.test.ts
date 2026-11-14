@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, test } from 'vitest';
+import { afterAll, describe, expect, test } from 'vitest';
 import { allowWriteMessage } from '../../../src/checks/stop/allow-write.js';
-import type { ExecResult } from '../../../src/checks/stop/gate.js';
+import { defaultExec, type ExecResult } from '../../../src/checks/stop/gate.js';
 import { srtMessage, type SrtProbe, type SrtWhy } from '../../../src/checks/stop/srt.js';
 import type { PlanStep } from '../../../src/checks/stop/steps.js';
 import { type Expected, parseResults, runWrapped, srtArgv, type WrapDeps } from '../../../src/checks/stop/wrap.js';
@@ -21,9 +21,11 @@ const runner = join(root, '.harness/hooks/dispatch.mjs');
 const state = join(root, '.harness/state');
 if (!win) for (const d of [join(root, '.harness/hooks'), home]) mkdirSync(d, { recursive: true });
 if (!win) writeFileSync(runner, '');
+afterAll(() => void (win || rmSync(base, { recursive: true, force: true })));
 // srt must sit outside every writable root, and the temp dir is one, so a repo file stands in (a .mjs is a node launch).
 const srtJs = fileURLToPath(new URL('../../../build.mjs', import.meta.url));
 const node = win ? '' : realpathSync(process.execPath);
+const srtBin = fileURLToPath(new URL('../../fixtures/srt', import.meta.url)); // 4 bytes of ELF magic; the fake probe never runs it
 
 const N = 'a'.repeat(32);
 const N2 = 'b'.repeat(32);
@@ -36,16 +38,16 @@ const planAt = (n = N) => join(state, `plan-${n}.json`);
 
 type Call = { cmd: string; args: string[]; ms: number; settings: string; plan: string };
 const probe = (path: string | null = srtJs, ver = '0.0.83'): SrtProbe => ({ which: () => path, version: () => ver });
-function setup(script: Partial<ExecResult> | (() => Partial<ExecResult>) = { stdout: pass }, o: Partial<WrapDeps> = {}) {
+function setup(script: Partial<ExecResult> | (() => Partial<ExecResult> | Promise<Partial<ExecResult>>) = { stdout: pass }, o: Partial<WrapDeps> = {}) {
   const calls: Call[] = [];
   const nonces = [N, N2];
   const d: WrapDeps = {
     root, stop: defaults().stop, now: () => 0, srt: probe(), home, platform: process.platform, env: { PATH: '/usr/bin:/bin' },
-    tokenBase: () => null, runner, node: process.execPath, nonce: () => nonces.shift()!,
-    exec: (cmd, args, ms) => {
+    tokenBase: () => null, node: process.execPath, nonce: () => nonces.shift()!,
+    exec: async (cmd, args, ms) => {
       const n = args.at(-1)!;
       calls.push({ cmd, args, ms, settings: readFileSync(settingsAt(n), 'utf8'), plan: readFileSync(planAt(n), 'utf8') });
-      return { status: 0, output: '', timedOut: false, stdout: '', stderr: '', ...(typeof script === 'function' ? script() : script) };
+      return { status: 0, output: '', timedOut: false, stdout: '', stderr: '', ...(typeof script === 'function' ? await script() : script) };
     },
     ...o,
   };
@@ -113,12 +115,61 @@ suite('runWrapped', () => {
     expect(await setup({ status: null, stdout: pass, stderr: '' }).run()).toEqual(unavailable('srt exit', 'status null'));
   });
 
-  test("a failing step's output ends with srt's stderr tail; a stray srt line on a passing run is a warning", async () => {
+  test("a failing step's output ends with srt's proxy lines, capped at 1024 chars; a stray srt line on any run is a warning", async () => {
     const stderr = 'sandbox proxy: denied registry.npmjs.org:443\n';
-    const r = await setup({ stdout: [line('format:check'), line('lint', { status: 1, output: 'npm ERR! network' })].join('\n'), stderr }).run();
+    const failOut = [line('format:check'), line('lint', { status: 1, output: 'npm ERR! network' })].join('\n');
+    const r = await setup({ stdout: failOut, stderr }).run();
     expect(r).toEqual({ kind: 'ran', results: [{ label: 'format:check', status: 0, timedOut: false, ms: 5, output: '' }, { label: 'lint', status: 1, timedOut: false, ms: 5, output: 'npm ERR! network\nsandbox proxy: denied registry.npmjs.org:443' }] });
+    const many = Array.from({ length: 100 }, (_, i) => `sandbox proxy: denied host${i}.example:443`).join('\n');
+    const capped = await setup({ stdout: failOut, stderr: many }).run();
+    const out = capped.kind === 'ran' ? capped.results[1]!.output : '';
+    expect(out.startsWith('npm ERR! network\n')).toBe(true);
+    expect(out.length - 'npm ERR! network\n'.length).toBe(1024);
+    expect(out.endsWith('host99.example:443')).toBe(true);
     expect(await setup({ stdout: pass, stderr }).run()).toMatchObject({ kind: 'ran' });
-    expect(await setup({ stdout: pass, stderr: stderr + 'warning: seccomp filter not applied\n' }).run()).toEqual(unavailable('srt warning', 'warning: seccomp filter not applied'));
+    const warn = stderr + 'warning: seccomp filter not applied\n';
+    expect(await setup({ stdout: pass, stderr: warn }).run()).toEqual(unavailable('srt warning', 'warning: seccomp filter not applied'));
+    expect(await setup({ stdout: failOut, stderr: warn }).run()).toEqual(unavailable('srt warning', 'warning: seccomp filter not applied'));
+  });
+
+  test('a stderr flood that rolls the warning out of the tail is an srt warning, never a pass', async () => {
+    // The real defaultExec: a warning, then 70 KiB of proxy lines, so the 64 KiB tail no longer holds the warning.
+    const js = "process.stderr.write('warning: seccomp filter not applied\\n' + 'sandbox proxy: denied x.example:443 padding padding padding pad\\n'.repeat(1120))";
+    const r = await setup(async () => ({ ...(await defaultExec(base)(process.execPath, ['-e', js], 20_000)), stdout: pass })).run();
+    expect(r).toEqual(unavailable('srt warning', 'stderr overflow'));
+  });
+
+  test('a deadline already past is a timeout, srt not called', async () => {
+    const { calls, run } = setup(undefined, { now: () => 2000 });
+    expect(await run()).toEqual({ kind: 'timeout' });
+    expect(calls).toHaveLength(0);
+    clean();
+  });
+
+  test('a failed plan write and a symlinked state folder fail closed as settings file', async () => {
+    writeFileSync(planAt(), 'planted');
+    const r = await setup().run();
+    expect(r).toMatchObject({ kind: 'unavailable', reason: 'settings file' });
+    expect(r.kind === 'unavailable' && r.message).toContain('failed its check: settings file (plan: EEXIST');
+    rmSync(planAt());
+    clean();
+    const elsewhere = join(base, 'elsewhere');
+    mkdirSync(elsewhere);
+    rmSync(state, { recursive: true, force: true });
+    symlinkSync(elsewhere, state);
+    const { calls, run } = setup();
+    expect(await run()).toEqual(unavailable('settings file', 'state folder is not a real directory'));
+    expect(calls).toHaveLength(0);
+    expect(readdirSync(elsewhere)).toEqual([]);
+    rmSync(state);
+  });
+
+  test('a binary srt still checks the node it runs the step runner with', async () => {
+    const inRepo = join(root, 'node');
+    writeFileSync(inRepo, '');
+    const { calls, run } = setup(undefined, { srt: probe(srtBin), node: inRepo });
+    expect(await run()).toEqual({ kind: 'unavailable', message: srtMessage({ kind: 'writable', path: inRepo }), reason: 'writable' });
+    expect(calls).toHaveLength(0);
   });
 
   test('settings file missing or changed before spawn fails closed, srt not called', async () => {
@@ -156,12 +207,16 @@ suite('runWrapped', () => {
     }
   });
 
-  test('a token base that throws, or a step runner that is a link or missing, fails closed before srt', async () => {
+  test('a token base that throws, or a hook bundle that is missing or a symlink, fails closed before srt', async () => {
     expect(await setup(undefined, { tokenBase: () => { throw new Error('getconf failed\nx'); } }).run()).toEqual(unavailable('token base', 'getconf failed'));
-    const link = join(root, '.harness/hooks/link.mjs');
-    symlinkSync(runner, link);
-    expect(await setup(undefined, { runner: link }).run()).toEqual(unavailable('step runner', 'not a regular file'));
-    expect(await setup(undefined, { runner: join(root, 'nope.mjs') }).run()).toMatchObject({ kind: 'unavailable', reason: 'step runner' });
+    rmSync(runner);
+    expect(await setup().run()).toMatchObject({ kind: 'unavailable', reason: 'step runner' });
+    const target = join(root, '.harness/hooks/real.mjs');
+    writeFileSync(target, '');
+    symlinkSync(target, runner);
+    expect(await setup().run()).toEqual(unavailable('step runner', 'not a regular file'));
+    rmSync(runner);
+    writeFileSync(runner, '');
   });
 });
 

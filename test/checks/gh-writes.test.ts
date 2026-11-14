@@ -1,5 +1,6 @@
 // Owner ruling 2026-11-13: the guard asks before gh/hub commands that change shared state, gh api writes and GitLab push
 // options; reads stay allowed; the pr-body denies stay and a deny beats the ask.
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -100,6 +101,76 @@ describe('hub writes and GitLab push options ask', () => {
   });
 });
 
+// Task 4 residual: origin's remote-tracking refs vouch for a task contract (loadContract), so repointing them asks.
+describe('commands that can repoint refs/remotes/* ask', () => {
+  test('update-ref and symbolic-ref on refs/remotes, remote add/set-url/rename/set-head, fetch of a URL or refspec, remote config', () => {
+    all(['git update-ref refs/remotes/origin/main HEAD', 'git update-ref -d refs/remotes/origin/main', 'git update-ref -m x refs/remotes/origin/main abc', 'git update-ref --no-deref Refs//Remotes/origin/main HEAD',
+      'git update-ref --stdin', 'git update-ref -z --stdin', 'git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/feat', 'git symbolic-ref -m x refs/remotes/origin/HEAD refs/remotes/origin/feat',
+      'git remote add evil /tmp/x', 'git remote set-url origin /tmp/x', 'git remote -v rename origin old', 'git remote set-head origin feat', 'git remote set-head origin --auto',
+      'git fetch /tmp/forged', 'git fetch ../forged', 'git fetch https://example.com/r.git', 'git fetch git@example.com:o/r.git', 'git fetch origin +refs/heads/x:refs/remotes/origin/main', 'git fetch origin x:y',
+      'git fetch --refmap=+refs/heads/*:refs/remotes/origin/* origin', 'git fetch --multiple origin /tmp/x', 'git pull /tmp/forged main', 'git pull origin x:refs/remotes/origin/main',
+      'git -c remote.origin.url=/tmp/x fetch', 'git -c remote.origin.fetch=+refs/heads/x:refs/remotes/origin/main fetch origin', 'git -c url./tmp/x.insteadOf=https://github.com/ fetch',
+      'git config remote.origin.url /tmp/x', 'git config set remote.origin.fetch +refs/heads/x:refs/remotes/origin/main', 'git config --add remote.origin.fetch +refs/heads/x:refs/remotes/origin/main',
+      'git config -f .git/config url./tmp/x.insteadOf https://github.com/'], 'ask');
+  });
+  test('wrapper, path and nested forms decide the same', () => {
+    all(['env git update-ref refs/remotes/origin/main HEAD', 'nice git remote set-url origin /tmp/x', '/usr/bin/git fetch /tmp/x', '"git" remote add e /tmp/x', 'g\\it remote add e /tmp/x',
+      'git -C sub fetch ../x main:refs/remotes/origin/main', 'hub remote add e /tmp/x', 'sh -c "git remote add e /tmp/x"', 'true && git update-ref refs/remotes/origin/main HEAD', 'timeout 5 git fetch /tmp/x'], 'ask');
+  });
+  test('review round 1: push into this repo or onto refs/remotes, fetch --stdin, replace, ref plumbing', () => {
+    all(['git push . HEAD:refs/remotes/origin/main', 'git push ./ HEAD:x', 'git push file:///p HEAD:x', 'git push ../wt HEAD:x', 'git push --mirror .', 'git push --mirror origin',
+      'git push origin HEAD:refs/remotes/origin/main', 'git push origin HEAD:Refs//Remotes/origin/main', 'git push --repo=. HEAD:x', 'git send-pack . HEAD:refs/remotes/origin/main', 'git send-pack ./ x',
+      'git fetch --stdin origin', 'git fetch origin --stdin', 'git replace abc def', 'git replace -d abc', 'git fast-import', 'git filter-branch -- --all', 'git receive-pack .'], 'ask');
+  });
+  test('review round 1: spaced global values, dynamic refs, xargs, aliases, includes and unknown subcommands', () => {
+    all(['git --git-dir .git update-ref refs/remotes/origin/main HEAD', 'git --work-tree . remote add e /tmp/x', 'git --config-env remote.origin.url=V fetch', 'git --config-env=url./tmp/x.insteadOf=V fetch',
+      'git update-ref $R HEAD', 'git update-ref "$(echo refs/remotes/origin/main)" HEAD', 'git symbolic-ref refs/remotes/origin/HEAD `x`', 'git push . "$R"', 'git fetch origin $SPEC', 'git update-ref',
+      'echo refs/remotes/origin/main HEAD | xargs git update-ref', 'echo . | xargs git push', 'echo /tmp/x | xargs -n1 git fetch',
+      'git -c alias.co=update-ref co refs/remotes/origin/main HEAD', 'git config alias.co "!git update-ref refs/remotes/origin/main HEAD"', 'git config --global alias.st status', 'git -c include.path=/tmp/x fetch',
+      'git config include.path /tmp/evil', 'git config includeIf.gitdir:/p/.path /tmp/evil', 'git config remote.origin.pushurl .', 'git config url./tmp/x.pushInsteadOf https://github.com/', 'git co main', 'git my-plugin run'], 'ask');
+  });
+  test('review round 2: substitutions count only in that git command, and only where they can matter', () => {
+    all(["git commit -m \"$(cat <<'EOF'\nfix: x\nEOF\n)\" && git push origin feat", 'git push origin $(git branch --show-current)', 'git push -u origin "$BRANCH"', 'git config user.email "$EMAIL"',
+      'git push origin $(git rev-parse --abbrev-ref HEAD)', 'git push -u origin "$(git rev-parse --abbrev-ref HEAD)"', 'git fetch origin && echo $(date)', 'git fetch origin $(git branch --show-current)'], 'allow');
+    all(['git push "$REMOTE" feat', 'git push $(echo .) feat', 'git push origin "HEAD:$DST"', 'git push origin $(cat spec)', 'git push origin `cat spec`', 'git fetch origin "$SPEC"', 'git fetch "$URL"',
+      'git fetch origin $(cat spec)', 'git config "$K" /tmp/x', 'git config remote.origin.url "$U"', 'git config set "$K" x', 'git remote add e "$U"', 'git replace $A $B'], 'ask');
+  });
+  test('review round 2: a subcommand git does not have asks only when it is an alias or the lookup fails', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'h-ghw-alias-'));
+    spawnSync('git', ['init', '-q'], { cwd: repo });
+    spawnSync('git', ['config', 'alias.zzh', 'update-ref refs/remotes/origin/main HEAD'], { cwd: repo });
+    const at = (c: string) => decideCommand(c, { config, env: {}, root: repo }).kind;
+    for (const c of ['git lfs pull', 'git lfs push origin feat', 'git lfs install --local']) expect(at(c), c).toBe('allow');
+    expect(at('git zzh')).toBe('ask');
+    expect(at("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.lfs GIT_CONFIG_VALUE_0='update-ref x y' git lfs pull")).toBe('ask');
+    expect(at('export GIT_CONFIG_PARAMETERS=x; git lfs pull')).toBe('ask');
+    expect(guard('git lfs pull')).toEqual(expect.objectContaining({ kind: 'ask' })); // root /p: the lookup fails, so it asks
+    // round 3: the lookup reads this repo with the hook's environment; a line that points git elsewhere skips it and asks
+    for (const c of ['HOME=/tmp/h git zzq', 'XDG_CONFIG_HOME=/tmp/x git zzq', 'export HOME=/tmp/h; git zzq', 'git -C /tmp/other zzq', 'cd /tmp/other && git zzq', 'pushd /tmp/o; git zzq',
+      'git --git-dir=/tmp/o/.git zzq', 'git --git-dir /tmp/o/.git zzq', 'git --work-tree=/tmp/o zzq', 'GIT_DIR=/tmp/o/.git git zzq', 'export GIT_WORK_TREE=/tmp/o; git zzq', 'GIT_COMMON_DIR=/tmp/o git zzq',
+      'GIT_CONFIG_GLOBAL=/tmp/g git zzq', 'env HOME=/tmp/h git zzq']) expect(at(c), c).toBe('ask');
+    expect(at('git zzq')).toBe('allow'); // not an alias here
+  });
+  test('round 3: a run-time source with a main destination is a push to main; a + refspec is a force push', () => {
+    for (const c of ['git push origin $(git branch --show-current):main', 'git push origin "$X:refs/heads/master"', 'git push origin +main', 'git push origin +HEAD:refs/heads/main'])
+      expect(guard(c), c).toEqual(expect.objectContaining({ kind: 'deny', reason: expect.stringContaining('main or master') }));
+    for (const c of ['git push origin "+$X"', 'git push origin +feat', 'git push origin +HEAD:feat', "git push origin '+feat'", 'git push -u origin +$(git branch --show-current)'])
+      expect(guard(c), c).toEqual(expect.objectContaining({ kind: 'deny', reason: expect.stringContaining('force push') }));
+    expect(guard('git push origin `git rev-parse HEAD`:main').kind).toBe('deny'); // an older backtick rule denies first
+    all(['git push origin feat:feat', 'git push -o ci.skip origin feat', 'git push --force-with-lease origin feat'], 'allow');
+  });
+  test('ordinary fetch, pull and remote reads stay allowed', () => {
+    all(['git fetch', 'git fetch origin', 'git fetch --all --prune', 'git fetch origin main', 'git fetch -q origin', 'git fetch --depth 1 origin', 'git fetch -j 4 origin', 'git pull', 'git pull origin main',
+      'git pull --rebase origin main', 'git remote', 'git remote -v', 'git remote show origin', 'git remote prune origin', 'git remote get-url origin', 'git update-ref refs/heads/x HEAD',
+      'git symbolic-ref refs/remotes/origin/HEAD', 'git symbolic-ref --short HEAD', 'git config remote.origin.url', 'git config --get remote.origin.url', 'git config get remote.origin.fetch',
+      'echo git remote add e /tmp/x'], 'allow');
+    // everyday git and plain pushes to a remote stay allowed
+    all(['git status', 'git log --oneline -5', 'git diff HEAD~1', 'git add -A', 'git commit -m x', 'git checkout -b feat/x', 'git switch main', 'git branch -a', 'git rebase main', 'git stash list',
+      'git show HEAD:README.md', 'git rev-parse HEAD', 'git ls-files', 'git worktree list', 'git push origin feat/x', 'git push -u origin HEAD', 'git push origin HEAD:refs/heads/feat/x', 'git config user.name x',
+      'git --git-dir .git log', 'git -C sub status', 'git replace --list', 'git replace -l', 'git --version', 'git help push', 'mkdir -p git src', 'cp -r git dist'], 'allow');
+  });
+});
+
 describe('a deny beats the ask; unattended follows the ask rule', () => {
   const root = mkdtempSync(join(tmpdir(), 'h-ghw-'));
   mkdirSync(join(root, '.harness'));
@@ -115,5 +186,13 @@ describe('a deny beats the ask; unattended follows the ask rule', () => {
   test('an attended ask asks; unattended it is denied', async () => {
     expect(await run('gh pr close 1')).toBe('ask');
     expect(await run('gh pr close 1', { HARNESS_UNATTENDED: '1' })).toBe('deny');
+    expect(await run('git remote set-url origin /tmp/x')).toBe('ask');
+  });
+  test('a refs/remotes ask is denied unattended, with its own reason', async () => {
+    writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\nsandbox: off\n');
+    const input = { hook_event_name: 'PreToolUse', session_id: 's2', cwd: root, tool_name: 'Bash', tool_input: { command: 'git update-ref refs/remotes/origin/main HEAD' } };
+    const out = JSON.parse(await dispatch(JSON.stringify(input), registry, { HARNESS_UNATTENDED: '1' }, { home: root })).hookSpecificOutput;
+    expect(out).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringMatching(/^Unattended run: .*git update-ref refs\/remotes\/origin\/main can repoint a remote-tracking ref/) });
+    expect(await run('git fetch origin', { HARNESS_UNATTENDED: '1' })).toBe('allow');
   });
 });

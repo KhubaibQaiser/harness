@@ -18,7 +18,7 @@ import type { Decision } from '../hooks/types.js';
 import { REMEMBER_WHY, rememberAsk } from './remember.js';
 import { rememberReadOnly } from '../core/remember-args.js';
 import { suggestBranches } from '../core/branch-prefix.js';
-import { ghWriteWhy, HUB_OWN, hubWriteWhy, pushConfigWhy, pushOptionWhy } from './gh-writes.js';
+import { ghWriteWhy, HUB_OWN, hubWriteWhy, pushConfigWhy, pushOptionWhy, remoteRefWhy } from './gh-writes.js';
 
 type GuardCtx = Pick<Ctx, 'config' | 'env' | 'root'> & { startedAt?: number; lookup?: VerifyOpts['lookup'] }; // lookup: test seam
 type Verdict = ['allow'] | ['deny' | 'ask', string];
@@ -193,7 +193,7 @@ function withoutBodies(cmd: string): string {
 }
 
 /** One command segment of one reading: `k = commandStart(toks)`, `prev`/`next` the separators around it, `words` all the words of the reading. */
-export type Seg = { toks: string[]; k: number; prev?: string; next?: string; words: string[] };
+export type Seg = { toks: string[]; k: number; prev?: string; next?: string; after?: string; words: string[] }; // after: the text past `next`
 export type Visit<T> = (seg: Seg) => T | null;
 /** `whole` sees each reading's words before that reading's segments; readings are interleaved (reading 2's `whole` runs
  *  after reading 1's visits, and payload readings come after all four). `script` sees each package-script body after it
@@ -291,7 +291,7 @@ function walkReading<T>(plain: string, w: Where, visit: Visit<T>, hooks: WalkHoo
         if (r !== null) return r;
       }
     }
-    const r = visit({ toks, k: commandStart(toks), prev: parts[i - 1], next: parts[i + 1], words });
+    const r = visit({ toks, k: commandStart(toks), prev: parts[i - 1], next: parts[i + 1], after: parts[i + 2], words });
     if (r !== null) return r;
   }
   return null;
@@ -484,8 +484,12 @@ const checkRm = (cmd: string): Verdict | undefined => {
 
 const checkPushToMain = (cmd: string): Verdict | undefined => {
   for (const m of cmd.matchAll(/\bgit\s+push\b([^;&|\n]*)/g)) {
-    const refs = m[1].trim().split(/\s+/).filter((t) => t && !t.startsWith('-')).flatMap((t) => t.replace(CLOSERS, '').split(':'));
+    const words = m[1].trim().split(/\s+/).map((t) => t.replace(/^['"]+|['"]+$/g, ''));
+    // A word that starts like an option but follows a substitution (`--show-current):main`) still carries its `:dst`.
+    const refs = words.flatMap((t) => (!t || t.startsWith('-') ? (/[)`]:/.test(t) ? [t.slice(t.lastIndexOf(':') + 1)] : []) : t.replace(CLOSERS, '').split(':'))).map((r) => r.replace(/^\+/, ''));
     if (refs.some((r) => /^(refs\/heads\/)?(main|master)$/.test(r))) return ['deny', 'pushing to main or master (open a pull request from a branch instead)'];
+    // A refspec with a leading + forces that ref, as --force does.
+    if (words.some((t) => t.startsWith('+'))) return ['deny', 'force push with a + refspec (use --force-with-lease, and only on your own branch)'];
   }
   return undefined;
 };
@@ -532,11 +536,11 @@ const checkInstall = (cmd: string, ctx: GuardCtx): Decision | undefined => {
   return toDecision(['deny', `${what}. Dependencies are added by a human: ask the user to run it`]);
 };
 
-// Tokens after "git" and its global options (-C dir, -c k=v, --no-pager, --git-dir=…): [subcommand, ...args].
-// ponytail: a space-separated --git-dir X / --work-tree X value is read as the subcommand.
+// Tokens after "git" and its global options (-C dir, -c k=v, --no-pager, --git-dir=… or --git-dir …): [subcommand, ...args].
+const GIT_GLOBAL_VALUE = /^(-[Cc]|--git-dir|--work-tree|--namespace|--config-env|--super-prefix|--attr-source)$/;
 export function gitArgs(toks: string[]): string[] {
   let i = toks.indexOf('git') + 1;
-  while (i > 0 && i < toks.length && toks[i].startsWith('-')) i += /^-[Cc]$/.test(toks[i]) ? 2 : 1;
+  while (i > 0 && i < toks.length && toks[i].startsWith('-')) i += GIT_GLOBAL_VALUE.test(toks[i]) ? 2 : 1;
   return i > 0 ? toks.slice(i) : [];
 }
 
@@ -617,6 +621,7 @@ export const targetDir = (args: string[]): string | null => valuesOf(readOptions
 // Targets of in-place edits and redirections, as written in the command (callers map them with toRepoPath).
 // ponytail: splits on ; & | even inside quotes, and ignores here-docs and subshells; upgrade to a real shell parser if bypasses matter.
 export function fileWriteTargets(cmd: string): string[] {
+  cmd = cmd.replace(/>\|/g, '> '); // `>|` overrides noclobber: still a write, and its `|` is no pipe
   const out: string[] = [];
   const SCRIPT_FLAG = /^-[a-zA-Z]*[ef]$/; // value follows: sed -e SCRIPT, perl -pi -e SCRIPT
   for (const seg of cmd.split(/[;&|\n]+/)) {
@@ -1009,10 +1014,10 @@ function decideCore(command: string, ctx: GuardCtx): Decision {
   if (install) return install;
   const preset = ctx.config?.preset && /\bgit\b/.test(command) ? walkCommands(command, ctx, presetVisit(command, ctx.config.preset)) : null;
   if (preset) return toDecision(['ask', preset.reason]);
-  // gh/hub writes and GitLab push options: found past wrappers and path heads by the walk, read with the getopt reader.
+  // gh/hub writes, GitLab push options and refs/remotes writes: found past wrappers and path heads by the walk, read with the getopt reader.
   // The quote-free text too, so a head spelled `g\h`, `"gh"` or `$'\x67h'` is read as gh.
   const ghText = vUnq === command ? command : `${command}\n${vUnq}`;
-  if (/\b(?:gh|hub)\b|merge_request/i.test(ghText)) {
+  if (/\b(?:gh|hub|git)\b|merge_request/i.test(ghText)) {
     const visit = ghWriteVisit(command, ctx);
     const gw = walkCommands(command, ctx, visit) ?? (vUnq !== command ? walkCommands(vUnq, ctx, visit) : null);
     if (gw) return gw;
@@ -1045,11 +1050,13 @@ const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
   // Once per line: a GraphQL query on it may be built at run time. A `$` inside single quotes is literal (GraphQL's own
   // `query($o:String!)`); one outside them (`"$Q"`, `$'…'`, `-F o=$O`), a backtick there, or a newline anywhere is not.
   const built = /\n/.test(raw) || expandsOutsideSingleQuotes(raw);
-  return ({ toks, k }) => {
+  // The alias lookup reads this repo's config with the hook's environment: a line that may point git at other config can't be checked.
+  const elsewhere = /(?:^|[\s;&|(])(?:HOME|XDG_CONFIG_HOME|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CONFIG\w*)=|(?:^|[\s;&|(])(?:cd|pushd)(?:\s|$)/.test(raw);
+  return ({ toks, k, next, after }) => {
   let at = k, name = runnerName(plainWord(toks[k] ?? ''));
   // A head the guard doesn't know may run gh or hub later in its words (`op run -- gh …`, `direnv exec . gh …`, `zzwrap -q gh …`).
   if (!['gh', 'hub', 'git'].includes(name) && !NOT_RUNNERS.has(name)) {
-    const j = toks.findIndex((t, i) => i > k && /^(gh|hub)$/.test(runnerName(plainWord(t))));
+    const j = toks.findIndex((t, i) => i > k && /^(gh|hub|git)$/.test(runnerName(plainWord(t))));
     if (j > k) [at, name] = [j, runnerName(plainWord(toks[j]))];
   }
   const args = toks.slice(at + 1).map(plainWord), ask = (why: string | null) => (why ? toDecision(['ask', why]) : null);
@@ -1060,14 +1067,18 @@ const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
     return ask(hubWriteWhy(args, built));
   }
   if (name === 'git') {
-    const [sub, ...rest] = gitArgs(['git', ...args]);
-    const globals = sub === undefined ? args : args.slice(0, args.length - rest.length - 1);
-    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest));
+    // A substitution right after git's words is one more word of it, its text gone from this reading. Two producers print only a branch name.
+    const subst = next === '$(' || next === '`' ? [BRANCH_PRODUCERS.has((after ?? '').replace(/[\s\u0001]+/g, ' ').trim()) ? 'HEAD' : '$(…)'] : [];
+    const all = [...args, ...subst], [sub, ...rest] = gitArgs(['git', ...all]);
+    const globals = sub === undefined ? all : all.slice(0, all.length - rest.length - 1);
+    const fed = toks.slice(0, at).some((t) => /^(xargs|parallel)$/.test(runnerName(plainWord(t))));
+    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest) ?? remoteRefWhy(globals, sub, rest, { head: at === k, fed, elsewhere: elsewhere || globals.some((g) => /^(-C|--git-dir|--work-tree)(=|$)/.test(g)), root: ctx.root }));
   }
   return null;
   };
 };
 
+const BRANCH_PRODUCERS = new Set(['git branch --show-current', 'git rev-parse --abbrev-ref HEAD']);
 const NEW_BRANCH_FLAGS: Record<string, string[]> = {
   checkout: ['-b', '-B', '--orphan'], switch: ['-c', '-C', '--create', '--force-create', '--orphan'], worktree: ['-b', '-B'], // worktree's --orphan is a switch
 };

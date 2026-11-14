@@ -32,7 +32,7 @@ const setup = (cfg = 'checks:\n  tdd: true\n') => {
 const crit = (test?: string) => [{ text: 'does x', ...(test ? { test } : {}) }];
 
 test('registered after testLock, not fail-closed, PreToolUse', () => {
-  expect(registry.map((c) => c.name).slice(0, 8)).toEqual(['guard', 'pr-size', 'protect', 'sandbox-required', 'redFirst', 'tamper', 'testLock', 'specGate']);
+  expect(registry.map((c) => c.name).slice(0, 9)).toEqual(['guard', 'pr-size', 'protect', 'task', 'sandbox-required', 'redFirst', 'tamper', 'testLock', 'specGate']);
   expect(specGate.failClosed).toBeFalsy();
   expect(specGate.events).toEqual(['PreToolUse']);
 });

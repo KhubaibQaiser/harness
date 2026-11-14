@@ -120,6 +120,21 @@ test('the default-branch match runs no repo-configured program (a clean filter o
   expect(existsSync(marker)).toBe(false);
 });
 
+test('git replace cannot forge the contract on origin/HEAD: the trust-rule reads ignore replace refs', () => {
+  const good = { ...c, sha256: contractHash(c) };
+  const { root: origin } = repoWith({ '.harness/tasks/add-login.json': JSON.stringify(good, null, 2) + '\n' }, {});
+  const d = dir();
+  git(d, 'clone', '-q', origin, 'c');
+  const root = join(d, 'c');
+  const forged = { ...c, title: 'Forged' };
+  const text = JSON.stringify({ ...forged, sha256: contractHash(forged) }, null, 2) + '\n';
+  writeFileSync(join(root, '.harness/tasks/add-login.json'), text);
+  const real = git(root, 'rev-parse', 'refs/remotes/origin/main:.harness/tasks/add-login.json').trim();
+  git(root, 'replace', '-f', real, git(root, 'hash-object', '-w', '.harness/tasks/add-login.json').trim());
+  expect(git(root, 'cat-file', 'blob', `refs/remotes/origin/main:.harness/tasks/add-login.json`)).toBe(text); // the forgery works on plain git
+  expect(loadContract(root, 'add-login')).toEqual({ error: expect.stringContaining('changed since it was approved') });
+});
+
 test('with origin/HEAD unset, the refusal tells the person to run git remote set-head origin --auto', () => {
   const good = { ...c, sha256: contractHash(c) };
   const { root: origin } = repoWith({ '.harness/tasks/add-login.json': JSON.stringify(good, null, 2) + '\n' }, {});
@@ -183,8 +198,9 @@ test('activeTaskId prefers a valid HARNESS_TASK, throws on an invalid one, else 
   // a bad launch value is an error the caller turns into deny or not-done, never a silent fall back to the state file
   expect(() => activeTaskId(root, { HARNESS_TASK: '../evil' })).toThrow('HARNESS_TASK "../evil" is not a task id');
   expect(() => activeTaskId(root, { HARNESS_TASK: '' })).toThrow('HARNESS_TASK "" is not a task id');
+  // a corrupt record is never read as "no active task"
   writeFileSync(join(root, ACTIVE_TASK), 'Not An Id\n');
-  expect(activeTaskId(root, {})).toBeNull();
+  expect(() => activeTaskId(root, {})).toThrow('the active task record is unreadable: .harness/state/active-task holds "Not An Id", not a task id');
   setActiveTask(root, null);
   expect(activeTaskId(root, {})).toBeNull();
   setActiveTask(root, null); // clearing twice is fine

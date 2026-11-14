@@ -551,3 +551,25 @@ describe('the skills\' work folders under .harness/tmp', () => {
     expect(at2('.harness/tmp/y/r/.harness/config.yaml')).toBe('deny');
   });
 });
+
+// Task 4 review round 1: a remote-tracking ref vouches for a task contract, so git's refs and config are written by git
+// commands only. Text-level: never in denyWrite, and git commands themselves are unaffected.
+describe("git's refs, packed-refs, config and HEAD", () => {
+  const GIT_WHY = /^Git's refs and config are changed by git commands/;
+  test.each(['.git/refs/remotes/origin/main', '.git/refs/heads/main', '.git/packed-refs', '.git/config', '.git/HEAD', '.GIT/Config', '/p/.git/refs/remotes/origin/HEAD'])('an edit to %s is denied', (p) =>
+    expect(edit(p, 'Write')).toEqual({ kind: 'deny', reason: expect.stringMatching(GIT_WHY), check: 'protect' }));
+  test('shell writes are denied, through cd too; reads and git commands pass', () => {
+    for (const c of ['echo abc > .git/refs/remotes/origin/main', 'echo x >> .git/packed-refs', 'cp x .git/config', 'mv x .git/HEAD', 'cd .git && echo x > config', 'tee .git/refs/remotes/origin/main < x', 'echo x >| .git/config'])
+      expect(run('Bash', { command: c }), c).toEqual({ kind: 'deny', reason: expect.stringMatching(GIT_WHY), check: 'protect' });
+    for (const c of ['cat .git/config', 'git update-ref refs/heads/x HEAD', 'git commit -m x', 'git config user.name x', 'echo x > .git/info/exclude', 'cat .git/HEAD']) expect(bash(c), c).toBe('allow');
+  });
+  test('the sandbox denyWrite list does not name them', async () => {
+    const { denyWritePaths } = await import('../../src/checks/protect.js');
+    expect(denyWritePaths().some((p) => p.includes('.git/'))).toBe(false);
+  });
+});
+
+test('>| (noclobber override) is a write the shared parser reads', () => {
+  expect(bash('echo x >| .harness/config.yaml')).toBe('deny');
+  expect(bash('echo x 2>| .claude/settings.json')).toBe('deny');
+});

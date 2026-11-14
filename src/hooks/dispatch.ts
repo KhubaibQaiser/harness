@@ -12,6 +12,7 @@ import { mcpWrites } from '../checks/mcp-writes.js';
 import { workdir } from '../cli/guide.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect } from '../checks/protect.js';
+import { taskGate } from '../checks/task-gate.js';
 import { stateCardCheck } from '../checks/state-card.js';
 import { sandboxRequired } from '../checks/sandbox-required.js';
 import { redFirst } from '../checks/tdd/red-first.js';
@@ -38,7 +39,7 @@ export { configInvalidWhy } from './config-gate.js';
 export { detectBaseHead } from './session-setup.js';
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
-export const registry: Check[] = [guard, prSize, protect, sandboxRequired, redFirst, tamper, testLock, specGate, prBody, secretScan, mcpWrites, multiFile, decisionSignals, configChange, stopGate, stateCardCheck];
+export const registry: Check[] = [guard, prSize, protect, taskGate, sandboxRequired, redFirst, tamper, testLock, specGate, prBody, secretScan, mcpWrites, multiFile, decisionSignals, configChange, stopGate, stateCardCheck];
 
 const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];

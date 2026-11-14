@@ -209,6 +209,13 @@ export function shellWriteTargets(cmd: string): string[] {
   return [...cmds.flatMap(fileWriteTargets), ...cmds.flatMap((c) => rmTargets(c).flatMap((r) => r.targets)), ...mc.mv, ...mc.cp, ...gitRestoreTargets(cmds), ...moreWriteTargets(cmds)];
 }
 
+/** shellWriteTargets with each relative one also read from every cd/pushd folder before it. `unresolved`: a relative
+ *  write follows a cd that can't be resolved ($X, -, ~), so where it lands is unknown. */
+export function shellWritePaths(cmd: string): { paths: string[]; unresolved: boolean } {
+  const ts = shellWriteTargets(cmd), dirs = cdDirs(expand(cmd));
+  return { paths: fromDirs(dirs ?? [], ts), unresolved: dirs === null && relative(ts).length > 0 };
+}
+
 // Interpreters and the options that make their next word inline code. Only the interpreter's own options, before its
 // first argument (the script it runs), count: `node node_modules/.bin/jest -c x` runs a file, `node -e '…'` is code.
 type Interp = { inline: RegExp; value?: Set<string>; stop?: Set<string>; sub?: string };
@@ -431,6 +438,13 @@ const withoutWorkdirs = (root: string, cmd: string): string =>
     });
 
 // A bare directory (rm -rf .harness/hooks) counts as inside its own glob.
+// Done contract: a remote-tracking ref or remote URL vouches for a task contract, so git's ref and config files change
+// only through git commands. Text-level only, never in denyWrite: git itself writes them from the agent's sandboxed Bash.
+const GIT_WHY = "Git's refs and config are changed by git commands, not written directly: a forged remote-tracking ref could vouch for a task contract.";
+const isGitState = (root: string, p: string): boolean => {
+  const rel = toRepoPath(root, p)?.toLowerCase();
+  return rel !== undefined && (['.git/config', '.git/packed-refs', '.git/head', '.git/refs'].includes(rel) || rel.startsWith('.git/refs/'));
+};
 const isProtected = (root: string, p: string, exempt = true): boolean => {
   if (exempt && inWorkdir(root, p)) return false;
   const lex = nodePath.relative(root, nodePath.resolve(root, p)).split(nodePath.sep).join('/').toLowerCase();
@@ -453,6 +467,7 @@ export const protect: Check = {
     const target = editTarget(input);
     const nm = { kind: 'deny' as const, reason: NM_REASON, check: 'protect' };
     if (target !== null && inNodeModules(root, target)) return nm;
+    if (target !== null && isGitState(root, target)) return { kind: 'deny', reason: GIT_WHY, check: 'protect' };
     if (target !== null) paths = [target];
     else if (isShell(tool_name)) {
       const cmd = String(tool_input.command ?? '');
@@ -484,6 +499,7 @@ export const protect: Check = {
       const dirs = cdDirs(cmds) ?? [], at = (ps: string[]) => fromDirs(dirs, ps);
       const segs = cmds.flatMap(segTokens), edited = at(editorFiles(cmds.flatMap((c) => segments(c).map((g) => words(g).map(unquote))))); // quote-aware: ex -sc '%s/a/b/|wq'
       paths = [...new Set(at([...fileWriteTargets(cmd), ...removed, ...mc.cp, ...git, ...moreWriteTargets(cmds)]))]; // once each: every check of one touches the disk (re-review 22b, F4)
+      if (paths.some((p) => p && isGitState(root, p))) return { kind: 'deny', reason: GIT_WHY, check: 'protect' };
       // Decisions: the directory routes (cp into a folder, tar -C, find -delete) and git restores replace what is under them.
       const dr = decisionRoutes(root, segs, dirs), names = codeNames(code), rmAt = at(rmT);
       const dd = decisionsDeny(root, config, [...paths, ...dr.writes, ...names], [...rmAt, ...dr.removed, ...at(git), ...names]);

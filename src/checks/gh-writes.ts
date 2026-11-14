@@ -1,6 +1,8 @@
 // gh and hub: an allow-list (owner ruling, 2026-11-13). Only the known reads below run freely; every other subcommand
 // asks, unknown ones, extensions and user aliases included. `gh pr create`/`new` stay allowed (the pr-body check gates
 // them). gh/hub api reads, and GitLab push options, are judged too. Arguments are read with the shared getopt reader.
+import { defaultExec } from '../core/exec.js';
+import { SAFE_GIT } from '../core/git-safe.js';
 import { type OptTable, readOptions, valuesOf } from '../core/options.js';
 
 /** gh 2.97's group aliases (`gh <group> --help`, ALIASES). */
@@ -129,13 +131,20 @@ const FETCH_OPTS: OptTable = {
 const SEND_OPTS: OptTable = { ...PUSH_OPTS, lv: [...PUSH_OPTS.lv!, 'remote'] };
 const CONFIG_OPTS: OptTable = { v: 'f', lv: ['file', 'blob', 'type', 'default', 'comment', 'value'] };
 const REF_WHY = 'can repoint a remote-tracking ref (refs/remotes/*), which vouches for a task contract; a person runs it';
+const CONFIG_VERBS = new Set(['get', 'set', 'unset', 'list', 'edit', 'rename-section', 'remove-section', 'get-color', 'get-colorbool']);
+/** True when `sub` is an alias in git's effective config here, or the lookup fails (fail closed). One git spawn. */
+function aliasOrUnknown(sub: string, root: string | undefined): boolean {
+  if (!root || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(sub)) return true;
+  const r = defaultExec('git', [...SAFE_GIT, 'config', '--get', `alias.${sub}`], { cwd: root, timeoutMs: 5000 });
+  return !(r.status === 1 && !r.stderr); // 1 with nothing on stderr: no such alias
+}
 const isUrl = (w: string) => /[/\\:]/.test(w) || w.startsWith('.');
 // This repository: `.`, a path, or file://. Not an https:// or scp-style (host:path) remote.
 const isLocal = (w: string) => w === '.' || /^file:/i.test(w) || (!/^[a-z][a-z0-9+.-]*:\/\//i.test(w) && !/^[^/\\]*:/.test(w) && /[/\\]|^\.\.$/.test(w));
 const toRemote = (spec: string) => REMOTE_REF.test(spec.slice(spec.lastIndexOf(':') + 1).replace(/^\+/, '').replace(/\/+/g, '/'));
 /** Why a git command may repoint refs/remotes/*, or null. `globals` are the words before the subcommand; `head`: git is
  *  the command word (not a word found later); `fed`: xargs or parallel hands it more words. */
-export function remoteRefWhy(globals: string[], sub: string | undefined, rest: string[], o: { head?: boolean; fed?: boolean } = {}): string | null {
+export function remoteRefWhy(globals: string[], sub: string | undefined, rest: string[], o: { head?: boolean; fed?: boolean; envConfig?: boolean; root?: string } = {}): string | null {
   const why = (what: string) => `${what} ${REF_WHY}`;
   for (let i = 0; i < globals.length; i++) {
     const g = globals[i], kv = g === '-c' || g === '--config-env' ? (globals[i + 1] ?? '') : /^-c./.test(g) ? g.slice(2) : g.startsWith('--config-env=') ? g.slice(13) : '';
@@ -143,9 +152,11 @@ export function remoteRefWhy(globals: string[], sub: string | undefined, rest: s
     if (CONFIG_KEY.test(key)) return why(`git -c ${key}`);
   }
   if (sub === undefined) return null;
-  if (REF_SUBS.has(sub) && (o.fed || rest.some((w) => /[$`]/.test(w)))) return why(`git ${sub} with words built at run time`);
+  const dyn = (w: string | undefined) => /[$`]/.test(w ?? ''), built = why(`git ${sub} with words built at run time`);
+  if (dyn(sub) || (REF_SUBS.has(sub) && o.fed)) return built;
   if (PLUMBING.has(sub)) return why(`git ${sub}`);
-  if (o.head !== false && !GIT_CMDS.has(sub)) return why(`git ${sub} (not a git command, so possibly an alias that)`);
+  if (o.head !== false && !GIT_CMDS.has(sub) && (o.envConfig || aliasOrUnknown(sub, o.root))) return why(`git ${sub} (an alias, or a name harness could not look up, that)`);
+  if (['update-ref', 'symbolic-ref', 'remote', 'replace'].includes(sub) && rest.some(dyn)) return built;
   if (sub === 'update-ref' || sub === 'symbolic-ref') {
     const p = readOptions(rest, { v: 'm' });
     if (p.flags.includes('--stdin') || !p.pos[0]) return why(`git ${sub} with refs harness can't see`);
@@ -160,14 +171,16 @@ export function remoteRefWhy(globals: string[], sub: string | undefined, rest: s
     const p = readOptions(rest, FETCH_OPTS);
     if (valuesOf(p, ['--refmap']).length || p.flags.includes('--stdin')) return why(`git ${sub} --refmap or --stdin`);
     const repos = p.flags.includes('--multiple') ? p.pos : p.pos.slice(0, 1);
-    if (repos.some(isUrl)) return why(`git ${sub} of a URL or path`);
-    return p.pos.slice(repos.length).some((r) => r.includes(':')) ? why(`git ${sub} with a refspec that names a destination`) : null;
+    if (repos.some((r) => isUrl(r) || dyn(r))) return why(`git ${sub} of a URL, a path or a remote built at run time`);
+    return p.pos.slice(repos.length).some((r) => r.includes(':') || dyn(r)) ? why(`git ${sub} with a refspec that names a destination or is built at run time`) : null;
   }
   if (sub === 'push' || sub === 'send-pack') {
     const p = readOptions(rest, SEND_OPTS);
     if (p.flags.includes('--mirror')) return why(`git ${sub} --mirror`);
-    if ([p.pos[0] ?? '', ...valuesOf(p, ['--repo', '--remote'])].some(isLocal)) return why(`git ${sub} into this repository`);
-    return p.pos.slice(1).some(toRemote) ? why(`git ${sub} onto refs/remotes`) : null;
+    if ([p.pos[0] ?? '', ...valuesOf(p, ['--repo', '--remote'])].some((r) => isLocal(r) || dyn(r))) return why(`git ${sub} into this repository or a remote built at run time`);
+    // A variable refspec with no `:` names a ref to push to another repo; a substitution or a run-time destination could be anything.
+    const risky = (r: string) => toRemote(r) || r.includes('$(') || (r.includes(':') && dyn(r.slice(r.lastIndexOf(':'))));
+    return p.pos.slice(1).some(risky) ? why(`git ${sub} onto refs/remotes or a destination built at run time`) : null;
   }
   if (sub === 'replace') {
     const p = readOptions(rest, { lo: ['format'] });
@@ -175,6 +188,7 @@ export function remoteRefWhy(globals: string[], sub: string | undefined, rest: s
   }
   if (sub === 'config') {
     const pos = readOptions(rest, CONFIG_OPTS).pos, k = pos.findIndex((w) => CONFIG_KEY.test(w));
+    if (dyn(pos[CONFIG_VERBS.has(pos[0] ?? '') ? 1 : 0])) return why('git config with a key built at run time');
     return k >= 0 && pos[k + 1] !== undefined ? why(`git config ${pos[k]}`) : null;
   }
   return null;

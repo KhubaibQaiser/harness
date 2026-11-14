@@ -1,17 +1,28 @@
 // Done contract (spec §4.1): with checks.done on, the agent edits nothing outside a workdir until a person approved a task contract.
-import { resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { defaultExec } from '../core/exec.js';
 import { SAFE_GIT } from '../core/git-safe.js';
 import { toRepoPath } from '../core/paths.js';
 import { activeTaskId, loadContract, TASKS_DIR } from '../done/contract.js';
 import type { Check } from '../hooks/check.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
-import { inWorkdir, shellWritePaths } from './protect.js';
+import { withoutHeredocBodies } from './guard.js';
+import { inWorkdir, shellWritePaths, shellWriteTargets } from './protect.js';
 
 export const NO_CONTRACT = 'Draft criteria: run harness task draft, then ask the person to approve';
 export const NO_CONTRACT_UNATTENDED = 'Unattended run with no approved contract: launch the run with HARNESS_TASK=<id> naming a contract that is on the base branch';
 export const CONTRACT_LOCKED = "Task contracts change only through a person's harness task approve, edit or close";
 const CI_DECIDES = "CI decides; this checkout can't vouch for the contract (origin/HEAD is not set)";
+
+// `cd DIR && …` with only && (and pipes) after it, no other cd, popd or subshell: every later write runs in DIR or not at all.
+// Anything looser (`;`, `||`, `&`, a subshell) may run a write where the cd failed, so protect's union reading applies.
+const LEADING_CD = /^\s*(?:cd|pushd)\s+([^\s;&|()<>$`~*?[{\\'"]+)\s*&&([^]*)$/;
+const LOOSE = /\|\||[;\n()`]|(?<![&>])&(?![&>])|(?:^|[\s&|])(?:cd|pushd|popd)(?:\s|$)/;
+function writesOf(cmd: string): { paths: string[]; unresolved: boolean } {
+  const m = LEADING_CD.exec(withoutHeredocBodies(cmd).trimEnd());
+  if (!m || LOOSE.test(m[2])) return shellWritePaths(cmd);
+  return { paths: shellWriteTargets(m[2]).map((t) => (isAbsolute(t) ? t : join(m[1], t))), unresolved: false };
+}
 
 export const taskGate: Check = {
   name: 'task',
@@ -24,7 +35,7 @@ export const taskGate: Check = {
     const deny = (reason: string) => ({ kind: 'deny' as const, reason, check: 'task' });
     const target = editTarget(input);
     // protect's shell reading, not just fileWriteTargets: rm, mv, cp, git restores, and paths after a cd or pushd.
-    const shell = target === null && isShell(input.tool_name) ? shellWritePaths(String(input.tool_input?.command ?? '')) : { paths: [], unresolved: false };
+    const shell = target === null && isShell(input.tool_name) ? writesOf(String(input.tool_input?.command ?? '')) : { paths: [], unresolved: false };
     // Writes outside the repo are not the task's edits.
     const paths = (target !== null ? [target] : shell.paths).map((t) => resolve(input.cwd || root, t)).filter((p) => toRepoPath(root, p) !== null);
     if (paths.some((p) => { const rel = toRepoPath(root, p)!.toLowerCase(); return rel === TASKS_DIR || rel.startsWith(`${TASKS_DIR}/`); })) return deny(CONTRACT_LOCKED);

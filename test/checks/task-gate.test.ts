@@ -62,6 +62,15 @@ test('review round 1: writes through cd and pushd, and >|, are read; an unresolv
   expect(run(root, bash('cd $X && echo x > /tmp/h-tg.log'))).toEqual({ kind: 'allow' }); // absolute and outside the repo
 });
 
+test('review round 2: a leading cd DIR && chain resolves writes in DIR; anything looser reads them from the root too', () => {
+  const root = dir();
+  for (const c of ['cd .harness/tmp/ab12 && echo x > d.json', "cd .harness/tmp/ab12 && cat > d.json <<'EOF'\n{}\nEOF", 'cd /tmp && echo x > y', 'cd .harness/tmp/ab12 && pnpm x 2>&1 | tee log.txt'])
+    expect(run(root, bash(c)), c).toEqual({ kind: 'allow' });
+  for (const c of ['cd .harness/tmp/ab12; echo x > d.json', 'cd .harness/tmp/ab12 || echo x > d.json', 'cd .harness/tmp/ab12 && true || echo x > d.json', '(cd .harness/tmp/ab12) && echo x > d.json',
+    'cd .harness/tmp/ab12 && cd ../../.. && echo x > src/a.ts', 'cd .harness/tmp/ab12 && popd && echo x > d.json', 'cd .harness/tmp/ab12 & echo x > d.json', `cd /tmp && echo x > ${root}/src/a.ts`])
+    expect(run(root, bash(c)), c).toEqual(deny(NO_CONTRACT));
+});
+
 test('writes into a workdir are allowed without a contract (drafting)', () => {
   const root = dir();
   expect(run(root, edit('.harness/tmp/ab12/draft.json'))).toEqual({ kind: 'allow' });

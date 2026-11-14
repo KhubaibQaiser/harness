@@ -193,7 +193,7 @@ function withoutBodies(cmd: string): string {
 }
 
 /** One command segment of one reading: `k = commandStart(toks)`, `prev`/`next` the separators around it, `words` all the words of the reading. */
-export type Seg = { toks: string[]; k: number; prev?: string; next?: string; words: string[] };
+export type Seg = { toks: string[]; k: number; prev?: string; next?: string; after?: string; words: string[] }; // after: the text past `next`
 export type Visit<T> = (seg: Seg) => T | null;
 /** `whole` sees each reading's words before that reading's segments; readings are interleaved (reading 2's `whole` runs
  *  after reading 1's visits, and payload readings come after all four). `script` sees each package-script body after it
@@ -291,7 +291,7 @@ function walkReading<T>(plain: string, w: Where, visit: Visit<T>, hooks: WalkHoo
         if (r !== null) return r;
       }
     }
-    const r = visit({ toks, k: commandStart(toks), prev: parts[i - 1], next: parts[i + 1], words });
+    const r = visit({ toks, k: commandStart(toks), prev: parts[i - 1], next: parts[i + 1], after: parts[i + 2], words });
     if (r !== null) return r;
   }
   return null;
@@ -1046,8 +1046,8 @@ const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
   // Once per line: a GraphQL query on it may be built at run time. A `$` inside single quotes is literal (GraphQL's own
   // `query($o:String!)`); one outside them (`"$Q"`, `$'…'`, `-F o=$O`), a backtick there, or a newline anywhere is not.
   const built = /\n/.test(raw) || expandsOutsideSingleQuotes(raw);
-  const dyn = /`|\$\(/.test(raw) && expandsOutsideSingleQuotes(raw); // a substitution: its words are gone from the reading
-  return ({ toks, k }) => {
+  const envConfig = /\bGIT_CONFIG(?:_[A-Z0-9_]+)?=/.test(raw); // the line sets git config through the environment
+  return ({ toks, k, next, after }) => {
   let at = k, name = runnerName(plainWord(toks[k] ?? ''));
   // A head the guard doesn't know may run gh or hub later in its words (`op run -- gh …`, `direnv exec . gh …`, `zzwrap -q gh …`).
   if (!['gh', 'hub', 'git'].includes(name) && !NOT_RUNNERS.has(name)) {
@@ -1062,15 +1062,18 @@ const ghWriteVisit = (raw: string, ctx: GuardCtx): Visit<Decision> => {
     return ask(hubWriteWhy(args, built));
   }
   if (name === 'git') {
-    const [sub, ...rest] = gitArgs(['git', ...args]);
-    const globals = sub === undefined ? args : args.slice(0, args.length - rest.length - 1);
+    // A substitution right after git's words is one more word of it, its text gone from this reading. Two producers print only a branch name.
+    const subst = next === '$(' || next === '`' ? [BRANCH_PRODUCERS.has((after ?? '').replace(/[\s\u0001]+/g, ' ').trim()) ? 'HEAD' : '$(…)'] : [];
+    const all = [...args, ...subst], [sub, ...rest] = gitArgs(['git', ...all]);
+    const globals = sub === undefined ? all : all.slice(0, all.length - rest.length - 1);
     const fed = toks.slice(0, at).some((t) => /^(xargs|parallel)$/.test(runnerName(plainWord(t))));
-    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest) ?? remoteRefWhy(globals, sub, rest, { head: at === k, fed: fed || dyn }));
+    return ask((sub === 'push' ? pushOptionWhy(rest) : null) ?? pushConfigWhy(globals, sub, rest) ?? remoteRefWhy(globals, sub, rest, { head: at === k, fed, envConfig, root: ctx.root }));
   }
   return null;
   };
 };
 
+const BRANCH_PRODUCERS = new Set(['git branch --show-current', 'git rev-parse --abbrev-ref HEAD']);
 const NEW_BRANCH_FLAGS: Record<string, string[]> = {
   checkout: ['-b', '-B', '--orphan'], switch: ['-c', '-C', '--create', '--force-create', '--orphan'], worktree: ['-b', '-B'], // worktree's --orphan is a switch
 };

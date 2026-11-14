@@ -1,5 +1,6 @@
 // Owner ruling 2026-11-13: the guard asks before gh/hub commands that change shared state, gh api writes and GitLab push
 // options; reads stay allowed; the pr-body denies stay and a deny beats the ask.
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -127,6 +128,23 @@ describe('commands that can repoint refs/remotes/* ask', () => {
       'echo refs/remotes/origin/main HEAD | xargs git update-ref', 'echo . | xargs git push', 'echo /tmp/x | xargs -n1 git fetch',
       'git -c alias.co=update-ref co refs/remotes/origin/main HEAD', 'git config alias.co "!git update-ref refs/remotes/origin/main HEAD"', 'git config --global alias.st status', 'git -c include.path=/tmp/x fetch',
       'git config include.path /tmp/evil', 'git config includeIf.gitdir:/p/.path /tmp/evil', 'git config remote.origin.pushurl .', 'git config url./tmp/x.pushInsteadOf https://github.com/', 'git co main', 'git my-plugin run'], 'ask');
+  });
+  test('review round 2: substitutions count only in that git command, and only where they can matter', () => {
+    all(["git commit -m \"$(cat <<'EOF'\nfix: x\nEOF\n)\" && git push origin feat", 'git push origin $(git branch --show-current)', 'git push -u origin "$BRANCH"', 'git config user.email "$EMAIL"',
+      'git push origin $(git rev-parse --abbrev-ref HEAD)', 'git push -u origin "$(git rev-parse --abbrev-ref HEAD)"', 'git fetch origin && echo $(date)', 'git fetch origin $(git branch --show-current)'], 'allow');
+    all(['git push "$REMOTE" feat', 'git push $(echo .) feat', 'git push origin "HEAD:$DST"', 'git push origin $(cat spec)', 'git push origin `cat spec`', 'git fetch origin "$SPEC"', 'git fetch "$URL"',
+      'git fetch origin $(cat spec)', 'git config "$K" /tmp/x', 'git config remote.origin.url "$U"', 'git config set "$K" x', 'git remote add e "$U"', 'git replace $A $B'], 'ask');
+  });
+  test('review round 2: a subcommand git does not have asks only when it is an alias or the lookup fails', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'h-ghw-alias-'));
+    spawnSync('git', ['init', '-q'], { cwd: repo });
+    spawnSync('git', ['config', 'alias.zzh', 'update-ref refs/remotes/origin/main HEAD'], { cwd: repo });
+    const at = (c: string) => decideCommand(c, { config, env: {}, root: repo }).kind;
+    for (const c of ['git lfs pull', 'git lfs push origin feat', 'git lfs install --local']) expect(at(c), c).toBe('allow');
+    expect(at('git zzh')).toBe('ask');
+    expect(at("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.lfs GIT_CONFIG_VALUE_0='update-ref x y' git lfs pull")).toBe('ask');
+    expect(at('export GIT_CONFIG_PARAMETERS=x; git lfs pull')).toBe('ask');
+    expect(guard('git lfs pull')).toEqual(expect.objectContaining({ kind: 'ask' })); // root /p: the lookup fails, so it asks
   });
   test('ordinary fetch, pull and remote reads stay allowed', () => {
     all(['git fetch', 'git fetch origin', 'git fetch --all --prune', 'git fetch origin main', 'git fetch -q origin', 'git fetch --depth 1 origin', 'git fetch -j 4 origin', 'git pull', 'git pull origin main',

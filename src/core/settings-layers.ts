@@ -44,12 +44,18 @@ export const claudeConfigDir = (home: string, env: NodeJS.ProcessEnv): string =>
 /** Claude Code's user settings file in `claudeConfigDir`. */
 export const userSettingsPath = (home: string, env: NodeJS.ProcessEnv): string => join(claudeConfigDir(home, env), 'settings.json');
 
-/** True when the repo's project or local settings set `name` in their `env`. */
-export const repoEnvSets = (root: string, name: string): boolean =>
-  ['settings.json', 'settings.local.json'].some((f) => {
-    const env = (readJson(join(root, '.claude', f)) as { env?: unknown } | null)?.env;
-    return typeof env === 'object' && env !== null && name in env;
+/**
+ * `env` without a `HARNESS_CLAUDE_CONFIG_DIR` that the repo's project or local settings set in their `env`: Claude Code
+ * ignores `CLAUDE_CONFIG_DIR` there, so the repo can't name the mirror either. Files are read only when it is set.
+ */
+export function withoutRepoMirror(root: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!env.HARNESS_CLAUDE_CONFIG_DIR) return env;
+  const set = ['settings.json', 'settings.local.json'].some((f) => {
+    const e = (readJson(join(root, '.claude', f)) as { env?: unknown } | null)?.env;
+    return typeof e === 'object' && e !== null && 'HARNESS_CLAUDE_CONFIG_DIR' in e;
   });
+  return set ? { ...env, HARNESS_CLAUDE_CONFIG_DIR: undefined } : env;
+}
 
 /** The value at `path` from the first layer that defines it. */
 export function effective(layers: Layer[], path: string[]): unknown {

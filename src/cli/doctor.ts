@@ -28,7 +28,7 @@ import { LEGACY_PINS, PINS_NAME, STRUCTURAL, contentPins, pinnedPlugins, pinsMis
 import { pluginList } from '../install/plugin-install.js';
 import { reconcile } from '../install/reconcile.js';
 import { selectedIds } from '../install/plan.js';
-import { effective, managedSettingsPath, readManagedLayers, userSettingsPath, type Layer } from '../core/settings-layers.js';
+import { effective, managedSettingsPath, readManagedLayers, userSettingsPath, withoutRepoMirror, type Layer } from '../core/settings-layers.js';
 import { sandboxBlocker, type MachineProbe } from '../core/sandbox-machine.js';
 import { denyWritePaths } from '../checks/protect.js';
 
@@ -173,7 +173,8 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
   // Claude Code's settings as it reads them: managed, local, project, user. Scalars go by that precedence; the sandbox
   // `filesystem` arrays and `excludedCommands` merge across scopes, so those are unions.
   const file = (path: string, name: Layer['name']): Layer => { try { return { name, json: JSON.parse(readFileSync(path, 'utf8')) }; } catch { return { name, json: undefined }; } };
-  const userPath = userSettingsPath(deps.home ?? homedir(), env);
+  // The agent's Bash carries the repo's settings env, which can't name the user config dir (as in the hooks).
+  const userPath = userSettingsPath(deps.home ?? homedir(), withoutRepoMirror(root, env));
   const named: [Layer, string][] = [
     ...readManagedLayers(deps.managed ?? managedSettingsPath(platform)).map((l): [Layer, string] => [l, 'managed settings']),
     [file(join(root, '.claude/settings.local.json'), 'local'), '`.claude/settings.local.json`'],

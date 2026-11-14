@@ -23,7 +23,7 @@ import { testLock } from '../checks/tdd/test-lock.js';
 import { type SessionState, isSafeSessionId, withSessionLock, writeState } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
 import { appendTiming, type TimingLine } from '../core/timing.js';
-import { managedSettingsPath, repoEnvSets } from '../core/settings-layers.js';
+import { managedSettingsPath, withoutRepoMirror } from '../core/settings-layers.js';
 import { detectHarnessFileChanges, seedBaselines } from './change-detection.js';
 import type { Check, Ctx } from './check.js';
 import { configInvalidGate } from './config-gate.js';
@@ -72,9 +72,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
   const event = input.hook_event_name as HookEvent;
   const { root, config, state, unattended, configErrors, fallback, degraded } = setupSession(input, event, env);
   const platform = opts.platform ?? process.platform;
-  // Claude Code ignores CLAUDE_CONFIG_DIR in a repo's settings env, so the repo can't name the mirror either: only the
-  // launcher's counts. Read only when the mirror is set, so other hooks pay nothing.
-  const hookEnv = env.HARNESS_CLAUDE_CONFIG_DIR && repoEnvSets(root, 'HARNESS_CLAUDE_CONFIG_DIR') ? { ...env, HARNESS_CLAUDE_CONFIG_DIR: undefined } : env;
+  const hookEnv = withoutRepoMirror(root, env); // only the launcher's HARNESS_CLAUDE_CONFIG_DIR counts
   const ctx = {
     input, root, config, state, unattended, env: hookEnv, configErrors, startedAt: PROCESS_START,
     home: opts.home ?? homedir(), platform, managed: opts.managed ?? managedSettingsPath(platform),

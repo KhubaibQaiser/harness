@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { closeSync, openSync, readlinkSync, readSync } from 'node:fs';
+import { closeSync, openSync, lstatSync, readlinkSync, readSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { esc } from '../../core/config.js';
 import { olderThan } from '../../core/min-claude.js';
@@ -24,14 +24,17 @@ export const realSrtProbe = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform, 
   version: ([cmd, ...rest]) => run(cmd, [...rest, '--version'], { timeout, encoding: 'utf8', killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'], env }),
 });
 
+// ELF, Mach-O (both byte orders), fat, PE. Anything else (BOM, leading space, plain text) is treated as a script.
+const MAGIC = /^(7f454c46|feedfac[ef]|cffaedfe|cefaedfe|cafebabe|4d5a.*)$/;
 type Kind = 'node' | 'script' | 'binary';
 // The kind of the launch target, and its first line (shown when a script is refused).
 function classify(p: string): { kind: Kind; head: string } {
   const fd = openSync(p, 'r');
   try {
     const b = Buffer.alloc(256);
-    const head = b.subarray(0, readSync(fd, b, 0, 256, 0)).toString('latin1').split('\n')[0];
-    const kind = /\.[cm]?js$/.test(p) || /^#!.*\bnode\b/.test(head) ? 'node' : head.startsWith('#!') ? 'script' : 'binary';
+    const buf = b.subarray(0, readSync(fd, b, 0, 256, 0));
+    const head = buf.toString('latin1').split('\n')[0];
+    const kind = /\.[cm]?js$/.test(p) || /^#!.*\bnode\b/.test(head) ? 'node' : MAGIC.test(buf.subarray(0, 4).toString('hex')) ? 'binary' : 'script';
     return { kind, head };
   } finally {
     closeSync(fd);
@@ -43,23 +46,33 @@ const text = (v: unknown): string => (v == null ? '' : String(v));
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const check = (c: string, f: string): { why: SrtWhy } => ({ why: { kind: 'check', check: c, first: f } });
 
+const isLink = (p: string): boolean => {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
 // Every link in the chain, each as written and with its folder resolved (a link may be reached through a symlinked folder).
 function chain(p: string): string[] | null {
   const out: string[] = [];
   for (let cur = p, i = 0; i < 40; i++) {
     out.push(cur, join(realish(dirname(cur)), basename(cur)));
+    for (let a = dirname(cur); dirname(a) !== a; a = dirname(a)) if (isLink(a)) out.push(join(realish(dirname(a)), basename(a)));
     let t: string;
     try {
       t = readlinkSync(cur);
     } catch {
       return out;
     }
-    cur = resolve(dirname(cur), t);
+    cur = resolve(realish(dirname(cur)), t);
   }
   return null;
 }
 
 export function locateSrt(probe: SrtProbe, writable: string[], platform: NodeJS.Platform, execPath: string = process.execPath): SrtFound | { why: SrtWhy } {
+  // A PATH symlink loop is dropped by findOnPath and reported as missing, which is closed.
   const found = probe.which('srt');
   if (!found) return { why: { kind: 'missing' } };
   const path = resolve(found);
@@ -73,8 +86,10 @@ export function locateSrt(probe: SrtProbe, writable: string[], platform: NodeJS.
     return check('version', first(e instanceof Error ? e.message : String(e)));
   }
   const interp = realish(execPath);
+  const ihops = c.kind === 'node' ? chain(execPath) : [];
+  if (!ihops) return check('launcher', 'too many symlinks');
   const roots = writable.flatMap((w) => [w, realish(w)]);
-  const hit = [...hops, real, ...(c.kind === 'node' ? [...(chain(execPath) ?? []), interp] : [])].find((p) => roots.some((w) => within(p, w, platform)));
+  const hit = [...hops, real, ...(c.kind === 'node' ? [...ihops, interp] : [])].find((p) => roots.some((w) => within(p, w, platform)));
   if (hit) return { why: { kind: 'writable', path: esc(hit) } };
   if (c.kind === 'script') return check('launcher', first(c.head));
   if (c.kind === 'binary' && !/^srt(\.exe)?$/.test(basename(real))) return check('launcher', esc(basename(real)));

@@ -34,7 +34,7 @@ describe('locateSrt', () => {
     loc({ which: () => envNode, version });
     expect(version).toHaveBeenCalledWith([node, envNode]);
   });
-  test('found path or its realpath inside a writable root is refused, naming the realpath', () => {
+  test('found path or its realpath inside a writable root is refused, naming the offending link or file', () => {
     expect(loc(probe(js), [out])).toEqual({ why: { kind: 'writable', path: js } });
     const inRepo = join(repo, 'srt');
     symlinkSync(js, inRepo);
@@ -135,4 +135,28 @@ test('realSrtProbe argv is [--version] with a 5 s timeout', () => {
   const p = realSrtProbe({ PATH: out }, 'linux', run as never);
   expect(p.version(['/n', '/s.js'])).toBe('0.0.83');
   expect(run).toHaveBeenCalledWith('/n', ['/s.js', '--version'], expect.objectContaining({ timeout: 5000, encoding: 'utf8', killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: out } }));
+});
+
+describe('round 2', () => {
+  test('a relative hop inside a symlinked PATH folder resolves from the real folder', () => {
+    const real = join(base, 'n1/t1/t2'); mkdirSync(real, { recursive: true });
+    symlinkSync(js, join(repo, 'x'));
+    symlinkSync('../../../repo/x', join(real, 'srt'));
+    const pd = join(base, 'pd'); symlinkSync(real, pd);
+    expect(loc(probe(join(pd, 'srt')))).toEqual({ why: { kind: 'writable', path: join(repo, 'x') } });
+  });
+  test.each([['bom', '﻿#!/bin/sh\n'], ['space', ' #!/bin/sh\n'], ['text', 'echo hi\n']])('binary needs a known magic: %s is a launcher failure', (n, body) => {
+    const d = join(base, `m-${n}`); mkdirSync(d);
+    expect(loc(probe(file(join(d, 'srt'), body)))).toMatchObject({ why: { kind: 'check', check: 'launcher' } });
+  });
+  test('a symlink loop on execPath is a launcher failure', () => {
+    const a = join(out, 'ea'), b = join(out, 'eb'); symlinkSync(b, a); symlinkSync(a, b);
+    expect(loc(probe(js), [repo], a)).toMatchObject({ why: { kind: 'check', check: 'launcher' } });
+  });
+  test('a symlinked ancestor folder is checked at its real location', () => {
+    mkdirSync(join(repo, 'stuff'));
+    symlinkSync(out, join(repo, 'stuff/sub'));
+    const tools = join(base, 'tools5'); symlinkSync(join(repo, 'stuff'), tools);
+    expect(loc(probe(join(tools, 'sub/srt')))).toEqual({ why: { kind: 'writable', path: join(repo, 'stuff/sub') } });
+  });
 });

@@ -19,6 +19,7 @@ import { redFirst } from '../checks/tdd/red-first.js';
 import { tamper } from '../checks/tdd/tamper.js';
 import { specGate } from '../checks/tdd/spec-gate.js';
 import { stopGate } from '../checks/stop/gate.js';
+import { runPlanEntry } from '../checks/stop/step-runner.js';
 import { evidenceLedger } from '../done/ledger-hook.js';
 import { testLock } from '../checks/tdd/test-lock.js';
 import { type SessionState, isSafeSessionId, withSessionLock, writeState } from '../core/state.js';
@@ -148,6 +149,11 @@ export async function runHook(raw: string, run: (raw: string) => Promise<string>
 async function main(): Promise<void> {
   if (process.argv.includes('--self-test')) {
     process.stdout.write(`ok ${process.version}\n`);
+    return;
+  }
+  // Stop-gate step runner (inside srt). Not in hand-run's ENTRY_FLAGS: an agent running it by hand stays blocked.
+  if (process.argv[2] === '--stop-steps') {
+    process.exitCode = await runPlanEntry(process.argv.slice(3), (l) => process.stdout.write(l + '\n'));
     return;
   }
   if (process.argv.includes('--pr-size') || process.argv.includes('--pr-size-raise')) {

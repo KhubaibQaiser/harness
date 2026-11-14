@@ -69,7 +69,7 @@ export const defaultExec = (root: string): Exec => (cmd, args, timeout) =>
     c.on('close', (status) => finish(status));
   });
 
-const tail = (text: string) => {
+export const tail = (text: string) => {
   const t = text.replace(/\s+$/u, '');
   return t.length <= MAX_LOG ? t : `…(truncated)\n${t.slice(-MAX_LOG)}`;
 };

@@ -1,11 +1,15 @@
 # Isolation hardening: design
 
-- Status: revision 2, for the owner's review, 2026-11-14. No code. Revision 1 (050c8da) was reviewed adversarially (6 Critical, 13 Important, 16 Minor; `.superpowers/sdd/isolation/spec-review.md`, local). §18 maps every finding to its fix.
+- Status: revision 3, for the owner's review, 2026-11-14. No code. The review file (`.superpowers/sdd/isolation/spec-review.md`, local) covers two rounds:
+  - revision 1 (050c8da): 6 Critical, 13 Important, 16 Minor;
+  - revision 2 (72748bb): 9 Important, 9 Minor.
+
+  §18 maps every finding to its fix.
 - Research: [`../research/2026-11-14-isolation.md`](../research/2026-11-14-isolation.md), cited below as "R§n". Its sources were fetched on 2026-11-14; URLs are repeated where a design choice rests on them.
 - `srt` facts are from its README, read on 2026-11-14 at https://github.com/anthropics/sandbox-runtime. The `anthropic-experimental/sandbox-runtime` URL redirects there. Cited as "srt README".
-- Owner decisions: I0 to I15, the coordinator's rulings, and one live finding, in `.superpowers/sdd/isolation/decisions.md` (local, not committed). They bind; §1 lists them.
-- Prior work, treated as shipped: the unattended launch fix, commit 9a98f50 on `fix/unattended-launch-strict` (I1). It includes its review fix rounds: Claude Code login denies, the release note, the managed `allowManagedDomainsOnly` false deny, plan mode, a missing `permission_mode`, I10's `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, and the `HARNESS_CLAUDE_CONFIG_DIR` ruling. "The launch JSON" below means that command's `--settings` value. This spec adds to the launch line (§6.4, §1 live finding) but doesn't redesign it.
-- Sequencing (I0, I12): the Stop-gate `srt` PR (§4) lands right after the done contract's PR 3. Everything else lands after the done contract ([`2026-11-13-done-contract-design.md`](2026-11-13-done-contract-design.md)) is complete.
+- Owner decisions: I0 to I18, the coordinator's rulings, and one live finding, in `.superpowers/sdd/isolation/decisions.md` (local, not committed). They bind; §1 lists them.
+- Prior work, treated as shipped: the unattended launch fix (I1), first committed as 9a98f50 on `fix/unattended-launch-strict` and shipped in #231 with `--allowedTools "Bash,Edit,Write"` and `HARNESS_UNATTENDED=1`. It includes its review fix rounds: Claude Code login denies, the release note, the managed `allowManagedDomainsOnly` false deny, plan mode, a missing `permission_mode`, I10's `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, and the `HARNESS_CLAUDE_CONFIG_DIR` ruling. "The launch JSON" below means that command's `--settings` value. This spec adds to the launch line (§6.4, §1 live finding) but doesn't redesign it.
+- Sequencing (I0, I12): the Stop-gate `srt` PRs (§4, PS1 and PS2) land right after the done contract's PR 3. Everything else lands after the done contract ([`2026-11-13-done-contract-design.md`](2026-11-13-done-contract-design.md)) is complete.
 
 ## 1. Owner decisions
 
@@ -31,14 +35,25 @@
 | C4 | An owner `User` bypass in `pull_request` mode, on by default for user-owned repos, plus a documented break-glass. | §5.2 |
 | C5 | A second ruleset, `harness-refs`: tags are owner-only, and the App may create and update branches only under a configurable prefix (default `agent/`). | §5.3 |
 | C6 | The launch and `harness-run` unset the askpass, SSH agent and VS Code git variables. They set `GIT_ASKPASS` and `SSH_ASKPASS` to `/bin/false` and `core.sshCommand=false`. `devcontainer.json` turns off git config copying and credential forwarding (setting names pinned in L4). | §6.4, §7.2 |
-| Live | On 2.1.322, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` forces the default permission mode ("Declare allowedTools explicitly"). `bypassPermissions` is ignored under the scrub, so launches need `--allowedTools`. | §6.4, §7.3, §16 Q4 |
+| Live | On 2.1.322, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` forces the default permission mode ("Declare allowedTools explicitly"). `bypassPermissions` is ignored under the scrub, so launches need `--allowedTools`. | §6.4, §7.3 |
+| I16 | If `srt` runs in Docker only in weaker nested mode, ship it and report it in doctor and status. No `SYS_ADMIN` and no unconfined seccomp. A custom seccomp profile that allows only user namespaces needs an owner yes. | §7.7 |
+| I17 | Keep the read block on in the container. L4 measures the denial rate, and the owner decides with numbers. | §7.7, §8.6 |
+| I18 | `container-smoke` is a **required** check, over the recommendation that it not be required. | §12.3 |
+| Q4 | Launches use `--allowedTools "Bash,Edit,Write"` plus `HARNESS_UNATTENDED=1`, shipped in #231. | §6.4, §7.3 |
+| Q5 | Done-contract PR 6 installs `srt` and the `ubuntu-24.04` `sysctl`. | §4.6 |
+| R2-I1 | The Stop wrap is never skipped on a probe. It skips only on the cached, trusted container verdict that `srt` already wraps the process. The preflight is behavioural, and the I12 limit is stated. | §4.1, §4.2, §4.4 |
+| R2-I2 | Steps get no loopback by default. A person-only `stop.allow_local: true` opts in, documented with the macOS risk. | §4.3, §10.1 |
+| R2-I3 | An `srt` that degrades with a warning, for example with no seccomp helper, fails the preflight. | §4.4 |
+| R2-I6 | `harness-refs` binds only App-created refs. Dependabot, `gh-pages` and release-please are exempt by actor or pattern. | §5.3 |
+| R2-I7 | Detect headless `-p` if Claude Code exposes a hook-visible signal (such as `CLAUDE_CODE_ENTRYPOINT`, to verify live); otherwise it is a documented limit. A follow-up to #231. | §10.5, L0 |
 
-The research recommended otherwise on three of these:
+The research or the review recommended otherwise on four of these:
 - I3 (R§12 Q2);
 - I6 (R§12 Q6);
-- I14 drops the inner sandbox that the research proposed (R§11 B2).
+- I14 drops the inner sandbox that the research proposed (R§11 B2);
+- I18 makes `container-smoke` required (§12.3).
 
-Their risks are stated where they are designed: §7.7 and §8.6.
+Their risks are stated where they are designed: §7.7, §8.6 and §12.3.
 
 ## 2. Threat model
 
@@ -79,6 +94,7 @@ Out of scope:
 - **Exfiltration over an allowed host.** Proxies decide on the hostname without inspecting TLS, so domain fronting works (R§2.4, https://code.claude.com/docs/en/sandboxing "Security limitations"; srt README "Security Limitations").
 - **Misuse of the App token inside its scope.** For up to an hour the agent can push under `agent/`, open, close and comment on PRs, and write misleading PR text. The token reaches the agent on push runs by design.
 - **Code outside the fence on the host.** Hooks, MCP servers, LSP servers and WebFetch run outside Claude Code's sandbox there (R§2.4). In the container they run inside `srt`.
+- **Contents write beyond refs.** The App can start `repository_dispatch` workflows and change release assets. Doctor flags both; no ruleset covers them (§5.7).
 - **What a person does:** approving a bad PR, using the C4 bypass or break-glass, setting `sandbox: off`, or running agent-written code on the host later.
 
 ### 2.4 Is the App key out of reach of agent-controlled code?
@@ -92,6 +108,8 @@ Out of scope:
 | macOS host | **Yes, unless the person clicks Allow.** The item has no trusted apps, so every read raises a keychain prompt; the broker reads it once at start | The person allowing a prompt that agent code raised. Agent code reading the broker's memory would need debugger rights: L2 confirms |
 | Linux host | **Only when no agent code runs unsandboxed there:** `sandbox: always` with Claude Code's seccomp filter (it blocks the D-Bus socket), and Stop steps in `srt` (I12, which blocks Unix sockets) | Otherwise, any unsandboxed process of the uid reads Secret Service silently: Bash in attended sessions under the default `sandbox: unattended`, agent-planted code the person runs later, and `/proc/<broker>/mem` where `ptrace_scope` is 0. Doctor and status say "App key reachable by unsandboxed code" (§10.4) |
 | Native Windows, or Linux without Secret Service | No host key; use the container or CI | — |
+
+**The Stop wrap (I12) has the same shape.** It holds against an agent with no unsandboxed write: `sandbox: always`, the container, or CI. In an attended session with the sandbox off, one write past the guard's text checks can defeat it, for example a purpose-built `srt` shim on a user-writable `PATH` (§4.1, R2-I1). Linux rows that rely on I12 inherit this.
 
 **The token is not the key.** On push runs it reaches the agent by design: for one repo, for one hour, with Contents and Pull requests write, and for branches under `agent/` only.
 
@@ -127,92 +145,110 @@ The Stop gate runs the project's lint, type check, test and build commands with 
 
 The done contract's `harness verify` reuses the same runner (done contract §4.4 step 3), so it has the same hole.
 
-### 4.2 How steps are wrapped
+**What I12 holds against.** It holds against an agent with no unsandboxed write: `sandbox: always`, the harness container, or CI. In an attended session with the sandbox off (the default `sandbox: unattended`), a single write that gets past the guard's text checks defeats it. An example is an `srt` shim placed in a user-writable global prefix (nvm, volta, a user-owned `/opt/homebrew`). The behavioural preflight (§4.4) catches a plain shim, but not one written against harness's own preflight (R2-I1). §2.4 and §14 state this.
+
+### 4.2 How steps are wrapped: one `srt` call per run
 
 - The wrap lives in the shared step runner (`src/checks/stop/runner.ts`), so Stop steps and verify's command runs are both covered.
-- **Per Stop run:**
-  1. Write the `srt` settings (§4.3) to `.harness/state/srt-stop.json`. That folder is protected by protect, `denyWrite` and ConfigChange. The file is regenerated on every run, never reused.
-  2. **Preflight:** `srt --settings <file> true` must exit 0 within 15 seconds. This separates "`srt` can't run" from "a step failed".
-  3. **Each step:** `srt --settings <file> <command> <args…>` replaces `<command> <args…>`, with the same time limits, environment, working directory and output capture as today. The exact argument form, which the README shows both as an argv and as one string, is pinned by a test (srt README "As a CLI tool").
-- **Which `srt`:** the binary found on the hooks' `PATH`.
-  - Its real path must not lie inside the repo or any `allowWrite` root. A copy the sandboxed command can rewrite "runs the result unsandboxed" next time (srt README "Where This Package Is Installed").
-  - `srt --version` must be at least the version harness pins (`SRT_MIN`, moved only by a harness release).
-  - Harness doesn't bundle `srt`; the person installs it globally (`npm install -g @anthropic-ai/sandbox-runtime@<pin>`).
-- **Already fenced: no second wrap.** A nested `srt` is refused, with EPERM, inside another bubblewrap or `srt` (srt README "The command stays in the namespaces made for it"), and a Seatbelt profile can't be applied inside another. Two cases hit this:
-  - the harness container, where the Stop hook already runs inside `srt`;
-  - the agent running `harness verify` from sandboxed Bash.
+- **Per run** (a Stop run, or one verify):
+  1. Write the `srt` settings (§4.3) and a plan to `.harness/state/srt-<nonce>.json` and `.harness/state/plan-<nonce>.json`. That folder is protected by protect, `denyWrite` and ConfigChange. The plan lists each step's command, arguments, absolute working directory and time limit. Both files are new for every run and deleted afterwards.
+  2. Run `srt --settings <abs settings> node <harness step runner> <abs plan> <nonce>` **once**.
+     - `srt` reads the settings once, at start, so nothing can change them between steps (R2-I8). The step runner is harness's own file from harness's install, never from the repo.
+     - The argument form (the README shows it both as an argv and as one string) is pinned by a test (srt README "As a CLI tool").
+  3. **Inside, the step runner:**
+     - runs the behavioural preflight (§4.4) first;
+     - runs each step with its time limit, capturing its output;
+     - writes one JSON line per check and step to stdout, tagged with the nonce.
 
-  The runner detects them by behaviour. Before wrapping, it writes `.harness/state/.fence-probe`:
-  - The write fails with EPERM (macOS Seatbelt) or EROFS (a Linux read-only bind). Only a fence that carries harness's `denyWrite` produces these, so the commands run unwrapped inside that fence, which also carries the credential denies and that fence's network allowlist.
-  - The write fails with EACCES, which a `chmod` produces. That is not a fence, so the runner wraps as usual.
-  - The write succeeds. The runner deletes the probe file and wraps.
-
-  Known limits (§14):
-  - In the container, steps use the run's `srt` settings, which may allow registry hosts and, on push runs, GitHub.
-  - An unsandboxed agent that can make its own read-only mount, inside a user namespace, could fake the probe. Agent-run verify is not the binding verdict; CI is.
+     The outer runner checks the nonce and the per-step results, and enforces `stop.timeout_s` on the whole call.
+- **Which `srt`:** the binary on the hooks' `PATH`.
+  - Its real path must lie outside the repo and every `allowWrite` root (srt README "Where This Package Is Installed").
+  - `srt --version` must be at least the pinned `SRT_MIN`, which moves only with a harness release.
+  - Harness doesn't bundle `srt`. The person installs the `@anthropic-ai/sandbox-runtime` package globally, at the pin. That one install also provides Claude Code's Linux seccomp filter (https://code.claude.com/docs/en/sandboxing, "Set up Linux and WSL2").
+- **The wrap is never skipped on a probe (R2-I1).** The one case without a second wrap is the harness container. There, a nested `srt` fails with EPERM (srt README "The command stays in the namespaces made for it"), and the session's cached, trusted container verdict (§7.5) shows `srt` already wraps the whole process. No file probe, environment variable or write result is consulted.
+- **From inside another fence.** Running `harness verify` from the agent's sandboxed Bash, or from any other fence, makes the nested `srt` fail. The preflight then exits "not done", saying: `harness verify can't run its checks inside another sandbox. Ask the person to run ! harness verify, which runs outside it.` The `!` prefix runs outside Claude Code's sandbox, the same route harness already uses for denied writes.
 
 ### 4.3 The `srt` settings for steps
 
-All keys were checked against the srt README "Configuration Options":
+All keys and the `literal` entry form were checked against the srt README "Configuration Options":
 
 ```json
 {
-  "network": { "allowedDomains": [], "allowLocalBinding": true },
+  "network": { "allowedDomains": [], "allowLocalBinding": false },
   "filesystem": {
-    "allowWrite": [".", "<os temp dir>", "/tmp"],
-    "denyWrite": ["<denyWritePaths()>", ".claude/settings.json", ".claude/settings.local.json", ".claude/hooks", ".claude/skills", ".devcontainer", "<CODEOWNERS paths>"],
-    "denyRead": ["<token base>"]
+    "allowWrite": [ {"path": "<repo realpath>", "literal": true}, "<os temp dir>", "/tmp", "<stop.allow_write…>" ],
+    "denyWrite": [ "<each protected path, absolute, literal>", {"path": "<token base>", "literal": true}, {"path": "<canary>", "literal": true} ],
+    "denyRead": [ {"path": "<token base>", "literal": true}, {"path": "<canary>", "literal": true} ]
   },
   "credentials": { "files": [ "<§8.3 list, mode deny>" ], "envVars": [ "<§8.3 list, mode deny>" ] }
 }
 ```
 
-- **Network.** None by default: `allowedDomains: []` means "no network access" (srt README). `stop.allowed_domains` (§10.1) adds hosts, for example a test that needs a registry.
-  - `allowLocalBinding: true` lets tests start and reach local servers on macOS. On Linux it is ignored, because the sandbox's own loopback always works there.
-  - Unix sockets stay blocked by default (srt README "Unix Socket Settings"). This also blocks D-Bus (Secret Service), `SSH_AUTH_SOCK` and VS Code's IPC.
-- **Writes.**
-  - The repo, the OS temp dir and `/tmp`, plus `stop.allow_write` for tool caches outside the repo (Go's build cache, for example).
-  - `srt` always lets the child write its stdio, `/tmp/claude`, `~/.npm/_logs` and `~/.claude/debug`.
-  - Its mandatory denies already cover `.git/hooks`, `.git/config`, `.vscode`, `.idea`, shell startup files, `.gitconfig`, `.mcp.json`, `.claude/commands` and `.claude/agents` (srt README "Mandatory Deny Paths"). Harness adds the paths those miss: its `denyWritePaths()`, `.claude/settings*.json`, `.claude/hooks`, `.claude/skills`, `.devcontainer` and CODEOWNERS.
-- **Reads.** Unrestricted except the credential denies and the token base (§6.3). The I3 home-wide read block is not applied to steps, so toolchains under home keep working.
-  - On Linux, a `denyRead` or credential path that doesn't exist when the step starts hides nothing (srt README "Path Syntax (Linux)"). The list is rebuilt for each run, so a credential created mid-session is covered from the next Stop run on.
-- **Credentials.** `srt` has its own `credentials.files` and `credentials.envVars` with `mode: "deny"` (srt README "Other Configuration"). Harness renders the §8.3 lists into them from the same source as `.claude/settings.json`.
-- `allowRead` has the opposite precedence in `srt` from Claude Code's (it wins over `denyRead`). Harness renders `srt` settings with their own function, never the Claude Code one, and writes no `allowRead`.
+- **Absolute, literal paths (R2-I8).** Every repo-derived path is the repo's `realpath`, joined and written as a `{"path", "literal": true}` entry. Then glob characters in a repo's path are never read as a pattern, and a step in `packages/x` gets the same roots as one at the top. `credentials.files` takes no `literal` form, so a credential path with glob characters is left out and doctor names it.
+- **Protected paths.** Harness's `denyWritePaths()`, `.claude/settings.json`, `.claude/settings.local.json`, `.claude/hooks`, `.claude/skills`, `.devcontainer` and the CODEOWNERS paths. `srt`'s mandatory denies already cover `.git/hooks`, `.git/config`, `.vscode`, `.idea`, shell startup files, `.gitconfig`, `.mcp.json`, `.claude/commands` and `.claude/agents` (srt README "Mandatory Deny Paths").
+- **The token base** is denied for both reads and writes. On macOS the OS temp dir is `DARWIN_USER_TEMP_DIR`, the parent of the token base, so without the write deny a step could swap `git-credential` or pre-create the broker's names (R2-M1).
+- **Network: none.**
+  - `allowedDomains: []` means no network (srt README). `stop.allowed_domains` adds hosts.
+  - **Loopback is off (R2-I2).** `allowLocalBinding: false` is the default. On macOS, `true` opens every service on the host's loopback, including Claude Code's own sandbox proxy (which allows any host in `bypassPermissions` without `strictAllowlist`), debug ports, and "a local proxy or forwarder that carries traffic off the machine" (srt README "Local servers on Windows", which says macOS behaves the same).
+  - The person can opt in with `stop.allow_local: true` (person-only, §10.1); doctor then shows the risk.
+  - On Linux the setting is ignored. Each step has its own loopback, so servers a step starts itself work, but host services (a database, a dev server) are unreachable from steps on Linux whatever the setting. A suite that needs a host service runs in CI or with `sandbox: off`.
+- **Unix sockets** stay blocked (srt README "Unix Socket Settings"). This blocks D-Bus (Secret Service), `SSH_AUTH_SOCK` and VS Code's IPC too.
+- **Reads.** Unrestricted except the credential denies, the token base and the canary. The I3 home-wide block is not applied to steps, so toolchains under home work. On Linux, a deny path that doesn't exist when `srt` starts hides nothing; the lists are rebuilt for every run.
+- **Credentials.** `srt`'s own `credentials.files` and `credentials.envVars` with `mode: "deny"`, rendered from the §8.3 lists.
+- **No `allowRead`.** It has the opposite precedence in `srt` from Claude Code's, so `srt` settings have their own renderer and never write it.
 
-### 4.4 When `srt` is missing or fails: fail closed
+### 4.4 Preflight: behavioural, and fail closed (R2-I3)
+
+Inside the single `srt` call, before any step, the step runner checks that the fence holds. Each name is random per run.
+
+| Check | Must |
+|---|---|
+| Write the `denyWrite` canary (a file the outer runner created under `.harness/state/`) | Fail. The outer runner also checks afterwards that the file is unchanged |
+| Read the `denyRead` canary (a file the outer runner created in the OS temp dir with a random value) | Fail |
+| Connect to a Unix socket the outer runner listens on, in the OS temp dir | Fail. The outer runner also checks that no connection arrived |
+| An HTTPS connection to `example.com` | Fail |
+| Linux: `bwrap --unshare-user --ro-bind / / true` (bubblewrap is a dependency of `srt`) | Fail, so step code can't unshare and drop the binds |
+
+The preflight also fails when:
+- **`srt` writes any warning to stderr,** for example no seccomp helper (Unix sockets unrestricted), no `--disable-userns` (bubblewrap older than 0.8), or bubblewrap older than 0.5 (srt README "Platform-Specific Dependencies", "Unix Socket Settings");
+- the outer runner's own checks see a change or a connection;
+- a result line lacks the nonce, or `srt` exits non-zero before the step runner reports.
+
+Each line names the check that failed. A plain shim fails it.
 
 | Case | What happens |
 |---|---|
-| `srt` not found, inside the repo or a write root, too old, or the preflight fails or times out | No step runs. Stop blocks with the message below; the block counts toward `stop.max_attempts`. A `stop-srt-unavailable` event is logged. |
-| A step fails inside `srt` | The same as a failing step today. The output tail includes `srt`'s "Operation not permitted" lines, so a fence hit is visible. |
-| `sandbox: off` | Steps run unwrapped, as today. A `stop-unwrapped` event is logged once per session, and doctor shows a note (I11's escape, applied here). |
-| `harness verify` (attended or `--ci`) | The same rules. A verify that can't wrap is "not done" (exit 1) with the same message. |
+| `srt` missing, inside the repo or a write root, older than the pin, or the preflight fails | No step runs. Stop blocks with the message below; the block counts toward `stop.max_attempts`. A `stop-srt-unavailable` event is logged with the failed check. |
+| Attempts run out on that cause | The Stop gate lets the agent stop, by its existing rule. The done ledger and `harness status` record `checks never ran (srt unavailable)`, never a pass (R2-M6). |
+| A step fails inside `srt` | The same as a failing step today. The output tail includes `srt`'s "Operation not permitted" lines. |
+| `sandbox: off` | Steps run unwrapped, as today. `stop-unwrapped` is logged once per session, and doctor shows a note. |
+| `harness verify` (attended or `--ci`) | The same rules. A verify that can't wrap exits "not done" (exit 1) with the message. |
 
 Message:
-`Stop gate: the checks run inside sandbox-runtime (srt), and srt <is not installed | is inside the repo or a writable folder (<path>) | is <ver>, older than <pin> | did not start: <first line of its error>>. Install it outside the repo with npm install -g @anthropic-ai/sandbox-runtime@<pin> (Linux also needs bubblewrap, socat and ripgrep; macOS needs ripgrep), then stop again. To run the checks unsandboxed instead, set sandbox: off in .harness/config.yaml (logged).`
+`Stop gate: the checks run inside sandbox-runtime (srt), and srt <is not installed | is inside the repo or a writable folder (<path>) | is <ver>, older than <pin> | failed its check: <check> (<first line>)>. Install @anthropic-ai/sandbox-runtime@<pin> globally, outside the repo (Linux also needs bubblewrap 0.8 or newer, socat and ripgrep; macOS needs ripgrep), then stop again. To run the checks unsandboxed instead, set sandbox: off in .harness/config.yaml (logged).`
 
 The Stop hook itself fails open by Claude Code's design (done contract §2.3). Fail closed here means the gate never runs steps unwrapped, and verify never passes without the wrap.
 
 ### 4.5 Windows
 
-`srt`'s Windows backend is an alpha with an elevated install (srt README "Windows (alpha)"). Harness doesn't use it.
+`srt`'s Windows backend is an alpha with an elevated install (srt README "Windows (alpha)"), and harness doesn't use it.
 
-- **Attended native Windows:** steps run unwrapped, as today. Doctor gives a warning: `Stop steps run without a sandbox on native Windows: the project's tests run with your full access. Use WSL2 or the harness dev container for a sandboxed Stop gate.`
-- **Unattended native Windows:** no step runs, and Stop blocks with `Stop steps don't run unsandboxed in an unattended run on native Windows. Run in WSL2 or the harness dev container, or set sandbox: off (logged).` Under I0, unattended shell is denied there anyway.
+- **Attended native Windows:** steps run unwrapped, as today. Doctor gives a warning: `Stop steps run without a sandbox on native Windows: the project's tests run with your full access. Use WSL2 or the harness dev container for a sandboxed Stop gate.` This is an exception to I12, listed in §14 for the owner to acknowledge.
+- **Unattended native Windows:** no step runs, and Stop blocks with `Stop steps don't run unsandboxed in an unattended run on native Windows. Run in WSL2 or the harness dev container, or set sandbox: off (logged).`
 - **WSL2:** Linux rules.
 
 ### 4.6 Machines that can't run `srt`
 
-- **Linux** needs `bubblewrap`, `socat` and `ripgrep`. Ubuntu 24.04 and later need `kernel.apparmor_restrict_unprivileged_userns=0` or an AppArmor profile (srt README "Ubuntu 24.04+ note").
-- **macOS** needs `ripgrep`.
-- Doctor finds each case and prints the fix. Until it is fixed, the Stop gate blocks (§4.4). This is a behaviour change for attended Linux users whose Stop gate worked unwrapped, so it goes in the release note under "Breaking".
-- **CI:** done-contract PR 6's `harness-verify` workflow must install `srt` at the pin, and on `ubuntu-24.04` run the `sysctl` line, or verify exits "not done". This is flagged to the owner as a change to the done-contract plan (§16 Q5).
+- Linux needs `bubblewrap` (0.8 or newer for the preflight), `socat` and `ripgrep`. Ubuntu 24.04 and later need `kernel.apparmor_restrict_unprivileged_userns=0` or an AppArmor profile (srt README "Ubuntu 24.04+ note").
+- macOS needs `ripgrep`.
+- Doctor finds each case and prints the fix; until then the Stop gate blocks. Attended Linux users whose Stop gate worked unwrapped see this change, so it goes in the release note under "Breaking".
+- **CI:** done-contract PR 6's `harness-verify` workflow installs `srt` at the pin and runs the `sysctl` line on `ubuntu-24.04` (Q5 ruling).
 
 ### 4.7 Performance
 
-- Each wrapped command pays `srt`'s start-up: the proxy, the sandbox profile or bubblewrap mounts, and on Linux a `ripgrep` scan for mandatory-deny files down to depth 3 (srt README "Linux search depth"). A Stop run pays it once for the preflight and once per step.
-- The cost is unmeasured. The PR adds a perf case to `pnpm test:perf`, a Stop run of four trivial steps wrapped and unwrapped, and sets the budget from the first measurement on CI (target: no more than 1.5 s added per Stop run, an estimate).
-- The overhead counts against `stop.timeout_s`. The Stop gate runs once per stop, not per tool call, so hook latency per tool call is unchanged.
+- A Stop run pays `srt`'s start-up **once**: the proxy, the sandbox profile or bubblewrap mounts, and on Linux a `ripgrep` scan for mandatory-deny files, to depth 3, in every `allowWrite` root, `/tmp` and the OS temp dir included (srt README "Linux search depth"). The preflight then adds its five checks.
+- PS2 adds a perf case to `pnpm test:perf`: a Stop run of four steps on a repo fixture with a large `node_modules`, wrapped and unwrapped, on Linux and macOS CI. The budget is set from the first measurement (target: no more than 2 s added per Stop run, an estimate) (R2-M5).
+- The overhead counts against `stop.timeout_s`. The Stop gate runs once per stop, not per tool call.
 
 ## 5. Layer A: server-side protection
 
@@ -255,7 +291,7 @@ The Stop hook itself fails open by Claude Code's design (done contract §2.3). F
 
 The rules and why they bind are in R§5.2 (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets). The review confirmed the field names against the REST docs, and PR P6 pins them in a test.
 
-**Owner bypass (C4).** `github.protect.owner_bypass: auto` adds the `User` bypass in `pull_request` mode for user-owned repos, and leaves it out for org repos. `on` and `off` force it.
+**Owner bypass (C4).** `github.protect.owner_bypass: auto` adds the `User` bypass in `pull_request` mode for user-owned repos. It also adds it for org repos with exactly one collaborator who has write access (`GET /repos/{o}/{r}/collaborators?permission=push`), so a one-person org doesn't lock itself out (R2-M9). Otherwise it leaves the bypass out. `on` and `off` force it.
 - **What it allows.** The owner can merge any PR without the approval or check, but can't push straight to the branch. It ends three deadlocks:
   - the owner's own PRs, which they can't approve themselves;
   - CI being down;
@@ -268,7 +304,7 @@ The rules and why they bind are in R§5.2 (https://docs.github.com/en/repositori
 2. Merge.
 3. Run `harness github protect` again, which shows the drift and restores it.
 
-**Update branch.** Ask the agent to run `gh pr update-branch <n>` with the App token, so the App stays the last pusher and the owner's approval still counts.
+**Update branch.** Ask the agent to run `gh pr update-branch <n>` with the App token, so the App stays the last pusher. Under `require_last_push_approval`, that push needs a **new** owner approval; the earlier one no longer counts. There is no deadlock, because the owner can approve the App's push (R2-M2).
 
 **Required check.** The `required_status_checks` rule is added only when the `harness-verify` CI item (done contract §4.7) is installed.
 - `integration_id` comes from a real check run: `GET /repos/{o}/{r}/commits/{default}/check-runs?check_name=harness-verify`, field `app.id` (R§5.5, https://docs.github.com/en/rest/checks/runs).
@@ -277,26 +313,37 @@ The rules and why they bind are in R§5.2 (https://docs.github.com/en/repositori
 
 **An approval authorizes the merge.** The App's Contents write reaches the merge API (R§0.8), so once the owner approves and the check passes, the App can merge its own PR, auto-merge included. Doctor and the docs say so, and L5 tests merging before and after approval.
 
-### 5.3 Ruleset `harness-refs`: tags and other branches (C5)
+### 5.3 Ruleset `harness-refs`: tags and other branches (C5, R2-I6)
 
 ```json
 [
   { "name": "harness-refs-tags", "target": "tag", "enforcement": "active",
     "conditions": { "ref_name": { "include": ["~ALL"], "exclude": [] } },
-    "bypass_actors": [ { "actor_type": "User", "actor_id": "<owner id>", "bypass_mode": "always" } ],
+    "bypass_actors": [ "<owner User, always>", "<exempt actors, always>" ],
     "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" } ] },
   { "name": "harness-refs-branches", "target": "branch", "enforcement": "active",
-    "conditions": { "ref_name": { "include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH", "refs/heads/agent/**"] } },
-    "bypass_actors": [ { "actor_type": "User", "actor_id": "<owner id>", "bypass_mode": "always" } ],
+    "conditions": { "ref_name": { "include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH", "refs/heads/agent/**", "<exempt patterns>"] } },
+    "bypass_actors": [ "<owner User, always>", "<exempt actors, always>" ],
     "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" } ] }
 ]
 ```
 
-- GitHub rulesets target either branches or tags, so `harness-refs` is two rulesets with these names. Both are managed like `harness`.
+- **Two rulesets.** GitHub rulesets target either branches or tags, so `harness-refs` is two rulesets with these names. Both are managed like `harness`.
+- **Only the App's refs are bound (R2-I6 ruling).** A ruleset can't name the actor it binds, so it binds everyone except its bypass actors. Protect therefore lists every known non-agent writer as a bypass actor or an excluded pattern, and never lists the agent App:
+  - **Exempt actors** (`Integration`, `always`), added when protect detects them, with ids read from `GET /apps/<slug>` and never hard-coded:
+    - `dependabot`, when `.github/dependabot.yml` exists;
+    - `renovate`, when `renovate.json`, `.github/renovate.json5` or a `renovate` key in `package.json` exists;
+    - `github-actions`, when a workflow pushes refs: `contents: write` with `git push`, `peaceiris/actions-gh-pages`, `googleapis/release-please-action`, or `changesets/action`.
+
+    On 2026-11-14 the API returned ids 29110, 2740 and 15368 for these three.
+  - **Exempt patterns:** `gh-pages`, `dependabot/**`, `renovate/**`, `release-please--**` and `changeset-release/**`, added with the matching detection.
+  - **Humans:** the owner (`User`, `always`). On org repos, also the Write role (`RepositoryRole`), if L6 confirms it doesn't cover an App.
+
+  Every exempt actor and pattern is shown in protect's diff, with the file that triggered it. `github.protect.exempt` (§10.1) adds or removes entries by hand.
 - **Prefix.** `github.agent_prefix` (default `agent/`) sets the excluded branch pattern. The agent's branches must start with it, and GitHub's rejection of any other branch names the ruleset.
-- **Tags and releases.** Only the owner creates, moves or deletes tags, so a tag-triggered publish can't build agent code. The App can still create a draft release object through the API, but not the tag it needs (L6 confirms).
-- **Org repos.** Other collaborators also need to push branches outside `agent/`. On org repos, protect adds a `RepositoryRole` bypass for the Write role. L6 checks that this doesn't cover the App (an `Integration` actor). If it does, org repos get `harness-refs-tags` only, with a doctor note.
+- **Tags and releases.** Only the owner and exempt actors create, move or delete tags, so the App can't trigger a tag-based publish. The App can still create releases and edit release assets (§5.7).
 - **Doctor flags release and deploy triggers:** workflows on `push: tags`, `release`, or `push` to non-default branches that use no protected environment, since a tag the owner pushes still builds whatever is on that commit.
+- L6 runs a real Dependabot PR under the ruleset.
 
 ### 5.4 CODEOWNERS from `project.codeowners`
 
@@ -333,6 +380,7 @@ Doctor builds the desired rulesets with protect's own function, then reads:
 | That endpoint returns 404 | fix: `no CODEOWNERS file on <branch>` → `merge the harness CODEOWNERS block` |
 | `GET /repos/{o}/{r}/collaborators/{u}/permission` below `write` for an owner | fix: `<owner> can't own code (no write access); GitHub skips them silently` |
 | Release or deploy workflows without a protected environment | note (§5.3) |
+| `repository_dispatch` triggers; release-asset publishing | fix or note (§5.7) |
 
 - **Identity.** Doctor prints which identity `gh` used: `owner <login>`, or `App <slug>[bot]` when `GH_CONFIG_DIR` points at a token folder. The App can't read Administration, so its read-back is "unknown", not "missing".
 - **Branch protection.** The existing `branchProtection` check stays; either a branch protection rule or the ruleset counts as "protected".
@@ -345,6 +393,18 @@ Doctor builds the desired rulesets with protect's own function, then reads:
 - **Protect** exits 1 and changes nothing (§11.2).
 - **Doctor** prints a statement, not a fix: `Server-side protection is unavailable: GitHub needs Pro, Team or Enterprise for rulesets on private repos. Nothing on GitHub stops a merge; harness's local layers stay on, and they can be bypassed.`
 - **What remains.** The App still gives the agent its own identity. Without rulesets, its Contents write can merge and tag through the API (R§0.8), and only the guard's text checks stop that.
+
+### 5.7 Contents write beyond refs (R2-I5)
+
+GitHub's permissions table for Apps lists these endpoints under Contents write (https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps, read on 2026-11-14), and no ruleset covers them:
+- **`POST /repos/{o}/{r}/dispatches`.** It starts `repository_dispatch` workflows on the default branch, with a `client_payload` the App chooses. A workflow that puts `client_payload` into a script is an injection point.
+- **`POST /repos/{o}/{r}/releases`, `PATCH` and `DELETE /repos/{o}/{r}/releases/assets/{id}`.** The App can create releases, and upload, replace or delete assets on releases that are already published. Whoever downloads the binary then runs agent-supplied code.
+
+What harness does:
+- **Doctor flags `repository_dispatch` triggers.** A fix when the workflow uses `github.event.client_payload` inside `run:`; a note otherwise.
+- **Doctor flags repos that publish release assets** (`softprops/action-gh-release`, `gh release upload`, `actions/upload-release-asset`). It recommends GitHub's immutable releases, which lock a published release's assets and tag (https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases). That page doesn't say which plans offer them, so doctor gives a note, not a fix.
+- **L6** has the App dispatch an event and upload an asset, before and after the fixes.
+- **§2.3 and §14** list both routes.
 
 ## 6. Layer A: agent identity
 
@@ -485,11 +545,11 @@ harness github broker --repo o/r            # in another terminal, for push runs
 eval "$(harness github broker --env --repo o/r)"   # push runs only
 <the §6.4 env block>
 HARNESS_UNATTENDED=1 HARNESS_SANDBOX=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 \
-  claude -p "…" --allowedTools "Bash Read Edit Write Glob Grep" --settings '<launch JSON>'
+  claude -p "…" --allowedTools "Bash,Edit,Write" --settings '<launch JSON>'
 ```
 
 - With the scrub, the session stays in the default permission mode (live finding). So harness detects the run as unattended through `HARNESS_UNATTENDED`, and tools outside `--allowedTools` are denied in `-p`.
-- The tool list is a draft, confirmed by the launch fix's round-2 live check (§16 Q4).
+- The tool list is the Q4 ruling, shipped in #231.
 - For push runs, the launch JSON adds `github.com` and `api.github.com` to `allowedDomains`.
 
 ### 6.5 Reaching the broker
@@ -500,7 +560,7 @@ HARNESS_UNATTENDED=1 HARNESS_SANDBOX=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 \
   - The broker's hash check on `git-credential` and its `lstat` checks catch a swap within 60 seconds either way.
 - **Container.** The host folder is bind-mounted read-only at `/run/harness/gh`. Only `srt-push.json` lets the tree read it (§7.3).
 
-### 6.6 CI: an agent job and a publish job (I13)
+### 6.6 CI: an agent job and a publish job (I13, R2-I4)
 
 The key and the token never enter a job that runs repo or agent code.
 
@@ -508,43 +568,61 @@ The key and the token never enter a job that runs repo or agent code.
 jobs:
   agent:                                  # runs the agent; holds no key and no token
     permissions: { contents: read }
+    outputs: { base: "${{ steps.base.outputs.sha }}" }
     steps:
       - uses: actions/checkout@<sha>
-        with: { persist-credentials: false }   # checkout v6 keeps the token in a file under $RUNNER_TEMP otherwise
+        with: { persist-credentials: false, fetch-depth: 0 }   # checkout v6 otherwise keeps the token in a file under $RUNNER_TEMP
+      - id: base
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"   # the default-branch commit the run starts from
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # ubuntu-24.04: Claude's sandbox and srt need it
-      - run: npm i -g @khubaibqaiser/harness@<pin> @anthropic-ai/sandbox-runtime@<pin>
+      - run: <install harness and sandbox-runtime globally, at their pins>
       - run: <the §6.4 launch, without the push lines, and without github.com>
-      - run: git bundle create agent.bundle "origin/${{ github.event.repository.default_branch }}..HEAD"
+      - run: |
+          mkdir agent-out
+          git bundle create agent-out/agent.bundle "${{ steps.base.outputs.sha }}..HEAD"
+          cp .harness/tmp/pr-body.md agent-out/pr-body.md
       - uses: actions/upload-artifact@<sha>
-        with: { name: agent-out, path: "agent.bundle\n.harness/tmp/pr-body.md", retention-days: 1 }
+        with: { name: agent-out, path: agent-out/, retention-days: 1 }
   publish:                                # runs no repo code
     needs: agent
     permissions: {}
     steps:
-      - uses: actions/download-artifact@<sha>
-        with: { name: agent-out }
-      - run: npm i -g @khubaibqaiser/harness@<pin>
+      - run: <install harness globally, at its pin>        # before any agent data arrives
+      - uses: actions/download-artifact@<sha>             # a release bundling @actions/artifact 2.1.2 or later (CVE-2024-42471)
+        with: { name: agent-out, path: in/ }
       - env: { HARNESS_APP_KEY: "${{ secrets.HARNESS_APP_KEY }}" }
         run: |
           printf '%s' "$HARNESS_APP_KEY" | env -u HARNESS_APP_KEY harness github publish \
             --repo "$GITHUB_REPOSITORY" --branch "agent/run-${{ github.run_id }}" \
-            --bundle agent.bundle --body pr-body.md --key-stdin
+            --base "${{ needs.agent.outputs.base }}" --bundle in/agent.bundle --body in/pr-body.md --key-stdin
 ```
 
-- **`harness github publish`** (person-only, like every `harness github` subcommand) does this:
-  1. Mints one token as the broker does, with the same installation check.
-  2. `git init`s an empty repo and fetches the bundle.
-  3. Checks the branch name starts with `github.agent_prefix`.
-  4. Pushes the branch over HTTPS with the token.
-  5. Opens or updates the PR with the body file.
-  6. Revokes the token.
+**What `harness github publish` does.** It is person-only, like every `harness github` subcommand, and the publish job runs it directly, not through an agent.
+1. **Mint.** One token, as the broker does, with the same installation check.
+2. **Empty repo.** `git init` in a fresh temporary folder, with `fetch.fsckObjects=true` and `transfer.fsckObjects=true`, because this job parses pack data the agent made. It never checks out a work tree.
+3. **Check the base.**
+   - The `--base` commit comes from the agent job's output, so it is not trusted.
+   - `GET /repos/{o}/{r}/compare/{base}...{default}` must report `identical` or `ahead`, which means the default branch contains the base.
+   - Then `git fetch --depth=1 https://github.com/<o>/<r> <base>`, with the token.
+4. **Check the bundle.**
+   - Every prerequisite in the bundle header must equal `--base`.
+   - `git bundle verify` must pass.
+   - `git bundle list-heads` must show exactly one ref.
+5. **Fetch** only that ref into `refs/harness/incoming`.
+6. **Check the branch name** starts with `github.agent_prefix`.
+7. **Push** with the explicit refspec `<sha>:refs/heads/<branch>` over HTTPS. Never `--tags`, `--mirror` or `--follow-tags`.
+8. **Open or update the PR.** The body file is untrusted: harness removes closing keywords (`close`, `closes`, `fix`, `fixes`, `resolve` and `resolves`, each with a following `#n` or URL), and @-mentions, and caps the size at 64 KB.
+9. **Revoke** the token.
 
-  It never checks out a work tree and never runs hooks, scripts or package managers. A bundle carries no hooks.
+What can't come through: a bundle carries no hooks, and publish never checks out, so hooks can't be smuggled. The server refuses workflow files, because the App has no Workflows permission. `harness-refs` refuses tags, and branches outside the prefix.
+
 - **Costs.** A CI agent can't push mid-run or read PR comments. There is no token in the agent job, so there is nothing to refresh.
 - **The artifact** is readable by anyone who can read the repo's Actions. It holds only the agent's commits and PR body, which are about to be public on the PR anyway.
 - **Doctor flags:**
-  - a workflow that runs `claude` after a checkout without `persist-credentials: false` (read from the workflow's `with:`);
-  - a workflow that passes `HARNESS_APP_KEY` to a job that checks out code.
+  - a workflow that runs `claude` after a checkout without `persist-credentials: false`, read from the workflow's `with:`;
+  - a workflow that passes `HARNESS_APP_KEY` to a job that checks out code;
+  - `actions/cache`, or a setup action's `cache:`, in a job that runs `claude`. A cache saved there can be restored by release workflows on the default branch, a poisoning route around the bundle (R2-M8).
+- **Tested by** an e2e that fetches a range bundle into an empty repo through these steps (§12.2), and by L7.
 
 ## 7. Layer B: the container
 
@@ -590,7 +668,7 @@ docker container (no added capabilities, no host credentials, VS Code bridges of
   <§6.4 env block; push lines only with --push, using HARNESS_GH_DIR=/run/harness/gh>
   exec env HARNESS_CONTAINER=1 HARNESS_UNATTENDED=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 \
     srt --settings /etc/harness/srt$P.json claude "$@" \
-      --allowedTools "Bash Read Edit Write Glob Grep" --settings "$(cat /etc/harness/claude$P.json)"
+      --allowedTools "Bash,Edit,Write" --settings "$(cat /etc/harness/claude$P.json)"
   ```
   - It no longer sets `HARNESS_SANDBOX=1`, because Claude Code's sandbox is off. `sandbox-required` relies on the container verdict instead (§7.5).
   - The build copies the settings from `.devcontainer/harness/` to `/etc/harness/`, root-owned.
@@ -604,7 +682,7 @@ docker container (no added capabilities, no host credentials, VS Code bridges of
   - `credentials`: the §8.3 lists, in `srt`'s own `credentials` key, minus Claude Code's own login (§8.3).
   - **Mandatory denies:** `.git/hooks`, `.git/config`, `.vscode`, `.idea`, shell startup files, `.gitconfig`, `.mcp.json`, `.claude/commands` and `.claude/agents` (srt README "Mandatory Deny Paths"). On Linux, a mandatory-deny path that doesn't exist yet is blocked too.
   - **Unix sockets** are blocked (the default), which also cuts VS Code's IPC and any forwarded SSH agent.
-  - No `allowNestedUserNamespaces`, no `allowAllUnixSockets`, and `enableWeakerNestedSandbox` only if L4 shows Docker needs it (§16 Q1).
+  - No `allowNestedUserNamespaces` and no `allowAllUnixSockets`. `enableWeakerNestedSandbox` is set only if L4 shows Docker needs it (I16).
 - **`srt-push.json`:** the same, plus `github.com` and `api.github.com`, and without the `/run/harness/gh` deny.
 - **`claude.json` and `claude-push.json`:** the launch JSON with `sandbox.enabled: false` (I14), the read block (I3), the credential lists, and `permissions` for the tool set.
 - **Linux deny lists** are built at launch (srt README). A path created mid-run is covered from the next launch. Pinned by a test, with the argument form.
@@ -629,7 +707,7 @@ docker container (no added capabilities, no host credentials, VS Code bridges of
    - Config validation keeps `example.com` out of every allowlist.
 
 **Outcomes.**
-- **Proved:** unattended shell calls are allowed without Claude Code's sandbox (I14). The Stop runner's fence probe sees `srt` and doesn't wrap again (§4.2).
+- **Proved:** unattended shell calls are allowed without Claude Code's sandbox (I14). The Stop runner uses this cached verdict, and nothing else, to skip its second wrap (§4.2).
 - **`required` and not proved:** a deny naming the failed signal (§11.2).
 - **`available` and not proved:** the run falls through to the existing sandbox checks.
 
@@ -655,10 +733,14 @@ Mitigations:
 
 1. **One fence.** `srt` is a research preview, and with I14 it is the only fence in the container. A bug in it leaves the agent's tree with the container's open network and write access to the bind mount. The research's design (R§11 B2) had iptables and the inner sandbox as two more fences.
 2. **It fences only its own process tree.** VS Code's server, extensions, lifecycle commands and `devcontainer exec` shells not started through `harness-run` have open egress.
-3. **Docker may force the weaker mode.** `srt`'s bubblewrap needs user namespaces. Docker's default seccomp or AppArmor profile may refuse them, which can force `enableWeakerNestedSandbox`, which "considerably weakens security" (srt README). L4 decides (§16 Q1).
+3. **Docker may force the weaker mode (I16).** `srt`'s bubblewrap needs user namespaces, and Docker's default seccomp or AppArmor profile may refuse them. If `srt` then runs only with `enableWeakerNestedSandbox`, which "considerably weakens security" (srt README), harness ships it that way.
+   - Doctor and status show `srt in weaker nested mode`.
+   - Harness adds no `SYS_ADMIN` and no unconfined seccomp profile.
+   - A custom seccomp profile that allows only user namespaces needs an owner yes.
+   - L4 records which mode runs.
 4. **Hostname filtering only,** with the same domain-fronting limit as before.
 5. **Claude Code's login is in the volume.** Hooks and MCP servers can read it, and `api.anthropic.com` is always allowed (R§3.2).
-6. **I3 inside the container.** With Claude Code's sandbox off, the read block makes recognized file-reading commands outside the working directories, and any command the parser can't trace, prompt even in `bypassPermissions`. In `-p` they are denied (the review, citing the permission-modes doc). A repo's `true` can't be lifted for the container alone. L4 measures the denial rate (§16 Q2).
+6. **I3 inside the container.** With Claude Code's sandbox off, the read block makes recognized file-reading commands outside the working directories, and any command the parser can't trace, prompt even in `bypassPermissions`. In `-p` they are denied (the review, citing the permission-modes doc). A repo's `true` can't be lifted for the container alone. I17 keeps the block on. L4 measures the denial rate, and the owner decides with those numbers.
 
 ## 8. Layer C: attended sessions
 
@@ -721,7 +803,7 @@ SSH_AUTH_SOCK GIT_ASKPASS SSH_ASKPASS VSCODE_GIT_ASKPASS_MAIN VSCODE_GIT_ASKPASS
 VSCODE_GIT_IPC_HANDLE REMOTE_CONTAINERS_IPC REMOTE_CONTAINERS_SOCKETS
 ```
 
-The VS Code names are pinned in L4. Denying them in attended sessions means the agent can't push with the owner's VS Code session. Without the App launch, git still uses the owner's own configured helpers (for example osxkeychain).
+The VS Code names are pinned in L4. With the sandbox on, denying them in attended sessions means the agent can't push with the owner's VS Code session. The denies apply to sandboxed commands only, so with the sandbox off (the attended default under `sandbox: unattended`) the agent can still reach VS Code's askpass (R2-M3). Without the App launch, git still uses the owner's own configured helpers (for example osxkeychain).
 
 **Claude Code's own login is exempt inside the container.** There `srt` fences Claude Code itself, so the container's `srt` lists leave out `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` and `~/.claude/.credentials.json`, or Claude Code couldn't sign in. The scrub still strips those variables from Bash, hooks and MCP servers (https://code.claude.com/docs/en/env-vars), and the residual is §7.7 point 5. The Stop gate's `srt` lists keep them, because steps never need them.
 
@@ -776,7 +858,7 @@ The research recommended `sandbox: always` only, after a live check (R§12 Q2). 
    - every attended session under the default `sandbox: unattended`;
    - native Windows;
    - I11's `sandbox: off` escape;
-   - the container under I14 (§7.7 point 6).
+   - the container under I14 (§7.7 point 6), where I17 keeps the block on and the owner decides with L4's numbers.
 
    The review called revision 1's "the breakage is small" wrong, and it was. L1, L4 and L8 measure the denial rate.
 3. **It binds every teammate.** A teammate who can't use Fix A ends up with Fix B, which also grants writes.
@@ -804,7 +886,8 @@ The gate: P14 ships only after L1 passes on macOS and Linux, after the broker PR
 | Key | Default | What it does |
 |---|---|---|
 | `stop.allowed_domains` | `[]` | Hosts Stop steps (and verify's command runs) may reach inside `srt`. Empty means no network (I12). GitHub hosts and wildcards matching `example.com` are refused. |
-| `stop.allow_write` | `[]` | Extra writable paths for Stop steps inside `srt`, such as a tool cache outside the repo. It can't name a protected path. |
+| `stop.allow_write` | `[]` | Extra writable paths for Stop steps inside `srt`, such as a tool cache outside the repo. Config validation refuses (R2-I9): a protected path; the home folder itself; `~/.claude`; login-start folders (`~/Library/LaunchAgents`, `~/.config/systemd/user`, `~/.config/autostart`); any folder on `PATH` or above one; `srt`'s own install prefix; and the token base. |
+| `stop.allow_local` | `false` | Person-only (protected config; update asks interactively before setting it, and an unattended update leaves it unchanged). `true` sets `allowLocalBinding` for Stop steps. On macOS that opens every service on the host's loopback, Claude Code's sandbox proxy included. On Linux it has no effect. Doctor and status show it when on (R2-I2). |
 | `isolation.block_reads` | `true` | Writes the read block in every mode (I3). `false` is person-only: update asks interactively before removing it, and SessionStart, doctor and status show it loudly (I15). |
 | `isolation.credentials.allow` | `[]` | §8.3 entries harness leaves off its deny lists. Each must be a §8.3 entry. |
 | `isolation.network.ecosystems` | `"auto"` | `auto`, or a list from `npm`, `python`, `rust`, `go`, `ruby`, `java`, `containers`. |
@@ -814,7 +897,8 @@ The gate: P14 ships only after L1 passes on macOS and Linux, after the broker PR
 | `github.app.slug` | `""` | From the manifest conversion. |
 | `github.app.key_stored_at` | `""` | ISO date the key was stored, for doctor's key age. |
 | `github.agent_prefix` | `"agent/"` | Branch prefix the App may create and update under (`harness-refs`). It must match `^[a-z0-9-]+/$`. |
-| `github.protect.owner_bypass` | `"auto"` | `auto` (on for user-owned repos), `on` or `off`: the owner's `pull_request` bypass on the `harness` ruleset (C4). |
+| `github.protect.owner_bypass` | `"auto"` | `auto` (on for user-owned repos, and for org repos with one write collaborator), `on` or `off`: the owner's `pull_request` bypass on the `harness` ruleset (C4). |
+| `github.protect.exempt` | `{add: [], remove: []}` | Bypass actors (app slugs) and branch patterns to add to, or remove from, what protect detects for `harness-refs` (§5.3). |
 | `project.codeowners` | `[]` | Changed: the owners written to the CODEOWNERS block (§5.4). Was input only. |
 
 The generated table in `docs/reference.md` picks these up from `src/core/config.ts`.
@@ -843,7 +927,7 @@ The generated table in `docs/reference.md` picks these up from `src/core/config.
 ### 10.4 Doctor and status
 
 **Doctor gains these sections:**
-- Stop sandbox: `srt` found, outside writable roots, at least the pin; preflight result; the Linux and macOS dependencies; Windows warning.
+- Stop sandbox: `srt` found, outside writable roots, at least the pin; the last preflight's result per check; the Linux and macOS dependencies; `stop.allow_local`; Windows warning.
 - Server side (§5.5), with the identity used.
 - Agent identity:
   - the App configured;
@@ -858,7 +942,7 @@ The generated table in `docs/reference.md` picks these up from `src/core/config.
 
 **Status gains:**
 ```
-Stop sandbox: srt <ver>                                  (or: UNAVAILABLE - stop gate blocks | off - logged)
+Stop sandbox: srt <ver>                                  (or: UNAVAILABLE - stop gate blocks; last stop: checks never ran | off - logged)
 Server side: rulesets ok
 Agent identity: <slug>[bot], token fresh until 14:05 UTC (or: no App | broker failing: <last_error> | broker stopped)
 App key: reachable only with a prompt                    (or: REACHABLE BY UNSANDBOXED CODE on this host)
@@ -881,10 +965,10 @@ Container: required; this session: proved                (or: available | off; n
 - **Protect:** `.devcontainer/**`, the CODEOWNERS paths, and the token base.
 - **`sandbox-required`**, in this order:
   1. `off`: allow, logging on `win32`.
-  2. Attended: allow.
+  2. Attended: allow. Unattended now also covers `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` in the hook's environment, which a scrubbed `-p` launch keeps in default mode, and a headless signal if L0 finds one (R2-I7). Without either, a host `-p` run that sets neither variable is judged attended; that is a documented limit (§14).
   3. `win32`: deny.
   4. The container verdict, when `isolation.container` isn't `off`: proved allows; `required` and not proved denies.
-  5. `HARNESS_SANDBOX=1`, or the settings confirmed (with the launch fix's strict rule): allow. On Linux, when `github.app.id` is set, Claude Code's seccomp filter must also be present (review I7).
+  5. `HARNESS_SANDBOX=1`, or the settings confirmed (with the launch fix's strict rule): allow. On Linux, when `github.app.id` is set, Claude Code's seccomp filter must also be present (review I7). Harness detects it as the `apply-seccomp` binary that the globally installed `@anthropic-ai/sandbox-runtime` ships for this architecture, which is the install the Claude Code docs name (https://code.claude.com/docs/en/sandboxing). The path is pinned in P11 and confirmed in L2 against `/sandbox` showing no Dependencies tab (R2-M4).
   6. Otherwise: deny.
 
 ## 11. Failure modes
@@ -925,6 +1009,11 @@ Container: required; this session: proved                (or: available | off; n
 | Protect, no admin role | `Your gh login can't change rulesets on <o/r> (<HTTP status>: <first line>). It needs the admin role. Nothing was changed.` |
 | Protect, no verify run yet | `No harness-verify check run on <branch> yet, so the required check can't be pinned to its app. Run the workflow once (open any PR), then run harness github protect again.` |
 | Protect, no CODEOWNERS | `<branch> has no CODEOWNERS file, so code-owner review requires nobody. Merge the harness CODEOWNERS block first (harness doctor shows it), or answer yes to continue without it.` |
+| Verify inside another fence | `harness verify can't run its checks inside another sandbox. Ask the person to run ! harness verify, which runs outside it.` |
+| Config, `stop.allow_write` refused | `stop.allow_write can't list <path>: <it is a protected path | it is your home folder | programs there run at login | it is on PATH | srt is installed there | it holds the GitHub token folder>. Choose a folder only your tests write, such as a cache folder.` |
+| Publish, base not on the default branch | `The agent job's base <sha> is not on <default branch> (compare: <status>). Nothing was pushed.` |
+| Publish, bad bundle | `The agent's bundle <has <n> refs, not one | needs <sha>, not the base <sha> | failed git bundle verify: <first line>>. Nothing was pushed.` |
+| Publish, branch outside the prefix | `The branch <name> doesn't start with <github.agent_prefix>, so harness-refs would refuse it. Nothing was pushed.` |
 | Config, GitHub or probe host in an allowlist | `<key> can't list <host>: GitHub is reachable only in runs that push (harness-run --push), and example.com must stay unreachable for the container check.` |
 
 ## 12. Testing
@@ -936,18 +1025,28 @@ Container: required; this session: proved                (or: available | off; n
   - `allowRead` never written;
   - the protected-path union;
   - the argument form;
-  - the preflight;
-  - each §4.4 row (missing, inside the repo, old, failing preflight, step failure, `off` logged);
+  - one `srt` call per run, with absolute `literal` paths;
+  - plan and settings files new per run and deleted after;
+  - the step runner's nonce-tagged results;
+  - each preflight check failing on its own, and any `srt` stderr warning failing it;
+  - a shim that runs the command unwrapped fails the preflight;
+  - each §4.4 row (missing, inside the repo, old, failing preflight, step failure, `off` logged, attempts exhausted recorded as never ran);
   - Windows attended and unattended;
-  - the fence probe: EPERM and EROFS run unwrapped inside the fence, while EACCES and a successful write still wrap.
+  - no second wrap only with a proved container verdict, and never from a probe;
+  - verify inside another fence exits not done with the `!` message;
+  - `stop.allow_write` validation for each refused class;
+  - `stop.allow_local` default off.
 - **Rulesets:**
-  - both builders, with owner bypass `auto`, `on` and `off` for user and org owners;
+  - all builders, with owner bypass `auto` (user, org with one and with several write collaborators), `on` and `off`;
+  - `harness-refs` exempt actors and patterns from each detection (ids from a stubbed `GET /apps/<slug>`), and `github.protect.exempt`;
   - the required-check rule with and without the item;
   - normalised compare;
   - workflow permissions;
   - protect against a stub `gh` (POST, PUT, no-op, drift, `--dry-run`, 403 private, 403 without admin, no check run, no CODEOWNERS, malformed answers), writing nothing on errors.
 - **CODEOWNERS:** create and merge in each of the three places; owner validation; the block moved back to last; uninstall.
 - **Doctor read-back:** every §5.5 row, and the identity line.
+- **Doctor §5.7:** `repository_dispatch` with and without `client_payload` in `run:`, release-asset actions.
+- **Unattended detection:** `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` counts; the headless signal, once L0 names it.
 - **App create:** state check, timeout, `slug` from the conversion, secrets discarded, `code` never echoed.
 - **Key storage:**
   - the `security -i` command built with no PEM in argv (asserted on the spawned argv) and `-T ""`;
@@ -968,7 +1067,14 @@ Container: required; this session: proved                (or: available | off; n
   - `heartbeat_at` and `last_error`;
   - `--env` printing no secret.
 - **`git-credential` run by `sh`:** fresh, nearly expired, expired, missing, a non-`get` action.
-- **Publish:** bundle fetch into an empty repo, prefix check, no hooks run (a planted hook file in the bundle has no effect), revoke.
+- **Publish:**
+  - the base check through compare (`identical`, `ahead`, `behind`, `diverged`);
+  - a bundle prerequisite other than the base;
+  - two refs in the bundle;
+  - the explicit refspec, and no tags pushed;
+  - `fsckObjects` on;
+  - the body stripped of closing keywords and @-mentions, and capped;
+  - prefix check, no hooks run, revoke.
 - **Guard:**
   - `PERSON_ONLY.github` in every `tdd off` spelling;
   - each §10.5 check, including `realpath` spellings of the token base;
@@ -997,8 +1103,8 @@ Temp repos with a stub `gh` and a stub GitHub API on a local port (a test-only b
 - protect twice, the second a no-op;
 - `app create` through the callback;
 - the broker feeding a real `git push` to a local bare remote through the helper, with a global helper configured that must not be asked;
-- publish from a bundle;
-- the Stop gate wrapped by a real `srt` on Linux and macOS CI runners, with a test that writes `.harness/config.yaml` and reads a fake `~/.aws/credentials`, both failing;
+- publish from a range bundle (`<base>..HEAD`) into an empty repo, fetching the base first, as the CI job does (R2-I4);
+- the Stop gate wrapped by a real `srt` on Linux and macOS CI runners, in one call, with steps in the root and in a subfolder, and a test that writes `.harness/config.yaml`, reads a fake `~/.aws/credentials` and connects to a host-side TCP server, all failing;
 - init and update with `--container`, then uninstall;
 - the Windows deny on `windows-latest`.
 
@@ -1015,7 +1121,11 @@ Temp repos with a stub `gh` and a stub GitHub API on a local port (a test-only b
   - the non-push variant can't read `/run/harness/gh`;
   - `git credential fill` for github.com returns nothing.
 
-  It is a **non-required** job that stays red when it fails. It is never skipped and never marked green (review Minor 16). That needs an owner ruling (§16 Q3).
+  **It is a required check (I18).**
+  - **Rollout.** P18 adds the job, and the owner makes it required once it has passed on `main`.
+  - **Never skipped.** It has no path filter and no `if:`, so it runs on every PR.
+  - **The risk.** Because it is required, an `srt` or Docker change on GitHub's runners blocks every PR until it is fixed. The review recommended a non-required job for that reason, and the owner chose required.
+  - **Break-glass.** It is the same as for the rulesets: the owner removes the requirement, fixes the job, then restores it.
 
 ### 12.4 Live batches (owner's subscription)
 
@@ -1023,15 +1133,46 @@ They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch 
 
 | Batch | Where | Checks | Gates |
 |---|---|---|---|
-| LS Stop in `srt` | macOS; Linux (Ubuntu 24.04 with and without the `sysctl`) | A real Stop gate in an attended session; a planted test that tries to write `.harness/config.yaml`, read `~/.aws`, reach `example.com`, connect to `$SSH_AUTH_SOCK` and D-Bus, and run `security find-generic-password -s harness-probe` (a dummy item), each failing; a local test server still works; the agent's `harness verify` from sandboxed Bash on macOS and Linux runs unwrapped through the fence probe; a `chmod -w .harness/state` doesn't skip the wrap; the overhead is measured; `srt` missing gives the §4.4 message | PS |
+| L0 unattended detection (#231 follow-up) | macOS, Linux | **The headless `-p` signal (R2-I7).** In the hook's environment for `claude -p`, an interactive session and an SDK run, record `CLAUDE_CODE_ENTRYPOINT` and any other variable Claude Code sets. Check whether `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` reaches hooks under the scrub, and that a scrubbed `-p --allowedTools "Bash,Edit,Write"` run without `HARNESS_UNATTENDED` is judged unattended once the fix lands | P0b |
+| LS Stop in `srt` | macOS; Linux (Ubuntu 24.04 with and without the `sysctl`) | See below | PS1, PS2 |
 | L1 read block | macOS; Linux; WSL2 if available | With the block and the sandbox on: nvm or volta `node -v`, pyenv, `cargo`, `~/.local/bin`, `npm ci` and `pnpm install` from cache, Playwright, `gh auth status` (keyring and file), an HTTPS push with the App helper, an SSH push, the Read tool on a home file, then Fix A and Fix B, recording which lifts each. **With the sandbox off:** the prompt rate in an attended session, and the denial rate of a scripted `-p` task (review I6) | P14 |
 | L2 credentials and keys | macOS; Linux | The full §8.3 lists are accepted without warnings; each present path fails `cat` in Bash; the variables are absent; **macOS:** a `-T ""` item prompts for `security` too, and sandboxed Bash can't read it silently; reading the broker's memory from unsandboxed code of the same uid fails without debugger rights; sandboxed Bash can or can't write `DARWIN_USER_TEMP_DIR`; **Linux:** `secret-tool lookup` from sandboxed Bash with and without the seccomp filter (review I7) | P3, P10, P11 |
 | L3 broker on the host | macOS | `app create` for one repo on a scratch public repo (the person edits the name); the broker mints; an attended agent pushes `agent/x` and opens a PR as `<slug>[bot]`; `GIT_TRACE` shows only the harness helper; VS Code's terminal askpass isn't used; `gh` doesn't migrate the folder; a 2.5-hour run with pushes every 20 minutes crosses about 3 refreshes and old tokens are revoked; SIGHUP from a closed terminal revokes; a second broker is refused; a killed broker gives the §11.2 messages | P11, P12 |
-| L4 container and `srt` | Docker Desktop on macOS; Docker on Linux (host uid 1000 and not 1000) | `srt` runs in the unprivileged container, recording whether `enableWeakerNestedSandbox` is needed under Docker's seccomp and AppArmor profiles; a nested `srt` from the Stop gate is not attempted; `.git/hooks`, `.devcontainer` and user settings writes fail; `example.com` is refused; a `--push` run pushes with the App token; a run without push can't reach `github.com` or read the token; the VS Code setting names turn off git config copying and helper forwarding; `git credential fill` returns nothing and `ssh-add -l` fails; the read block's denial rate in `-p` with the sandbox off; `updateRemoteUserUID` and a re-created token folder keep the mount readable; Claude Code starts and finishes a run with the user-config `denyWrite` entries (plugins, settings) in place | P17, P18, §16 Q1, Q2 |
+| L4 container and `srt` | Docker Desktop on macOS; Docker on Linux (host uid 1000 and not 1000) | `srt` runs in the unprivileged container, recording whether `enableWeakerNestedSandbox` is needed under Docker's seccomp and AppArmor profiles (I16), and that doctor and status report it; the Stop gate skips its second wrap only on the proved verdict; `.git/hooks`, `.devcontainer` and user settings writes fail; `example.com` is refused; a `--push` run pushes with the App token; a run without push can't reach `github.com` or read the token; the VS Code setting names turn off git config copying and helper forwarding; `git credential fill` returns nothing and `ssh-add -l` fails; the read block's denial rate in `-p` with the sandbox off; `updateRemoteUserUID` and a re-created token folder keep the mount readable; Claude Code starts and finishes a run with the user-config `denyWrite` entries (plugins, settings) in place | P17, P18 |
 | L5 end to end | Container, unattended `-p` | With the done contract on: the run pushes and opens a PR; before approval the App can't merge (`gh api -X PUT …/merge` is refused) or push a tag, a workflow change, or a branch outside `agent/`; it can't post a `harness-verify` status; after the owner approves, the App *can* merge, which is documented; the owner merges through the bypass | Release |
-| L6 protect | Scratch public repo (personal), and one org repo | Apply, re-apply as a no-op, hand-edit then drift then restore; a personal repo accepts the `User` bypass in `pull_request` mode; the owner merges their own PR; `gh pr update-branch` by the App keeps the owner's approval valid; `harness-refs` refuses App tags and non-prefix branches; the org Write-role bypass doesn't cover the App; workflow permissions are set and read back; CODEOWNERS errors and a 404 are shown | P6, P7, P8 |
-| L7 CI | Public scratch repo, GitHub-hosted | The agent job runs with the `sysctl` and no key; agent code (Bash, a Stop step and a hook) finds no key or token in env, files or processes; the publish job pushes and opens the PR from the bundle; a hook file planted in the bundle doesn't run; doctor flags a workflow without `persist-credentials: false` | P13 |
+| L6 protect | Scratch public repo (personal), and one org repo | See below | P6, P7, P8 |
+| L7 CI | Public scratch repo, GitHub-hosted | The agent job runs with the `sysctl` and no key; agent code (Bash, a Stop step and a hook) finds no key or token in env, files or processes; the publish job fetches the base, verifies and fetches the one-ref range bundle, and pushes with the explicit refspec; a bundle with a second ref, a tag or a wrong prerequisite is refused; a hook file planted in the bundle doesn't run; closing keywords in the body are stripped; doctor flags a workflow without `persist-credentials: false` and a `cache:` in the agent job | P13 |
 | L8 Windows | Native Windows, if the owner has a machine | An unattended PowerShell call is denied with the message; `off` allows and logs; attended Stop runs unwrapped with the doctor warning; the read block's roots and prompt rate | P1 (with no machine: CI only, and a known limit) |
+
+**LS in full:**
+- A real Stop gate in an attended session.
+- A planted test that tries each of these; each must fail:
+  - writing `.harness/config.yaml`;
+  - reading `~/.aws`;
+  - reaching `example.com`;
+  - connecting to `$SSH_AUTH_SOCK` and to D-Bus;
+  - running `security find-generic-password -s harness-probe` against a dummy item;
+  - connecting to a database on the host's loopback, on both platforms, with `stop.allow_local` off (on macOS it connects once it is on).
+- A server the test starts itself works on Linux, and on macOS only with `stop.allow_local`.
+- **The R2-I1 tricks.** Each still wraps, or fails the preflight:
+  - `.harness/state/<name>` as a symlink to a read-only system path;
+  - `chflags uchg` on `.harness/state`;
+  - an `srt` shim earlier on `PATH` that answers `--version` and execs the command.
+- **The R2-I3 cases:** `srt` without its seccomp helper, and bubblewrap older than 0.8, each failing the preflight on its warning.
+- The agent's `harness verify` from sandboxed Bash exits not done with the `!` message.
+- The overhead on a large repo.
+- `srt` missing gives the §4.4 message.
+
+**L6 in full:**
+- Apply, re-apply as a no-op, hand-edit, see the drift, restore.
+- A personal repo accepts the `User` bypass in `pull_request` mode, and the owner merges their own PR.
+- `gh pr update-branch` by the App needs a new owner approval.
+- `harness-refs` refuses App tags and non-prefix branches.
+- A Dependabot PR and a `gh-pages` deploy still work under it.
+- The org Write-role bypass doesn't cover the App.
+- Workflow permissions are set and read back.
+- The App's `repository_dispatch` and release-asset upload work before the doctor fixes, and doctor flags them.
+- CODEOWNERS errors and a 404 are shown.
 
 ## 13. Rollout
 
@@ -1041,30 +1182,32 @@ They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch 
 
 | # | PR | After | Live gate | Size (est.) |
 |---|---|---|---|---|
-| P0 | Launch fix (I1, I10, live-finding round 2): prior work | — | — | done |
-| PS | Stop steps and verify runs in `srt` (§4), doctor Stop-sandbox lines, perf case, "Breaking" note | Done-contract PR 3 | LS | ~300 |
-| — | *The rest of the done contract (its PRs 4 to 7) lands here. Its PR 6 adds `srt` and the `sysctl` to `harness-verify` (§4.6)* | | | |
+| P0 | Launch fix (I1, I10, Q4): prior work, shipped in #231 | — | — | done |
+| P0b | Unattended detection follow-up to #231: `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` counts as unattended, plus the headless signal if L0 finds one; documented limit otherwise (R2-I7) | P0 | L0 | ~80 |
+| PS1 | Stop steps and verify runs in one `srt` call (§4.2, §4.3): plan, step runner, absolute literal paths, fail closed, `stop.allowed_domains`, `stop.allow_write` validation, `stop.allow_local`, Windows, "Breaking" note | Done-contract PR 3 | LS | ~360 |
+| PS2 | The behavioural preflight (§4.4), the "checks never ran" record, doctor and status Stop-sandbox lines, perf case | PS1 | LS | ~280 |
+| — | *The rest of the done contract (its PRs 4 to 7) lands here. Its PR 6 adds `srt` and the `sysctl` to `harness-verify` (Q5 ruling)* | | | |
 | P1 | Native Windows deny, the `off` logging branch, doctor fix, "Breaking" note (0.3.0) | Done contract | L8 | ~140 |
 | P2 | Guard: `PERSON_ONLY.github` and the §10.5 checks; protect: `.devcontainer/`, CODEOWNERS, token base | P1 | — | ~260 |
-| P3 | Credential and env deny lists (§8.3): `mergeSettings`, `credentials.allow`, restore on update; shared with PS's renderer | P2 | L2 | ~240 |
+| P3 | Credential and env deny lists (§8.3): `mergeSettings`, `credentials.allow`, restore on update; shared with PS1's `srt` renderer | P2 | L2 | ~240 |
 | P4 | Ecosystem allowlist: `isolation.network.*`, renderers, `doctor --launch-hosts`, `NETWORK_NOTE`, validation | P3 | — | ~250 |
 | P5 | CODEOWNERS block: init, update, uninstall, kept last | P2 | — | ~180 |
 | P6 | Protect core: the `harness` ruleset, owner bypass, idempotent compare, required check | P5 | L6 | ~340 |
-| P7 | Protect: `harness-refs` (tags, prefix), Actions workflow permissions, `github.agent_prefix` | P6 | L6 | ~260 |
-| P8 | Doctor and status read-back, drift, private without Pro, identity line, release-trigger flags | P7 | L6 | ~300 |
+| P7 | Protect: `harness-refs` (tags, prefix, detected exempt actors and patterns, `github.protect.exempt`), Actions workflow permissions, `github.agent_prefix` | P6 | L6 | ~330 |
+| P8 | Doctor and status read-back, drift, private without Pro, identity line, release-trigger and §5.7 flags | P7 | L6 | ~340 |
 | P9 | `harness github app create`: manifest, callback, per-repo App, config keys | P2 | — | ~280 |
 | P10 | Key storage: macOS `security -i` with `-T ""`, Secret Service, plain-file refusal, `store-key`, rotation runbook | P9 | L2 | ~230 |
 | P11 | Broker core: token base and `lstat` chain, `O_EXCL` writes, installation check, mint, `git-credential`, `hosts.yml` and `config.yml`, `--env`, the §6.4 launch docs (C6), the Linux seccomp requirement in `sandbox-required` | P10 | L2, L3 | ~380 |
 | P12 | Broker lifecycle: refresh, revoke, lock, signals, heartbeat, `last_error`, helper hash, supervisor docs; doctor and status identity lines | P11 | L3 | ~300 |
-| P13 | CI: `harness github publish`, the two-job docs, doctor workflow checks | P12 | L7 | ~280 |
+| P13 | CI: `harness github publish` with the base and bundle checks, the two-job docs, doctor workflow and cache checks | P12 | L7 | ~360 |
 | P14 | Read block default, `isolation.block_reads` (I15), toolchain fix lines | P12 | L1 | ~280 |
 | P15 | Doctor credential report and the App-key line | P3, P14 | — | ~260 |
 | P16 | Container verdict: `isolation.container` (all three values), marker check, SessionStart probe, status line | P2 | — | ~300 |
 | P17 | Container templates and renderers: Dockerfile, `devcontainer.json` (C6 settings, I4 paths), `srt` and Claude settings | P4, P11, P16 | L4 | ~350 |
-| P18 | `harness-run`, `/harness:init --container`, update and uninstall of the files, user-settings hash, `container-smoke` job | P17 | L4 | ~320 |
+| P18 | `harness-run`, `/harness:init --container`, update and uninstall of the files, user-settings hash, `container-smoke` job (made required after it passes on `main`, I18) | P17 | L4 | ~320 |
 | P19 | Known limits and reference wrap-up; L5; release | All | L5 | ~150 |
 
-P11 is the closest to 400 lines. If it grows past, its docs and the `sandbox-required` change move into P12.
+PS1 and PS2 ship in the same release, so no release has the wrap without the behavioural preflight. P11, PS1 and P13 are the closest to 400 lines. If one grows past, the split is: P11's docs and `sandbox-required` change move into P12; PS1's Windows rows move into PS2; P13's doctor checks become their own PR.
 
 ## 14. Known limits
 
@@ -1074,6 +1217,8 @@ P11 is the closest to 400 lines. If it grows past, its docs and the `sandbox-req
   - The owner bypass (C4) lets the owner merge without approval or the check.
   - Push rulesets aren't used (R§5.1).
 - **Approval authorizes the App's merge.** Once the owner approves and the check passes, the App can merge.
+- **Contents write beyond refs.** `repository_dispatch` and release assets are open to the App; doctor flags them, and immutable releases help where the plan offers them (§5.7).
+- **`harness-refs` exemptions.** Detected bots and patterns are exempt, so the App can push a branch named like an exempt pattern (`gh-pages`, `dependabot/**`); doctor lists the exemptions. An undetected bot is refused until it is added to `github.protect.exempt`.
 - **Personal repos.** Per-path required reviewers are unavailable, so code-owner review stands in. CODEOWNERS silently skips owners without write access; doctor reports it.
 - **The token reaches the agent** on push runs: one repo, one hour, Contents and Pull requests write, branches under `agent/` only. It can still overwrite or delete its own `agent/` branches and act on any PR.
 - **The App key** (§2.4):
@@ -1085,13 +1230,17 @@ P11 is the closest to 400 lines. If it grows past, its docs and the `sandbox-req
   - the network is off unless configured;
   - on Linux, a credential file created mid-session is covered from the next Stop run;
   - in the container, and when the agent runs verify from sandboxed Bash, steps run inside that fence and its network allowlist, not the Stop settings;
-  - the fence probe can be faked by an unsandboxed agent that makes its own read-only mount;
+  - I12 holds only against an agent with no unsandboxed write: an `srt` shim written against harness's preflight, on a user-writable `PATH`, defeats it in attended sandbox-off sessions;
+  - no loopback unless `stop.allow_local`; on Linux, host services are unreachable from steps whatever the setting;
+  - attended native Windows is an exception to I12, for the owner to acknowledge;
+  - verify from inside another fence can't wrap and exits not done, so the person runs `! harness verify`;
   - attended native Windows runs them unwrapped.
-- **`srt`:** a beta, the only fence in the container (I14), fencing only its own process tree, possibly in its weaker mode under Docker, and hostname-only.
+- **`srt`:** a beta, the only fence in the container (I14), fencing only its own process tree, possibly in its weaker mode under Docker (I16, reported), and hostname-only.
 - **Bind mount.** Files outside the protected paths reach the host (§7.6).
 - **The read block** costs toolchains under home until Fix A or B is added, makes unsandboxed Bash prompt (and `-p` deny), binds every teammate, and its Windows roots are undocumented (§8.6).
 - **Credential list.** It is incomplete by nature, and can't cover keychain or keyring IPC.
-- **Detection.** The person who launches a run can fake every container signal and `HARNESS_SANDBOX=1`.
+- **Detection.** The person who launches a run can fake every container signal and `HARNESS_SANDBOX=1`. A host `-p` run that sets neither `HARNESS_UNATTENDED` nor the scrub, on a Claude Code with no headless signal, is judged attended (R2-I7).
+- **`container-smoke` is required** (I18): a runner-side change can block every PR until fixed.
 - **Native Windows.** Unattended shell is denied; attended sessions keep text checks and run Stop steps unwrapped; no key storage.
 - **CI.** The agent can't push mid-run or read PR comments; the publish job pushes once.
 - **Container login.** Claude Code's login is in the volume, and `api.anthropic.com` is always reachable.
@@ -1109,27 +1258,32 @@ P11 is the closest to 400 lines. If it grows past, its docs and the `sandbox-req
 7. The suggested App name is `<login>-<repo>-harness`.
 8. CI pushes through a separate publish job from a git bundle. A CI agent can't push mid-run.
 9. The required check is added only when the `harness-verify` item is installed; with the item but no run, protect exits 1.
-10. Owner bypass `auto` is off for org repos. Org repos get a Write-role bypass on `harness-refs-branches`.
+10. Owner bypass `auto`: on for user repos and for org repos with one write collaborator. Org repos get a Write-role bypass on `harness-refs-branches`.
 11. CODEOWNERS paths: `/.github/`, `/.harness/`, `/.claude/`, `/.devcontainer/`, `/AGENTS.md`, `/CLAUDE.md` and the CODEOWNERS files, with the block kept last.
 12. The container lives in `.devcontainer/harness/`. The `-push` and non-push files are baked into the image, so changing the allowlist needs a rebuild.
 13. `isolation.container` has three values; `--container` sets `required`.
 14. The probe host is fixed to `example.com`.
-15. Stop steps get `allowLocalBinding: true`, no home read block, no network, and blocked Unix sockets. `stop.allowed_domains` and `stop.allow_write` are the escape hatches.
+15. Stop steps get no home read block, no network, no loopback and blocked Unix sockets, in one `srt` call per run. `stop.allowed_domains`, `stop.allow_write` and `stop.allow_local` are the escape hatches.
 16. `sandbox: off` also runs Stop steps unwrapped (logged).
 17. Harness doesn't bundle `srt`; it must be installed globally outside the repo.
 18. VS Code's askpass and IPC variables are denied in attended sessions too.
 19. Browser profile folders are left off the credential list; the read block covers them.
 20. No command assembles the launch line. `--env` and `doctor --launch-hosts` print parts.
-21. The draft `--allowedTools` list is `Bash Read Edit Write Glob Grep`, pending the launch fix's round 2.
+21. `harness-refs` exemptions come from detection (`dependabot.yml`, Renovate config, workflows that push), with ids read from `GET /apps/<slug>`, plus `github.protect.exempt`.
+22. Publish trusts no input from the agent job: the base is checked through the compare API, and the bundle must have exactly that prerequisite and one ref.
+23. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` in a hook's environment counts as unattended, even in a session a person watches.
 
 ## 16. Open questions
 
-1. **What if `srt` runs in Docker only with `enableWeakerNestedSandbox` (L4)?** **Recommended:** ship it, show "`srt` in weaker mode" in doctor and status, and add no `SYS_ADMIN` or unconfined seccomp profile.
-   - If `srt` can't run at all under Docker's default profiles, a custom seccomp profile that allows only user namespaces is the next step, and needs an owner yes.
-2. **The read block inside the container (L4, review I6).** With Claude Code's sandbox off (I14), the block makes unsandboxed Bash reads outside the working directories, and untraceable commands, deny in `-p`. A repo's `true` can't be lifted for the container alone. **Recommended:** keep I3 as decided and measure the denial rate in L4. If it blocks ordinary tasks, the owner chooses between accepting it and `isolation.block_reads: false` for container-first repos (with I15's loud reporting).
-3. **`container-smoke` red but not required (review Minor 16).** **Recommended:** a non-required job that stays red when it fails, never skipped. The owner rules on whether a red non-required job may stay red while PRs merge.
-4. **`--allowedTools` under the scrub (live finding).** The launch fix's round 2 is still running. **Recommended:** adopt its confirmed list in P0's docs, and update §6.4, §7.3 and §15 point 21 to match before P11 and P18. If round 2 shows the scrub breaks unattended detection other than through `HARNESS_UNATTENDED`, the launch fix carries that fix, not this spec.
-5. **Done-contract PR 6 must install `srt` (§4.6).** The wrap in the shared runner makes `harness verify --ci` need `srt` and, on `ubuntu-24.04`, the `sysctl` step. **Recommended:** add both lines to done-contract PR 6. Otherwise every `--ci` verify exits "not done" (§4.4).
+Revision 2's questions are closed:
+- Q1 by I16;
+- Q2 by I17;
+- Q3 by I18;
+- Q4 and Q5 by the coordinator's rulings.
+
+One is still open:
+
+1. **Agent-run verify with the sandbox on (§4.2).** The wrap can't nest inside Claude Code's sandbox, and R2-I1 rules out skipping it on a probe. So when the agent runs `harness verify` (the `/harness:verify` skill) from sandboxed Bash, verify exits "not done" and asks the person to run `! harness verify`. This changes the done contract's attended flow (done contract §4.4: "the agent or the person runs it"). **Recommended:** accept it. The skill tells the person to run `! harness verify`, and the Stop gate, which runs outside the sandbox, still checks evidence on its own. The alternative, letting agent-run verify execute inside Claude Code's sandbox without `srt`, reopens R2-I1.
 
 ## 17. Not in scope
 
@@ -1154,7 +1308,7 @@ P11 is the closest to 400 lines. If it grows past, its docs and the `sandbox-req
 | I3 PEM in argv | `security -i` on stdin, `-T ""` (§6.2) |
 | I4 `CLAUDE_CONFIG_DIR` | Kept, with the mirror; files pre-created (§7.2) |
 | I5 volume planting | `srt` `denyWrite` on user config; hash check (§7.3) |
-| I6 prompts without sandbox | §8.1, §8.2, §8.6, §7.7 point 6; L1, L4, L8; §16 Q2 |
+| I6 prompts without sandbox | §8.1, §8.2, §8.6, §7.7 point 6; L1, L4, L8; I17 |
 | I7 Linux sockets | Doctor fix, `sandbox-required` requirement (§10.5); L2 |
 | I8 Actions approvals | Workflow permissions in protect, doctor (§5.1, §5.5); L6 |
 | I9 rollout | §13 order and splits |
@@ -1177,4 +1331,27 @@ P11 is the closest to 400 lines. If it grows past, its docs and the `sandbox-req
 | Minor 13 | §5.5 identity |
 | Minor 14 | §7.2, §14 |
 | Minor 15 | §8.2 worktree row |
-| Minor 16 | §12.3; §16 Q3 |
+| Minor 16 | §12.3; I18 (now required) |
+
+### Revision 2 review
+
+| Finding | Fix |
+|---|---|
+| R2-I1 probe and shim | No probe; skip only on the container verdict; behavioural preflight; I12 limit stated (§4.1, §4.2, §4.4, §2.4, §14); LS tricks |
+| R2-I2 loopback | `allowLocalBinding: false`, person-only `stop.allow_local`, Linux host-service note (§4.3, §10.1); LS host database |
+| R2-I3 degraded `srt` | Warnings fail; behavioural checks (§4.4); LS |
+| R2-I4 publish job | Base output and compare check, bundle checks, explicit refspec, body path, `fetch-depth: 0` (§6.6); e2e, L7 |
+| R2-I5 Contents write | §5.7, §2.3, §14; L6 |
+| R2-I6 bots | Exempt actors and patterns, `github.protect.exempt` (§5.3); L6 Dependabot |
+| R2-I7 detection | §10.5 step 2, P0b, L0, §14 |
+| R2-I8 settings re-read, relative paths | One `srt` call, absolute literal paths (§4.2, §4.3) |
+| R2-I9 `allow_write` | Validation list (§10.1) |
+| R2-M1 token base writable | Stop `denyWrite` (§4.3); launch JSON per L2 (§6.5) |
+| R2-M2 update-branch | §5.2 |
+| R2-M3 VS Code denies | §8.3 |
+| R2-M4 seccomp detection | §10.5 step 5 |
+| R2-M5 performance | §4.7 |
+| R2-M6 attempts exhausted | §4.4, §10.4 |
+| R2-M7 publish hardening | §6.6 (install first, artifact pin, `fsckObjects`, body sanitising) |
+| R2-M8 cache poisoning | §6.6 doctor flag |
+| R2-M9 org bypass | §5.2, §10.1 |

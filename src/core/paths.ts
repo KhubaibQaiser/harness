@@ -1,5 +1,5 @@
 import { readdirSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
 import picomatch from 'picomatch';
 
 // Native realpath gives what git reports: true case (macOS, Windows) and long names for 8.3 short ones (C:\Users\RUNNER~1).
@@ -12,7 +12,7 @@ export const real = (p: string): string => {
 };
 
 // Realpath of the deepest existing ancestor, with the not-yet-existing remainder re-appended (new files don't exist yet).
-function realish(p: string): string {
+export function realish(p: string): string {
   const rest: string[] = [];
   for (let cur = resolve(p); ; cur = dirname(cur)) {
     try {
@@ -55,4 +55,12 @@ export function hasHarnessDir(root: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** `p` is `dir` or inside it, on a path boundary; case-blind on darwin and win32 like trustedCli. */
+export function within(p: string, dir: string, platform: NodeJS.Platform): boolean {
+  const m = platform === 'win32' ? win32 : posix;
+  const fold = platform === 'win32' || platform === 'darwin' ? (s: string) => s.toLowerCase() : (s: string) => s;
+  const rel = m.relative(fold(dir), fold(p));
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + m.sep) && !m.isAbsolute(rel));
 }

@@ -55,9 +55,44 @@ test('the reference carries the context-budget known limits, verbatim', () => {
   for (const l of limits) expect(reference).toContain(l + '\n');
 });
 
+const launch = (s: string) => /```sh\n(HARNESS_SANDBOX=1 [^\n]*claude -p [\s\S]+?)\n```/.exec(s)?.[1];
+
 test('README carries the unattended launch command', () => {
-  const cmd = /```sh\n(HARNESS_SANDBOX=1 claude -p [^\n]+)\n```/.exec(between(pe, '### 3.4', '### 3.5'))![1];
+  const cmd = launch(between(pe, '### 3.4', '### 3.5'));
+  expect(cmd, 'spec 3.4 has the launch block').toBeDefined();
   expect(readme).toContain(cmd);
+});
+
+test('the documented launch is one valid --settings JSON, the same in README and reference', () => {
+  const cmd = launch(readme)!;
+  expect(launch(reference)).toBe(cmd);
+  // The whole JSON is one POSIX single-quoted word, so it can't hold a single quote of its own.
+  // The env scrub keeps credential-looking variables out of Bash, hooks and MCP servers (and /proc on Linux).
+  // The scrub forces the permission mode to default (live, 2.1.322): -p then refuses any tool not named in --allowedTools,
+  // and harness sees no dontAsk/bypassPermissions, so HARNESS_UNATTENDED marks the run unattended outside CI.
+  const m = /^HARNESS_SANDBOX=1 HARNESS_UNATTENDED=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p "…" --allowedTools "Bash,Edit,Write" --settings '([^']*)'$/.exec(cmd);
+  expect(m, 'the prefix, the allowed tools and one single-quoted --settings argument').not.toBeNull();
+  for (const doc of [readme, reference]) {
+    expect(doc).toContain('forces the permission mode to `default`, so `bypassPermissions` is ignored');
+    expect(doc).toContain('add the tools your run needs');
+  }
+  expect(notes).toContain('--allowedTools "Bash,Edit,Write"');
+  // The scrub strips CLAUDE_CONFIG_DIR from the hooks too, so both docs say how to pass the mirror.
+  for (const doc of [readme, reference]) expect(doc).toContain('HARNESS_CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"');
+  const sb = JSON.parse(m![1]).sandbox;
+  expect(sb).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: false });
+  expect(sb.network).toEqual({ strictAllowlist: true, allowedDomains: [] });
+  // The whole lists: dropping one entry must fail.
+  const files = sb.credentials.files.map((f: { path: string; mode: string }) => (expect(f.mode).toBe('deny'), f.path));
+  expect(files).toEqual([
+    '~/.ssh', '~/.aws', '~/.config/gcloud', '~/.azure', '~/.kube', '~/.docker/config.json', '~/.npmrc', '~/.pypirc', '~/.netrc',
+    '~/.git-credentials', '~/.config/git/credentials', '~/.config/gh', '~/.claude/.credentials.json',
+  ]);
+  const vars = sb.credentials.envVars.map((e: { name: string; mode: string }) => (expect(e.mode).toBe('deny'), e.name));
+  expect(vars).toEqual([
+    'NPM_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+    'CLAUDE_CODE_OAUTH_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN',
+  ]);
 });
 
 test('README carries the enforcement line', () => {

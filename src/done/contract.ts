@@ -1,6 +1,6 @@
 // The task contract (spec §4.1): the criteria a person approved, locked by its hash in protected state.
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { checks, q } from '../ai/vet-review.js';
 import { writeAtomic } from '../core/atomic.js';
@@ -142,7 +142,13 @@ export function loadContract(root: string, id: string, o: { ref?: string; git?: 
     if (r.status !== 0) return { error: `${label}: not found (${esc((r.stderr ?? '').trim().split('\n')[0] ?? '')})` };
     text = r.stdout;
   } else {
-    if (!existsSync(abs(root, label))) return { error: `${label}: no such task contract` };
+    let problem: string | null;
+    try {
+      problem = taskFileProblem(abs(root, label));
+    } catch (e) {
+      return { error: `${label}: ${(e as NodeJS.ErrnoException).code === 'ENOENT' ? 'no such task contract' : (e as Error).message}` };
+    }
+    if (problem) return { error: `${label}: ${problem}` };
     text = readFileSync(abs(root, label), 'utf8');
   }
   let raw: unknown;
@@ -177,6 +183,13 @@ export function loadContract(root: string, id: string, o: { ref?: string; git?: 
     return { error: `${label} changed since it was approved: it matches neither the contract on the default branch (origin/HEAD) nor an approval recorded here.${unset} Restore it with git checkout origin/HEAD -- ${label}, or have a person run harness task approve --replace <file>.` };
   }
   return { contract: v.contract };
+}
+
+export const MAX_TASK_BYTES = 256 * 1024;
+/** Why a task file must not be read, or null: a symlink, FIFO or device could redirect or stall the read, a huge file exhaust memory. lstat throws when it is missing. */
+export function taskFileProblem(p: string): string | null {
+  const st = lstatSync(p);
+  return !st.isFile() ? 'not a regular file' : st.size > MAX_TASK_BYTES ? `over ${MAX_TASK_BYTES / 1024} KiB` : null;
 }
 
 /** origin's default branch (`refs/remotes/origin/<branch>`, from `refs/remotes/origin/HEAD`), or null when that is not set. */

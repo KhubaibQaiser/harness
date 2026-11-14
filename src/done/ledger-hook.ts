@@ -1,17 +1,18 @@
 // Writes the evidence ledger after a Bash or PowerShell call (spec §4.2). Not failClosed: a throw only warns (and is logged
 // as `done ledger-failed`), and the evidence is simply missing (§7), so verify re-runs the check. A row is never written with
 // a guessed tree or exit.
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { toolFailed } from '../checks/decisions-stop.js';
 import { newestFresh, readResults, resultsDir } from '../checks/tdd/results.js';
 import { esc, isObj } from '../core/config.js';
+import { real } from '../core/paths.js';
 import { appendEvent } from '../core/events.js';
 import { redactSecrets } from '../core/secrets.js';
 import type { Check, Ctx } from '../hooks/check.js';
 import { warn } from '../hooks/event-log.js';
 import { checkArgvs, harnessArgs, isTestRunner, plainArgv } from './commands.js';
-import { activeTaskId, type Contract, loadContract, TASKS_DIR } from './contract.js';
+import { activeTaskId, type Contract, loadContract, taskFileProblem, TASKS_DIR } from './contract.js';
 import { appendRow, freshEvidence, readLedger, sameArgv } from './ledger.js';
 import { treeHash } from './tree.js';
 
@@ -22,17 +23,18 @@ const MAX_REASON = 200;
 /** The call's exit: PostToolUseFailure's `Exit code N` line, or PostToolUse's response. Unknown is null, never a pass (F4). */
 function exitOf(ctx: Ctx): number | null {
   const { input } = ctx;
+  if (input.tool_name !== 'Bash') return null; // PowerShell's response shapes are unverified until a live Windows check
   if (input.hook_event_name === 'PostToolUseFailure') {
     const m = typeof input.error === 'string' ? /^Exit code (\d+)/.exec(input.error) : null;
     return m && Number(m[1]) !== 0 ? Number(m[1]) : null; // a failure that says exit 0 contradicts itself
   }
   const res = isObj(input.tool_response) ? input.tool_response : {};
-  const code = res.exitCode ?? res.exit_code;
-  if (('exitCode' in res || 'exit_code' in res) && typeof code !== 'number') return null;
-  if (toolFailed(res)) return typeof code === 'number' && code !== 0 ? code : null;
-  // A numeric exit code, or Bash's own output object (interrupted: false), is the success signal. PowerShell's shape is
-  // unverified, so it says nothing until a live Windows check.
-  return typeof code === 'number' ? code : input.tool_name === 'Bash' && res.interrupted === false ? 0 : null;
+  const fields = ['exitCode', 'exit_code'].filter((k) => k in res).map((k) => res[k]);
+  if (fields.some((v) => typeof v !== 'number') || new Set(fields).size > 1) return null; // non-numeric, or two that disagree
+  const code = fields[0] as number | undefined;
+  if (toolFailed(res)) return code !== undefined && code !== 0 ? code : null;
+  // A numeric exit code, or Bash's own output object (interrupted: false), is the success signal.
+  return code ?? (res.interrupted === false ? 0 : null);
 }
 
 /** Test criteria whose test passed in a results file written during this call; none when the call's duration is unknown. */
@@ -53,7 +55,8 @@ function passedTests(ctx: Ctx, c: Contract): string[] {
 function looseRunArgvs(root: string, env: NodeJS.ProcessEnv): string[][] {
   try {
     const id = activeTaskId(root, env);
-    const raw: unknown = id === null ? null : JSON.parse(readFileSync(join(root, TASKS_DIR, `${id}.json`), 'utf8'));
+    const p = join(root, TASKS_DIR, `${id}.json`);
+    const raw: unknown = id === null || taskFileProblem(p) ? null : JSON.parse(readFileSync(p, 'utf8'));
     const criteria = isObj(raw) && Array.isArray(raw.criteria) ? raw.criteria : [];
     return criteria.map((cr) => (isObj(cr) && isObj(cr.check) && typeof cr.check.run === 'string' ? plainArgv(cr.check.run) : null)).filter((a): a is string[] => a !== null);
   } catch {
@@ -63,7 +66,7 @@ function looseRunArgvs(root: string, env: NodeJS.ProcessEnv): string[][] {
 
 const atRoot = (cwd: string | undefined, root: string): boolean => {
   try {
-    return !!cwd && realpathSync(cwd) === realpathSync(root);
+    return !!cwd && real(cwd) === real(root); // native: true case and long names, as git reports the root
   } catch {
     return false;
   }
@@ -86,7 +89,11 @@ function record(ctx: Ctx, command: string, argv: string[], reason: string | null
     const failing = freshEvidence(c, readLedger(root), tree, argvOf).gaps.filter((g) => g.kind === 'criterion').map((g) => g.id);
     const r = redactSecrets(reason);
     appendRow(root, { kind: 'blocked', ts, session, task: c.id, reason: r.slice(0, MAX_REASON), failing_criteria: failing, tree, contract });
-    appendEvent(root, { ts, session, check: 'done', decision: 'task-blocked', reason: esc(r).slice(0, MAX_REASON) });
+    try {
+      appendEvent(root, { ts, session, check: 'done', decision: 'task-blocked', reason: esc(r).slice(0, MAX_REASON) });
+    } catch (e) {
+      warn('task-blocked event', e); // the row is written: not a ledger failure
+    }
     return;
   }
   const runs = c.criteria.filter((cr) => 'run' in cr.check && sameArgv(plainArgv(cr.check.run), argv));

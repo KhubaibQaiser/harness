@@ -1,6 +1,8 @@
 // Task 6: the evidence ledger hook. Only an exact check, criterion or test-runner call records a row; a blocked call records a blocked row.
-import { mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { loadConfig } from '../../src/core/config.js';
 import { readEvents } from '../../src/core/events.js';
@@ -49,9 +51,11 @@ test('a matched check records a row with tree, contract hash and passing criteri
   const rows = await rowsAfter(root, post('node build.mjs'));
   expect(rows[1]).toMatchObject({ command: 'node build.mjs', exit: 0, criteria: ['C2'] });
   // PowerShell runs the same commands; Monitor and other tools are not runs.
-  // PowerShell's response shape is unverified (I2): its row records exit null until a live Windows check.
-  expect((await rowsAfter(root, post('node build.mjs', { tool: 'PowerShell' }))).at(-1)).toMatchObject({ exit: null, criteria: [] });
-  expect(await rowsAfter(root, post('node build.mjs', { tool: 'Monitor' }))).toHaveLength(3);
+  // PowerShell's response shape is unverified: its row records exit null, whatever exit fields it carries, until a live Windows check.
+  for (const res of [OK, { exitCode: 0 }, { exit_code: 0, interrupted: false }]) expect((await rowsAfter(root, post('node build.mjs', { tool: 'PowerShell', res }))).at(-1)).toMatchObject({ exit: null, criteria: [] });
+  expect((await rowsAfter(root, { ...failure('node build.mjs', 'Exit code 1'), tool_name: 'PowerShell' })).at(-1)).toMatchObject({ exit: null });
+  const n = readLedger(root).length;
+  expect(await rowsAfter(root, post('node build.mjs', { tool: 'Monitor' }))).toHaveLength(n);
 });
 
 test('PostToolUseFailure records the exit from "Exit code 2"', async () => {
@@ -66,12 +70,13 @@ test('PostToolUseFailure records the exit from "Exit code 2"', async () => {
 
 test('F4: a PostToolUse response with no success or failure signal records exit null, never a pass', async () => {
   const { root } = setup();
-  for (const res of [undefined, null, 'done', {}, { stdout: '' }, { ...OK, interrupted: true }, { ...OK, is_error: true }, { ...OK, exitCode: '0' }, { ...OK, exit_code: null }]) await rowsAfter(root, post('node build.mjs', { res }));
+  for (const res of [undefined, null, 'done', {}, { stdout: '' }, { ...OK, interrupted: true }, { ...OK, is_error: true }, { ...OK, exitCode: '0' }, { ...OK, exit_code: null }, { ...OK, exitCode: null, exit_code: 0 }, { ...OK, exitCode: 0, exit_code: 1 }]) await rowsAfter(root, post('node build.mjs', { res }));
   const rows = readLedger(root);
-  expect(rows.map((r) => (r.kind === 'run' ? [r.exit, r.criteria] : null))).toEqual(Array(9).fill([null, []])); // a non-numeric exit field is unknown too (M1)
+  expect(rows.map((r) => (r.kind === 'run' ? [r.exit, r.criteria] : null))).toEqual(Array(11).fill([null, []])); // a non-numeric exit field, or two that disagree, is unknown too (M1)
   // An explicit exit code is used as it is.
   expect((await rowsAfter(root, post('node build.mjs', { res: { exitCode: 3 } }))).at(-1)).toMatchObject({ exit: 3, criteria: [] });
   expect((await rowsAfter(root, post('node build.mjs', { res: { exit_code: 0 } }))).at(-1)).toMatchObject({ exit: 0, criteria: ['C2'] });
+  expect((await rowsAfter(root, post('node build.mjs', { res: { exitCode: 0, exit_code: 0 } }))).at(-1)).toMatchObject({ exit: 0, criteria: ['C2'] });
 });
 
 test('compound, prefixed, redirected and background runs record nothing', async () => {
@@ -243,6 +248,61 @@ test('M4: a failure after a match is logged as done ledger-failed, redacted and 
     expect(e).toMatchObject({ check: 'done', reason: expect.stringContaining('HARNESS_TASK') });
     expect(e!.reason).not.toContain('ghp_');
     expect(e!.reason!.length).toBeLessThanOrEqual(200);
+  } finally {
+    err.mockRestore();
+  }
+});
+
+test('a cwd that names the root another way (symlink, letter case) still records', async () => {
+  const { root } = setup();
+  const link = join(mkdtempSync(join(tmpdir(), 'h-link-')), 'repo');
+  symlinkSync(root, link, 'dir');
+  expect(await rowsAfter(root, { ...post('pnpm run test'), cwd: link })).toHaveLength(1);
+  // On a case-insensitive file system (macOS, Windows) the same folder in other letter case is the root too.
+  const upper = join(dirname(root), basename(root).toUpperCase());
+  if (upper !== root && existsSync(upper)) expect(await rowsAfter(root, { ...post('pnpm run test'), cwd: upper })).toHaveLength(2);
+});
+
+test('a task-blocked event that fails to write, after the row was written, is not a ledger failure', async () => {
+  const { root } = setup();
+  mkdirSync(join(root, '.harness/logs/events.jsonl'), { recursive: true }); // every event append now fails
+  const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    expect(await rowsAfter(root, post('harness done --blocked "no key"'))).toMatchObject([{ kind: 'blocked', reason: 'no key' }]);
+    const said = err.mock.calls.flat().join('');
+    expect(said).toContain('task-blocked event failed');
+    expect(said).not.toContain('ledger-failed');
+    expect(said).not.toContain('check evidence-ledger failed');
+  } finally {
+    err.mockRestore();
+  }
+});
+
+test('a task file that is not a regular file, or is over 256 KiB, is never read', async () => {
+  const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    // Over 256 KiB: the loose read skips it silently, so its run criterion `ls` matches nothing.
+    const big = setup().root;
+    const p = join(big, '.harness/tasks/add-login.json');
+    const raw = JSON.parse(readFileSync(p, 'utf8'));
+    raw.criteria[1].check.run = 'ls';
+    writeContract(big, { ...raw, sha256: null });
+    writeFileSync(p, readFileSync(p, 'utf8') + ' '.repeat(300 * 1024));
+    expect(await rowsAfter(big, post('ls'))).toEqual([]);
+    expect(err.mock.calls.flat().join('')).toBe('');
+    expect(await rowsAfter(big, post('pnpm run test'))).toEqual([]); // the verified load refuses it, with a warning
+    expect(err.mock.calls.flat().join('')).toContain('over 256 KiB');
+    if (process.platform !== 'win32') {
+      const fifo = setup().root;
+      const f = join(fifo, '.harness/tasks/add-login.json');
+      execFileSync('rm', [f]);
+      execFileSync('mkfifo', [f]);
+      err.mockClear();
+      expect(await rowsAfter(fifo, post('ls'))).toEqual([]); // no hang, no warning
+      expect(err.mock.calls.flat().join('')).toBe('');
+      expect(await rowsAfter(fifo, post('pnpm run test'))).toEqual([]);
+      expect(err.mock.calls.flat().join('')).toContain('not a regular file');
+    }
   } finally {
     err.mockRestore();
   }

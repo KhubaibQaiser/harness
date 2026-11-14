@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import picomatch from 'picomatch';
 
 // Native realpath gives what git reports: true case (macOS, Windows) and long names for 8.3 short ones (C:\Users\RUNNER~1).
-const real = (p: string): string => {
+export const real = (p: string): string => {
   try {
     return realpathSync.native(p);
   } catch {

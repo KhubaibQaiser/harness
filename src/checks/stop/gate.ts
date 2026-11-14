@@ -7,6 +7,8 @@ import type { Check, Ctx } from '../../hooks/dispatch.js';
 import type { Decision } from '../../hooks/types.js';
 import { coverageGate } from './coverage-gate.js';
 import { findOnPath, resolveStep, scriptsOf, winCmdLine } from './runner.js';
+import { realish } from '../../core/paths.js';
+import { type PlanStep, type RunSteps, runUnwrapped } from './steps.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
 export type ExecResult = { status: number | null; output: string; timedOut: boolean };
@@ -74,7 +76,7 @@ const tail = (text: string) => {
 
 const realWhich = (cmd: string) => (/[\\/]/.test(cmd) ? cmd : findOnPath(cmd, process.env, process.platform));
 
-export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now, which: (cmd: string) => string | null = realWhich): Promise<Decision> {
+export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now, which: (cmd: string) => string | null = realWhich, run: RunSteps): Promise<Decision> {
   const { root, config, input } = ctx;
   const { steps, package_manager: pm, max_attempts: max, timeout_s } = config.stop;
   const log = (decision: string, reason?: string) => {
@@ -159,6 +161,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     setAttempts(0);
     return done(allow);
   }
+  const plan: PlanStep[] = [];
   for (const step of steps) {
     const rs = resolveStep(step, pm, scripts);
     if (!rs) continue;
@@ -168,18 +171,10 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       missing.push({ label: rs.label, cmd: rs.cmd });
       continue;
     }
-    ran++;
-    const remaining = timeout_s * 1000 - (now() - stepsStart);
     // On Windows pass the resolved path so a .cmd shim can be recognised and wrapped.
-    const t0 = now();
-    const r = remaining > 0 ? await exec(process.platform === 'win32' ? found : rs.cmd, rs.args, remaining) : null;
-    appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: rs.label, outcome: !r || r.timedOut ? 'timeout' : r.status === 0 ? 'allow' : 'block', ms: Math.max(0, now() - t0) });
-    if (!r || r.timedOut) {
-      return { kind: 'context', text: `Stop gate timed out after ${timeout_s}s; checks did not finish.`, check: 'stop' };
-    }
-    if (r.status === 0) continue;
-    return failStep(`${rs.label} failed (attempt {n}). Fix it, then finish again.\n${tail(r.output)}`);
+    plan.push({ label: rs.label, cmd: process.platform === 'win32' ? found : rs.cmd, args: rs.args, cwd: realish(root), timeoutMs: timeout_s * 1000 });
   }
+  ran = plan.length;
   if (ran === 0) {
     // Nothing ran, so there is no fresh coverage to judge: allow without the coverage gate.
     if (!ctx.state.stopNothingLogged) {
@@ -188,6 +183,15 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     }
     setAttempts(0);
     return done(allow);
+  }
+  const res = await run(plan, stepsStart + timeout_s * 1000);
+  const timeoutText = `Stop gate timed out after ${timeout_s}s; checks did not finish.`;
+  if (res.kind === 'timeout') return { kind: 'context', text: timeoutText, check: 'stop' };
+  if (res.kind === 'unavailable') return { kind: 'block', reason: res.message, check: 'stop' }; // not reached until the wrapped runner lands
+  for (const r of res.results) {
+    appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: r.label, outcome: r.timedOut ? 'timeout' : r.status === 0 ? 'allow' : 'block', ms: Math.max(0, r.ms) });
+    if (r.timedOut) return { kind: 'context', text: timeoutText, check: 'stop' };
+    if (r.status !== 0) return failStep(`${r.label} failed (attempt {n}). Fix it, then finish again.\n${tail(r.output)}`);
   }
 
   // Diff coverage runs after every step passes.
@@ -211,5 +215,5 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
 export const stopGate: Check = {
   name: 'stopGate',
   events: ['Stop'],
-  run: (ctx) => (ctx.config.checks.stop ? runStop(ctx, defaultExec(ctx.root)) : allow),
+  run: (ctx) => (ctx.config.checks.stop ? (() => { const exec = defaultExec(ctx.root); return runStop(ctx, exec, Date.now, realWhich, runUnwrapped(exec, Date.now)); })() : allow),
 };

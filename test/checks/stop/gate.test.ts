@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { defaultExec, type Exec, killTree, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
+import { runUnwrapped } from '../../../src/checks/stop/steps.js';
 import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
 import { readTiming } from '../../../src/core/timing.js';
@@ -12,7 +13,7 @@ import { decision, writeDecision } from '../../core/decisions-helpers.js';
 import { type Ctx, detectBaseHead, dispatch, registry } from '../../../src/hooks/dispatch.js';
 
 // Existing tests fake the exec; pretend every binary is on PATH (found as itself: on Windows the gate execs the found path).
-const runStop = (c: Ctx, e: Exec, now?: () => number) => runStopReal(c, e, now, (cmd) => cmd);
+const runStop = (c: Ctx, e: Exec, now?: () => number) => runStopReal(c, e, now, (cmd) => cmd, runUnwrapped(e, now ?? Date.now));
 const ALL = ['format:check', 'lint', 'typecheck', 'test'];
 type Opts = { baseHead?: string; scripts?: string[]; yaml?: string; attempts?: number; hookActive?: boolean };
 const setup = (o: Opts = {}) => {
@@ -367,17 +368,17 @@ const MISSING = `Every Stop step was skipped: \`ruff\` is not on the PATH Claude
 
 test('missing command does not block: one warning and one stop-tool-missing event per session per step', async () => {
   const s = setup({ yaml: PY });
-  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now));
   expect(d).toEqual({ kind: 'context', check: 'stop', text: MISSING });
   expect(s.steps()).toEqual([]);
   expect(s.ctx.state.stopAttempts).toBe(0);
-  expect(await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null)).toEqual({ kind: 'allow' });
+  expect(await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now))).toEqual({ kind: 'allow' });
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing').map((e) => e.reason)).toEqual(['lint: ruff']);
 });
 
 test('missing tool reaches the user as a Stop systemMessage, not a block', async () => {
   const s = setup({ yaml: PY });
-  const out = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  const out = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now));
   const { emit } = await import('../../../src/hooks/io.js');
   expect(JSON.parse(emit('Stop', out))).toEqual({ systemMessage: MISSING });
 });
@@ -385,20 +386,20 @@ test('missing tool reaches the user as a Stop systemMessage, not a block', async
 test('missing package manager binary is skipped the same way; other steps still run and can block', async () => {
   const s = setup({ yaml: 'stop:\n  steps:\n    - lint\n    - name: own\n      run: [node, -e, x]\n' });
   const which = (cmd: string) => (cmd === 'pnpm' ? null : cmd);
-  const d = await runStopReal(s.ctx, s.exec(SRC, 'x'), Date.now, which);
+  const d = await runStopReal(s.ctx, s.exec(SRC, 'x'), Date.now, which, runUnwrapped(s.exec(SRC, 'x'), Date.now));
   expect(d).toMatchObject({ kind: 'block' });
   expect((d as { reason: string }).reason).toContain('own failed (attempt 1 of');
   // The block wins and the warning was not shown, so the step is not marked: the next Stop that passes warns.
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing')).toEqual([]);
   expect(s.ctx.state.stopToolMissing ?? []).toEqual([]);
-  const ok = await runStopReal(s.ctx, s.exec(SRC), Date.now, which);
+  const ok = await runStopReal(s.ctx, s.exec(SRC), Date.now, which, runUnwrapped(s.exec(SRC), Date.now));
   expect(ok).toEqual({ kind: 'context', check: 'stop', text: `Stop step \`lint\` was skipped: \`pnpm\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). ${HINT}` });
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing').map((e) => e.reason)).toEqual(['lint: pnpm']);
 });
 
 test('package manager missing for every step: one warning that says every step was skipped', async () => {
   const s = setup();
-  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now));
   expect(d).toEqual({ kind: 'context', check: 'stop', text: `Every Stop step was skipped: \`pnpm\` is not on the PATH Claude Code's hooks see (it can differ from your terminal's). ${HINT}` });
   expect(readEvents(s.root).filter((e) => e.decision === 'stop-tool-missing')).toHaveLength(4);
 });
@@ -465,7 +466,7 @@ test('nudge: a session that changed only docs/decisions/ still gets it', async (
 test('nudge: joined with the tool-missing warning in one note', async () => {
   const s = setup({ yaml: PY });
   s.ctx.state = { ...s.ctx.state, ...HIT };
-  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null);
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, () => null, runUnwrapped(s.exec(SRC), Date.now));
   expect(text(d).split('\n')).toHaveLength(2);
   expect(text(d)).toMatch(new RegExp(`^${MISSING.slice(0, 20)}`));
   expect(text(d)).toMatch(NUDGE);

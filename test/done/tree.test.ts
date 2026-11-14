@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
@@ -8,6 +9,14 @@ import { commit, git, repoWith } from '../review/repo.js';
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 const mk = (files: Record<string, string> = { 'a.txt': 'a\n' }) => { const { root } = repoWith({ 'README.md': 'r\n' }, files); dirs.push(root); return root; };
+// Ground truth: hash everything from disk through a brand-new index.
+const truth = (root: string) => {
+  const d = mkdtempSync(join(tmpdir(), 'h-truth-'));
+  dirs.push(d);
+  const env = { ...process.env, GIT_INDEX_FILE: join(d, 'index') };
+  execFileSync('git', ['add', '-A'], { cwd: root, env });
+  return execFileSync('git', ['write-tree'], { cwd: root, env, encoding: 'utf8' }).trim();
+};
 const put = (root: string, rel: string, s: string) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, s); };
 
 test('same content, same hash; a tracked edit or a new untracked file changes it; an ignored file does not', () => {
@@ -79,4 +88,67 @@ test('outside a repo it throws', () => {
   const d = mkdtempSync(join(tmpdir(), 'h-tree-norepo-'));
   dirs.push(d);
   expect(() => treeHash(d)).toThrow(/git/);
+});
+
+test('a same-size edit made right after git add is seen (racy index)', () => {
+  const root = mk({ 'a.txt': 'AAAA\n' });
+  put(root, 'a.txt', 'BBBB\n');
+  git(root, 'add', 'a.txt');
+  put(root, 'a.txt', 'CCCC\n');
+  expect(treeHash(root)).toBe(truth(root));
+});
+
+test('assume-unchanged, skip-worktree and core.ignoreStat do not hide an edit', () => {
+  const root = mk({ 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt': 'c\n' });
+  git(root, 'update-index', '--assume-unchanged', 'a.txt');
+  git(root, 'update-index', '--skip-worktree', 'b.txt');
+  git(root, 'config', 'core.ignoreStat', 'true');
+  git(root, 'add', 'c.txt');
+  for (const f of ['a.txt', 'b.txt', 'c.txt']) put(root, f, `edited ${f}\n`);
+  expect(treeHash(root)).toBe(truth(root));
+});
+
+test('a clean filter from info/attributes plus config never runs, and the raw bytes are hashed', () => {
+  const root = mk();
+  const out = mkdtempSync(join(tmpdir(), 'h-filter-'));
+  dirs.push(out);
+  const marker = join(out, 'ran').replace(/\\/g, '/');
+  const script = join(out, 'clean.js').replace(/\\/g, '/');
+  writeFileSync(script, `require('fs').writeFileSync(${JSON.stringify(marker)}, 'x'); process.stdout.write('const');`);
+  writeFileSync(join(root, '.git', 'info', 'attributes'), '*.txt filter=x\n');
+  git(root, 'config', 'filter.x.clean', `node "${script}"`);
+  put(root, 'a.txt', 'one\n');
+  const h1 = treeHash(root);
+  put(root, 'a.txt', 'two\n');
+  expect(treeHash(root)).not.toBe(h1);
+  expect(existsSync(marker)).toBe(false);
+});
+
+test('a subdirectory root hashes the whole repo', () => {
+  const root = mk({ 'a.txt': 'a\n', 'sub/x.txt': 'x\n' });
+  const h = treeHash(root);
+  expect(treeHash(join(root, 'sub'))).toBe(h);
+  put(root, 'a.txt', 'changed\n');
+  expect(treeHash(join(root, 'sub'))).toBe(treeHash(root));
+  expect(treeHash(root)).not.toBe(h);
+});
+
+test('GIT_CONFIG_COUNT/KEY/VALUE in the environment are ignored', () => {
+  const root = mk({ 'a.txt': 'a\r\nb\r\n' });
+  const h = treeHash(root);
+  const saved = { ...process.env };
+  try {
+    Object.assign(process.env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true' });
+    expect(treeHash(root)).toBe(h);
+  } finally {
+    for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+});
+
+test('a timeout throws and leaves no temp folder behind', () => {
+  const root = mk();
+  const left = () => readdirSync(tmpdir()).filter((n) => n.startsWith('harness-tree-')).length;
+  const before = left();
+  expect(() => treeHash(root, { timeoutMs: 1 })).toThrow();
+  expect(left()).toBe(before);
 });

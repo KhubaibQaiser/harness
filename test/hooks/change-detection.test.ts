@@ -51,8 +51,9 @@ test('a commitDecisions write is not reported', async () => {
 test('the session baseline keeps the `sandbox` value from the first hook, whatever config.yaml says later', async () => {
   const root = await installedRepo();
   await hook(root, 'PreToolUse');
-  expect(readState(root, 's').sandboxBase).toBe('always');
+  const base = readState(root, 's').sandboxBase; // init picks the value per platform (always, or unattended on native Windows)
+  expect(['always', 'unattended']).toContain(base);
   writeFileSync(join(root, '.harness/config.yaml'), 'sandbox: off\n');
   await hook(root, 'UserPromptSubmit');
-  expect(readState(root, 's').sandboxBase).toBe('always');
+  expect(readState(root, 's').sandboxBase).toBe(base);
 });

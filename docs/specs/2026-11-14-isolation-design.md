@@ -1,8 +1,9 @@
 # Isolation hardening: design
 
-- Status: revision 3, for the owner's review, 2026-11-14. No code. The review file (`.superpowers/sdd/isolation/spec-review.md`, local) covers two rounds:
+- Status: revision 4, for the owner's review, 2026-11-14. No code. The review file (`.superpowers/sdd/isolation/spec-review.md`, local) covers two rounds:
   - revision 1 (050c8da): 6 Critical, 13 Important, 16 Minor;
-  - revision 2 (72748bb): 9 Important, 9 Minor.
+  - revision 2 (72748bb): 9 Important, 9 Minor;
+  - revision 3 (d391055): 1 Critical, 2 Important, 8 Minor.
 
   §18 maps every finding to its fix.
 - Research: [`../research/2026-11-14-isolation.md`](../research/2026-11-14-isolation.md), cited below as "R§n". Its sources were fetched on 2026-11-14; URLs are repeated where a design choice rests on them.
@@ -44,7 +45,11 @@
 | R2-I1 | The Stop wrap is never skipped on a probe. It skips only on the cached, trusted container verdict that `srt` already wraps the process. The preflight is behavioural, and the I12 limit is stated. | §4.1, §4.2, §4.4 |
 | R2-I2 | Steps get no loopback by default. A person-only `stop.allow_local: true` opts in, documented with the macOS risk. | §4.3, §10.1 |
 | R2-I3 | An `srt` that degrades with a warning, for example with no seccomp helper, fails the preflight. | §4.4 |
-| R2-I6 | `harness-refs` binds only App-created refs. Dependabot, `gh-pages` and release-please are exempt by actor or pattern. | §5.3 |
+| R2-I6 | `harness-refs` binds only App-created refs. Dependabot, `gh-pages` and release-please are exempt by actor or pattern. Narrowed by R3-C1 and R3-I2 below. | §5.3 |
+| R3-C1 | No bot branch patterns in `harness-refs`. Bots are exempt by app identity only (bypass actors), so the App and everyone else are bound on `gh-pages`, `dependabot/**`, `renovate/**` and release branches. | §5.3 |
+| R3-I1 | The publish job never copies a file the agent wrote through the filesystem. `pr-body.md` comes from the bundle's tree after verify; a symlink or non-regular blob is refused, and the size is capped. | §6.6 |
+| R3-I2 | No `github-actions` bypass. A workflow that must push protected refs uses a protected environment with required reviewers. Doctor flags `contents: write` workflows that can run on agent pushes. | §5.3 |
+| Q1 (rev 3) | Accept that an agent-run `harness verify` inside the sandbox exits not done and asks the person to run it. | §4.2 |
 | R2-I7 | Detect headless `-p` if Claude Code exposes a hook-visible signal (such as `CLAUDE_CODE_ENTRYPOINT`, to verify live); otherwise it is a documented limit. A follow-up to #231. | §10.5, L0 |
 
 The research or the review recommended otherwise on four of these:
@@ -160,13 +165,15 @@ The done contract's `harness verify` reuses the same runner (done contract §4.4
      - runs each step with its time limit, capturing its output;
      - writes one JSON line per check and step to stdout, tagged with the nonce.
 
-     The outer runner checks the nonce and the per-step results, and enforces `stop.timeout_s` on the whole call.
+     The outer runner enforces `stop.timeout_s` on the whole call.
+
+     **Result lines are checked strictly (R3-M3).** It accepts exactly one line per expected check and step, in plan order, each with the nonce, and rejects the run on a missing, extra or out-of-order line. The nonce isn't secret from step code (on Linux the runner is visible under `/proc`), so the plan and settings files are also on the steps' `denyRead`. Forging a line gains nothing that editing a test doesn't.
 - **Which `srt`:** the binary on the hooks' `PATH`.
   - Its real path must lie outside the repo and every `allowWrite` root (srt README "Where This Package Is Installed").
   - `srt --version` must be at least the pinned `SRT_MIN`, which moves only with a harness release.
   - Harness doesn't bundle `srt`. The person installs the `@anthropic-ai/sandbox-runtime` package globally, at the pin. That one install also provides Claude Code's Linux seccomp filter (https://code.claude.com/docs/en/sandboxing, "Set up Linux and WSL2").
 - **The wrap is never skipped on a probe (R2-I1).** The one case without a second wrap is the harness container. There, a nested `srt` fails with EPERM (srt README "The command stays in the namespaces made for it"), and the session's cached, trusted container verdict (§7.5) shows `srt` already wraps the whole process. No file probe, environment variable or write result is consulted.
-- **From inside another fence.** Running `harness verify` from the agent's sandboxed Bash, or from any other fence, makes the nested `srt` fail. The preflight then exits "not done", saying: `harness verify can't run its checks inside another sandbox. Ask the person to run ! harness verify, which runs outside it.` The `!` prefix runs outside Claude Code's sandbox, the same route harness already uses for denied writes.
+- **From inside another fence.** Running `harness verify` from the agent's sandboxed Bash, or from any other fence, makes the nested `srt` fail. The preflight then exits "not done", saying: `harness verify can't run its checks inside another sandbox. Ask the person to run harness verify in their own terminal, or ! harness verify (outside the sandbox on macOS, and on Linux without the env scrub).` On Linux with `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` set, `!` commands are sandboxed too (https://code.claude.com/docs/en/sandboxing "What runs outside the sandbox"), so the person's own terminal is the route there (R3-M4). The Q1 ruling accepts this.
 
 ### 4.3 The `srt` settings for steps
 
@@ -178,7 +185,7 @@ All keys and the `literal` entry form were checked against the srt README "Confi
   "filesystem": {
     "allowWrite": [ {"path": "<repo realpath>", "literal": true}, "<os temp dir>", "/tmp", "<stop.allow_write…>" ],
     "denyWrite": [ "<each protected path, absolute, literal>", {"path": "<token base>", "literal": true}, {"path": "<canary>", "literal": true} ],
-    "denyRead": [ {"path": "<token base>", "literal": true}, {"path": "<canary>", "literal": true} ]
+    "denyRead": [ {"path": "<token base>", "literal": true}, {"path": "<canary>", "literal": true}, {"path": "<plan and settings files>", "literal": true} ]
   },
   "credentials": { "files": [ "<§8.3 list, mode deny>" ], "envVars": [ "<§8.3 list, mode deny>" ] }
 }
@@ -313,37 +320,54 @@ The rules and why they bind are in R§5.2 (https://docs.github.com/en/repositori
 
 **An approval authorizes the merge.** The App's Contents write reaches the merge API (R§0.8), so once the owner approves and the check passes, the App can merge its own PR, auto-merge included. Doctor and the docs say so, and L5 tests merging before and after approval.
 
-### 5.3 Ruleset `harness-refs`: tags and other branches (C5, R2-I6)
+### 5.3 Ruleset `harness-refs`: tags and other branches (C5, R2-I6, R3-C1, R3-I2)
 
 ```json
 [
   { "name": "harness-refs-tags", "target": "tag", "enforcement": "active",
     "conditions": { "ref_name": { "include": ["~ALL"], "exclude": [] } },
-    "bypass_actors": [ "<owner User, always>", "<exempt actors, always>" ],
+    "bypass_actors": [ "<owner User, always>", "<DeployKey, always>", "<exempt bot actors, always>" ],
     "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" } ] },
   { "name": "harness-refs-branches", "target": "branch", "enforcement": "active",
-    "conditions": { "ref_name": { "include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH", "refs/heads/agent/**", "<exempt patterns>"] } },
-    "bypass_actors": [ "<owner User, always>", "<exempt actors, always>" ],
+    "conditions": { "ref_name": { "include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH", "refs/heads/agent/**"] } },
+    "bypass_actors": [ "<owner User, always>", "<DeployKey, always>", "<exempt bot actors, always>" ],
     "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" } ] }
 ]
 ```
 
-- **Two rulesets.** GitHub rulesets target either branches or tags, so `harness-refs` is two rulesets with these names. Both are managed like `harness`.
-- **Only the App's refs are bound (R2-I6 ruling).** A ruleset can't name the actor it binds, so it binds everyone except its bypass actors. Protect therefore lists every known non-agent writer as a bypass actor or an excluded pattern, and never lists the agent App:
-  - **Exempt actors** (`Integration`, `always`), added when protect detects them, with ids read from `GET /apps/<slug>` and never hard-coded:
-    - `dependabot`, when `.github/dependabot.yml` exists;
-    - `renovate`, when `renovate.json`, `.github/renovate.json5` or a `renovate` key in `package.json` exists;
-    - `github-actions`, when a workflow pushes refs: `contents: write` with `git push`, `peaceiris/actions-gh-pages`, `googleapis/release-please-action`, or `changesets/action`.
+**Two rulesets.** GitHub rulesets target either branches or tags, so `harness-refs` is two rulesets with these names. Both are managed like `harness`.
 
-    On 2026-11-14 the API returned ids 29110, 2740 and 15368 for these three.
-  - **Exempt patterns:** `gh-pages`, `dependabot/**`, `renovate/**`, `release-please--**` and `changeset-release/**`, added with the matching detection.
-  - **Humans:** the owner (`User`, `always`). On org repos, also the Write role (`RepositoryRole`), if L6 confirms it doesn't cover an App.
+**Bound by ref, exempt by identity only (R3-C1 ruling).** A ruleset binds every actor on the refs it targets, except its bypass actors. The only exclusions are the default branch (covered by `harness`) and the agent prefix. No bot branch pattern is ever excluded, so the App, and everyone not listed, is bound on `gh-pages`, `dependabot/**`, `renovate/**`, `release-please--**`, `changeset-release/**` and every other branch.
 
-  Every exempt actor and pattern is shown in protect's diff, with the file that triggered it. `github.protect.exempt` (§10.1) adds or removes entries by hand.
-- **Prefix.** `github.agent_prefix` (default `agent/`) sets the excluded branch pattern. The agent's branches must start with it, and GitHub's rejection of any other branch names the ruleset.
-- **Tags and releases.** Only the owner and exempt actors create, move or delete tags, so the App can't trigger a tag-based publish. The App can still create releases and edit release assets (§5.7).
-- **Doctor flags release and deploy triggers:** workflows on `push: tags`, `release`, or `push` to non-default branches that use no protected environment, since a tag the owner pushes still builds whatever is on that commit.
-- L6 runs a real Dependabot PR under the ruleset.
+The bypass actors:
+- **The owner** (`User`, `always`).
+- **Deploy keys** (`DeployKey`, `always`), for workflows that must push protected refs (below).
+- **Bots, by app identity** (`Integration`, `always`). Each id is read from `GET /apps/<slug>`, never hard-coded:
+  - `dependabot`, when the default branch has `.github/dependabot.yml`;
+  - `renovate`, when the default branch has `renovate.json`, `.github/renovate.json5` or a `renovate` key in `package.json`.
+
+  On 2026-11-14 the API returned 29110 and 2740. Detection reads these files from the **default branch** through `GET /repos/{o}/{r}/contents/<path>?ref=<default>`, never from the working tree, where the agent could plant them (R3-M8). Self-hosted Renovate, or a tool that pushes with a PAT, is added by hand as an actor in `github.protect.exempt`, never as a branch pattern.
+- **Humans on org repos:** the Write role (`RepositoryRole`), if L6 confirms it doesn't cover an App.
+
+Every bypass actor is shown in protect's diff, with the file that triggered it.
+
+**No `github-actions` bypass (R3-I2 ruling).**
+- Every workflow's `GITHUB_TOKEN` acts as `github-actions`, including workflows that run agent code. So that identity is never a bypass actor.
+- **A workflow that must push a protected ref** (a `gh-pages` deploy, release-please or changesets creating tags or release branches) pushes with a deploy key. The key is stored as a secret of a protected environment with required reviewers, so a person approves each such run.
+- Protect lists those workflows in its output, with this fix, because they stop pushing once `harness-refs` is active.
+- Pages deployed with `actions/deploy-pages`, which publishes an artifact and pushes no branch, is unaffected.
+- `DeployKey` bypass on personal repos is checked in L6.
+
+**Prefix.** `github.agent_prefix` (default `agent/`) sets the excluded branch pattern. The agent's branches must start with it, and GitHub's rejection of any other branch names the ruleset.
+
+**Tags and releases.** Only the owner, deploy keys and exempt bots create, move or delete tags, so the App can't trigger a tag-based publish. The App can still create releases and edit release assets (§5.7).
+
+**Doctor flags:**
+- **Fix:** a workflow with `contents: write` (or `write-all`) that runs on an event the agent can cause: `push` to a non-default branch, `pull_request`, `pull_request_target`, or `workflow_run` of such a workflow. That workflow hands agent code a write token (R3-I2).
+- **Fix:** an auto-merge or auto-approve workflow that keys on the PR's author or `head_ref` (for example `github.event.pull_request.user.login == 'dependabot[bot]'`) rather than on `github.actor`. The App can push commits onto a bot's PR branch only where `harness-refs` is off, but the check must not rest on that (R3-C1).
+- **Note:** release and deploy triggers (`push: tags`, `release`, `push` to non-default branches) that use no protected environment, since a tag the owner pushes still builds whatever is on that commit.
+
+**L6** checks that the App's pushes to `dependabot/x` and `gh-pages` are refused, that a Dependabot PR still works, and that a deploy-key push from an approved environment works.
 
 ### 5.4 CODEOWNERS from `project.codeowners`
 
@@ -403,7 +427,9 @@ GitHub's permissions table for Apps lists these endpoints under Contents write (
 What harness does:
 - **Doctor flags `repository_dispatch` triggers.** A fix when the workflow uses `github.event.client_payload` inside `run:`; a note otherwise.
 - **Doctor flags repos that publish release assets** (`softprops/action-gh-release`, `gh release upload`, `actions/upload-release-asset`). It recommends GitHub's immutable releases, which lock a published release's assets and tag (https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases). That page doesn't say which plans offer them, so doctor gives a note, not a fix.
-- **L6** has the App dispatch an event and upload an asset, before and after the fixes.
+- **Delete and recreate.** Contents write can also delete a release and create a new one, with new assets, on an **existing owner tag**. Immutable releases may stop that; whether the tag can be reused after the release is deleted is checked in L6 (R3-M6).
+- **Dispatch needs no injection to matter.** `repository_dispatch` workflows can be fired at will, even when their payload is never interpolated, which matters for any workflow with side effects.
+- **L6** has the App dispatch an event, upload an asset, and delete and recreate a release on an owner tag, with and without immutable releases, before and after the fixes.
 - **§2.3 and §14** list both routes.
 
 ## 6. Layer A: agent identity
@@ -560,9 +586,11 @@ HARNESS_UNATTENDED=1 HARNESS_SANDBOX=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 \
   - The broker's hash check on `git-credential` and its `lstat` checks catch a swap within 60 seconds either way.
 - **Container.** The host folder is bind-mounted read-only at `/run/harness/gh`. Only `srt-push.json` lets the tree read it (§7.3).
 
-### 6.6 CI: an agent job and a publish job (I13, R2-I4)
+### 6.6 CI: an agent job and a publish job (I13, R2-I4, R3-I1)
 
 The key and the token never enter a job that runs repo or agent code.
+
+**After the agent step, the workspace is hostile.** Every later step follows no symlink, reads no file the agent wrote, and runs git only after checking that the repo's config and hooks are unchanged. Nothing the agent wrote travels except git objects in the bundle (R3-I1).
 
 ```yaml
 jobs:
@@ -572,17 +600,21 @@ jobs:
     steps:
       - uses: actions/checkout@<sha>
         with: { persist-credentials: false, fetch-depth: 0 }   # checkout v6 otherwise keeps the token in a file under $RUNNER_TEMP
-      - id: base
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"   # the default-branch commit the run starts from
+      - id: base                          # before the agent runs
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          sha256sum .git/config > "$RUNNER_TEMP/git-config.sha"; ls -la .git/hooks > "$RUNNER_TEMP/git-hooks.list"
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # ubuntu-24.04: Claude's sandbox and srt need it
       - run: <install harness and sandbox-runtime globally, at their pins>
       - run: <the §6.4 launch, without the push lines, and without github.com>
-      - run: |
-          mkdir agent-out
-          git bundle create agent-out/agent.bundle "${{ steps.base.outputs.sha }}..HEAD"
-          cp .harness/tmp/pr-body.md agent-out/pr-body.md
+      - run: |                            # hostile workspace from here on
+          sha256sum -c "$RUNNER_TEMP/git-config.sha" && diff <(ls -la .git/hooks) "$RUNNER_TEMP/git-hooks.list"
+          out=$(mktemp -d "$RUNNER_TEMP/agent-out.XXXXXX")
+          git -c core.hooksPath=/dev/null -c core.fsmonitor= bundle create "$out/agent.bundle" \
+            "${{ steps.base.outputs.sha }}..HEAD"
+          echo "OUT=$out" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@<sha>
-        with: { name: agent-out, path: agent-out/, retention-days: 1 }
+        with: { name: agent-out, path: "${{ env.OUT }}/agent.bundle", retention-days: 1 }
   publish:                                # runs no repo code
     needs: agent
     permissions: {}
@@ -594,35 +626,55 @@ jobs:
         run: |
           printf '%s' "$HARNESS_APP_KEY" | env -u HARNESS_APP_KEY harness github publish \
             --repo "$GITHUB_REPOSITORY" --branch "agent/run-${{ github.run_id }}" \
-            --base "${{ needs.agent.outputs.base }}" --bundle in/agent.bundle --body in/pr-body.md --key-stdin
+            --base "${{ needs.agent.outputs.base }}" --bundle in/agent.bundle --key-stdin
 ```
+
+**The PR body travels in git.** The agent commits it as `.harness/pr-body.md` on its branch, and publish reads it from the verified commit (step 6). No file is copied through the filesystem. The file lands in the PR diff, under the `/.harness/` CODEOWNERS line, and each later PR overwrites it. This is a spec point the owner can overrule (§15).
 
 **What `harness github publish` does.** It is person-only, like every `harness github` subcommand, and the publish job runs it directly, not through an agent.
 1. **Mint.** One token, as the broker does, with the same installation check.
-2. **Empty repo.** `git init` in a fresh temporary folder, with `fetch.fsckObjects=true` and `transfer.fsckObjects=true`, because this job parses pack data the agent made. It never checks out a work tree.
+   - The token reaches git through `GIT_CONFIG_*`, as an `http.https://github.com/.extraHeader` with a basic auth header, and reaches the API in memory.
+   - It is never in a URL, argv or a file (R3-M1).
+2. **Empty repo.** `git init` in a fresh temporary folder, with `fetch.fsckObjects=true`, `transfer.fsckObjects=true`, `core.hooksPath=/dev/null` and `core.fsmonitor=` (empty). This job parses pack data the agent made, and it never checks out a work tree.
 3. **Check the base.**
    - The `--base` commit comes from the agent job's output, so it is not trusted.
    - `GET /repos/{o}/{r}/compare/{base}...{default}` must report `identical` or `ahead`, which means the default branch contains the base.
-   - Then `git fetch --depth=1 https://github.com/<o>/<r> <base>`, with the token.
-4. **Check the bundle.**
-   - Every prerequisite in the bundle header must equal `--base`.
+   - Then `git fetch --depth=1 https://github.com/<o>/<r> <base>`.
+4. **Check the bundle (R3-M1).**
+   - The header must list **exactly one** prerequisite, equal to `--base`. This rules out a full-history bundle, which has none.
    - `git bundle verify` must pass.
    - `git bundle list-heads` must show exactly one ref.
-5. **Fetch** only that ref into `refs/harness/incoming`.
-6. **Check the branch name** starts with `github.agent_prefix`.
-7. **Push** with the explicit refspec `<sha>:refs/heads/<branch>` over HTTPS. Never `--tags`, `--mirror` or `--follow-tags`.
-8. **Open or update the PR.** The body file is untrusted: harness removes closing keywords (`close`, `closes`, `fix`, `fixes`, `resolve` and `resolves`, each with a following `#n` or URL), and @-mentions, and caps the size at 64 KB.
-9. **Revoke** the token.
+5. **Fetch** only that ref into `refs/harness/incoming`, then check:
+   - `refs/harness/incoming^{commit}` resolves, so a tag-only bundle fails clearly;
+   - `git merge-base --is-ancestor <base> refs/harness/incoming` passes.
+6. **Read the body from the tree (R3-I1 ruling).**
+   - `git ls-tree refs/harness/incoming -- .harness/pr-body.md` must show one blob of mode `100644`. A symlink (`120000`), a submodule or any other mode is refused.
+   - Its size, from `git cat-file -s`, must be under 64 KB.
+   - Its content, from `git cat-file blob`, must be valid UTF-8.
+7. **Check the branch name** starts with `github.agent_prefix`.
+8. **Push** `<incoming commit sha>:refs/heads/<branch>`, an explicit refspec over HTTPS. Never `--tags`, `--mirror` or `--follow-tags`.
+9. **Open or update the PR.**
+   - The body is untrusted. Harness removes closing keywords (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves` and `resolved`, each followed by `#n`, `owner/repo#n` or an issue URL, R3-M2) and @-mentions.
+   - It keeps the 64 KB cap.
+10. **Revoke** the token.
 
-What can't come through: a bundle carries no hooks, and publish never checks out, so hooks can't be smuggled. The server refuses workflow files, because the App has no Workflows permission. `harness-refs` refuses tags, and branches outside the prefix.
+**What can't come through.**
+- **Hooks:** a bundle carries none, and publish never checks out.
+- **Workflow files:** the server refuses them, because the App has no Workflows permission.
+- **Tags, and branches outside the prefix:** `harness-refs` refuses them.
+- **Files the agent wrote outside git:** only the bundle file crosses jobs, and it is created in a fresh `$RUNNER_TEMP` folder after the config and hooks checks.
 
-- **Costs.** A CI agent can't push mid-run or read PR comments. There is no token in the agent job, so there is nothing to refresh.
-- **The artifact** is readable by anyone who can read the repo's Actions. It holds only the agent's commits and PR body, which are about to be public on the PR anyway.
-- **Doctor flags:**
-  - a workflow that runs `claude` after a checkout without `persist-credentials: false`, read from the workflow's `with:`;
-  - a workflow that passes `HARNESS_APP_KEY` to a job that checks out code;
-  - `actions/cache`, or a setup action's `cache:`, in a job that runs `claude`. A cache saved there can be restored by release workflows on the default branch, a poisoning route around the bundle (R2-M8).
-- **Tested by** an e2e that fetches a range bundle into an empty repo through these steps (§12.2), and by L7.
+**Costs.** A CI agent can't push mid-run or read PR comments. There is no token in the agent job, so there is nothing to refresh.
+
+**The artifact** is readable by anyone who can read the repo's Actions. It holds only the agent's commits, which are about to be public on the PR anyway.
+
+**Doctor flags:**
+- a workflow that runs `claude` after a checkout without `persist-credentials: false`, read from the workflow's `with:`;
+- a workflow that passes `HARNESS_APP_KEY` to a job that checks out code;
+- a step after the agent step that reads workspace files, other than the documented bundle step;
+- `actions/cache`, or a setup action's `cache:`, in a job that runs `claude` (R2-M8).
+
+**Tested by** an e2e that fetches a range bundle into an empty repo through these steps (§12.2), and by L7.
 
 ## 7. Layer B: the container
 
@@ -898,7 +950,7 @@ The gate: P14 ships only after L1 passes on macOS and Linux, after the broker PR
 | `github.app.key_stored_at` | `""` | ISO date the key was stored, for doctor's key age. |
 | `github.agent_prefix` | `"agent/"` | Branch prefix the App may create and update under (`harness-refs`). It must match `^[a-z0-9-]+/$`. |
 | `github.protect.owner_bypass` | `"auto"` | `auto` (on for user-owned repos, and for org repos with one write collaborator), `on` or `off`: the owner's `pull_request` bypass on the `harness` ruleset (C4). |
-| `github.protect.exempt` | `{add: [], remove: []}` | Bypass actors (app slugs) and branch patterns to add to, or remove from, what protect detects for `harness-refs` (§5.3). |
+| `github.protect.exempt` | `{add: [], remove: []}` | Bot bypass actors (app slugs) to add to, or remove from, what protect detects for `harness-refs` (§5.3). Actors only; branch patterns are not accepted (R3-C1). `github-actions` is refused (R3-I2). |
 | `project.codeowners` | `[]` | Changed: the owners written to the CODEOWNERS block (§5.4). Was input only. |
 
 The generated table in `docs/reference.md` picks these up from `src/core/config.ts`.
@@ -911,7 +963,7 @@ The generated table in `docs/reference.md` picks these up from `src/core/config.
 | `harness github app create [--org <org>]` | Person only | §6.1 |
 | `harness github app store-key` | Person only | §6.2 (key on stdin) |
 | `harness github broker [--repo <o/r>] [--env] [--check]` | Person only | §6.3 |
-| `harness github publish --repo --branch --bundle --body --key-stdin` | Person, or the CI publish job (never through an agent) | §6.6 |
+| `harness github publish --repo --branch --base --bundle --key-stdin` | Person, or the CI publish job (never through an agent) | §6.6 |
 | `harness doctor --launch-hosts` | Anyone (print only) | §8.4 |
 | `/harness:init --container` | Through the skill | §7.1 |
 | `harness-run [--push] -- <claude args>` | Person, inside the container | §7.3 |
@@ -965,7 +1017,7 @@ Container: required; this session: proved                (or: available | off; n
 - **Protect:** `.devcontainer/**`, the CODEOWNERS paths, and the token base.
 - **`sandbox-required`**, in this order:
   1. `off`: allow, logging on `win32`.
-  2. Attended: allow. Unattended now also covers `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` in the hook's environment, which a scrubbed `-p` launch keeps in default mode, and a headless signal if L0 finds one (R2-I7). Without either, a host `-p` run that sets neither variable is judged attended; that is a documented limit (§14).
+  2. Attended: allow. Unattended now also covers `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` in the hook's environment, which a scrubbed `-p` launch keeps in default mode, and a headless signal if L0 finds one (R2-I7). Without either, a host `-p` run that sets neither variable is judged attended; that is a documented limit (§14). When the scrub variable alone makes a session unattended, SessionStart prints: `harness: this session is treated as unattended because CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 is set; questions become denies and the unattended gates apply. Unset it in your shell profile for interactive work.` (R3-M5)
   3. `win32`: deny.
   4. The container verdict, when `isolation.container` isn't `off`: proved allows; `required` and not proved denies.
   5. `HARNESS_SANDBOX=1`, or the settings confirmed (with the launch fix's strict rule): allow. On Linux, when `github.app.id` is set, Claude Code's seccomp filter must also be present (review I7). Harness detects it as the `apply-seccomp` binary that the globally installed `@anthropic-ai/sandbox-runtime` ships for this architecture, which is the install the Claude Code docs name (https://code.claude.com/docs/en/sandboxing). The path is pinned in P11 and confirmed in L2 against `/sandbox` showing no Dependencies tab (R2-M4).
@@ -1009,7 +1061,7 @@ Container: required; this session: proved                (or: available | off; n
 | Protect, no admin role | `Your gh login can't change rulesets on <o/r> (<HTTP status>: <first line>). It needs the admin role. Nothing was changed.` |
 | Protect, no verify run yet | `No harness-verify check run on <branch> yet, so the required check can't be pinned to its app. Run the workflow once (open any PR), then run harness github protect again.` |
 | Protect, no CODEOWNERS | `<branch> has no CODEOWNERS file, so code-owner review requires nobody. Merge the harness CODEOWNERS block first (harness doctor shows it), or answer yes to continue without it.` |
-| Verify inside another fence | `harness verify can't run its checks inside another sandbox. Ask the person to run ! harness verify, which runs outside it.` |
+| Verify inside another fence | `harness verify can't run its checks inside another sandbox. Ask the person to run harness verify in their own terminal, or ! harness verify (outside the sandbox on macOS, and on Linux without the env scrub).` |
 | Config, `stop.allow_write` refused | `stop.allow_write can't list <path>: <it is a protected path | it is your home folder | programs there run at login | it is on PATH | srt is installed there | it holds the GitHub token folder>. Choose a folder only your tests write, such as a cache folder.` |
 | Publish, base not on the default branch | `The agent job's base <sha> is not on <default branch> (compare: <status>). Nothing was pushed.` |
 | Publish, bad bundle | `The agent's bundle <has <n> refs, not one | needs <sha>, not the base <sha> | failed git bundle verify: <first line>>. Nothing was pushed.` |
@@ -1026,6 +1078,7 @@ Container: required; this session: proved                (or: available | off; n
   - the protected-path union;
   - the argument form;
   - one `srt` call per run, with absolute `literal` paths;
+  - result lines: missing, extra, out of order, or without the nonce, each rejected;
   - plan and settings files new per run and deleted after;
   - the step runner's nonce-tagged results;
   - each preflight check failing on its own, and any `srt` stderr warning failing it;
@@ -1038,7 +1091,10 @@ Container: required; this session: proved                (or: available | off; n
   - `stop.allow_local` default off.
 - **Rulesets:**
   - all builders, with owner bypass `auto` (user, org with one and with several write collaborators), `on` and `off`;
-  - `harness-refs` exempt actors and patterns from each detection (ids from a stubbed `GET /apps/<slug>`), and `github.protect.exempt`;
+  - `harness-refs` bypass actors from each detection, read from the default branch through a stubbed contents API, never the working tree (ids from a stubbed `GET /apps/<slug>`);
+  - no branch pattern beyond the default branch and the agent prefix in any ruleset;
+  - no `github-actions` actor in any ruleset, and `github.protect.exempt` refusing patterns and `github-actions`;
+  - the doctor fixes for `contents: write` workflows on agent-reachable events, and auto-merge keyed on the PR author;
   - the required-check rule with and without the item;
   - normalised compare;
   - workflow permissions;
@@ -1069,11 +1125,14 @@ Container: required; this session: proved                (or: available | off; n
 - **`git-credential` run by `sh`:** fresh, nearly expired, expired, missing, a non-`get` action.
 - **Publish:**
   - the base check through compare (`identical`, `ahead`, `behind`, `diverged`);
-  - a bundle prerequisite other than the base;
-  - two refs in the bundle;
+  - a bundle prerequisite other than the base, zero prerequisites, and two;
+  - two refs in the bundle, and a single tag ref;
+  - an incoming head the base isn't an ancestor of;
+  - `.harness/pr-body.md` as a symlink blob, a submodule, missing, over 64 KB, and not UTF-8;
+  - the token never in argv or a URL (asserted on spawned commands);
   - the explicit refspec, and no tags pushed;
   - `fsckObjects` on;
-  - the body stripped of closing keywords and @-mentions, and capped;
+  - the body stripped of every closing keyword form, including `closed`, `fixed`, `resolved` and `owner/repo#n`, and of @-mentions;
   - prefix check, no hooks run, revoke.
 - **Guard:**
   - `PERSON_ONLY.github` in every `tdd off` spelling;
@@ -1141,7 +1200,7 @@ They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch 
 | L4 container and `srt` | Docker Desktop on macOS; Docker on Linux (host uid 1000 and not 1000) | `srt` runs in the unprivileged container, recording whether `enableWeakerNestedSandbox` is needed under Docker's seccomp and AppArmor profiles (I16), and that doctor and status report it; the Stop gate skips its second wrap only on the proved verdict; `.git/hooks`, `.devcontainer` and user settings writes fail; `example.com` is refused; a `--push` run pushes with the App token; a run without push can't reach `github.com` or read the token; the VS Code setting names turn off git config copying and helper forwarding; `git credential fill` returns nothing and `ssh-add -l` fails; the read block's denial rate in `-p` with the sandbox off; `updateRemoteUserUID` and a re-created token folder keep the mount readable; Claude Code starts and finishes a run with the user-config `denyWrite` entries (plugins, settings) in place | P17, P18 |
 | L5 end to end | Container, unattended `-p` | With the done contract on: the run pushes and opens a PR; before approval the App can't merge (`gh api -X PUT …/merge` is refused) or push a tag, a workflow change, or a branch outside `agent/`; it can't post a `harness-verify` status; after the owner approves, the App *can* merge, which is documented; the owner merges through the bypass | Release |
 | L6 protect | Scratch public repo (personal), and one org repo | See below | P6, P7, P8 |
-| L7 CI | Public scratch repo, GitHub-hosted | The agent job runs with the `sysctl` and no key; agent code (Bash, a Stop step and a hook) finds no key or token in env, files or processes; the publish job fetches the base, verifies and fetches the one-ref range bundle, and pushes with the explicit refspec; a bundle with a second ref, a tag or a wrong prerequisite is refused; a hook file planted in the bundle doesn't run; closing keywords in the body are stripped; doctor flags a workflow without `persist-credentials: false` and a `cache:` in the agent job | P13 |
+| L7 CI | Public scratch repo, GitHub-hosted | The agent job runs with the `sysctl` and no key; agent code (Bash, a Stop step and a hook) finds no key or token in env, files or processes; the publish job fetches the base, verifies and fetches the one-ref range bundle, and pushes with the explicit refspec; a bundle with a second ref, a tag or a wrong prerequisite is refused; a hook file planted in the bundle doesn't run; closing keywords in the body are stripped; **`.harness/pr-body.md` committed as a symlink to `~/.claude/.credentials.json` is refused, and nothing from outside git reaches the artifact (R3-I1)**; a `.git/config` change by the agent fails the bundle step; doctor flags a workflow without `persist-credentials: false` and a `cache:` in the agent job | P13 |
 | L8 Windows | Native Windows, if the owner has a machine | An unattended PowerShell call is denied with the message; `off` allows and logs; attended Stop runs unwrapped with the doctor warning; the read block's roots and prompt rate | P1 (with no machine: CI only, and a known limit) |
 
 **LS in full:**
@@ -1168,7 +1227,11 @@ They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch 
 - A personal repo accepts the `User` bypass in `pull_request` mode, and the owner merges their own PR.
 - `gh pr update-branch` by the App needs a new owner approval.
 - `harness-refs` refuses App tags and non-prefix branches.
-- A Dependabot PR and a `gh-pages` deploy still work under it.
+- The App's pushes to `dependabot/x` and `gh-pages` are refused (R3-C1).
+- A Dependabot PR still works under it.
+- A `gh-pages` push with a deploy key from an approved protected environment works, while a `GITHUB_TOKEN` push is refused (R3-I2).
+- `DeployKey` bypass is accepted on a personal repo.
+- A release deleted and recreated on an owner tag, with and without immutable releases (R3-M6).
 - The org Write-role bypass doesn't cover the App.
 - Workflow permissions are set and read back.
 - The App's `repository_dispatch` and release-asset upload work before the doctor fixes, and doctor flags them.
@@ -1184,16 +1247,16 @@ They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch 
 |---|---|---|---|---|
 | P0 | Launch fix (I1, I10, Q4): prior work, shipped in #231 | — | — | done |
 | P0b | Unattended detection follow-up to #231: `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` counts as unattended, plus the headless signal if L0 finds one; documented limit otherwise (R2-I7) | P0 | L0 | ~80 |
-| PS1 | Stop steps and verify runs in one `srt` call (§4.2, §4.3): plan, step runner, absolute literal paths, fail closed, `stop.allowed_domains`, `stop.allow_write` validation, `stop.allow_local`, Windows, "Breaking" note | Done-contract PR 3 | LS | ~360 |
+| PS1 | Stop steps and verify runs in one `srt` call (§4.2, §4.3). PS1 owns the credential-list module and the protected-path source, and P3 and P5 extend them (R3-M7). It covers the plan, the step runner, absolute literal paths, fail closed, `stop.allowed_domains`, `stop.allow_write` validation, `stop.allow_local`, Windows, "Breaking" note | Done-contract PR 3 | LS | ~360 |
 | PS2 | The behavioural preflight (§4.4), the "checks never ran" record, doctor and status Stop-sandbox lines, perf case | PS1 | LS | ~280 |
 | — | *The rest of the done contract (its PRs 4 to 7) lands here. Its PR 6 adds `srt` and the `sysctl` to `harness-verify` (Q5 ruling)* | | | |
 | P1 | Native Windows deny, the `off` logging branch, doctor fix, "Breaking" note (0.3.0) | Done contract | L8 | ~140 |
 | P2 | Guard: `PERSON_ONLY.github` and the §10.5 checks; protect: `.devcontainer/`, CODEOWNERS, token base | P1 | — | ~260 |
-| P3 | Credential and env deny lists (§8.3): `mergeSettings`, `credentials.allow`, restore on update; shared with PS1's `srt` renderer | P2 | L2 | ~240 |
+| P3 | Credential and env deny lists (§8.3), extending PS1's list module: `mergeSettings`, `credentials.allow`, restore on update | P2 | L2 | ~240 |
 | P4 | Ecosystem allowlist: `isolation.network.*`, renderers, `doctor --launch-hosts`, `NETWORK_NOTE`, validation | P3 | — | ~250 |
 | P5 | CODEOWNERS block: init, update, uninstall, kept last | P2 | — | ~180 |
 | P6 | Protect core: the `harness` ruleset, owner bypass, idempotent compare, required check | P5 | L6 | ~340 |
-| P7 | Protect: `harness-refs` (tags, prefix, detected exempt actors and patterns, `github.protect.exempt`), Actions workflow permissions, `github.agent_prefix` | P6 | L6 | ~330 |
+| P7 | Protect: `harness-refs` (tags, prefix, bot actors detected from the default branch, `DeployKey`, `github.protect.exempt`), Actions workflow permissions, `github.agent_prefix`, the R3-I2 and R3-C1 doctor fixes | P6 | L6 | ~350 |
 | P8 | Doctor and status read-back, drift, private without Pro, identity line, release-trigger and §5.7 flags | P7 | L6 | ~340 |
 | P9 | `harness github app create`: manifest, callback, per-repo App, config keys | P2 | — | ~280 |
 | P10 | Key storage: macOS `security -i` with `-T ""`, Secret Service, plain-file refusal, `store-key`, rotation runbook | P9 | L2 | ~230 |
@@ -1217,8 +1280,9 @@ PS1 and PS2 ship in the same release, so no release has the wrap without the beh
   - The owner bypass (C4) lets the owner merge without approval or the check.
   - Push rulesets aren't used (R§5.1).
 - **Approval authorizes the App's merge.** Once the owner approves and the check passes, the App can merge.
-- **Contents write beyond refs.** `repository_dispatch` and release assets are open to the App; doctor flags them, and immutable releases help where the plan offers them (§5.7).
-- **`harness-refs` exemptions.** Detected bots and patterns are exempt, so the App can push a branch named like an exempt pattern (`gh-pages`, `dependabot/**`); doctor lists the exemptions. An undetected bot is refused until it is added to `github.protect.exempt`.
+- **Contents write beyond refs.** The App can fire `repository_dispatch` workflows at will, and can change release assets or delete and recreate a release on an existing tag. Doctor flags these, and immutable releases help where the plan offers them (§5.7).
+- **`harness-refs` exemptions** are by app identity only. An undetected bot, or self-hosted Renovate, is refused until its actor is added to `github.protect.exempt`. Workflows that push protected refs with `GITHUB_TOKEN` (`gh-pages`, release-please tags) stop working until they move to a deploy key in a protected environment (§5.3). Doctor lists them.
+- **Deploy keys are bypass actors.** Any deploy key with write access on the repo bypasses `harness-refs`, so a write deploy key must live only in a protected environment with required reviewers. Doctor lists the repo's write deploy keys.
 - **Personal repos.** Per-path required reviewers are unavailable, so code-owner review stands in. CODEOWNERS silently skips owners without write access; doctor reports it.
 - **The token reaches the agent** on push runs: one repo, one hour, Contents and Pull requests write, branches under `agent/` only. It can still overwrite or delete its own `agent/` branches and act on any PR.
 - **The App key** (§2.4):
@@ -1233,7 +1297,7 @@ PS1 and PS2 ship in the same release, so no release has the wrap without the beh
   - I12 holds only against an agent with no unsandboxed write: an `srt` shim written against harness's preflight, on a user-writable `PATH`, defeats it in attended sandbox-off sessions;
   - no loopback unless `stop.allow_local`; on Linux, host services are unreachable from steps whatever the setting;
   - attended native Windows is an exception to I12, for the owner to acknowledge;
-  - verify from inside another fence can't wrap and exits not done, so the person runs `! harness verify`;
+  - verify from inside another fence can't wrap and exits not done, so the person runs it in their own terminal or with `!` (the rev 3 Q1 ruling);
   - attended native Windows runs them unwrapped.
 - **`srt`:** a beta, the only fence in the container (I14), fencing only its own process tree, possibly in its weaker mode under Docker (I16, reported), and hostname-only.
 - **Bind mount.** Files outside the protected paths reach the host (§7.6).
@@ -1269,21 +1333,16 @@ PS1 and PS2 ship in the same release, so no release has the wrap without the beh
 18. VS Code's askpass and IPC variables are denied in attended sessions too.
 19. Browser profile folders are left off the credential list; the read block covers them.
 20. No command assembles the launch line. `--env` and `doctor --launch-hosts` print parts.
-21. `harness-refs` exemptions come from detection (`dependabot.yml`, Renovate config, workflows that push), with ids read from `GET /apps/<slug>`, plus `github.protect.exempt`.
+21. `harness-refs` exempts bots by app identity only, detected from the default branch (`dependabot.yml`, Renovate config), with ids from `GET /apps/<slug>`, plus `github.protect.exempt` actors. Deploy keys are bypass actors, for workflows that push protected refs from a protected environment.
 22. Publish trusts no input from the agent job: the base is checked through the compare API, and the bundle must have exactly that prerequisite and one ref.
 23. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` in a hook's environment counts as unattended, even in a session a person watches.
+24. The PR body is committed as `.harness/pr-body.md` on the agent branch, so it is in the PR diff and is overwritten by each later PR.
 
 ## 16. Open questions
 
-Revision 2's questions are closed:
-- Q1 by I16;
-- Q2 by I17;
-- Q3 by I18;
-- Q4 and Q5 by the coordinator's rulings.
+None. Revision 2's Q1 to Q5 were closed by I16, I17, I18 and the Q4 and Q5 rulings.
 
-One is still open:
-
-1. **Agent-run verify with the sandbox on (§4.2).** The wrap can't nest inside Claude Code's sandbox, and R2-I1 rules out skipping it on a probe. So when the agent runs `harness verify` (the `/harness:verify` skill) from sandboxed Bash, verify exits "not done" and asks the person to run `! harness verify`. This changes the done contract's attended flow (done contract §4.4: "the agent or the person runs it"). **Recommended:** accept it. The skill tells the person to run `! harness verify`, and the Stop gate, which runs outside the sandbox, still checks evidence on its own. The alternative, letting agent-run verify execute inside Claude Code's sandbox without `srt`, reopens R2-I1.
+Revision 3's Q1 (agent-run verify with the sandbox on) is ruled: accept it. An agent-run `harness verify` inside the sandbox exits "not done" and asks the person to run it. This matches done contract §4.4, where the person runs verify. The cost if this is wrong is one extra step for the person in attended sessions (§4.2).
 
 ## 17. Not in scope
 
@@ -1342,7 +1401,7 @@ One is still open:
 | R2-I3 degraded `srt` | Warnings fail; behavioural checks (§4.4); LS |
 | R2-I4 publish job | Base output and compare check, bundle checks, explicit refspec, body path, `fetch-depth: 0` (§6.6); e2e, L7 |
 | R2-I5 Contents write | §5.7, §2.3, §14; L6 |
-| R2-I6 bots | Exempt actors and patterns, `github.protect.exempt` (§5.3); L6 Dependabot |
+| R2-I6 bots | Superseded by R3-C1 and R3-I2 (§5.3) |
 | R2-I7 detection | §10.5 step 2, P0b, L0, §14 |
 | R2-I8 settings re-read, relative paths | One `srt` call, absolute literal paths (§4.2, §4.3) |
 | R2-I9 `allow_write` | Validation list (§10.1) |
@@ -1355,3 +1414,19 @@ One is still open:
 | R2-M7 publish hardening | §6.6 (install first, artifact pin, `fsckObjects`, body sanitising) |
 | R2-M8 cache poisoning | §6.6 doctor flag |
 | R2-M9 org bypass | §5.2, §10.1 |
+
+### Revision 3 review
+
+| Finding | Fix |
+|---|---|
+| R3-C1 bot branch patterns | Patterns removed; bots exempt by app identity only, detected from the default branch; auto-merge keyed on the PR author is a doctor fix (§5.3, §10.1); L6 |
+| R3-I1 post-agent paths | Body from the bundle tree, mode and size checked; no filesystem copy; hostile-workspace rule, config and hooks check before the bundle step (§6.6); L7 |
+| R3-I2 `github-actions` bypass | Removed; deploy keys in protected environments; `contents: write` workflows on agent-reachable events are a doctor fix (§5.3, §14); L6 |
+| R3-M1 bundle checks | Exactly one prerequisite, ancestor check, `^{commit}`, token through `GIT_CONFIG_*` only (§6.6) |
+| R3-M2 closing keywords | Full keyword list and `owner/repo#n` (§6.6) |
+| R3-M3 forged result lines | Strict line checking; plan and settings on `denyRead` (§4.2, §4.3) |
+| R3-M4 `!` under the scrub | Message adds the person's own terminal (§4.2, §11.2) |
+| R3-M5 scrub surprise | SessionStart note (§10.5) |
+| R3-M6 release recreate, dispatch | §5.7, §14; L6 |
+| R3-M7 PS1 module ownership | §13 |
+| R3-M8 detection source | Default branch through the API (§5.3) |

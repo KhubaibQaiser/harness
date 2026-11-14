@@ -100,6 +100,7 @@ test('managed layers, unreadable layers, the repo mirror and match-all matchers'
   expect(x({ managed: { allowManagedHooksOnly: true } }), 'managed-only, wiring not managed').toBe(1);
   expect(x({ managed: { allowManagedHooksOnly: true, ...WIRED } }), 'managed-only, wiring managed').toBe(0);
   expect(x({ managed: WIRED, settings: {} }), 'managed wiring counts').toBe(0);
+  expect(x({ managed: { allowManagedHooksOnly: true }, dropIn: { allowManagedHooksOnly: false }, settings: WIRED }), 'a winning drop-in unsets managed-only').toBe(0);
   expect(x({ rawLocal: '{ nope' }), 'malformed local layer').toBe(1);
   // The repo's own settings name a wired dir as the user layer: Claude Code ignores that, so must the check.
   const m = setup({ mirror: true, user: WIRED, settings: { env: { HARNESS_CLAUDE_CONFIG_DIR: '/x' } } });

@@ -927,3 +927,62 @@ test('an invalid decision makes doctor exit 1', async () => {
 test('no decisions folder: doctor prints the ok line', async () => {
   expect(run(await installed()).out).toContain('ok no team decisions yet');
 });
+
+test('doctor: an unreadable managed file is a note, a missing one is not', async () => {
+  const root = await installed();
+  const home = mkdtempSync(join(tmpdir(), 'h-home-'));
+  const managed = join(home, 'managed-settings.json');
+  const go = () => run(root, { path: bin('npm'), platform: 'darwin', home, managed });
+  expect(go().out).not.toMatch(/can't be read/);
+  writeFileSync(managed, 'not json');
+  const r = go();
+  expect(r.out).toContain(`note managed settings ${managed.replace(/\\/g, "/")} exists but can't be read or parsed; Claude Code skips it, so its policy is not applied. Ask your admin to fix it.`);
+  expect(r.code).toBe(0);
+  writeFileSync(managed, '{}');
+  const dropin = join(home, 'managed-settings.d', '10-x.json');
+  mkdirSync(join(home, 'managed-settings.d'));
+  writeFileSync(dropin, '{oops');
+  expect(go().out).toContain(`managed settings ${dropin.replace(/\\/g, "/")} exists but can't be read or parsed`);
+});
+
+test('doctor: allowManagedHooksOnly without harness hooks in managed settings is a fix', async () => {
+  const root = await installed();
+  const home = mkdtempSync(join(tmpdir(), 'h-home-'));
+  const managed = join(home, 'managed-settings.json');
+  const go = () => run(root, { path: bin('npm'), platform: 'darwin', home, managed });
+  writeFileSync(managed, JSON.stringify({ allowManagedHooksOnly: false }));
+  expect(go().out).not.toMatch(/allowManagedHooksOnly/);
+  writeFileSync(managed, JSON.stringify({ allowManagedHooksOnly: true }));
+  const r = go();
+  expect(r.out).toContain('fix managed settings set allowManagedHooksOnly, so the harness hooks for PreToolUse, PostToolUse, PostToolUseFailure, UserPromptSubmit, Stop, SessionStart, SessionEnd, ConfigChange (guards, ledger, Stop gate) are dropped: ask your admin to add the harness hooks to managed settings, or unset allowManagedHooksOnly');
+  expect(r.code).toBe(1);
+  // The same hooks the project carries, now in a managed layer (a drop-in here), keep it healthy.
+  const hooks = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).hooks;
+  mkdirSync(join(home, 'managed-settings.d'));
+  writeFileSync(join(home, 'managed-settings.d', '10-h.json'), JSON.stringify({ hooks }));
+  expect(go().out).not.toMatch(/allowManagedHooksOnly/);
+});
+
+test('doctor: allowManagedHooksOnly follows precedence, names the missing events, and shows with an invalid config', async () => {
+  const root = await installed();
+  const home = mkdtempSync(join(tmpdir(), 'h-home-'));
+  const managed = join(home, 'managed-settings.json');
+  const dir = join(home, 'managed-settings.d');
+  mkdirSync(dir);
+  const go = () => run(root, { path: bin('npm'), platform: 'darwin', home, managed });
+  writeFileSync(managed, JSON.stringify({ allowManagedHooksOnly: true }));
+  writeFileSync(join(dir, '10-off.json'), JSON.stringify({ allowManagedHooksOnly: false })); // the drop-in wins
+  expect(go().out).not.toMatch(/allowManagedHooksOnly/);
+  // One event missing from managed settings: only it is named.
+  const hooks = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).hooks;
+  delete hooks.Stop;
+  writeFileSync(join(dir, '10-off.json'), JSON.stringify({ allowManagedHooksOnly: true, hooks }));
+  expect(go().out).toMatch(/^fix managed settings set allowManagedHooksOnly, so the harness hooks for Stop \(guards/m);
+  // Not behind the invalid-config return.
+  setConfig(root, (t) => t + '\nbogus_key: 1\n');
+  const r = go();
+  expect(r.out).toMatch(/is invalid/);
+  expect(r.out).toMatch(/^fix managed settings set allowManagedHooksOnly/m);
+  writeFileSync(managed, '[]');
+  expect(go().out).toContain(`note managed settings ${managed.replace(/\\/g, "/")} exists but can't be read or parsed`);
+});

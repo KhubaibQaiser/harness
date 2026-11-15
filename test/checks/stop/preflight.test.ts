@@ -1,3 +1,4 @@
+import { createServer, type Server, type Socket } from 'node:net';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,10 +9,11 @@ import type { ResultLine } from '../../../src/checks/stop/steps.js';
 
 const N = 'a'.repeat(32);
 const pf = { writeCanary: '/r/.harness/state/c', readCanary: '/tmp/rc', socket: '/tmp/s.sock', linux: false };
-const boom = () => {
-  throw new Error('blocked');
+const err = (code?: string, m = 'blocked'): Error => Object.assign(new Error(m), { code });
+const boom = (code = 'EPERM') => {
+  throw err(code);
 };
-const fenced = (): Probes => ({ write: boom, read: boom, connect: async () => boom(), https: async () => boom(), bwrap: () => 1 });
+const fenced = (): Probes => ({ write: () => boom(), read: () => boom(), connect: async () => boom(), https: async () => boom('ENOTFOUND'), bwrap: () => 1 });
 const collect = async (p: typeof pf, probes: Probes) => {
   const lines: ResultLine[] = [];
   const ok = await preflight(p, probes, (l) => lines.push(l), N);
@@ -48,8 +50,35 @@ test('detail is the first line, escaped and capped', async () => {
   expect(d.length).toBe(200);
 });
 
-test('bwrap null or non-zero is ok; user namespace is skipped off linux', async () => {
-  expect((await collect({ ...pf, linux: true }, { ...fenced(), bwrap: () => null })).ok).toBe(true);
+test.each([
+  ['write canary', 'write', 'ENOENT'],
+  ['write canary', 'write', 'EISDIR'],
+  ['read canary', 'read', 'ENOENT'],
+  ['unix socket', 'connect', 'ENOENT'],
+  ['unix socket', 'connect', 'ECONNREFUSED'],
+  ['network', 'https', 'ETIMEDOUT'],
+] as const)('%s: %s probe error %s is not a deny, so it fails with the code', async (name, probe, code) => {
+  const over = { [probe]: probe === 'connect' || probe === 'https' ? async () => boom(code) : () => boom(code) } as Partial<Probes>;
+  const { ok, lines } = await collect(pf, { ...fenced(), ...over });
+  expect(ok).toBe(false);
+  expect(lines.at(-1)).toMatchObject({ name, ok: false });
+  expect((lines.at(-1) as { detail: string }).detail).toContain(`${code}: `);
+});
+
+test('a TypeError fails the check; EROFS and EACCES deny a write; an empty read is a deny', async () => {
+  const te = () => {
+    throw new TypeError('bug');
+  };
+  expect((await collect(pf, { ...fenced(), write: te })).lines.at(-1)).toMatchObject({ ok: false, detail: 'bug' });
+  expect((await collect(pf, { ...fenced(), write: () => boom('EROFS') })).ok).toBe(true);
+  expect((await collect(pf, { ...fenced(), write: () => boom('EACCES') })).ok).toBe(true);
+  expect((await collect(pf, { ...fenced(), read: () => '' })).ok).toBe(true);
+  expect((await collect(pf, { ...fenced(), https: async () => boom('HARNESS_TIMEOUT') })).ok).toBe(true);
+});
+
+test('bwrap null or a thrown spawn error fails; non-zero is ok; user namespace is skipped off linux', async () => {
+  expect((await collect({ ...pf, linux: true }, { ...fenced(), bwrap: () => null })).lines.at(-1)).toMatchObject({ ok: false, detail: 'bwrap: no status' });
+  expect((await collect({ ...pf, linux: true }, { ...fenced(), bwrap: () => boom('BWRAP') })).ok).toBe(false);
   const bwrap = vi.fn(() => 0);
   expect((await collect(pf, { ...fenced(), bwrap })).ok).toBe(true);
   expect(bwrap).not.toHaveBeenCalled();
@@ -101,4 +130,47 @@ test('a shim that runs the command unwrapped fails the preflight', async () => {
   expect(readFileSync(canary, 'utf8')).toBe('x');
   expect(https).not.toHaveBeenCalled();
   expect(exec).not.toHaveBeenCalled();
+});
+
+// Real probes, loopback and temp files only.
+const tmp = () => mkdtempSync(join(tmpdir(), 'h-pf-rp-'));
+const listen = (s: Server, where: string | number) => new Promise<void>((r) => s.listen(where as never, r));
+const unix = test.skipIf(process.platform === 'win32');
+
+test('real read probe: content returns it, an empty file returns ""', () => {
+  const f = join(tmp(), 'f');
+  writeFileSync(f, 'secret');
+  expect(realProbes.read(f)).toBe('secret');
+  writeFileSync(f, '');
+  expect(realProbes.read(f)).toBe('');
+});
+
+unix('real connect probe: a listener leaks, a missing path fails with ENOENT', async () => {
+  const sock = join(tmp(), 's');
+  const srv = createServer((c) => c.destroy());
+  await listen(srv, sock);
+  await expect(realProbes.connect(sock)).resolves.toBeUndefined();
+  srv.close();
+  await expect(realProbes.connect(join(tmp(), 'none'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+test('real https probe: an accepted but silent TCP connection counts as reached; a closed port is ECONNREFUSED', async () => {
+  const socks: Socket[] = [];
+  const srv = createServer((c) => socks.push(c));
+  await listen(srv, 0);
+  const port = (srv.address() as { port: number }).port;
+  await expect(realProbes.https(`https://127.0.0.1:${port}`)).resolves.toBeUndefined();
+  socks.forEach((c) => c.destroy());
+  await new Promise((r) => srv.close(r));
+  await expect(realProbes.https(`https://127.0.0.1:${port}`)).rejects.toMatchObject({ code: 'ECONNREFUSED' });
+});
+
+test('real bwrap probe with an empty PATH throws instead of passing', () => {
+  const p = process.env.PATH;
+  process.env.PATH = '';
+  try {
+    expect(() => realProbes.bwrap()).toThrow(/bwrap: ENOENT/);
+  } finally {
+    process.env.PATH = p;
+  }
 });

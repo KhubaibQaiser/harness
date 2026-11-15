@@ -32,6 +32,7 @@ export interface SessionState {
   decisionNudged?: true; // the team-decision nudge was shown this session
   decisionsWarned?: string[]; // team decisions the Stop warning already named this session
   rememberAdded?: true; // a harness remember add ran this session
+  doneClaimAttempts?: number; // blocks by the done-claim Stop check since the last clean claim
 }
 
 export const isSafeSessionId = (id: string): boolean => /^[A-Za-z0-9._-]+$/.test(id) && id !== '.' && id !== '..';

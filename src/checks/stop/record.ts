@@ -38,7 +38,9 @@ export function writeStopRecord(root: string, r: StopSandboxRecord): void {
       warn('stop record', new Error('state folder is not a real directory'));
       return;
     }
-    writeAtomic(join(root, STOP_SANDBOX_REL), JSON.stringify(r));
+    // Caps keep a written record under the read limit.
+    const checks = Object.fromEntries(Object.entries(r.checks).map(([k, v]) => [k, v.slice(0, 200)]));
+    writeAtomic(join(root, STOP_SANDBOX_REL), JSON.stringify({ ...r, checks, ...(r.reason === undefined ? {} : { reason: r.reason.slice(0, 500) }) }));
   } catch (e) {
     warn('stop record', e);
   }

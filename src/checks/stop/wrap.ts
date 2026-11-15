@@ -225,7 +225,7 @@ const attempt = async (d: WrapDeps, got: Seen, steps: Parameters<RunSteps>[0], d
     const expected: Expected[] = [...PREFLIGHT_ORDER(pre.plan.linux).map((name): Expected => ({ kind: 'check', name })), ...steps.map((s): Expected => ({ kind: 'step', label: s.label }))];
     const parsed = parseResults(r.stdout ?? '', nonce, expected, seal);
     if ('error' in parsed) return fail('result lines', parsed.error);
-    for (const l of parsed.lines) if (l.kind === 'check') got.checks[l.name] = l.ok ? 'ok' : first(l.detail ?? 'failed');
+    for (const l of parsed.lines) if (l.kind === 'check') got.checks[l.name] = l.ok ? 'ok' : esc((l.detail ?? 'failed').trim().split('\n')[0]!.slice(0, 200)).slice(0, 200);
     const results: StepResult[] = parsed.lines.flatMap((l) => (l.kind === 'step' ? [{ label: l.label, status: l.status, timedOut: l.timedOut, ms: l.ms, output: l.output ?? '' }] : []));
     const bad = parsed.lines.find((l) => l.kind === 'check' && !l.ok);
     if (bad?.kind === 'check') return fail(bad.name, bad.detail ?? 'failed');

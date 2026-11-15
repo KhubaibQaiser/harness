@@ -147,7 +147,11 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
     if (attempts > max) {
       setAttempts(0);
       log('stop-gave-up', never);
-      if (never) writeStopRecord(root, { srt: null, checks: {}, ...readStopRecord(root), ts: new Date().toISOString(), outcome: 'never-ran', reason: never });
+      if (never) {
+        const old = readStopRecord(root);
+        const why = old?.outcome === 'unavailable' && old.reason ? `${never}: ${old.reason}` : never; // keep which check failed
+        writeStopRecord(root, { srt: null, checks: {}, ...old, ts: new Date().toISOString(), outcome: 'never-ran', reason: why });
+      }
       return done(allow);
     }
     setAttempts(attempts);

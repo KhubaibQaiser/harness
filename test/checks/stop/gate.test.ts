@@ -727,7 +727,7 @@ test.skipIf(winSkip)('attempts exhausted on srt unavailable: allow, stop-gave-up
   const s = setup({ yaml: 'stop:\n  max_attempts: 1\n', attempts: 1 });
   expect(await wrapped(s)(s.exec(SRC))).toEqual({ kind: 'allow' });
   expect(stopEvents(s.root, 'stop-gave-up').map((e) => e.reason)).toEqual(['checks never ran (srt unavailable)']);
-  expect(readStopRecord(s.root)).toMatchObject({ outcome: 'never-ran', reason: 'checks never ran (srt unavailable)', srt: null });
+  expect(readStopRecord(s.root)).toMatchObject({ outcome: 'never-ran', reason: 'checks never ran (srt unavailable): missing', srt: null });
 });
 
 test('native Windows unattended give-up uses its own never-ran reason', async () => {
@@ -735,7 +735,7 @@ test('native Windows unattended give-up uses its own never-ran reason', async ()
   Object.assign(s.ctx, { platform: 'win32', unattended: true });
   expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'allow' });
   expect(stopEvents(s.root, 'stop-gave-up').map((e) => e.reason)).toEqual(['checks never ran (native Windows unattended)']);
-  expect(readStopRecord(s.root)?.outcome).toBe('never-ran');
+  expect(readStopRecord(s.root)).toMatchObject({ outcome: 'never-ran', reason: 'checks never ran (native Windows unattended)' });
 });
 
 test('step-failure give-up keeps the old event with no reason', async () => {
@@ -743,4 +743,26 @@ test('step-failure give-up keeps the old event with no reason', async () => {
   expect(await runStop(s.ctx, s.exec(SRC, 'lint'))).toEqual({ kind: 'allow' });
   expect(stopEvents(s.root, 'stop-gave-up')).toEqual([expect.not.objectContaining({ reason: expect.anything() })]);
   expect(readStopRecord(s.root)).toBeNull();
+});
+
+test('a never-ran rewrite after an earlier never-ran record does not chain reasons', async () => {
+  const s = setup({ attempts: 3 });
+  Object.assign(s.ctx, { platform: 'win32', unattended: true });
+  for (let i = 0; i < 2; i++) await wrapped(s, NOPROBE)(s.exec(SRC)), (s.ctx.state = { ...s.ctx.state, stopAttempts: 3 });
+  expect(readStopRecord(s.root)?.reason).toBe('checks never ran (native Windows unattended)');
+});
+
+test('a record write that fails warns and never changes the decision', async () => {
+  const a = setup({ attempts: 3 });
+  const b = setup({ attempts: 3 });
+  for (const s of [a, b]) Object.assign(s.ctx, { platform: 'win32', unattended: true });
+  mkdirSync(join(b.root, '.harness/state/stop-sandbox.json'), { recursive: true }); // the record path is a directory: the rename fails
+  const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    expect(await wrapped(b, NOPROBE)(b.exec(SRC))).toEqual(await wrapped(a, NOPROBE)(a.exec(SRC)));
+    expect(spy.mock.calls.some((c) => String(c[0]).includes('stop record'))).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
+  expect(stopEvents(b.root, 'stop-gave-up')).toHaveLength(1);
 });

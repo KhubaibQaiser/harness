@@ -43,6 +43,12 @@ test('a path named in a script is test config, in either side of the diff', () =
   expect(findings({ 'package.json': sc('tests/ci.ts'), 'tests/ci.ts': 'a' }, { 'package.json': sc('tests/ci.ts'), 'tests/ci.ts': 'b' })).toEqual(['tests/ci.ts: test config changed']);
   expect(findings({ 'package.json': sc('tests/ci.ts'), 'src/x.ts': 'a' }, { 'package.json': sc('tests/ci.ts'), 'src/x.ts': 'b' })).toEqual([]);
 });
+test('a path named in a nested package.json script is test config, resolved against its folder and the root', () => {
+  const sc = JSON.stringify({ scripts: { test: 'vitest --config ci.config.ts' } });
+  expect(findings({ 'sub/package.json': sc, 'sub/ci.config.ts': 'a' }, { 'sub/package.json': sc, 'sub/ci.config.ts': 'b' })).toEqual(['sub/ci.config.ts: test config changed']);
+  expect(findings({ 'sub/package.json': sc, 'ci.config.ts': 'a' }, { 'sub/package.json': sc, 'ci.config.ts': 'b' })).toEqual(['ci.config.ts: test config changed']);
+  expect(findings({ 'sub/package.json': sc, 'other/ci.config.ts': 'a' }, { 'sub/package.json': sc, 'other/ci.config.ts': 'b' })).toEqual([]);
+});
 test('Yarn and other tool files and configs are findings at any depth', () => {
   const names = ['.pnp.cjs', 'sub/.pnp.loader.mjs', '.yarn/releases/yarn-4.cjs', 'babel.config.js', '.babelrc.json', '.mocharc.yml', 'turbo.json', 'nx.json', 'tsconfig.json', 'sub/tsconfig.test.json', '.pnpmfile.cjs', 'pnpm-workspace.yaml'];
   const f = findings({ 'a.txt': '1' }, Object.fromEntries(names.map((n) => [n, 'x'])));

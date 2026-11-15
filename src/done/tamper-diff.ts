@@ -72,11 +72,17 @@ export function diffTamper(root: string, git: Exec, from: string, to: string, o:
     if (!m || !rel) throw new Error(`tamper check: can't parse diff entry ${esc(parts[i]!)} ${esc(rel ?? '')}`);
     changed.push({ status: m[3]!, rel, link: [m[1]!, m[2]!].some((x) => x === '120000' || x === '160000') });
   }
-  const exists = (rev: string, rel: string) => g(`ls-tree ${rel}`, ['ls-tree', '-z', '--name-only', '--end-of-options', rev, '--', rel]) !== '';
-  // Paths a package.json script names (`--config tests/ci.ts`): the root one on both sides, plus every package.json in the diff.
+  // Paths a package.json script names (`--config ci.config.ts`): every package.json on both sides, resolved against its own folder and the root.
   const named = new Set<string>();
-  const addWords = (p: Pkg) => Object.values(p.scripts ?? {}).forEach((v) => typeof v === 'string' && v.split(/[\s"'`;&|()<>=]+/).forEach((w) => named.add(w.replace(/^\.\//, ''))));
-  for (const rev of [from, to]) if (exists(rev, 'package.json')) addWords(parse(blob(rev, 'package.json'), 'package.json'));
+  const addWords = (p: Pkg, dir: string) => Object.values(p.scripts ?? {}).forEach((v) => typeof v === 'string' && v.split(/[\s"'`;&|()<>=]+/).forEach((w) => {
+    const word = w.replace(/^\.\//, '');
+    named.add(word);
+    named.add(dir + word);
+  }));
+  for (const rev of [from, to]) {
+    const all = g('listing package.json files', ['ls-tree', '-r', '-z', '--name-only', '--end-of-options', rev]).split('\0');
+    for (const f of all) if (PKG.test(f) && !f.split('/').includes('node_modules')) addWords(parse(blob(rev, f), f), f.slice(0, f.length - 'package.json'.length));
+  }
   const findings: string[] = [];
   const oc = o.ownContract;
   for (const { status, rel, link } of changed) {

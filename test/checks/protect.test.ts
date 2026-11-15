@@ -150,9 +150,10 @@ describe('branch switch to a ref without the harness hooks (real repo)', () => {
   };
   const SW = (ref: string) => `Switching to ${ref} removes the harness hooks (no .harness/hooks/dispatch.mjs there). Confirm the switch.`;
 
-  test.each(['git checkout old', 'git switch old', 'git checkout -b x old', 'git checkout -B x old', 'git switch -c x old', 'git switch --detach old', 'git -C . switch old', 'git --no-pager checkout old', 'cd . && git switch old'])('%s asks', (c) => {
+  test.each(['git checkout old', 'git switch old', 'git checkout -b x old', 'git checkout -B x old', 'git switch -c x old', 'git switch --detach old', 'git -C . switch old', 'git --no-pager checkout old'])('%s asks', (c) => {
     expect(cmd(c)).toEqual({ kind: 'ask', reason: SW('old'), check: 'protect' });
   });
+  test('a cd before the switch asks: the cd may change the repo it runs in (round 4, N6)', () => expect(cmd('cd . && git switch old').kind).toBe('ask'));
   test('a sha without the hooks asks', () => expect(cmd(`git checkout ${oldSha}`).reason).toBe(SW(oldSha)));
   test.each(['git checkout main', 'git switch main', 'git checkout -b x', 'git switch -c x', 'git switch -c x main', 'git checkout -- a.ts', 'git checkout old a.ts', 'git checkout old -- a.ts', 'git checkout a.ts', 'git status'])('%s is allowed', (c) => {
     expect(cmd(c).kind).toBe('allow');

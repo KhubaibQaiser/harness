@@ -1,6 +1,6 @@
 // Git commands that move the worktree to another ref can change protected harness files without a direct write.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { beforeAll, describe, expect, test } from 'vitest';
@@ -109,7 +109,8 @@ describe('git ref moves that change protected harness files', () => {
     const c = 'git checkout src-only';
     expect(run(`git update-ref refs/heads/src-only ${cfgCommit} && ${c}`)).toEqual({ kind: 'ask', reason: `\`${c}\` follows another command on the same line, which may move refs or the index first, so harness can't check what it changes. Confirm it.`, check: 'protect' });
     expect(run(`./forge.sh; ${c}`, true)).toEqual({ kind: 'deny', reason: `\`${c}\` follows another command on the same line, which may move refs or the index first, so harness can't check what it changes. Run the git command on its own so harness can check what it changes.`, check: 'protect' });
-    expect(run(`cd . && git status && ${c}`)).toEqual({ kind: 'allow' });
+    expect(run(`git status && ${c}`)).toEqual({ kind: 'allow' });
+    expect(run(`cd . && git status && ${c}`).kind).toBe('ask'); // round 4, N6: a cd may change the repo it runs in
   });
   test('git checkout - is the previous branch', () => {
     g('checkout', '-q', 'other');
@@ -227,5 +228,82 @@ describe('fix round 2', () => {
     expect(run(c, false, env)).toEqual({ kind: 'ask', reason: `${why} Confirm it.`, check: 'protect' });
     expect(run(c, true, env)).toEqual({ kind: 'deny', reason: `${why} Unattended runs can't change harness's protected files through git; the person runs it.`, check: 'protect' });
     expect(run('git status', false, env)).toEqual({ kind: 'allow' });
+  });
+});
+
+describe('fix round 4: words read the way the shell and git read them', () => {
+  const both = (c: string, cwd = repo) => {
+    const at = (unattended: boolean) => {
+      const config = loadConfig('/nonexistent-harness-root').config;
+      const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd, tool_name: 'Bash', tool_input: { command: c } };
+      return protect.run({ input, root: repo, config, env: {}, unattended } as unknown as Ctx) as { kind: string };
+    };
+    expect(at(false).kind, c).toBe('ask');
+    expect(at(true).kind, c).toBe('deny');
+  };
+  test.each([
+    // N1: quotes and backslashes inside a word
+    "git che''ckout other", "git sw''itch other", "git mer''ge other", "git re''set --hard other", "g''it che''ckout other",
+    "git checkout o''ther", 'git checkout ot"he"r', "git checkout 'oth'er", 'git che\\ckout other',
+    // N2: a value stuck inside a cluster
+    'git checkout -bc other', 'git checkout -Bb other', 'git checkout -fbc other', 'git switch -cb other',
+    // N3: abbreviated long options
+    'git reset --har other', 'git reset --ha other', 'git reset --kee other', "git restore --sour=other '*.yaml'",
+    'git restore -s other --pathspec-from-f=list.txt', 'git checkout --orp x other', 'git rebase --ont=other src-only',
+    // N4: a restore cluster that carries -s
+    "git restore -Ws other '*.yaml'", "git restore -SWs other '*.yaml'",
+    // N5: a backslash-newline inside the subcommand
+    'git check\\\nout other',
+    // N8: an orphan branch starts from the empty tree
+    'git switch --orphan x', 'git checkout --orphan x',
+    // found while fixing: a redirect, a comment, an unknown option, git by path, a substitution in quotes, git $SUB
+    'git checkout other >/dev/null', 'git checkout other 2>&1', 'git checkout other # x', 'git checkout --bogus other', '/usr/bin/git checkout other',
+    'echo "$(git checkout other)"', 'git $SUB other', 'git checkout oth*', 'git commit -m "$(git checkout other)"',
+  ])('%s asks attended and denies unattended', (c) => both(c));
+  test('N3: checkout-index --al after an index-only read-tree', () => {
+    g('read-tree', 'other');
+    try { both('git checkout-index -f --al'); } finally { g('reset', '-q'); }
+  });
+  test('stash -k puts a forged index entry in the worktree: it asks', () => {
+    const blob = spawnSync('git', ['hash-object', '-w', '--stdin'], { cwd: repo, input: 'sandbox: off\n', encoding: 'utf8' }).stdout.trim();
+    g('update-index', '--cacheinfo', `100644,${blob},${CFG}`);
+    try { both('git stash -k'); both('git stash push --keep-i'); } finally { g('reset', '-q'); }
+  });
+  test('N6: a cd, pushd or popd before a mover fails closed', () => {
+    const n = join(repo, 'vendor/n');
+    mkdirSync(join(n, '.harness/hooks'), { recursive: true });
+    writeFileSync(join(n, '.harness/hooks/dispatch.mjs'), '');
+    const gn = (...a: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: n, encoding: 'utf8' });
+    gn('init', '-q', '-b', 'main'); gn('add', '.'); gn('commit', '-q', '-m', 'n'); gn('branch', 'other');
+    try {
+      for (const c of ['cd ../.. && git checkout other', `cd ${repo} && git checkout other`, 'pushd ../.. && git checkout other', 'popd && git checkout other']) both(c, n);
+    } finally { rmSync(join(repo, 'vendor'), { recursive: true, force: true }); }
+  });
+  test('N7: a -C folder protect cannot resolve fails closed, alias lookup included', () => {
+    g('config', 'alias.co', 'checkout');
+    try {
+      for (const c of ['git -C $(pwd) co other', 'git -C "$PWD" co other', "git -C .'' co other", 'git -C nope co other', 'git -C `pwd` co other']) both(c);
+    } finally { g('config', '--unset', 'alias.co'); }
+  });
+  test.each(['GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS', 'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS', 'GIT_CEILING_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE', 'GIT_CONFIG_PARAMETERS'])('N9: %s in the hook environment fails a ref move closed', (k) => {
+    expect(run('git checkout src-only', false, { [k]: '1' }).kind).toBe('ask');
+    expect(run('git checkout src-only', true, { [k]: '1' }).kind).toBe('deny');
+  });
+  test('N11: worktree add into a protected path is denied like a direct write; one protect cannot resolve fails closed', () => {
+    for (const c of ['git worktree add .harness/hooks/wt other', 'git worktree add -b y .harness/state/wt other', 'git -C .harness worktree add hooks/wt other']) {
+      expect(run(c), c).toEqual({ kind: 'deny', reason: 'Harness files and Claude settings are changed by a person, not the agent.', check: 'protect' });
+    }
+    both('git worktree add $P other');
+    both('git worktree add --bogus wt other');
+    expect(run('git worktree add ../wt-x src-only')).toEqual({ kind: 'allow' });
+  });
+  test.each([
+    'git checkout src-only', "git che''ckout src-only", 'git checkout -bc src-only', 'git reset --hard HEAD', 'git reset --har HEAD', 'git restore --source=other src/x.ts',
+    "git restore --sour=src-only 'src/*'", 'git rebase --ont=src-only main', 'git checkout src-only >/dev/null', '/usr/bin/git checkout src-only',
+    'git --no-pager checkout src-only', 'git -C . checkout src-only', 'git checkout --no-guess src-only', 'git merge --no-ff --no-edit src-only',
+    'git commit -m "$(cat <<\'EOF\'\nfix: git checkout other asks\nEOF\n)"', 'git stash -k',
+  ])('%s is allowed', (c) => {
+    expect(run(c), c).toEqual({ kind: 'allow' });
+    expect(run(c, true), c).toEqual({ kind: 'allow' });
   });
 });

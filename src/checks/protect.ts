@@ -13,6 +13,7 @@ import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinProg
 import { SAFE_DIFF, SAFE_GIT } from '../core/git-safe.js';
 import { type OptTable, readOptions, valuesOf } from '../core/options.js';
 import { globGuardAsk, guardedPaths, plainHeads, wrapperForms } from '../core/command-head.js';
+import { GIT_CMDS } from './gh-writes.js';
 
 export const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/reviews/**', `${TASKS_DIR}/**`, '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/reviews', TASKS_DIR, '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
@@ -133,16 +134,38 @@ const positional = (args: string[], value?: RegExp): string[] => {
   }
   return pos;
 };
-// ponytail: checkout's remote-tracking DWIM (`git checkout foo` with only origin/foo) reads as a file checkout; git
-// aliases and option clusters (`-fb`) are not read.
-function refMove(toks: string[], cwd: string): Move | null {
-  const [sub, ...rest] = gitArgs(toks);
-  if (!sub || !MOVERS.has(sub)) return null;
+// Grouping around a command (`(git …)`, `{ git …; }`, `! git …`) is not one of its words.
+const ungrouped = (toks: string[]): string[] => {
+  const t = toks.map((w, i) => (i === 0 ? w.replace(/^[({!]+/, '') : w));
+  const last = t.length - 1, w = t[last] ?? '';
+  if (w.split(')').length > w.split('(').length) t[last] = w.replace(/\)+$/, '');
+  return t.filter(Boolean);
+};
+/** True when `sub` is a git alias here, or the lookup fails or times out. git ignores an alias named like a builtin. */
+const aliased = (dir: string, sub: string): boolean => {
+  if (!/^[A-Za-z0-9][\w-]*$/.test(sub)) return false; // no alias has this name: git can't run it as one
+  const r = git(dir, ['config', '--get', `alias.${sub}`]);
+  return !(r.status === 1 && !r.stderr && !r.error);
+};
+// ponytail: checkout's remote-tracking DWIM (`git checkout foo` with only origin/foo) reads as a file checkout.
+function refMove(raw: string[], cwd: string): Move | null {
+  const toks = ungrouped(raw);
+  let j = 0;
+  while (j < toks.length && /^\w+=/.test(toks[j]!)) j += 1; // VAR=value before the command
+  const [sub, ...rest] = gitArgs(toks), k = toks.indexOf('git');
   let dir = cwd;
-  for (let i = toks.indexOf('git') + 1; toks[i]?.startsWith('-'); i += /^-[Cc]$/.test(toks[i]!) ? 2 : 1) if (toks[i] === '-C') dir = resolve(dir, toks[i + 1] ?? '');
+  for (let i = k + 1; toks[i]?.startsWith('-'); i += /^-[Cc]$/.test(toks[i]!) ? 2 : 1) if (toks[i] === '-C') dir = resolve(dir, toks[i + 1] ?? '');
   const unknown: Move = { dir, fail: 'unknown' };
-  // Expansions, another git dir or worktree, and paths git reads from a file are not followed.
-  if (toks.some((t) => /[$`\\]|\{[^}]*(,|\.\.)|^~|^GIT_\w+=|^--(git-dir|work-tree)\b|^--pathspec-from-file|^--stdin$/.test(t))) return unknown;
+  // A head built at run time ($(which git), $G) may be git.
+  if (/[$`]/.test(toks[j] ?? '') && toks.some((t) => MOVERS.has(t))) return unknown;
+  if (!sub) return null;
+  // Global options that change config, the git programs run, the repo, the worktree or the refs git reads.
+  const odd = toks.slice(k + 1, toks.length - rest.length - 1).some((g) => /^(-c|--config-env|--exec-path|--git-dir|--work-tree|--namespace)/.test(g));
+  if (!MOVERS.has(sub)) return !GIT_CMDS.has(sub) && (odd || aliased(dir, sub)) ? unknown : null; // an alias may run a mover
+  // git run by another command (env, command, exec, sudo, xargs …) may get more words or another environment.
+  if (k !== j || odd) return unknown;
+  // Expansions, another git dir or worktree, and words git reads past its options or from a file are not followed.
+  if (toks.some((t) => /[$`\\]|\{[^}]*(,|\.\.)|^~|^GIT_\w+=|^--pathspec-from-file|^--stdin$|^--end-of-options$/.test(t))) return unknown;
   const has = (re: RegExp) => rest.some((t) => re.test(t));
   const dd = rest.indexOf('--'), opts = dd < 0 ? rest : rest.slice(0, dd), after = dd < 0 ? [] : rest.slice(dd + 1);
   if (sub === 'pull') return { dir, fail: 'pull' };
@@ -152,8 +175,9 @@ function refMove(toks: string[], cwd: string): Move | null {
   if (has(/^--(quit|show-current-patch|edit-todo)$/)) return null;
   switch (sub) {
     case 'checkout': case 'switch': {
-      const pos = positional(opts, /^(-[bBcC]|--orphan)$/); // value is the new branch name
-      if (dd >= 0) return pos.length > 1 ? unknown : after.some((p) => SPEC_MAGIC.test(p)) ? { dir, diffs: [{ from: pos[0], paths: after }] } : null;
+      const pos = positional(opts, /^(-[a-zA-Z]*[bBcC]|--orphan)$/); // value is the new branch name (also in a cluster: -fb x)
+      if (dd >= 0 && after.length) return pos.length > 1 ? unknown : after.some((p) => SPEC_MAGIC.test(p)) ? { dir, diffs: [{ from: pos[0], paths: after }] } : null;
+      if (dd >= 0 && pos.length > 1) return unknown; // `<ref> --` with nothing after is a move to <ref>
       if (!pos.length) return has(/^(-f|--force|--discard-changes)$/) ? { dir, diffs: [{ from: 'HEAD' }] } : null;
       if (sub === 'switch' && pos.length > 1) return unknown;
       return pos.length > 1 && !pos.some((p) => SPEC_MAGIC.test(p)) ? null : { dir, diffs: [], sw: { ref: pos[0]!, sw: sub === 'switch', paths: pos.slice(1) } };
@@ -247,7 +271,7 @@ function refMoveAsk(cmds: string[], cwd: string, unattended: boolean): Decision 
       continue;
     }
     const c = toks.join(' ');
-    if (busy) return say(`\`${c}\` follows another command on the same line, which may move refs or the index first, so harness can't check what it changes.`, 'Run it as its own command.');
+    if (busy) return say(`\`${c}\` follows another command on the same line, which may move refs or the index first, so harness can't check what it changes.`, 'Run the git command on its own so harness can check what it changes.');
     busy = true;
     if ('fail' in m) {
       if (m.fail === 'unknown') return say(`Could not check what \`${c}\` changes in harness's protected files.`);
@@ -255,6 +279,10 @@ function refMoveAsk(cmds: string[], cwd: string, unattended: boolean): Decision 
         ? { kind: 'deny', reason: `\`${c}\` fetches before harness can check what it changes. Run git fetch, then git merge <ref>, so harness can check what it changes.`, check: 'protect' }
         : ask(`\`${c}\` fetches before harness can check what it changes in harness's protected files. Confirm it.`);
     }
+    // git follows refs/replace/*; harness's diffs don't (--no-replace-objects), so they could read other content.
+    const rr = git(m.dir, ['for-each-ref', '--count=1', 'refs/replace/']);
+    if (rr.status !== 0 || rr.error) return say(`Could not check what \`${c}\` changes in harness's protected files.`);
+    if (rr.stdout.trim()) return say(`Could not check what \`${c}\` changes in harness's protected files: the repo has replacement refs (refs/replace/), which git follows when it checks out.`);
     let diffs = m.diffs;
     if (m.sw) {
       const { ref, sw, paths } = m.sw;

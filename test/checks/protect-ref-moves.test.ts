@@ -108,7 +108,7 @@ describe('git ref moves that change protected harness files', () => {
   test('a ref move after another command on the line fails closed: the refs may move first', () => {
     const c = 'git checkout src-only';
     expect(run(`git update-ref refs/heads/src-only ${cfgCommit} && ${c}`)).toEqual({ kind: 'ask', reason: `\`${c}\` follows another command on the same line, which may move refs or the index first, so harness can't check what it changes. Confirm it.`, check: 'protect' });
-    expect(run(`./forge.sh; ${c}`, true)).toEqual({ kind: 'deny', reason: `\`${c}\` follows another command on the same line, which may move refs or the index first, so harness can't check what it changes. Run it as its own command.`, check: 'protect' });
+    expect(run(`./forge.sh; ${c}`, true)).toEqual({ kind: 'deny', reason: `\`${c}\` follows another command on the same line, which may move refs or the index first, so harness can't check what it changes. Run the git command on its own so harness can check what it changes.`, check: 'protect' });
     expect(run(`cd . && git status && ${c}`)).toEqual({ kind: 'allow' });
   });
   test('git checkout - is the previous branch', () => {
@@ -158,4 +158,54 @@ describe('git ref moves that change protected harness files', () => {
       expect(run('git reset --hard other', true)).toEqual(FAIL_DENY('git reset --hard other'));
     } finally { process.env.PATH = path; }
   });
+});
+
+describe('fix round 1: forms that used to pass', () => {
+  const both = (c: string) => {
+    expect(run(c).kind, c).toBe('ask');
+    expect(run(c, true).kind, c).toBe('deny');
+  };
+  test('--end-of-options with a ref named -x fails closed', () => {
+    g('update-ref', 'refs/heads/-x', cfgCommit);
+    try {
+      for (const c of ['git checkout --end-of-options -x', 'git switch --end-of-options -x']) {
+        expect(run(c), c).toEqual(FAIL(c));
+        expect(run(c, true), c).toEqual(FAIL_DENY(c));
+      }
+    } finally { g('update-ref', '-d', 'refs/heads/-x'); }
+  });
+  test('replacement refs fail closed: git follows them and the diff does not', () => {
+    const c = 'git checkout src-only';
+    g('update-ref', `refs/replace/${srcCommit}`, cfgCommit);
+    const why = `Could not check what \`${c}\` changes in harness's protected files: the repo has replacement refs (refs/replace/), which git follows when it checks out.`;
+    try {
+      expect(run(c)).toEqual({ kind: 'ask', reason: `${why} Confirm it.`, check: 'protect' });
+      expect(run(c, true)).toEqual({ kind: 'deny', reason: `${why} Unattended runs can't change harness's protected files through git; the person runs it.`, check: 'protect' });
+    } finally { g('update-ref', '-d', `refs/replace/${srcCommit}`); }
+    expect(run(c)).toEqual({ kind: 'allow' });
+  });
+  test.each(['$(which git) checkout src-only', '$G checkout src-only', 'env git checkout src-only', 'command git checkout src-only', 'exec git checkout src-only', 'sudo git checkout src-only', 'xargs git checkout < refs.txt'])(
+    'a head that is not a literal git word fails closed: %s', (c) => {
+      expect(run(c), c).toEqual(FAIL(c));
+      expect(run(c, true), c).toEqual(FAIL_DENY(c));
+    });
+  test('xargs fed by a pipe fails closed', () => both('echo src-only | xargs git checkout'));
+  test('a git alias fails closed', () => {
+    g('config', 'alias.co', 'checkout');
+    try { both('git co src-only'); } finally { g('config', '--unset', 'alias.co'); }
+    expect(run('git co src-only')).toEqual({ kind: 'allow' }); // no such alias: not a git command, nothing moves
+  });
+  test.each(['git -c core.hooksPath=x checkout src-only', 'git --config-env=core.x=Y checkout src-only', 'git --exec-path=/x checkout src-only', 'git --namespace=x checkout src-only', 'git -c alias.co=checkout co other'])(
+    'a config or path global option before a mover fails closed: %s', (c) => {
+      expect(run(c), c).toEqual(FAIL(c));
+      expect(run(c, true), c).toEqual(FAIL_DENY(c));
+    });
+  test.each(['git checkout -fb x other', 'git checkout -qb x other', 'git checkout -qB x other', 'git switch -qc x other', 'git checkout other --', 'git switch other --'])('%s is read as a move to other', (c) => {
+    expect(run(c), c).toEqual(ASK(c));
+    expect(run(c, true), c).toEqual(DENY(c));
+  });
+  test.each(['LC_ALL=C git checkout src-only', '(git checkout src-only)', 'grep git src/b.ts', 'grep -n git a.ts', 'git lfs-like-thing x'])('%s is allowed', (c) => {
+    expect(run(c), c).toEqual({ kind: 'allow' });
+  });
+  test('a subshell move is still read', () => expect(run('(git checkout other)').kind).toBe('ask'));
 });

@@ -4,6 +4,7 @@ import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { esc, type HarnessConfig } from '../../core/config.js';
+import { olderThan } from '../../core/min-claude.js';
 import { real, realish, within } from '../../core/paths.js';
 import { allowWriteMessage, allowWriteProblem } from './allow-write.js';
 import type { Exec } from './gate.js';
@@ -16,7 +17,9 @@ import type { CheckName, Plan, ResultLine, RunSteps, StepResult, StepsRun } from
 export interface WrapDeps { root: string; stop: HarnessConfig['stop']; exec: Exec; now: () => number; srt: SrtProbe; home: string; platform: NodeJS.Platform; env: NodeJS.ProcessEnv; tokenBase: () => string | null; node: string; nonce?: () => string; tmp?: string }
 export type Expected = { kind: 'check'; name: CheckName } | { kind: 'step'; label: string };
 
-export const srtArgv = (settings: string, node: string, runner: string, plan: string, nonce: string): string[] => ['--settings', settings, node, '--no-warnings', runner, '--stop-steps', plan, nonce];
+// --disable-sigusr1 (node 22.14.0+) keeps the runner, which holds the seal, from opening an inspector on SIGUSR1.
+export const srtArgv = (settings: string, node: string, runner: string, plan: string, nonce: string, version: string = process.versions.node): string[] =>
+  ['--settings', settings, node, '--no-warnings', ...(olderThan(version, '22.14.0') ? [] : ['--disable-sigusr1']), runner, '--stop-steps', plan, nonce];
 
 const PROXY = 'sandbox proxy:';
 const MAX_PROXY = 1024;
@@ -210,15 +213,20 @@ const attempt = async (d: WrapDeps, got: Seen, steps: Parameters<RunSteps>[0], d
     if (seen) return fail(seen, 'seen by the outer runner');
     if (r.timedOut) {
       // Steps start only after every check passed, so a timeout stays a timeout unless a check line that did arrive failed.
+      // A runner that reported nothing at all (hung at start, or never got the seal) is unavailable, never a timeout-allow.
+      const names = PREFLIGHT_ORDER(pre.plan.linux);
+      let reported = false;
       for (const text of (r.stdout ?? '').split('\n')) {
         try {
           const o = JSON.parse(text);
-          if (o?.nonce === nonce && o.kind === 'check' && o.ok === false && PREFLIGHT_ORDER(pre.plan.linux).includes(o.name)) return fail(o.name, typeof o.detail === 'string' ? esc(o.detail.slice(0, 200)).slice(0, 200) : 'failed');
+          if (o?.nonce !== nonce || !(o.kind === 'step' || (o.kind === 'check' && names.includes(o.name)))) continue;
+          if (o.kind === 'check' && o.ok === false) return fail(o.name, typeof o.detail === 'string' ? esc(o.detail.slice(0, 200)).slice(0, 200) : 'failed');
+          if (valid(o)) reported = true;
         } catch {
           /* a partial or non-JSON line is ignored */
         }
       }
-      return { kind: 'timeout' };
+      return reported ? { kind: 'timeout' } : fail('result lines', 'the runner reported nothing before the deadline');
     }
     const err = r.stderr ?? '';
     if (r.status !== 0) return fail(stage, err.trim() ? err : r.output.trim() ? r.output : `status ${r.status}`);

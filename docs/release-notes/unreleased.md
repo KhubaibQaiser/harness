@@ -31,6 +31,7 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 - Before any step, a preflight inside `srt` proves the fence holds: a write to a protected file, a read of a masked file, a Unix socket, an HTTPS connection to `example.com`, and on Linux a nested bubblewrap user namespace must all fail. The outer runner checks the canaries and socket again afterwards, and the results carry a sealed end line, so a forged result can't pass. Any `srt` stderr other than its `sandbox proxy:` lines blocks. A failed check blocks Stop and names itself. A machine that is offline reads as network-blocked, which is safe.
 - When the attempts run out, Stop passes by its existing rule and logs `checks never ran (srt unavailable)` in `.harness/state/stop-sandbox.json`; it is never a pass.
 - Attended native Windows keeps running steps unwrapped, with a note on every Stop. An unattended native Windows Stop now blocks (`checks never ran (native Windows unattended)` on give-up); run in WSL2 or the harness dev container.
+- `harness doctor` has a Stop sandbox section (the `srt` version and its dependencies, the refused `stop.allow_write` entries, the last preflight result per check, and on native Windows a warning), and `harness status` has a `Stop sandbox:` line that adds `last stop: checks never ran` when it applies.
 
 ## Catalog
 

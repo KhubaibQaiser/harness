@@ -9,7 +9,7 @@ import { coverageGate } from './coverage-gate.js';
 import { findOnPath, resolveStep, scriptsOf, winCmdLine } from './runner.js';
 import { realish } from '../../core/paths.js';
 import { type PlanStep, type RunSteps, runUnwrapped } from './steps.js';
-import { realSrtProbe, type SrtProbe } from './srt.js';
+import { realSrtProbe, STOP_WIN_UNATTENDED, type SrtProbe } from './srt.js';
 import { tokenBase } from '../../core/token-base.js';
 import { runWrapped } from './wrap.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
@@ -260,6 +260,17 @@ export function pickRunner(ctx: Ctx, exec: Exec, now: () => number, srt: SrtProb
   };
   const off = ctx.config.sandbox === 'off';
   const honoured = off && ctx.state.sandboxBase === 'off';
+  const refuse = (notes: string[]) => {
+    if (off && !ctx.state.stopOffRefusedLogged) {
+      log('stop-unwrapped-refused');
+      ctx.save({ ...ctx.state, stopOffRefusedLogged: true });
+      notes.push(REFUSED);
+    }
+  };
+  if (ctx.platform === 'win32' && ctx.unattended && !honoured) {
+    const unavailable: RunSteps = async () => ({ kind: 'unavailable', message: STOP_WIN_UNATTENDED, reason: 'native Windows unattended' });
+    return noted(unavailable, refuse);
+  }
   if (honoured || ctx.platform === 'win32')
     return noted(runUnwrapped(exec, now), (notes) => {
       if (honoured && !ctx.state.stopUnwrappedLogged) {
@@ -269,13 +280,7 @@ export function pickRunner(ctx: Ctx, exec: Exec, now: () => number, srt: SrtProb
       notes.push(`Stop steps ran without the sandbox (${honoured ? 'sandbox: off' : 'native Windows'}).`);
     });
   const wrapped = runWrapped({ root: ctx.root, stop: ctx.config.stop, exec, now, srt, home: ctx.home, platform: ctx.platform, env: ctx.env, tokenBase: () => tokenBase(ctx.platform, ctx.env), node: process.execPath });
-  return noted(wrapped, (notes) => {
-    if (off && !ctx.state.stopOffRefusedLogged) {
-      log('stop-unwrapped-refused');
-      ctx.save({ ...ctx.state, stopOffRefusedLogged: true });
-      notes.push(REFUSED);
-    }
-  });
+  return noted(wrapped, refuse);
 }
 
 export const stopGate: Check = {

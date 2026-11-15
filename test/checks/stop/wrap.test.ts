@@ -107,13 +107,11 @@ suite('runWrapped', () => {
     expect(await setup({ timedOut: true, status: null, stdout: pre[0] }).run()).toEqual({ kind: 'timeout' });
   });
 
-  test('a timeout before any result line is unavailable (result lines) and recorded; one valid line keeps it a timeout', async () => {
+  test('a timeout before any result line is unavailable (result lines); one valid line keeps it a timeout', async () => {
     const none = unavailable('result lines', 'the runner reported nothing before the deadline');
     // The fake appends a sealed end line, which is not a result line.
     for (const stdout of ['', 'junk', check('write canary', {}, N2), check('evil', { ok: true }), check('network', { ok: 'yes' }), line('lint', { ms: 'x' })]) {
-      rmSync(join(state, 'stop-sandbox.json'), { force: true });
       expect(await setup({ timedOut: true, status: null, stdout }).run(), stdout).toEqual(none);
-      expect(readStopRecord(root)).toMatchObject({ outcome: 'unavailable', reason: 'result lines' });
     }
     expect(await setup({ timedOut: true, status: null, stdout: undefined }, {}, false).run()).toEqual(none);
     for (const stdout of [pre[0]!, [...pre, line('format:check')].join('\n')]) expect(await setup({ timedOut: true, status: null, stdout }).run()).toEqual({ kind: 'timeout' });

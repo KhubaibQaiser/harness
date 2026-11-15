@@ -15,7 +15,9 @@ test.each([
 
 test('a negation in an earlier sentence does not suppress a later claim', () => expect(findClaim('Not yet. Now it is done.')).toBe('done'));
 test('a negation before a comma only covers its own clause', () => expect(findClaim('Not sure, but fixed.')).toBe('fixed'));
-test('input is capped at 64 KiB', () => {
-  expect(findClaim(`${'x '.repeat(40000)}done.`)).toBeNull();
+test('input is capped at the last 64 KiB: the end is kept', () => {
+  expect(findClaim(`${'x '.repeat(40000)}done.`)).toBe('done');
+  expect(findClaim(`Done. ${'x '.repeat(40000)}`)).toBeNull(); // a claim only in the first part of a message over 64 KiB is not seen
+  expect(findClaim(`\`\`\`\n${'x\n'.repeat(40000)}\`\`\`\nDone.`)).toBe('done'); // strip runs on the whole text, so a fence cut by the cap can't swallow the claim
   expect(CLAIM_PHRASES).toContain('ready to merge');
 });

@@ -10,10 +10,12 @@ const PHRASE_RES = CLAIM_PHRASES.map((p) => [p, new RegExp(`\\b${p.replace(/ /g,
 
 /** The first claim phrase (in list order, first sentence that has one) or null. */
 export function findClaim(text: string): string | null {
-  const prose = text.slice(0, MAX_INPUT)
+  // Strip over the whole text (linear, keeps fence parity), then keep the last 64 KiB: the claim is usually the last thing said.
+  const prose = text
     .replace(/```[\s\S]*?(```|$)/g, ' ') // an unterminated fence swallows the rest
     .replace(/`[^`\n]*`/g, ' ')
-    .replace(/"[^"\n]*"|“[^”\n]*”/g, ' ');
+    .replace(/"[^"\n]*"|“[^”\n]*”/g, ' ')
+    .slice(-MAX_INPUT);
   for (const raw of prose.split(/(?<=[.!?])\s+|\n+/)) {
     const s = raw.trim();
     if (!s || s.endsWith('?')) continue;

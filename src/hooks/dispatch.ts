@@ -42,7 +42,7 @@ export { configInvalidWhy } from './config-gate.js';
 export { detectBaseHead } from './session-setup.js';
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
-export const registry: Check[] = [guard, prSize, protect, taskGate, sandboxRequired, redFirst, tamper, testLock, specGate, prBody, secretScan, mcpWrites, multiFile, decisionSignals, configChange, evidenceLedger, doneClaim, stopGate, stateCardCheck];
+export const registry: Check[] = [guard, prSize, protect, taskGate, sandboxRequired, redFirst, tamper, testLock, specGate, prBody, secretScan, mcpWrites, multiFile, decisionSignals, configChange, evidenceLedger, stopGate, doneClaim, stateCardCheck];
 
 const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];

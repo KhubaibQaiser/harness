@@ -83,7 +83,7 @@ export function writeState(root: string, session: string, s: SessionState): void
 export { renameWithRetry }; // kept for existing importers
 
 export function clearTurn(root: string, session: string): void {
-  writeState(root, session, { ...readState(root, session), files: [], approved: false, askNoted: undefined, reasonDenied: [], stopAttempts: 0 });
+  writeState(root, session, { ...readState(root, session), files: [], approved: false, askNoted: undefined, reasonDenied: [], stopAttempts: 0, doneClaimAttempts: undefined });
 }
 
 const readOwner = (lock: string): { pid?: number; nonce?: string } | null => {
@@ -144,7 +144,7 @@ function breakStale(lock: string, nonce: string, ops: LockOps): void {
 }
 
 // Serialises read-modify-write of a session's state across hook processes via an exclusive, owner-tagged lock directory.
-// Waits up to 2 s (10 ms steps), then runs fn unlocked with a warning. Stop events skip the lock (long-running, only touch stopAttempts).
+// Waits up to 2 s (10 ms steps), then runs fn unlocked with a warning. Stop events skip the lock (long-running; they write only the attempt counters and the decision, tool-missing and notice fields).
 export async function withSessionLock<T>(root: string, session: string, fn: () => T | Promise<T>, ops: LockOps = REAL_OPS): Promise<T> {
   const lock = `${statePath(root, session).slice(0, -'.json'.length)}.lock`;
   const nonce = randomBytes(8).toString('hex');

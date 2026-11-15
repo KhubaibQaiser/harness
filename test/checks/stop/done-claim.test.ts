@@ -1,9 +1,10 @@
 // Task 9: the Stop claim checker blocks a "done" claim that has no fresh evidence, and never decides done itself.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { doneClaim } from '../../../src/checks/stop/done-claim.js';
+import { multiFile } from '../../../src/checks/multi-file.js';
 import { readEvents } from '../../../src/core/events.js';
 import { type Contract, setActiveTask, writeContract } from '../../../src/done/contract.js';
 import { appendRow } from '../../../src/done/ledger.js';
@@ -30,13 +31,14 @@ function setup(o: { done?: boolean; active?: boolean; yaml?: string } = {}) {
   if (o.active ?? true) setActiveTask(root, c.id);
   const run = (command: string, criteria: string[] = [], exit = 0) =>
     appendRow(root, { kind: 'run', ts: 't', session: 's', command, exit, tree: treeHash(root), contract: c.sha256!, criteria });
+  const prompt = () => dispatch(JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: root, prompt: 'next' }), [multiFile], {});
   const stop = async (extra: Record<string, unknown> = { last_assistant_message: 'All tests pass.' }, checks: Check[] = [doneClaim]) => {
     const out = await dispatch(JSON.stringify({ hook_event_name: 'Stop', session_id: 's', cwd: root, ...extra }), checks, {});
     return out ? (JSON.parse(out) as { decision?: string; reason?: string }) : {};
   };
   // the dispatcher's own `block` line is not this check's event
   const events = () => readEvents(root).filter((e) => e.check === 'done' && e.decision !== 'block');
-  return { root, c, run, stop, events };
+  return { root, c, run, stop, events, prompt };
 }
 const blocks = (d: { decision?: string }) => expect(d.decision).toBe('block');
 
@@ -125,11 +127,88 @@ test('with the default config nothing runs and nothing is logged', async () => {
   expect(events()).toEqual([]);
 });
 
-test('when it blocks, a later Stop check still runs and the done reason wins', async () => {
+test('when it blocks, a later Stop check still runs and the done reason wins (the reverse order shows the first)', async () => {
   const { stop } = setup();
   let ran = false;
   const later: Check = { name: 'later', events: ['Stop'], run: () => ((ran = true), { kind: 'block', reason: 'later says no', check: 'later' }) };
   const d = await stop(undefined, [doneClaim, later]);
   expect(ran).toBe(true);
   expect(d.reason).toContain('You said "all tests pass"');
+});
+
+test('a passing row for an older tree does not count', async () => {
+  const { root, run, stop } = setup();
+  run('pnpm run test');
+  run('node build.mjs', ['C1']);
+  expect(await stop()).toEqual({});
+  appendFileSync(join(root, 'README.md'), 'edit\n');
+  const d = await stop();
+  blocks(d);
+  expect(d.reason).toContain('but test has not passed since your last edit');
+});
+
+test('a near-miss argv does not count as the check', async () => {
+  const { run, stop } = setup();
+  run('pnpm run test -- -t x');
+  run('node build.mjs', ['C1']);
+  blocks(await stop());
+});
+
+test('an invalid HARNESS_TASK is logged, not a silent allow', async () => {
+  const { root, events } = setup();
+  const out = await dispatch(JSON.stringify({ hook_event_name: 'Stop', session_id: 's', cwd: root, last_assistant_message: 'Done.' }), [doneClaim], { HARNESS_TASK: 'Bad Id' });
+  expect(out).toBe('');
+  expect(events().at(-1)).toMatchObject({ decision: 'done-claim-unchecked', reason: expect.stringContaining('HARNESS_TASK') });
+});
+
+test('a new prompt starts the attempts at 1', async () => {
+  const { stop, prompt } = setup();
+  expect((await stop()).reason).toMatch(/\(attempt 1 of 3\)$/);
+  expect((await stop()).reason).toMatch(/\(attempt 2 of 3\)$/);
+  await prompt();
+  expect((await stop()).reason).toMatch(/\(attempt 1 of 3\)$/);
+});
+
+test('a Stop with no claim resets the attempts', async () => {
+  const { stop } = setup();
+  await stop();
+  await stop();
+  expect(await stop({ last_assistant_message: 'Still working.' })).toEqual({});
+  expect((await stop()).reason).toMatch(/\(attempt 1 of 3\)$/);
+});
+
+test('a fresh blocked row allows and logs the claim as blocked', async () => {
+  const { root, c, stop, events } = setup();
+  appendRow(root, { kind: 'blocked', ts: 't', session: 's', task: c.id, reason: 'x', failing_criteria: [], tree: treeHash(root), contract: c.sha256! });
+  expect(await stop()).toEqual({});
+  expect(events().at(-1)).toMatchObject({ decision: 'done-claim', reason: 'all tests pass blocked' });
+});
+
+test('an empty or unreadable transcript logs done-claim-unchecked', async () => {
+  const { root, stop, events } = setup();
+  expect(await stop({ transcript_path: join(root, 'missing.jsonl') })).toEqual({});
+  expect(events().at(-1)).toMatchObject({ decision: 'done-claim-unchecked', reason: 'no assistant text' });
+});
+
+test('with a failing stop gate of its own, the Stop is bounded and the gate output is shown first', async () => {
+  const { stop } = setup();
+  // Stand-in for stopGate: same shared counter and give-up rule as gate.ts failStep.
+  const gate: Check = {
+    name: 'stopGate', events: ['Stop'],
+    run(ctx) {
+      const n = ctx.state.stopAttempts + 1;
+      if (n > ctx.config.stop.max_attempts) return ctx.save({ ...ctx.state, stopAttempts: 0 }), { kind: 'allow' };
+      ctx.save({ ...ctx.state, stopAttempts: n });
+      return { kind: 'block', reason: `test failed (attempt ${n})`, check: 'stop' };
+    },
+  };
+  await stop({ last_assistant_message: 'Still working.' }, [gate, doneClaim]); // the gate alone blocks first, putting the counters out of phase
+  let allowed = -1;
+  for (let i = 0; i < 9 && allowed < 0; i++) {
+    const d = await stop(undefined, [gate, doneClaim]);
+    if (d.decision !== 'block') allowed = i;
+    else expect(d.reason).toMatch(/^test failed|^You said/); // when both block, the gate's message wins
+  }
+  expect(allowed).toBeGreaterThanOrEqual(0);
+  expect(allowed).toBeLessThanOrEqual(2 * 3);
 });

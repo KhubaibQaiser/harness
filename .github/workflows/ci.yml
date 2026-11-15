@@ -56,6 +56,7 @@ jobs:
       - name: Install srt's system tools (Linux)
         if: runner.os == 'Linux'
         run: |
+          sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Install srt's system tools (macOS)
@@ -64,11 +65,14 @@ jobs:
       - run: npm install -g @anthropic-ai/sandbox-runtime@0.0.83
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Real-srt versions
+        run: srt --version && (bwrap --version || true)
       - name: Real-srt e2e
         run: pnpm vitest run --project e2e test/e2e/stop-srt.e2e.test.ts
         env:
           HARNESS_E2E_SRT: '1'
       - name: Real-srt perf (alone, after the e2e)
+        if: success() || failure()
         run: pnpm vitest run --project perf test/perf/stop-srt.test.ts
         env:
           HARNESS_E2E_SRT: '1'

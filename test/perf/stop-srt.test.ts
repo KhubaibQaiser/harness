@@ -45,9 +45,11 @@ describe.skipIf(!SRT_ON)('Stop gate overhead of srt', () => {
     writeFileSync(cfg, `${off ? 'sandbox: off\n' : ''}stop:\n  steps:\n${steps}`);
     const i = spawnSync('node', [CLI, 'init', '--config', cfg, '--yes'], { cwd: root, encoding: 'utf8', env });
     expect(i.status, i.stdout + i.stderr).toBe(0);
-    mkdirSync(join(root, 'coverage'), { recursive: true });
-    writeFileSync(join(root, 'coverage/coverage-final.json'), '{}');
     hook(root, 'UserPromptSubmit');
+    mkdirSync(join(root, 'coverage'), { recursive: true }); // after the session's first hook, so it is fresh
+    writeFileSync(join(root, 'coverage/coverage-final.json'), '{}');
+    writeFileSync(join(root, 'work.dat'), 'x'); // a non-doc change, so the Stop runs the steps
+    cold.push(hook(root, 'Stop').ms); // one discarded warm-up Stop; the first wrapped one pays srt's one-time cost, so it is logged apart
     return root;
   };
   const hook = (root: string, event: string) => {
@@ -56,6 +58,7 @@ describe.skipIf(!SRT_ON)('Stop gate overhead of srt', () => {
     expect(r.status, r.stderr).toBe(0);
     return { ms: performance.now() - t0, out: r.stdout };
   };
+  const cold: number[] = [];
   const times = (root: string, check: (out: string) => void) =>
     Array.from({ length: RUNS }, () => {
       const r = hook(root, 'Stop');
@@ -69,7 +72,7 @@ describe.skipIf(!SRT_ON)('Stop gate overhead of srt', () => {
     const on = times(root, (out) => expect(out ? JSON.parse(out).decision : 'allow').toBe('allow'));
     expect(readStopRecord(root)).toMatchObject({ outcome: 'ran', srt: SRT });
     const [w, u] = [median(on), median(off)];
-    writeSync(2, `[perf] stop-srt ${process.platform} srt ${SRT}: wrapped median ${w.toFixed(0)} ms, unwrapped median ${u.toFixed(0)} ms (runs ${on.map(Math.round)} / ${off.map(Math.round)})\n`);
+    writeSync(2, `[perf] stop-srt ${process.platform} srt ${SRT}: wrapped median ${w.toFixed(0)} ms, unwrapped median ${u.toFixed(0)} ms (runs ${on.map(Math.round)} / ${off.map(Math.round)}; discarded cold first Stops: unwrapped ${cold[0]!.toFixed(0)} ms, wrapped ${cold[1]!.toFixed(0)} ms)\n`);
     report('stop-srt', { overhead: w - u, total: w });
     expect(w - u).toBeLessThan(BUDGET_MS);
   }, 600_000);

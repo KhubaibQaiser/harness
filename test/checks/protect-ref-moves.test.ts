@@ -338,7 +338,13 @@ describe('fix round 5: eval payloads and run-time words the reader cut out', () 
     'git checkout src-only <<< x', 'git merge <(echo src-only)', 'git checkout src-only >(cat)', 'git reset --hard HEAD~$((0))', 'git checkout ${REF}', 'git checkout ${REF:-src-only}',
     'git checkout "${a[@]}"', 'a=(checkout src-only); git "${a[@]}"', 'git checkout src-only "`true`"',
   ])('%s asks attended and denies unattended', (c) => both(c));
-  test.each(['eval "git checkout src-only"', 'eval git status', 'eval "echo hi"', 'X=1; eval "echo $X"', 'source ./env.sh && git status', 'echo `date`', 'ls `pwd`'])('%s is allowed', (c) => {
+  test.each([
+    // Re-review round 5: a payload built at run time can assemble git itself, so no text test on the line can tell; it always fails closed
+    'G=gi; eval "${G}t checkout other"', 'G=gi; X="${G}t checkout other"; eval "$X"', 'A=gi B=t; eval "$A$B checkout other"', 'eval "${x-gi}t checkout other"',
+    'a=(gi t); eval "${a[0]}${a[1]} checkout other"', 'G=gi; eval "${G}t switch other"', 'G=gi; eval "${G}t reset --hard other"',
+    'F=./s.sh; . "$F"', 'F=./s.sh; source "$F"', '. "$F"', 'X=1; eval "echo $X"',
+  ])('%s asks attended and denies unattended (a built eval or source payload)', (c) => both(c));
+  test.each(['eval "git checkout src-only"', 'eval git status', 'eval "echo hi"', 'source ./env.sh && git status', 'echo `date`', 'ls `pwd`'])('%s is allowed', (c) => {
     expect(run(c), c).toEqual({ kind: 'allow' });
     expect(run(c, true), c).toEqual({ kind: 'allow' });
   });

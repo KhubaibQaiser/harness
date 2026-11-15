@@ -313,7 +313,8 @@ function moveSegs(line: string, out: Seg[] = []): Seg[] {
     const cont = /^[)`]$/.test(ps[i - 1]?.sep ?? ''), cut = /^[(`]$/.test(sep), seg = { text, cont, cut, say: cont || cut ? line.trim() : text };
     const j = u.findIndex((w) => !/^([{!]|\w+=.*|command|builtin)$/.test(w)), head = u[j];
     if (head === 'eval' || head === 'source' || head === '.') {
-      if (cut || ws.slice(j + 1).some((w) => /[$`]/.test(w))) { if (/git/i.test(line)) out.push({ ...seg, say: line.trim(), fail: true }); return; }
+      // A payload built at run time can assemble any command, git included (`G=gi; eval "${G}t checkout x"`), so no text test can clear it.
+      if (cut || ws.slice(j + 1).some((w) => /[$`]/.test(w))) return void out.push({ ...seg, say: line.trim(), fail: true });
       if (head === 'eval') return void moveSegs(withoutHeredocBodies(u.slice(j + 1).join(' ')), out);
     }
     out.push(seg);

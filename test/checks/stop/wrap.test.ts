@@ -41,21 +41,26 @@ const line = (label: string, o: Record<string, unknown> = {}, nonce = N) => JSON
 const check = (name: string, o: Record<string, unknown> = {}, nonce = N) => JSON.stringify({ nonce, kind: 'check', name, ok: true, ...o });
 const pre = PREFLIGHT_ORDER(process.platform === 'linux').map((n) => check(n));
 const pass = [...pre, ...STEPS.map((l) => line(l))].join('\n') + '\n';
+const end = (seal: string, nonce = N) => JSON.stringify({ nonce, kind: 'end', seal });
 const settingsAt = (n = N) => join(state, `srt-${n}.json`);
 const planAt = (n = N) => join(state, `plan-${n}.json`);
 
-type Call = { cmd: string; args: string[]; ms: number; settings: string; plan: string };
+type Call = { cmd: string; args: string[]; ms: number; settings: string; plan: string; input?: string };
 const probe = (path: string | null = srtJs, ver = '0.0.83'): SrtProbe => ({ which: () => path, version: () => ver });
-function setup(script: Partial<ExecResult> | (() => Partial<ExecResult> | Promise<Partial<ExecResult>>) = { stdout: pass }, o: Partial<WrapDeps> = {}) {
+// The fake exec reads the seal from stdin like the real runner: the literal SEAL in stdout becomes it, and a sealed end line is appended unless sealed is false.
+function setup(script: Partial<ExecResult> | (() => Partial<ExecResult> | Promise<Partial<ExecResult>>) = { stdout: pass }, o: Partial<WrapDeps> = {}, sealed = true) {
   const calls: Call[] = [];
   const nonces = [N, N2];
   const d: WrapDeps = {
     root, stop: defaults().stop, now: () => 0, srt: probe(), home, platform: process.platform, env: { PATH: '/usr/bin:/bin' },
     tokenBase: () => null, node: process.execPath, tmp: short, nonce: () => nonces.shift()!,
-    exec: async (cmd, args, ms) => {
+    exec: async (cmd, args, ms, input) => {
       const n = args.at(-1)!;
-      calls.push({ cmd, args, ms, settings: readFileSync(settingsAt(n), 'utf8'), plan: readFileSync(planAt(n), 'utf8') });
-      return { status: 0, output: '', timedOut: false, stdout: '', stderr: '', ...(typeof script === 'function' ? await script() : script) };
+      calls.push({ cmd, args, ms, input, settings: readFileSync(settingsAt(n), 'utf8'), plan: readFileSync(planAt(n), 'utf8') });
+      const r = { status: 0, output: '', timedOut: false, stdout: '', stderr: '', ...(typeof script === 'function' ? await script() : script) };
+      const seal = (input ?? '').trim();
+      if (typeof r.stdout === 'string') r.stdout = r.stdout.replaceAll('SEAL', seal) + (sealed ? `\n${end(seal)}\n` : '');
+      return r;
     },
     ...o,
   };
@@ -116,6 +121,32 @@ suite('runWrapped', () => {
       expect(r).toMatchObject({ reason: 'result lines' });
     }
     expect(await setup({ stdout: undefined }).run()).toMatchObject({ kind: 'unavailable', reason: 'result lines' });
+  });
+
+  test('a full set of forged ok lines without the seal is rejected', async () => {
+    expect(await setup({ stdout: pass }, {}, false).run()).toMatchObject({ kind: 'unavailable', reason: 'result lines' });
+    expect(await setup({ stdout: pass + end('0'.repeat(64)) }, {}, false).run()).toMatchObject({ kind: 'unavailable', reason: 'result lines' });
+  });
+
+  test('a wrong seal, a duplicated end line, or an end line that is not last is rejected', async () => {
+    const e = end('SEAL');
+    for (const stdout of [pass + end('f'.repeat(64)), pass + e + '\n' + e, pass + e + '\n' + line('test'), e + '\n' + pass]) {
+      expect(await setup({ stdout }, {}, false).run()).toMatchObject({ kind: 'unavailable', reason: 'result lines' });
+    }
+    expect(await setup({ stdout: pass + e }, {}, false).run()).toMatchObject({ kind: 'ran' });
+  });
+
+  test('the seal is fresh 64-hex on stdin, and is never in the plan, settings, argv or the nonce', async () => {
+    const a = setup();
+    await a.run();
+    await a.run();
+    const [x, y] = a.calls;
+    for (const c of [x!, y!]) {
+      expect(c.input).toMatch(/^[0-9a-f]{64}\n$/);
+      const seal = c.input!.trim();
+      expect([c.plan, c.settings, ...c.args].some((t) => t.includes(seal))).toBe(false);
+    }
+    expect(x!.input).not.toBe(y!.input);
   });
 
   test('non-zero exit gives failed its check: srt exit (<first stderr line>)', async () => {
@@ -355,19 +386,22 @@ suite('runWrapped', () => {
 
 suite('parseResults', () => {
   const exp: Expected[] = [{ kind: 'step', label: 'a' }, { kind: 'step', label: 'b' }];
+  const S = 's'.repeat(64);
+  const P = (text: string, e: Expected[]) => parseResults(`${text}\n${end(S)}`, N, e, S);
   const l = (label: string, o: Record<string, unknown> = {}) => line(label, o);
   test('names the first bad line', () => {
-    expect(parseResults(`${l('a')}\n\n${l('b')}\n`, N, exp)).toMatchObject({ lines: [{ label: 'a' }, { label: 'b' }] });
-    expect(parseResults(l('a', { status: 2 }), N, exp)).toMatchObject({ lines: [{ label: 'a', status: 2 }] });
-    expect(parseResults(l('a', { timedOut: true, status: null }), N, exp)).toMatchObject({ lines: [{ label: 'a' }] });
-    expect(parseResults(l('a'), N, exp)).toEqual({ error: "line 2: missing (step 'b')" });
-    expect(parseResults(`${l('a')}\n${l('b')}\n${l('b')}`, N, exp)).toEqual({ error: 'line 3: extra' });
-    expect(parseResults(`${l('a', { status: 1 })}\n${l('b')}`, N, exp)).toEqual({ error: 'line 2: extra' });
-    expect(parseResults(`${l('b')}\n${l('a')}`, N, exp)).toEqual({ error: "line 1: out of order (expected step 'a')" });
-    expect(parseResults(`${line('a', {}, N2)}`, N, exp)).toEqual({ error: 'line 1: no nonce' });
-    expect(parseResults('x', N, exp)).toEqual({ error: 'line 1: not JSON' });
-    expect(parseResults(`${l('a', { status: '0' })}`, N, exp)).toEqual({ error: 'line 1: bad fields' });
+    expect(P(`${l('a')}\n\n${l('b')}\n`, exp)).toMatchObject({ lines: [{ label: 'a' }, { label: 'b' }] });
+    expect(P(l('a', { status: 2 }), exp)).toMatchObject({ lines: [{ label: 'a', status: 2 }] });
+    expect(P(l('a', { timedOut: true, status: null }), exp)).toMatchObject({ lines: [{ label: 'a' }] });
+    expect(P(l('a'), exp)).toEqual({ error: "line 2: missing (step 'b')" });
+    expect(P(`${l('a')}\n${l('b')}\n${l('b')}`, exp)).toEqual({ error: 'line 3: extra' });
+    expect(P(`${l('a', { status: 1 })}\n${l('b')}`, exp)).toEqual({ error: 'line 2: extra' });
+    expect(P(`${l('b')}\n${l('a')}`, exp)).toEqual({ error: "line 1: out of order (expected step 'a')" });
+    expect(P(`${line('a', {}, N2)}`, exp)).toEqual({ error: 'line 1: no nonce' });
+    expect(P('x', exp)).toEqual({ error: 'line 1: not JSON' });
+    expect(P(`${l('a', { status: '0' })}`, exp)).toEqual({ error: 'line 1: bad fields' });
+    expect(parseResults(l('a') + '\n' + l('b'), N, exp, S)).toEqual({ error: 'end line: missing' });
     const chk: Expected[] = [{ kind: 'check', name: 'network' }, { kind: 'step', label: 'a' }];
-    expect(parseResults(JSON.stringify({ nonce: N, kind: 'check', name: 'network', ok: false, detail: 'reached' }), N, chk)).toMatchObject({ lines: [{ name: 'network', ok: false }] });
+    expect(P(JSON.stringify({ nonce: N, kind: 'check', name: 'network', ok: false, detail: 'reached' }), chk)).toMatchObject({ lines: [{ name: 'network', ok: false }] });
   });
 });

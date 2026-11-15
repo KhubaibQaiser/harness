@@ -347,6 +347,12 @@ test('spawn error resolves with status null and does not throw', async () => {
   expect(r.output).toMatch(/ENOENT/);
 });
 
+test('defaultExec writes the input to the child stdin and closes it; without input stdin is ignored', async () => {
+  const js = "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log('got:'+d.length))";
+  expect((await defaultExec(tmpdir())(process.execPath, ['-e', js], 5000, 'abc\n')).stdout).toBe('got:4\n');
+  expect((await defaultExec(tmpdir())(process.execPath, ['-e', js], 5000)).stdout).toBe('got:0\n');
+});
+
 test('output is bounded to a rolling tail', async () => {
   const r = await defaultExec(tmpdir())('node', ['-e', "for(let i=0;i<20000;i++)console.log('line '+i+' '+'x'.repeat(100)); console.log('THE-END')"], 20000);
   expect(r.status).toBe(0);
@@ -609,14 +615,14 @@ test.skipIf(winSkip)('a wrapped step failure blocks like today and keeps the srt
   const srtJs = fileURLToPath(new URL('../../../build.mjs', import.meta.url)); // outside every writable root; a .mjs is a node launch
   const probe: SrtProbe = { which: () => srtJs, version: () => '0.0.83' };
   const made: string[] = [];
-  const e: Exec = (cmd, args, ms) => {
+  const e: Exec = (cmd, args, ms, input) => {
     if (cmd === 'git') return s.exec(SRC)(cmd, args, ms);
     const nonce = args.at(-1)!;
     const plan = JSON.parse(readFileSync(args.at(-2)!, 'utf8')) as { steps: { label: string }[]; preflight: { readCanary: string; socket: string } };
     made.push(plan.preflight.readCanary, plan.preflight.socket);
     const checks = ['write canary', 'read canary', 'unix socket', 'network', ...(process.platform === 'linux' ? ['user namespace'] : [])].map((name) => JSON.stringify({ nonce, kind: 'check', name, ok: true }));
     const out = checks.concat(plan.steps.slice(0, 2).map((st, i) => JSON.stringify({ nonce, kind: 'step', label: st.label, status: i, timedOut: false, ms: 1, ...(i ? { output: 'boom in lint' } : {}) })));
-    return { status: 0, output: '', timedOut: false, stdout: out.join('\n'), stderr: 'sandbox proxy: denied registry.npmjs.org:443\n' };
+    return { status: 0, output: '', timedOut: false, stdout: [...out, JSON.stringify({ nonce, kind: 'end', seal: input!.trim() })].join('\n'), stderr: 'sandbox proxy: denied registry.npmjs.org:443\n' };
   };
   const d = await wrapped(s, probe)(e);
   expect(made).toHaveLength(2);

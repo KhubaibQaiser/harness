@@ -213,7 +213,8 @@ const SCENARIOS: [string, (n: number, max: number) => boolean, (n: number) => bo
   ['the gate always fails and the agent always claims', () => true, () => true],
 ];
 
-// The docs promise: a run of blocked Stops ends within stop.max_attempts + 2 Stops.
+// The docs promise: a run of blocked Stops ends within stop.max_attempts + 2 Stops once the gate starts blocking (here it
+// fails from Stop 1). If the claim check blocks alone first, its own max Stops come before that run (2 × max + 1 overall).
 test.each(SCENARIOS.flatMap((sc) => [1, 2, 3, 5, 10].map((max) => [...sc, max] as const)))('bounded with a failing stop gate of its own: %s (max %i)', async (_name, claims, gateFails, max) => {
   const { stop } = setup({ yaml: `stop:\n  max_attempts: ${max}\n` });
   const checks = [standIn(gateFails), doneClaim];

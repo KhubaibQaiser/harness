@@ -8,6 +8,10 @@ import { MergeError, pinnedPlugins, pinsAt } from '../install/merge.js';
 import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
 import { PRESET_ITEM } from '../install/plan-preset.js';
+import { homedir } from 'node:os';
+import { readStopRecord } from '../checks/stop/record.js';
+import { locateSrt, realSrtProbe, stopSandboxLine, type SrtProbe } from '../checks/stop/srt.js';
+import { gateWritable } from '../checks/stop/srt-settings.js';
 import { esc, loadConfig } from '../core/config.js';
 import { GATES } from '../core/gates.js';
 import { lastConfigChangeBlocked, lastHarnessFilesChange } from '../core/events.js';
@@ -23,7 +27,7 @@ declare const __HARNESS_VERSION__: string;
 const VERSION = typeof __HARNESS_VERSION__ === 'string' ? __HARNESS_VERSION__ : '0.0.0-dev';
 const OFF_CONFIG = 'turned off in `.harness/config.yaml`';
 
-export type StatusDeps = { platform?: NodeJS.Platform; pluginList?: typeof pluginList };
+export type StatusDeps = { platform?: NodeJS.Platform; pluginList?: typeof pluginList; srt?: SrtProbe; record?: () => ReturnType<typeof readStopRecord> };
 
 export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): number {
   const { root, out } = cli;
@@ -58,6 +62,12 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
   lines.push(contextLine(contextSet(root, config, contextDirs(), undefined, { catalog: lc })));
   lines.push(decisionsStatusLine(root, config));
   lines.push(`Enforcement: sandbox ${config.sandbox} (${where})`);
+  if (config.checks.stop) {
+    // Off and native Windows never probe srt: locateSrt spawns `srt --version`.
+    const probe = platform !== 'win32' && config.sandbox !== 'off';
+    const found = probe ? locateSrt(deps.srt ?? realSrtProbe(cli.env, platform), gateWritable(root, config.stop, homedir()), platform) : null;
+    lines.push(stopSandboxLine(config, platform, found, probe ? (deps.record ?? (() => readStopRecord(root)))() : null));
+  }
   lines.push(blocksOnFailure(root)
     ? 'Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open'
     : 'Hook failure: a harness hook in `.claude/settings.json` lacks `onFailure: "block"`, so a failure may not block; run harness doctor');

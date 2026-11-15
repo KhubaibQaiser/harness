@@ -5,7 +5,7 @@ import { allowWriteMessage, allowWriteProblem } from '../checks/stop/allow-write
 import { PREFLIGHT_ORDER } from '../checks/stop/preflight.js';
 import { readStopRecord, type StopSandboxRecord } from '../checks/stop/record.js';
 import { locateSrt, SRT_MIN, srtReason, WIN_STEPS_WARNING, type SrtProbe } from '../checks/stop/srt.js';
-import { tempRoots, writableRoots } from '../checks/stop/srt-settings.js';
+import { gateWritable } from '../checks/stop/srt-settings.js';
 import { esc, type HarnessConfig } from '../core/config.js';
 import { credentialFiles } from '../core/credentials.js';
 import { olderThan } from '../core/min-claude.js';
@@ -51,7 +51,7 @@ export function stopSandboxChecks(root: string, config: HarnessConfig, p: P, sys
   guard('srt', () => {
     const which = sys.srt.which('srt');
     srtReal = which ? realish(which) : null;
-    const found = locateSrt(sys.srt, writableRoots({ root: realish(root), stop, home: sys.home, tmp: tempRoots() }), platform);
+    const found = locateSrt(sys.srt, gateWritable(root, stop, sys.home), platform);
     if ('why' in found) p.fix(`Stop sandbox: srt ${srtReason(found.why)}`, `install @anthropic-ai/sandbox-runtime@${SRT_MIN} globally, outside the repo`);
     else p.ok(`Stop sandbox: srt ${esc(found.version)} (${esc(found.real)})`);
   });

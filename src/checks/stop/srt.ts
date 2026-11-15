@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { closeSync, openSync, lstatSync, readlinkSync, readSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { esc } from '../../core/config.js';
+import { esc, type HarnessConfig } from '../../core/config.js';
+import type { StopSandboxRecord } from './record.js';
 import { olderThan } from '../../core/min-claude.js';
 import { realish, within } from '../../core/paths.js';
 import { findOnPath } from './runner.js';
@@ -124,3 +125,12 @@ export const srtMessage = (w: SrtWhy): string =>
 
 export const STOP_WIN_UNATTENDED = "Stop steps don't run unsandboxed in an unattended run on native Windows. Run in WSL2 or the harness dev container, or set sandbox: off (logged).";
 export const WIN_STEPS_WARNING = "Stop steps run without a sandbox on native Windows: the project's tests run with your full access. Use WSL2 or the harness dev container for a sandboxed Stop gate.";
+
+/** The `harness status` line. The caller never probes srt for `off` or win32, so `found` is only read for the other forms. */
+export function stopSandboxLine(config: HarnessConfig, platform: NodeJS.Platform, found: SrtFound | { why: SrtWhy } | null, rec: StopSandboxRecord | null): string {
+  const local = config.stop.allow_local ? ' - stop.allow_local on' : '';
+  if (platform === 'win32') return `Stop sandbox: off - native Windows${local}`;
+  if (config.sandbox === 'off' || !found) return `Stop sandbox: off - logged${local}`;
+  const never = rec?.outcome === 'never-ran' ? '; last stop: checks never ran' : '';
+  return 'why' in found ? `Stop sandbox: UNAVAILABLE - stop gate blocks${never}${local}` : `Stop sandbox: srt ${esc(found.version)}${never}${local}`;
+}

@@ -103,9 +103,10 @@ describe.skipIf(!SRT_ON)('Stop gate inside real srt', () => {
   // timeout, a wrong path that is not an accepted code) fails the match below, and a preflight, settings or srt-exit failure has no "planted failed".
   const ATTACK = (body: string) => `const fs=require('fs');const B=(c)=>{console.log('BLOCKED:'+c);process.exit(10)};${body}`;
   const connectAttack = (target: string) => `const s=require('net').connect(${target});s.on('connect',()=>process.exit(0));s.on('error',(e)=>B(e.code));s.setTimeout(3000,()=>{console.log('TIMEOUT');process.exit(3)})`;
-  const planted = async (name: string, script: string, blocked: RegExp): Promise<string> => {
+  const planted = async (name: string, script: string, blocked: RegExp, before?: (root: string) => void): Promise<string> => {
     const root = session([...OK.slice(0, 1), { name: 'planted', run: node(script) }]);
     await start(root);
+    before?.(root); // right before the Stop, outside srt
     const r = await stop(root);
     expect(r.decision, `${name}: ${r.reason}`).toBe('block');
     expect(r.reason, name).toContain('planted failed');
@@ -116,8 +117,11 @@ describe.skipIf(!SRT_ON)('Stop gate inside real srt', () => {
   };
 
   test('threat: a step edits .harness/config.yaml (config tamper)', async () => {
-    const root = await planted('config write', ATTACK(`try{fs.appendFileSync('.harness/config.yaml','\\n# tampered\\n');process.exit(0)}catch(e){B(e.code)}`), /BLOCKED:(EPERM|EROFS|EACCES)/);
-    expect(readFileSync(join(root, '.harness/config.yaml'), 'utf8')).not.toContain('tampered');
+    // The overlay writes the step's own command into the config, so compare bytes before and after the Stop instead of searching for a word.
+    let before = Buffer.alloc(0);
+    const root = await planted('config write', ATTACK(`try{fs.appendFileSync('.harness/config.yaml','\\n# tampered\\n');process.exit(0)}catch(e){B(e.code)}`), /BLOCKED:(EPERM|EROFS|EACCES)/, (r) => (before = readFileSync(join(r, '.harness/config.yaml'))));
+    expect(before.length).toBeGreaterThan(0);
+    expect(readFileSync(join(root, '.harness/config.yaml')).equals(before)).toBe(true);
   });
 
   test('threat: a step reads the cloud credentials file under HOME (credential theft; srt may mask the file as empty)', async () => {
@@ -125,7 +129,8 @@ describe.skipIf(!SRT_ON)('Stop gate inside real srt', () => {
     mkdirSync(dirname(f), { recursive: true });
     writeFileSync(f, '[default]\naws_secret_access_key = fake\n');
     // Only the fake file's real content is a leak; an empty read is the mask, and a throw is a plain deny.
-    await planted('credential read', ATTACK(`try{const c=fs.readFileSync(${J(f)},'utf8');if(c.includes('aws_secret_access_key'))process.exit(0);B('masked-empty')}catch(e){B(e.code)}`), /BLOCKED:(masked-empty|EPERM|EACCES)/);
+    // srt 0.0.83 on Linux hides the denied file, so the step sees ENOENT; that is accepted here only because the file is shown to exist outside srt first.
+    await planted('credential read', ATTACK(`try{const c=fs.readFileSync(${J(f)},'utf8');if(c.includes('aws_secret_access_key'))process.exit(0);B('masked-empty')}catch(e){B(e.code)}`), /BLOCKED:(masked-empty|EPERM|EACCES|ENOENT)/, () => expect(readFileSync(f, 'utf8')).toContain('aws_secret_access_key'));
   });
 
   test('threat: a step connects to a TCP service on host loopback (host service reach)', async () => {

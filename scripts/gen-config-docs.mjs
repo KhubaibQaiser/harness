@@ -61,7 +61,7 @@ const WHAT = {
   'unattended.review': '`code-only`: an unattended `harness review` gathers the PR for a code-only review that is never posted; `skip`: it does nothing.',
   'stop.steps': 'Commands that must pass before the agent may stop.',
   'stop.package_manager': 'Used to run script-name steps.',
-  'stop.max_attempts': 'How many times the Stop gate blocks before it gives up and lets the agent stop.',
+  'stop.max_attempts': 'How many times the Stop gate blocks before it gives up and lets the agent stop. The done-claim check (`checks.done`) uses the same limit.',
   'stop.timeout_s': 'Seconds the Stop steps may run in total.',
   'stop.base_ref': 'Git ref that changed lines are compared with.',
   'stop.coverage_globs': 'Globs for the coverage files that diff coverage reads.',

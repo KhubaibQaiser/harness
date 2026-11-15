@@ -57,8 +57,10 @@ import { SAFE_DIFF, SAFE_GIT } from '../../../src/core/git-safe.js';
 const require_mkdir = (root: string) => mkdirSync(join(root, '.harness'), { recursive: true });
 const SRC = ' M src/a.ts\0';
 
-test('registered last of the Stop checks, Stop only, not fail-closed', async () => {
-  expect(registry.filter((c) => c.events.includes('Stop')).at(-1)).toBe(stopGate);
+test('registered right before the done-claim check, which is last of the Stop checks; Stop only, not fail-closed', async () => {
+  const stops = registry.filter((c) => c.events.includes('Stop'));
+  expect(stops.at(-2)).toBe(stopGate); // the gate's failing output is shown first when both block
+  expect(stops.at(-1)?.name).toBe('done');
   expect(stopGate.events).toEqual(['Stop']);
   expect(stopGate.failClosed).toBeFalsy();
 });

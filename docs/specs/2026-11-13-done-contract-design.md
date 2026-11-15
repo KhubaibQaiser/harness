@@ -92,7 +92,7 @@ Rules:
 - Done-type claims are a fixed phrase list: done, finished, complete, fixed, resolved, all tests pass, tests are green, verified, works now, ready to merge.
 - It ignores negations and future tense: "not done", "will be done", "isn't fixed yet", "once tests pass".
 - If a claim matches and some criterion or check has no fresh passing ledger row, Stop blocks, naming each gap: `You said "<claim>", but <check> has not passed since your last edit (criterion C2). Run it, or end with harness done --blocked "<reason>".`
-- It respects `stop_hook_active` and harness's own `stop.max_attempts`.
+- `stop.max_attempts` is the loop bound (shared with the Stop gate's count). `stop_hook_active` is deliberately ignored, as the Stop gate already does: honouring it literally would make every block one-shot.
 - It never decides done, because Stop can fail open. Every block is logged as a `false-done-claim` event.
 
 ### 4.4 `harness verify [--ci] [--task <id>]`: the verdict

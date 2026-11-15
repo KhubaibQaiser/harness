@@ -97,6 +97,13 @@ test('git global options do not hide restore and checkout', () => {
     expect(bash(c), c).toBe('deny');
   expect(bash('git -C . restore src/a.ts')).toBe('allow');
 });
+test('git -C . from a cwd not written the way path.resolve writes it is the same folder (Windows: /p resolves to C:\\p)', () => {
+  const config = loadConfig('/nonexistent-harness-root').config;
+  for (const cwd of [`${ROOT}/`, `${ROOT}/x/..`]) {
+    const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd, tool_name: 'Bash', tool_input: { command: 'git -C . restore src/a.ts' } };
+    expect((protect.run({ input, root: ROOT, config, env: {}, unattended: false } as unknown as Ctx) as { kind: string }).kind, cwd).toBe('allow');
+  }
+});
 test(':/ pathspecs and bash -c are seen', () => {
   for (const c of ["git restore ':/.'", 'git restore :/', 'bash -c "git restore ."', 'sh -c "mv a .harness/hooks/dispatch.mjs"']) expect(bash(c), c).toBe('deny');
 });

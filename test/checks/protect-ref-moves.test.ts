@@ -276,7 +276,7 @@ describe('fix round 4: words read the way the shell and git read them', () => {
     const gn = (...a: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: n, encoding: 'utf8' });
     gn('init', '-q', '-b', 'main'); gn('add', '.'); gn('commit', '-q', '-m', 'n'); gn('branch', 'other');
     try {
-      for (const c of ['cd ../.. && git checkout other', `cd ${repo} && git checkout other`, 'pushd ../.. && git checkout other', 'popd && git checkout other']) both(c, n);
+      for (const c of ['cd ../.. && git checkout other', `cd ${repo.replaceAll('\\', '/')} && git checkout other`, 'pushd ../.. && git checkout other', 'popd && git checkout other']) both(c, n);
     } finally { rmSync(join(repo, 'vendor'), { recursive: true, force: true }); }
   });
   test('N7: a -C folder protect cannot resolve fails closed, alias lookup included', () => {

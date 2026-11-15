@@ -234,7 +234,7 @@ function refMove(text: string, cwd: string, { cont, cut }: { cont: boolean; cut:
     else if (raw[i + 1] === undefined || shellBuilt(raw[i + 1]!)) lost = true;
     else dir = resolve(dir, u[i + 1]!);
   }
-  lost ||= dir !== cwd && !existsSync(dir);
+  lost ||= dir !== resolve(cwd) && dir !== cwd && !existsSync(dir); // resolve writes cwd its own way (/p is C:\p on Windows)
   const sub = u[i], rest = u.slice(i + 1);
   if (sub === undefined) return lost || cut ? unknown : null;
   if (shellBuilt(raw[i]!)) return unknown; // git $SUB

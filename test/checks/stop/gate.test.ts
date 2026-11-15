@@ -1,7 +1,15 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { expect, test, vi } from 'vitest';
+
+// spawn passes through unless a test sets fake.make
+const fake = vi.hoisted(() => ({ make: undefined as undefined | (() => unknown) }));
+vi.mock('node:child_process', async (orig) => {
+  const real = await orig<typeof import('node:child_process')>();
+  return { ...real, spawn: ((...a: Parameters<typeof real.spawn>) => (fake.make ? fake.make() : real.spawn(...a))) as typeof real.spawn };
+});
 import { defaultExec, type Exec, killTree, pickRunner, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
 import { runUnwrapped } from '../../../src/checks/stop/steps.js';
 import { loadConfig } from '../../../src/core/config.js';
@@ -43,7 +51,7 @@ const setup = (o: Opts = {}) => {
 };
 import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { SrtProbe } from '../../../src/checks/stop/srt.js';
+import { STOP_WIN_UNATTENDED, type SrtProbe } from '../../../src/checks/stop/srt.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../../src/core/git-safe.js';
 const require_mkdir = (root: string) => mkdirSync(join(root, '.harness'), { recursive: true });
 const SRC = ' M src/a.ts\0';
@@ -347,6 +355,43 @@ test('spawn error resolves with status null and does not throw', async () => {
   expect(r.output).toMatch(/ENOENT/);
 });
 
+test('defaultExec writes the input to the child stdin and closes it; without input stdin is ignored', async () => {
+  const js = "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log('got:'+d.length))";
+  expect((await defaultExec(tmpdir())(process.execPath, ['-e', js], 5000, 'abc\n')).stdout).toBe('got:4\n');
+  expect((await defaultExec(tmpdir())(process.execPath, ['-e', js], 5000)).stdout).toBe('got:0\n');
+});
+
+// POSIX only: on win32 killTree runs the real taskkill on the fake pid (the routing is the killTree test above).
+test.skipIf(process.platform === 'win32')('an input spawn whose child has no stdin is killed and fails, never left running', async () => {
+  fake.make = () => Object.assign(new EventEmitter(), { pid: 4242, stdin: null, stdout: null, stderr: null });
+  const kill = vi.spyOn(process, 'kill').mockImplementation((() => true) as never);
+  try {
+    const r = await defaultExec(tmpdir())('x', [], 5000, 'abc\n');
+    expect(r.status).toBeNull();
+    expect(r.output).toMatch(/no stdin/);
+    expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL');
+  } finally {
+    fake.make = undefined;
+    kill.mockRestore();
+  }
+});
+
+test('a stdin write error keeps its code in the output', async () => {
+  fake.make = () => {
+    const c = Object.assign(new EventEmitter(), { pid: undefined, stdout: Object.assign(new EventEmitter(), { destroy() {} }), stderr: Object.assign(new EventEmitter(), { destroy() {} }) });
+    const stdin = Object.assign(new EventEmitter(), { end: () => stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })) });
+    setImmediate(() => c.emit('close', 0));
+    return Object.assign(c, { stdin });
+  };
+  try {
+    const r = await defaultExec(tmpdir())('x', [], 5000, 'abc\n');
+    expect(r.output).toContain('stdin: EPIPE');
+    expect(r.output).not.toContain('abc');
+  } finally {
+    fake.make = undefined;
+  }
+});
+
 test('output is bounded to a rolling tail', async () => {
   const r = await defaultExec(tmpdir())('node', ['-e', "for(let i=0;i<20000;i++)console.log('line '+i+' '+'x'.repeat(100)); console.log('THE-END')"], 20000);
   expect(r.status).toBe(0);
@@ -559,6 +604,38 @@ test('win32 runs unwrapped with a visible note', async () => {
   expect(s.steps()).toEqual(ALL);
 });
 
+test('win32 unattended blocks with the §4.5 text, no step runs, counts toward max_attempts', async () => {
+  const s = setup();
+  Object.assign(s.ctx, { platform: 'win32', unattended: true });
+  const d = await wrapped(s, NOPROBE)(s.exec(SRC));
+  expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+  expect((d as { reason: string }).reason).toContain(STOP_WIN_UNATTENDED);
+  expect(s.steps()).toEqual([]);
+  expect(s.ctx.state.stopAttempts).toBe(1);
+  expect(stopEvents(s.root, 'stop-srt-unavailable')).toHaveLength(1);
+});
+
+test('win32 attended unwrapped', async () => {
+  const s = setup();
+  Object.assign(s.ctx, { platform: 'win32', unattended: false });
+  expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'context', text: 'Stop steps ran without the sandbox (native Windows).', check: 'stop' });
+});
+
+test('win32 + off unwrapped and logged; off set mid-session on unattended win32 is refused', async () => {
+  const s = setup({ yaml: 'sandbox: off\n' });
+  Object.assign(s.ctx, { platform: 'win32', unattended: true });
+  s.ctx.state = { ...s.ctx.state, sandboxBase: 'off' };
+  expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'context', text: OFF, check: 'stop' });
+  expect(stopEvents(s.root, 'stop-unwrapped')).toHaveLength(1);
+  const m = setup({ yaml: 'sandbox: off\n' });
+  Object.assign(m.ctx, { platform: 'win32', unattended: true });
+  const d = await wrapped(m, NOPROBE)(m.exec(SRC));
+  expect(d).toMatchObject({ kind: 'block' });
+  expect((d as { reason: string }).reason).toContain(STOP_WIN_UNATTENDED);
+  expect(stopEvents(m.root, 'stop-unwrapped-refused')).toHaveLength(1);
+  expect(m.steps()).toEqual([]);
+});
+
 test.skipIf(winSkip)('no .harness/config.yaml and no srt: wrapped, blocks', async () => {
   const s = setup();
   s.ctx.env = { PATH: '/nonexistent-dir' };
@@ -608,14 +685,19 @@ test.skipIf(winSkip)('a wrapped step failure blocks like today and keeps the srt
   writeFileSync(join(s.root, '.harness/hooks/dispatch.mjs'), '');
   const srtJs = fileURLToPath(new URL('../../../build.mjs', import.meta.url)); // outside every writable root; a .mjs is a node launch
   const probe: SrtProbe = { which: () => srtJs, version: () => '0.0.83' };
-  const e: Exec = (cmd, args, ms) => {
+  const made: string[] = [];
+  const e: Exec = (cmd, args, ms, input) => {
     if (cmd === 'git') return s.exec(SRC)(cmd, args, ms);
     const nonce = args.at(-1)!;
-    const plan = JSON.parse(readFileSync(args.at(-2)!, 'utf8')) as { steps: { label: string }[] };
-    const out = plan.steps.slice(0, 2).map((st, i) => JSON.stringify({ nonce, kind: 'step', label: st.label, status: i, timedOut: false, ms: 1, ...(i ? { output: 'boom in lint' } : {}) }));
-    return { status: 0, output: '', timedOut: false, stdout: out.join('\n'), stderr: 'sandbox proxy: denied registry.npmjs.org:443\n' };
+    const plan = JSON.parse(readFileSync(args.at(-2)!, 'utf8')) as { steps: { label: string }[]; preflight: { readCanary: string; socket: string } };
+    made.push(plan.preflight.readCanary, plan.preflight.socket);
+    const checks = ['write canary', 'read canary', 'unix socket', 'network', ...(process.platform === 'linux' ? ['user namespace'] : [])].map((name) => JSON.stringify({ nonce, kind: 'check', name, ok: true }));
+    const out = checks.concat(plan.steps.slice(0, 2).map((st, i) => JSON.stringify({ nonce, kind: 'step', label: st.label, status: i, timedOut: false, ms: 1, ...(i ? { output: 'boom in lint' } : {}) })));
+    return { status: 0, output: '', timedOut: false, stdout: [...out, JSON.stringify({ nonce, kind: 'end', seal: input!.trim() })].join('\n'), stderr: 'sandbox proxy: denied registry.npmjs.org:443\n' };
   };
   const d = await wrapped(s, probe)(e);
+  expect(made).toHaveLength(2);
+  expect(made.filter((f) => existsSync(f))).toEqual([]); // the canary and socket in the shared temp dir are removed
   expect(d).toMatchObject({ kind: 'block', check: 'stop' });
   const reason = (d as { reason: string }).reason;
   expect(reason).toMatch(/^lint failed \(attempt 1 of 3\)/);

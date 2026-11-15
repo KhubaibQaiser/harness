@@ -9,13 +9,13 @@ import { coverageGate } from './coverage-gate.js';
 import { findOnPath, resolveStep, scriptsOf, winCmdLine } from './runner.js';
 import { realish } from '../../core/paths.js';
 import { type PlanStep, type RunSteps, runUnwrapped } from './steps.js';
-import { realSrtProbe, type SrtProbe } from './srt.js';
+import { realSrtProbe, STOP_WIN_UNATTENDED, type SrtProbe } from './srt.js';
 import { tokenBase } from '../../core/token-base.js';
 import { runWrapped } from './wrap.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
 export type ExecResult = { status: number | null; output: string; timedOut: boolean; stdout?: string; stderr?: string; stderrRolled?: boolean };
-export type Exec = (cmd: string, args: string[], timeoutMs: number) => ExecResult | Promise<ExecResult>;
+export type Exec = (cmd: string, args: string[], timeoutMs: number, input?: string) => ExecResult | Promise<ExecResult>;
 
 const DOCS_ONLY = /\.(md|mdx|txt)$|^docs\/|^LICENSE$/;
 const MAX_LOG = 3500;
@@ -40,13 +40,13 @@ export function killTree(pid: number, platform: string = process.platform, run: 
 const KEEP = 64 * 1024; // rolling tail per stream; the gate only shows the last MAX_LOG chars
 const GRACE_MS = 2000; // after the kill, how long to wait for pipes held by escaped grandchildren
 
-export const defaultExec = (root: string): Exec => (cmd, args, timeout) =>
+export const defaultExec = (root: string): Exec => (cmd, args, timeout, input) =>
   new Promise((resolve) => {
     // Node won't spawn .cmd/.bat directly (CVE-2024-27980), so run them through cmd.exe with a pre-quoted line.
     const shim = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
     const c = shim
-      ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', winCmdLine(cmd, args)], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsVerbatimArguments: true })
-      : spawn(cmd, args, { cwd: root, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', winCmdLine(cmd, args)], { cwd: root, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], windowsVerbatimArguments: true })
+      : spawn(cmd, args, { cwd: root, detached: process.platform !== 'win32', stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     let timedOut = false;
@@ -74,6 +74,14 @@ export const defaultExec = (root: string): Exec => (cmd, args, timeout) =>
     }, timeout);
     c.on('error', (e) => finish(null, `\n${e.message}`));
     c.on('close', (status) => finish(status));
+    if (input !== undefined) {
+      if (!c.stdin) {
+        if (c.pid) killTree(c.pid); // a spawn that cannot take the input is a failure, and never left running
+        return finish(null, '\nspawn has no stdin for the input');
+      }
+      c.stdin.on('error', (e: NodeJS.ErrnoException) => (err += `\nstdin: ${e.code ?? e.message}`)); // the code only, never the input
+      c.stdin.end(input);
+    }
   });
 
 export const tail = (text: string) => {
@@ -252,6 +260,17 @@ export function pickRunner(ctx: Ctx, exec: Exec, now: () => number, srt: SrtProb
   };
   const off = ctx.config.sandbox === 'off';
   const honoured = off && ctx.state.sandboxBase === 'off';
+  const refuse = (notes: string[]) => {
+    if (off && !ctx.state.stopOffRefusedLogged) {
+      log('stop-unwrapped-refused');
+      ctx.save({ ...ctx.state, stopOffRefusedLogged: true });
+      notes.push(REFUSED);
+    }
+  };
+  if (ctx.platform === 'win32' && ctx.unattended && !honoured) {
+    const unavailable: RunSteps = async () => ({ kind: 'unavailable', message: STOP_WIN_UNATTENDED, reason: 'native Windows unattended' });
+    return noted(unavailable, refuse);
+  }
   if (honoured || ctx.platform === 'win32')
     return noted(runUnwrapped(exec, now), (notes) => {
       if (honoured && !ctx.state.stopUnwrappedLogged) {
@@ -261,13 +280,7 @@ export function pickRunner(ctx: Ctx, exec: Exec, now: () => number, srt: SrtProb
       notes.push(`Stop steps ran without the sandbox (${honoured ? 'sandbox: off' : 'native Windows'}).`);
     });
   const wrapped = runWrapped({ root: ctx.root, stop: ctx.config.stop, exec, now, srt, home: ctx.home, platform: ctx.platform, env: ctx.env, tokenBase: () => tokenBase(ctx.platform, ctx.env), node: process.execPath });
-  return noted(wrapped, (notes) => {
-    if (off && !ctx.state.stopOffRefusedLogged) {
-      log('stop-unwrapped-refused');
-      ctx.save({ ...ctx.state, stopOffRefusedLogged: true });
-      notes.push(REFUSED);
-    }
-  });
+  return noted(wrapped, refuse);
 }
 
 export const stopGate: Check = {

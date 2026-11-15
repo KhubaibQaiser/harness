@@ -28,7 +28,9 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 
 - The Stop gate's steps now run inside Anthropic's sandbox-runtime (`srt`) by default, so attended macOS and Linux Stop gates need `srt` installed. Install `@anthropic-ai/sandbox-runtime@0.0.83` globally with npm, outside the repo. Linux also needs bubblewrap 0.8 or newer, socat and ripgrep; macOS needs ripgrep. Until `srt` is installed, Stop blocks with the fix. A Stop with nothing to run (a docs-only change, a clean tree) still passes without `srt`.
 - Steps get no network, no loopback and no Unix sockets, and can't write outside the repo and the temp folders. New keys: `stop.allowed_domains`, `stop.allow_write` and `stop.allow_local`. A suite that needs the network, a host service or testcontainers fails until you allow it, or set `sandbox: off` before the session starts (logged).
-- Native Windows keeps running steps unwrapped, with a note on every Stop, until a later release.
+- Before any step, a preflight inside `srt` proves the fence holds: a write to a protected file, a read of a masked file, a Unix socket, an HTTPS connection to `example.com`, and on Linux a nested bubblewrap user namespace must all fail. The outer runner checks the canaries and socket again afterwards, and the results carry a sealed end line, so a forged result can't pass. A run that reports nothing before the timeout blocks as unavailable. Any `srt` stderr other than its `sandbox proxy:` lines blocks. A failed check blocks Stop and names itself. A machine that is offline reads as network-blocked, which is safe.
+- When the attempts run out, Stop passes by its existing rule and logs `stop-gave-up`.
+- Attended native Windows keeps running steps unwrapped, with a note on every Stop. An unattended native Windows Stop now blocks; run in WSL2 or the harness dev container.
 
 ## Catalog
 

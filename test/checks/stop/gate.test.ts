@@ -51,7 +51,7 @@ const setup = (o: Opts = {}) => {
 };
 import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { SrtProbe } from '../../../src/checks/stop/srt.js';
+import { STOP_WIN_UNATTENDED, type SrtProbe } from '../../../src/checks/stop/srt.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../../src/core/git-safe.js';
 const require_mkdir = (root: string) => mkdirSync(join(root, '.harness'), { recursive: true });
 const SRC = ' M src/a.ts\0';
@@ -601,6 +601,38 @@ test('win32 runs unwrapped with a visible note', async () => {
   s.ctx.platform = 'win32';
   expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'context', text: 'Stop steps ran without the sandbox (native Windows).', check: 'stop' });
   expect(s.steps()).toEqual(ALL);
+});
+
+test('win32 unattended blocks with the §4.5 text, no step runs, counts toward max_attempts', async () => {
+  const s = setup();
+  Object.assign(s.ctx, { platform: 'win32', unattended: true });
+  const d = await wrapped(s, NOPROBE)(s.exec(SRC));
+  expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+  expect((d as { reason: string }).reason).toContain(STOP_WIN_UNATTENDED);
+  expect(s.steps()).toEqual([]);
+  expect(s.ctx.state.stopAttempts).toBe(1);
+  expect(stopEvents(s.root, 'stop-srt-unavailable')).toHaveLength(1);
+});
+
+test('win32 attended unwrapped', async () => {
+  const s = setup();
+  Object.assign(s.ctx, { platform: 'win32', unattended: false });
+  expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'context', text: 'Stop steps ran without the sandbox (native Windows).', check: 'stop' });
+});
+
+test('win32 + off unwrapped and logged; off set mid-session on unattended win32 is refused', async () => {
+  const s = setup({ yaml: 'sandbox: off\n' });
+  Object.assign(s.ctx, { platform: 'win32', unattended: true });
+  s.ctx.state = { ...s.ctx.state, sandboxBase: 'off' };
+  expect(await wrapped(s, NOPROBE)(s.exec(SRC))).toEqual({ kind: 'context', text: OFF, check: 'stop' });
+  expect(stopEvents(s.root, 'stop-unwrapped')).toHaveLength(1);
+  const m = setup({ yaml: 'sandbox: off\n' });
+  Object.assign(m.ctx, { platform: 'win32', unattended: true });
+  const d = await wrapped(m, NOPROBE)(m.exec(SRC));
+  expect(d).toMatchObject({ kind: 'block' });
+  expect((d as { reason: string }).reason).toContain(STOP_WIN_UNATTENDED);
+  expect(stopEvents(m.root, 'stop-unwrapped-refused')).toHaveLength(1);
+  expect(m.steps()).toEqual([]);
 });
 
 test.skipIf(winSkip)('no .harness/config.yaml and no srt: wrapped, blocks', async () => {

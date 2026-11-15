@@ -1,16 +1,18 @@
 // The wrapped Stop runner: one srt call per run, the steps inside it, strict nonce-tagged result lines. Every failure is unavailable.
 import { randomBytes } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { esc, type HarnessConfig } from '../../core/config.js';
 import { real, realish, within } from '../../core/paths.js';
 import { allowWriteMessage, allowWriteProblem } from './allow-write.js';
 import type { Exec } from './gate.js';
+import { PREFLIGHT_ORDER, type PreflightPlan } from './preflight.js';
 import { locateSrt, srtMessage, type SrtProbe } from './srt.js';
 import { renderSrtSettings, tempRoots, writableRoots } from './srt-settings.js';
 import type { CheckName, Plan, ResultLine, RunSteps, StepResult, StepsRun } from './steps.js';
 
-export interface WrapDeps { root: string; stop: HarnessConfig['stop']; exec: Exec; now: () => number; srt: SrtProbe; home: string; platform: NodeJS.Platform; env: NodeJS.ProcessEnv; tokenBase: () => string | null; node: string; nonce?: () => string }
+export interface WrapDeps { root: string; stop: HarnessConfig['stop']; exec: Exec; now: () => number; srt: SrtProbe; home: string; platform: NodeJS.Platform; env: NodeJS.ProcessEnv; tokenBase: () => string | null; node: string; nonce?: () => string; tmp?: string }
 export type Expected = { kind: 'check'; name: CheckName } | { kind: 'step'; label: string };
 
 export const srtArgv = (settings: string, node: string, runner: string, plan: string, nonce: string): string[] => ['--settings', settings, node, '--no-warnings', runner, '--stop-steps', plan, nonce];
@@ -49,9 +51,64 @@ export function parseResults(stdout: string, nonce: string, expected: Expected[]
   return { lines };
 }
 
+const MAX_SOCK = 104; // macOS sun_path, including the NUL
+
+export interface Preflight { plan: PreflightPlan; denyWrite: string[]; denyRead: string[]; verify(): string | null; close(): void }
+
+/** Outer side of the preflight: new canaries and a listening socket (all exclusive creates), checked again after srt returns. */
+export async function preparePreflight(root: string, tmp: string, nonce: string, platform: NodeJS.Platform): Promise<Preflight> {
+  if (platform === 'win32') throw new Error('srt is not supported on native Windows');
+  const writeCanary = join(root, '.harness/state', `canary-${nonce}`);
+  const readCanary = join(tmp, `h-canary-${nonce}`);
+  const socket = join(tmp, `h-${nonce.slice(0, 12)}.sock`);
+  if (Buffer.byteLength(socket) >= MAX_SOCK) throw new Error(`socket path is ${Buffer.byteLength(socket)} bytes, over the ${MAX_SOCK - 1} limit: ${socket}`);
+  const body = randomBytes(16).toString('hex');
+  const made: string[] = [];
+  let connected = false;
+  const server = createServer((c) => ((connected = true), c.destroy()));
+  let listening = false;
+  const close = (): void => {
+    if (listening) server.close();
+    for (const f of made) {
+      try {
+        rmSync(f, { force: true });
+      } catch (e) {
+        process.stderr.write(`harness: could not delete ${f}: ${first(msg(e))}\n`);
+      }
+    }
+  };
+  try {
+    writeFileSync(writeCanary, body, { flag: 'wx', mode: 0o600 });
+    made.push(writeCanary);
+    writeFileSync(readCanary, randomBytes(16).toString('hex'), { flag: 'wx', mode: 0o600 });
+    made.push(readCanary);
+    await new Promise<void>((res, rej) => server.once('error', rej).listen(socket, res));
+    listening = true;
+    made.push(socket);
+  } catch (e) {
+    close();
+    throw e;
+  }
+  return {
+    plan: { writeCanary, readCanary, socket, linux: platform === 'linux' },
+    denyWrite: [writeCanary],
+    denyRead: [readCanary],
+    verify: () => {
+      try {
+        if (readFileSync(writeCanary, 'utf8') !== body) return 'write canary';
+      } catch {
+        return 'write canary';
+      }
+      return connected ? 'unix socket' : null;
+    },
+    close,
+  };
+}
+
 export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => {
   const fail = (check: string, why: string): StepsRun => ({ kind: 'unavailable', message: srtMessage({ kind: 'check', check, first: first(why) }), reason: check });
   const files: string[] = [];
+  let pre: Preflight | undefined;
   let stage = 'token base'; // names the failed check when anything below throws
   try {
     const tokenBase = d.tokenBase();
@@ -81,11 +138,14 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
     const dir = join(root, '.harness/state');
     const sFile = join(dir, `srt-${nonce}.json`);
     const pFile = join(dir, `plan-${nonce}.json`);
-    // R1: the runner must read the plan, so only the settings file is on denyRead. The nonce binds a line's origin; it is not a secret (step code can read it).
-    const settings = Buffer.from(JSON.stringify(renderSrtSettings({ ...inputs, tokenBase, denyWrite: [], denyRead: [sFile] }, d.platform)));
-    const plan: Plan = { nonce, deadlineMs: deadline, steps };
     mkdirSync(dir, { recursive: true });
     if (!lstatSync(dir).isDirectory() || real(dir) !== dir) return fail(stage, 'state folder is not a real directory');
+    stage = 'preflight';
+    pre = await preparePreflight(root, d.tmp ?? inputs.tmp[0]!, nonce, d.platform);
+    stage = 'settings file';
+    // R1: the runner must read the plan, so only the settings file is on denyRead. The nonce binds a line's origin; it is not a secret (step code can read it).
+    const settings = Buffer.from(JSON.stringify(renderSrtSettings({ ...inputs, tokenBase, denyWrite: pre.denyWrite, denyRead: [sFile, ...pre.denyRead] }, d.platform)));
+    const plan: Plan = { nonce, deadlineMs: deadline, steps, preflight: pre.plan };
     writeFileSync(sFile, settings, { flag: 'wx', mode: 0o600 });
     files.push(sFile);
     try {
@@ -110,13 +170,18 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
     if (r.timedOut) return { kind: 'timeout' };
     const err = r.stderr ?? '';
     if (r.status !== 0) return fail(stage, err.trim() ? err : r.output.trim() ? r.output : `status ${r.status}`);
-    const parsed = parseResults(r.stdout ?? '', nonce, steps.map((s) => ({ kind: 'step', label: s.label })));
+    const seen = pre.verify(); // the outer view of the canaries and socket, whatever the inner lines say
+    if (seen) return fail(seen, 'seen by the outer runner');
+    const expected: Expected[] = [...PREFLIGHT_ORDER(pre.plan.linux).map((name): Expected => ({ kind: 'check', name })), ...steps.map((s): Expected => ({ kind: 'step', label: s.label }))];
+    const parsed = parseResults(r.stdout ?? '', nonce, expected);
     if ('error' in parsed) return fail('result lines', parsed.error);
     const results: StepResult[] = parsed.lines.flatMap((l) => (l.kind === 'step' ? [{ label: l.label, status: l.status, timedOut: l.timedOut, ms: l.ms, output: l.output ?? '' }] : []));
     // R12: srt's stderr should hold only proxy lines; anything else means a degraded srt.
     const errLines = err.split('\n').filter((s) => s.trim());
     const warn = errLines.find((s) => !s.startsWith(PROXY));
     if (warn) return fail('srt warning', warn);
+    const bad = parsed.lines.find((l) => l.kind === 'check' && !l.ok);
+    if (bad?.kind === 'check') return fail(bad.name, bad.detail ?? 'failed');
     const last = results.at(-1);
     const failed = !!last && (last.timedOut || last.status !== 0);
     if (!failed && r.stderrRolled) return fail('srt warning', 'stderr overflow'); // the dropped head may have held a warning
@@ -128,6 +193,7 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
   } catch (e) {
     return fail(stage, msg(e));
   } finally {
+    pre?.close();
     for (const f of files) {
       try {
         rmSync(f, { force: true });

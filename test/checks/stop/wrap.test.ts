@@ -1,10 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, test } from 'vitest';
 import { allowWriteMessage } from '../../../src/checks/stop/allow-write.js';
 import { defaultExec, type ExecResult } from '../../../src/checks/stop/gate.js';
+import { PREFLIGHT_ORDER } from '../../../src/checks/stop/preflight.js';
 import { srtMessage, type SrtProbe, type SrtWhy } from '../../../src/checks/stop/srt.js';
 import type { PlanStep } from '../../../src/checks/stop/steps.js';
 import { type Expected, parseResults, runWrapped, srtArgv, type WrapDeps } from '../../../src/checks/stop/wrap.js';
@@ -21,7 +23,9 @@ const runner = join(root, '.harness/hooks/dispatch.mjs');
 const state = join(root, '.harness/state');
 if (!win) for (const d of [join(root, '.harness/hooks'), home]) mkdirSync(d, { recursive: true });
 if (!win) writeFileSync(runner, '');
-afterAll(() => void (win || rmSync(base, { recursive: true, force: true })));
+// macOS caps a socket path at 104 bytes and the test temp dir is long, so the canaries go in a short folder.
+const short = win ? '' : mkdtempSync(join(realpathSync('/tmp'), 'w-'));
+afterAll(() => void (win || (rmSync(base, { recursive: true, force: true }), rmSync(short, { recursive: true, force: true }))));
 // srt must sit outside every writable root, and the temp dir is one, so a repo file stands in (a .mjs is a node launch).
 const srtJs = fileURLToPath(new URL('../../../build.mjs', import.meta.url));
 const node = win ? '' : realpathSync(process.execPath);
@@ -32,7 +36,9 @@ const N2 = 'b'.repeat(32);
 const STEPS = ['format:check', 'lint', 'typecheck', 'test'];
 const steps: PlanStep[] = STEPS.map((label) => ({ label, cmd: 'pnpm', args: ['run', label], cwd: root, timeoutMs: 1000 }));
 const line = (label: string, o: Record<string, unknown> = {}, nonce = N) => JSON.stringify({ nonce, kind: 'step', label, status: 0, timedOut: false, ms: 5, ...o });
-const pass = STEPS.map((l) => line(l)).join('\n') + '\n';
+const check = (name: string, o: Record<string, unknown> = {}, nonce = N) => JSON.stringify({ nonce, kind: 'check', name, ok: true, ...o });
+const pre = PREFLIGHT_ORDER(process.platform === 'linux').map((n) => check(n));
+const pass = [...pre, ...STEPS.map((l) => line(l))].join('\n') + '\n';
 const settingsAt = (n = N) => join(state, `srt-${n}.json`);
 const planAt = (n = N) => join(state, `plan-${n}.json`);
 
@@ -43,7 +49,7 @@ function setup(script: Partial<ExecResult> | (() => Partial<ExecResult> | Promis
   const nonces = [N, N2];
   const d: WrapDeps = {
     root, stop: defaults().stop, now: () => 0, srt: probe(), home, platform: process.platform, env: { PATH: '/usr/bin:/bin' },
-    tokenBase: () => null, node: process.execPath, nonce: () => nonces.shift()!,
+    tokenBase: () => null, node: process.execPath, tmp: short, nonce: () => nonces.shift()!,
     exec: async (cmd, args, ms) => {
       const n = args.at(-1)!;
       calls.push({ cmd, args, ms, settings: readFileSync(settingsAt(n), 'utf8'), plan: readFileSync(planAt(n), 'utf8') });
@@ -54,7 +60,7 @@ function setup(script: Partial<ExecResult> | (() => Partial<ExecResult> | Promis
   return { calls, run: () => runWrapped(d)(steps, 1000) };
 }
 const unavailable = (check: string, first: string) => ({ kind: 'unavailable', message: srtMessage({ kind: 'check', check, first }), reason: check });
-const clean = () => expect(readdirSync(state).filter((f) => /^(srt|plan)-/.test(f))).toEqual([]);
+const clean = () => expect(readdirSync(state).filter((f) => /^(srt|plan|canary)-/.test(f))).toEqual([]);
 
 suite('runWrapped', () => {
   test('argv is exactly the launch prefix, --settings <abs settings>, <node>, <abs runner>, --stop-steps <abs plan>, <nonce>', async () => {
@@ -69,7 +75,7 @@ suite('runWrapped', () => {
     const { calls, run } = setup();
     expect(await run()).toEqual({ kind: 'ran', results: STEPS.map((label) => ({ label, status: 0, timedOut: false, ms: 5, output: '' })) });
     expect(calls).toHaveLength(1);
-    expect(JSON.parse(calls[0]!.plan)).toEqual({ nonce: N, deadlineMs: 1000, steps });
+    expect(JSON.parse(calls[0]!.plan)).toEqual({ nonce: N, deadlineMs: 1000, steps, preflight: expect.objectContaining({ linux: process.platform === 'linux' }) });
     const deny = JSON.parse(calls[0]!.settings).filesystem.denyRead.map((e: { path: string }) => e.path);
     expect(deny).toContain(settingsAt());
     expect(deny).not.toContain(planAt());
@@ -81,7 +87,7 @@ suite('runWrapped', () => {
     await two.run();
     expect(two.calls.map((c) => c.args.at(-1))).toEqual([N, N2]);
     clean();
-    const fail = [line('format:check'), line('lint', { status: 1, output: 'boom' })].join('\n');
+    const fail = [...pre, line('format:check'), line('lint', { status: 1, output: 'boom' })].join('\n');
     for (const s of [{ stdout: fail }, { timedOut: true, status: null }, () => { throw new Error('spawn boom'); }]) {
       await setup(s).run();
       clean();
@@ -92,11 +98,11 @@ suite('runWrapped', () => {
 
   test('result lines: missing, extra, out of order, a wrong nonce and non-JSON are each rejected as failed its check: result lines', async () => {
     const bad = [
-      STEPS.slice(0, 3).map((l) => line(l)).join('\n'),
+      [...pre, ...STEPS.slice(0, 3).map((l) => line(l))].join('\n'),
       pass + line('test'),
-      [line('lint'), line('format:check'), line('typecheck'), line('test')].join('\n'),
-      [line('format:check'), line('lint', {}, N2), line('typecheck'), line('test')].join('\n'),
-      [line('format:check'), 'not json', line('typecheck'), line('test')].join('\n'),
+      [...pre, line('lint'), line('format:check'), line('typecheck'), line('test')].join('\n'),
+      [...pre, line('format:check'), line('lint', {}, N2), line('typecheck'), line('test')].join('\n'),
+      [...pre, line('format:check'), 'not json', line('typecheck'), line('test')].join('\n'),
     ];
     for (const stdout of bad) expect(await setup({ stdout }).run()).toMatchObject({ kind: 'unavailable', reason: 'result lines' });
   });
@@ -115,9 +121,9 @@ suite('runWrapped', () => {
     expect(await setup({ status: null, stdout: pass, stderr: '' }).run()).toEqual(unavailable('srt exit', 'status null'));
   });
 
-  test("a failing step's output ends with srt's proxy lines, capped at 1024 chars; a stray srt line on any run is a warning", async () => {
+  test("any non-proxy srt stderr line fails the preflight; sandbox proxy: lines only reach the step tail", async () => {
     const stderr = 'sandbox proxy: denied registry.npmjs.org:443\n';
-    const failOut = [line('format:check'), line('lint', { status: 1, output: 'npm ERR! network' })].join('\n');
+    const failOut = [...pre, line('format:check'), line('lint', { status: 1, output: 'npm ERR! network' })].join('\n');
     const r = await setup({ stdout: failOut, stderr }).run();
     expect(r).toEqual({ kind: 'ran', results: [{ label: 'format:check', status: 0, timedOut: false, ms: 5, output: '' }, { label: 'lint', status: 1, timedOut: false, ms: 5, output: 'npm ERR! network\nsandbox proxy: denied registry.npmjs.org:443' }] });
     const many = Array.from({ length: 100 }, (_, i) => `sandbox proxy: denied host${i}.example:443${'x'.repeat(i % 7)}`).join('\n');
@@ -139,6 +145,74 @@ suite('runWrapped', () => {
     const js = "process.stderr.write('warning: seccomp filter not applied\\n' + 'sandbox proxy: denied x.example:443 padding padding padding pad\\n'.repeat(1120))";
     const r = await setup(async () => ({ ...(await defaultExec(base)(process.execPath, ['-e', js], 20_000)), stdout: pass })).run();
     expect(r).toEqual(unavailable('srt warning', 'stderr overflow'));
+  });
+
+  test('canaries are new per run, on denyWrite and denyRead, removed after', async () => {
+    const seen: { w: string; r: string; s: string; mode: number; wBody: string; sock: boolean; deny: { w: string[]; r: string[] } }[] = [];
+    const script = () => {
+      const n = [N, N2][seen.length]!;
+      const p = JSON.parse(readFileSync(planAt(n), 'utf8')).preflight;
+      const f = JSON.parse(readFileSync(settingsAt(n), 'utf8')).filesystem;
+      seen.push({ w: p.writeCanary, r: p.readCanary, s: p.socket, mode: statSync(p.writeCanary).mode & 0o777, wBody: readFileSync(p.writeCanary, 'utf8'), sock: statSync(p.socket).isSocket(), deny: { w: f.denyWrite.map((e: { path: string }) => e.path), r: f.denyRead.map((e: { path: string }) => e.path) } });
+      return { stdout: [...pre.map((c) => c), ...STEPS.map((l) => line(l))].join('\n').replaceAll(N, n) };
+    };
+    const { run } = setup(script);
+    await run();
+    await run();
+    expect(seen).toHaveLength(2);
+    for (const c of seen) {
+      expect(c.w.startsWith(`${state}/canary-`)).toBe(true);
+      expect(c.mode).toBe(0o600);
+      expect(c.wBody).toMatch(/^[0-9a-f]{32}$/);
+      expect(Buffer.byteLength(c.s)).toBeLessThan(104);
+      expect(c.sock).toBe(true);
+      expect(c.deny.w).toContain(c.w);
+      expect(c.deny.r).toContain(c.r);
+      expect(c.r.startsWith(`${short}/`)).toBe(true);
+      for (const f of [c.w, c.r, c.s]) expect(existsSync(f)).toBe(false);
+    }
+    expect(new Set([seen[0]!.w, seen[1]!.w, seen[0]!.r, seen[1]!.r, seen[0]!.s, seen[1]!.s]).size).toBe(6);
+    clean();
+  });
+
+  test('a pre-existing canary path fails closed, srt not called, and is left alone', async () => {
+    mkdirSync(state, { recursive: true });
+    const planted = join(state, `canary-${N}`);
+    writeFileSync(planted, 'planted');
+    const { calls, run } = setup();
+    expect(await run()).toMatchObject({ kind: 'unavailable', reason: 'preflight' });
+    expect(calls).toHaveLength(0);
+    expect(readFileSync(planted, 'utf8')).toBe('planted');
+    rmSync(planted);
+    clean();
+    const long = setup(undefined, { tmp: join(short, 'x'.repeat(100)) });
+    expect(await long.run()).toMatchObject({ kind: 'unavailable', reason: 'preflight' });
+    expect(long.calls).toHaveLength(0);
+  });
+
+  test('a check line ok:false gives failed its check: <name> (<detail>)', async () => {
+    const stdout = [check('write canary', { ok: false, detail: 'wrote to the state canary' })].join('\n');
+    expect(await setup({ stdout }).run()).toEqual(unavailable('write canary', 'wrote to the state canary'));
+    clean();
+  });
+
+  test('outer sees a changed canary or a socket connection and fails it', async () => {
+    const plan = (n = N) => JSON.parse(readFileSync(planAt(n), 'utf8')).preflight;
+    const ok = { stdout: pass };
+    expect(await setup(() => (writeFileSync(plan().writeCanary, 'changed'), ok)).run()).toEqual(unavailable('write canary', 'seen by the outer runner'));
+    expect(await setup(() => (rmSync(plan().writeCanary), ok)).run()).toEqual(unavailable('write canary', 'seen by the outer runner'));
+    const viaSocket = async () => {
+      await new Promise<void>((res) => connect(plan().socket).on('close', () => res()).on('error', () => res())); // the server destroys it at once
+      return ok;
+    };
+    expect(await setup(viaSocket).run()).toEqual(unavailable('unix socket', 'seen by the outer runner'));
+    clean();
+  });
+
+  test('a missing check line is rejected', async () => {
+    const steps = STEPS.map((l) => line(l)).join('\n');
+    expect(await setup({ stdout: steps }).run()).toMatchObject({ kind: 'unavailable', reason: 'result lines' });
+    expect(await setup({ stdout: [...pre.slice(0, -1), ...STEPS.map((l) => line(l))].join('\n') }).run()).toMatchObject({ kind: 'unavailable', reason: 'result lines' });
   });
 
   test('a deadline already past is a timeout, srt not called', async () => {

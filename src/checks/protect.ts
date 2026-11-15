@@ -1,6 +1,6 @@
 // Harness files and Claude settings are changed by a person; the agent is denied at the tool-call level.
 import { spawnSync } from 'node:child_process';
-import { lstatSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import nodePath, { resolve } from 'node:path';
 import picomatch from 'picomatch';
 import { matches, TASKS_DIR, toRepoPath } from '../core/paths.js';
@@ -9,10 +9,12 @@ import { editTarget, isShell } from '../hooks/edit-target.js';
 import { becomesDecision, codeNames, decisionRoutes, decisionsDeny, editorAsk, editorFiles, globHits } from './decisions-protect.js';
 import type { Decision } from '../hooks/types.js';
 import { commandStart, decodeAnsiC, EXPANDS, fileWriteTargets, gitArgs, ifsReading, lexLine, MAX_SHELL_NESTING, NESTING_WHY, PROTECTED_TEXT, quoteFree, rmTargets, shellNesting, targetDir, withoutHeredocBodies, WRITER_ALIAS } from './guard.js';
-import { balanced, commandName, cPayloads, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
-import { SAFE_GIT } from '../core/git-safe.js';
-import { type OptTable, readOptions, valuesOf } from '../core/options.js';
+import { balanced, commandName, cPayloads, pieces, remember, segments, SHELLS, stdinPrograms, unquote, withWorkBudget, words } from '../core/shell-words.js';
+import { SAFE_DIFF, SAFE_GIT } from '../core/git-safe.js';
+import { type OptTable, readOptions, valuesOf, withoutRedirects } from '../core/options.js';
+import { joinAll } from './guard-readings.js';
 import { globGuardAsk, guardedPaths, plainHeads, wrapperForms } from '../core/command-head.js';
+import { GIT_CMDS } from './gh-writes.js';
 
 export const PROTECTED = ['.harness/hooks/**', '.harness/state/**', '.harness/logs/**', '.harness/backup/**', '.harness/results/**', '.harness/reviews/**', `${TASKS_DIR}/**`, '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/**', '.claude/settings.json', '.claude/settings.local.json'];
 const PROTECTED_CONCRETE = ['.harness', '.harness/hooks', '.harness/hooks/dispatch.mjs', '.harness/hooks/jest-results.cjs', '.harness/state', '.harness/state/tdd-pause.json', '.harness/logs', '.harness/logs/events.jsonl', '.harness/backup', '.harness/results', '.harness/reviews', TASKS_DIR, '.harness/config.yaml', '.harness/manifest.json', '.harness/apply.lock', '.harness/tmp', '.harness/tmp/.gitignore', '.claude', '.claude/settings.json', '.claude/settings.local.json'];
@@ -98,51 +100,304 @@ function moveCopyTargets(cmds: string[]): { mv: string[]; cp: string[] } {
   return r;
 }
 
-// git checkout/restore paths. Without "--", checkout's first non-flag arg is a ref (or a branch being switched to).
+// git checkout/restore paths and a worktree add's folder, from any -C folder. Without "--", checkout's first non-flag
+// arg is a ref (or a branch being switched to).
 function gitRestoreTargets(cmds: string[]): string[] {
   const out: string[] = [];
   for (const toks of cmds.flatMap(segTokens)) {
-    const [sub, ...rest] = gitArgs(toks);
+    const [sub, ...rest] = gitArgs(toks), k = toks.indexOf('git');
+    const cds = toks.slice(k + 1, toks.length - rest.length - 1).filter((_, i, a) => a[i - 1] === '-C');
+    const at = (ps: string[]) => ps.map((p) => [...cds, p].reduce((d, x) => (nodePath.isAbsolute(x) ? x : nodePath.posix.join(d, x))));
+    if (sub === 'worktree' && rest[0] === 'add') out.push(...at(readGit(rest.slice(1), WT_ADD)?.pos.slice(0, 1) ?? []));
     if (sub !== 'checkout' && sub !== 'restore') continue;
     const d = rest.indexOf('--');
     const plain = rest.filter((t) => !t.startsWith('-'));
-    // "git checkout ." has no ref; with two or more args the first is one.
-    out.push(...(d >= 0 ? rest.slice(d + 1) : sub === 'checkout' && plain.length > 1 ? plain.slice(1) : plain));
+    // "git checkout ." has no ref; with two or more args the first may be one, or a file when it isn't a ref: read both ways.
+    out.push(...at(d >= 0 ? rest.slice(d + 1) : plain));
   }
   return out;
 }
 
-// The ref a git checkout/switch moves the worktree to, with the dir git runs in; null for file checkouts and new branches off HEAD.
-// ponytail: checkout's remote-tracking DWIM (`git checkout foo` with only origin/foo) reads as a file checkout; `-`, @{-1} and --orphan are not looked up.
-function switchTarget(toks: string[], cwd: string): { ref: string; dir: string; sw: boolean } | null {
-  const [sub, ...rest] = gitArgs(toks);
-  if (sub !== 'checkout' && sub !== 'switch') return null;
-  let dir = cwd;
-  for (let i = toks.indexOf('git') + 1; toks[i]?.startsWith('-'); i += /^-[Cc]$/.test(toks[i]!) ? 2 : 1) if (toks[i] === '-C') dir = resolve(dir, toks[i + 1] ?? '');
-  if (rest.includes('--')) return null;
-  const pos: string[] = [];
-  for (let i = 0; i < rest.length; i += 1) {
-    if (/^(-[bBcC]|--orphan)$/.test(rest[i]!)) i += 1; // value is the new branch name
-    else if (!rest[i]!.startsWith('-')) pos.push(rest[i]!);
+/**
+ * What one git command changes in the worktree, as `git diff --name-only [from [to]] -- paths` reads it: `from` alone is
+ * that tree against the worktree, neither is the index against the worktree; `untracked` is a stash's untracked tree.
+ * `sw` is a checkout/switch whose first word may be a ref or a file; `fail` is a form harness can't check first.
+ */
+type Diff = { from?: string; to?: string; paths?: string[]; untracked?: string };
+type Move = { dir: string; diffs: Diff[]; sw?: { ref: string; sw: boolean; paths: string[] } } | { dir: string; fail: 'unknown' | 'pull' };
+// Plain named paths are judged by the direct-write rule (gitRestoreTargets); git reads magic (`:(exclude)src`) and globs
+// (`*.yaml` matches `.harness/config.yaml`) itself, so those are diffed.
+const SPEC_MAGIC = /^:|[*?[]/, magic = (p: string) => SPEC_MAGIC.test(p);
+const MOVERS = new Set(['checkout', 'switch', 'restore', 'reset', 'merge', 'rebase', 'cherry-pick', 'revert', 'stash', 'read-tree', 'checkout-index', 'pull', 'am']);
+/**
+ * Each mover's options as git 2.46's parse-options reads them (`git <cmd> -h`, `git <cmd> --git-completion-helper-all`).
+ * `s`: short letters, `x:name` when `-x` is `--name`; `l`: long names. `=` takes a value (the rest of a cluster or the
+ * next word), `?` takes one only when stuck (`--x=v`, `-xv`). A long option may be any unique prefix of a name or of its
+ * `--no-` form, except for cherry-pick and revert, which take no abbreviation.
+ */
+type Opts = { s: string; l: string; exact?: true };
+const PICK = 'quit continue abort skip cleanup= commit edit signoff mainline= rerere-autoupdate strategy= strategy-option= gpg-sign?';
+const STASH_APPLY: Opts = { s: 'q:quiet', l: 'quiet index' };
+const STASH_PUSH: Opts = { s: 'k:keep-index S:staged p:patch q:quiet u:include-untracked a:all m:message', l: 'keep-index staged patch quiet include-untracked all message= pathspec-from-file= pathspec-file-nul' };
+const WT_ADD: Opts = { s: 'f:force b= B= d:detach q:quiet', l: 'force orphan detach checkout lock reason= quiet track guess-remote' };
+const OPTS: Record<string, Opts> = {
+  checkout: { s: 'b= B= l q:quiet m:merge d:detach t:track f:force 2:ours 3:theirs p:patch', l: 'guess overlay quiet recurse-submodules? progress merge conflict= detach track? force orphan= overwrite-ignore ignore-other-worktrees ours theirs patch ignore-skip-worktree-bits pathspec-from-file= pathspec-file-nul' },
+  switch: { s: 'c:create C:force-create q:quiet m:merge d:detach t:track f:force', l: 'create= force-create= guess discard-changes quiet recurse-submodules? progress merge conflict= detach track? force orphan= overwrite-ignore ignore-other-worktrees' },
+  restore: { s: 's:source S:staged W:worktree q:quiet m:merge 2:ours 3:theirs p:patch', l: 'source= staged worktree ignore-unmerged overlay quiet recurse-submodules? progress merge conflict= ours theirs patch ignore-skip-worktree-bits pathspec-from-file= pathspec-file-nul' },
+  reset: { s: 'q:quiet p:patch N:intent-to-add', l: 'quiet refresh mixed soft hard merge keep recurse-submodules? patch intent-to-add pathspec-from-file= pathspec-file-nul' },
+  merge: { s: 'n e:edit s:strategy X:strategy-option m:message F:file v:verbose q:quiet S:gpg-sign', l: 'stat summary log? squash commit edit cleanup= ff ff-only rerere-autoupdate verify-signatures strategy= strategy-option= message= file= into-name= verbose quiet abort quit continue allow-unrelated-histories progress gpg-sign? autostash overwrite-ignore signoff verify' },
+  rebase: { s: 'q:quiet v:verbose n C= f:force-rebase m:merge i:interactive S:gpg-sign x:exec r:rebase-merges s:strategy X:strategy-option', l: 'onto= keep-base verify quiet verbose stat signoff committer-date-is-author-date reset-author-date ignore-whitespace whitespace= force-rebase ff continue skip abort quit edit-todo show-current-patch apply merge interactive rerere-autoupdate empty= autosquash update-refs gpg-sign? autostash exec= rebase-merges? fork-point strategy= strategy-option= root reschedule-failed-exec reapply-cherry-picks allow-empty-message keep-empty preserve-merges ignore-date' },
+  'cherry-pick': { s: 'n e:edit s:signoff m:mainline X:strategy-option S:gpg-sign x', l: `${PICK} ff allow-empty allow-empty-message keep-redundant-commits empty=`, exact: true },
+  revert: { s: 'n e:edit s:signoff m:mainline X:strategy-option S:gpg-sign', l: `${PICK} reference`, exact: true },
+  'read-tree': { s: 'v:verbose m i n:dry-run u q:quiet', l: 'index-output= empty verbose trivial aggressive reset prefix= exclude-per-directory= dry-run sparse-checkout debug-unpack recurse-submodules? quiet super-prefix=' },
+  'checkout-index': { s: 'a:all f:force q:quiet n u:index z', l: 'all ignore-skip-worktree-bits force quiet create index stdin temp prefix= stage=' },
+};
+const kindOf = (x: string) => (/[=?]$/.test(x) ? x.slice(-1) : '');
+/** `args` read with `t` the way git does, options anywhere until `--`; null for an option git rejects or can't tell apart
+ *  (unknown, ambiguous, a missing value, `--end-of-options` and its abbreviations). `o` maps each option's long name (or
+ *  its letter) to its value, '' for a flag; `--no-x` removes `x`. A bare `-` is the previous branch. */
+function readGit(args: readonly string[], t: Opts): { o: Map<string, string>; pos: string[]; after?: string[] } | null {
+  const long = new Map(t.l.split(' ').map((x) => [x.replace(/[=?]$/, ''), kindOf(x)]));
+  const short = new Map(t.s.split(' ').map((x) => { const [c, n] = x.split(':') as [string, string?]; return [c[0]!, [n ?? c[0]!, n ? long.get(n)! : kindOf(c)]]; }));
+  const names = [...long.keys()].flatMap((n) => [n, `no-${n}`]), o = new Map<string, string>(), pos: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const w = args[i]!;
+    if (w === '--') return { o, pos, after: args.slice(i + 1) };
+    if (w.startsWith('--')) {
+      const eq = w.indexOf('='), typed = w.slice(2, eq < 0 ? undefined : eq);
+      const hit = names.includes(typed) ? [typed] : t.exact ? [] : names.filter((n) => n.startsWith(typed));
+      if (hit.length !== 1) return null;
+      const n = long.has(hit[0]!) ? hit[0]! : hit[0]!.slice(3), kind = long.has(hit[0]!) ? long.get(n)! : '';
+      if (eq >= 0 && !kind) return null;
+      const v = eq >= 0 ? w.slice(eq + 1) : kind === '=' ? args[(i += 1)] : '';
+      if (v === undefined) return null;
+      if (long.has(hit[0]!)) o.set(n, v);
+      else o.delete(n);
+    } else if (w.length > 1 && w[0] === '-') {
+      for (let j = 1; j < w.length; j += 1) {
+        const [n, kind] = short.get(w[j]!) ?? [];
+        if (n === undefined) return null;
+        if (!kind || (kind === '?' && j === w.length - 1)) { o.set(n, ''); continue; }
+        const v = j < w.length - 1 ? w.slice(j + 1) : args[(i += 1)];
+        if (v === undefined) return null;
+        o.set(n, v);
+        break;
+      }
+    } else pos.push(w === '-' ? '@{-1}' : w);
   }
-  return pos.length === 1 ? { ref: pos[0]!, dir, sw: sub === 'switch' } : null;
+  return { o, pos };
+}
+// git's global options (`git -h`, git.c): exact words, no clusters or abbreviations. These take the next word as a value.
+const GIT_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--attr-source', '--shallow-file', '--super-prefix']);
+const GIT_PLAIN = new Set(['-C', '-p', '-P', '--paginate', '--no-pager', '--no-replace-objects', '--no-lazy-fetch', '--no-optional-locks', '--no-advice']);
+/** A word the shell changes before git sees it: an expansion, a glob, braces or a leading `~` outside quotes. */
+const shellBuilt = (w: string): boolean => /[$`]/.test(w) || /[*?[]|\{[^}]*(,|\.\.)|^~/.test(w.replace(/'[^']*'|"(\\.|[^"\\])*"|\\./g, '_'));
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; // a SHA-256 repo has another: its diff fails, so it fails closed
+/** True when `sub` is a git alias here, or the lookup fails or times out. git ignores an alias named like a builtin. */
+const ALIAS_NAME = /^[A-Za-z0-9][\w-]*$/;
+const aliased = (dir: string, sub: string): boolean => {
+  if (!ALIAS_NAME.test(sub)) return false; // no alias has this name: git can't run it as one
+  // ponytail: the cwd not existing (only test fixtures) holds no repo and no command starts there. A -C folder that
+  // doesn't exist fails closed before this.
+  if (!existsSync(dir)) return false;
+  const r = git(dir, ['config', '--get', `alias.${sub}`]);
+  return !(r.status === 1 && !r.stderr && !r.error);
+};
+/**
+ * One command segment, read with the shell word reader (quotes and escapes removed, redirects and a comment dropped).
+ * `cont`: the words carry on after a substitution (`$(which git) co x`), so the head is built at run time. `cut`: a
+ * substitution (`` `…` ``, `<(…)`) carries them on, so the last argument is built at run time (round 5). `after`: an
+ * earlier command on the line may have changed the folder or defined an alias.
+ * ponytail: checkout's remote-tracking DWIM (`git checkout foo` with only origin/foo) reads as a file checkout.
+ */
+function refMove(text: string, cwd: string, { cont, cut }: { cont: boolean; cut: boolean }, after: boolean): Move | null {
+  const all = words(text), hash = all.findIndex((w) => w.startsWith('#'));
+  const raw = withoutRedirects(hash < 0 ? all : all.slice(0, hash)), u = raw.map(unquote);
+  let j = 0;
+  while (j < raw.length && /^([{!]|\w+=.*)$/.test(raw[j]!)) j += 1; // grouping and VAR=value before the command
+  const unknown: Move = { dir: cwd, fail: 'unknown' };
+  if (!balanced(text)) return u.some((w) => commandName(w) === 'git' || MOVERS.has(w)) ? unknown : null;
+  // A head built at run time ($G, $(which git)) may be git: a mover word, or an alias or $X as the word after it, fails
+  // closed; so does a literal git with a built word (`a=(checkout x); git "${a[@]}"`: the `)` reads as a substitution).
+  if (cont || /[$`]/.test(raw[j] ?? '')) {
+    const at = cont ? j : j + 1;
+    if (u.slice(j).some((w) => MOVERS.has(w)) || (u.slice(j).some((w) => commandName(w) === 'git') && raw.slice(j).some(shellBuilt))) return unknown;
+    return raw[at] !== undefined && (/[$`]/.test(raw[at]!) || aliased(cwd, u[at]!)) ? unknown : null;
+  }
+  const k = u.findIndex((w, i) => i >= j && commandName(w) === 'git');
+  if (k < 0) return null;
+  // Global options: -C is followed (a folder protect can't resolve fails closed); the rest change config, the programs
+  // git runs, the repo, the worktree, the refs or the pathspecs git reads.
+  let i = k + 1, dir = cwd, odd = false, lost = false;
+  for (; u[i]?.startsWith('-'); i += GIT_VALUE.has(u[i]!) ? 2 : 1) {
+    if (u[i] !== '-C') odd ||= !GIT_PLAIN.has(u[i]!);
+    else if (raw[i + 1] === undefined || shellBuilt(raw[i + 1]!)) lost = true;
+    else dir = resolve(dir, u[i + 1]!);
+  }
+  lost ||= dir !== resolve(cwd) && dir !== cwd && !existsSync(dir); // resolve writes cwd its own way (/p is C:\p on Windows)
+  const sub = u[i], rest = u.slice(i + 1);
+  if (sub === undefined) return lost || cut ? unknown : null;
+  if (shellBuilt(raw[i]!)) return unknown; // git $SUB
+  // `<<<` feeds stdin git may read words from (round 5, item 4); its target was dropped with the redirects.
+  const plain = k === j && !odd && !lost && !cut && !raw.slice(k).some(shellBuilt) && !all.some((w) => w.includes('<<<')) && !u.some((w) => /^GIT_\w+=|^--end-of-options$/.test(w));
+  // worktree add's path is a write target (gitRestoreTargets); here only what can't be read fails closed.
+  if (sub === 'worktree') return rest[0] === 'add' && (!plain || !readGit(rest.slice(1), WT_ADD)) ? unknown : null;
+  // An alias may run a mover; an earlier command may have defined it or changed the folder it is looked up in.
+  if (!MOVERS.has(sub)) return !GIT_CMDS.has(sub) && (odd || lost || (after && ALIAS_NAME.test(sub)) || aliased(dir, sub)) ? unknown : null;
+  // git run by another command (env, command, exec, sudo, xargs …), expansions and other repos are not followed.
+  if (!plain) return unknown;
+  if (sub === 'pull') return { dir, fail: 'pull' };
+  if (sub === 'am') return unknown;
+  let t = OPTS[sub], args = rest;
+  if (sub === 'stash') {
+    const op = rest[0];
+    if (op === 'branch') return unknown;
+    if (op === 'apply' || op === 'pop') [t, args] = [STASH_APPLY, rest.slice(1)];
+    else if (op === undefined || op === 'push' || op === 'save' || op.startsWith('-')) [t, args] = [STASH_PUSH, op === 'push' || op === 'save' ? rest.slice(1) : rest];
+    else return null; // list, show, drop, create, store, clear
+  }
+  const r = readGit(args, t!);
+  if (!r) return unknown;
+  const { o, pos } = r, has = (...ns: string[]) => ns.some((n) => o.has(n)), end = r.after ?? [], refs = [...pos, ...end];
+  if (has('pathspec-from-file', 'stdin')) return unknown; // words read from a file
+  // A paused merge, rebase or sequencer goes on from state files the agent can write.
+  if (has('continue', 'skip', 'abort')) return unknown;
+  if (has('quit', 'show-current-patch', 'edit-todo')) return null;
+  switch (sub) {
+    case 'checkout': case 'switch': {
+      const sw = sub === 'switch';
+      // An orphan branch starts from the empty tree (switch empties the worktree); with a start point, from that ref.
+      if (has('orphan')) return refs.length > 1 ? unknown : { dir, diffs: [{ from: EMPTY_TREE, to: 'HEAD' }], ...(pos[0] ? { sw: { ref: pos[0], sw, paths: [] } } : {}) };
+      if (end.length) return pos.length > 1 ? unknown : end.some(magic) ? { dir, diffs: [{ from: pos[0], paths: end }] } : null;
+      if (r.after && pos.length > 1) return unknown; // `<ref> --` with nothing after is a move to <ref>
+      if (!pos.length) return has('force', 'discard-changes') ? { dir, diffs: [{ from: 'HEAD' }] } : null;
+      if (sw && pos.length > 1) return unknown;
+      return pos.length > 1 && !pos.some(magic) ? null : { dir, diffs: [], sw: { ref: pos[0]!, sw, paths: pos.slice(1) } };
+    }
+    case 'restore':
+      return (has('staged') && !has('worktree')) || !refs.some(magic) ? null : { dir, diffs: [{ from: o.get('source') ?? (has('staged') ? 'HEAD' : undefined), paths: refs }] };
+    case 'reset': // --soft and a plain reset leave the worktree alone
+      return !has('hard', 'keep', 'merge') ? null : r.after || pos.length > 1 ? unknown : { dir, diffs: [{ from: pos[0] ?? 'HEAD' }] };
+    case 'merge': // what each side brings in since the merge base
+      return { dir, diffs: (refs.length ? refs : ['@{upstream}']).map((x) => ({ from: `HEAD...${x}` })) };
+    case 'cherry-pick': case 'revert': // a range, another parent or a pathspec fails closed
+      return has('mainline') || r.after || !pos.length || pos.some((x) => /\.\.|\^[!@-]/.test(x)) ? unknown : { dir, diffs: pos.map((x) => ({ from: `${x}^`, to: x })) };
+    case 'rebase': { // `rebase <upstream> <branch>` checks out the branch first
+      const onto = o.get('onto');
+      return has('interactive', 'exec', 'root', 'rebase-merges') || refs.length > 1 ? unknown : { dir, diffs: [onto ? { from: 'HEAD', to: onto } : { from: `HEAD...${refs[0] ?? '@{upstream}'}` }] };
+    }
+    case 'stash': {
+      if (t === STASH_APPLY) {
+        const ref = /^\d+$/.test(refs[0] ?? '') ? `stash@{${refs[0]}}` : refs[0] ?? 'stash@{0}';
+        return refs.length > 1 ? unknown : { dir, diffs: [{ from: `${ref}^1`, to: ref }, { untracked: ref }] };
+      }
+      // A push resets the worktree to HEAD (with -k, to the index); -u and -a also remove untracked and ignored files.
+      return has('include-untracked', 'all') ? unknown : { dir, diffs: [{ from: 'HEAD' }, {}] };
+    }
+    case 'read-tree': // without -u only the index changes
+      return !has('u') ? null : refs.length !== 1 || has('prefix', 'empty') ? unknown : { dir, diffs: [{ from: refs[0] }] };
+    default: // checkout-index
+      return has('prefix', 'temp', 'stage') ? unknown : has('all') ? { dir, diffs: [{}] } : refs.length ? { dir, diffs: [{ paths: refs }] } : null;
+  }
+}
+/** The command segments of a line for refMove, quote-aware: each piece (`say`: how it is named in a message), and the
+ *  commands of a double-quoted substitution ("$(git …)") before the piece that holds it, its data heredocs left out.
+ *  `eval` runs its arguments, joined, as a command line (round 5): a literal payload is read as that line; one the shell
+ *  builds (`eval "$X"`), or a `source`/`.` of a path it builds, fails closed (`fail`) when the line names git anywhere. */
+type Seg = { text: string; cont: boolean; cut: boolean; say: string; fail?: true };
+function moveSegs(line: string, out: Seg[] = []): Seg[] {
+  const ps = pieces(line);
+  ps.forEach(({ text, sep }, i) => {
+    const ws = words(text), u = ws.map(unquote);
+    for (const w of ws) if (/"[^"]*(\$\(|`)/.test(w)) moveSegs(withoutHeredocBodies(unquote(w)), out);
+    const cont = /^[)`]$/.test(ps[i - 1]?.sep ?? ''), cut = /^[(`]$/.test(sep), seg = { text, cont, cut, say: cont || cut ? line.trim() : text };
+    const j = u.findIndex((w) => !/^([{!]|\w+=.*|command|builtin)$/.test(w)), head = u[j];
+    if (head === 'eval' || head === 'source' || head === '.') {
+      // A payload built at run time can assemble any command, git included (`G=gi; eval "${G}t checkout x"`), so no text test can clear it.
+      if (cut || ws.slice(j + 1).some((w) => /[$`]/.test(w))) return void out.push({ ...seg, say: line.trim(), fail: true });
+      if (head === 'eval') return void moveSegs(withoutHeredocBodies(u.slice(j + 1).join(' ')), out);
+    }
+    out.push(seg);
+  });
+  return out;
 }
 
 const git = (dir: string, args: string[]) => spawnSync('git', [...SAFE_GIT, ...args], { cwd: dir, encoding: 'utf8', timeout: 1500 });
+// protect's table as git pathspecs from the repo top, case-insensitive (macOS and Windows checkouts ignore case).
+const PROTECTED_SPECS = [...new Set(PROTECTED.map((g) => g.replace(/\/\*\*$/, '')))].map((p) => `:(top,icase)${p}`);
+/** The protected files a diff changes, or null when git fails, times out or a ref doesn't resolve. */
+function protectedChanges(dir: string, d: Diff): string[] | null {
+  let r;
+  if (d.untracked !== undefined) {
+    const rp = git(dir, ['rev-parse', '-q', '--verify', `${d.untracked}^3`]); // not ^3^{commit}: git 2.46 resolves that to the stash itself
+    if (rp.status === 1) return []; // no untracked part
+    if (rp.status !== 0 || rp.error) return null;
+    r = git(dir, ['ls-tree', '-r', '-z', '--full-tree', '--name-only', `${d.untracked}^3`]);
+  } else {
+    const revs = [d.from, d.to].filter((x): x is string => !!x);
+    r = git(dir, ['-c', 'diff.relative=false', 'diff', ...SAFE_DIFF, '--no-renames', '--name-only', '-z', ...revs, '--', ...(d.paths ?? PROTECTED_SPECS)]);
+  }
+  return r.status === 0 && !r.error ? r.stdout.split('\0').filter((n) => n && matches(n.toLowerCase(), PROTECTED)) : null;
+}
 
-// Ask before moving to a ref with no .harness/hooks/dispatch.mjs: every hook would then fail open until someone switches back.
-function switchAsk(cmds: string[], cwd: string): Decision | null {
-  for (const toks of cmds.flatMap(segTokens)) {
-    const t = switchTarget(toks, cwd);
-    if (!t) continue;
-    const ask = (reason: string): Decision => ({ kind: 'ask', reason, check: 'protect' });
-    const failed = ask(`Could not check that ${t.ref} has the harness hooks. Confirm the switch.`);
-    const rp = git(t.dir, ['rev-parse', '--verify', '-q', `${t.ref}^{commit}`]);
-    if (rp.status === 1 && !t.sw) continue; // not a ref: checkout of a file
-    if (rp.status !== 0) return failed;
-    const cf = git(t.dir, ['cat-file', '-e', `${t.ref}:.harness/hooks/dispatch.mjs`]);
-    if (cf.status === null || cf.error) return failed;
-    if (cf.status !== 0) return ask(`Switching to ${t.ref} removes the harness hooks (no .harness/hooks/dispatch.mjs there). Confirm the switch.`);
+const UNATTENDED_GIT = "Unattended runs can't change harness's protected files through git; the person runs it.";
+/**
+ * Git commands that move the worktree to another ref (checkout, switch, restore, reset --hard, merge, rebase, cherry-pick,
+ * revert, stash, read-tree -u, checkout-index) ask when they change a protected file, and deny unattended. A switch to a
+ * ref with no .harness/hooks/dispatch.mjs asks too: every hook would then fail open until someone switches back. Any
+ * error, an unread form, or another command before it on the line (it may move refs first) fails closed.
+ */
+// Set in harness's own environment, these make git read other refs, objects, an index or a worktree than protect's diffs.
+// Pathspec, repo-discovery, namespace, shallow and config variables likewise (round 4, N9).
+const GIT_ENV = ['GIT_REPLACE_REF_BASE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS', 'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM', 'GIT_COMMON_DIR',
+  'GIT_NAMESPACE', 'GIT_SHALLOW_FILE', 'GIT_QUARANTINE_PATH', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT'];
+function refMoveAsk(cmds: string[], cwd: string, unattended: boolean, env: NodeJS.ProcessEnv): Decision | null {
+  const ask = (reason: string): Decision => ({ kind: 'ask', reason, check: 'protect' });
+  const say = (why: string, tail = UNATTENDED_GIT): Decision => (unattended ? { kind: 'deny', reason: `${why} ${tail}`, check: 'protect' } : ask(`${why} Confirm it.`));
+  let busy = false; // an earlier command on the line, cd/pushd/popd included (N6): it may move refs or the folder first
+  for (const { text, say: c, fail, ...flags } of cmds.flatMap((l) => moveSegs(joinAll(withoutCatMessages(l))))) { // a commit message is text
+    const m = fail ? { dir: cwd, fail: 'unknown' as const } : refMove(text, cwd, flags, busy);
+    if (!m) {
+      if (!readOnly(words(text))) busy = true;
+      continue;
+    }
+    if ('fail' in m) {
+      if (m.fail === 'unknown') return say(`Could not check what \`${c}\` changes in harness's protected files.`);
+      return unattended
+        ? { kind: 'deny', reason: `\`${c}\` fetches before harness can check what it changes. Run git fetch, then git merge <ref>, so harness can check what it changes.`, check: 'protect' }
+        : ask(`\`${c}\` fetches before harness can check what it changes in harness's protected files. Confirm it.`);
+    }
+    if (busy) return say(`\`${c}\` follows another command on the same line, which may move refs or the index first, so harness can't check what it changes.`, 'Run the git command on its own so harness can check what it changes.');
+    busy = true;
+    const set = GIT_ENV.find((k) => env[k] !== undefined || process.env[k] !== undefined); // ctx.env, and what git spawns inherit
+    if (set) return say(`Could not check what \`${c}\` changes in harness's protected files: ${set} is set in harness's environment, so git may read other refs or objects than harness does.`);
+    // git follows refs/replace/*; harness's diffs don't (--no-replace-objects), so they could read other content.
+    const rr = git(m.dir, ['for-each-ref', '--count=1', 'refs/replace/']);
+    if (rr.status !== 0 || rr.error) return say(`Could not check what \`${c}\` changes in harness's protected files.`);
+    if (rr.stdout.trim()) return say(`Could not check what \`${c}\` changes in harness's protected files: the repo has replacement refs (refs/replace/), which git follows when it checks out.`);
+    let diffs = m.diffs;
+    if (m.sw) {
+      const { ref, sw, paths } = m.sw;
+      const failed = ask(`Could not check that ${ref} has the harness hooks. Confirm the switch.`);
+      const rp = git(m.dir, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
+      if (rp.status === 1 && !sw) diffs = [...diffs, { paths: [ref, ...paths] }]; // not a ref: checkout of files from the index
+      else if (rp.status !== 0) return failed;
+      else if (paths.length) diffs = [{ from: ref, paths }];
+      else {
+        const cf = git(m.dir, ['cat-file', '-e', `${ref}:.harness/hooks/dispatch.mjs`]);
+        if (cf.status === null || cf.error) return failed;
+        if (cf.status !== 0) return ask(`Switching to ${ref} removes the harness hooks (no .harness/hooks/dispatch.mjs there). Confirm the switch.`);
+        diffs = [...diffs, { from: ref }];
+      }
+    }
+    const names = new Set<string>();
+    for (const d of diffs) {
+      const n = protectedChanges(m.dir, d);
+      if (n === null) return say(`Could not check what \`${c}\` changes in harness's protected files.`);
+      n.forEach((x) => names.add(x));
+    }
+    if (names.size) return say(`\`${c}\` changes harness's protected files (${[...names].slice(0, 3).join(', ')}).`);
   }
   return null;
 }
@@ -516,7 +771,7 @@ export const protect: Check = {
       const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(exempt ? withoutWorkdirs(root, cmd) : cmd);
-      if (!paths.some((p) => p && isProtected(root, p, exempt))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : switchAsk(cmds, input.cwd || root) ?? { kind: 'allow' });
+      if (!paths.some((p) => p && isProtected(root, p, exempt))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : refMoveAsk(cmds, input.cwd || root, ctx.unattended, ctx.env ?? {}) ?? { kind: 'allow' });
     }
     if (target !== null) { const dd = decisionsDeny(root, config, [target], []); if (dd) return dd; }
     const da = target === null ? null : becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target, shellWrites: [] });

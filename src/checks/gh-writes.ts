@@ -114,7 +114,7 @@ const REMOTE_SUBS = new Set(['add', 'set-url', 'rename', 'set-head']);
 const REF_SUBS = new Set(['update-ref', 'symbolic-ref', 'push', 'send-pack', 'fetch', 'pull', 'remote', 'config', 'replace']);
 const PLUMBING = new Set(['fast-import', 'filter-branch', 'receive-pack', 'http-fetch', 'remote-ext', 'remote-fd']);
 // `git --list-cmds=main` (git 2.46).
-const GIT_CMDS = new Set(`add am annotate apply archimport archive bisect blame branch bugreport bundle cat-file check-attr check-ignore check-mailmap check-ref-format checkout checkout--worker
+export const GIT_CMDS = new Set(`add am annotate apply archimport archive bisect blame branch bugreport bundle cat-file check-attr check-ignore check-mailmap check-ref-format checkout checkout--worker
 checkout-index cherry cherry-pick clean clone column commit commit-graph commit-tree config count-objects credential credential-cache credential-cache--daemon credential-netrc credential-osxkeychain
 credential-store cvsexportcommit cvsimport cvsserver daemon describe diagnose diff diff-files diff-index diff-tree difftool difftool--helper fast-export fast-import fetch fetch-pack filter-branch
 fmt-merge-msg for-each-ref for-each-repo format-patch fsck fsck-objects fsmonitor--daemon gc get-tar-commit-id grep hash-object help hook http-backend http-fetch http-push imap-send index-pack init

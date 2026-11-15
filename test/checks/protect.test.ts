@@ -97,6 +97,13 @@ test('git global options do not hide restore and checkout', () => {
     expect(bash(c), c).toBe('deny');
   expect(bash('git -C . restore src/a.ts')).toBe('allow');
 });
+test('git -C . from a cwd not written the way path.resolve writes it is the same folder (Windows: /p resolves to C:\\p)', () => {
+  const config = loadConfig('/nonexistent-harness-root').config;
+  for (const cwd of [`${ROOT}/`, `${ROOT}/x/..`]) {
+    const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd, tool_name: 'Bash', tool_input: { command: 'git -C . restore src/a.ts' } };
+    expect((protect.run({ input, root: ROOT, config, env: {}, unattended: false } as unknown as Ctx) as { kind: string }).kind, cwd).toBe('allow');
+  }
+});
 test(':/ pathspecs and bash -c are seen', () => {
   for (const c of ["git restore ':/.'", 'git restore :/', 'bash -c "git restore ."', 'sh -c "mv a .harness/hooks/dispatch.mjs"']) expect(bash(c), c).toBe('deny');
 });
@@ -154,9 +161,10 @@ describe('branch switch to a ref without the harness hooks (real repo)', () => {
   };
   const SW = (ref: string) => `Switching to ${ref} removes the harness hooks (no .harness/hooks/dispatch.mjs there). Confirm the switch.`;
 
-  test.each(['git checkout old', 'git switch old', 'git checkout -b x old', 'git checkout -B x old', 'git switch -c x old', 'git switch --detach old', 'git -C . switch old', 'git --no-pager checkout old', 'cd . && git switch old'])('%s asks', (c) => {
+  test.each(['git checkout old', 'git switch old', 'git checkout -b x old', 'git checkout -B x old', 'git switch -c x old', 'git switch --detach old', 'git -C . switch old', 'git --no-pager checkout old'])('%s asks', (c) => {
     expect(cmd(c)).toEqual({ kind: 'ask', reason: SW('old'), check: 'protect' });
   });
+  test('a cd before the switch asks: the cd may change the repo it runs in (round 4, N6)', () => expect(cmd('cd . && git switch old').kind).toBe('ask'));
   test('a sha without the hooks asks', () => expect(cmd(`git checkout ${oldSha}`).reason).toBe(SW(oldSha)));
   test.each(['git checkout main', 'git switch main', 'git checkout -b x', 'git switch -c x', 'git switch -c x main', 'git checkout -- a.ts', 'git checkout old a.ts', 'git checkout old -- a.ts', 'git checkout a.ts', 'git status'])('%s is allowed', (c) => {
     expect(cmd(c).kind).toBe('allow');

@@ -190,25 +190,35 @@ test('an empty or unreadable transcript logs done-claim-unchecked', async () => 
   expect(events().at(-1)).toMatchObject({ decision: 'done-claim-unchecked', reason: 'no assistant text' });
 });
 
-test('with a failing stop gate of its own, the Stop is bounded and the gate output is shown first', async () => {
-  const { stop } = setup();
-  // Stand-in for stopGate: same shared counter and give-up rule as gate.ts failStep.
-  const gate: Check = {
+// Stand-in for stopGate with gate.ts's counter rule (shared stopAttempts, reset on pass and on give-up), in the shipped order.
+const standIn = (fails: (stop: number) => boolean): Check => {
+  let stop = 0;
+  return {
     name: 'stopGate', events: ['Stop'],
     run(ctx) {
+      stop++;
+      if (!fails(stop)) return ctx.save({ ...ctx.state, stopAttempts: 0 }), { kind: 'allow' };
       const n = ctx.state.stopAttempts + 1;
       if (n > ctx.config.stop.max_attempts) return ctx.save({ ...ctx.state, stopAttempts: 0 }), { kind: 'allow' };
       ctx.save({ ...ctx.state, stopAttempts: n });
       return { kind: 'block', reason: `test failed (attempt ${n})`, check: 'stop' };
     },
   };
-  await stop({ last_assistant_message: 'Still working.' }, [gate, doneClaim]); // the gate alone blocks first, putting the counters out of phase
-  let allowed = -1;
-  for (let i = 0; i < 9 && allowed < 0; i++) {
-    const d = await stop(undefined, [gate, doneClaim]);
-    if (d.decision !== 'block') allowed = i;
-    else expect(d.reason).toMatch(/^test failed|^You said/); // when both block, the gate's message wins
+};
+
+test.each([
+  ['the gate passes at first, so the done counter starts ahead', () => true, (n: number) => n >= 2],
+  ['no claim on the Stop where the gate is at its limit', (n: number) => n !== 3, () => true],
+  ['the gate alone blocks first (out of phase)', (n: number) => n !== 1, () => true],
+  ['the gate always fails and the agent always claims', () => true, () => true],
+])('bounded with a failing stop gate of its own: %s', async (_name, claims: (n: number) => boolean, gateFails: (n: number) => boolean) => {
+  const { stop } = setup();
+  const checks = [standIn(gateFails), doneClaim];
+  let allowed = 0;
+  for (let n = 1; n <= 5 && !allowed; n++) {
+    const d = await stop({ last_assistant_message: claims(n) ? 'All tests pass.' : 'Still working.' }, checks);
+    if (d.decision !== 'block') allowed = n;
+    else expect(d.reason).toMatch(/^test failed|^You said/); // when both block, the gate's message wins whenever it blocks
   }
-  expect(allowed).toBeGreaterThanOrEqual(0);
-  expect(allowed).toBeLessThanOrEqual(2 * 3);
+  expect(allowed).toBeGreaterThan(0);
 });

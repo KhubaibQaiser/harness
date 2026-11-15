@@ -206,19 +206,23 @@ const standIn = (fails: (stop: number) => boolean): Check => {
   };
 };
 
-test.each([
-  ['the gate passes at first, so the done counter starts ahead', () => true, (n: number) => n >= 2],
-  ['no claim on the Stop where the gate is at its limit', (n: number) => n !== 3, () => true],
-  ['the gate alone blocks first (out of phase)', (n: number) => n !== 1, () => true],
+const SCENARIOS: [string, (n: number, max: number) => boolean, (n: number) => boolean][] = [
+  ['the gate passes at first, so the done counter starts ahead', () => true, (n) => n >= 2],
+  ['no claim on the Stop where the gate is at its limit', (n, max) => n !== max, () => true],
+  ['the gate alone blocks first (out of phase)', (n) => n !== 1, () => true],
   ['the gate always fails and the agent always claims', () => true, () => true],
-])('bounded with a failing stop gate of its own: %s', async (_name, claims: (n: number) => boolean, gateFails: (n: number) => boolean) => {
-  const { stop } = setup();
+];
+
+// The docs promise: a run of blocked Stops ends within stop.max_attempts + 2 Stops.
+test.each(SCENARIOS.flatMap((sc) => [1, 2, 3, 5, 10].map((max) => [...sc, max] as const)))('bounded with a failing stop gate of its own: %s (max %i)', async (_name, claims, gateFails, max) => {
+  const { stop } = setup({ yaml: `stop:\n  max_attempts: ${max}\n` });
   const checks = [standIn(gateFails), doneClaim];
   let allowed = 0;
-  for (let n = 1; n <= 5 && !allowed; n++) {
-    const d = await stop({ last_assistant_message: claims(n) ? 'All tests pass.' : 'Still working.' }, checks);
+  for (let n = 1; n <= 3 * max + 5 && !allowed; n++) {
+    const d = await stop({ last_assistant_message: claims(n, max) ? 'All tests pass.' : 'Still working.' }, checks);
     if (d.decision !== 'block') allowed = n;
     else expect(d.reason).toMatch(/^test failed|^You said/); // when both block, the gate's message wins whenever it blocks
   }
   expect(allowed).toBeGreaterThan(0);
+  expect(allowed).toBeLessThanOrEqual(max + 2);
 });

@@ -41,7 +41,7 @@ const setup = (o: Opts = {}) => {
   const steps = () => calls.filter((c) => c.cmd !== 'git').map((c) => c.args[1]);
   return { root, ctx, calls, exec, steps, saved };
 };
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { SrtProbe } from '../../../src/checks/stop/srt.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../../src/core/git-safe.js';
@@ -612,10 +612,22 @@ test.skipIf(winSkip)('a wrapped step failure blocks like today and keeps the srt
     if (cmd === 'git') return s.exec(SRC)(cmd, args, ms);
     const nonce = args.at(-1)!;
     const plan = JSON.parse(readFileSync(args.at(-2)!, 'utf8')) as { steps: { label: string }[] };
-    const out = plan.steps.slice(0, 2).map((st, i) => JSON.stringify({ nonce, kind: 'step', label: st.label, status: i, timedOut: false, ms: 1, ...(i ? { output: 'boom in lint' } : {}) }));
+    const checks = ['write canary', 'read canary', 'unix socket', 'network', ...(process.platform === 'linux' ? ['user namespace'] : [])].map((name) => JSON.stringify({ nonce, kind: 'check', name, ok: true }));
+    const out = checks.concat(plan.steps.slice(0, 2).map((st, i) => JSON.stringify({ nonce, kind: 'step', label: st.label, status: i, timedOut: false, ms: 1, ...(i ? { output: 'boom in lint' } : {}) })));
     return { status: 0, output: '', timedOut: false, stdout: out.join('\n'), stderr: 'sandbox proxy: denied registry.npmjs.org:443\n' };
   };
-  const d = await wrapped(s, probe)(e);
+  // The preflight socket path must stay under 104 bytes, and the test temp dir is longer than that.
+  const oldTmp = process.env.TMPDIR;
+  const short = mkdtempSync('/tmp/g-');
+  process.env.TMPDIR = short;
+  let d;
+  try {
+    d = await wrapped(s, probe)(e);
+  } finally {
+    if (oldTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = oldTmp;
+    rmSync(short, { recursive: true, force: true });
+  }
   expect(d).toMatchObject({ kind: 'block', check: 'stop' });
   const reason = (d as { reason: string }).reason;
   expect(reason).toMatch(/^lint failed \(attempt 1 of 3\)/);

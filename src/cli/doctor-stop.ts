@@ -1,5 +1,6 @@
 // Doctor's "Stop sandbox" section: whether the Stop gate's steps can run inside srt, and what the last wrapped Stop saw.
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { allowWriteMessage, allowWriteProblem } from '../checks/stop/allow-write.js';
 import { PREFLIGHT_ORDER } from '../checks/stop/preflight.js';
@@ -20,6 +21,8 @@ type Sys = {
 };
 
 const BWRAP_MIN = '0.8.0';
+const APPARMOR_PROFILES = '/sys/kernel/security/apparmor/profiles';
+const APPARMOR_FILE = '/etc/apparmor.d/bwrap-userns-restrict';
 const cap = (s: string): string => esc(s.trim().split('\n')[0] ?? '').slice(0, 200); // record text can hold raw srt stderr
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -76,6 +79,15 @@ export function stopSandboxChecks(root: string, config: HarnessConfig, p: P, sys
       const v = out === null ? null : /^bubblewrap (\d+\.\d+\.\d+)\s*$/.exec(out)?.[1];
       if (!v) p.fix(`Stop sandbox: bwrap --version ${out === null ? 'failed' : `gave no version (${cap(out)})`}`, 'install bubblewrap 0.8 or newer');
       else if (olderThan(v, BWRAP_MIN)) p.fix(`Stop sandbox: bwrap ${v} is older than 0.8`, 'install bubblewrap 0.8 or newer');
+    });
+  }
+
+  if (platform === 'linux') {
+    guard('AppArmor', () => {
+      const read = sys.read ?? ((f: string) => { try { return readFileSync(f, 'utf8'); } catch { return null; } });
+      const list = read(APPARMOR_PROFILES);
+      const state = list !== null ? (/^(unpriv_)?bwrap /m.test(list) ? 'is loaded' : null) : read(APPARMOR_FILE) !== null ? 'may be loaded' : null;
+      if (state) p.fix(`Stop sandbox: AppArmor's bwrap-userns-restrict profile ${state}, so srt's seccomp helper ${state === 'is loaded' ? 'is' : 'may be'} refused inside bwrap (apply-seccomp: write /proc/self/setgroups)`, `run \`sudo apparmor_parser -R ${APPARMOR_FILE}\` (it turns off Ubuntu's AppArmor user-namespace restriction for bwrap on this machine: fine on a throwaway CI runner, a real tradeoff on a shared or personal machine; harness never runs it)`);
     });
   }
 

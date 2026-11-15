@@ -43,9 +43,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-24.04 pinned: on ubuntu-26.04 srt 0.0.83's seccomp helper can't write /proc/self/setgroups (nested userns
-        # is capability-restricted), so every Stop blocks; see Known limits. Moving to 26.04 needs an srt that runs there.
-        os: [ubuntu-24.04, macos-latest]
+        # ubuntu-26.04 loads AppArmor's bwrap-userns-restrict profile, which denies capabilities to bwrap's children, so srt
+        # 0.0.83's seccomp helper can't write /proc/self/setgroups. The Linux step below unloads it (a throwaway runner VM); see Known limits.
+        os: [ubuntu-24.04, ubuntu-26.04, macos-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,10 +61,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          if [ -e /etc/apparmor.d/bwrap-userns-restrict ]; then sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict; fi
       - name: Install srt's system tools (macOS)
         if: runner.os == 'macOS'
         run: brew install ripgrep
       - run: npm install -g @anthropic-ai/sandbox-runtime@0.0.83
+      - name: AppArmor state and srt smoke check (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo aa-status | grep -i bwrap || true
+          srt /bin/echo srt-ok
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Real-srt versions

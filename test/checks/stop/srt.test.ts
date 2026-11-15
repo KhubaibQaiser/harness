@@ -66,6 +66,10 @@ suite('messages', () => {
     [{ kind: 'old', version: '0.0.82' }, `is 0.0.82, older than ${SRT_MIN}`],
     [{ kind: 'check', check: 'version', first: 'boom' }, 'failed its check: version (boom)'],
   ];
+  const doctorTail = ' srt is installed, so read srt\'s error above and run harness doctor to see what this machine is missing, then stop again. To run the checks unsandboxed instead, set sandbox: off in .harness/config.yaml (logged).';
+  test.each(['srt exit', 'srt warning', 'result lines', 'settings file', 'step runner', 'preflight', 'user namespace', 'network'])('%s points at doctor, not at installing srt', (check) => {
+    expect(srtMessage({ kind: 'check', check, first: 'boom' })).toBe(`Stop gate: the checks run inside sandbox-runtime (srt), and srt failed its check: ${check} (boom).${doctorTail}`);
+  });
   test('launcher failure adds the install hint', () => expect(srtMessage({ kind: 'check', check: 'launcher', first: 'x' })).toContain(`Install it with npm i -g @anthropic-ai/sandbox-runtime@${SRT_MIN} so srt is a node script, not a shim.`));
   test.each(cases)('srtMessage %j', (why, frag) => expect(srtMessage(why)).toBe(`Stop gate: the checks run inside sandbox-runtime (srt), and srt ${frag}.${tail}`));
   test('fixed strings', () => {

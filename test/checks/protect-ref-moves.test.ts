@@ -307,3 +307,39 @@ describe('fix round 4: words read the way the shell and git read them', () => {
     expect(run(c, true), c).toEqual({ kind: 'allow' });
   });
 });
+
+describe('fix round 5: eval payloads and run-time words the reader cut out', () => {
+  const both = (c: string) => {
+    expect(run(c).kind, c).toBe('ask');
+    expect(run(c, true).kind, c).toBe('deny');
+  };
+  test.each([
+    // Critical 1: eval runs its arguments, joined, as a command line
+    'eval "git checkout other"', "eval 'git checkout other'", 'eval "git che""ckout other"', 'X="git checkout other"; eval "$X"',
+    'command eval "git checkout other"', 'builtin eval "git checkout other"', 'X="git checkout other"; eval $X', 'eval "$(echo git checkout other)"',
+    '{ eval "git checkout other"; }', 'eval "git checkout" other', 'eval git checkout `echo other`',
+    // source/. of a path the shell builds, on a line that names git
+    '. "$F" && git status', 'source $HOME/x.sh && git status',
+  ])('%s asks attended and denies unattended', (c) => both(c));
+  test('a literal eval payload is read as the command it runs', () => {
+    expect(run('eval "git checkout other"')).toEqual(ASK('git checkout other'));
+    expect(run('X="git checkout other"; eval "$X"')).toEqual(FAIL('X="git checkout other"; eval "$X"'));
+  });
+  test.each([
+    // Critical 2: a backtick substitution supplies an argument the reader cut off
+    'git checkout `echo other`', 'git checkout`echo \\ other`', 'git switch `echo other`', 'git switch`printf " other"`', 'git reset --hard `echo other`',
+    'git checkout -b x `echo other`', 'git checkout `echo -q` other', 'git -C `pwd` checkout other', 'git `echo checkout` other', 'git checkout <(echo other)',
+  ])('%s fails closed', (c) => {
+    expect(run(c), c).toEqual(FAIL(c));
+    expect(run(c, true), c).toEqual(FAIL_DENY(c));
+  });
+  test.each([
+    // Item 4: other words built at run time inside a mover segment
+    'git checkout src-only <<< x', 'git merge <(echo src-only)', 'git checkout src-only >(cat)', 'git reset --hard HEAD~$((0))', 'git checkout ${REF}', 'git checkout ${REF:-src-only}',
+    'git checkout "${a[@]}"', 'a=(checkout src-only); git "${a[@]}"', 'git checkout src-only "`true`"',
+  ])('%s asks attended and denies unattended', (c) => both(c));
+  test.each(['eval "git checkout src-only"', 'eval git status', 'eval "echo hi"', 'X=1; eval "echo $X"', 'source ./env.sh && git status', 'echo `date`', 'ls `pwd`'])('%s is allowed', (c) => {
+    expect(run(c), c).toEqual({ kind: 'allow' });
+    expect(run(c, true), c).toEqual({ kind: 'allow' });
+  });
+});

@@ -205,21 +205,23 @@ const aliased = (dir: string, sub: string): boolean => {
 };
 /**
  * One command segment, read with the shell word reader (quotes and escapes removed, redirects and a comment dropped).
- * `cont`: the words carry on after a substitution (`$(which git) co x`), so the head is built at run time. `after`: an
+ * `cont`: the words carry on after a substitution (`$(which git) co x`), so the head is built at run time. `cut`: a
+ * substitution (`` `…` ``, `<(…)`) carries them on, so the last argument is built at run time (round 5). `after`: an
  * earlier command on the line may have changed the folder or defined an alias.
  * ponytail: checkout's remote-tracking DWIM (`git checkout foo` with only origin/foo) reads as a file checkout.
  */
-function refMove(text: string, cwd: string, cont: boolean, after: boolean): Move | null {
-  const all = words(text), cut = all.findIndex((w) => w.startsWith('#'));
-  const raw = withoutRedirects(cut < 0 ? all : all.slice(0, cut)), u = raw.map(unquote);
+function refMove(text: string, cwd: string, { cont, cut }: { cont: boolean; cut: boolean }, after: boolean): Move | null {
+  const all = words(text), hash = all.findIndex((w) => w.startsWith('#'));
+  const raw = withoutRedirects(hash < 0 ? all : all.slice(0, hash)), u = raw.map(unquote);
   let j = 0;
   while (j < raw.length && /^([{!]|\w+=.*)$/.test(raw[j]!)) j += 1; // grouping and VAR=value before the command
   const unknown: Move = { dir: cwd, fail: 'unknown' };
   if (!balanced(text)) return u.some((w) => commandName(w) === 'git' || MOVERS.has(w)) ? unknown : null;
-  // A head built at run time ($G, $(which git)) may be git: a mover word, or an alias or $X as the word after it, fails closed.
+  // A head built at run time ($G, $(which git)) may be git: a mover word, or an alias or $X as the word after it, fails
+  // closed; so does a literal git with a built word (`a=(checkout x); git "${a[@]}"`: the `)` reads as a substitution).
   if (cont || /[$`]/.test(raw[j] ?? '')) {
     const at = cont ? j : j + 1;
-    if (u.slice(j).some((w) => MOVERS.has(w))) return unknown;
+    if (u.slice(j).some((w) => MOVERS.has(w)) || (u.slice(j).some((w) => commandName(w) === 'git') && raw.slice(j).some(shellBuilt))) return unknown;
     return raw[at] !== undefined && (/[$`]/.test(raw[at]!) || aliased(cwd, u[at]!)) ? unknown : null;
   }
   const k = u.findIndex((w, i) => i >= j && commandName(w) === 'git');
@@ -234,9 +236,10 @@ function refMove(text: string, cwd: string, cont: boolean, after: boolean): Move
   }
   lost ||= dir !== cwd && !existsSync(dir);
   const sub = u[i], rest = u.slice(i + 1);
-  if (sub === undefined) return lost ? unknown : null;
+  if (sub === undefined) return lost || cut ? unknown : null;
   if (shellBuilt(raw[i]!)) return unknown; // git $SUB
-  const plain = k === j && !odd && !lost && !raw.slice(k).some(shellBuilt) && !u.some((w) => /^GIT_\w+=|^--end-of-options$/.test(w));
+  // `<<<` feeds stdin git may read words from (round 5, item 4); its target was dropped with the redirects.
+  const plain = k === j && !odd && !lost && !cut && !raw.slice(k).some(shellBuilt) && !all.some((w) => w.includes('<<<')) && !u.some((w) => /^GIT_\w+=|^--end-of-options$/.test(w));
   // worktree add's path is a write target (gitRestoreTargets); here only what can't be read fails closed.
   if (sub === 'worktree') return rest[0] === 'add' && (!plain || !readGit(rest.slice(1), WT_ADD)) ? unknown : null;
   // An alias may run a mover; an earlier command may have defined it or changed the folder it is looked up in.
@@ -298,13 +301,22 @@ function refMove(text: string, cwd: string, cont: boolean, after: boolean): Move
   }
 }
 /** The command segments of a line for refMove, quote-aware: each piece (`say`: how it is named in a message), and the
- *  commands of a double-quoted substitution ("$(git …)") before the piece that holds it, its data heredocs left out. */
-function moveSegs(line: string, out: { text: string; cont: boolean; say: string }[] = []): typeof out {
+ *  commands of a double-quoted substitution ("$(git …)") before the piece that holds it, its data heredocs left out.
+ *  `eval` runs its arguments, joined, as a command line (round 5): a literal payload is read as that line; one the shell
+ *  builds (`eval "$X"`), or a `source`/`.` of a path it builds, fails closed (`fail`) when the line names git anywhere. */
+type Seg = { text: string; cont: boolean; cut: boolean; say: string; fail?: true };
+function moveSegs(line: string, out: Seg[] = []): Seg[] {
   const ps = pieces(line);
   ps.forEach(({ text, sep }, i) => {
-    for (const w of words(text)) if (/"[^"]*(\$\(|`)/.test(w)) moveSegs(withoutHeredocBodies(unquote(w)), out);
-    const cont = /^[)`]$/.test(ps[i - 1]?.sep ?? '');
-    out.push({ text, cont, say: cont || /^[(`]$/.test(sep) ? line.trim() : text });
+    const ws = words(text), u = ws.map(unquote);
+    for (const w of ws) if (/"[^"]*(\$\(|`)/.test(w)) moveSegs(withoutHeredocBodies(unquote(w)), out);
+    const cont = /^[)`]$/.test(ps[i - 1]?.sep ?? ''), cut = /^[(`]$/.test(sep), seg = { text, cont, cut, say: cont || cut ? line.trim() : text };
+    const j = u.findIndex((w) => !/^([{!]|\w+=.*|command|builtin)$/.test(w)), head = u[j];
+    if (head === 'eval' || head === 'source' || head === '.') {
+      if (cut || ws.slice(j + 1).some((w) => /[$`]/.test(w))) { if (/git/i.test(line)) out.push({ ...seg, say: line.trim(), fail: true }); return; }
+      if (head === 'eval') return void moveSegs(withoutHeredocBodies(u.slice(j + 1).join(' ')), out);
+    }
+    out.push(seg);
   });
   return out;
 }
@@ -343,8 +355,8 @@ function refMoveAsk(cmds: string[], cwd: string, unattended: boolean, env: NodeJ
   const ask = (reason: string): Decision => ({ kind: 'ask', reason, check: 'protect' });
   const say = (why: string, tail = UNATTENDED_GIT): Decision => (unattended ? { kind: 'deny', reason: `${why} ${tail}`, check: 'protect' } : ask(`${why} Confirm it.`));
   let busy = false; // an earlier command on the line, cd/pushd/popd included (N6): it may move refs or the folder first
-  for (const { text, cont, say: c } of cmds.flatMap((l) => moveSegs(joinAll(withoutCatMessages(l))))) { // a commit message is text
-    const m = refMove(text, cwd, cont, busy);
+  for (const { text, say: c, fail, ...flags } of cmds.flatMap((l) => moveSegs(joinAll(withoutCatMessages(l))))) { // a commit message is text
+    const m = fail ? { dir: cwd, fail: 'unknown' as const } : refMove(text, cwd, flags, busy);
     if (!m) {
       if (!readOnly(words(text))) busy = true;
       continue;

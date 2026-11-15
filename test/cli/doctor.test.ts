@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { doctor } from '../../src/cli/doctor.js';
 import { contextSet } from '../../src/budget/summary.js';
-import { loadConfig } from '../../src/core/config.js';
+import { esc, loadConfig } from '../../src/core/config.js';
 import { contextDirs } from '../../src/cli/doctor-context.js';
 import { init, type Prompt } from '../../src/cli/init.js';
 import { MIN_CLAUDE_CODE } from '../../src/core/min-claude.js';
@@ -48,6 +48,11 @@ const bin = (name: string) => {
 // The machine probes and the user/managed settings never come from this host: CI's Ubuntu restricts user namespaces.
 const HOME = mkdtempSync(join(tmpdir(), 'h-home-'));
 // The Stop sandbox section never looks for a real srt or bwrap: an existing .mjs stands in for srt, and every tool is found.
+// Doctor's Stop sandbox section asks getconf for the macOS token folder; a stub keeps the darwin cases off the host (no getconf on Windows).
+vi.mock('../../src/core/token-base.js', async (orig) => {
+  const m = await orig<typeof import('../../src/core/token-base.js')>();
+  return { ...m, tokenBase: (p: NodeJS.Platform, e: NodeJS.ProcessEnv) => m.tokenBase(p, e, () => '/var/folders/zz/test/T/\n') };
+});
 const SRT_STUB = fileURLToPath(new URL('../../build.mjs', import.meta.url));
 const srtProbe = { which: (c: string) => (c === 'srt' ? SRT_STUB : `/usr/bin/${c}`), version: () => '0.0.83\n' };
 const hermetic = (o: { read?: (p: string) => string | null; home?: string; managed?: string } = {}) => ({ read: o.read ?? (() => null), home: o.home ?? HOME, managed: o.managed ?? join(HOME, 'no-managed.json'), srt: srtProbe, bwrapVersion: () => 'bubblewrap 0.9.0' });
@@ -993,7 +998,7 @@ test('doctor: allowManagedHooksOnly follows precedence, names the missing events
 test('Stop sandbox section: srt from deps, and gone when checks.stop is off', async () => {
   const root = await installed();
   const on = run(root, { path: bin('npm'), platform: 'darwin' });
-  expect(on.out).toContain(`ok Stop sandbox: srt 0.0.83 (${realpathSync(SRT_STUB)})`);
+  expect(on.out).toContain(`ok Stop sandbox: srt 0.0.83 (${esc(realpathSync(SRT_STUB))})`); // esc doubles a win32 path's backslashes
   setConfig(root, (t) => t.replace(/^(\s*)stop: true/m, '$1stop: false'));
   expect(run(root, { path: bin('npm'), platform: 'darwin' }).out).not.toMatch(/Stop sandbox/);
 });

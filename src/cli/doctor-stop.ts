@@ -42,7 +42,12 @@ export function stopSandboxChecks(root: string, config: HarnessConfig, p: P, sys
     }
   };
   const { platform } = sys;
-  if (platform === 'win32') p.note(WIN_STEPS_WARNING);
+  const record = () => (sys.record ?? (() => readStopRecord(root)))();
+  const neverRan = (r: StopSandboxRecord) => p.fix(`last Stop: checks never ran (${cap(r.reason ?? 'no reason recorded')})`, 'fix what it names, then stop again');
+  if (platform === 'win32') {
+    p.note(WIN_STEPS_WARNING);
+    guard('last Stop record', () => { const r = record(); if (r?.outcome === 'never-ran') neverRan(r); }); // the unattended give-up writes it
+  }
   if (config.sandbox === 'off') p.note('Stop steps run without srt (sandbox: off; each session logs stop-unwrapped)');
   if (platform === 'win32' || config.sandbox === 'off') return;
 
@@ -91,7 +96,7 @@ export function stopSandboxChecks(root: string, config: HarnessConfig, p: P, sys
   });
 
   guard('last Stop record', () => {
-    const r = (sys.record ?? (() => readStopRecord(root)))();
+    const r = record();
     if (!r) return p.note('no Stop has run inside srt yet');
     if (r.outcome !== 'never-ran') {
       for (const name of PREFLIGHT_ORDER(platform === 'linux')) {
@@ -102,6 +107,6 @@ export function stopSandboxChecks(root: string, config: HarnessConfig, p: P, sys
       }
     }
     if (r.outcome === 'unavailable') p.fix(`last Stop: srt unavailable (${cap(r.reason ?? 'no reason recorded')})`, 'fix what it names, then stop again');
-    else if (r.outcome === 'never-ran') p.fix(`last Stop: checks never ran (${cap(r.reason ?? 'no reason recorded')})`, 'fix what it names, then stop again');
+    else if (r.outcome === 'never-ran') neverRan(r);
   });
 }

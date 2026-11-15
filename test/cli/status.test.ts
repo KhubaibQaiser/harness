@@ -248,6 +248,9 @@ test('stopSandboxLine: never-ran is appended found or not, and the version is es
   expect(stopSandboxLine(cfgOf(), 'linux', FOUND, rec('never-ran'))).toBe('Stop sandbox: srt 0.0.83; last stop: checks never ran');
   expect(stopSandboxLine(cfgOf(), 'linux', { why: { kind: 'missing' } }, rec('never-ran'))).toBe('Stop sandbox: UNAVAILABLE - stop gate blocks; last stop: checks never ran');
   expect(stopSandboxLine(cfgOf(), 'linux', FOUND, rec('ran'))).toBe('Stop sandbox: srt 0.0.83');
+  // Native Windows: the gave-up record shows too (R16 amended), from the record alone.
+  expect(stopSandboxLine(cfgOf(), 'win32', null, rec('never-ran'))).toBe('Stop sandbox: off - native Windows; last stop: checks never ran');
+  expect(stopSandboxLine(cfgOf(), 'win32', null, rec('ran'))).toBe('Stop sandbox: off - native Windows');
   expect(stopSandboxLine(cfgOf(), 'linux', { ...FOUND, version: 'a\u001b[31mb' }, null)).not.toContain('\u001b');
 });
 
@@ -273,6 +276,7 @@ test('status: sandbox off and win32 never probe srt; checks.stop off prints no l
   const root = await installedAt();
   const p = probeOf();
   expect(showWith(root, 'win32', p.srt)).toMatch(/^Stop sandbox: off - native Windows$/m);
+  expect(showWith(root, 'win32', p.srt, rec('never-ran'))).toMatch(/^Stop sandbox: off - native Windows; last stop: checks never ran$/m);
   const cfg = join(root, '.harness/config.yaml');
   const orig = readFileSync(cfg, 'utf8');
   writeFileSync(cfg, orig.replace('sandbox: unattended', 'sandbox: off'));

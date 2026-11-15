@@ -33,6 +33,10 @@ const run = (config: HarnessConfig, o: Over = {}) => {
   return { lines, spawned: () => spawned, home };
 };
 
+// These cases fake linux or darwin over real temp paths; on a win32 host those are D:\ paths that the POSIX
+// within() can't place (production returns before them on win32), so they run on POSIX hosts only.
+const posixHost = test.skipIf(process.platform === 'win32');
+
 describe('stopSandboxChecks', () => {
   test('sandbox off: only the off note, no srt lookup', () => {
     const r = run(cfg({}, 'off'), { which: { srt: null } });
@@ -44,7 +48,14 @@ describe('stopSandboxChecks', () => {
     expect(r.spawned()).toBe(0);
     expect(run(cfg({}, 'off'), { platform: 'win32' }).lines).toEqual([`note ${WIN_STEPS_WARNING}`, 'note Stop steps run without srt (sandbox: off; each session logs stop-unwrapped)']);
   });
-  test('srt found: ok with version and real path', () => {
+  test('win32: a never-ran record is the fix line after the warning; srt still never looked up', () => {
+    const r = run(cfg(), { platform: 'win32', which: { srt: null }, record: rec({ outcome: 'never-ran', reason: 'native Windows unattended' }) });
+    expect(r.lines).toEqual([`note ${WIN_STEPS_WARNING}`, 'fix last Stop: checks never ran (native Windows unattended): fix what it names, then stop again']);
+    expect(r.spawned()).toBe(0);
+    expect(run(cfg(), { platform: 'win32', record: rec({ outcome: 'unavailable', reason: 'x' }) }).lines).toEqual([`note ${WIN_STEPS_WARNING}`]);
+    expect(run(cfg(), { platform: 'win32', record: null }).lines).toEqual([`note ${WIN_STEPS_WARNING}`]);
+  });
+  posixHost('srt found: ok with version and real path', () => {
     expect(run(cfg()).lines).toContain(`ok Stop sandbox: srt 0.0.83 (${realpathSync(SRT)})`);
   });
   test('srt missing: fix with the install line', () => {
@@ -78,7 +89,7 @@ describe('stopSandboxChecks', () => {
     expect(miss.spawned()).toBe(0);
     expect(run(cfg(), { platform: 'darwin', which: { bwrap: null } }).lines.filter((l) => l.startsWith('fix'))).toEqual([]);
   });
-  test('allow_write refusals are fixes with allowWriteMessage; a relative entry is a fix, not a throw', () => {
+  posixHost('allow_write refusals are fixes with allowWriteMessage; a relative entry is a fix, not a throw', () => {
     const { home } = mk();
     const r = run(cfg({ allow_write: [home, 'rel/dir'] }), { home });
     expect(r.lines).toContain(`fix stop.allow_write can't list ${home}: it is your home folder. Choose a folder only your tests write, such as a cache folder: remove it from stop.allow_write in .harness/config.yaml`);
@@ -120,7 +131,7 @@ describe('stopSandboxChecks', () => {
     const r = run(cfg({ allow_write: [entry] }), o);
     expect(r.lines).toContain(`fix stop.allow_write can't list ${entry}: ${why}. Choose a folder only your tests write, such as a cache folder: remove it from stop.allow_write in .harness/config.yaml`);
   };
-  describe('allow_write refusal classes match the gate', () => {
+  describe.skipIf(process.platform === 'win32')('allow_write refusal classes match the gate', () => {
     test('protected path', () => {
       const root = mk().root;
       const lines: string[] = [];
@@ -156,7 +167,7 @@ describe('stopSandboxChecks', () => {
       refused(t, 'it holds the GitHub token folder', { tok: t });
     });
   });
-  test('allow_write entry text is escaped', () => {
+  posixHost('allow_write entry text is escaped', () => {
     const { home } = mk();
     const l = run(cfg({ allow_write: [`${home}/.claude/\u001b[31mred\nline`] }), { home }).lines.filter((x) => x.includes('allow_write'));
     expect(l.length).toBeGreaterThan(0);

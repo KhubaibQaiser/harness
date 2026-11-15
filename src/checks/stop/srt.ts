@@ -126,11 +126,11 @@ export const srtMessage = (w: SrtWhy): string =>
 export const STOP_WIN_UNATTENDED = "Stop steps don't run unsandboxed in an unattended run on native Windows. Run in WSL2 or the harness dev container, or set sandbox: off (logged).";
 export const WIN_STEPS_WARNING = "Stop steps run without a sandbox on native Windows: the project's tests run with your full access. Use WSL2 or the harness dev container for a sandboxed Stop gate.";
 
-/** The `harness status` line. The caller never probes srt for `off` or win32, so `found` is only read for the other forms. */
+/** The `harness status` line. The caller never probes srt for `off` or win32, so `found` is only read for the other forms; win32 still reads the record. */
 export function stopSandboxLine(config: HarnessConfig, platform: NodeJS.Platform, found: SrtFound | { why: SrtWhy } | null, rec: StopSandboxRecord | null): string {
-  if (platform === 'win32') return 'Stop sandbox: off - native Windows';
+  const never = rec?.outcome === 'never-ran' ? '; last stop: checks never ran' : '';
+  if (platform === 'win32') return `Stop sandbox: off - native Windows${never}`; // the unattended give-up writes never-ran
   if (config.sandbox === 'off' || !found) return 'Stop sandbox: off - logged';
   const local = config.stop.allow_local ? ' - stop.allow_local on' : ''; // no effect when steps run unwrapped
-  const never = rec?.outcome === 'never-ran' ? '; last stop: checks never ran' : '';
   return 'why' in found ? `Stop sandbox: UNAVAILABLE - stop gate blocks${never}${local}` : `Stop sandbox: srt ${esc(found.version)}${never}${local}`;
 }

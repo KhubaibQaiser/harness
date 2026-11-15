@@ -66,7 +66,7 @@ export function status(args: string[], cli: CliEnv, deps: StatusDeps = {}): numb
     // Off and native Windows never probe srt: locateSrt spawns `srt --version`.
     const probe = platform !== 'win32' && config.sandbox !== 'off';
     const found = probe ? locateSrt(deps.srt ?? realSrtProbe(cli.env, platform), gateWritable(root, config.stop, homedir()), platform) : null;
-    lines.push(stopSandboxLine(config, platform, found, probe ? (deps.record ?? (() => readStopRecord(root)))() : null));
+    lines.push(stopSandboxLine(config, platform, found, probe || platform === 'win32' ? (deps.record ?? (() => readStopRecord(root)))() : null));
   }
   lines.push(blocksOnFailure(root)
     ? 'Hook failure: blocks tool calls, prompts and settings changes; the Stop gate fails open'

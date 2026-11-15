@@ -43,7 +43,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # ubuntu-24.04 pinned: on ubuntu-26.04 srt 0.0.83's seccomp helper can't write /proc/self/setgroups (nested userns
+        # is capability-restricted), so every Stop blocks; see Known limits. Moving to 26.04 needs an srt that runs there.
+        os: [ubuntu-24.04, macos-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

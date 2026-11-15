@@ -875,6 +875,7 @@ More detail: [TDD setup details](#tdd-setup-details).
 - Stop steps in `srt`: attended native Windows runs them unwrapped, with your full access. This is the one exception to the Stop wrap; unattended Windows Stops block.
 - Stop steps in `srt` (e): the preflight's `network` check goes direct, so it doesn't test `srt`'s proxy domain filter, and an offline machine reads as network-blocked. The `user namespace` check passes on any non-zero `bwrap` exit; the live batch confirms the seccomp and `unshare` behaviour. The write canary check also flags an outside change that moves ctime, such as a no-op `chmod` or an xattr write by endpoint security software; it only ever blocks.
 - Stop steps in `srt` (f): a step that outruns `stop.timeout_s` passes on the gate's timeout rule, as it did before `srt`; only a run that reported no result line at all blocks.
+- Stop steps in `srt` (g): on Ubuntu 26.04 `srt` 0.0.83 can't start. Its seccomp helper is refused writing `/proc/self/setgroups` (nested user namespaces are capability-restricted there), so every Stop with steps to run blocks with `srt failed its check: srt exit (apply-seccomp: …)`. Ubuntu 24.04 with `kernel.apparmor_restrict_unprivileged_userns=0` works and is what CI checks. On 26.04, set `sandbox: off` before the session starts (logged) until an `srt` that runs there is pinned.
 - Not in this release: the PR reviewer (M2) and TDD for other languages.
 
 ## Development

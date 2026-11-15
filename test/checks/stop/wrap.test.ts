@@ -400,7 +400,12 @@ suite('parseResults', () => {
     expect(P(`${line('a', {}, N2)}`, exp)).toEqual({ error: 'line 1: no nonce' });
     expect(P('x', exp)).toEqual({ error: 'line 1: not JSON' });
     expect(P(`${l('a', { status: '0' })}`, exp)).toEqual({ error: 'line 1: bad fields' });
-    expect(parseResults(l('a') + '\n' + l('b'), N, exp, S)).toEqual({ error: 'end line: missing' });
+    const [a, b, e] = [l('a'), l('b'), end(S)];
+    expect(parseResults(a + '\n' + b, N, exp, S)).toEqual({ error: 'end line: missing' });
+    expect(parseResults(a + '\n' + b + '\n' + end('f'.repeat(64)), N, exp, S)).toEqual({ error: 'end line: wrong seal' });
+    expect(parseResults([a, b, e, e].join('\n'), N, exp, S)).toEqual({ error: 'end line: duplicated' });
+    expect(parseResults([a, b, e, l('a')].join('\n'), N, exp, S)).toEqual({ error: 'end line: not last' });
+    expect(parseResults([e, a, b].join('\n'), N, exp, S)).toEqual({ error: 'end line: not last' });
     const chk: Expected[] = [{ kind: 'check', name: 'network' }, { kind: 'step', label: 'a' }];
     expect(P(JSON.stringify({ nonce: N, kind: 'check', name: 'network', ok: false, detail: 'reached' }), chk)).toMatchObject({ lines: [{ name: 'network', ok: false }] });
   });

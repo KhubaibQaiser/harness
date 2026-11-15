@@ -62,11 +62,6 @@ export const defaultExec = (root: string): Exec => (cmd, args, timeout, input) =
       c.stderr?.destroy();
       resolve({ status, output: `${out}\n${err}${extra}`, timedOut, stdout: out, stderr: err, stderrRolled: rolled });
     };
-    if (input !== undefined) {
-      if (!c.stdin) return finish(null, '\nspawn has no stdin for the input');
-      c.stdin.on('error', () => {}); // a child that exits first shows in its status and output
-      c.stdin.end(input);
-    }
     c.stdout?.on('data', (d) => (out = (out + d).slice(-KEEP)));
     c.stderr?.on('data', (d) => {
       err += d;
@@ -79,6 +74,14 @@ export const defaultExec = (root: string): Exec => (cmd, args, timeout, input) =
     }, timeout);
     c.on('error', (e) => finish(null, `\n${e.message}`));
     c.on('close', (status) => finish(status));
+    if (input !== undefined) {
+      if (!c.stdin) {
+        if (c.pid) killTree(c.pid); // a spawn that cannot take the input is a failure, and never left running
+        return finish(null, '\nspawn has no stdin for the input');
+      }
+      c.stdin.on('error', (e: NodeJS.ErrnoException) => (err += `\nstdin: ${e.code ?? e.message}`)); // the code only, never the input
+      c.stdin.end(input);
+    }
   });
 
 export const tail = (text: string) => {

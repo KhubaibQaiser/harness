@@ -1,4 +1,4 @@
-// Behavioural preflight: before any step runs inside srt, prove the fence holds. A probe that throws means "blocked" = ok.
+// Behavioural preflight: before any step runs inside srt, prove the fence holds. A check is ok only on positive evidence of a deny (see DENY).
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { request } from 'node:https';
@@ -11,33 +11,58 @@ export type Probes = { write(p: string): void; read(p: string): string; connect(
 
 export const PREFLIGHT_ORDER = (linux: boolean): CheckName[] => ['write canary', 'read canary', 'unix socket', 'network', ...(linux ? (['user namespace'] as const) : [])];
 
-// A probe settles once: resolve = it got through (fence leak); reject = refused, errored or hung past its limit (fence held).
-const limited = (ms: number, start: (done: (ok: boolean) => void) => () => void) =>
+// A probe settles once: resolve = it got through (fence leak); reject = an error carrying its errno code. A sync throw from start rejects too.
+const limited = (ms: number, timeoutCode: string, start: (done: (leak: boolean, code?: string) => void) => () => void) =>
   new Promise<void>((res, rej) => {
-    let stop = (): void => undefined;
-    const done = (leak: boolean) => (clearTimeout(t), stop(), leak ? res() : rej(new Error('blocked')));
-    const t = setTimeout(() => done(false), ms);
-    stop = start(done);
+    let stop: (() => void) | undefined;
+    let settled = false;
+    const done = (leak: boolean, code?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(t);
+      stop?.();
+      leak ? res() : rej(Object.assign(new Error(code ?? 'error'), { code }));
+    };
+    const t = setTimeout(() => done(false, timeoutCode), ms);
+    try {
+      stop = start(done);
+      if (settled) stop();
+    } catch (e) {
+      done(false, (e as { code?: string }).code);
+    }
   });
 
 export const realProbes: Probes = {
   write: (p) => appendFileSync(p, 'x'),
   read: (p) => readFileSync(p, 'utf8'),
   connect: (sock) =>
-    limited(2000, (done) => {
+    limited(2000, 'ETIMEDOUT', (done) => {
       const c = connect(sock);
-      c.on('connect', () => done(true)).on('error', () => done(false));
+      c.on('connect', () => done(true)).on('error', (e: NodeJS.ErrnoException) => done(false, e.code));
       return () => c.destroy();
     }),
-  // Reached = a completed HTTP response, any status (srt's proxy may answer CONNECT with a 403 page; that still means the network answered). A TLS error, refusal, reset or 3 s of silence = blocked.
-  // agent:false and no redirect handling: env proxies are never used and nothing is followed.
+  // Direct egress only (agent:false: no env proxy, no redirects); srt's proxy domain filter is not tested here.
+  // Reached = a TCP connection was established (certificate errors, silence or a non-TLS reply afterwards do not matter), or any completed response.
+  // Blocked = the errors listed in DENY.network, or HARNESS_TIMEOUT: 3 s without a connection.
   https: (url) =>
-    limited(3000, (done) => {
-      const r = request(url, { method: 'HEAD', agent: false }, (res) => (res.resume(), done(true)));
-      r.on('error', () => done(false)).end();
+    limited(3000, 'HARNESS_TIMEOUT', (done) => {
+      const r = request(url, { method: 'HEAD', agent: false, rejectUnauthorized: false }, (res) => (res.resume(), done(true)));
+      r.on('socket', (s) => s.once('connect', () => done(true))).on('error', (e: NodeJS.ErrnoException) => done(false, e.code)).end();
       return () => r.destroy();
     }),
-  bwrap: () => spawnSync('bwrap', ['--unshare-user', '--ro-bind', '/', '/', 'true'], { timeout: 5000 }).status,
+  bwrap: () => {
+    const r = spawnSync('bwrap', ['--unshare-user', '--ro-bind', '/', '/', 'true'], { timeout: 5000 });
+    if (r.error || r.signal || r.status === null) throw Object.assign(new Error(`bwrap: ${(r.error as NodeJS.ErrnoException | undefined)?.code ?? r.signal ?? 'no status'}`), { code: 'BWRAP' });
+    return r.status;
+  },
+};
+
+// A check is ok only on positive evidence of a deny; any other error, or getting through, fails it.
+const DENY: Partial<Record<CheckName, string[]>> = {
+  'write canary': ['EPERM', 'EROFS', 'EACCES'],
+  'read canary': ['EPERM', 'EACCES'],
+  'unix socket': ['EPERM', 'EACCES'],
+  network: ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'EPERM', 'EACCES', 'HARNESS_TIMEOUT'],
 };
 
 const FAIL: Record<CheckName, string> = {
@@ -50,29 +75,30 @@ const FAIL: Record<CheckName, string> = {
 
 /** Emits one check line per check, in order, stopping after the first failure. True when every check holds. */
 export async function preflight(p: PreflightPlan, probes: Probes, emit: (l: ResultLine) => void, nonce: string): Promise<boolean> {
+  // Each runner returns undefined when the probe proves a deny without throwing, or the failure line.
   const run: Record<CheckName, () => Promise<string | undefined>> = {
-    'write canary': async () => (probes.write(p.writeCanary), undefined),
-    'read canary': async () => probes.read(p.readCanary),
-    'unix socket': async () => probes.connect(p.socket).then(() => undefined),
-    network: async () => probes.https('https://example.com').then(() => undefined),
+    'write canary': async () => (probes.write(p.writeCanary), FAIL['write canary']),
+    'read canary': async () => {
+      const c = probes.read(p.readCanary);
+      return c === '' ? undefined : c.split('\n')[0] || FAIL['read canary']; // '' = srt masked the file
+    },
+    'unix socket': async () => probes.connect(p.socket).then(() => FAIL['unix socket']),
+    network: async () => probes.https('https://example.com').then(() => FAIL.network),
     'user namespace': async () => {
       const s = probes.bwrap();
-      if (s === 0) return '';
-      throw new Error('blocked');
+      return s === null ? 'bwrap: no status' : s === 0 ? FAIL['user namespace'] : undefined;
     },
   };
   for (const name of PREFLIGHT_ORDER(p.linux)) {
-    let leaked: string | undefined;
-    let got = false;
+    let fail: string | undefined;
     try {
-      leaked = await run[name]();
-      got = true;
-    } catch {
-      // blocked
+      fail = await run[name]();
+    } catch (e) {
+      const code = (e as { code?: unknown } | null)?.code;
+      if (!(typeof code === 'string' && DENY[name]?.includes(code))) fail = `${typeof code === 'string' ? `${code}: ` : ''}${String((e as Error | null)?.message ?? e).split('\n')[0]}`;
     }
-    const line = (got ? (leaked ?? '').split('\n')[0]! : '') || FAIL[name];
-    emit(got ? { nonce, kind: 'check', name, ok: false, detail: esc(line).slice(0, 200) } : { nonce, kind: 'check', name, ok: true });
-    if (got) return false;
+    emit(fail === undefined ? { nonce, kind: 'check', name, ok: true } : { nonce, kind: 'check', name, ok: false, detail: esc(fail.slice(0, 200)).slice(0, 200) });
+    if (fail !== undefined) return false;
   }
   return true;
 }

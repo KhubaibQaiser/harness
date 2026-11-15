@@ -134,6 +134,8 @@ export function tamperFindings(before: string, after: string, file: string): str
   return out;
 }
 
+export const tamperScope = (rel: string): boolean => isTestFile(rel) || CONFIG.test(rel) || PKG.test(rel);
+
 export const tamper: Check = {
   name: 'tamper',
   events: ['PreToolUse'],
@@ -142,7 +144,7 @@ export const tamper: Check = {
     const p = editTarget(ctx.input);
     if (!ctx.config.checks.tdd || p === null) return { kind: 'allow' };
     const rel = toRepoPath(ctx.root, p);
-    if (rel === null || !(isTestFile(rel) || CONFIG.test(rel) || PKG.test(rel))) return { kind: 'allow' };
+    if (rel === null || !tamperScope(rel)) return { kind: 'allow' };
     let before = '';
     try {
       before = readFileSync(resolve(ctx.root, p), 'utf8');

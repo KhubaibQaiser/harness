@@ -38,15 +38,15 @@ test('a dependency that points at a path, file, link, git or github spec is a fi
   for (const spec of ['file:../fake', 'link:../fake', 'portal:../fake', 'git+https://x/y.git', 'github:a/b', './fake', '../fake', '/abs/fake']) expect(f({ vitest: spec })).toEqual([`package.json: dependency "vitest" points at ${spec}`]);
   expect(f({ lodash: '^4.0.0' })).toEqual([]);
 });
-test('a path named in a script is test config, in either side of the diff', () => {
+test('a path named in a script is a finding, in either side of the diff', () => {
   const sc = (c: string) => JSON.stringify({ scripts: { test: `vitest run --config ${c}` } });
-  expect(findings({ 'package.json': sc('tests/ci.ts'), 'tests/ci.ts': 'a' }, { 'package.json': sc('tests/ci.ts'), 'tests/ci.ts': 'b' })).toEqual(['tests/ci.ts: test config changed']);
+  expect(findings({ 'package.json': sc('tests/ci.ts'), 'tests/ci.ts': 'a' }, { 'package.json': sc('tests/ci.ts'), 'tests/ci.ts': 'b' })).toEqual(['tests/ci.ts: file named by a package.json script changed']);
   expect(findings({ 'package.json': sc('tests/ci.ts'), 'src/x.ts': 'a' }, { 'package.json': sc('tests/ci.ts'), 'src/x.ts': 'b' })).toEqual([]);
 });
-test('a path named in a nested package.json script is test config, resolved against its folder and the root', () => {
+test('a path named in a nested package.json script is a finding, resolved against its folder and the root', () => {
   const sc = JSON.stringify({ scripts: { test: 'vitest --config ci.config.ts' } });
-  expect(findings({ 'sub/package.json': sc, 'sub/ci.config.ts': 'a' }, { 'sub/package.json': sc, 'sub/ci.config.ts': 'b' })).toEqual(['sub/ci.config.ts: test config changed']);
-  expect(findings({ 'sub/package.json': sc, 'ci.config.ts': 'a' }, { 'sub/package.json': sc, 'ci.config.ts': 'b' })).toEqual(['ci.config.ts: test config changed']);
+  expect(findings({ 'sub/package.json': sc, 'sub/ci.config.ts': 'a' }, { 'sub/package.json': sc, 'sub/ci.config.ts': 'b' })).toEqual(['sub/ci.config.ts: file named by a package.json script changed']);
+  expect(findings({ 'sub/package.json': sc, 'ci.config.ts': 'a' }, { 'sub/package.json': sc, 'ci.config.ts': 'b' })).toEqual(['ci.config.ts: file named by a package.json script changed']);
   expect(findings({ 'sub/package.json': sc, 'other/ci.config.ts': 'a' }, { 'sub/package.json': sc, 'other/ci.config.ts': 'b' })).toEqual([]);
 });
 test('Yarn and other tool files and configs are findings at any depth', () => {
@@ -134,8 +134,71 @@ test('fail closed: git failure, timeout, unreadable blob, binary, oversize', () 
   expect(() => diffTamper(r.root, defaultExec, 'nope', r.head, o)).toThrow(/git/);
   expect(() => diffTamper(r.root, () => ({ status: 0, stdout: '', timedOut: true }), r.base, r.head, o)).toThrow(/timed out/);
   expect(() => diffTamper(r.root, () => ({ status: 127, stdout: '', missing: true }), r.base, r.head, o)).toThrow(/git/);
-  expect(() => diffTamper(r.root, (c, a, x) => (a.includes('show') ? { status: 128, stdout: '' } : defaultExec(c, a, x)), r.base, r.head, o)).toThrow(/a\.test\.ts/);
+  const missing: Exec = (c, a, x) => (a.includes('cat-file') ? { status: 0, stdout: (x?.input ?? '').split('\n').filter(Boolean).map((l) => `${l} missing\n`).join('') } : defaultExec(c, a, x));
+  expect(() => diffTamper(r.root, missing, r.base, r.head, o)).toThrow(/a\.test\.ts/);
+  expect(() => diffTamper(r.root, (c, a, x) => (a.includes('cat-file') ? { status: 128, stdout: '' } : defaultExec(c, a, x)), r.base, r.head, o)).toThrow(/git/);
   expect(() => run({ 'a.test.ts': 'x\n' }, { 'a.test.ts': 'a\0b' })).toThrow(/a\.test\.ts.*binary/);
   expect(() => run({ 'a.test.ts': 'x\n' }, { 'a.test.ts': 'a'.repeat(2_000_000) })).toThrow(/a\.test\.ts.*large/);
   expect(() => diffTamper(r.root, () => ({ status: 0, stdout: 'R100\0a\0b\0' }), r.base, r.head, o)).toThrow(/R100/);
+});
+
+// Round 4
+const src = { 'src/a.ts': 'a' }, src2 = { 'src/a.ts': 'b' };
+test('N1: an unchanged package.json that is invalid, a symlink, binary or oversize is skipped, not a throw', () => {
+  const bad = { 'test/fixtures/bad/package.json': '{ not json', 'sub/package.json': { link: '../x' }, 'bin/package.json': 'a\0b', 'big/package.json': JSON.stringify({ scripts: { t: 'a'.repeat(2_000_000) } }) };
+  expect(findings({ ...bad, ...src }, { ...src2, 'sub/package.json': { link: '../x' } })).toEqual([]); // the helper drops a link it isn't given again
+});
+test('N1: a changed package.json that cannot be read is a finding, not a throw', () => {
+  expect(findings({ 'package.json': '{}' }, { 'package.json': '{ not json' })).toEqual(['package.json: package.json unreadable']);
+  expect(findings({ 'sub/package.json': '{ not json' }, { 'sub/package.json': '{}' })).toEqual(['sub/package.json: package.json unreadable']);
+  expect(findings({ 'package.json': '{}' }, { 'package.json': JSON.stringify({ x: 'a'.repeat(2_000_000) }) })).toEqual(['package.json: package.json unreadable']);
+  expect(findings({ 'package.json': '{}' }, { 'package.json': '{"a":"\0"}' })).toEqual(['package.json: package.json unreadable']);
+});
+test('N2: overrides, resolutions, pnpm.overrides and pnpm.patchedDependencies changes are findings', () => {
+  const f = (a: object) => findings({ 'package.json': '{}' }, { 'package.json': JSON.stringify(a) });
+  expect(f({ overrides: { vitest: '1.0.0' } })).toEqual(['package.json: overrides changed']);
+  expect(f({ resolutions: { vitest: 'portal:../fake' } })).toEqual(['package.json: resolutions changed']);
+  expect(f({ pnpm: { overrides: { vitest: 'link:../fake' } } })).toEqual(['package.json: pnpm.overrides changed']);
+  expect(f({ pnpm: { patchedDependencies: { vitest: 'p.patch' } } })).toEqual(['package.json: pnpm.patchedDependencies changed']);
+});
+test('N2: workspace:, npm: alias, tarball, URL and user/repo specs are findings', () => {
+  const f = (spec: string) => findings({ 'package.json': '{}' }, { 'package.json': JSON.stringify({ devDependencies: { vitest: spec } }) });
+  for (const spec of ['workspace:*', 'npm:fake-vitest@1', 'fake.tgz', 'sub/fake.tar.gz', 'https://x.io/a.tgz', 'http://x.io/a', 'user/repo']) expect(f(spec)).toEqual([`package.json: dependency "vitest" points at ${spec}`]);
+});
+test('N2: a new package whose name is a dependency of any package.json is a finding; another name is not', () => {
+  const base = { 'package.json': JSON.stringify({ devDependencies: { vitest: '^1' } }) };
+  expect(findings(base, { 'fake/package.json': JSON.stringify({ name: 'vitest' }) })).toEqual(['fake/package.json: package name "vitest" matches a dependency']);
+  expect(findings(base, { 'mine/package.json': JSON.stringify({ name: 'mine' }) })).toEqual([]);
+});
+test('N2: a lockfile line added with a file:, link: or portal: resolution is a finding; a registry bump is not', () => {
+  const l = (rel: string, b: string, a: string) => findings({ [rel]: b }, { [rel]: a });
+  expect(l('package-lock.json', '"resolved": "https://registry.npmjs.org/v/-/v-1.tgz"\n', '"resolved": "file:../fake"\n')).toEqual(['package-lock.json: lockfile adds a local file, link or portal dependency']);
+  expect(l('package-lock.json', '"resolved": "https://r/v-1.tgz"\n', '"resolved": "../fake",\n"link": true\n')).toHaveLength(1);
+  expect(l('pnpm-lock.yaml', 'version: 1.0.0\n', 'version: link:../fake\n')).toHaveLength(1);
+  expect(l('sub/yarn.lock', 'a\n', '"vitest@portal:../fake":\n')).toHaveLength(1);
+  expect(l('bun.lock', 'a\n', '"vitest": ["vitest@file:../fake"]\n')).toHaveLength(1);
+  expect(l('package-lock.json', '"resolved": "https://r/v-1.tgz"\n', '"resolved": "https://r/v-2.tgz"\n')).toEqual([]);
+});
+test('N3: script words are normalised against the package folder, and INIT_CWD or the local prefix mean the root', () => {
+  const sc = (t: string) => ({ 'sub/package.json': JSON.stringify({ scripts: { test: t } }) });
+  const f = (t: string, rel: string) => findings({ ...sc(t), [rel]: 'a' }, { ...sc(t), [rel]: 'b' });
+  expect(f('vitest --config ../shared/ci.ts', 'shared/ci.ts')).toEqual(['shared/ci.ts: file named by a package.json script changed']);
+  for (const v of ['$INIT_CWD', '${INIT_CWD}', '$npm_config_local_prefix']) expect(f(`vitest --config "${v}/tests/ci.ts"`, 'tests/ci.ts')).toHaveLength(1);
+});
+test('N6: a file named only by a script gets its own text; package.yaml and package.json5 are package files', () => {
+  const start = JSON.stringify({ scripts: { start: 'node server.js' } });
+  expect(findings({ 'package.json': start, 'server.js': 'a' }, { 'server.js': 'b' })).toEqual(['server.js: file named by a package.json script changed']);
+  expect(findings({ 'package.yaml': 'scripts:\n  test: vitest\n' }, { 'package.yaml': 'scripts:\n  test: "true"\n' })).toEqual(['package.yaml: scripts changed (test)']);
+  expect(findings({ 'package.yaml': 'scripts:\n  test: vitest -c ci.ts\n', 'ci.ts': 'a' }, { 'ci.ts': 'b' })).toEqual(['ci.ts: file named by a package.json script changed']);
+  expect(findings({ 'package.json5': '{"scripts":{"test":"a"}}' }, { 'package.json5': '{"scripts":{"test":"b"}}' })).toEqual(['package.json5: scripts changed (test)']);
+  expect(findings({ 'package.json5': '{}' }, { 'package.json5': '{ // c\n}' })).toEqual(['package.json5: package.json unreadable']);
+  expect(findings({ 'x/package.json5': '{ // c\n}', ...src }, src2)).toEqual([]);
+});
+test('namedPaths from T11 steps are treated like script-named paths', () => {
+  expect(findings({ 'scripts/ci.sh': 'a', 'ci.mk': 'a' }, { 'scripts/ci.sh': 'b', 'ci.mk': 'b' }, { namedPaths: ['./scripts/ci.sh', 'ci.mk'] }).sort()).toEqual(['ci.mk: file named by a package.json script changed', 'scripts/ci.sh: file named by a package.json script changed']);
+  expect(findings({ 'scripts/ci.sh': 'a' }, { 'scripts/ci.sh': 'b' })).toEqual([]);
+});
+test('N4: one cat-file read keeps its byte framing across multibyte and non-UTF-8 blobs', () => {
+  const f = findings({ 'p/package.json': Buffer.concat([Buffer.from('{"name":"é€"} '), Buffer.from([0xff, 0xfe])]), 'b.test.ts': T('expect("é").toBe("é");') }, { 'b.test.ts': 'test.skip("é€", () => {});\n' });
+  expect(f).toEqual(['b.test.ts: .skip( added', 'b.test.ts: 1 assertion removed']);
 });

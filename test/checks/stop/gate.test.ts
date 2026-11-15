@@ -361,14 +361,15 @@ test('defaultExec writes the input to the child stdin and closes it; without inp
   expect((await defaultExec(tmpdir())(process.execPath, ['-e', js], 5000)).stdout).toBe('got:0\n');
 });
 
-test('an input spawn whose child has no stdin is killed and fails, never left running', async () => {
+// POSIX only: on win32 killTree runs the real taskkill on the fake pid (the routing is the killTree test above).
+test.skipIf(process.platform === 'win32')('an input spawn whose child has no stdin is killed and fails, never left running', async () => {
   fake.make = () => Object.assign(new EventEmitter(), { pid: 4242, stdin: null, stdout: null, stderr: null });
   const kill = vi.spyOn(process, 'kill').mockImplementation((() => true) as never);
   try {
     const r = await defaultExec(tmpdir())('x', [], 5000, 'abc\n');
     expect(r.status).toBeNull();
     expect(r.output).toMatch(/no stdin/);
-    expect(kill).toHaveBeenCalledWith(process.platform === 'win32' ? 4242 : -4242, 'SIGKILL');
+    expect(kill).toHaveBeenCalledWith(-4242, 'SIGKILL');
   } finally {
     fake.make = undefined;
     kill.mockRestore();

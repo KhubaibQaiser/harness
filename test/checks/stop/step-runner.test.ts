@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { buildSync } from 'esbuild';
 import { expect, test } from 'vitest';
 import { defaultExec } from '../../../src/checks/stop/gate.js';
@@ -94,12 +95,18 @@ test('a failing step still ends with the sealed end line', async () => {
   expect(lines.map((l) => JSON.parse(l).kind)).toEqual(['step', 'end']);
 });
 
-test.skipIf(process.platform === 'win32')('the real fd-0 reader: a runner spawned with the seal on stdin ends with the sealed line; without input it exits 2', async () => {
-  const d = mkdtempSync(join(tmpdir(), 'h-sr-e-'));
+// The real fd-0 reader, bundled into a runnable entry.
+const entryFile = (d: string) => {
   const entry = join(d, 'entry.ts');
   writeFileSync(entry, `import { runPlanEntry } from ${JSON.stringify(join(process.cwd(), 'src/checks/stop/step-runner.ts'))};\nrunPlanEntry(process.argv.slice(2), (l) => process.stdout.write(l + '\\n')).then((c) => (process.exitCode = c));`);
   const out = join(d, 'entry.cjs');
   buildSync({ entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  return out;
+};
+
+test.skipIf(process.platform === 'win32')('the real fd-0 reader: a runner spawned with the seal on stdin ends with the sealed line; without input it exits 2', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'h-sr-e-'));
+  const out = entryFile(d);
   const reader = step('r', { cmd: process.execPath, args: ['-e', "let n=0;process.stdin.on('data',d=>n+=d.length).on('end',()=>{console.log('stdin='+n);process.exit(1)})"], cwd: d, timeoutMs: 5000 });
   const f = planFile(plan([reader], { deadlineMs: Date.now() + 60_000 }));
   const r = await defaultExec(d)(process.execPath, [out, f, N], 20_000, SEAL + '\n');
@@ -111,3 +118,22 @@ test.skipIf(process.platform === 'win32')('the real fd-0 reader: a runner spawne
   const none = await defaultExec(d)(process.execPath, [out, f, N], 20_000);
   expect([none.status, none.stdout]).toEqual([2, '']);
 });
+
+test.skipIf(process.platform === 'win32')('the seal is one bounded line: read to the first newline or 128 bytes, never waiting for EOF', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'h-sr-b-'));
+  const out = entryFile(d);
+  const f = planFile(plan([step('a', { cmd: process.execPath, args: ['-e', ''], cwd: d })], { deadlineMs: Date.now() + 60_000 }));
+  // stdin stays open (no EOF), as when srt does not forward the close.
+  const open = (input: string) => new Promise<{ code: number | null; stdout: string }>((res) => {
+    const c = spawn(process.execPath, [out, f, N], { stdio: ['pipe', 'pipe', 'ignore'] });
+    let stdout = '';
+    const t = setTimeout(() => c.kill('SIGKILL'), 5000);
+    c.stdout.on('data', (b) => (stdout += b));
+    c.on('close', (code) => (clearTimeout(t), c.stdin.destroy(), res({ code, stdout })));
+    c.stdin.write(input);
+  });
+  const good = await open(SEAL + '\n');
+  expect(good.code).toBe(0);
+  expect(good.stdout.trim().split('\n').at(-1)).toBe(JSON.stringify({ nonce: N, kind: 'end', seal: SEAL }));
+  for (const bad of ['f'.repeat(200), 'abc\n', SEAL.slice(0, 63) + 'g\n']) expect(await open(bad), bad.slice(0, 10)).toEqual({ code: 2, stdout: '' });
+}, 30000);

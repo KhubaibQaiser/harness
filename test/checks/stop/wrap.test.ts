@@ -73,8 +73,12 @@ suite('runWrapped', () => {
   test('argv is exactly the launch prefix, --settings <abs settings>, <node>, <abs runner>, --stop-steps <abs plan>, <nonce>', async () => {
     const { calls, run } = setup();
     await run();
-    expect(srtArgv('/s', '/n', '/r', '/p', N)).toEqual(['--settings', '/s', '/n', '--no-warnings', '/r', '--stop-steps', '/p', N]);
-    expect([calls[0]!.cmd, ...calls[0]!.args]).toEqual([node, srtJs, '--settings', settingsAt(), node, '--no-warnings', runner, '--stop-steps', planAt(), N]);
+    expect(srtArgv('/s', '/n', '/r', '/p', N, '22.14.0')).toEqual(['--settings', '/s', '/n', '--no-warnings', '--disable-sigusr1', '/r', '--stop-steps', '/p', N]);
+    expect(srtArgv('/s', '/n', '/r', '/p', N, '24.1.0')).toContain('--disable-sigusr1');
+    // Before 22.14.0 node rejects the flag, so it is left out (engines floor 22.11.0).
+    for (const v of ['22.13.1', '22.11.0']) expect(srtArgv('/s', '/n', '/r', '/p', N, v)).toEqual(['--settings', '/s', '/n', '--no-warnings', '/r', '--stop-steps', '/p', N]);
+    expect([calls[0]!.cmd, ...calls[0]!.args]).toEqual([node, srtJs, ...srtArgv(settingsAt(), node, runner, planAt(), N)]);
+    expect(srtArgv('/s', '/n', '/r', '/p', N)).toEqual(srtArgv('/s', '/n', '/r', '/p', N, process.versions.node));
     expect(calls[0]!.ms).toBe(1000);
   });
 
@@ -100,7 +104,20 @@ suite('runWrapped', () => {
       clean();
     }
     expect(await setup(() => { throw new Error('spawn boom'); }).run()).toEqual(unavailable('srt exit', 'spawn boom'));
-    expect(await setup({ timedOut: true, status: null }).run()).toEqual({ kind: 'timeout' });
+    expect(await setup({ timedOut: true, status: null, stdout: pre[0] }).run()).toEqual({ kind: 'timeout' });
+  });
+
+  test('a timeout before any result line is unavailable (result lines) and recorded; one valid line keeps it a timeout', async () => {
+    const none = unavailable('result lines', 'the runner reported nothing before the deadline');
+    // The fake appends a sealed end line, which is not a result line.
+    for (const stdout of ['', 'junk', check('write canary', {}, N2), check('evil', { ok: true }), check('network', { ok: 'yes' }), line('lint', { ms: 'x' })]) {
+      rmSync(join(state, 'stop-sandbox.json'), { force: true });
+      expect(await setup({ timedOut: true, status: null, stdout }).run(), stdout).toEqual(none);
+      expect(readStopRecord(root)).toMatchObject({ outcome: 'unavailable', reason: 'result lines' });
+    }
+    expect(await setup({ timedOut: true, status: null, stdout: undefined }, {}, false).run()).toEqual(none);
+    for (const stdout of [pre[0]!, [...pre, line('format:check')].join('\n')]) expect(await setup({ timedOut: true, status: null, stdout }).run()).toEqual({ kind: 'timeout' });
+    clean();
   });
 
   test('result lines: missing, extra, out of order, a wrong nonce and non-JSON are each rejected as failed its check: result lines', async () => {
@@ -294,7 +311,7 @@ suite('runWrapped', () => {
   });
 
   test('the timeout scan ignores unknown check names and non-boolean ok, and caps the detail', async () => {
-    const t = (o: Record<string, unknown>) => ({ timedOut: true, status: null, stdout: JSON.stringify({ nonce: N, kind: 'check', ...o }) });
+    const t = (o: Record<string, unknown>) => ({ timedOut: true, status: null, stdout: `${check('write canary')}\n${JSON.stringify({ nonce: N, kind: 'check', ...o })}` });
     expect(await setup(t({ name: 'evil\u001b[2J', ok: false, detail: 'x' })).run()).toEqual({ kind: 'timeout' });
     expect(await setup(t({ name: 'network', ok: 'no' })).run()).toEqual({ kind: 'timeout' });
     const r = await setup(t({ name: 'network', ok: false, detail: 'y\u001b[2J' + 'z'.repeat(500) })).run();

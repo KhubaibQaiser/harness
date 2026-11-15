@@ -29,8 +29,39 @@ test('a vanished check script is a finding; an unrelated script is not', () => {
   expect(findings({ 'package.json': pkg({ test: 'x', other: 'a' }) }, { 'package.json': pkg({ other: 'a' }) })).toContain('package.json: script "test" changed');
   expect(findings({ 'package.json': pkg({ test: 'x', other: 'a' }) }, { 'package.json': pkg({ test: 'x', other: 'b' }) })).toEqual([]);
 });
-test('only the root package.json counts for scripts', () =>
-  expect(findings({ 'sub/package.json': pkg({ test: 'a' }) }, { 'sub/package.json': pkg({ test: 'b' }) })).toEqual([]));
+test('a workspace package.json script counts too', () =>
+  expect(findings({ 'sub/package.json': pkg({ test: 'a' }) }, { 'sub/package.json': pkg({ test: 'b' }) })).toEqual(['sub/package.json: script "test" changed']));
+test('scripts a check reaches count: called, pre/post, run-p globs; unreachable ones do not', () => {
+  const f = (b: Record<string, string>, a: Record<string, string>) => findings({ 'package.json': pkg(b) }, { 'package.json': pkg(a) });
+  expect(f({ test: 'npm run test:unit', 'test:unit': 'vitest' }, { test: 'npm run test:unit', 'test:unit': 'echo ok' })).toEqual(['package.json: script "test:unit" changed']);
+  expect(f({ test: 'run-p t:*', 't:a': 'x' }, { test: 'run-p t:*', 't:a': 'true' })).toEqual(['package.json: script "t:a" changed']);
+  expect(f({ test: 'x' }, { test: 'x', pretest: 'patch' })).toEqual(['package.json: script "pretest" changed']);
+  expect(f({ test: 'x', docs: 'a' }, { test: 'x', docs: 'b' })).toEqual([]);
+});
+test('package manager config and test config changes are findings, at any depth', () => {
+  const f = findings({ 'a.txt': '1' }, { '.npmrc': 'a=1', 'sub/.yarnrc.yml': 'a', 'bunfig.toml': 'b', 'vite.config.ts': 'x', 'sub/jest.config.js': 'y', 'package.json': JSON.stringify({ jest: { roots: ['x'] } }) }, { checkNames: [] });
+  expect(f).toEqual(expect.arrayContaining(['.npmrc: package manager config changed', 'sub/.yarnrc.yml: package manager config changed', 'bunfig.toml: package manager config changed', 'vite.config.ts: test config changed', 'sub/jest.config.js: test config changed', 'package.json: test config changed']));
+});
+test('symlink or submodule entries: in-scope ones and anything linked under .harness or .claude are findings', () => {
+  const f = findings({ 'real.ts': 'x\n', 'a.test.ts': T('expect(1).toBe(1);') }, { 'a.test.ts': { link: 'real.ts' }, '.claude/x': { link: 'y' }, 'x.test.ts': { gitlink: 'a'.repeat(40) } }, { checkNames: [] });
+  expect(f).toEqual(expect.arrayContaining(['a.test.ts: symlink or submodule changed', 'x.test.ts: symlink or submodule changed', 'protected file changed: .claude/x']));
+  expect(findings({ 'a.txt': '1' }, { '.harness': { link: 'elsewhere' } }, { checkNames: [] })).toEqual(['protected file changed: .harness']);
+});
+test('the git budget is passed through, the environment blocks grafts and replace refs, stderr is escaped', () => {
+  const seen: { timeoutMs?: number; env?: Record<string, string> }[] = [];
+  const ex: Exec = (c, a, x) => { seen.push(x ?? {}); return defaultExec(c, a, x); };
+  run({ 'a.txt': '1' }, { 'a.txt': '2' }, { checkNames: [], timeoutMs: 1234 }, ex);
+  expect(seen.every((x) => x.timeoutMs === 1234)).toBe(true);
+  expect(seen[0]!.env).toMatchObject({ GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null/harness-no-grafts' });
+  expect(() => diffTamper('/', () => ({ status: 1, stdout: '', stderr: 'bad\nforged line' }), 'a', 'b', { checkNames: [] })).toThrow(/bad\\nforged line/);
+});
+test('a replace ref on the tree does not change what is diffed', () => {
+  const r = repoWith({ 'a.test.ts': T('expect(1).toBe(1);') }, { 'a.test.ts': T('') });
+  dirs.push(r.root);
+  const tree = git(r.root, 'rev-parse', `${r.head}^{tree}`).trim(), other = git(r.root, 'rev-parse', `${r.base}^{tree}`).trim();
+  git(r.root, 'replace', '-f', tree, other);
+  expect(diffTamper(r.root, defaultExec, r.base, tree, { checkNames: [] }).findings).toContain('a.test.ts: 1 assertion removed');
+});
 test('scriptChanges: names not in scripts or unchanged give nothing', () => {
   expect(scriptChanges(pkg({ a: '1' }), pkg({ a: '1' }), ['a', 'zzz'])).toEqual([]);
   expect(scriptChanges('', pkg({ a: '1' }), ['a'])).toEqual(['package.json: script "a" changed']);
@@ -63,7 +94,11 @@ test('own contract: a rename onto the path is a delete plus an add, so the delet
   const f = findings({ '.harness/tasks/old.json': text }, { '.harness/tasks/old.json': null, '.harness/tasks/t1.json': text }, { checkNames: [], ownContract: o });
   expect(f).toEqual(['protected file changed: .harness/tasks/old.json']);
 });
-test('hostile paths: newline, quote, unicode, leading dash', () => {
+test('hostile paths Windows allows: unicode, space, leading dash', () => {
+  const name = '-we ird é.test.ts';
+  expect(run({ 'a.txt': '1' }, { [name]: 'test.skip("a", () => {});\n' }).findings).toEqual([`${name}: .skip( added`]);
+});
+test.skipIf(process.platform === 'win32')('hostile paths: newline and quote', () => {
   const name = '-we"ird\né.test.ts';
   const r = run({ 'a.txt': '1' }, { [name]: 'test.skip("a", () => {});\n', '-x.txt': '1' });
   expect(r.files).toContain(name);

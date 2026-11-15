@@ -36,11 +36,17 @@ suite('within', () => {
 });
 
 suite('srt settings', () => {
-  test('every key name from the srt README, and no allowRead anywhere', () => {
+  test('every key name is in the srt 0.0.83 schema, and no allowRead anywhere', () => {
     const s = renderSrtSettings(mk({ tokenBase: '/run/u/harness/gh' }, { allowed_domains: ['a.io'] }));
     const k = keys(s);
-    expect(new Set(k)).toEqual(new Set(['network', 'allowedDomains', 'allowLocalBinding', 'filesystem', 'allowWrite', 'denyWrite', 'denyRead', 'path', 'literal', 'credentials', 'files', 'envVars', 'mode', 'name']));
+    // srt strips unknown keys silently, so a misspelt deny would vanish: pin the exact set.
+    expect(new Set(k)).toEqual(new Set(['network', 'allowedDomains', 'deniedDomains', 'allowLocalBinding', 'filesystem', 'allowWrite', 'denyWrite', 'denyRead', 'path', 'literal', 'credentials', 'files', 'envVars', 'mode', 'name']));
     expect(JSON.stringify(s)).not.toMatch(/allowRead/);
+  });
+  test('every key srt 0.0.83 requires is present (srt refuses the file otherwise)', () => {
+    const s = renderSrtSettings(mk()) as unknown as { network: Record<string, unknown>; filesystem: Record<string, unknown> };
+    for (const key of ['allowedDomains', 'deniedDomains']) expect(Array.isArray(s.network[key]), `network.${key}`).toBe(true);
+    for (const key of ['denyRead', 'allowWrite', 'denyWrite']) expect(Array.isArray(s.filesystem[key]), `filesystem.${key}`).toBe(true);
   });
   test('allowWrite = repo realpath, temp roots and allow_write, all literal', () => {
     const d = mkdtempSync(join(realpathSync(tmpdir()), 'srt-'));
@@ -66,7 +72,7 @@ suite('srt settings', () => {
   });
   test('allowedDomains from config, normalised and deduped; allowLocalBinding from allow_local', () => {
     const s = renderSrtSettings(mk({}, { allowed_domains: ['Registry.NpmJS.org.', ' registry.npmjs.org ', 'b.io'], allow_local: true }));
-    expect(s.network).toEqual({ allowedDomains: ['registry.npmjs.org', 'b.io'], allowLocalBinding: true });
+    expect(s.network).toEqual({ allowedDomains: ['registry.npmjs.org', 'b.io'], deniedDomains: [], allowLocalBinding: true });
   });
   test('a repo path with [ * and a space stays literal', () => {
     const s = renderSrtSettings(mk({ root: '/r/a [x]*/my repo' }));

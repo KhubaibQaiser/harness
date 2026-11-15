@@ -120,6 +120,29 @@ describe('stopSandboxChecks', () => {
     expect(long).not.toContain('\u001b');
     expect(long.length).toBeLessThan(300);
   });
+  describe('AppArmor bwrap profile (Ubuntu 25.04 and newer)', () => {
+    const PROFILES = '/sys/kernel/security/apparmor/profiles';
+    const FILE = '/etc/apparmor.d/bwrap-userns-restrict';
+    const fixLine = (what: string) => `fix Stop sandbox: ${what}: run \`sudo apparmor_parser -R ${FILE}\` (it turns off Ubuntu's AppArmor user-namespace restriction for bwrap on this machine: fine on a throwaway CI runner, a real tradeoff on a shared or personal machine; harness never runs it)`;
+    const loaded = (profiles: string | null, file: boolean) => (p: string) => (p === PROFILES ? profiles : p === FILE && file ? '# profile' : null);
+    test('loaded profile (bwrap or unpriv_bwrap line) prints the fix', () => {
+      for (const l of ['bwrap (enforce)', 'unpriv_bwrap (enforce)']) {
+        expect(run(cfg(), { read: loaded(`foo (enforce)\n${l}\n`, true) }).lines).toContain(fixLine("AppArmor's bwrap-userns-restrict profile is loaded, so srt's seccomp helper is refused inside bwrap (apply-seccomp: write /proc/self/setgroups)"));
+      }
+    });
+    test('profiles list readable without a bwrap line: nothing', () => {
+      expect(run(cfg(), { read: loaded('bwrapper (enforce)\nfoo (enforce)\n', true) }).lines.some((l) => l.includes('apparmor_parser'))).toBe(false);
+    });
+    test('profiles list unreadable, file present: may be loaded', () => {
+      expect(run(cfg(), { read: loaded(null, true) }).lines).toContain(fixLine("AppArmor's bwrap-userns-restrict profile may be loaded, so srt's seccomp helper may be refused inside bwrap (apply-seccomp: write /proc/self/setgroups)"));
+    });
+    test('neither readable: nothing; darwin: nothing; a throwing reader is a fix line, not a throw', () => {
+      expect(run(cfg(), { read: loaded(null, false) }).lines.some((l) => l.includes('apparmor'))).toBe(false);
+      expect(run(cfg(), { platform: 'darwin', read: loaded('bwrap (enforce)', true) }).lines.some((l) => l.includes('apparmor'))).toBe(false);
+      const r = run(cfg(), { read: (p) => { if (p === PROFILES) throw new Error('eacces'); return null; } });
+      expect(r.lines.some((l) => l.startsWith('fix Stop sandbox: AppArmor') && l.includes('could not be checked') && l.includes('eacces'))).toBe(true);
+    });
+  });
   test('an unexpected error becomes a fix naming the check, never a throw', () => {
     const lines: string[] = [];
     const srt: SrtProbe = { which: () => { throw new Error('boom'); }, version: () => '' };

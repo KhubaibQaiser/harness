@@ -120,8 +120,14 @@ export const srtReason = (w: SrtWhy): string =>
   : w.kind === 'old' ? `is ${w.version}, older than ${SRT_MIN}`
   : `failed its check: ${w.check} (${w.first})`;
 
+// Install advice only where srt itself is the problem; once srt was found and version-checked, the cause is the machine or the run.
+const srtItself = (w: SrtWhy): boolean => w.kind !== 'check' || w.check === 'launcher' || w.check === 'version';
+const ESCAPE = 'To run the checks unsandboxed instead, set sandbox: off in .harness/config.yaml (logged).';
+
 export const srtMessage = (w: SrtWhy): string =>
-  `Stop gate: the checks run inside sandbox-runtime (srt), and srt ${srtReason(w)}. Install @anthropic-ai/sandbox-runtime@${SRT_MIN} globally, outside the repo (Linux also needs bubblewrap 0.8 or newer, socat and ripgrep; macOS needs ripgrep), then stop again. To run the checks unsandboxed instead, set sandbox: off in .harness/config.yaml (logged).${w.kind === 'check' && w.check === 'launcher' ? ` Install it with npm i -g @anthropic-ai/sandbox-runtime@${SRT_MIN} so srt is a node script, not a shim.` : ''}`;
+  `Stop gate: the checks run inside sandbox-runtime (srt), and srt ${srtReason(w)}. ${srtItself(w)
+    ? `Install @anthropic-ai/sandbox-runtime@${SRT_MIN} globally, outside the repo (Linux also needs bubblewrap 0.8 or newer, socat and ripgrep; macOS needs ripgrep), then stop again. ${ESCAPE}${w.kind === 'check' && w.check === 'launcher' ? ` Install it with npm i -g @anthropic-ai/sandbox-runtime@${SRT_MIN} so srt is a node script, not a shim.` : ''}`
+    : `srt is installed, so read srt's error above and run harness doctor to see what this machine is missing, then stop again. ${ESCAPE}`}`;
 
 export const STOP_WIN_UNATTENDED = "Stop steps don't run unsandboxed in an unattended run on native Windows. Run in WSL2 or the harness dev container, or set sandbox: off (logged).";
 export const WIN_STEPS_WARNING = "Stop steps run without a sandbox on native Windows: the project's tests run with your full access. Use WSL2 or the harness dev container for a sandboxed Stop gate.";

@@ -61,6 +61,3 @@ test('a bad plan, a wrong nonce or extra args write nothing and exit 2', async (
   expect(lines).toEqual([]);
 });
 
-test('preflight is accepted and ignored', async () => {
-  expect((await run(plan([step('a')], { preflight: { any: 1 } }))).code).toBe(0);
-});

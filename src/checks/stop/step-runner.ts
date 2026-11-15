@@ -2,6 +2,7 @@
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { defaultExec, type Exec, tail } from './gate.js';
+import { preflight, realProbes, type Probes } from './preflight.js';
 import type { Plan, PlanStep, ResultLine } from './steps.js';
 
 const MAX_PLAN = 256 * 1024;
@@ -11,6 +12,12 @@ const posNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v 
 const validStep = (s: unknown): s is PlanStep => {
   const o = s as Record<string, unknown> | null;
   return !!o && typeof o === 'object' && isStr(o.label) && isStr(o.cmd) && Array.isArray(o.args) && o.args.every((a) => typeof a === 'string') && isStr(o.cwd) && isAbsolute(o.cwd) && posNum(o.timeoutMs);
+};
+
+const validPreflight = (v: unknown) => {
+  const o = v as Record<string, unknown> | null;
+  const keys = ['writeCanary', 'readCanary', 'socket', 'linux'];
+  return !!o && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length === 4 && keys.every((k) => k in o) && ['writeCanary', 'readCanary', 'socket'].every((k) => isStr(o[k]) && isAbsolute(o[k] as string)) && typeof o.linux === 'boolean';
 };
 
 function readPlan(path: string, nonce: string): Plan | null {
@@ -29,11 +36,12 @@ function readPlan(path: string, nonce: string): Plan | null {
   if (typeof p.nonce !== 'string' || !/^[0-9a-f]{32}$/.test(p.nonce) || p.nonce !== nonce) return null;
   if (typeof p.deadlineMs !== 'number' || !Number.isFinite(p.deadlineMs)) return null;
   if (!Array.isArray(p.steps) || p.steps.length > MAX_STEPS || !p.steps.every(validStep)) return null;
+  if ('preflight' in p && !validPreflight(p.preflight)) return null;
   return p as unknown as Plan;
 }
 
 /** Exit 2 and no output for a bad plan; otherwise 0, with the verdict in the lines. */
-export async function runPlanEntry(argv: string[], out: (line: string) => void, execFor: (cwd: string) => Exec = defaultExec, now: () => number = Date.now): Promise<number> {
+export async function runPlanEntry(argv: string[], out: (line: string) => void, execFor: (cwd: string) => Exec = defaultExec, now: () => number = Date.now, probes: Probes = realProbes): Promise<number> {
   if (argv.length !== 2) return 2;
   let plan: Plan | null;
   try {
@@ -43,6 +51,7 @@ export async function runPlanEntry(argv: string[], out: (line: string) => void, 
   }
   if (!plan) return 2;
   const emit = (l: Omit<Extract<ResultLine, { kind: 'step' }>, 'nonce' | 'kind'>) => out(JSON.stringify({ nonce: plan.nonce, kind: 'step', ...l }));
+  if (plan.preflight && !(await preflight(plan.preflight, probes, (l) => out(JSON.stringify(l)), plan.nonce))) return 0;
   for (const s of plan.steps) {
     const timeout = Math.min(s.timeoutMs, plan.deadlineMs - now());
     if (timeout <= 0) return emit({ label: s.label, status: null, timedOut: true, ms: 0 }), 0;

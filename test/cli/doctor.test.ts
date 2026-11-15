@@ -47,7 +47,10 @@ const bin = (name: string) => {
 };
 // The machine probes and the user/managed settings never come from this host: CI's Ubuntu restricts user namespaces.
 const HOME = mkdtempSync(join(tmpdir(), 'h-home-'));
-const hermetic = (o: { read?: (p: string) => string | null; home?: string; managed?: string } = {}) => ({ read: o.read ?? (() => null), home: o.home ?? HOME, managed: o.managed ?? join(HOME, 'no-managed.json') });
+// The Stop sandbox section never looks for a real srt or bwrap: an existing .mjs stands in for srt, and every tool is found.
+const SRT_STUB = fileURLToPath(new URL('../../build.mjs', import.meta.url));
+const srtProbe = { which: (c: string) => (c === 'srt' ? SRT_STUB : `/usr/bin/${c}`), version: () => '0.0.83\n' };
+const hermetic = (o: { read?: (p: string) => string | null; home?: string; managed?: string } = {}) => ({ read: o.read ?? (() => null), home: o.home ?? HOME, managed: o.managed ?? join(HOME, 'no-managed.json'), srt: srtProbe, bwrapVersion: () => 'bubblewrap 0.9.0' });
 const run = (root: string, o: { claude?: string | null; path?: string; platform?: NodeJS.Platform; read?: (p: string) => string | null; home?: string; managed?: string; env?: NodeJS.ProcessEnv } = {}) => {
   let out = '';
   const code = doctor([], { root, env: { PATH: withNode(o.path), ...o.env }, out: (s) => (out += s + '\n') }, { gh: () => ({ status: null, stdout: '' }), claudeVersion: () => (o.claude === undefined ? MIN_CLAUDE_CODE : o.claude), platform: o.platform, ...hermetic(o) });

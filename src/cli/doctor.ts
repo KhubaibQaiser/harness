@@ -31,11 +31,15 @@ import { selectedIds } from '../install/plan.js';
 import { effective, managedSettingsPath, readManagedLayers, userSettingsPath, withoutRepoMirror, type Layer } from '../core/settings-layers.js';
 import { sandboxBlocker, type MachineProbe } from '../core/sandbox-machine.js';
 import { denyWritePaths } from '../checks/protect.js';
+import { realSrtProbe, type SrtProbe } from '../checks/stop/srt.js';
+import { stopSandboxChecks } from './doctor-stop.js';
 
 export type DoctorDeps = {
   claudeVersion?: () => string | null; platform?: NodeJS.Platform; pluginList?: typeof pluginList; gh?: Gh;
   /** Machine probe (/proc reads); `home` and `managed` locate the user and managed settings. Tests inject all three. */
   read?: MachineProbe['read']; home?: string; managed?: string;
+  /** The Stop sandbox section's srt lookup and `bwrap --version`; tests stub both. */
+  srt?: SrtProbe; bwrapVersion?: () => string | null;
 };
 
 const DISPATCH = '.harness/hooks/dispatch.mjs';
@@ -280,6 +284,7 @@ export function doctor(args: string[], cli: CliEnv, deps: DoctorDeps = {}): numb
     }
     if (config.stop.steps.length)
       note("Stop steps were checked against this terminal's PATH", "Claude Code's hooks may see a different one (for example when Claude Code starts from the GUI); if Stop warns that a tool is not on its PATH, make the tool available there");
+    stopSandboxChecks(root, config, { ok, fix, note }, { platform, env, home: deps.home ?? homedir(), srt: deps.srt ?? realSrtProbe(env, platform), read: deps.read, bwrapVersion: deps.bwrapVersion });
   }
   const gh = deps.gh ?? ((a: string[]) => { const r = spawnSync('gh', a, { cwd: root, env, encoding: 'utf8', timeout: GH_TIMEOUT_MS, maxBuffer: GH_MAX_BUFFER }); return { status: r.status, stdout: r.stdout ?? '' }; });
   const prot = branchProtection(root, gh);

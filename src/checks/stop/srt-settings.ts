@@ -8,7 +8,7 @@ import { realish } from '../../core/paths.js';
 
 export type Lit = { path: string; literal: true };
 export interface SrtSettings {
-  network: { allowedDomains: string[]; allowLocalBinding: boolean };
+  network: { allowedDomains: string[]; deniedDomains: string[]; allowLocalBinding: boolean };
   filesystem: { allowWrite: Lit[]; denyWrite: Lit[]; denyRead: Lit[] };
   credentials: { files: { path: string; mode: 'deny' }[]; envVars: { name: string; mode: 'deny' }[] };
 }
@@ -38,7 +38,8 @@ export function renderSrtSettings(i: SrtInputs, platform: NodeJS.Platform = proc
   if (platform === 'win32') throw new Error('srt is not supported on native Windows');
   const extra = i.tokenBase ? [i.tokenBase] : [];
   return {
-    network: { allowedDomains: [...new Set(i.stop.allowed_domains.map(normHost))], allowLocalBinding: i.stop.allow_local },
+    // srt 0.0.83 requires deniedDomains; an empty list adds no denies (anything not allowed is already blocked).
+    network: { allowedDomains: [...new Set(i.stop.allowed_domains.map(normHost))], deniedDomains: [], allowLocalBinding: i.stop.allow_local },
     filesystem: {
       allowWrite: writableRoots(i).map(lit),
       denyWrite: [...new Set([...stopDenyWritePaths().map((p) => `${i.root}/${p.replace(/^\.\//, '')}`), ...extra, ...i.denyWrite].flatMap(both))].map(lit),

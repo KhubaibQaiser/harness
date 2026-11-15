@@ -182,7 +182,7 @@ All keys and the `literal` entry form were checked against the srt README "Confi
 
 ```json
 {
-  "network": { "allowedDomains": [], "allowLocalBinding": false },
+  "network": { "allowedDomains": [], "deniedDomains": [], "allowLocalBinding": false },
   "filesystem": {
     "allowWrite": [ {"path": "<repo realpath>", "literal": true}, "<os temp dir>", "/tmp", "<stop.allow_write…>" ],
     "denyWrite": [ "<each protected path, absolute, literal>", {"path": "<token base>", "literal": true}, {"path": "<canary>", "literal": true} ],

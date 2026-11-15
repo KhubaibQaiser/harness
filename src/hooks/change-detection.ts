@@ -43,7 +43,7 @@ export function detectHarnessFileChanges(ctx: Ctx, event: HookEvent, log: Log): 
   try {
     if (!ctx.state.harnessFiles) {
       const seen = readRepoSnapshot(ctx.root).lastSeen;
-      ctx.save({ ...ctx.state, harnessFiles: seen?.files ?? snapshotHarnessFiles(ctx.root), harnessHead: seen ? seen.head : ctx.state.baseHead });
+      ctx.save({ ...ctx.state, harnessFiles: seen?.files ?? snapshotHarnessFiles(ctx.root), harnessHead: seen ? seen.head : ctx.state.baseHead, sandboxBase: ctx.config.sandbox });
     }
     if (event === 'Stop' || event === 'UserPromptSubmit' || event === 'SessionEnd') compare({ ctx, event, log, cur: snapshotHarnessFiles(ctx.root), found });
   } catch (e) {

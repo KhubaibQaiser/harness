@@ -11,7 +11,9 @@ export default defineConfig({
       { test: { name: 'unit', include: ['test/**/*.test.ts'], exclude: ['test/e2e/**', 'test/perf/**', '**/node_modules/**'], setupFiles: ['test/setup-tmp.ts', 'test/setup-no-gh.ts'], testTimeout: UNIT_TIMEOUT, hookTimeout: UNIT_TIMEOUT } },
       { test: { name: 'e2e', include: ['test/e2e/**/*.test.ts'], setupFiles: ['test/setup-tmp.ts'], testTimeout: 60_000, hookTimeout: 60_000 } },
       // Timing tests: one file at a time, run alone (`pnpm test:perf`, its own CI step), never beside the parallel suite.
-      { test: { name: 'perf', include: ['test/perf/**/*.test.ts'], fileParallelism: false, setupFiles: ['test/setup-tmp.ts'] } },
+      // Each asserts its own ceiling; the runner timeout only catches hangs, and covers fixture setup (a 500-file repo
+      // took 5.6-6.3 s on windows-latest, CI runs 43700482217 and 43722135920).
+      { test: { name: 'perf', include: ['test/perf/**/*.test.ts'], fileParallelism: false, setupFiles: ['test/setup-tmp.ts'], testTimeout: UNIT_TIMEOUT, hookTimeout: UNIT_TIMEOUT } },
     ],
   },
 });

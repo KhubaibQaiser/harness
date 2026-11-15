@@ -182,7 +182,7 @@ All keys and the `literal` entry form were checked against the srt README "Confi
 
 ```json
 {
-  "network": { "allowedDomains": [], "allowLocalBinding": false },
+  "network": { "allowedDomains": [], "deniedDomains": [], "allowLocalBinding": false },
   "filesystem": {
     "allowWrite": [ {"path": "<repo realpath>", "literal": true}, "<os temp dir>", "/tmp", "<stop.allow_write…>" ],
     "denyWrite": [ "<each protected path, absolute, literal>", {"path": "<token base>", "literal": true}, {"path": "<canary>", "literal": true} ],
@@ -975,7 +975,7 @@ The gate: P14 ships only after L1 passes on macOS and Linux, after the broker PR
 | Key | Default | What it does |
 |---|---|---|
 | `stop.allowed_domains` | `[]` | Hosts Stop steps (and verify's command runs) may reach inside `srt`. Empty means no network (I12). GitHub hosts and wildcards matching `example.com` are refused. |
-| `stop.allow_write` | `[]` | Extra writable paths for Stop steps inside `srt`, such as a tool cache outside the repo. Config validation refuses (R2-I9): a protected path; the home folder itself; `~/.claude`; login-start folders (`~/Library/LaunchAgents`, `~/.config/systemd/user`, `~/.config/autostart`); any folder on `PATH` or above one; `srt`'s own install prefix; and the token base. |
+| `stop.allow_write` | `[]` | Extra writable paths for Stop steps inside `srt`, such as a tool cache outside the repo. The Stop gate and doctor refuse (R2-I9, R5): a protected path; the home folder itself; `~/.claude`; login-start folders (`~/Library/LaunchAgents`, `~/.config/systemd/user`, `~/.config/autostart`); any folder on `PATH` or above one; `srt`'s own install prefix; and the token base. |
 | `stop.allow_local` | `false` | Person-only (protected config; update asks interactively before setting it, and an unattended update leaves it unchanged). `true` sets `allowLocalBinding` for Stop steps. On macOS that opens every service on the host's loopback, Claude Code's sandbox proxy included. On Linux it has no effect. Doctor and status show it when on (R2-I2). |
 | `isolation.block_reads` | `true` | Writes the read block in every mode (I3). `false` is person-only: update asks interactively before removing it, and SessionStart, doctor and status show it loudly (I15). |
 | `isolation.credentials.allow` | `[]` | §8.3 entries harness leaves off its deny lists. Each must be a §8.3 entry. |

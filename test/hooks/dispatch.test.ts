@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { expect, onTestFinished, test, vi } from 'vitest';
 import { readEvents } from '../../src/core/events.js';
 import { readTiming } from '../../src/core/timing.js';
+import { HAND_RUN, handRun } from '../../src/checks/pr-size/hand-run.js';
 import { guard } from '../../src/checks/guard.js';
 import { isSafeSessionId, readState, statePath } from '../../src/core/state.js';
 import { readHookEnv } from '../../src/core/hook-env.js';
@@ -523,4 +524,8 @@ test('dispatch accepts PostToolUseFailure; the fragment registers it for Bash|Po
   expect(names.indexOf('evidence-ledger')).toBeLessThan(names.indexOf('stopGate'));
   const frag = JSON.parse(readFileSync('templates/settings.fragment.json', 'utf8'));
   expect(frag.hooks.PostToolUseFailure).toEqual([{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: 'node', args: ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'], timeout: 10 }] }]);
+});
+
+test('node .harness/hooks/dispatch.mjs --stop-steps p n is a hand run (blocked)', () => {
+  expect(handRun('node .harness/hooks/dispatch.mjs --stop-steps p n', { root, env: {} })).toBe(HAND_RUN);
 });

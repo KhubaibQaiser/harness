@@ -8,6 +8,7 @@ import { verifyPackages } from '../../src/checks/dep-verify.js';
 import { measure } from '../../src/checks/pr-size/measure.js';
 import { protect } from '../../src/checks/protect.js';
 import { diffCoverage } from '../../src/checks/stop/diff-coverage.js';
+import { runUnwrapped } from '../../src/checks/stop/steps.js';
 import { defaultExec, type Exec, runStop } from '../../src/checks/stop/gate.js';
 import { report } from '../../src/cli/report.js';
 import { defaults, loadConfig } from '../../src/core/config.js';
@@ -102,7 +103,7 @@ describe.skipIf(process.platform === 'win32').each([false, true])('a repo config
     expect(protect.run(pre)).toMatchObject({ kind: 'ask' });
     // The stop gate's status and diff; only git is really run.
     const onlyGit: Exec = (cmd, args, ms) => (cmd === 'git' ? defaultExec(root)(cmd, args, ms) : { status: 0, output: '', timedOut: false });
-    await runStop(stopCtx(root, sha), onlyGit);
+    await runStop(stopCtx(root, sha), onlyGit, Date.now, undefined, runUnwrapped(onlyGit, Date.now));
     expect(detect(root).defaultBranch).toBe('main');
     const home = mkdtempSync(join(tmpdir(), 'h-gitsafe-home-'));
     roots.push(home);

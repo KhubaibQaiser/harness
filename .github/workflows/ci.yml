@@ -34,6 +34,56 @@ jobs:
           HARNESS_PLAIN_INIT: '1'
       - name: Hook latency (alone, after the parallel suite)
         run: pnpm test:perf
+  stop-srt:
+    # The Stop gate against a real sandbox-runtime: the only tests that run it (every other test uses fakes). No secrets.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-26.04 loads AppArmor's bwrap-userns-restrict profile, which denies capabilities to bwrap's children, so srt
+        # 0.0.83's seccomp helper can't write /proc/self/setgroups. The Linux step below unloads it (a throwaway runner VM); see Known limits.
+        os: [ubuntu-24.04, ubuntu-26.04, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install srt's system tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat ripgrep
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          if [ -e /etc/apparmor.d/bwrap-userns-restrict ]; then sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict; fi
+      - name: Install srt's system tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ripgrep
+      - run: npm install -g @anthropic-ai/sandbox-runtime@0.0.83
+      - name: AppArmor state and srt smoke check (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo aa-status | grep -i bwrap || true
+          srt /bin/echo srt-ok
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Real-srt versions
+        run: srt --version && (bwrap --version || true)
+      - name: Real-srt e2e
+        run: pnpm vitest run --project e2e test/e2e/stop-srt.e2e.test.ts
+        env:
+          HARNESS_E2E_SRT: '1'
+      - name: Real-srt perf (alone, after the e2e)
+        if: success() || failure()
+        run: pnpm vitest run --project perf test/perf/stop-srt.test.ts
+        env:
+          HARNESS_E2E_SRT: '1'
   security-and-pack:
     runs-on: ubuntu-latest
     steps:

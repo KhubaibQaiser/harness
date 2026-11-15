@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { changedLines, coveredLines, diffCoverage, formatLines } from '../../../src/checks/stop/diff-coverage.js';
+import { runUnwrapped } from '../../../src/checks/stop/steps.js';
 import { defaultExec, runStop, type Exec } from '../../../src/checks/stop/gate.js';
 import { loadConfig, type HarnessConfig } from '../../../src/core/config.js';
 import type { Ctx } from '../../../src/hooks/dispatch.js';
@@ -176,8 +177,10 @@ function gateCtx(root: string, tdd = true) {
   const saved: unknown[] = [];
   return { root, config, input: { session_id: 's' }, state: { startedAt: 0, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0, baseHead: undefined }, unattended: false, env: {}, save: (s: unknown) => saved.push(s) } as unknown as Ctx;
 }
-const stopWith = (root: string, g: ReturnType<typeof gitExec>, ctx = gateCtx(root)) =>
-  runStop(ctx, (c, a, ms) => (c === 'true' ? { status: 0, output: '', timedOut: false } : c === 'git' && a.includes('status') ? { status: 0, output: ' M src/a.ts\0', timedOut: false } : g.exec(c, a, ms)), () => FRESH * 1000, () => '/bin/true');
+const stopWith = (root: string, g: ReturnType<typeof gitExec>, ctx = gateCtx(root)) => {
+  const e: Exec = (c, a, ms) => (c === 'true' ? { status: 0, output: '', timedOut: false } : c === 'git' && a.includes('status') ? { status: 0, output: ' M src/a.ts\0', timedOut: false } : g.exec(c, a, ms));
+  return runStop(ctx, e, () => FRESH * 1000, () => '/bin/true', runUnwrapped(e, () => FRESH * 1000));
+};
 
 test('gate blocks below threshold with the brief message, capped at 10 files and 20 line numbers', async () => {
   const cov = istanbul();

@@ -30,9 +30,21 @@ const valid = (o: Record<string, unknown>): boolean =>
 const desc = (e: Expected): string => (e.kind === 'step' ? `step '${e.label}'` : `check '${e.name}'`);
 
 /** Lines must match `expected` in order, and stop right after the first failing entry or at its end. */
-export function parseResults(stdout: string, nonce: string, expected: Expected[]): { lines: ResultLine[] } | { error: string } {
+export function parseResults(stdout: string, nonce: string, expected: Expected[], seal: string): { lines: ResultLine[] } | { error: string } {
   const lines: ResultLine[] = [];
-  for (const [i, text] of stdout.split('\n').filter((s) => s.trim()).entries()) {
+  const all = stdout.split('\n').filter((s) => s.trim());
+  // The sealed end line must be last, once, and carry the seal. Only the runner holds the seal (step code reads the nonce, never this), so forged result lines cannot pass.
+  // Residual: a step with ptrace-attach rights over its parent (Yama ptrace_scope=0) could read runner memory; live batch LS checks srt's ptrace/seccomp policy.
+  const sealed = (t: string): boolean => {
+    try {
+      const o = JSON.parse(t);
+      return o?.nonce === nonce && o.kind === 'end' && o.seal === seal;
+    } catch {
+      return false;
+    }
+  };
+  if (!all.length || !sealed(all.pop()!)) return { error: 'end line: missing' };
+  for (const [i, text] of all.entries()) {
     const at = `line ${i + 1}`;
     const e = expected[i];
     if (!e || (lines.length && failing(lines.at(-1)!))) return { error: `${at}: extra` };
@@ -173,7 +185,8 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
     if (!st.isFile()) return fail(stage, 'not a regular file');
     if (!readFileSync(sFile).equals(settings)) return fail(stage, 'changed');
     stage = 'srt exit';
-    const r = await d.exec(found.launch[0]!, [...found.launch.slice(1), ...srtArgv(sFile, node, runner, pFile, nonce)], ms);
+    const seal = randomBytes(32).toString('hex'); // stdin only: never in a file, argv, env or message
+    const r = await d.exec(found.launch[0]!, [...found.launch.slice(1), ...srtArgv(sFile, node, runner, pFile, nonce)], ms, `${seal}\n`);
     await new Promise((res) => setImmediate(res)); // let the listener accept a connection that arrived at the very end
     const seen = pre.verify(); // the outer view of the canaries and socket, whatever the inner lines say
     if (seen) return fail(seen, 'seen by the outer runner');
@@ -192,7 +205,7 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
     const err = r.stderr ?? '';
     if (r.status !== 0) return fail(stage, err.trim() ? err : r.output.trim() ? r.output : `status ${r.status}`);
     const expected: Expected[] = [...PREFLIGHT_ORDER(pre.plan.linux).map((name): Expected => ({ kind: 'check', name })), ...steps.map((s): Expected => ({ kind: 'step', label: s.label }))];
-    const parsed = parseResults(r.stdout ?? '', nonce, expected);
+    const parsed = parseResults(r.stdout ?? '', nonce, expected, seal);
     if ('error' in parsed) return fail('result lines', parsed.error);
     const results: StepResult[] = parsed.lines.flatMap((l) => (l.kind === 'step' ? [{ label: l.label, status: l.status, timedOut: l.timedOut, ms: l.ms, output: l.output ?? '' }] : []));
     const bad = parsed.lines.find((l) => l.kind === 'check' && !l.ok);

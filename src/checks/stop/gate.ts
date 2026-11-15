@@ -15,7 +15,7 @@ import { runWrapped } from './wrap.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
 export type ExecResult = { status: number | null; output: string; timedOut: boolean; stdout?: string; stderr?: string; stderrRolled?: boolean };
-export type Exec = (cmd: string, args: string[], timeoutMs: number) => ExecResult | Promise<ExecResult>;
+export type Exec = (cmd: string, args: string[], timeoutMs: number, input?: string) => ExecResult | Promise<ExecResult>;
 
 const DOCS_ONLY = /\.(md|mdx|txt)$|^docs\/|^LICENSE$/;
 const MAX_LOG = 3500;
@@ -40,13 +40,13 @@ export function killTree(pid: number, platform: string = process.platform, run: 
 const KEEP = 64 * 1024; // rolling tail per stream; the gate only shows the last MAX_LOG chars
 const GRACE_MS = 2000; // after the kill, how long to wait for pipes held by escaped grandchildren
 
-export const defaultExec = (root: string): Exec => (cmd, args, timeout) =>
+export const defaultExec = (root: string): Exec => (cmd, args, timeout, input) =>
   new Promise((resolve) => {
     // Node won't spawn .cmd/.bat directly (CVE-2024-27980), so run them through cmd.exe with a pre-quoted line.
     const shim = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
     const c = shim
-      ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', winCmdLine(cmd, args)], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsVerbatimArguments: true })
-      : spawn(cmd, args, { cwd: root, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', winCmdLine(cmd, args)], { cwd: root, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], windowsVerbatimArguments: true })
+      : spawn(cmd, args, { cwd: root, detached: process.platform !== 'win32', stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     let timedOut = false;
@@ -62,6 +62,11 @@ export const defaultExec = (root: string): Exec => (cmd, args, timeout) =>
       c.stderr?.destroy();
       resolve({ status, output: `${out}\n${err}${extra}`, timedOut, stdout: out, stderr: err, stderrRolled: rolled });
     };
+    if (input !== undefined) {
+      if (!c.stdin) return finish(null, '\nspawn has no stdin for the input');
+      c.stdin.on('error', () => {}); // a child that exits first shows in its status and output
+      c.stdin.end(input);
+    }
     c.stdout?.on('data', (d) => (out = (out + d).slice(-KEEP)));
     c.stderr?.on('data', (d) => {
       err += d;

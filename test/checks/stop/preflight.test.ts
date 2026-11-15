@@ -93,8 +93,10 @@ const step = { label: 'a', cmd: 'a', args: [], cwd: '/r', timeoutMs: 1000 };
 const exec = vi.fn(() => ({ status: 0, output: '', timedOut: false }));
 const entry = async (plan: Record<string, unknown>, probes: Probes) => {
   const lines: string[] = [];
-  const code = await runPlanEntry([planFile({ nonce: N, deadlineMs: 10_000, steps: [step], ...plan }), N], (l) => lines.push(l), () => exec, () => 0, probes);
-  return { code, lines: lines.map((l) => JSON.parse(l) as ResultLine) };
+  const code = await runPlanEntry([planFile({ nonce: N, deadlineMs: 10_000, steps: [step], ...plan }), N], (l) => lines.push(l), () => exec, () => 0, probes, () => 'c0ffee'.repeat(10) + 'abcd');
+  const all = lines.map((l) => JSON.parse(l));
+  if (code === 0) expect(all.pop()).toMatchObject({ kind: 'end' }); // sealed end line is last even when a check fails
+  return { code, lines: all as ResultLine[] };
 };
 
 test('all pass then steps run', async () => {

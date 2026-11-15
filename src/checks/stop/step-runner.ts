@@ -1,5 +1,5 @@
 // The step runner behind `dispatch.mjs --stop-steps <plan> <nonce>`: runs inside srt, prints one nonce-tagged JSON line per step.
-import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { defaultExec, type Exec, tail } from './gate.js';
 import { preflight, realProbes, type Probes } from './preflight.js';
@@ -40,26 +40,33 @@ function readPlan(path: string, nonce: string): Plan | null {
   return p as unknown as Plan;
 }
 
-/** Exit 2 and no output for a bad plan; otherwise 0, with the verdict in the lines. */
-export async function runPlanEntry(argv: string[], out: (line: string) => void, execFor: (cwd: string) => Exec = defaultExec, now: () => number = Date.now, probes: Probes = realProbes): Promise<number> {
+/** Exit 2 and no output for a bad plan or seal; otherwise 0, with the verdict in the lines and the sealed end line last. */
+export async function runPlanEntry(argv: string[], out: (line: string) => void, execFor: (cwd: string) => Exec = defaultExec, now: () => number = Date.now, probes: Probes = realProbes, readSeal: () => string = () => readFileSync(0, 'utf8')): Promise<number> {
   if (argv.length !== 2) return 2;
   let plan: Plan | null;
+  let seal: string;
   try {
+    seal = readSeal(); // to EOF, before the preflight and before any step runs
     plan = readPlan(argv[0]!, argv[1]!);
   } catch {
     return 2;
   }
-  if (!plan) return 2;
+  if (!plan || !/^[0-9a-f]{64}\n?$/.test(seal)) return 2;
+  await runLines(plan, out, execFor, now, probes);
+  out(JSON.stringify({ nonce: plan.nonce, kind: 'end', seal: seal.trim() }));
+  return 0;
+}
+
+async function runLines(plan: Plan, out: (line: string) => void, execFor: (cwd: string) => Exec, now: () => number, probes: Probes): Promise<void> {
   const emit = (l: Omit<Extract<ResultLine, { kind: 'step' }>, 'nonce' | 'kind'>) => out(JSON.stringify({ nonce: plan.nonce, kind: 'step', ...l }));
-  if (plan.preflight && !(await preflight(plan.preflight, probes, (l) => out(JSON.stringify(l)), plan.nonce))) return 0;
+  if (plan.preflight && !(await preflight(plan.preflight, probes, (l) => out(JSON.stringify(l)), plan.nonce))) return;
   for (const s of plan.steps) {
     const timeout = Math.min(s.timeoutMs, plan.deadlineMs - now());
-    if (timeout <= 0) return emit({ label: s.label, status: null, timedOut: true, ms: 0 }), 0;
+    if (timeout <= 0) return emit({ label: s.label, status: null, timedOut: true, ms: 0 });
     const t0 = now();
     const r = await execFor(s.cwd)(s.cmd, s.args, timeout);
     const failed = r.timedOut || r.status !== 0;
     emit({ label: s.label, status: r.status, timedOut: r.timedOut, ms: now() - t0, ...(failed ? { output: tail(r.output) } : {}) });
     if (failed) break;
   }
-  return 0;
 }

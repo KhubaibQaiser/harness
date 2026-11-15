@@ -15,9 +15,12 @@ const planFile = (p: unknown) => {
   return f;
 };
 const plan = (steps: PlanStep[], o: Partial<Plan> = {}): Plan => ({ nonce: N, deadlineMs: 10_000, steps, ...o });
-const run = async (p: unknown, argvNonce = N, exec: Exec = () => ok, now = () => 0) => {
+const SEAL = 'c0ffee'.repeat(10) + 'abcd';
+// run() splits off the sealed end line (checked here), so tests see only check and step lines.
+const run = async (p: unknown, argvNonce = N, exec: Exec = () => ok, now = () => 0, seal: () => string = () => SEAL + '\n') => {
   const lines: string[] = [];
-  const code = await runPlanEntry([planFile(p), argvNonce], (l) => lines.push(l), () => exec, now);
+  const code = await runPlanEntry([planFile(p), argvNonce], (l) => lines.push(l), () => exec, now, undefined, seal);
+  if (code === 0) expect(JSON.parse(lines.pop()!)).toEqual({ nonce: N, kind: 'end', seal: SEAL });
   return { code, lines };
 };
 
@@ -55,9 +58,35 @@ test('a bad plan, a wrong nonce or extra args write nothing and exit 2', async (
   for (const p of bad) expect(await run(p), JSON.stringify(p).slice(0, 60)).toEqual({ code: 2, lines: [] });
   expect(await run(plan([step('a')]), 'c'.repeat(32))).toEqual({ code: 2, lines: [] });
   const lines: string[] = [];
-  expect(await runPlanEntry([planFile(plan([step('a')])), N, 'x'], (l) => lines.push(l))).toBe(2);
-  expect(await runPlanEntry(['/no/such/file', N], (l) => lines.push(l))).toBe(2);
-  expect(await runPlanEntry([planFile('x'.repeat(300 * 1024)), N], (l) => lines.push(l))).toBe(2);
+  expect(await runPlanEntry([planFile(plan([step('a')])), N, 'x'], (l) => lines.push(l), undefined, undefined, undefined, () => SEAL)).toBe(2);
+  expect(await runPlanEntry(['/no/such/file', N], (l) => lines.push(l), undefined, undefined, undefined, () => SEAL)).toBe(2);
+  expect(await runPlanEntry([planFile('x'.repeat(300 * 1024)), N], (l) => lines.push(l), undefined, undefined, undefined, () => SEAL)).toBe(2);
   expect(lines).toEqual([]);
 });
 
+
+test('the runner reads the seal from stdin before any step and steps get no stdin', async () => {
+  const order: string[] = [];
+  const exec: Exec = () => (order.push('step'), ok);
+  await run(plan([step('a')]), N, exec, () => 0, () => (order.push('seal'), SEAL));
+  expect(order).toEqual(['seal', 'step']);
+  // a real step that tries to read stdin sees EOF at once, and the seal is nowhere in its output
+  const lines: string[] = [];
+  const reader = step('r', { cmd: process.execPath, args: ['-e', "let n=0;process.stdin.on('data',d=>n+=d.length).on('end',()=>{console.log('stdin='+n);process.exit(1)})"], cwd: tmpdir() });
+  await runPlanEntry([planFile(plan([reader])), N], (l) => lines.push(l), undefined, () => 0, undefined, () => SEAL);
+  expect(JSON.parse(lines[0]!)).toMatchObject({ label: 'r', status: 1, output: 'stdin=0' });
+  expect(lines.slice(0, -1).join('')).not.toContain(SEAL);
+  expect(lines).toHaveLength(2);
+});
+
+test('a bad seal on stdin exits 2 and writes nothing', async () => {
+  const bad = ['', '\n', 'abc\n', SEAL.toUpperCase() + '\n', SEAL + '\n' + SEAL + '\n', SEAL + '0\n', ' ' + SEAL, SEAL.slice(1) + 'g\n'];
+  for (const b of bad) expect(await run(plan([step('a')]), N, () => ok, () => 0, () => b), JSON.stringify(b)).toEqual({ code: 2, lines: [] });
+  expect(await run(plan([step('a')]), N, () => ok, () => 0, () => { throw new Error('no stdin'); })).toEqual({ code: 2, lines: [] });
+});
+
+test('a failing step still ends with the sealed end line', async () => {
+  const lines: string[] = [];
+  await runPlanEntry([planFile(plan([step('a')])), N], (l) => lines.push(l), () => () => ({ status: 1, output: 'x', timedOut: false }), () => 0, undefined, () => SEAL);
+  expect(lines.map((l) => JSON.parse(l).kind)).toEqual(['step', 'end']);
+});

@@ -22,6 +22,9 @@ const PKG = /(^|\/)package\.(json|json5|yaml)$/;
 const LOCK = /(^|\/)(pnpm-lock\.yaml|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|bun\.lock)$/;
 const LOCAL_DEP = /\b(file|link|portal):|"link":\s*true/;
 const LOCK_MAX = 16 * MAX_BLOB;
+const BATCH = 32 * MAX_BLOB;
+// ~87 bytes per entry: about 3 million files.
+const TREE_MAX = 256 * MAX_BLOB;
 const ROOT_VAR = /^\$\{?(INIT_CWD|npm_config_local_prefix)\}?\//;
 const ZERO = /^0+$/;
 
@@ -89,7 +92,7 @@ export function diffTamper(root: string, git: Exec, from: string, to: string, o:
   const size = new Map<string, number>(), want = new Map<string, string>(), pkgs: { oid: string; rel: string }[] = [];
   const need = (oid: string, rel: string, cap = MAX_BLOB) => { if (!ZERO.test(oid) && (size.get(oid) ?? 0) <= cap && !want.has(oid)) want.set(oid, rel); };
   for (const rev of [from, to]) {
-    for (const e of split(g('listing files', ['ls-tree', '-r', '-l', '-z', '--end-of-options', rev]), 'git ls-tree')) {
+    for (const e of split(g('listing files', ['ls-tree', '-r', '-l', '-z', '--end-of-options', rev], { maxBuffer: TREE_MAX }), 'git ls-tree')) {
       const m = /^(\d{6}) (\w+) ([0-9a-f]+) +(\d+|-)\t([^]*)$/.exec(e);
       if (!m) throw new Error(`tamper check: can't parse tree entry ${esc(e)}`);
       size.set(m[3]!, Number(m[4]));
@@ -99,11 +102,20 @@ export function diffTamper(root: string, git: Exec, from: string, to: string, o:
   const oc = o.ownContract;
   for (const p of pkgs) need(p.oid, p.rel);
   for (const c of changed) if (!c.link && (tamperScope(c.rel) || PKG.test(c.rel) || LOCK.test(c.rel) || c.rel === `${TASKS_DIR}/${oc?.id}.json`)) for (const oid of [c.ob, c.oa]) need(oid, c.rel, LOCK.test(c.rel) ? LOCK_MAX : MAX_BLOB);
+  // Batches of at most BATCH bytes (by ls-tree size) keep each read under the exec output limit; one blob is at most LOCK_MAX.
+  const batches: [string, string][][] = [];
+  let sum = Infinity;
+  for (const e of want) {
+    const n = size.get(e[0]) ?? 0;
+    if (sum + n > BATCH) { batches.push([]); sum = 0; }
+    batches.at(-1)!.push(e);
+    sum += n;
+  }
   const got = new Map<string, string>();
-  if (want.size) {
-    const out = g('reading files', ['cat-file', '--batch'], { input: [...want.keys()].join('\n') + '\n', encoding: 'latin1' });
+  for (const batch of batches) {
+    const out = g('reading files', ['cat-file', '--batch'], { input: batch.map(([oid]) => oid).join('\n') + '\n', encoding: 'latin1' });
     let i = 0;
-    for (const [oid, rel] of want) {
+    for (const [oid, rel] of batch) {
       const nl = out.indexOf('\n', i), m = /^([0-9a-f]+) (?:blob (\d+)|(missing))$/.exec(out.slice(i, nl < 0 ? i : nl));
       if (!m || m[1] !== oid) throw new Error('tamper check: git cat-file output was cut off');
       if (m[3]) throw new Error(`tamper check: git can't read ${esc(rel)}`);

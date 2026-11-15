@@ -202,3 +202,19 @@ test('N4: one cat-file read keeps its byte framing across multibyte and non-UTF-
   const f = findings({ 'p/package.json': Buffer.concat([Buffer.from('{"name":"é€"} '), Buffer.from([0xff, 0xfe])]), 'b.test.ts': T('expect("é").toBe("é");') }, { 'b.test.ts': 'test.skip("é€", () => {});\n' });
   expect(f).toEqual(['b.test.ts: .skip( added', 'b.test.ts: 1 assertion removed']);
 });
+test('M1: cat-file reads are split at about 32 MiB of ls-tree sizes, and ls-tree gets a 256 MiB buffer', () => {
+  const MiB = 1024 * 1024, calls: { args: string[]; x: ExecOpts }[] = [];
+  // Real blobs are small; ls-tree is told they are 12 MiB each, which is what the batching goes by.
+  const ex: Exec = (c, a, x = {}) => {
+    calls.push({ args: a, x });
+    const r = defaultExec(c, a, x);
+    return a.includes('ls-tree') ? { ...r, stdout: r.stdout.replace(/ +\d+\t([^\0]*package-lock\.json)/g, ` ${12 * MiB}\t$1`) } : r;
+  };
+  const lock = (s: string) => Object.fromEntries(['a', 'b', 'c'].map((d) => [`${d}/package-lock.json`, `"resolved": "${s}${d}"\n`]));
+  const f = run(lock('https://r/v-1.tgz'), { ...lock('https://r/v-2.tgz'), 'b/package-lock.json': '"resolved": "file:../fake"\n' }, {}, ex).findings;
+  expect(f).toEqual(['b/package-lock.json: lockfile adds a local file, link or portal dependency']);
+  const reads = calls.filter((c) => c.args.includes('cat-file'));
+  expect(reads.length).toBe(3);
+  for (const r of reads) expect(r.x.input!.trim().split('\n').length * 12 * MiB).toBeLessThanOrEqual(32 * MiB);
+  expect(calls.filter((c) => c.args.includes('ls-tree')).every((c) => c.x.maxBuffer === 256 * MiB)).toBe(true);
+});

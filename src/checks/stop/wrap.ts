@@ -182,7 +182,7 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
       for (const text of (r.stdout ?? '').split('\n')) {
         try {
           const o = JSON.parse(text);
-          if (o?.nonce === nonce && o.kind === 'check' && o.ok === false && typeof o.name === 'string') return fail(o.name, typeof o.detail === 'string' ? o.detail : 'failed');
+          if (o?.nonce === nonce && o.kind === 'check' && o.ok === false && PREFLIGHT_ORDER(pre.plan.linux).includes(o.name)) return fail(o.name, typeof o.detail === 'string' ? esc(o.detail.slice(0, 200)).slice(0, 200) : 'failed');
         } catch {
           /* a partial or non-JSON line is ignored */
         }

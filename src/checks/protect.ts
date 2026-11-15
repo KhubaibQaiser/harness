@@ -1,6 +1,6 @@
 // Harness files and Claude settings are changed by a person; the agent is denied at the tool-call level.
 import { spawnSync } from 'node:child_process';
-import { lstatSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import nodePath, { resolve } from 'node:path';
 import picomatch from 'picomatch';
 import { matches, TASKS_DIR, toRepoPath } from '../core/paths.js';
@@ -144,6 +144,9 @@ const ungrouped = (toks: string[]): string[] => {
 /** True when `sub` is a git alias here, or the lookup fails or times out. git ignores an alias named like a builtin. */
 const aliased = (dir: string, sub: string): boolean => {
   if (!/^[A-Za-z0-9][\w-]*$/.test(sub)) return false; // no alias has this name: git can't run it as one
+  // ponytail: a folder that doesn't exist (only test fixtures) holds no repo and no command starts there; a cd earlier on
+  // the line is not followed, as for every git read here.
+  if (!existsSync(dir)) return false;
   const r = git(dir, ['config', '--get', `alias.${sub}`]);
   return !(r.status === 1 && !r.stderr && !r.error);
 };
@@ -156,8 +159,13 @@ function refMove(raw: string[], cwd: string): Move | null {
   let dir = cwd;
   for (let i = k + 1; toks[i]?.startsWith('-'); i += /^-[Cc]$/.test(toks[i]!) ? 2 : 1) if (toks[i] === '-C') dir = resolve(dir, toks[i + 1] ?? '');
   const unknown: Move = { dir, fail: 'unknown' };
-  // A head built at run time ($(which git), $G) may be git.
-  if (/[$`]/.test(toks[j] ?? '') && toks.some((t) => MOVERS.has(t))) return unknown;
+  // A head built at run time ($(which git), $G) may be git: a mover word, or a git alias as the word after it, fails closed.
+  if (/[$`]/.test(toks[j] ?? '')) {
+    let n = j; // the substitution's last word: `$(which git)` and `` `which git` `` split into two
+    const open = (w: string) => (w.match(/\$\(/g) ?? []).length > (w.match(/\)/g) ?? []).length || (w.match(/`/g) ?? []).length % 2 === 1;
+    if (open(toks[j]!)) while (n + 1 < toks.length && !/[)`]/.test(toks[++n]!));
+    if (toks.some((t) => MOVERS.has(t)) || (toks[n + 1] !== undefined && aliased(dir, toks[n + 1]!))) return unknown;
+  }
   if (!sub) return null;
   // Global options that change config, the git programs run, the repo, the worktree or the refs git reads.
   const odd = toks.slice(k + 1, toks.length - rest.length - 1).some((g) => /^(-c|--config-env|--exec-path|--git-dir|--work-tree|--namespace)/.test(g));
@@ -260,7 +268,9 @@ const UNATTENDED_GIT = "Unattended runs can't change harness's protected files t
  * ref with no .harness/hooks/dispatch.mjs asks too: every hook would then fail open until someone switches back. Any
  * error, an unread form, or another command before it on the line (it may move refs first) fails closed.
  */
-function refMoveAsk(cmds: string[], cwd: string, unattended: boolean): Decision | null {
+// Set in harness's own environment, these make git read other refs, objects, an index or a worktree than protect's diffs.
+const GIT_ENV = ['GIT_REPLACE_REF_BASE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES'];
+function refMoveAsk(cmds: string[], cwd: string, unattended: boolean, env: NodeJS.ProcessEnv): Decision | null {
   const ask = (reason: string): Decision => ({ kind: 'ask', reason, check: 'protect' });
   const say = (why: string, tail = UNATTENDED_GIT): Decision => (unattended ? { kind: 'deny', reason: `${why} ${tail}`, check: 'protect' } : ask(`${why} Confirm it.`));
   let busy = false;
@@ -279,6 +289,8 @@ function refMoveAsk(cmds: string[], cwd: string, unattended: boolean): Decision 
         ? { kind: 'deny', reason: `\`${c}\` fetches before harness can check what it changes. Run git fetch, then git merge <ref>, so harness can check what it changes.`, check: 'protect' }
         : ask(`\`${c}\` fetches before harness can check what it changes in harness's protected files. Confirm it.`);
     }
+    const set = GIT_ENV.find((k) => env[k] !== undefined || process.env[k] !== undefined); // ctx.env, and what git spawns inherit
+    if (set) return say(`Could not check what \`${c}\` changes in harness's protected files: ${set} is set in harness's environment, so git may read other refs or objects than harness does.`);
     // git follows refs/replace/*; harness's diffs don't (--no-replace-objects), so they could read other content.
     const rr = git(m.dir, ['for-each-ref', '--count=1', 'refs/replace/']);
     if (rr.status !== 0 || rr.error) return say(`Could not check what \`${c}\` changes in harness's protected files.`);
@@ -678,7 +690,7 @@ export const protect: Check = {
       const da = becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target: null, shellWrites: [...paths, ...dr.writes].filter((p) => !rmAt.includes(p)) }) ?? editorAsk(root, config, edited);
       // A path built at run time (p=.harness/x; tee $p, tee .harness/conf*, cd .harness && …) is not parsed: ask.
       const built = touchesProtectedText(exempt ? withoutWorkdirs(root, cmd) : cmd);
-      if (!paths.some((p) => p && isProtected(root, p, exempt))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : refMoveAsk(cmds, input.cwd || root, ctx.unattended) ?? { kind: 'allow' });
+      if (!paths.some((p) => p && isProtected(root, p, exempt))) return da ?? (built ? { kind: 'ask', reason: BUILT_REASON, check: 'protect' } : refMoveAsk(cmds, input.cwd || root, ctx.unattended, ctx.env ?? {}) ?? { kind: 'allow' });
     }
     if (target !== null) { const dd = decisionsDeny(root, config, [target], []); if (dd) return dd; }
     const da = target === null ? null : becomesDecision(root, config, { tool: tool_name ?? '', input: tool_input, target, shellWrites: [] });

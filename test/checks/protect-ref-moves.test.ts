@@ -10,10 +10,10 @@ import { type Ctx, dispatch, registry } from '../../src/hooks/dispatch.js';
 
 let repo = '';
 const g = (...a: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: repo, encoding: 'utf8' }).stdout.trim();
-const run = (command: string, unattended = false) => {
+const run = (command: string, unattended = false, env: Record<string, string> = {}) => {
   const config = loadConfig('/nonexistent-harness-root').config;
   const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: repo, tool_name: 'Bash', tool_input: { command } };
-  return protect.run({ input, root: repo, config, env: {}, unattended } as unknown as Ctx) as { kind: string; reason?: string };
+  return protect.run({ input, root: repo, config, env, unattended } as unknown as Ctx) as { kind: string; reason?: string };
 };
 const CFG = '.harness/config.yaml';
 const ASK = (c: string, ps = CFG) => ({ kind: 'ask', reason: `\`${c}\` changes harness's protected files (${ps}). Confirm it.`, check: 'protect' });
@@ -208,4 +208,24 @@ describe('fix round 1: forms that used to pass', () => {
     expect(run(c), c).toEqual({ kind: 'allow' });
   });
   test('a subshell move is still read', () => expect(run('(git checkout other)').kind).toBe('ask'));
+});
+
+describe('fix round 2', () => {
+  test('a head built at run time followed by a git alias fails closed', () => {
+    for (const c of ['$G co src-only', '$(which git) co src-only']) expect(run(c), c).toEqual({ kind: 'allow' }); // co is no alias yet
+    g('config', 'alias.co', 'checkout');
+    try {
+      for (const c of ['$G co src-only', '$(which git) co src-only', '`which git` co src-only']) {
+        expect(run(c), c).toEqual(FAIL(c));
+        expect(run(c, true), c).toEqual(FAIL_DENY(c));
+      }
+    } finally { g('config', '--unset', 'alias.co'); }
+  });
+  test.each(['GIT_REPLACE_REF_BASE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES'])('%s in the hook environment fails any ref move closed', (k) => {
+    const c = 'git checkout src-only', env = { [k]: 'x' };
+    const why = `Could not check what \`${c}\` changes in harness's protected files: ${k} is set in harness's environment, so git may read other refs or objects than harness does.`;
+    expect(run(c, false, env)).toEqual({ kind: 'ask', reason: `${why} Confirm it.`, check: 'protect' });
+    expect(run(c, true, env)).toEqual({ kind: 'deny', reason: `${why} Unattended runs can't change harness's protected files through git; the person runs it.`, check: 'protect' });
+    expect(run('git status', false, env)).toEqual({ kind: 'allow' });
+  });
 });

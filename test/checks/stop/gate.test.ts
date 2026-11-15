@@ -1,7 +1,15 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { expect, test, vi } from 'vitest';
+
+// spawn passes through unless a test sets fake.make
+const fake = vi.hoisted(() => ({ make: undefined as undefined | (() => unknown) }));
+vi.mock('node:child_process', async (orig) => {
+  const real = await orig<typeof import('node:child_process')>();
+  return { ...real, spawn: ((...a: Parameters<typeof real.spawn>) => (fake.make ? fake.make() : real.spawn(...a))) as typeof real.spawn };
+});
 import { defaultExec, type Exec, killTree, pickRunner, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
 import { runUnwrapped } from '../../../src/checks/stop/steps.js';
 import { loadConfig } from '../../../src/core/config.js';
@@ -351,6 +359,36 @@ test('defaultExec writes the input to the child stdin and closes it; without inp
   const js = "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log('got:'+d.length))";
   expect((await defaultExec(tmpdir())(process.execPath, ['-e', js], 5000, 'abc\n')).stdout).toBe('got:4\n');
   expect((await defaultExec(tmpdir())(process.execPath, ['-e', js], 5000)).stdout).toBe('got:0\n');
+});
+
+test('an input spawn whose child has no stdin is killed and fails, never left running', async () => {
+  fake.make = () => Object.assign(new EventEmitter(), { pid: 4242, stdin: null, stdout: null, stderr: null });
+  const kill = vi.spyOn(process, 'kill').mockImplementation((() => true) as never);
+  try {
+    const r = await defaultExec(tmpdir())('x', [], 5000, 'abc\n');
+    expect(r.status).toBeNull();
+    expect(r.output).toMatch(/no stdin/);
+    expect(kill).toHaveBeenCalledWith(process.platform === 'win32' ? 4242 : -4242, 'SIGKILL');
+  } finally {
+    fake.make = undefined;
+    kill.mockRestore();
+  }
+});
+
+test('a stdin write error keeps its code in the output', async () => {
+  fake.make = () => {
+    const c = Object.assign(new EventEmitter(), { pid: undefined, stdout: Object.assign(new EventEmitter(), { destroy() {} }), stderr: Object.assign(new EventEmitter(), { destroy() {} }) });
+    const stdin = Object.assign(new EventEmitter(), { end: () => stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })) });
+    setImmediate(() => c.emit('close', 0));
+    return Object.assign(c, { stdin });
+  };
+  try {
+    const r = await defaultExec(tmpdir())('x', [], 5000, 'abc\n');
+    expect(r.output).toContain('stdin: EPIPE');
+    expect(r.output).not.toContain('abc');
+  } finally {
+    fake.make = undefined;
+  }
 });
 
 test('output is bounded to a rolling tail', async () => {

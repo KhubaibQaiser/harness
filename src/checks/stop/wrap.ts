@@ -34,16 +34,22 @@ export function parseResults(stdout: string, nonce: string, expected: Expected[]
   const lines: ResultLine[] = [];
   const all = stdout.split('\n').filter((s) => s.trim());
   // The sealed end line must be last, once, and carry the seal. Only the runner holds the seal (step code reads the nonce, never this), so forged result lines cannot pass.
-  // Residual: a step with ptrace-attach rights over its parent (Yama ptrace_scope=0) could read runner memory; live batch LS checks srt's ptrace/seccomp policy.
-  const sealed = (t: string): boolean => {
+  // Residual (Linux): a step that could read its parent's memory, by ptrace attach (Yama ptrace_scope=0) or from a core dump of the runner, could learn the seal.
+  // Live batch LS checks srt's ptrace/seccomp policy, ulimit -c and core_pattern, and whether a step can reach srt's stdout. Reasons never carry a seal value.
+  const ends = all.flatMap((t, i) => {
     try {
       const o = JSON.parse(t);
-      return o?.nonce === nonce && o.kind === 'end' && o.seal === seal;
+      return o?.nonce === nonce && o.kind === 'end' ? [{ i, ok: o.seal === seal }] : [];
     } catch {
-      return false;
+      return [];
     }
-  };
-  if (!all.length || !sealed(all.pop()!)) return { error: 'end line: missing' };
+  });
+  const good = ends.filter((e) => e.ok);
+  if (!ends.length) return { error: 'end line: missing' };
+  if (!good.length) return { error: 'end line: wrong seal' };
+  if (good.length > 1) return { error: 'end line: duplicated' };
+  if (good[0]!.i !== all.length - 1) return { error: 'end line: not last' };
+  all.pop();
   for (const [i, text] of all.entries()) {
     const at = `line ${i + 1}`;
     const e = expected[i];

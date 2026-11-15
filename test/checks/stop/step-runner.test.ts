@@ -1,7 +1,10 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildSync } from 'esbuild';
 import { expect, test } from 'vitest';
+import { defaultExec } from '../../../src/checks/stop/gate.js';
+import { parseResults } from '../../../src/checks/stop/wrap.js';
 import type { Exec } from '../../../src/checks/stop/gate.js';
 import { runPlanEntry } from '../../../src/checks/stop/step-runner.js';
 import type { Plan, PlanStep } from '../../../src/checks/stop/steps.js';
@@ -89,4 +92,22 @@ test('a failing step still ends with the sealed end line', async () => {
   const lines: string[] = [];
   await runPlanEntry([planFile(plan([step('a')])), N], (l) => lines.push(l), () => () => ({ status: 1, output: 'x', timedOut: false }), () => 0, undefined, () => SEAL);
   expect(lines.map((l) => JSON.parse(l).kind)).toEqual(['step', 'end']);
+});
+
+test.skipIf(process.platform === 'win32')('the real fd-0 reader: a runner spawned with the seal on stdin ends with the sealed line; without input it exits 2', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'h-sr-e-'));
+  const entry = join(d, 'entry.ts');
+  writeFileSync(entry, `import { runPlanEntry } from ${JSON.stringify(join(process.cwd(), 'src/checks/stop/step-runner.ts'))};\nrunPlanEntry(process.argv.slice(2), (l) => process.stdout.write(l + '\\n')).then((c) => (process.exitCode = c));`);
+  const out = join(d, 'entry.cjs');
+  buildSync({ entryPoints: [entry], outfile: out, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+  const reader = step('r', { cmd: process.execPath, args: ['-e', "let n=0;process.stdin.on('data',d=>n+=d.length).on('end',()=>{console.log('stdin='+n);process.exit(1)})"], cwd: d, timeoutMs: 5000 });
+  const f = planFile(plan([reader], { deadlineMs: Date.now() + 60_000 }));
+  const r = await defaultExec(d)(process.execPath, [out, f, N], 20_000, SEAL + '\n');
+  expect(r.status).toBe(0);
+  expect(r.stdout!.trim().split('\n').at(-1)).toBe(JSON.stringify({ nonce: N, kind: 'end', seal: SEAL }));
+  expect(r.stdout!.match(new RegExp(SEAL, 'g'))).toHaveLength(1);
+  expect(JSON.parse(r.stdout!.split('\n')[0]!)).toMatchObject({ label: 'r', output: 'stdin=0' });
+  expect(parseResults(r.stdout!, N, [{ kind: 'step', label: 'r' }], SEAL)).toMatchObject({ lines: [{ label: 'r' }] });
+  const none = await defaultExec(d)(process.execPath, [out, f, N], 20_000);
+  expect([none.status, none.stdout]).toEqual([2, '']);
 });

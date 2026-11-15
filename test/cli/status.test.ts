@@ -221,3 +221,68 @@ test('status prints the Decisions line right after Context:', async () => {
   const r = await go({ 'pyproject.toml': '[tool.pytest]\n', 'tests/test_a.py': 'def test_a(): pass\n' });
   expect(r.out).toMatch(/^Context: [^\n]*\nDecisions: none\nEnforcement:/m);
 });
+
+// Stop sandbox line. An existing .mjs file stands in for the srt script (real, outside every writable root).
+import { stopSandboxLine, type SrtProbe } from '../../src/checks/stop/srt.js';
+import { defaults, type HarnessConfig } from '../../src/core/config.js';
+import type { StopSandboxRecord } from '../../src/checks/stop/record.js';
+
+const SRT = fileURLToPath(new URL('../../build.mjs', import.meta.url));
+const FOUND = { path: '/s', real: '/s', version: '0.0.83', launch: ['/s'] };
+const cfgOf = (sandbox: HarnessConfig['sandbox'] = 'unattended', local = false): HarnessConfig => ({ ...defaults(), sandbox, stop: { ...defaults().stop, allow_local: local } });
+const rec = (outcome: StopSandboxRecord['outcome']): StopSandboxRecord => ({ ts: 't', srt: null, outcome, checks: {} });
+
+test('stopSandboxLine: one string per form', () => {
+  expect(stopSandboxLine(cfgOf('off'), 'linux', null, null)).toBe('Stop sandbox: off - logged');
+  expect(stopSandboxLine(cfgOf(), 'win32', null, null)).toBe('Stop sandbox: off - native Windows');
+  expect(stopSandboxLine(cfgOf(), 'linux', FOUND, null)).toBe('Stop sandbox: srt 0.0.83');
+  expect(stopSandboxLine(cfgOf(), 'linux', { why: { kind: 'missing' } }, null)).toBe('Stop sandbox: UNAVAILABLE - stop gate blocks');
+  expect(stopSandboxLine(cfgOf('unattended', true), 'linux', FOUND, null)).toBe('Stop sandbox: srt 0.0.83 - stop.allow_local on');
+  expect(stopSandboxLine(cfgOf('unattended', true), 'linux', { why: { kind: 'missing' } }, null)).toBe('Stop sandbox: UNAVAILABLE - stop gate blocks - stop.allow_local on');
+  // No effect when steps run unwrapped, so no suffix.
+  expect(stopSandboxLine(cfgOf('off', true), 'linux', null, null)).toBe('Stop sandbox: off - logged');
+  expect(stopSandboxLine(cfgOf('unattended', true), 'win32', null, null)).toBe('Stop sandbox: off - native Windows');
+});
+
+test('stopSandboxLine: never-ran is appended found or not, and the version is escaped', () => {
+  expect(stopSandboxLine(cfgOf(), 'linux', FOUND, rec('never-ran'))).toBe('Stop sandbox: srt 0.0.83; last stop: checks never ran');
+  expect(stopSandboxLine(cfgOf(), 'linux', { why: { kind: 'missing' } }, rec('never-ran'))).toBe('Stop sandbox: UNAVAILABLE - stop gate blocks; last stop: checks never ran');
+  expect(stopSandboxLine(cfgOf(), 'linux', FOUND, rec('ran'))).toBe('Stop sandbox: srt 0.0.83');
+  // Native Windows: the gave-up record shows too (R16 amended), from the record alone.
+  expect(stopSandboxLine(cfgOf(), 'win32', null, rec('never-ran'))).toBe('Stop sandbox: off - native Windows; last stop: checks never ran');
+  expect(stopSandboxLine(cfgOf(), 'win32', null, rec('ran'))).toBe('Stop sandbox: off - native Windows');
+  expect(stopSandboxLine(cfgOf(), 'linux', { ...FOUND, version: 'a\u001b[31mb' }, null)).not.toContain('\u001b');
+});
+
+const probeOf = () => {
+  const calls: string[] = [];
+  const srt: SrtProbe = { which: (c) => (calls.push(`which ${c}`), c === 'srt' ? SRT : null), version: () => (calls.push('version'), '0.0.83\n') };
+  return { calls, srt };
+};
+const showWith = (root: string, platform: NodeJS.Platform, srt: SrtProbe, record: StopSandboxRecord | null = null) => {
+  let out = '';
+  status([], { root, env: {}, out: (s) => (out += s + '\n') }, { platform, srt, record: () => record });
+  return out;
+};
+
+test('status prints the Stop sandbox line right after Enforcement', async () => {
+  const root = await installedAt();
+  const p = probeOf();
+  expect(showWith(root, 'linux', p.srt, rec('never-ran'))).toMatch(/^Enforcement: [^\n]*\nStop sandbox: srt 0\.0\.83; last stop: checks never ran\n/m);
+  expect(showWith(root, 'linux', { which: () => null, version: () => '' })).toMatch(/^Stop sandbox: UNAVAILABLE - stop gate blocks$/m);
+});
+
+test('status: sandbox off and win32 never probe srt; checks.stop off prints no line', async () => {
+  const root = await installedAt();
+  const p = probeOf();
+  expect(showWith(root, 'win32', p.srt)).toMatch(/^Stop sandbox: off - native Windows$/m);
+  expect(showWith(root, 'win32', p.srt, rec('never-ran'))).toMatch(/^Stop sandbox: off - native Windows; last stop: checks never ran$/m);
+  const cfg = join(root, '.harness/config.yaml');
+  const orig = readFileSync(cfg, 'utf8');
+  writeFileSync(cfg, orig.replace('sandbox: unattended', 'sandbox: off'));
+  expect(showWith(root, 'linux', p.srt)).toMatch(/^Stop sandbox: off - logged$/m);
+  expect(p.calls).toEqual([]);
+  writeFileSync(cfg, orig.replace('  stop: true', '  stop: false'));
+  expect(showWith(root, 'linux', p.srt)).not.toContain('Stop sandbox');
+  expect(p.calls).toEqual([]);
+});

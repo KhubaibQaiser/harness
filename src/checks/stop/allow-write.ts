@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { stopDenyWritePaths } from '../protect.js';
+import { esc } from '../../core/config.js';
 import { realish, within } from '../../core/paths.js';
 import { expandHome } from './srt-settings.js';
 
@@ -44,4 +45,4 @@ export function allowWriteProblem(entry: string, sys: AllowWriteSys): string | n
 }
 
 export const allowWriteMessage = (entry: string, why: string): string =>
-  `stop.allow_write can't list ${entry}: ${why}. Choose a folder only your tests write, such as a cache folder.`;
+  `stop.allow_write can't list ${esc(entry)}: ${why}. Choose a folder only your tests write, such as a cache folder.`;

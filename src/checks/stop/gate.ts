@@ -11,6 +11,7 @@ import { realish } from '../../core/paths.js';
 import { type PlanStep, type RunSteps, runUnwrapped } from './steps.js';
 import { realSrtProbe, STOP_WIN_UNATTENDED, type SrtProbe } from './srt.js';
 import { tokenBase } from '../../core/token-base.js';
+import { readStopRecord, writeStopRecord } from './record.js';
 import { runWrapped } from './wrap.js';
 import { SAFE_DIFF, SAFE_GIT } from '../../core/git-safe.js';
 
@@ -141,11 +142,16 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   const runNotes: string[] = []; // lines the runner wants shown (unwrapped, or a refused sandbox: off)
   const stepsStart = now(); // the step budget starts after the git calls
   // Every failure path shares one attempt counter: block, or give up and allow once max is exceeded.
-  const failStep = (reason: string): Decision => {
+  const failStep = (reason: string, never?: string): Decision => {
     const attempts = ctx.state.stopAttempts + 1;
     if (attempts > max) {
       setAttempts(0);
-      log('stop-gave-up');
+      log('stop-gave-up', never);
+      if (never) {
+        const old = readStopRecord(root);
+        const why = old?.outcome === 'unavailable' && old.reason ? `${never}: ${old.reason}` : never; // keep which check failed
+        writeStopRecord(root, { srt: null, checks: {}, ...old, ts: new Date().toISOString(), outcome: 'never-ran', reason: why });
+      }
       return done(allow);
     }
     setAttempts(attempts);
@@ -206,7 +212,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   if (res.kind === 'timeout') return { kind: 'context', text: timeoutText, check: 'stop' };
   if (res.kind === 'unavailable') {
     log('stop-srt-unavailable', res.reason);
-    return failStep(`${res.message} (attempt {n})`); // counts toward max_attempts like any failing step
+    return failStep(`${res.message} (attempt {n})`, `checks never ran (${res.reason === 'native Windows unattended' ? res.reason : 'srt unavailable'})`); // counts toward max_attempts like any failing step
   }
   for (const r of res.results) {
     appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: r.label, outcome: r.timedOut ? 'timeout' : r.status === 0 ? 'allow' : 'block', ms: Math.max(0, r.ms) });

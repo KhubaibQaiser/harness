@@ -12,6 +12,7 @@ import { PREFLIGHT_ORDER } from '../../../src/checks/stop/preflight.js';
 import { srtMessage, type SrtProbe, type SrtWhy } from '../../../src/checks/stop/srt.js';
 import type { PlanStep } from '../../../src/checks/stop/steps.js';
 import { type Expected, parseResults, runWrapped, srtArgv, type WrapDeps } from '../../../src/checks/stop/wrap.js';
+import { readStopRecord } from '../../../src/checks/stop/record.js';
 import { defaults } from '../../../src/core/config.js';
 
 // srt runs on macOS and Linux only (R10); a skipped file never runs its cleanup, so win32 touches no disk.
@@ -107,11 +108,13 @@ suite('runWrapped', () => {
     expect(await setup({ timedOut: true, status: null, stdout: pre[0] }).run()).toEqual({ kind: 'timeout' });
   });
 
-  test('a timeout before any result line is unavailable (result lines); one valid line keeps it a timeout', async () => {
+  test('a timeout before any result line is unavailable (result lines) and recorded; one valid line keeps it a timeout', async () => {
     const none = unavailable('result lines', 'the runner reported nothing before the deadline');
     // The fake appends a sealed end line, which is not a result line.
     for (const stdout of ['', 'junk', check('write canary', {}, N2), check('evil', { ok: true }), check('network', { ok: 'yes' }), line('lint', { ms: 'x' })]) {
+      rmSync(join(state, 'stop-sandbox.json'), { force: true });
       expect(await setup({ timedOut: true, status: null, stdout }).run(), stdout).toEqual(none);
+      expect(readStopRecord(root)).toMatchObject({ outcome: 'unavailable', reason: 'result lines' });
     }
     expect(await setup({ timedOut: true, status: null, stdout: undefined }, {}, false).run()).toEqual(none);
     for (const stdout of [pre[0]!, [...pre, line('format:check')].join('\n')]) expect(await setup({ timedOut: true, status: null, stdout }).run()).toEqual({ kind: 'timeout' });
@@ -423,5 +426,44 @@ suite('parseResults', () => {
     expect(parseResults([e, a, b].join('\n'), N, exp, S)).toEqual({ error: 'end line: not last' });
     const chk: Expected[] = [{ kind: 'check', name: 'network' }, { kind: 'step', label: 'a' }];
     expect(P(JSON.stringify({ nonce: N, kind: 'check', name: 'network', ok: false, detail: 'reached' }), chk)).toMatchObject({ lines: [{ name: 'network', ok: false }] });
+  });
+});
+
+suite('runWrapped records what it saw', () => {
+  const recFile = join(state, 'stop-sandbox.json');
+  const rec = () => readStopRecord(root);
+  const failNet = (detail: string) => [...PREFLIGHT_ORDER(process.platform === 'linux').slice(0, 3).map((n) => check(n)), check('network', { ok: false, detail })].join('\n') + '\n';
+
+  test('a passing run records ran, srt version and every check ok', async () => {
+    rmSync(recFile, { force: true });
+    expect((await setup().run()).kind).toBe('ran');
+    const names = PREFLIGHT_ORDER(process.platform === 'linux');
+    expect(rec()).toMatchObject({ outcome: 'ran', srt: '0.0.83', checks: Object.fromEntries(names.map((n) => [n, 'ok'])) });
+    expect(rec()?.reason).toBeUndefined();
+  });
+
+  test('an unavailable run records the reported checks, the failing detail and the reason', async () => {
+    rmSync(recFile, { force: true });
+    expect((await setup({ stdout: failNet('connected out') }).run()).kind).toBe('unavailable');
+    expect(rec()).toMatchObject({ outcome: 'unavailable', srt: '0.0.83', reason: 'network', checks: { 'write canary': 'ok', 'read canary': 'ok', 'unix socket': 'ok', network: 'connected out' } });
+  });
+
+  test('a check detail is capped so the record always reads back', async () => {
+    rmSync(recFile, { force: true });
+    await setup({ stdout: failNet('x'.repeat(100000)) }).run();
+    expect(rec()?.checks.network).toHaveLength(200);
+  });
+
+  test('a timeout leaves the previous record byte for byte', async () => {
+    await setup().run();
+    const before = readFileSync(recFile, 'utf8');
+    expect(await setup({ timedOut: true, status: null, stdout: pre[0] }).run()).toEqual({ kind: 'timeout' });
+    expect(readFileSync(recFile, 'utf8')).toBe(before);
+  });
+
+  test('srt not found records unavailable with srt null', async () => {
+    rmSync(recFile, { force: true });
+    await setup(undefined, { srt: { which: () => null, version: () => '' } }).run();
+    expect(rec()).toMatchObject({ outcome: 'unavailable', srt: null, reason: 'missing', checks: {} });
   });
 });

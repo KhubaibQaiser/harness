@@ -9,6 +9,7 @@ import { real, realish, within } from '../../core/paths.js';
 import { allowWriteMessage, allowWriteProblem } from './allow-write.js';
 import type { Exec } from './gate.js';
 import { PREFLIGHT_ORDER, type PreflightPlan } from './preflight.js';
+import { type StopSandboxRecord, writeStopRecord } from './record.js';
 import { locateSrt, srtMessage, type SrtProbe } from './srt.js';
 import { renderSrtSettings, tempRoots, writableRoots } from './srt-settings.js';
 import type { CheckName, Plan, ResultLine, RunSteps, StepResult, StepsRun } from './steps.js';
@@ -133,7 +134,17 @@ export async function preparePreflight(root: string, tmp: string, nonce: string,
   };
 }
 
+type Seen = { srt: string | null; checks: StopSandboxRecord['checks'] };
+
+/** Runs, then records what this attempt reported. A timeout leaves the previous record alone. */
 export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => {
+  const got: Seen = { srt: null, checks: {} };
+  const r = await attempt(d, got, steps, deadline);
+  if (r.kind !== 'timeout') writeStopRecord(d.root, { ts: new Date().toISOString(), srt: got.srt, outcome: r.kind, checks: got.checks, ...(r.kind === 'unavailable' ? { reason: r.reason } : {}) });
+  return r;
+};
+
+const attempt = async (d: WrapDeps, got: Seen, steps: Parameters<RunSteps>[0], deadline: number): Promise<StepsRun> => {
   const fail = (check: string, why: string): StepsRun => ({ kind: 'unavailable', message: srtMessage({ kind: 'check', check, first: first(why) }), reason: check });
   const files: string[] = [];
   let pre: Preflight | undefined;
@@ -153,6 +164,7 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
     const roots = writableRoots(inputs);
     const found = locateSrt(d.srt, roots, d.platform, d.node);
     if ('why' in found) return { kind: 'unavailable', message: srtMessage(found.why), reason: found.why.kind === 'check' ? found.why.check : found.why.kind };
+    got.srt = found.version;
     // launch[0] for a node launch; a binary srt still runs the step runner with node, so check it the same way.
     const node = realish(d.node);
     const hit = [d.node, node].find((p) => roots.flatMap((w) => [w, realish(w)]).some((w) => within(p, w, d.platform)));
@@ -221,6 +233,7 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
     const expected: Expected[] = [...PREFLIGHT_ORDER(pre.plan.linux).map((name): Expected => ({ kind: 'check', name })), ...steps.map((s): Expected => ({ kind: 'step', label: s.label }))];
     const parsed = parseResults(r.stdout ?? '', nonce, expected, seal);
     if ('error' in parsed) return fail('result lines', parsed.error);
+    for (const l of parsed.lines) if (l.kind === 'check') got.checks[l.name] = l.ok ? 'ok' : esc((l.detail ?? 'failed').trim().split('\n')[0]!.slice(0, 200)).slice(0, 200);
     const results: StepResult[] = parsed.lines.flatMap((l) => (l.kind === 'step' ? [{ label: l.label, status: l.status, timedOut: l.timedOut, ms: l.ms, output: l.output ?? '' }] : []));
     const bad = parsed.lines.find((l) => l.kind === 'check' && !l.ok);
     if (bad?.kind === 'check') return fail(bad.name, bad.detail ?? 'failed');

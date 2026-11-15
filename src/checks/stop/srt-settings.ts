@@ -25,6 +25,9 @@ const abs = (path: string): string => {
 export const writableRoots = (i: Pick<SrtInputs, 'root' | 'stop' | 'home' | 'tmp'>): string[] =>
   [...new Set([i.root, ...i.tmp, ...i.stop.allow_write.map((p) => realish(abs(expandHome(p, i.home))))])];
 
+/** The writable set `locateSrt` checks srt against: the repo, temp folders and `stop.allow_write`. */
+export const gateWritable = (root: string, stop: SrtInputs['stop'], home: string): string[] => writableRoots({ root: realish(root), stop, home, tmp: tempRoots() });
+
 // Both spellings, so a deny binds whether srt matches given or resolved paths.
 const both = (p: string): string[] => [...new Set([normalize(abs(p)), realish(abs(p))])];
 const GLOB = /[*?[\]{}]/;

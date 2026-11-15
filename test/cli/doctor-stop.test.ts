@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ const mk = (): { root: string; home: string } => {
 };
 const cfg = (stop: Partial<HarnessConfig['stop']> = {}, sandbox: HarnessConfig['sandbox'] = 'unattended'): HarnessConfig => ({ ...defaults(), sandbox, stop: { ...defaults().stop, ...stop } });
 const rec = (r: Partial<StopSandboxRecord> = {}): StopSandboxRecord => ({ ts: 't', srt: '0.0.83', outcome: 'ran', checks: {}, ...r });
-type Over = { platform?: NodeJS.Platform; which?: Record<string, string | null>; version?: string; read?: (p: string) => string | null; bwrap?: string | null; record?: StopSandboxRecord | null; env?: NodeJS.ProcessEnv; home?: string };
+type Over = { platform?: NodeJS.Platform; which?: Record<string, string | null>; version?: string; read?: (p: string) => string | null; bwrap?: string | null; record?: StopSandboxRecord | null; env?: NodeJS.ProcessEnv; home?: string; tok?: string | null; bwrapSpawn?: (bin: string) => void };
 const run = (config: HarnessConfig, o: Over = {}) => {
   const lines: string[] = [];
   const { root, home } = mk();
@@ -28,7 +28,7 @@ const run = (config: HarnessConfig, o: Over = {}) => {
   let spawned = 0;
   stopSandboxChecks(root, config, { ok: (s) => lines.push(`ok ${s}`), fix: (w, n) => lines.push(`fix ${w}: ${n}`), note: (w, n) => lines.push(`note ${w}${n === undefined ? '' : `: ${n}`}`) }, {
     platform: o.platform ?? 'linux', env: o.env ?? { PATH: '/usr/bin' }, home: o.home ?? home, srt, read: o.read ?? (() => null),
-    bwrapVersion: () => { spawned++; return o.bwrap === undefined ? 'bubblewrap 0.9.0\n' : o.bwrap; }, tokenBase: () => null, record: () => (o.record === undefined ? rec() : o.record),
+    bwrapVersion: (bin) => { spawned++; o.bwrapSpawn?.(bin as string); return o.bwrap === undefined ? 'bubblewrap 0.9.0\n' : o.bwrap; }, tokenBase: () => o.tok ?? null, record: () => (o.record === undefined ? rec() : o.record),
   });
   return { lines, spawned: () => spawned, home };
 };
@@ -81,7 +81,7 @@ describe('stopSandboxChecks', () => {
   test('allow_write refusals are fixes with allowWriteMessage; a relative entry is a fix, not a throw', () => {
     const { home } = mk();
     const r = run(cfg({ allow_write: [home, 'rel/dir'] }), { home });
-    expect(r.lines).toContain(`fix stop.allow_write can't list ${home}: it is your home folder. Choose a folder only your tests write, such as a cache folder.: remove it from stop.allow_write in .harness/config.yaml`);
+    expect(r.lines).toContain(`fix stop.allow_write can't list ${home}: it is your home folder. Choose a folder only your tests write, such as a cache folder: remove it from stop.allow_write in .harness/config.yaml`);
     expect(r.lines.some((l) => l.startsWith('fix') && l.includes('rel/dir'))).toBe(true);
   });
   test('allow_local note, only when on', () => {
@@ -115,5 +115,63 @@ describe('stopSandboxChecks', () => {
     expect(() => stopSandboxChecks('/r', cfg(), { ok: (s) => lines.push(s), fix: (w, n) => lines.push(`fix ${w}: ${n}`), note: (w) => lines.push(w) }, { platform: 'linux', env: {}, home: '/h', srt, record: () => { throw new Error('rec'); }, bwrapVersion: () => null, tokenBase: () => null })).not.toThrow();
     expect(lines.some((l) => l.startsWith('fix') && l.includes('boom'))).toBe(true);
     expect(lines.some((l) => l.startsWith('fix') && l.includes('last Stop') && l.includes('rec'))).toBe(true);
+  });
+  const refused = (entry: string, why: string, o: Over = {}) => {
+    const r = run(cfg({ allow_write: [entry] }), o);
+    expect(r.lines).toContain(`fix stop.allow_write can't list ${entry}: ${why}. Choose a folder only your tests write, such as a cache folder: remove it from stop.allow_write in .harness/config.yaml`);
+  };
+  describe('allow_write refusal classes match the gate', () => {
+    test('protected path', () => {
+      const root = mk().root;
+      const lines: string[] = [];
+      const e = join(root, '.harness/state');
+      const srt: SrtProbe = { which: (c) => (c === 'srt' ? SRT : '/usr/bin/x'), version: () => '0.0.83' };
+      stopSandboxChecks(root, cfg({ allow_write: [e] }), { ok: () => {}, fix: (w) => lines.push(w), note: () => {} }, { platform: 'linux', env: { PATH: '/usr/bin' }, home: '/nohome/x', srt, read: () => null, bwrapVersion: () => 'bubblewrap 0.9.0', tokenBase: () => null, record: () => null });
+      expect(lines.some((l) => l.includes(`can't list ${e}: it is a protected path`))).toBe(true);
+    });
+    test('home folder', () => {
+      const { home } = mk();
+      refused(home, 'it is your home folder', { home });
+    });
+    test('login-start folder', () => {
+      const { home } = mk();
+      refused(join(home, '.claude/x'), 'programs there run at login', { home });
+    });
+    test('PATH folder', () => {
+      const d = join(mk().home, 'binp');
+      mkdirSync(d);
+      refused(d, 'it is on PATH', { env: { PATH: `${d}:/usr/bin` } });
+    });
+    test('srt install folder', () => {
+      const { home } = mk();
+      const pkg = join(home, 'lib/@anthropic-ai/sandbox-runtime');
+      mkdirSync(join(pkg, 'dist'), { recursive: true });
+      writeFileSync(join(pkg, 'package.json'), '{"name":"@anthropic-ai/sandbox-runtime"}');
+      writeFileSync(join(pkg, 'dist/cli.js'), '');
+      refused(join(pkg, 'dist'), 'srt is installed there', { which: { srt: join(pkg, 'dist/cli.js') } });
+    });
+    test('token folder', () => {
+      const t = join(mk().home, 'tok/harness/gh');
+      mkdirSync(t, { recursive: true });
+      refused(t, 'it holds the GitHub token folder', { tok: t });
+    });
+  });
+  test('allow_write entry text is escaped', () => {
+    const { home } = mk();
+    const l = run(cfg({ allow_write: [`${home}/.claude/\u001b[31mred\nline`] }), { home }).lines.filter((x) => x.includes('allow_write'));
+    expect(l.length).toBeGreaterThan(0);
+    for (const x of l) expect(x).not.toMatch(/[\u001b\n]/);
+  });
+  test('srt real path is escaped', () => {
+    const lines = run(cfg(), { which: { srt: SRT } }).lines;
+    expect(lines.every((x) => !x.includes('\u001b'))).toBe(true);
+  });
+  test('bwrap runs by the absolute path found; a relative path is a fix and never spawned', () => {
+    let bin = '';
+    run(cfg(), { which: { bwrap: '/opt/bin/bwrap' }, bwrapSpawn: (b) => (bin = b) });
+    expect(bin).toBe('/opt/bin/bwrap');
+    const r = run(cfg(), { which: { bwrap: './bwrap' } });
+    expect(r.lines.some((l) => l.startsWith('fix Stop sandbox: bwrap is not on PATH as an absolute path'))).toBe(true);
+    expect(r.spawned()).toBe(0);
   });
 });

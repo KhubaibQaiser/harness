@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, realpathSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -988,4 +988,12 @@ test('doctor: allowManagedHooksOnly follows precedence, names the missing events
   expect(r.out).toMatch(/^fix managed settings set allowManagedHooksOnly/m);
   writeFileSync(managed, '[]');
   expect(go().out).toContain(`note managed settings ${managed.replace(/\\/g, "/")} exists but can't be read or parsed`);
+});
+
+test('Stop sandbox section: srt from deps, and gone when checks.stop is off', async () => {
+  const root = await installed();
+  const on = run(root, { path: bin('npm'), platform: 'darwin' });
+  expect(on.out).toContain(`ok Stop sandbox: srt 0.0.83 (${realpathSync(SRT_STUB)})`);
+  setConfig(root, (t) => t.replace(/^(\s*)stop: true/m, '$1stop: false'));
+  expect(run(root, { path: bin('npm'), platform: 'darwin' }).out).not.toMatch(/Stop sandbox/);
 });

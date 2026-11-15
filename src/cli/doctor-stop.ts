@@ -1,5 +1,6 @@
 // Doctor's "Stop sandbox" section: whether the Stop gate's steps can run inside srt, and what the last wrapped Stop saw.
 import { execFileSync } from 'node:child_process';
+import { isAbsolute } from 'node:path';
 import { allowWriteMessage, allowWriteProblem } from '../checks/stop/allow-write.js';
 import { PREFLIGHT_ORDER } from '../checks/stop/preflight.js';
 import { readStopRecord, type StopSandboxRecord } from '../checks/stop/record.js';
@@ -15,7 +16,7 @@ import { tokenBase } from '../core/token-base.js';
 type P = { ok: (s: string) => void; fix: (w: string, n: string) => void; note: (w: string, n?: string) => void };
 type Sys = {
   platform: NodeJS.Platform; env: NodeJS.ProcessEnv; home: string; srt: SrtProbe; read?: MachineProbe['read'];
-  bwrapVersion?: () => string | null; tokenBase?: () => string | null; record?: () => StopSandboxRecord | null;
+  bwrapVersion?: (bin: string) => string | null; tokenBase?: () => string | null; record?: () => StopSandboxRecord | null;
 };
 
 const BWRAP_MIN = '0.8.0';
@@ -23,9 +24,9 @@ const cap = (s: string): string => esc(s.trim().split('\n')[0] ?? '').slice(0, 2
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** `bwrap --version` output, or null when it can't be run. */
-const realBwrapVersion = (): string | null => {
+const realBwrapVersion = (bin: string): string | null => {
   try {
-    return execFileSync('bwrap', ['--version'], { timeout: 5000, encoding: 'utf8', killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'] });
+    return execFileSync(bin, ['--version'], { timeout: 5000, encoding: 'utf8', killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'] });
   } catch {
     return null;
   }
@@ -52,7 +53,7 @@ export function stopSandboxChecks(root: string, config: HarnessConfig, p: P, sys
     srtReal = which ? realish(which) : null;
     const found = locateSrt(sys.srt, writableRoots({ root: realish(root), stop, home: sys.home, tmp: tempRoots() }), platform);
     if ('why' in found) p.fix(`Stop sandbox: srt ${srtReason(found.why)}`, `install @anthropic-ai/sandbox-runtime@${SRT_MIN} globally, outside the repo`);
-    else p.ok(`Stop sandbox: srt ${found.version} (${found.real})`);
+    else p.ok(`Stop sandbox: srt ${esc(found.version)} (${esc(found.real)})`);
   });
 
   guard('rg', () => {
@@ -62,8 +63,11 @@ export function stopSandboxChecks(root: string, config: HarnessConfig, p: P, sys
     guard('bwrap', () => {
       const block = sandboxBlocker(platform, { which: sys.srt.which, read: sys.read });
       if (block) p.fix(`Stop sandbox: ${block.why}`, block.fix || 'use a machine that can run it');
-      if (!sys.srt.which('bwrap')) return; // already named above
-      const out = (sys.bwrapVersion ?? realBwrapVersion)();
+      const bin = sys.srt.which('bwrap');
+      if (!bin) return; // already named above
+      // A relative PATH hit is agent-controlled (cwd), so it is never run.
+      if (!isAbsolute(bin)) return p.fix('Stop sandbox: bwrap is not on PATH as an absolute path', 'put bubblewrap in an absolute PATH folder');
+      const out = (sys.bwrapVersion ?? realBwrapVersion)(bin);
       const v = out === null ? null : /^bubblewrap (\d+\.\d+\.\d+)\s*$/.exec(out)?.[1];
       if (!v) p.fix(`Stop sandbox: bwrap --version ${out === null ? 'failed' : `gave no version (${cap(out)})`}`, 'install bubblewrap 0.8 or newer');
       else if (olderThan(v, BWRAP_MIN)) p.fix(`Stop sandbox: bwrap ${v} is older than 0.8`, 'install bubblewrap 0.8 or newer');
@@ -75,7 +79,7 @@ export function stopSandboxChecks(root: string, config: HarnessConfig, p: P, sys
     for (const entry of stop.allow_write) {
       try {
         const why = allowWriteProblem(entry, base);
-        if (why) p.fix(allowWriteMessage(entry, why), 'remove it from stop.allow_write in .harness/config.yaml');
+        if (why) p.fix(allowWriteMessage(entry, why).replace(/\.$/, ''), 'remove it from stop.allow_write in .harness/config.yaml');
       } catch (e) {
         p.fix(`stop.allow_write entry ${esc(entry)} is refused (${cap(msg(e))})`, 'fix it in .harness/config.yaml');
       }

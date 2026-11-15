@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs';
 import { afterEach, expect, test } from 'vitest';
 import { contractHash, type Contract } from '../../src/done/contract.js';
-import { defaultExec, type Exec } from '../../src/core/exec.js';
+import { defaultExec, type Exec, type ExecOpts } from '../../src/core/exec.js';
 import { diffTamper, isHarnessOwned, scriptChanges, WORKFLOW_PATH } from '../../src/done/tamper-diff.js';
 import { git, repoWith, type Files } from '../review/repo.js';
 
@@ -48,7 +48,7 @@ test('symlink or submodule entries: in-scope ones and anything linked under .har
   expect(findings({ 'a.txt': '1' }, { '.harness': { link: 'elsewhere' } }, { checkNames: [] })).toEqual(['protected file changed: .harness']);
 });
 test('the git budget is passed through, the environment blocks grafts and replace refs, stderr is escaped', () => {
-  const seen: { timeoutMs?: number; env?: Record<string, string> }[] = [];
+  const seen: ExecOpts[] = [];
   const ex: Exec = (c, a, x) => { seen.push(x ?? {}); return defaultExec(c, a, x); };
   run({ 'a.txt': '1' }, { 'a.txt': '2' }, { checkNames: [], timeoutMs: 1234 }, ex);
   expect(seen.every((x) => x.timeoutMs === 1234)).toBe(true);

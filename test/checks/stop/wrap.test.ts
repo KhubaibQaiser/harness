@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, test } from 'vitest';
 import { allowWriteMessage } from '../../../src/checks/stop/allow-write.js';
 import { defaultExec, type ExecResult } from '../../../src/checks/stop/gate.js';
+import { tempRoots } from '../../../src/checks/stop/srt-settings.js';
 import { PREFLIGHT_ORDER } from '../../../src/checks/stop/preflight.js';
 import { srtMessage, type SrtProbe, type SrtWhy } from '../../../src/checks/stop/srt.js';
 import type { PlanStep } from '../../../src/checks/stop/steps.js';
@@ -60,7 +61,7 @@ function setup(script: Partial<ExecResult> | (() => Partial<ExecResult> | Promis
   return { calls, run: () => runWrapped(d)(steps, 1000) };
 }
 const unavailable = (check: string, first: string) => ({ kind: 'unavailable', message: srtMessage({ kind: 'check', check, first }), reason: check });
-const clean = () => expect(readdirSync(state).filter((f) => /^(srt|plan|canary)-/.test(f))).toEqual([]);
+const clean = () => (expect(readdirSync(state).filter((f) => /^(srt|plan|canary)-/.test(f))).toEqual([]), expect(readdirSync(short)).toEqual([])); // short holds the read canary and the socket
 
 suite('runWrapped', () => {
   test('argv is exactly the launch prefix, --settings <abs settings>, <node>, <abs runner>, --stop-steps <abs plan>, <nonce>', async () => {
@@ -213,6 +214,48 @@ suite('runWrapped', () => {
     const steps = STEPS.map((l) => line(l)).join('\n');
     expect(await setup({ stdout: steps }).run()).toMatchObject({ kind: 'unavailable', reason: 'result lines' });
     expect(await setup({ stdout: [...pre.slice(0, -1), ...STEPS.map((l) => line(l))].join('\n') }).run()).toMatchObject({ kind: 'unavailable', reason: 'result lines' });
+  });
+
+  test('a breach the outer runner saw blocks on a timeout or a non-zero exit too; a failed check line on timeout blocks', async () => {
+    const plan = () => JSON.parse(readFileSync(planAt(), 'utf8')).preflight;
+    const touch = () => writeFileSync(plan().writeCanary, 'changed');
+    expect(await setup(() => (touch(), { timedOut: true, status: null })).run()).toEqual(unavailable('write canary', 'seen by the outer runner'));
+    expect(await setup(() => (touch(), { status: 1, stderr: 'boom' })).run()).toEqual(unavailable('write canary', 'seen by the outer runner'));
+    const viaSocket = async () => {
+      await new Promise<void>((res) => connect(plan().socket).on('close', () => res()).on('error', () => res()));
+      return { timedOut: true, status: null };
+    };
+    expect(await setup(viaSocket).run()).toEqual(unavailable('unix socket', 'seen by the outer runner'));
+    const badLine = [check('write canary'), check('read canary', { ok: false, detail: 'read the temp canary' })].join('\n');
+    expect(await setup({ timedOut: true, status: null, stdout: badLine }).run()).toEqual(unavailable('read canary', 'read the temp canary'));
+    expect(await setup({ timedOut: true, status: null, stdout: check('write canary') + '\nnot json' }).run()).toEqual({ kind: 'timeout' });
+    clean();
+  });
+
+  test('a canary deleted and recreated, or renamed over, with the same content is seen as changed', async () => {
+    const plan = () => JSON.parse(readFileSync(planAt(), 'utf8')).preflight;
+    const ok = { stdout: pass };
+    const same = (f: string) => readFileSync(f, 'utf8');
+    expect(await setup(() => { const f = plan().writeCanary; const b = same(f); rmSync(f); writeFileSync(f, b); return ok; }).run()).toEqual(unavailable('write canary', 'seen by the outer runner'));
+    expect(await setup(() => { const f = plan().writeCanary; writeFileSync(`${f}.x`, same(f)); renameSync(`${f}.x`, f); return ok; }).run()).toEqual(unavailable('write canary', 'seen by the outer runner'));
+    expect(await setup(() => { const f = plan().writeCanary; writeFileSync(`${f}.x`, same(f)); rmSync(f); symlinkSync(`${f}.x`, f); return ok; }).run()).toEqual(unavailable('write canary', 'seen by the outer runner'));
+    for (const f of readdirSync(state)) rmSync(join(state, f), { force: true });
+    clean();
+  });
+
+  test('every failure path removes the write canary, the read canary and the socket', async () => {
+    const failLine = [...pre.slice(0, 1).map(() => check('write canary', { ok: false, detail: 'x' }))].join('\n');
+    for (const s of [() => { throw new Error('spawn boom'); }, { status: 1, stderr: 'e' }, { timedOut: true, status: null }, { stdout: 'junk' }, { stdout: failLine }]) {
+      await setup(s).run();
+      clean();
+    }
+  });
+
+  test('the socket and read canary go in the shortest temp root', async () => {
+    let seen = '';
+    await setup(() => ((seen = JSON.parse(readFileSync(planAt(), 'utf8')).preflight.socket), { stdout: pass }), { tmp: undefined }).run();
+    const shortest = tempRoots().reduce((a, b) => (Buffer.byteLength(b) < Buffer.byteLength(a) ? b : a));
+    expect(seen.startsWith(`${shortest}/h-`)).toBe(true);
   });
 
   test('a deadline already past is a timeout, srt not called', async () => {

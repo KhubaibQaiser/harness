@@ -51,6 +51,11 @@ export function parseResults(stdout: string, nonce: string, expected: Expected[]
   return { lines };
 }
 
+// lstat does not follow links; ctime moves on any write, chmod or rename and userland cannot set it back.
+const identity = (f: string): string => {
+  const st = lstatSync(f);
+  return st.isFile() ? [st.dev, st.ino, st.size, st.mtimeMs, st.ctimeMs].join(':') : 'not a file';
+};
 const MAX_SOCK = 104; // macOS sun_path, including the NUL
 
 export interface Preflight { plan: PreflightPlan; denyWrite: string[]; denyRead: string[]; verify(): string | null; close(): void }
@@ -65,6 +70,7 @@ export async function preparePreflight(root: string, tmp: string, nonce: string,
   const body = randomBytes(16).toString('hex');
   const made: string[] = [];
   let connected = false;
+  let ident = '';
   const server = createServer((c) => ((connected = true), c.destroy()));
   let listening = false;
   const close = (): void => {
@@ -80,6 +86,7 @@ export async function preparePreflight(root: string, tmp: string, nonce: string,
   try {
     writeFileSync(writeCanary, body, { flag: 'wx', mode: 0o600 });
     made.push(writeCanary);
+    ident = identity(writeCanary);
     writeFileSync(readCanary, randomBytes(16).toString('hex'), { flag: 'wx', mode: 0o600 });
     made.push(readCanary);
     await new Promise<void>((res, rej) => server.once('error', rej).listen(socket, res));
@@ -95,7 +102,7 @@ export async function preparePreflight(root: string, tmp: string, nonce: string,
     denyRead: [readCanary],
     verify: () => {
       try {
-        if (readFileSync(writeCanary, 'utf8') !== body) return 'write canary';
+        if (identity(writeCanary) !== ident || readFileSync(writeCanary, 'utf8') !== body) return 'write canary';
       } catch {
         return 'write canary';
       }
@@ -141,7 +148,7 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
     mkdirSync(dir, { recursive: true });
     if (!lstatSync(dir).isDirectory() || real(dir) !== dir) return fail(stage, 'state folder is not a real directory');
     stage = 'preflight';
-    pre = await preparePreflight(root, d.tmp ?? inputs.tmp[0]!, nonce, d.platform);
+    pre = await preparePreflight(root, d.tmp ?? inputs.tmp.reduce((a, b) => (Buffer.byteLength(b) < Buffer.byteLength(a) ? b : a)), nonce, d.platform);
     stage = 'settings file';
     // R1: the runner must read the plan, so only the settings file is on denyRead. The nonce binds a line's origin; it is not a secret (step code can read it).
     const settings = Buffer.from(JSON.stringify(renderSrtSettings({ ...inputs, tokenBase, denyWrite: pre.denyWrite, denyRead: [sFile, ...pre.denyRead] }, d.platform)));
@@ -167,21 +174,33 @@ export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => 
     if (!readFileSync(sFile).equals(settings)) return fail(stage, 'changed');
     stage = 'srt exit';
     const r = await d.exec(found.launch[0]!, [...found.launch.slice(1), ...srtArgv(sFile, node, runner, pFile, nonce)], ms);
-    if (r.timedOut) return { kind: 'timeout' };
-    const err = r.stderr ?? '';
-    if (r.status !== 0) return fail(stage, err.trim() ? err : r.output.trim() ? r.output : `status ${r.status}`);
+    await new Promise((res) => setImmediate(res)); // let the listener accept a connection that arrived at the very end
     const seen = pre.verify(); // the outer view of the canaries and socket, whatever the inner lines say
     if (seen) return fail(seen, 'seen by the outer runner');
+    if (r.timedOut) {
+      // Steps start only after every check passed, so a timeout stays a timeout unless a check line that did arrive failed.
+      for (const text of (r.stdout ?? '').split('\n')) {
+        try {
+          const o = JSON.parse(text);
+          if (o?.nonce === nonce && o.kind === 'check' && o.ok === false && typeof o.name === 'string') return fail(o.name, typeof o.detail === 'string' ? o.detail : 'failed');
+        } catch {
+          /* a partial or non-JSON line is ignored */
+        }
+      }
+      return { kind: 'timeout' };
+    }
+    const err = r.stderr ?? '';
+    if (r.status !== 0) return fail(stage, err.trim() ? err : r.output.trim() ? r.output : `status ${r.status}`);
     const expected: Expected[] = [...PREFLIGHT_ORDER(pre.plan.linux).map((name): Expected => ({ kind: 'check', name })), ...steps.map((s): Expected => ({ kind: 'step', label: s.label }))];
     const parsed = parseResults(r.stdout ?? '', nonce, expected);
     if ('error' in parsed) return fail('result lines', parsed.error);
     const results: StepResult[] = parsed.lines.flatMap((l) => (l.kind === 'step' ? [{ label: l.label, status: l.status, timedOut: l.timedOut, ms: l.ms, output: l.output ?? '' }] : []));
+    const bad = parsed.lines.find((l) => l.kind === 'check' && !l.ok);
+    if (bad?.kind === 'check') return fail(bad.name, bad.detail ?? 'failed');
     // R12: srt's stderr should hold only proxy lines; anything else means a degraded srt.
     const errLines = err.split('\n').filter((s) => s.trim());
     const warn = errLines.find((s) => !s.startsWith(PROXY));
     if (warn) return fail('srt warning', warn);
-    const bad = parsed.lines.find((l) => l.kind === 'check' && !l.ok);
-    if (bad?.kind === 'check') return fail(bad.name, bad.detail ?? 'failed');
     const last = results.at(-1);
     const failed = !!last && (last.timedOut || last.status !== 0);
     if (!failed && r.stderrRolled) return fail('srt warning', 'stderr overflow'); // the dropped head may have held a warning

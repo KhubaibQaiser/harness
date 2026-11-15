@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -608,15 +608,19 @@ test.skipIf(winSkip)('a wrapped step failure blocks like today and keeps the srt
   writeFileSync(join(s.root, '.harness/hooks/dispatch.mjs'), '');
   const srtJs = fileURLToPath(new URL('../../../build.mjs', import.meta.url)); // outside every writable root; a .mjs is a node launch
   const probe: SrtProbe = { which: () => srtJs, version: () => '0.0.83' };
+  const made: string[] = [];
   const e: Exec = (cmd, args, ms) => {
     if (cmd === 'git') return s.exec(SRC)(cmd, args, ms);
     const nonce = args.at(-1)!;
-    const plan = JSON.parse(readFileSync(args.at(-2)!, 'utf8')) as { steps: { label: string }[] };
+    const plan = JSON.parse(readFileSync(args.at(-2)!, 'utf8')) as { steps: { label: string }[]; preflight: { readCanary: string; socket: string } };
+    made.push(plan.preflight.readCanary, plan.preflight.socket);
     const checks = ['write canary', 'read canary', 'unix socket', 'network', ...(process.platform === 'linux' ? ['user namespace'] : [])].map((name) => JSON.stringify({ nonce, kind: 'check', name, ok: true }));
     const out = checks.concat(plan.steps.slice(0, 2).map((st, i) => JSON.stringify({ nonce, kind: 'step', label: st.label, status: i, timedOut: false, ms: 1, ...(i ? { output: 'boom in lint' } : {}) })));
     return { status: 0, output: '', timedOut: false, stdout: out.join('\n'), stderr: 'sandbox proxy: denied registry.npmjs.org:443\n' };
   };
   const d = await wrapped(s, probe)(e);
+  expect(made).toHaveLength(2);
+  expect(made.filter((f) => existsSync(f))).toEqual([]); // the canary and socket in the shared temp dir are removed
   expect(d).toMatchObject({ kind: 'block', check: 'stop' });
   const reason = (d as { reason: string }).reason;
   expect(reason).toMatch(/^lint failed \(attempt 1 of 3\)/);

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, test } from 'vitest';
 import { allowWriteMessage } from '../../../src/checks/stop/allow-write.js';
@@ -251,11 +252,24 @@ suite('runWrapped', () => {
     }
   });
 
-  test('the socket and read canary go in the shortest temp root', async () => {
-    let seen = '';
-    await setup(() => ((seen = JSON.parse(readFileSync(planAt(), 'utf8')).preflight.socket), { stdout: pass }), { tmp: undefined }).run();
+  test('the socket and read canary go in the shortest temp root, and are gone after', async () => {
+    const rnd = randomBytes(16).toString('hex');
+    let p: { socket: string; readCanary: string } | undefined;
+    await setup(() => ((p = JSON.parse(readFileSync(planAt(rnd), 'utf8')).preflight), { stdout: pass.replaceAll(N, rnd) }), { tmp: undefined, nonce: () => rnd }).run();
     const shortest = tempRoots().reduce((a, b) => (Buffer.byteLength(b) < Buffer.byteLength(a) ? b : a));
-    expect(seen.startsWith(`${shortest}/h-`)).toBe(true);
+    expect(p!.socket.startsWith(`${shortest}/h-`)).toBe(true);
+    expect(p!.readCanary.startsWith(`${shortest}/h-canary-`)).toBe(true);
+    expect([p!.socket, p!.readCanary].filter(existsSync)).toEqual([]);
+  });
+
+  test('the timeout scan ignores unknown check names and non-boolean ok, and caps the detail', async () => {
+    const t = (o: Record<string, unknown>) => ({ timedOut: true, status: null, stdout: JSON.stringify({ nonce: N, kind: 'check', ...o }) });
+    expect(await setup(t({ name: 'evil\u001b[2J', ok: false, detail: 'x' })).run()).toEqual({ kind: 'timeout' });
+    expect(await setup(t({ name: 'network', ok: 'no' })).run()).toEqual({ kind: 'timeout' });
+    const r = await setup(t({ name: 'network', ok: false, detail: 'y\u001b[2J' + 'z'.repeat(500) })).run();
+    expect(r).toMatchObject({ kind: 'unavailable', reason: 'network' });
+    expect(r.kind === 'unavailable' && r.message).not.toContain('\u001b');
+    expect(r.kind === 'unavailable' && r.message.length).toBeLessThan(900);
   });
 
   test('a deadline already past is a timeout, srt not called', async () => {

@@ -238,6 +238,10 @@ test('stopSandboxLine: one string per form', () => {
   expect(stopSandboxLine(cfgOf(), 'linux', FOUND, null)).toBe('Stop sandbox: srt 0.0.83');
   expect(stopSandboxLine(cfgOf(), 'linux', { why: { kind: 'missing' } }, null)).toBe('Stop sandbox: UNAVAILABLE - stop gate blocks');
   expect(stopSandboxLine(cfgOf('unattended', true), 'linux', FOUND, null)).toBe('Stop sandbox: srt 0.0.83 - stop.allow_local on');
+  expect(stopSandboxLine(cfgOf('unattended', true), 'linux', { why: { kind: 'missing' } }, null)).toBe('Stop sandbox: UNAVAILABLE - stop gate blocks - stop.allow_local on');
+  // No effect when steps run unwrapped, so no suffix.
+  expect(stopSandboxLine(cfgOf('off', true), 'linux', null, null)).toBe('Stop sandbox: off - logged');
+  expect(stopSandboxLine(cfgOf('unattended', true), 'win32', null, null)).toBe('Stop sandbox: off - native Windows');
 });
 
 test('stopSandboxLine: never-ran is appended found or not, and the version is escaped', () => {

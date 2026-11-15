@@ -128,9 +128,9 @@ export const WIN_STEPS_WARNING = "Stop steps run without a sandbox on native Win
 
 /** The `harness status` line. The caller never probes srt for `off` or win32, so `found` is only read for the other forms. */
 export function stopSandboxLine(config: HarnessConfig, platform: NodeJS.Platform, found: SrtFound | { why: SrtWhy } | null, rec: StopSandboxRecord | null): string {
-  const local = config.stop.allow_local ? ' - stop.allow_local on' : '';
-  if (platform === 'win32') return `Stop sandbox: off - native Windows${local}`;
-  if (config.sandbox === 'off' || !found) return `Stop sandbox: off - logged${local}`;
+  if (platform === 'win32') return 'Stop sandbox: off - native Windows';
+  if (config.sandbox === 'off' || !found) return 'Stop sandbox: off - logged';
+  const local = config.stop.allow_local ? ' - stop.allow_local on' : ''; // no effect when steps run unwrapped
   const never = rec?.outcome === 'never-ran' ? '; last stop: checks never ran' : '';
   return 'why' in found ? `Stop sandbox: UNAVAILABLE - stop gate blocks${never}${local}` : `Stop sandbox: srt ${esc(found.version)}${never}${local}`;
 }

@@ -585,6 +585,29 @@ const betaInstall = (root: string, pre: object) => {
 const SETTINGS = '.claude/settings.json';
 const settingsBlocks = (root: string) => readManifest(root)!.files.find((f) => f.rel === SETTINGS)!.blocks!;
 
+test('an install with the old compact group is updated in place to the new group, with one group and no note', async () => {
+  const root = await installed();
+  const sp = join(root, SETTINGS);
+  const s = JSON.parse(readFileSync(sp, 'utf8'));
+  const oldGroup = { matcher: 'compact', hooks: s.hooks.SessionStart[0].hooks };
+  s.hooks.SessionStart = [oldGroup];
+  const text = JSON.stringify(s, null, 2) + '\n';
+  writeFileSync(sp, text);
+  const mp = join(root, '.harness/manifest.json');
+  const m = JSON.parse(readFileSync(mp, 'utf8'));
+  const f = m.files.find((x: { rel: string }) => x.rel === SETTINGS);
+  f.blocks = f.blocks.map((b: string) => (JSON.parse(b).event === 'SessionStart' ? JSON.stringify({ event: 'SessionStart', group: oldGroup }) : b));
+  f.hash = sha256(text);
+  writeFileSync(mp, JSON.stringify(m, null, 2) + '\n');
+  commitAll(root);
+  const r = await up(root, ['--yes']);
+  expect(r.code).toBe(0);
+  expect(r.out).not.toContain('left as is');
+  const g = JSON.parse(readFileSync(sp, 'utf8')).hooks.SessionStart;
+  expect(g).toHaveLength(1);
+  expect(g[0]).not.toHaveProperty('matcher');
+});
+
 test('update replaces the beta hook groups, and uninstall removes the settings file init created', async () => {
   const root = await installed();
   const fresh = settingsBlocks(root);

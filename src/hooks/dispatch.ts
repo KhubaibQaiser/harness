@@ -14,7 +14,7 @@ import { multiFile } from '../checks/multi-file.js';
 import { protect } from '../checks/protect.js';
 import { taskGate } from '../checks/task-gate.js';
 import { stateCardCheck } from '../checks/state-card.js';
-import { sandboxRequired } from '../checks/sandbox-required.js';
+import { sandboxRequired, scrubNote } from '../checks/sandbox-required.js';
 import { redFirst } from '../checks/tdd/red-first.js';
 import { tamper } from '../checks/tdd/tamper.js';
 import { specGate } from '../checks/tdd/spec-gate.js';
@@ -42,7 +42,7 @@ export { configInvalidWhy } from './config-gate.js';
 export { detectBaseHead } from './session-setup.js';
 
 // multiFile runs after every other PreToolUse check, so an edit another check denies is never recorded as touched.
-export const registry: Check[] = [guard, prSize, protect, taskGate, sandboxRequired, redFirst, tamper, testLock, specGate, prBody, secretScan, mcpWrites, multiFile, decisionSignals, configChange, evidenceLedger, stopGate, doneClaim, stateCardCheck];
+export const registry: Check[] = [guard, prSize, protect, taskGate, sandboxRequired, redFirst, tamper, testLock, specGate, prBody, secretScan, mcpWrites, multiFile, decisionSignals, configChange, evidenceLedger, stopGate, doneClaim, stateCardCheck, scrubNote];
 
 const PROCESS_START = Date.now();
 const EVENTS = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'ConfigChange'];

@@ -3,6 +3,7 @@ import { appendEvent } from '../core/events.js';
 import { type Layer, effective, readManagedLayers } from '../core/settings-layers.js';
 import { isShell } from '../hooks/edit-target.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
+import { scrubOnly } from '../core/unattended.js';
 import { findOnPath } from './stop/runner.js';
 
 const MSG = "Unattended run without Claude Code's sandbox. Start it with the command in the README (Unattended runs and CI), or set `sandbox: off` in `.harness/config.yaml`.";
@@ -74,4 +75,15 @@ export const sandboxRequired: Check = {
     }
     return { kind: 'allow' };
   },
+};
+
+export const SCRUB_NOTE =
+  'harness: this session is treated as unattended because CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is set (any value but 0, false, no or off); questions become denies and the unattended gates apply. Unset it in your shell profile for interactive work.';
+
+/** SessionStart: say why asks become denies when the scrub alone is the cause. Not failClosed: a SessionStart never blocks. */
+export const scrubNote: Check = {
+  name: 'unattended-note',
+  events: ['SessionStart'],
+  pure: true,
+  run: (ctx) => (scrubOnly(ctx.input, ctx.env) ? { kind: 'context', text: SCRUB_NOTE, notice: SCRUB_NOTE, check: 'unattended-note' } : { kind: 'allow' }),
 };

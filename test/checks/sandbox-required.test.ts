@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, onTestFinished, test } from 'vitest';
-import { sandboxRequired, sandboxVerdict } from '../../src/checks/sandbox-required.js';
+import { SCRUB_NOTE, sandboxRequired, sandboxVerdict } from '../../src/checks/sandbox-required.js';
 import type { SandboxMode } from '../../src/core/config.js';
 import { readEvents } from '../../src/core/events.js';
 import type { Layer } from '../../src/core/settings-layers.js';
@@ -217,5 +217,39 @@ describe('the check', () => {
     const { root, ...opts } = setup();
     for (let i = 0; i < 2; i++) expect(await dispatch(call(root, 'PowerShell', { command: 'ls' }), [sandboxRequired], {}, { ...opts, platform: 'win32' })).toBe('');
     expect(readEvents(root).map((e) => [e.check, e.decision])).toEqual([['sandbox-required', 'sandbox-unavailable']]);
+  });
+});
+
+describe('scrubNote at SessionStart (real registry)', () => {
+  const S = { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' };
+  const start = (source: string, extra: object = {}) => {
+    const root = mkdtempSync(join(tmpdir(), 'h-scrub-'));
+    onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+    mkdirSync(join(root, '.harness/state'), { recursive: true });
+    writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  tdd: true\n');
+    return JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'sn', cwd: root, source, ...extra });
+  };
+  const run = async (raw: string, env: NodeJS.ProcessEnv) => {
+    const o = await dispatch(raw, registry, env);
+    return o ? JSON.parse(o) : null;
+  };
+  test('scrub alone at startup: additionalContext and systemMessage are the note', async () => {
+    const o = await run(start('startup'), S);
+    expect(o.hookSpecificOutput.additionalContext).toBe(SCRUB_NOTE);
+    expect(o.systemMessage).toBe(SCRUB_NOTE);
+  });
+  test('no note when CI, HARNESS_UNATTENDED or bypassPermissions already make it unattended, or without the scrub', async () => {
+    expect(await run(start('startup'), { ...S, CI: 'true' })).toBeNull();
+    expect(await run(start('startup'), { ...S, HARNESS_UNATTENDED: '1' })).toBeNull();
+    expect(await run(start('startup', { permission_mode: 'bypassPermissions' }), S)).toBeNull();
+    expect(await run(start('startup'), {})).toBeNull();
+  });
+  test('compact with the scrub alone: the state card and the note together', async () => {
+    const o = await run(start('compact'), S);
+    expect(o.hookSpecificOutput.additionalContext).toContain('Harness state');
+    expect(o.hookSpecificOutput.additionalContext).toContain(SCRUB_NOTE);
+  });
+  test('resume and clear sources also get the note', async () => {
+    for (const source of ['resume', 'clear']) expect((await run(start(source), S)).hookSpecificOutput.additionalContext).toBe(SCRUB_NOTE);
   });
 });

@@ -1,9 +1,8 @@
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { appendEvent } from '../core/events.js';
-import {
-  GUARDED, type GuardedView, guardedDiff, guardedView, harnessDenyRules, readGuarded, readRepoSnapshot, settingsFingerprint,
-} from '../core/harness-files.js';
+import { GUARDED, type GuardedView, guardedView, readGuarded, readRepoSnapshot, settingsFingerprint } from '../core/harness-files.js';
+import { ownedSettings, weakened } from '../core/settings-weaken.js';
 import type { Check } from '../hooks/dispatch.js';
 
 // Source values from the hooks reference (ConfigChange input). policy_settings can't be blocked, and skills aren't guarded.
@@ -19,8 +18,10 @@ const real = (p: string, home: string): string => {
   }
 };
 
-// Spec 3.3 (D6, C5): a mid-session change to harness's hooks, its deny rules, disableAllHooks, sandbox or env is not applied
-// to the running session, measured against the guarded views at the session's first other hook (plan ruling 4).
+// Spec 3.3 (D6, C5), narrowed by plan ruling R11 (CC7): a mid-session change that weakens harness (settings-weaken.ts) is
+// not applied to the running session, measured against the guarded views at the session's first other hook (plan ruling
+// 4). Any other change applies live. Claude Code shows nothing for a blocked change (hooks reference, ConfigChange), so the
+// next prompt's notice is the only signal.
 export const configChange: Check = {
   name: 'config-change',
   events: ['ConfigChange'],
@@ -31,7 +32,8 @@ export const configChange: Check = {
     const user = GUARDED.user(ctx.home, ctx.env);
     const rel = key !== 'user' ? GUARDED[key] : user === join(ctx.home, '.claude', 'settings.json') ? '~/.claude/settings.json' : user;
     const base = ctx.state?.guardedBase;
-    const deny = harnessDenyRules(ctx.root);
+    const owned = ownedSettings(ctx.root);
+    const deny = owned.deny;
     let text: string | null = null;
     let cur: GuardedView = null;
     try {
@@ -44,7 +46,9 @@ export const configChange: Check = {
     const elsewhere = reported !== undefined && real(reported, ctx.home) !== real(user, ctx.home);
     const parts = elsewhere
       ? [`not the watched \`${rel}\`: launch with HARNESS_CLAUDE_CONFIG_DIR set`]
-      : base ? guardedDiff(base[key] ?? null, cur) : ['no session baseline'];
+      : base ? weakened(base[key] ?? null, cur, owned)
+      // No baseline: the project file against the manifest's records, the others against an empty file.
+      : deny ? weakened(key === 'project' ? undefined : guardedView('{}', deny), cur, owned) : ['no session baseline'];
     if (!parts.length) return { kind: 'allow' };
     if (base && rel === GUARDED.project && cur) {
       // A change the harness CLI recorded (init, update, uninstall) is allowed, and becomes this file's baseline. Only the
@@ -63,13 +67,13 @@ export const configChange: Check = {
     try {
       appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'config-change', decision: 'config-change-blocked', reason: `${shown}: ${list}` });
     } catch {} // the block stands without the log
-    const notice = `Harness blocked a change to \`${shown}\` (${list}) in this session. The file is still changed on disk, so the next session loads it: review it first.`;
+    const notice = `Harness blocked a change to \`${shown}\` (${list}): the whole file change was held for this session, not only those parts. The file is still changed on disk, so the next session loads it: review it first.`;
     const pending = ctx.state?.pendingNotice;
     if (ctx.state) ctx.save({ ...ctx.state, pendingNotice: pending?.split('\n').includes(notice) ? pending : [pending, notice].filter(Boolean).join('\n') });
     return {
       kind: 'block',
       check: 'config-change',
-      reason: `Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and \`env\` as they were when this session started, so this change to \`${shown}\` (${list}) is not applied to the session. Ask the person to make this change outside the session.`,
+      reason: `Harness keeps its own hooks, deny rules, sandbox keys and hook-steering \`env\` keys as they were when this session started, and disableAllHooks off, so this change to \`${shown}\` (${list}) is not applied to the session. Ask the person to make this change outside the session.`,
     };
   },
 };

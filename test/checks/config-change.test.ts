@@ -15,14 +15,15 @@ const FORCE = 'Bash(git push *--force*)';
 const GROUP = { hooks: [{ type: 'command', command: 'node', args: ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'], onFailure: 'block' }] };
 const SETTINGS = { hooks: { PreToolUse: [{ matcher: 'Bash', ...GROUP }], ConfigChange: [GROUP] }, permissions: { deny: [FORCE] } };
 
-const repo = () => {
+const SANDBOX_BLOCKS = [{ set: ['sandbox'], value: {} }, { set: ['sandbox', 'enabled'], value: true }];
+const repo = (blocks: object[] = []) => {
   const root = mkdtempSync(join(tmpdir(), 'h-cc-'));
   const home = mkdtempSync(join(tmpdir(), 'h-cc-home-'));
   mkdirSync(join(root, '.harness/hooks'), { recursive: true });
   mkdirSync(join(root, '.claude'));
   mkdirSync(join(home, '.claude'));
   writeFileSync(join(root, '.harness/config.yaml'), 'checks:\n  guard: true\n');
-  writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ version: '1', createdAt: 'x', files: [{ rel: '.claude/settings.json', kind: 'create', hash: 'x', blocks: [JSON.stringify({ deny: FORCE })] }] }));
+  writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ version: '1', createdAt: 'x', files: [{ rel: '.claude/settings.json', kind: 'create', hash: 'x', blocks: [{ deny: FORCE }, ...blocks].map((b) => JSON.stringify(b)) }] }));
   writeFileSync(join(root, '.harness/hooks/dispatch.mjs'), '// v1\n');
   writeFileSync(join(root, '.claude/settings.json'), JSON.stringify(SETTINGS));
   writeFileSync(join(home, '.claude/settings.json'), '{}');
@@ -46,10 +47,10 @@ test('a project hook removed is blocked, logged, and noticed at the next prompt 
   await prompt(r); // first hook: baseline
   write(join(r.root, '.claude/settings.json'), { ...SETTINGS, hooks: { ConfigChange: [GROUP] } });
   const out = parsed(await change(r, 'project_settings'));
-  expect(out).toEqual({ decision: 'block', reason: 'Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and `env` as they were when this session started, so this change to `.claude/settings.json` (hooks) is not applied to the session. Ask the person to make this change outside the session.' });
+  expect(out).toEqual({ decision: 'block', reason: 'Harness keeps its own hooks, deny rules, sandbox keys and hook-steering `env` keys as they were when this session started, and disableAllHooks off, so this change to `.claude/settings.json` (hooks) is not applied to the session. Ask the person to make this change outside the session.' });
   expect(readEvents(r.root).filter((e) => e.decision === 'config-change-blocked').map((e) => e.reason)).toEqual(['.claude/settings.json: hooks']);
   expect(lastConfigChangeBlocked(r.root)?.reason).toBe('.claude/settings.json: hooks');
-  const notice = 'Harness blocked a change to `.claude/settings.json` (hooks) in this session. The file is still changed on disk, so the next session loads it: review it first.';
+  const notice = 'Harness blocked a change to `.claude/settings.json` (hooks): the whole file change was held for this session, not only those parts. The file is still changed on disk, so the next session loads it: review it first.';
   expect(readState(r.root, 's').pendingNotice).toBe(notice);
   const next = parsed(await prompt(r));
   expect(next.systemMessage).toContain(notice);
@@ -162,9 +163,9 @@ test('a CLI-recorded change is allowed, and so is a later allow-only change to t
 test('the CLI record never covers the user file', async () => {
   const r = repo();
   await prompt(r);
-  write(join(r.home, '.claude/settings.json'), { sandbox: { enabled: false } });
+  write(join(r.home, '.claude/settings.json'), { disableAllHooks: true });
   stampHarnessFiles(r.root);
-  expect(parsed(await change(r, 'user_settings')).reason).toContain('(sandbox)');
+  expect(parsed(await change(r, 'user_settings')).reason).toContain('(disableAllHooks)');
 });
 
 test('deleting the project settings blocks', async () => {
@@ -182,10 +183,11 @@ test('a non-JSON guarded file blocks as unreadable', async () => {
   expect(parsed(await change(r, 'local_settings')).reason).toContain('`.claude/settings.local.json` (unreadable)');
 });
 
-test('no baseline blocks', async () => {
+test('no baseline: a weakening change blocks, judged against the manifest; the baseline is then taken once', async () => {
   const r = repo();
-  // The session's first hook is the ConfigChange itself: nothing to compare against, so it blocks as onFailure would.
-  expect(parsed(await change(r, 'local_settings'))?.decision).toBe('block');
+  // The session's first hook is the ConfigChange itself: the local file is judged against an empty file.
+  write(join(r.root, '.claude/settings.local.json'), { disableAllHooks: true });
+  expect(parsed(await change(r, 'local_settings'))?.reason).toContain('`.claude/settings.local.json` (disableAllHooks)');
   expect(readState(r.root, 's').guardedBase).toBeUndefined();
   await prompt(r); // the next other hook takes the baseline, once
   const base = readState(r.root, 's').guardedBase;
@@ -213,7 +215,7 @@ test('a script that strips the project file to {} after the CLI record is blocke
 });
 
 test('a CLI record for the local file does not let a later script change sandbox there', async () => {
-  const r = repo();
+  const r = repo(SANDBOX_BLOCKS);
   write(join(r.root, '.claude/settings.local.json'), { permissions: { allow: ['Bash(ls)'] } });
   stampHarnessFiles(r.root);
   await prompt(r);
@@ -227,7 +229,7 @@ test('the same blocked change twice leaves the notice once', async () => {
   write(join(r.root, '.claude/settings.json'), { ...SETTINGS, disableAllHooks: true });
   await change(r, 'project_settings');
   await change(r, 'project_settings');
-  expect(readState(r.root, 's').pendingNotice).toBe('Harness blocked a change to `.claude/settings.json` (disableAllHooks) in this session. The file is still changed on disk, so the next session loads it: review it first.');
+  expect(readState(r.root, 's').pendingNotice).toBe('Harness blocked a change to `.claude/settings.json` (disableAllHooks): the whole file change was held for this session, not only those parts. The file is still changed on disk, so the next session loads it: review it first.');
 });
 
 test('a harness deny rule rewritten narrower is blocked (C5)', async () => {
@@ -239,7 +241,7 @@ test('a harness deny rule rewritten narrower is blocked (C5)', async () => {
 });
 
 test('a CLI record from before the session never allows restoring its state over a later edit', async () => {
-  const r = repo();
+  const r = repo(SANDBOX_BLOCKS);
   stampHarnessFiles(r.root); // init or update records the project file
   write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { enabled: true } }); // the person's edit between sessions
   await prompt(r); // new session: baseline has the sandbox
@@ -268,4 +270,52 @@ test('a CLI record never covers the local file: a blocked change recorded mid-se
   stampHarnessFiles(r.root);
   expect(parsed(await change(r, 'local_settings'))?.reason).toContain('`.claude/settings.local.json` (disableAllHooks)');
   expect(await change(r, 'project_settings')).toBe('');
+});
+
+test('a user env MCP token added applies, in the user and the project file', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.home, '.claude/settings.json'), { env: { MCP_TOKEN: 'abc' } });
+  expect(await change(r, 'user_settings')).toBe('');
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, env: { ANTHROPIC_MODEL: 'x' } });
+  expect(await change(r, 'project_settings')).toBe('');
+  expect(readEvents(r.root).some((e) => e.decision === 'config-change-blocked')).toBe(false);
+});
+
+test('a user hook added applies', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, hooks: { ...SETTINGS.hooks, Stop: [{ hooks: [{ type: 'command', command: 'echo done' }] }] } });
+  expect(await change(r, 'project_settings')).toBe('');
+});
+
+test('a /sandbox-style local network.allowedDomains edit applies', async () => {
+  const r = repo(SANDBOX_BLOCKS);
+  await prompt(r);
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { enabled: true, network: { allowedDomains: ['registry.npmjs.org'] } } });
+  expect(await change(r, 'local_settings')).toBe('');
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { enabled: false } });
+  expect(parsed(await change(r, 'local_settings')).reason).toContain('`.claude/settings.local.json` (sandbox)');
+});
+
+test('a change with no baseline that keeps every harness entry applies', async () => {
+  const r = repo();
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, env: { MCP_TOKEN: 'x' }, permissions: { deny: [FORCE], allow: ['Bash(ls)'] } });
+  expect(await change(r, 'project_settings')).toBe('');
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, permissions: { deny: [] } });
+  expect(parsed(await change(r, 'project_settings')).reason).toContain('`.claude/settings.json` (deny)');
+});
+
+test('no baseline and no readable manifest blocks', async () => {
+  const r = repo();
+  write(join(r.root, '.harness/manifest.json'), '{');
+  expect(parsed(await change(r, 'project_settings')).reason).toContain('(no session baseline)');
+});
+
+test('the pending notice names only the weakened parts and says the whole file change was held for this session', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.root, '.claude/settings.local.json'), { env: { MCP_TOKEN: 'x', NODE_OPTIONS: '--require x.js' }, permissions: { allow: ['Bash(ls)'] } });
+  expect(parsed(await change(r, 'local_settings'))?.decision).toBe('block');
+  expect(readState(r.root, 's').pendingNotice).toBe('Harness blocked a change to `.claude/settings.local.json` (env): the whole file change was held for this session, not only those parts. The file is still changed on disk, so the next session loads it: review it first.');
 });

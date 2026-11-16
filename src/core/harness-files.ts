@@ -82,19 +82,6 @@ export function guardedView(text: string | null, deny: Set<string> | null): Guar
   return { hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null, sandbox: s?.sandbox, env };
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-/** The guarded parts changed from base to cur. A deny rule counts only when a base rule is gone (removed or narrowed). */
-export function guardedDiff(base: GuardedView, cur: GuardedView): GuardedPart[] {
-  if (!base || !cur) return ['unreadable'];
-  const parts: GuardedPart[] = [];
-  if (!same(base.hooks, cur.hooks)) parts.push('hooks');
-  if (base.deny.some((r) => !cur.deny.includes(r))) parts.push('deny');
-  if (!same(base.disableAllHooks, cur.disableAllHooks)) parts.push('disableAllHooks');
-  if (!same(base.sandbox, cur.sandbox)) parts.push('sandbox');
-  if (!same(base.env, cur.env)) parts.push('env');
-  return parts;
-}
-
 export const GUARDED = { user: userSettingsPath, project: '.claude/settings.json', local: '.claude/settings.local.json' } as const;
 /** The file's text, or null when it doesn't exist; any other read error throws. */
 export function readGuarded(path: string): string | null {

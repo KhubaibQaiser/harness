@@ -118,3 +118,7 @@ New since 0.2.0-beta.0, unchanged in this release:
 ### Stop gate on Ubuntu 26.04
 
 - The message no longer tells you to install `srt` when `srt` is installed and failed a check (`srt exit`, `srt warning`, preflight checks and the like): it points at `harness doctor` and `srt`'s own error. `harness doctor` now detects Ubuntu's loaded `bwrap-userns-restrict` AppArmor profile (the cause of `srt exit (apply-seccomp: write /proc/self/setgroups)` on 25.04 and newer) and prints the fix and its cost; it never applies it. CI now also runs the real-`srt` job on `ubuntu-26.04`.
+
+### Claude Code compatibility
+
+- The `ConfigChange` hook now holds a mid-session settings change only when it weakens harness: a harness hook entry or deny rule removed or changed, `disableAllHooks` turned on, a sandbox key or `denyWrite` path harness wrote loosened, or a hook-steering `env` key (`PATH`, `NODE_OPTIONS`, `CI`, `HARNESS_*`, `GIT_*` and the like) changed. Your own hooks, deny rules, other `env` keys (an MCP token, a model) and `/sandbox` network domains apply at once. Claude Code shows nothing for a held change, so the notice at your next prompt names the weakened parts and says the whole file change was held.

@@ -129,8 +129,8 @@ describe('the check', () => {
     expect(await dispatch(call(root, 'Write', { file_path: user, content: JSON.stringify(CONFIRMED) }), registry, {}, opts)).toBe('');
     writeFileSync(user, JSON.stringify(CONFIRMED)); // what the allowed Write does
     const cc = JSON.stringify({ hook_event_name: 'ConfigChange', session_id: 's', cwd: root, source: 'user_settings', file_path: user });
-    expect(JSON.parse(await dispatch(cc, registry, {}, opts)).decision).toBe('block');
-    expect(await bash()).toBe('deny');
+    expect(await dispatch(cc, registry, {}, opts)).toBe(''); // turning the sandbox on weakens nothing: it applies (CC7)
+    expect(await bash()).toBe('deny'); // the requirement still reads the session-start files
   });
 
   test('a sandbox confirmed at the session start allows; managed is still read from disk', async () => {

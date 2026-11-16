@@ -2,8 +2,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { type Git, headBranch, isOver, measure, realGit, type SizeConfig } from '../../../src/checks/pr-size/measure.js';
+import { type Git, headBranch, isOver, measure, realGit, type Size, type SizeConfig } from '../../../src/checks/pr-size/measure.js';
 import { defaults } from '../../../src/core/config.js';
+import { TEST_FILE_GLOBS } from '../../../src/core/paths.js';
 import { makeRepo } from '../../install/helpers.js';
 import { SAFE_DIFF } from '../../../src/core/git-safe.js';
 
@@ -38,10 +39,27 @@ const fakeGit = (reply: ReturnType<Git> = { status: 0, stdout: '' }) => {
 };
 
 describe('counting', () => {
-  test('a 10-line source and a 5-line test count 15 lines in 2 files against origin/main', () => {
+  test('a 10-line source counts and a 5-line test is listed as not counted, against origin/main', () => {
     const root = repo();
     commit(root, { 'src/a.ts': lines(10), 'test/a.test.ts': lines(5) });
-    expect(measure(root, {}, cfg())).toEqual({ base: 'origin/main', head: 'HEAD', lines: 15, files: 2, top: [{ path: 'src/a.ts', lines: 10 }, { path: 'test/a.test.ts', lines: 5 }], excluded: [] });
+    expect(measure(root, {}, cfg())).toEqual({ base: 'origin/main', head: 'HEAD', lines: 10, files: 1, top: [{ path: 'src/a.ts', lines: 10 }], excluded: ['test/a.test.ts'] });
+  });
+
+  test('500 test lines and 50 source lines are under the limit, and the test files are named as not counted', () => {
+    const root = repo();
+    const tests = ['src/a.test.ts', 'src/b.spec.js', 'src/__tests__/c.ts', 'test/d.ts', 'tests/e.ts', 'pkg/test_f.py', 'pkg/g_test.py', 'pkg/h_test.go', 'src/__snapshots__/x.snap'];
+    commit(root, { 'src/a.ts': lines(50), ...Object.fromEntries(tests.map((p) => [p, lines(55)])) });
+    const s = measure(root, {}, cfg()) as Size;
+    expect(s).toMatchObject({ lines: 50, files: 1, excluded: [...tests].sort() });
+    expect(isOver(s, defaults().pr_size)).toBe(false);
+  });
+
+  test("a person's own pr_size.exclude replaces the default, so tests count again unless they list them", () => {
+    const root = repo();
+    commit(root, { 'src/a.ts': lines(10), 'gen/g.ts': lines(30), 'test/a.test.ts': lines(5) });
+    const c = cfg();
+    expect(measure(root, {}, { ...c, pr_size: { ...c.pr_size, exclude: ['gen/**'] } })).toMatchObject({ lines: 15, files: 2, excluded: ['gen/g.ts'] });
+    expect(measure(root, {}, { ...c, pr_size: { ...c.pr_size, exclude: ['gen/**', ...TEST_FILE_GLOBS] } })).toMatchObject({ lines: 10, files: 1, excluded: ['gen/g.ts', 'test/a.test.ts'] });
   });
 
   test('lockfiles, ignore files, snapshots and generated paths are excluded; .npmignore and .harnessignore count', () => {

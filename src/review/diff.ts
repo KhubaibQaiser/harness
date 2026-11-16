@@ -1,4 +1,5 @@
 import picomatch from 'picomatch';
+import { TEST_FILE_GLOBS } from '../core/paths.js';
 import { SAFE_DIFF } from '../core/git-safe.js';
 
 export interface Hunk { oldStart: number; newStart: number; rows: { kind: '+' | '-' | ' '; text: string; old?: number; new?: number }[] }
@@ -59,6 +60,9 @@ export function commentable(files: DiffFile[]): Record<string, { RIGHT: number[]
   }
   return out;
 }
+
+/** The reviewer checks test quality, so it reads tests even though they are not counted toward the PR size. */
+export const reviewExclude = (exclude: string[]): string[] => exclude.filter((g) => !TEST_FILE_GLOBS.includes(g));
 
 /** Excluded files are listed, not sent; then whole files go in diff order while they fit. A file that doesn't fit is skipped and later ones are still tried. */
 export function capDiff(files: DiffFile[], cap: number, exclude: string[]): { sent: DiffFile[]; omitted: { path: string; why: string }[] } {

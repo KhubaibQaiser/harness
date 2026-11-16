@@ -16,7 +16,7 @@ import { harnessIgnoreText } from '../install/harnessignore.js';
 import { LIMITS } from '../vet/fetch.js';
 import { baseBlobs, driftCheck, lsTree } from './base.js';
 import { contextMd, DELETED_FORK, diffText, newNonce, nonceIn } from './context.js';
-import { capDiff, commentable, DIFF_CAP, diffArgs, parseDiff } from './diff.js';
+import { capDiff, commentable, reviewExclude, DIFF_CAP, diffArgs, parseDiff } from './diff.js';
 import { issueView, parsePr, preflight, prView, reviewComments } from './gh.js';
 import { writeSnapshot } from './snapshot.js';
 
@@ -123,7 +123,7 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
     const d = exec('git', [...SAFE_GIT, ...diffArgs(mergeBase, headSha)], { timeoutMs: 120_000 });
     if (d.status !== 0) return fail(`review: git diff failed: ${gitErr(d)}`);
     const files = parseDiff(d.stdout);
-    const cap = capDiff(files, DIFF_CAP, cfg.config.pr_size.exclude);
+    const cap = capDiff(files, DIFF_CAP, reviewExclude(cfg.config.pr_size.exclude));
 
     const dir = resolve(root, outDir), head = join(dir, 'head');
     const changed = new Set(files.map((x) => x.path));

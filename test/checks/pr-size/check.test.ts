@@ -23,10 +23,10 @@ afterEach(() => void chmodded.splice(0).forEach((p) => chmodSync(p, 0o755)));
 describe('thresholds', () => {
   test('400 lines allows; 401 asks with the exact create copy', () => {
     expect(decidePrSize(ctx(repo({ 'src/a.ts': lines(400) }), 'gh pr create'))).toEqual({ kind: 'allow' });
-    const root = repo({ 'src/a.ts': lines(300), 'src/b.ts': lines(100), 'test/a.test.ts': lines(1), 'pnpm-lock.yaml': lines(9) });
+    const root = repo({ 'src/a.ts': lines(300), 'src/b.ts': lines(100), 'src/c.ts': lines(1), 'pnpm-lock.yaml': lines(9) });
     expect(decidePrSize(ctx(root, 'gh pr create'))).toEqual({
       kind: 'ask', check: 'pr-size',
-      reason: `Confirm: this pull request is 401 changed lines in 3 files against \`origin/main\`, over the limit of 400 lines or 20 files (aim for 200). Largest: \`src/a.ts\` 300, \`src/b.ts\` 100, \`test/a.test.ts\` 1. Not counted: \`pnpm-lock.yaml\`. ${ASK_END}`,
+      reason: `Confirm: this pull request is 401 changed lines in 3 files against \`origin/main\`, over the limit of 400 lines or 20 files (aim for 200). Largest: \`src/a.ts\` 300, \`src/b.ts\` 100, \`src/c.ts\` 1. Not counted: \`pnpm-lock.yaml\`. ${ASK_END}`,
     });
   });
 

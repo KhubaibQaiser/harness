@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import { expect, test } from 'vitest';
 import { validateConfig } from '../../src/core/config-io.js';
+import { TEST_FILE_GLOBS } from '../../src/core/paths.js';
 import { configReference, defaults, esc, loadConfig, PR_SIZE_EXCLUDE } from '../../src/core/config.js';
 
 const emptyDir = () => mkdtempSync(join(tmpdir(), 'h-cfg-'));
@@ -239,7 +240,8 @@ const withPrSize = (pr_size: string) => dirWith('.harness/config.yaml', `pr_size
 
 test('pr_size defaults, and no section loads clean', () => {
   expect(defaults().pr_size).toEqual({ target_lines: 200, max_lines: 400, max_files: 20, exclude: PR_SIZE_EXCLUDE });
-  expect(PR_SIZE_EXCLUDE).toHaveLength(16);
+  expect(PR_SIZE_EXCLUDE).toHaveLength(16 + TEST_FILE_GLOBS.length);
+  expect(PR_SIZE_EXCLUDE).toEqual(expect.arrayContaining(TEST_FILE_GLOBS));
   const r = loadConfig(dirWith('.harness/config.yaml', 'version: 1\n'));
   expect(r.warnings).toEqual([]);
   expect(r.config.pr_size).toEqual(defaults().pr_size);

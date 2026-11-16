@@ -57,7 +57,7 @@ test('a bad plan, a wrong nonce or extra args write nothing and exit 2', async (
     'not json', [], plan([step('a')], { nonce: 'b'.repeat(32) }), plan([step('a')], { nonce: 'A'.repeat(32) }),
     plan([step('a')], { deadlineMs: Infinity }), { ...plan([step('a')]), extra: 1 },
     plan([step('')]), plan([step('a', { cmd: '' })]), plan([step('a', { args: [1 as never] })]), plan([step('a', { cwd: 'rel' })]),
-    plan([step('a', { timeoutMs: 0 })]), plan(Array.from({ length: 65 }, (_, i) => step(`s${i}`))), plan('x' as never),
+    plan([step('a', { timeoutMs: 0 })]), plan(Array.from({ length: 65 }, (_, i) => step(`s${i}`))), plan('x' as never), { ...plan([step('a')]), all: 'yes' },
   ];
   for (const p of bad) expect(await run(p), JSON.stringify(p).slice(0, 60)).toEqual({ code: 2, lines: [] });
   expect(await run(plan([step('a')]), 'c'.repeat(32))).toEqual({ code: 2, lines: [] });
@@ -137,3 +137,13 @@ test.skipIf(process.platform === 'win32')('the seal is one bounded line: read to
   expect(good.stdout.trim().split('\n').at(-1)).toBe(JSON.stringify({ nonce: N, kind: 'end', seal: SEAL }));
   for (const bad of ['f'.repeat(200), 'abc\n', SEAL.slice(0, 63) + 'g\n']) expect(await open(bad), bad.slice(0, 10)).toEqual({ code: 2, stdout: '' });
 }, 30000);
+
+test('with all, a failing step does not stop the plan, each line has its start, and a spent deadline times out each remaining step', async () => {
+  let t = 0;
+  const exec: Exec = (cmd) => ((t += 600), cmd === 'a' ? { status: 1, output: 'boom\n', timedOut: false } : ok);
+  const { lines } = await run(plan([step('a'), step('b'), step('c'), step('d')], { all: true, deadlineMs: 1000 }), N, exec, () => t);
+  expect(lines.map((l) => JSON.parse(l))).toMatchObject([
+    { label: 'a', status: 1, start: 0, output: 'boom' }, { label: 'b', status: 0, start: 600 },
+    { label: 'c', status: null, timedOut: true }, { label: 'd', status: null, timedOut: true },
+  ]);
+});

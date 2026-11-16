@@ -65,7 +65,7 @@ function setup(script: Partial<ExecResult> | (() => Partial<ExecResult> | Promis
     },
     ...o,
   };
-  return { calls, run: () => runWrapped(d)(steps, 1000) };
+  return { calls, run: (o?: { all?: boolean }) => runWrapped(d)(steps, 1000, o) };
 }
 const unavailable = (check: string, first: string) => ({ kind: 'unavailable', message: srtMessage({ kind: 'check', check, first }), reason: check });
 const clean = () => (expect(readdirSync(state).filter((f) => /^(srt|plan|canary)-/.test(f))).toEqual([]), expect(readdirSync(short)).toEqual([])); // short holds the read canary and the socket
@@ -402,6 +402,22 @@ suite('runWrapped', () => {
   });
 });
 
+suite('runWrapped with all', () => {
+  test('every step runs after a failure, the plan file says all, and proxy lines go on each failed step; without all the same lines are refused', async () => {
+    const stdout = [...pre, line('format:check', { status: 1 }), line('lint'), line('typecheck', { status: 2 }), line('test')].join('\n') + '\n';
+    const { calls, run } = setup({ stdout, stderr: 'sandbox proxy: denied x.example:443\n' });
+    const r = await run({ all: true });
+    expect(JSON.parse(calls[0]!.plan).all).toBe(true);
+    const px = '\nsandbox proxy: denied x.example:443';
+    expect(r).toEqual({ kind: 'ran', results: [
+      { label: 'format:check', status: 1, timedOut: false, ms: 5, output: px }, { label: 'lint', status: 0, timedOut: false, ms: 5, output: '' },
+      { label: 'typecheck', status: 2, timedOut: false, ms: 5, output: px }, { label: 'test', status: 0, timedOut: false, ms: 5, output: '' },
+    ] });
+    expect((await run()).kind).toBe('unavailable'); // the Stop gate never passes all: lines after a failure are extra
+    expect(JSON.parse(calls[1]!.plan).all).toBeUndefined();
+  });
+});
+
 suite('parseResults', () => {
   const exp: Expected[] = [{ kind: 'step', label: 'a' }, { kind: 'step', label: 'b' }];
   const S = 's'.repeat(64);
@@ -424,7 +440,12 @@ suite('parseResults', () => {
     expect(parseResults([a, b, e, e].join('\n'), N, exp, S)).toEqual({ error: 'end line: duplicated' });
     expect(parseResults([a, b, e, l('a')].join('\n'), N, exp, S)).toEqual({ error: 'end line: not last' });
     expect(parseResults([e, a, b].join('\n'), N, exp, S)).toEqual({ error: 'end line: not last' });
+    // With all, a failing step line is not terminal and every expected line is required; a failed check still ends the list.
+    expect(parseResults(`${l('a', { status: 1 })}\n${l('b')}\n${end(S)}`, N, exp, S, true)).toMatchObject({ lines: [{ label: 'a' }, { label: 'b' }] });
+    expect(parseResults(`${l('a', { status: 1 })}\n${end(S)}`, N, exp, S, true)).toEqual({ error: "line 2: missing (step 'b')" });
+    expect(parseResults(`${l('a', { start: 'x' })}\n${l('b')}\n${end(S)}`, N, exp, S)).toEqual({ error: 'line 1: bad fields' });
     const chk: Expected[] = [{ kind: 'check', name: 'network' }, { kind: 'step', label: 'a' }];
+    expect(parseResults(`${JSON.stringify({ nonce: N, kind: 'check', name: 'network', ok: false })}\n${l('a')}\n${end(S)}`, N, chk, S, true)).toEqual({ error: 'line 2: extra' });
     expect(P(JSON.stringify({ nonce: N, kind: 'check', name: 'network', ok: false, detail: 'reached' }), chk)).toMatchObject({ lines: [{ name: 'network', ok: false }] });
   });
 });

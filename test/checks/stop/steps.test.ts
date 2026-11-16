@@ -15,7 +15,7 @@ test('runUnwrapped: runs in order, each step gets the remaining share, ms from n
   };
   const r = await runUnwrapped(exec, () => t)([step('a'), step('b')], 1000);
   expect(calls).toEqual([['a', 1000], ['b', 900]]);
-  expect(r).toEqual({ kind: 'ran', results: [{ label: 'a', status: 0, timedOut: false, ms: 100, output: '' }, { label: 'b', status: 0, timedOut: false, ms: 100, output: '' }] });
+  expect(r).toEqual({ kind: 'ran', results: [{ label: 'a', status: 0, timedOut: false, ms: 100, output: '', start: 0 }, { label: 'b', status: 0, timedOut: false, ms: 100, output: '', start: 100 }] });
 });
 
 test('runUnwrapped: stops at the first non-zero step', async () => {
@@ -39,4 +39,14 @@ test('runUnwrapped: a timed-out step stops the run', async () => {
   const r = await runUnwrapped(exec, () => 0)([step('a'), step('b')], 1000);
   expect(seen).toEqual(['a']);
   expect(r).toMatchObject({ kind: 'ran', results: [{ label: 'a', timedOut: true }] });
+});
+
+test('runUnwrapped with all: a failing step does not stop the run, and a spent budget times out each remaining step', async () => {
+  let t = 0;
+  const exec: Exec = (cmd) => ((t += 100), cmd === 'a' ? { status: 1, output: 'boom', timedOut: false } : ok);
+  const r = await runUnwrapped(exec, () => t)([step('a'), step('b'), step('c'), step('d')], 200, { all: true });
+  expect(r).toEqual({ kind: 'ran', results: [
+    { label: 'a', status: 1, timedOut: false, ms: 100, output: 'boom', start: 0 }, { label: 'b', status: 0, timedOut: false, ms: 100, output: '', start: 100 },
+    { label: 'c', status: null, timedOut: true, ms: 0, output: '' }, { label: 'd', status: null, timedOut: true, ms: 0, output: '' },
+  ] });
 });

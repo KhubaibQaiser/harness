@@ -78,7 +78,7 @@ export const sandboxRequired: Check = {
 };
 
 export const SCRUB_NOTE =
-  'harness: this session is treated as unattended because CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 is set; questions become denies and the unattended gates apply. Unset it in your shell profile for interactive work.';
+  'harness: this session is treated as unattended because CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is set (any value but 0, false, no or off); questions become denies and the unattended gates apply. Unset it in your shell profile for interactive work.';
 
 /** SessionStart: say why asks become denies when the scrub alone is the cause. Not failClosed: a SessionStart never blocks. */
 export const scrubNote: Check = {

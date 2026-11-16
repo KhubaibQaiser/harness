@@ -25,11 +25,15 @@ const answered = (a: unknown): boolean => (Array.isArray(a) ? a.some(real) : rea
 
 const KNOWN = new Set(['questions', 'answers', 'annotations', 'response', 'afkTimeoutMs', 'followUp']);
 /** A top-level key we don't know in the call or its result means Claude Code changed the shape: log it once per session. */
+const noted = new Set<string>(); // sessions already logged by this process, so later calls skip the events read
 function noteShape(ctx: Ctx): void {
+  const sid = ctx.input.session_id, id = `${ctx.root}:${sid}`;
+  if (noted.has(id)) return;
   const res = ctx.input.tool_response;
   const odd = [...Object.keys(ctx.input.tool_input ?? {}), ...(isObj(res) ? Object.keys(res) : [])].filter((k) => !KNOWN.has(k));
-  const sid = ctx.input.session_id;
-  if (odd.length && !readEvents(ctx.root).some((e) => e.session === sid && e.decision === 'ask-shape-unknown')) {
+  if (!odd.length) return;
+  noted.add(id);
+  if (!readEvents(ctx.root).some((e) => e.session === sid && e.decision === 'ask-shape-unknown')) {
     appendEvent(ctx.root, { ts: new Date().toISOString(), session: sid, check: 'pr-size', decision: 'ask-shape-unknown', reason: odd.slice(0, 5).join(', ').slice(0, 100) });
   }
 }

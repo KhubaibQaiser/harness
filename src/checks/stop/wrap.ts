@@ -29,12 +29,13 @@ const failing = (l: ResultLine): boolean => (l.kind === 'step' ? l.timedOut || l
 const opt = (v: unknown) => v === undefined || typeof v === 'string';
 const valid = (o: Record<string, unknown>): boolean =>
   o.kind === 'step'
-    ? (o.status === null || Number.isInteger(o.status)) && typeof o.timedOut === 'boolean' && Number.isFinite(o.ms) && opt(o.output)
+    ? (o.status === null || Number.isInteger(o.status)) && typeof o.timedOut === 'boolean' && Number.isFinite(o.ms) && opt(o.output) && (o.start === undefined || Number.isFinite(o.start))
     : typeof o.ok === 'boolean' && opt(o.detail);
 const desc = (e: Expected): string => (e.kind === 'step' ? `step '${e.label}'` : `check '${e.name}'`);
 
-/** Lines must match `expected` in order, and stop right after the first failing entry or at its end. */
-export function parseResults(stdout: string, nonce: string, expected: Expected[], seal: string): { lines: ResultLine[] } | { error: string } {
+/** Lines must match `expected` in order, and stop right after the first failing entry or at its end. With `runAll`, only a failed check ends them. */
+export function parseResults(stdout: string, nonce: string, expected: Expected[], seal: string, runAll = false): { lines: ResultLine[] } | { error: string } {
+  const last = (l: ResultLine) => failing(l) && !(runAll && l.kind === 'step');
   const lines: ResultLine[] = [];
   const all = stdout.split('\n').filter((s) => s.trim());
   // The sealed end line must be last, once, and carry the seal. Only the runner holds the seal (step code reads the nonce, never this), so forged result lines cannot pass.
@@ -57,7 +58,7 @@ export function parseResults(stdout: string, nonce: string, expected: Expected[]
   for (const [i, text] of all.entries()) {
     const at = `line ${i + 1}`;
     const e = expected[i];
-    if (!e || (lines.length && failing(lines.at(-1)!))) return { error: `${at}: extra` };
+    if (!e || (lines.length && last(lines.at(-1)!))) return { error: `${at}: extra` };
     let o: Record<string, unknown> | null;
     try {
       o = JSON.parse(text);
@@ -69,7 +70,7 @@ export function parseResults(stdout: string, nonce: string, expected: Expected[]
     if (!valid(o)) return { error: `${at}: bad fields` };
     lines.push(o as ResultLine);
   }
-  if (lines.length < expected.length && !(lines.length && failing(lines.at(-1)!))) return { error: `line ${lines.length + 1}: missing (${desc(expected[lines.length]!)})` };
+  if (lines.length < expected.length && !(lines.length && last(lines.at(-1)!))) return { error: `line ${lines.length + 1}: missing (${desc(expected[lines.length]!)})` };
   return { lines };
 }
 
@@ -137,14 +138,14 @@ export async function preparePreflight(root: string, tmp: string, nonce: string,
 type Seen = { srt: string | null; checks: StopSandboxRecord['checks'] };
 
 /** Runs, then records what this attempt reported. A timeout leaves the previous record alone. */
-export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline) => {
+export const runWrapped = (d: WrapDeps): RunSteps => async (steps, deadline, o) => {
   const got: Seen = { srt: null, checks: {} };
-  const r = await attempt(d, got, steps, deadline);
+  const r = await attempt(d, got, steps, deadline, !!o?.all);
   if (r.kind !== 'timeout') writeStopRecord(d.root, { ts: new Date().toISOString(), srt: got.srt, outcome: r.kind, checks: got.checks, ...(r.kind === 'unavailable' ? { reason: r.reason } : {}) });
   return r;
 };
 
-const attempt = async (d: WrapDeps, got: Seen, steps: Parameters<RunSteps>[0], deadline: number): Promise<StepsRun> => {
+const attempt = async (d: WrapDeps, got: Seen, steps: Parameters<RunSteps>[0], deadline: number, runAll: boolean): Promise<StepsRun> => {
   const fail = (check: string, why: string): StepsRun => ({ kind: 'unavailable', message: srtMessage({ kind: 'check', check, first: first(why) }), reason: check });
   const files: string[] = [];
   let pre: Preflight | undefined;
@@ -185,7 +186,7 @@ const attempt = async (d: WrapDeps, got: Seen, steps: Parameters<RunSteps>[0], d
     stage = 'settings file';
     // R1: the runner must read the plan, so only the settings file is on denyRead. The nonce binds a line's origin; it is not a secret (step code can read it).
     const settings = Buffer.from(JSON.stringify(renderSrtSettings({ ...inputs, tokenBase, denyWrite: pre.denyWrite, denyRead: [sFile, ...pre.denyRead] }, d.platform)));
-    const plan: Plan = { nonce, deadlineMs: deadline, steps, preflight: pre.plan };
+    const plan: Plan = { nonce, deadlineMs: deadline, steps, preflight: pre.plan, ...(runAll && { all: true }) };
     writeFileSync(sFile, settings, { flag: 'wx', mode: 0o600 });
     files.push(sFile);
     try {
@@ -231,23 +232,23 @@ const attempt = async (d: WrapDeps, got: Seen, steps: Parameters<RunSteps>[0], d
     const err = r.stderr ?? '';
     if (r.status !== 0) return fail(stage, err.trim() ? err : r.output.trim() ? r.output : `status ${r.status}`);
     const expected: Expected[] = [...PREFLIGHT_ORDER(pre.plan.linux).map((name): Expected => ({ kind: 'check', name })), ...steps.map((s): Expected => ({ kind: 'step', label: s.label }))];
-    const parsed = parseResults(r.stdout ?? '', nonce, expected, seal);
+    const parsed = parseResults(r.stdout ?? '', nonce, expected, seal, runAll);
     if ('error' in parsed) return fail('result lines', parsed.error);
     for (const l of parsed.lines) if (l.kind === 'check') got.checks[l.name] = l.ok ? 'ok' : esc((l.detail ?? 'failed').trim().split('\n')[0]!.slice(0, 200)).slice(0, 200);
-    const results: StepResult[] = parsed.lines.flatMap((l) => (l.kind === 'step' ? [{ label: l.label, status: l.status, timedOut: l.timedOut, ms: l.ms, output: l.output ?? '' }] : []));
+    const results: StepResult[] = parsed.lines.flatMap((l) => (l.kind === 'step' ? [{ label: l.label, status: l.status, timedOut: l.timedOut, ms: l.ms, output: l.output ?? '', ...(l.start !== undefined && { start: l.start }) }] : []));
     const bad = parsed.lines.find((l) => l.kind === 'check' && !l.ok);
     if (bad?.kind === 'check') return fail(bad.name, bad.detail ?? 'failed');
     // R12: srt's stderr should hold only proxy lines; anything else means a degraded srt.
     const errLines = err.split('\n').filter((s) => s.trim());
     const warn = errLines.find((s) => !s.startsWith(PROXY));
     if (warn) return fail('srt warning', warn);
-    const last = results.at(-1);
-    const failed = !!last && (last.timedOut || last.status !== 0);
+    const bads = results.filter((x) => x.timedOut || x.status !== 0);
+    const failed = bads.length > 0;
     if (!failed && r.stderrRolled) return fail('srt warning', 'stderr overflow'); // the dropped head may have held a warning
     const all = errLines.join('\n');
     const cut = all.slice(-MAX_PROXY);
     const proxy = all.length > MAX_PROXY && all[all.length - MAX_PROXY - 1] !== '\n' ? cut.slice(cut.indexOf('\n') + 1) : cut; // start at a line boundary
-    if (failed && proxy) last.output += `\n${proxy}`; // srt's own denial lines explain a step that needed the network
+    if (proxy) for (const x of bads) x.output += `\n${proxy}`; // srt's own denial lines explain a step that needed the network
     return { kind: 'ran', results };
   } catch (e) {
     return fail(stage, msg(e));

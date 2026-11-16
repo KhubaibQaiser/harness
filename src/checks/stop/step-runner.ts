@@ -46,7 +46,8 @@ function readPlan(path: string, nonce: string): Plan | null {
   }
   const p = JSON.parse(text) as Record<string, unknown> | null;
   if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
-  if (Object.keys(p).some((k) => !['nonce', 'deadlineMs', 'steps', 'preflight'].includes(k))) return null;
+  if (Object.keys(p).some((k) => !['nonce', 'deadlineMs', 'steps', 'preflight', 'all'].includes(k))) return null;
+  if ('all' in p && typeof p.all !== 'boolean') return null;
   if (typeof p.nonce !== 'string' || !/^[0-9a-f]{32}$/.test(p.nonce) || p.nonce !== nonce) return null;
   if (typeof p.deadlineMs !== 'number' || !Number.isFinite(p.deadlineMs)) return null;
   if (!Array.isArray(p.steps) || p.steps.length > MAX_STEPS || !p.steps.every(validStep)) return null;
@@ -76,11 +77,15 @@ async function runLines(plan: Plan, out: (line: string) => void, execFor: (cwd: 
   if (plan.preflight && !(await preflight(plan.preflight, probes, (l) => out(JSON.stringify(l)), plan.nonce))) return;
   for (const s of plan.steps) {
     const timeout = Math.min(s.timeoutMs, plan.deadlineMs - now());
-    if (timeout <= 0) return emit({ label: s.label, status: null, timedOut: true, ms: 0 });
+    if (timeout <= 0) {
+      emit({ label: s.label, status: null, timedOut: true, ms: 0 });
+      if (plan.all) continue;
+      return;
+    }
     const t0 = now();
     const r = await execFor(s.cwd)(s.cmd, s.args, timeout);
     const failed = r.timedOut || r.status !== 0;
-    emit({ label: s.label, status: r.status, timedOut: r.timedOut, ms: now() - t0, ...(failed ? { output: tail(r.output) } : {}) });
-    if (failed) break;
+    emit({ label: s.label, status: r.status, timedOut: r.timedOut, ms: now() - t0, start: t0, ...(failed ? { output: tail(r.output) } : {}) });
+    if (failed && !plan.all) break;
   }
 }

@@ -8,10 +8,18 @@ import { join } from 'node:path';
 import { expect, onTestFinished, test } from 'vitest';
 import { attendedEnv, CEILING_MS, COUNTED_EDIT_OVERHEAD_MS, DISPATCH, measure, OVERHEAD_MS, report } from './overhead.js';
 
-// An attended Stop reads git state and the transcript tail, so it gets its own ceilings. macOS hosted runners measured
-// 186 ms (50 MB transcript) and 495 ms (500 decisions) on main 86833e8 (Nov 2026), over the old 150 / 450; about 1.35x headroom.
-const STOP_OVERHEAD_MS = { win32: 450, darwin: 250 }[process.platform as string] ?? 100;
-const WARN_OVERHEAD_MS = { win32: 1350, darwin: 650 }[process.platform as string] ?? 300;
+// An attended Stop reads git state and the transcript tail, so it gets its own ceilings, set as in overhead.ts (1.25x the
+// slowest median, 13-16 Nov 2026). 50 MB transcript: macOS median 129 ms, slowest 328 (04bd10c, failed 250); Windows
+// median 374, slowest 422 against 450. 500 decisions: macOS median 411, slowest 864 (04bd10c) and 649 against 650 (b2f7636);
+// Windows median 940, slowest 1045, so 1350 stays.
+const STOP_OVERHEAD_MS = { win32: 550, darwin: 450 }[process.platform as string] ?? 100;
+const WARN_OVERHEAD_MS = { win32: 1350, darwin: 1100 }[process.platform as string] ?? 300;
+// 40 result files to read: macOS median 101 ms, slowest 220 (87ab33e); it failed 150 in 10 runs from 9 to 15 Nov, and its
+// daily medians did not move (89-106). Windows: median 193, slowest 243.
+const GATED_OVERHEAD_MS = { win32: 450, darwin: 300 }[process.platform as string] ?? 100;
+// Not raised: protect's ref-move diff (e82410a, 15 Nov) is new git work, a median of 116 ms on macOS against 71 for
+// `git status`, and it reached 154 against 150 in 2 of 14 runs. That's a cost to decide on, not runner noise.
+const CHECKOUT_OVERHEAD_MS = { win32: 450, darwin: 150 }[process.platform as string] ?? 100;
 // The warning run's total holds its own overhead plus the bare spawn, so it can't share the 1000 ms ceiling where that overhead may reach 1350.
 const WARN_CEILING_MS = Math.max(CEILING_MS, WARN_OVERHEAD_MS + 300);
 
@@ -69,7 +77,7 @@ test('gated PreToolUse with 40 result files: harness overhead over a bare node s
     expect(r.stdout).toBe(''); // allowed: fresh failing related result
   });
   report('gated-40-results', m);
-  expect(m.overhead, `gated overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.overhead, `gated overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(GATED_OVERHEAD_MS);
   expect(m.total, `gated total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
   // Control: a passing related result must deny, proving the gate ran on this path.
   const failing = join(repo, '.harness/results/r7.json');
@@ -120,7 +128,7 @@ test.each(['git status', 'git checkout feat'])('attended Bash `%s`: harness over
     expect(r.stdout).toBe('');
   }, true);
   report(`ref-move-${command.replace(/\W+/g, '-')}`, m);
-  expect(m.overhead, `overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.overhead, `overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(command === 'git checkout feat' ? CHECKOUT_OVERHEAD_MS : OVERHEAD_MS);
   expect(m.total, `total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 

@@ -1,9 +1,11 @@
 // Fails CI when the suite silently shrinks: a project's passed-test count below its floor, or a test file that failed to load.
-// Usage: node scripts/check-test-count.mjs [vitest-json-report] [floor-json]
+// Usage: node scripts/check-test-count.mjs [vitest-json-report] [floor-json] [platform]
 import { readFileSync } from 'node:fs';
 
-const [reportPath = 'node_modules/.cache/test-report.json', floorPath = '.github/test-floor.json'] = process.argv.slice(2);
-const floor = JSON.parse(readFileSync(floorPath, 'utf8'));
+const [reportPath = 'node_modules/.cache/test-report.json', floorPath = '.github/test-floor.json', platform = process.platform] = process.argv.slice(2);
+// Floors are per platform: some tests skip on Windows, so its passed count differs.
+const floor = JSON.parse(readFileSync(floorPath, 'utf8'))[platform];
+if (!floor) { console.error(`no floor for ${platform} in ${floorPath}; add one (the passed counts of a full ${platform} run)`); process.exit(1); }
 const files = JSON.parse(readFileSync(reportPath, 'utf8')).testResults;
 if (!Array.isArray(files) || files.length === 0) { console.error(`${reportPath}: no test results; did the run write the JSON report?`); process.exit(1); }
 

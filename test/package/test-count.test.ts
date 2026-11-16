@@ -5,11 +5,11 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 
 const file = (name: string, passed: number, extra: object = {}) => ({ name, status: 'passed', assertionResults: Array.from({ length: passed }, () => ({ status: 'passed' })), ...extra });
-const run = (files: object[], floor: object) => {
+const run = (files: object[], floor: object, platform = 'darwin') => {
   const dir = mkdtempSync(join(tmpdir(), 'floor-'));
   writeFileSync(join(dir, 'r.json'), JSON.stringify({ testResults: files }));
-  writeFileSync(join(dir, 'f.json'), JSON.stringify(floor));
-  const r = spawnSync('node', ['scripts/check-test-count.mjs', join(dir, 'r.json'), join(dir, 'f.json')], { encoding: 'utf8' });
+  writeFileSync(join(dir, 'f.json'), JSON.stringify({ darwin: floor, win32: { unit: 1 } }));
+  const r = spawnSync('node', ['scripts/check-test-count.mjs', join(dir, 'r.json'), join(dir, 'f.json'), platform], { encoding: 'utf8' });
   return { code: r.status, out: r.stdout + r.stderr };
 };
 
@@ -37,8 +37,16 @@ test('a malformed report fails instead of passing', () => {
   expect(run([], { unit: 1 }).code).toBe(1);
 });
 
+test('the floor is looked up by platform, and a platform without one fails clearly', () => {
+  const files = [file('/r/test/core/a.test.ts', 2)];
+  expect(run(files, { unit: 9 }, 'win32').code).toBe(0); // win32's floor is 1
+  const r = run(files, { unit: 1 }, 'linux');
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('no floor for linux');
+});
+
 test('the committed floor is a number per project and ci runs the check after the tests', () => {
-  const floor = JSON.parse(readFileSync('.github/test-floor.json', 'utf8'));
+  const floor = JSON.parse(readFileSync('.github/test-floor.json', 'utf8')).darwin;
   expect(Object.keys(floor).sort()).toEqual(['e2e', 'unit']);
   for (const n of Object.values(floor)) expect(Number.isInteger(n) && (n as number) > 0).toBe(true);
   const raw = readFileSync('.github/workflows/ci.yml', 'utf8');

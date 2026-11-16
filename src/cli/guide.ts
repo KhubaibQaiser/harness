@@ -1,4 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { writeAtomic } from '../core/atomic.js';
 import { basename, dirname, join, resolve } from 'node:path';
 import { packageDir } from '../core/package-dir.js';
 import type { CliEnv } from './index.js';
@@ -24,6 +25,21 @@ export function guide(args: string[], { out }: CliEnv): number {
 }
 
 const WORKDIR_USAGE = 'Usage: harness workdir [--clean <path>]';
+const WORKDIR_NAME = /^w-[A-Za-z0-9]{6}$/; // what mkdtempSync(…/w-) makes
+// The folders `harness workdir` made: `--clean` removes only these, so it can never delete a folder of the person's or another tool's.
+const recordFile = (root: string) => join(root, '.harness', 'state', 'workdirs.json');
+function recorded(root: string): string[] {
+  try {
+    const v: unknown = JSON.parse(readFileSync(recordFile(root), 'utf8'));
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+function record(root: string, names: string[]): void {
+  mkdirSync(dirname(recordFile(root)), { recursive: true });
+  writeAtomic(recordFile(root), JSON.stringify(names));
+}
 const linked = (p: string) => existsSync(p) && lstatSync(p).isSymbolicLink();
 
 /** A work folder for the skills inside the repo, `.harness/tmp/<id>/`, so they never write outside the working directory. */
@@ -33,11 +49,18 @@ export function workdir(args: string[], { root, out }: CliEnv): number {
   if (!args.length) {
     mkdirSync(tmp, { recursive: true });
     if (!existsSync(join(tmp, '.gitignore'))) writeFileSync(join(tmp, '.gitignore'), '*\n');
-    return out(mkdtempSync(join(tmp, 'w-'))), 0;
+    const dir = mkdtempSync(join(tmp, 'w-'));
+    record(root, [...recorded(root), basename(dir)]);
+    return out(dir), 0;
   }
   const p = args.length === 2 && args[0] === '--clean' ? resolve(root, args[1]!) : null;
   if (!p) return out(WORKDIR_USAGE), 2;
-  if (dirname(p) !== tmp || basename(p) === '.gitignore') return out(`Not a harness work folder (it must be directly under ${tmp}): ${p}`), 2;
+  if (dirname(p) !== tmp || !WORKDIR_NAME.test(basename(p))) return out(`Not a harness work folder (it must be a \`w-…\` folder directly under ${tmp}): ${p}`), 2;
+  const name = basename(p), names = recorded(root);
+  let st;
+  try { st = lstatSync(p); } catch { return record(root, names.filter((n) => n !== name)), 0; } // already gone
+  if (!names.includes(name) || !st.isDirectory()) return out(`Refused: ${p} is not a folder \`harness workdir\` made (or is now a link). Nothing was removed.`), 1;
   rmSync(p, { recursive: true, force: true });
+  record(root, names.filter((n) => n !== name));
   return 0;
 }

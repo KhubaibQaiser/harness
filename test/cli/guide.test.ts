@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -83,4 +83,41 @@ test('workdir refuses a symlinked .harness/tmp', () => {
   expect(cli(root, 'workdir').code).toBe(2);
   expect(cli(root, 'workdir', '--clean', join(root, '.harness/tmp/x')).code).toBe(2);
   expect(existsSync(join(away, 'x'))).toBe(true);
+});
+
+test('workdir --clean refuses a folder harness did not record, and it survives', () => {
+  const root = repo();
+  cli(root, 'workdir');
+  for (const name of ['w-mine123', 'notes', 'w-']) {
+    const p = join(root, '.harness/tmp', name);
+    mkdirSync(p);
+    writeFileSync(join(p, 'keep.txt'), 'x');
+    const r = cli(root, 'workdir', '--clean', p);
+    expect(r.code, name).not.toBe(0);
+    expect(existsSync(join(p, 'keep.txt')), name).toBe(true);
+  }
+});
+
+test('workdir --clean refuses a recorded name that is now a symlink, and drops the record of a cleaned folder', () => {
+  const root = repo();
+  const a = cli(root, 'workdir').out;
+  expect(cli(root, 'workdir', '--clean', a).code).toBe(0);
+  const away = repo();
+  writeFileSync(join(away, 'keep.txt'), 'x');
+  symlinkSync(away, a); // same name as the recorded one, now a link
+  expect(cli(root, 'workdir', '--clean', a).code).not.toBe(0); // record dropped, so refused
+  expect(existsSync(join(away, 'keep.txt'))).toBe(true);
+  const b = cli(root, 'workdir').out;
+  rmSync(b, { recursive: true });
+  const away2 = repo();
+  symlinkSync(away2, b);
+  expect(cli(root, 'workdir', '--clean', b).code).toBe(1); // recorded, but a link
+  expect(existsSync(away2)).toBe(true);
+});
+
+test('workdir --clean of a folder that is already gone is a quiet success', () => {
+  const root = repo();
+  const a = cli(root, 'workdir').out;
+  expect(cli(root, 'workdir', '--clean', a).code).toBe(0);
+  expect(cli(root, 'workdir', '--clean', a).code).toBe(0);
 });

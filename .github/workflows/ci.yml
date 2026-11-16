@@ -32,6 +32,8 @@ jobs:
       - run: pnpm test
         env:
           HARNESS_PLAIN_INIT: '1'
+      - name: Test count floor
+        run: node scripts/check-test-count.mjs
       - name: Hook latency (alone, after the parallel suite)
         run: pnpm test:perf
   stop-srt:

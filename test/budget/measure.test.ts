@@ -271,7 +271,7 @@ test('budgetGate: an unattended run is refused even with --over-budget --yes', a
   for (const env of [{ CI: 'true' }, { HARNESS_UNATTENDED: '1' }, { CLAUDE_CODE_REMOTE: 'true' }]) {
     const r = await gate({ yes: true, overBudget: true, env });
     expect(r.code).toBe(2);
-    expect(r.out).toContain(`Not added: it would take always-loaded context past the budget of ${n(harnessTokens + 2000)} tokens, and no person is here to approve it. Run it in a session, or raise context.budget_tokens.`);
+    expect(r.out).toContain(`Not added: it would take always-loaded context past the budget of ${n(harnessTokens + 2000)} tokens, and no person is here to approve it (unattended: CI, cloud, no-prompt sessions or CLAUDE_CODE_SUBPROCESS_ENV_SCRUB set). Run it in a session, or raise context.budget_tokens.`);
   }
 });
 

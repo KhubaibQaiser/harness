@@ -120,9 +120,17 @@ test('add: a dead --path is refused', async () => {
   expect(r).toEqual({ code: 1, out: 'harness remember: lib/** matches no tracked file. Fix the path, or retire the decision.' });
 });
 
+test('remember add refuses under the scrub', async () => {
+  const root = await repo();
+  const r = await go(root, ADD, { env: { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' } });
+  expect(r.code).toBe(1);
+  expect(r.out).toMatch(/does not write in unattended runs/);
+  expect(existsSync(join(root, 'docs/decisions'))).toBe(false);
+});
+
 test('refusals: unattended, guard off, secret, no manifest', async () => {
   const root = await repo();
-  expect(await go(root, ADD, { env: { CI: 'true' } })).toEqual({ code: 1, out: 'harness remember does not write in unattended runs (CI, cloud or no-prompt sessions). A person can save it later.' });
+  expect(await go(root, ADD, { env: { CI: 'true' } })).toEqual({ code: 1, out: 'harness remember does not write in unattended runs (CI, cloud, no-prompt sessions or CLAUDE_CODE_SUBPROCESS_ENV_SCRUB set). A person can save it later.' });
   expect(existsSync(join(root, 'docs/decisions'))).toBe(false);
   writeFileSync(join(root, '.harness/config.yaml'), readFileSync(join(root, '.harness/config.yaml'), 'utf8').replace(/guard: true/, 'guard: false'));
   expect((await go(root, ADD, { env: { CLAUDECODE: '1' } })).out).toBe("harness remember won't write from inside Claude Code while checks.guard is off, because nobody would be asked. Run it in your own terminal.");

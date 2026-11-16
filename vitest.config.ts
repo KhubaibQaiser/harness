@@ -4,8 +4,11 @@ import { defineConfig } from 'vitest/config';
 // 1-8 s on a busy Windows runner (CI runs 41382143251, 41383051207). One budget on every OS; it only catches hangs.
 // Speed itself is asserted in the perf project. The e2e project drives the built CLI end to end and gets more.
 const UNIT_TIMEOUT = 30_000;
+// In CI the run also writes a JSON report, which scripts/check-test-count.mjs checks against .github/test-floor.json.
+const reporters = process.env.CI ? ['default', ['json', { outputFile: 'node_modules/.cache/test-report.json' }]] : ['default'];
 export default defineConfig({
   test: {
+    reporters: reporters as any,
     globalSetup: ['test/global-tmp.ts'],
     projects: [
       { test: { name: 'unit', include: ['test/**/*.test.ts'], exclude: ['test/e2e/**', 'test/perf/**', '**/node_modules/**'], setupFiles: ['test/setup-tmp.ts', 'test/setup-no-gh.ts'], testTimeout: UNIT_TIMEOUT, hookTimeout: UNIT_TIMEOUT } },

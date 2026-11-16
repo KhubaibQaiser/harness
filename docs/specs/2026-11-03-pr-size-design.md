@@ -92,7 +92,7 @@ With `-z`, a numstat entry is `added\tdeleted\tpath\0`. For a rename it is `adde
 ## 5. Counting rules
 
 - Changed lines for a file = added + deleted lines, from numstat (the sum GitHub shows). The PR's lines are the sum over the counted files. Its files are the number of counted files.
-- **Tests are excluded by default** (D3, owner ruling 2026-11-16, reversing the original "tests count"): `*.test.*`, `*.spec.*`, `__tests__/`, `test/`, `tests/`, Python `test_*.py` and `*_test.py`, and Go `*_test.go`, as `TEST_FILE_GLOBS` in `src/core/paths.ts`, pinned to `isTestFile`. Why: big test suites shouldn't trip the limit, and the review checks test quality. They stay listed under "Not counted", and the PR reviewer still reads them. A `pr_size.exclude` a person sets replaces the whole default, so tests count again unless they list them.
+- **Tests are excluded by default** (D3, owner ruling 2026-11-16, reversing the original "tests count"): `*.test.*`, `*.spec.*`, `__tests__/`, `test/`, `tests/`, Python `test_*.py` and `*_test.py`, Go `*_test.go` and `conftest.py`, as `TEST_FILE_GLOBS` in `src/core/paths.ts`, pinned to `isTestFile`. Why: big test suites shouldn't trip the limit, and the review checks test quality. They stay listed under "Not counted", and the PR reviewer still reads them. A `pr_size.exclude` a person sets replaces the whole default, so tests count again unless they list them.
 - **Excluded** paths count toward neither lines nor files: a path that matches `pr_size.exclude` (picomatch, `dot: true`, through the existing `matches`). For a rename, the new path is judged.
 - **Binary** files count as one file and 0 lines.
 - **A pure rename** counts as one file with its numstat lines (0 when the content is unchanged).

@@ -55,10 +55,10 @@ test.skipIf(!existsSync(canonical.toLowerCase()))('toRepoPath maps a path in ano
 });
 
 test('TEST_FILE_GLOBS are pinned to isTestFile and isAnyTestFile, plus test/, tests/ and Go', () => {
-  const yes = ['a.test.ts', 'src/a.spec.tsx', 'src/__tests__/a.ts', 'test/a.ts', 'src/test/fixtures/a.json', 'tests/x/a.ts', 'pkg/test_a.py', 'pkg/a_test.py', 'pkg/tests/a.py', 'pkg/a_test.go', 'tests/conftest.py'];
+  const yes = ['a.test.ts', 'src/a.spec.tsx', 'src/__tests__/a.ts', 'test/a.ts', 'src/test/fixtures/a.json', 'tests/x/a.ts', 'pkg/test_a.py', 'pkg/a_test.py', 'pkg/tests/a.py', 'pkg/a_test.go', 'tests/conftest.py', 'conftest.py', 'pkg/conftest.py'];
   const no = ['src/a.ts', 'src/latest.ts', 'src/contest.ts', 'src/testing.ts', 'src/a_test.ts', 'pkg/a.py', 'pkg/atest.go', 'src/tests.ts', 'docs/test.md'];
   for (const p of yes) expect(matches(p, TEST_FILE_GLOBS), p).toBe(true);
   for (const p of no) expect(matches(p, TEST_FILE_GLOBS), p).toBe(false);
-  // The two notions can't drift: anything either one calls a test is matched.
-  for (const p of [...yes, ...no]) if (isTestFile(p) || isAnyTestFile(p)) expect(matches(p, TEST_FILE_GLOBS), p).toBe(true);
+  // The two notions can't drift: the globs match exactly what isAnyTestFile calls a test, plus test/, tests/ and Go.
+  for (const p of [...yes, ...no]) expect(matches(p, TEST_FILE_GLOBS), p).toBe(isAnyTestFile(p) || /(^|\/)tests?\//.test(p) || /_test\.go$/.test(p));
 });

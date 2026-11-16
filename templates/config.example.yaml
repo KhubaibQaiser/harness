@@ -96,6 +96,7 @@ pr_size:
     - "**/test_*.py"
     - "**/*_test.py"
     - "**/*_test.go"
+    - "**/conftest.py"
 
 # Team decisions in docs/decisions/ (needs checks.decisions). Each loads as a rule when its paths are touched.
 decisions:

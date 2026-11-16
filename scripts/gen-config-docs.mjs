@@ -48,7 +48,7 @@ const WHAT = {
   'pr_size.target_lines': 'Changed lines the pr-ship skill aims for in each PR, and the size of the first in-progress warning. Guidance only; no gate blocks on it.',
   'pr_size.max_lines': 'Changed lines above which opening or growing a PR asks you first (denied when unattended).',
   'pr_size.max_files': 'Changed files above which opening or growing a PR asks you first (denied when unattended).',
-  'pr_size.exclude': "Globs not counted toward a PR's size: lockfiles, `.*ignore` files except `.npmignore` and `.harnessignore`, snapshots, and test files (`*.test.*`, `*.spec.*`, `__tests__/`, `test/`, `tests/`, `test_*.py`, `*_test.py`, `*_test.go`). Not counted files are still listed in the size warning, and the PR reviewer still reads tests. A list you set replaces the whole default, so keep the defaults you want.",
+  'pr_size.exclude': "Globs not counted toward a PR's size: lockfiles, `.*ignore` files except `.npmignore` and `.harnessignore`, snapshots, and test files (`*.test.*`, `*.spec.*`, `__tests__/`, `test/`, `tests/`, `test_*.py`, `*_test.py`, `*_test.go`, `conftest.py`). Not counted files are still listed in the size warning, and the PR reviewer still reads tests. A list you set replaces the whole default, so keep the defaults you want.",
   'decisions.max_lines': 'Content lines of one generated rule.',
   'decisions.expiry_days': 'A decision not confirmed for this long stops loading at the next sync.',
   'decisions.nudge': 'Stop suggests saving a decision when the session shows signals.',

@@ -395,3 +395,18 @@ test('uninstall keeps .harness/tasks, and the prompt lists what goes and what st
   expect(prompt.asked[0]).toMatch(/keeps .*\.harness\/presets\//);
   expect(r.out).toContain('.harness/tasks/');
 });
+
+test('a linked .harness is refused before anything is removed', async () => {
+  const root = await installed();
+  const before = readFileSync(join(root, '.harness/manifest.json'), 'utf8');
+  const away = mkdtempSync(join(tmpdir(), 'harness-un-away-'));
+  const moved = join(away, 'real');
+  const { renameSync, symlinkSync } = await import('node:fs');
+  renameSync(join(root, '.harness'), moved);
+  symlinkSync(moved, join(root, '.harness'));
+  const r = await un(root, ['--yes']);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('symlink');
+  expect(readFileSync(join(moved, 'manifest.json'), 'utf8')).toBe(before);
+  expect(readdirSync(join(moved, 'hooks')).length).toBeGreaterThan(0); // nothing removed
+});

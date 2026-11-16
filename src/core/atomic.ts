@@ -49,15 +49,19 @@ export function writeAtomic(path: string, data: string, fs: WriteFs = nodeFs): v
   }
 }
 
+// ponytail: a link swapped in between this check and the open that follows is a bounded race. O_NOFOLLOW covers only the last path part, and the agent can already write what it could reach this way.
 /** Makes `rel` (e.g. `.harness/logs`) under `root` if missing, and throws when it or any folder above it inside `root` is a symlink: a planted link must never send a harness write or delete onto someone else's files. Returns the absolute path. */
 export function ensureRealDir(root: string, rel: string): string {
   let p = root;
   for (const part of rel.split('/').filter(Boolean)) {
     p = `${p}/${part}`;
-    let st: nodeFs.Stats | undefined;
-    try { st = nodeFs.lstatSync(p); } catch { /* missing: made below */ }
-    if (st?.isSymbolicLink() || (st && !st.isDirectory())) throw new Error(`${p} is a symlink or not a folder; harness does not write through it.`);
-    if (!st) nodeFs.mkdirSync(p);
+    const look = () => { try { return nodeFs.lstatSync(p); } catch { return undefined; } };
+    let st = look();
+    if (!st) {
+      try { nodeFs.mkdirSync(p); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; } // a concurrent create is fine
+      st = look(); // checked again: it may be a planted link now
+    }
+    if (!st || st.isSymbolicLink() || !st.isDirectory()) throw new Error(`${p} is a symlink or not a folder; harness does not write through it.`);
   }
   return p;
 }

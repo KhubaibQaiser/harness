@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -98,21 +98,39 @@ test('workdir --clean refuses a folder harness did not record, and it survives',
   }
 });
 
-test('workdir --clean refuses a recorded name that is now a symlink, and drops the record of a cleaned folder', () => {
+test('workdir --clean refuses a folder with no marker, a forged marker link, or a link, and they survive', () => {
   const root = repo();
   const a = cli(root, 'workdir').out;
-  expect(cli(root, 'workdir', '--clean', a).code).toBe(0);
+  rmSync(join(a, '.harness-workdir'));
+  expect(cli(root, 'workdir', '--clean', a).code).toBe(1); // marker gone: not ours
+  expect(existsSync(a)).toBe(true);
   const away = repo();
   writeFileSync(join(away, 'keep.txt'), 'x');
-  symlinkSync(away, a); // same name as the recorded one, now a link
-  expect(cli(root, 'workdir', '--clean', a).code).not.toBe(0); // record dropped, so refused
+  const b = join(root, '.harness/tmp/w-linkAB');
+  symlinkSync(away, b);
+  expect(cli(root, 'workdir', '--clean', b).code).toBe(1);
   expect(existsSync(join(away, 'keep.txt'))).toBe(true);
-  const b = cli(root, 'workdir').out;
-  rmSync(b, { recursive: true });
-  const away2 = repo();
-  symlinkSync(away2, b);
-  expect(cli(root, 'workdir', '--clean', b).code).toBe(1); // recorded, but a link
-  expect(existsSync(away2)).toBe(true);
+  const c = join(root, '.harness/tmp/w-fakeCD');
+  mkdirSync(c);
+  writeFileSync(join(away, '.harness-workdir'), 'x');
+  symlinkSync(join(away, '.harness-workdir'), join(c, '.harness-workdir')); // the marker must be a real file
+  expect(cli(root, 'workdir', '--clean', c).code).toBe(1);
+  expect(existsSync(c)).toBe(true);
+});
+
+test('workdir and --clean work with .harness/state read-only, as in the sandbox', () => {
+  const root = repo();
+  mkdirSync(join(root, '.harness/state'), { recursive: true });
+  chmodSync(join(root, '.harness/state'), 0o500);
+  try {
+    const a = cli(root, 'workdir');
+    expect(a.code).toBe(0);
+    expect(existsSync(a.out)).toBe(true);
+    expect(cli(root, 'workdir', '--clean', a.out).code).toBe(0);
+    expect(existsSync(a.out)).toBe(false);
+  } finally {
+    chmodSync(join(root, '.harness/state'), 0o700);
+  }
 });
 
 test('workdir --clean of a folder that is already gone is a quiet success', () => {

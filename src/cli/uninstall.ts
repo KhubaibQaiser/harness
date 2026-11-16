@@ -157,6 +157,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   const opened = openInstall(cli, 'Not a git repository. Run harness uninstall inside a git repo.');
   if (typeof opened === 'number') return opened;
   const { root, m } = opened;
+  if (existsSync(join(root, '.harness')) && lstatSync(join(root, '.harness')).isSymbolicLink()) return out('`.harness` is a symlink; harness does not delete or write through it. Nothing was changed.'), 1; // before any removal
 
   const { changes, kept, notes, imported } = removalChanges(root, m, force);
   const importedWhy = `${list(imported)} kept because your edited eslint config still imports them. Delete them after you remove its harness lines.`;
@@ -171,7 +172,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   }
 
   // Asked first: with .harness/ kept, its .gitignore lines stay too, so logs, state and backups stay untracked.
-  const deleteHarness = yes || (await prompt.confirm('Delete the rest of .harness/ (config, hooks, logs, state, backups, reviews, reports, vet reports)? It keeps .harness/presets/ and .harness/tasks/, your own files. (y/N)'));
+  const deleteHarness = yes || (await prompt.confirm('Delete the rest of .harness/ (everything in it: config, hooks, logs, state, backups, work folders, results, debug files, reviews, reports, vet reports, eslint files and context)? It keeps .harness/presets/ and .harness/tasks/, your own files. (y/N)'));
   if (!deleteHarness && changes.some((c) => c.rel === '.gitignore')) {
     changes.splice(changes.findIndex((c) => c.rel === '.gitignore'), 1);
     notes.push('Kept the `.harness/` lines in `.gitignore`, so its logs, state and backups stay out of git.');
@@ -193,7 +194,6 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   if (deleteHarness) {
     // .harness/presets/ and .harness/tasks/ (approved task contracts) are the person's own, not something harness wrote: they stay.
     const own = ['presets', 'tasks'].map((d) => join(root, '.harness', d)).filter((d) => existsSync(d));
-    if (existsSync(join(root, '.harness')) && lstatSync(join(root, '.harness')).isSymbolicLink()) return out('`.harness` is a symlink; harness does not delete through it. Nothing under it was removed.'), 1;
     pruneExcept(join(root, '.harness'), [...kept, ...imported].map((k) => join(root, k)).concat(own));
     const edited = [...kept, ...imported].some((k) => k.startsWith('.harness/'));
     const stays = [...(edited ? ['the kept files'] : []), ...own.map((d) => `\`.harness/${basename(d)}/\``)];

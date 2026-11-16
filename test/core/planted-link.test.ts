@@ -70,3 +70,16 @@ test('tmp: workdir never writes through a planted .gitignore link', () => {
   expect(readFileSync(w.f, 'utf8')).toBe('mine');
 });
 
+
+test('ensureRealDir makes a missing folder, and is fine when it already exists', () => {
+  const r = mk();
+  ensureRealDir(r, '.harness/logs');
+  expect(() => ensureRealDir(r, '.harness/logs')).not.toThrow();
+});
+
+test('appendEventSafe reports a planted link on stderr instead of throwing', async () => {
+  const { appendEventSafe } = await import('../../src/core/events.js');
+  const v = planted('logs');
+  expect(() => appendEventSafe(v.root, { ts: 't', session: 's', check: 'c', decision: 'd' } as never)).not.toThrow();
+  intact(v);
+});

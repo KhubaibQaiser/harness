@@ -1,4 +1,5 @@
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { ensureRealDir, writeAtomic } from '../core/atomic.js';
 import { basename, dirname, join, resolve } from 'node:path';
 import { packageDir } from '../core/package-dir.js';
@@ -26,20 +27,9 @@ export function guide(args: string[], { out }: CliEnv): number {
 
 const WORKDIR_USAGE = 'Usage: harness workdir [--clean <path>]';
 const WORKDIR_NAME = /^w-[A-Za-z0-9]{6}$/; // what mkdtempSync(…/w-) makes
-// The folders `harness workdir` made: `--clean` removes only these, so it can never delete a folder of the person's or another tool's.
-const recordFile = (root: string) => join(root, '.harness', 'state', 'workdirs.json');
-function recorded(root: string): string[] {
-  try {
-    const v: unknown = JSON.parse(readFileSync(recordFile(root), 'utf8'));
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-function record(root: string, names: string[]): void {
-  ensureRealDir(root, '.harness/state');
-  writeAtomic(recordFile(root), JSON.stringify(names));
-}
+// `harness workdir` puts this marker in each folder it makes (created with `wx`, so a folder of the person's never has it);
+// `--clean` removes only a folder that holds it. Not in `.harness/state`: the sandbox denies writes there, and skills run workdir in it.
+const MARKER = '.harness-workdir';
 const linked = (p: string) => existsSync(p) && lstatSync(p).isSymbolicLink();
 
 /** A work folder for the skills inside the repo, `.harness/tmp/<id>/`, so they never write outside the working directory. */
@@ -51,17 +41,17 @@ export function workdir(args: string[], { root, out }: CliEnv): number {
     const ig = join(tmp, '.gitignore');
     try { lstatSync(ig); } catch { writeAtomic(ig, '*\n'); } // lstat: a planted link there counts as present and is never written through
     const dir = mkdtempSync(join(tmp, 'w-'));
-    record(root, [...recorded(root), basename(dir)]);
+    writeFileSync(join(dir, MARKER), randomBytes(8).toString('hex'), { flag: 'wx' });
     return out(dir), 0;
   }
   const p = args.length === 2 && args[0] === '--clean' ? resolve(root, args[1]!) : null;
   if (!p) return out(WORKDIR_USAGE), 2;
   if (dirname(p) !== tmp || !WORKDIR_NAME.test(basename(p))) return out(`Not a harness work folder (it must be a \`w-…\` folder directly under ${tmp}): ${p}`), 2;
-  const name = basename(p), names = recorded(root);
   let st;
-  try { st = lstatSync(p); } catch { return record(root, names.filter((n) => n !== name)), 0; } // already gone
-  if (!names.includes(name) || !st.isDirectory()) return out(`Refused: ${p} is not a folder \`harness workdir\` made (or is now a link). Nothing was removed.`), 1;
+  try { st = lstatSync(p); } catch { return 0; } // already gone
+  let mark = false;
+  try { mark = st.isDirectory() && lstatSync(join(p, MARKER)).isFile(); } catch { /* no marker */ }
+  if (!mark) return out(`Refused: ${p} is not a folder \`harness workdir\` made (or is a link). Nothing was removed.`), 1;
   rmSync(p, { recursive: true, force: true });
-  record(root, names.filter((n) => n !== name));
   return 0;
 }

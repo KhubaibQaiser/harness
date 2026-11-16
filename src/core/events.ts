@@ -54,3 +54,12 @@ export function lastConfigChangeBlocked(root: string): { ts: string; reason: str
     return null;
   }
 }
+
+/** A log line that must never decide a check: a failed write (a planted link, a full disk) is reported on stderr and the check goes on. */
+export function appendEventSafe(root: string, e: HarnessEvent): void {
+  try {
+    appendEvent(root, e);
+  } catch (err) {
+    process.stderr.write(`harness: event log failed: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}

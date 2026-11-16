@@ -39,6 +39,9 @@ export const matches = (rel: string, globs: string[]): boolean => globs.length >
 
 export const isTestFile = (rel: string): boolean => /\.(test|spec)\.[^/]+$/.test(rel) || /(^|\/)__tests__\//.test(rel);
 
+/** Globs for the test files isTestFile and isAnyTestFile name, plus `test/`, `tests/` folders and Go `*_test.go`; pinned to them by test/core/paths.test.ts. */
+export const TEST_FILE_GLOBS: string[] = ['**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/test/**', '**/tests/**', '**/test_*.py', '**/*_test.py', '**/*_test.go', '**/conftest.py'];
+
 /** JS/TS tests (isTestFile) plus Python tests: test_*.py, *_test.py, conftest.py, any .py under a tests/ dir. */
 export const isAnyTestFile = (rel: string): boolean => isTestFile(rel) || /(^|\/)(test_[^/]*|[^/]*_test|conftest)\.py$/.test(rel) || /(^|\/)tests\/(.*\/)?[^/]*\.py$/.test(rel);
 
@@ -47,7 +50,7 @@ export const pairKey = (rel: string): string => rel.replace(/(^|\/)__tests__\//,
 /** Harness's own local files: install gitignores them, and the in-progress size never counts them (pr-size spec §5). */
 /** Task contracts (done contract). Here, a leaf with no harness imports, so protect's table can name it. */
 export const TASKS_DIR = '.harness/tasks';
-export const HARNESS_LOCAL = ['.harness/state/', '.harness/logs/', '.harness/backup/', '.harness/results/', '.harness/debug/', '.harness/reports/', '.harness/reviews/'];
+export const HARNESS_LOCAL = ['.harness/state/', '.harness/logs/', '.harness/backup/', '.harness/results/', '.harness/debug/', '.harness/reports/', '.harness/reviews/', '.harness/verdicts/'];
 
 /** `.harness/` exists and is not just the skills' work folders (`.harness/tmp`, made before init): harness is or was installed. An empty `.harness/` counts, as the old existsSync check did. */
 export function hasHarnessDir(root: string): boolean {

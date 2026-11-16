@@ -427,3 +427,12 @@ test('owner round 3: enableWeakerNestedSandbox turned on in the user file is hel
   write(join(r.home, '.claude/settings.json'), { sandbox: { enableWeakerNestedSandbox: true } });
   expect(parsed(await change(r, 'user_settings'))?.reason).toContain('(sandbox)');
 });
+
+test('owner round 4: allowLocalBinding turned on in the local file is held; a string "true" counts as on', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { network: { allowLocalBinding: 'true' } } });
+  expect(parsed(await change(r, 'local_settings'))?.reason).toContain('(sandbox)');
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { network: { allowLocalBinding: false } } });
+  expect(await change(r, 'local_settings')).toBe('');
+});

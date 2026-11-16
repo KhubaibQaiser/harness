@@ -100,6 +100,20 @@ test.each([
   ['user enableWeakerNestedSandbox turned off does not', { sandbox: { enableWeakerNestedSandbox: true } }, { sandbox: { enableWeakerNestedSandbox: false } }, {}, 'user', []],
   ['local allowUnixSockets adds a path weakens', {}, { sandbox: { network: { allowUnixSockets: ['/var/run/docker.sock'] } } }, {}, 'local', ['sandbox']],
   ['user allowUnixSockets path removed does not', { sandbox: { network: { allowUnixSockets: ['/a.sock'] } } }, { sandbox: { network: { allowUnixSockets: [] } } }, {}, 'user', []],
+  // Owner (round 4): the macOS keys, and values that aren't the documented type count as loosening (fail closed).
+  ['local allowLocalBinding true weakens', {}, { sandbox: { network: { allowLocalBinding: true } } }, {}, 'local', ['sandbox']],
+  ['local allowLocalBinding false under a project true does not', {}, { sandbox: { network: { allowLocalBinding: false } } }, { project: { sandbox: { network: { allowLocalBinding: true } } } }, 'local', []],
+  ['user allowMachLookup new service weakens', {}, { sandbox: { network: { allowMachLookup: ['com.apple.x'] } } }, {}, 'user', ['sandbox']],
+  ['user allowMachLookup service removed does not', { sandbox: { network: { allowMachLookup: ['com.apple.x'] } } }, { sandbox: { network: { allowMachLookup: [] } } }, {}, 'user', []],
+  ['type: local enabled "true" over a user true weakens', {}, { sandbox: { enabled: 'true' } }, { user: USER_STRICT }, 'local', ['sandbox']],
+  ['type: user strictAllowlist "true" weakens', USER_STRICT, { sandbox: { ...USER_STRICT.sandbox, network: { strictAllowlist: 'true' } } }, {}, 'user', ['sandbox']],
+  ['type: project allowAllUnixSockets 1 weakens', {}, { sandbox: { network: { allowAllUnixSockets: 1 } } }, {}, 'project', ['sandbox']],
+  ['type: user enableWeakerNestedSandbox "yes" weakens', {}, { sandbox: { enableWeakerNestedSandbox: 'yes' } }, {}, 'user', ['sandbox']],
+  ['type: local httpProxyPort "8080" weakens', {}, { sandbox: { network: { httpProxyPort: '8080' } } }, {}, 'local', ['sandbox']],
+  ['type: local excludedCommands as a string weakens', {}, { sandbox: { excludedCommands: 'docker' } }, {}, 'local', ['excludedCommands']],
+  ['type: user allowMachLookup as a string weakens', {}, { sandbox: { network: { allowMachLookup: '*' } } }, {}, 'user', ['sandbox']],
+  ['type: local sandbox.network as a string weakens', {}, { sandbox: { network: 'open' } }, {}, 'local', ['sandbox']],
+  ['type: local sandbox as a string weakens', {}, { sandbox: 'off' }, {}, 'local', ['sandbox']],
 ] as const)('layered: %s', (_, base, cur, others, key, want) => {
   const layers = { base: stack({ ...others, [key]: view(base) }), cur: stack({ ...others, [key]: view(cur) }) };
   expect(weakened(view(base), view(cur), NONE, layers)).toEqual(want);

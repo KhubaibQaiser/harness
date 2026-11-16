@@ -28,17 +28,26 @@ const TRUSTED: [string[], unknown, Layer['name'][]][] = [
   [['network', 'strictAllowlist'], true, ['managed', 'user']], // any honoured true wins
   [['network', 'allowManagedDomainsOnly'], true, ['managed']],
 ];
-// Owner answer M3 (2026-11-16): excludedCommands entries run outside the sandbox, and (round 3) allowUnixSockets paths open
-// sockets to sandboxed commands. Lists merge across layers, so an entry new to the union is held, and a removal applies.
+// Owner answer M3 (2026-11-16): excludedCommands entries run outside the sandbox, and (rounds 3 and 4) allowUnixSockets
+// paths and allowMachLookup services open the sandbox. Lists merge across layers, so an entry new to the union is held,
+// and a removal applies. A value that isn't a list counts as an entry of its own, so a new one is held (fail closed).
 const union = (layers: Layer[], path: string[]): Set<string> =>
-  new Set(layers.flatMap((x) => { const v = effective([x], ['sandbox', ...path]); return Array.isArray(v) ? v.map((e) => JSON.stringify(e)) : []; }));
+  new Set(layers.flatMap((x) => { const v = effective([x], ['sandbox', ...path]); return Array.isArray(v) ? v.map((e) => JSON.stringify(e)) : v === undefined ? [] : [`!${JSON.stringify(v)}`]; }));
 const added = (l: { base: Layer[]; cur: Layer[] }, path: string[]) => [...union(l.cur, path)].some((e) => !union(l.base, path).has(e));
-// Owner (round 3): scalar keys that loosen the sandbox when the winning value turns on, or when a proxy port is set or moved.
-const on = (b: unknown, c: unknown) => c === true && b !== true;
+// Owner (rounds 3 and 4): scalar keys that loosen the sandbox when the winning value turns on, or when a proxy port is set or
+// moved. Anything but `false` counts as on, and any port value as set, so a value of the wrong type is held (fail closed).
+const on = (b: unknown, c: unknown) => c !== undefined && c !== false && !isDeepStrictEqual(b, c);
 const port = (b: unknown, c: unknown) => c !== undefined && !isDeepStrictEqual(b, c);
 const LOOSER: [string[], (b: unknown, c: unknown) => boolean][] = [
   [['network', 'httpProxyPort'], port], [['network', 'socksProxyPort'], port], [['network', 'allowAllUnixSockets'], on], [['enableWeakerNestedSandbox'], on],
+  [['network', 'allowLocalBinding'], on],
 ];
+// `sandbox` or `sandbox.network` changed to something that isn't an object hides every key below it: held (fail closed).
+const shapeBroken = (l: { base: Layer[]; cur: Layer[] }) =>
+  [['sandbox'], ['sandbox', 'network']].some((path) => l.cur.some((x, i) => {
+    const v = effective([x], path);
+    return v !== undefined && !(v && typeof v === 'object' && !Array.isArray(v)) && !isDeepStrictEqual(v, effective([l.base[i]], path));
+  }));
 // Precedence (settings docs): managed, then --settings (a hook can't see it), local, project, user: the first that sets it.
 const winning = (layers: Layer[], path: string[], from: Layer['name'][]): unknown =>
   from === ANY ? effective(layers, ['sandbox', ...path]) : layers.some((l) => from.includes(l.name) && effective([l], ['sandbox', ...path]) === true) || undefined;
@@ -99,7 +108,9 @@ export function weakened(base: GuardedView | undefined, cur: GuardedView, owned:
     Object.entries(owned.sandbox).some(([k, v]) => !isDeepStrictEqual(box(b)[k], box(cur)[k]) && !isDeepStrictEqual(box(cur)[k], v)) ||
     TRUSTED.some(([path, safe, from]) => winning(l.base, path, from) === safe && winning(l.cur, path, from) !== safe) ||
     LOOSER.some(([path, looser]) => looser(winning(l.base, path, ANY), winning(l.cur, path, ANY))) ||
-    added(l, ['network', 'allowUnixSockets'])
+    added(l, ['network', 'allowUnixSockets']) ||
+    added(l, ['network', 'allowMachLookup']) ||
+    shapeBroken(l)
   ) parts.push('sandbox');
   if (added(l, ['excludedCommands'])) parts.push('excludedCommands');
   if (owned.denyWrite.some((p) => denyWrite(b).includes(p) && !denyWrite(cur).includes(p))) parts.push('denyWrite');

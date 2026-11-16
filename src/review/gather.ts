@@ -7,7 +7,6 @@ import type { CliEnv } from '../cli/index.js';
 import { writeAtomic } from '../core/atomic.js';
 import { packageDir } from '../core/package-dir.js';
 import { esc } from '../core/config.js';
-import { TEST_FILE_GLOBS } from '../core/paths.js';
 import { validateConfig } from '../core/config-io.js';
 import { appendEvent } from '../core/events.js';
 import { defaultExec, defaultExecBytes, type Exec, type ExecBytes } from '../core/exec.js';
@@ -17,7 +16,7 @@ import { harnessIgnoreText } from '../install/harnessignore.js';
 import { LIMITS } from '../vet/fetch.js';
 import { baseBlobs, driftCheck, lsTree } from './base.js';
 import { contextMd, DELETED_FORK, diffText, newNonce, nonceIn } from './context.js';
-import { capDiff, commentable, DIFF_CAP, diffArgs, parseDiff } from './diff.js';
+import { capDiff, commentable, reviewExclude, DIFF_CAP, diffArgs, parseDiff } from './diff.js';
 import { issueView, parsePr, preflight, prView, reviewComments } from './gh.js';
 import { writeSnapshot } from './snapshot.js';
 
@@ -124,7 +123,7 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
     const d = exec('git', [...SAFE_GIT, ...diffArgs(mergeBase, headSha)], { timeoutMs: 120_000 });
     if (d.status !== 0) return fail(`review: git diff failed: ${gitErr(d)}`);
     const files = parseDiff(d.stdout);
-    const cap = capDiff(files, DIFF_CAP, cfg.config.pr_size.exclude.filter((g) => !TEST_FILE_GLOBS.includes(g))) // the reviewer checks test quality, so tests are sent;
+    const cap = capDiff(files, DIFF_CAP, reviewExclude(cfg.config.pr_size.exclude));
 
     const dir = resolve(root, outDir), head = join(dir, 'head');
     const changed = new Set(files.map((x) => x.path));

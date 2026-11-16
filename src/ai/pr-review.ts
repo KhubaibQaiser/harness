@@ -4,7 +4,9 @@ import { checks, q } from './vet-review.js';
 
 /** The rubric's 13 questions as slugs (spec §7.1 and §14). */
 export const CATEGORIES = ['correctness', 'failure-modes', 'security', 'performance', 'accessibility', 'seo', 'operability', 'design', 'simplicity', 'tests', 'agents-md', 'product', 'pr-description'] as const;
-export type Category = (typeof CATEGORIES)[number];
+/** Task mode's three questions (done contract): valid only when the caller passes them. */
+export const TASK_CATEGORIES = ['criterion-evidence', 'unrequested-scope', 'weakened'] as const;
+export type Category = (typeof CATEGORIES)[number] | (typeof TASK_CATEGORIES)[number];
 export interface PrFinding {
   id: string; severity: 'critical' | 'medium' | 'nit'; category: Category; file: string; line: number; side: 'RIGHT' | 'LEFT'; title: string;
   evidence: { kind: 'quote'; text: string } | { kind: 'missing-test'; search: string }; fix: string;
@@ -14,7 +16,7 @@ export type SteeringSource = typeof SOURCES extends Set<infer T> ? T : never;
 export interface PrReview { findings: PrFinding[]; steering: { source: SteeringSource; text: string }[]; summary: string; limits: string }
 
 /** The reviewer's findings.json as data (spec §7.2). More findings than review.max_findings is not an error: finish collapses them. */
-export function validatePrReview(raw: unknown, g: GatherJson, inSnapshot: (file: string) => boolean): { ok: true; review: PrReview } | { ok: false; errors: string[] } {
+export function validatePrReview(raw: unknown, g: Pick<GatherJson, 'files'>, inSnapshot: (file: string) => boolean, categories: readonly string[] = CATEGORIES): { ok: true; review: PrReview } | { ok: false; errors: string[] } {
   if (!isObj(raw)) return { ok: false, errors: ['pr-review: must be a mapping'] };
   const errors: string[] = [];
   const { str, list, keys } = checks(errors);
@@ -31,7 +33,7 @@ export function validatePrReview(raw: unknown, g: GatherJson, inSnapshot: (file:
       ids.add(f.id);
     }
     if (!['critical', 'medium', 'nit'].includes(f.severity as string)) errors.push(`${at}.severity: must be critical, medium or nit`);
-    if (!(CATEGORIES as readonly string[]).includes(f.category as string)) errors.push(`${at}.category: must be one of the 13 rubric categories`);
+    if (!categories.includes(f.category as string)) errors.push(`${at}.category: must be one of the ${categories.length}${categories === CATEGORIES ? ' rubric' : ''} categories`);
     if (typeof f.file !== 'string') errors.push(`${at}.file: must be a string`);
     else if (!inPr.has(f.file) && !inSnapshot(f.file)) errors.push(`${at}.file: ${q(f.file)} is not in this PR or its snapshot`);
     if (!Number.isSafeInteger(f.line) || (f.line as number) < 1) errors.push(`${at}.line: must be a positive integer`);

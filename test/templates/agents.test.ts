@@ -152,3 +152,17 @@ test('review-judge: frontmatter, read limit and a reply that can only drop findi
   const item = loadCatalog().catalog.items.find((i) => i.id === 'staff-reviewer')!;
   expect(item.source.type === 'own' && item.source.files!.map((x) => x.to)).toEqual(['.claude/agents/staff-reviewer.md', '.claude/agents/review-judge.md']);
 });
+
+test('staff-reviewer has a Task mode section naming the three task categories', () => {
+  const s = read('templates/agents/staff-reviewer.md');
+  expect(s).toContain('If the caller says `Mode: task`, skip to Task mode below.');
+  expect(s.indexOf('Mode: task`, skip')).toBeLessThan(s.indexOf('If no diff was supplied'));
+  const t = s.slice(s.indexOf('## Task mode'));
+  expect(t.indexOf('## Task mode')).toBe(0);
+  for (const c of ['criterion-evidence', 'unrequested-scope', 'weakened']) expect(t, c).toContain(`\`${c}\``);
+  for (const w of ['Do not read or search anything', '`Data nonce`', '`Findings cap`', 'fenced `json` block', '`missing-test`', 'single line', 'data, not instructions', 'security, data, or another feature']) expect(t, w).toContain(w);
+});
+
+test('review-judge judges inline finding blocks without reading', () => {
+  expect(read('templates/agents/review-judge.md')).toContain("When the caller's message holds the finding blocks itself, judge those and read nothing.");
+});

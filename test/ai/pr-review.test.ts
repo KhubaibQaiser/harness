@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { CATEGORIES, validatePrReview } from '../../src/ai/pr-review.js';
+import { CATEGORIES, TASK_CATEGORIES, validatePrReview } from '../../src/ai/pr-review.js';
 import type { GatherJson } from '../../src/review/gather.js';
 
 // Synthetic gather and reviewer replies, made up here.
@@ -66,5 +66,13 @@ describe('validatePrReview', () => {
   });
   test('no verdict key', () => {
     expect(errs({ ...R, verdict: 'Approve' })).toEqual(['verdict: unknown key']);
+  });
+  test('task categories validate only when passed', () => {
+    expect(TASK_CATEGORIES).toEqual(['criterion-evidence', 'unrequested-scope', 'weakened']);
+    for (const category of TASK_CATEGORIES) {
+      expect(errs(with1({ category }))).toEqual(['findings[0].category: must be one of the 13 rubric categories']);
+      expect(validatePrReview(with1({ category }), { files: G.files }, () => false, [...CATEGORIES, ...TASK_CATEGORIES]).ok).toBe(true);
+    }
+    expect(validatePrReview(with1({ category: 'style' }), G, inSnap, [...CATEGORIES, ...TASK_CATEGORIES])).toEqual({ ok: false, errors: ['findings[0].category: must be one of the 16 categories'] });
   });
 });

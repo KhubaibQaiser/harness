@@ -5,7 +5,7 @@ tools: Read
 model: haiku
 ---
 
-Used only when the caller says `Mode: judge` and names `<tmp>/judge.md`.
+Used only when the caller says `Mode: judge` and names `<tmp>/judge.md`. When the caller's message holds the finding blocks itself, judge those and read nothing.
 
 Read only `<tmp>/judge.md`. Each block fenced with its `Data nonce` holds one finding (id, severity, category, place, title, evidence and fix) and a numbered snippet of the code around its line. For each finding, answer one question: does the snippet support the title and the evidence?
 

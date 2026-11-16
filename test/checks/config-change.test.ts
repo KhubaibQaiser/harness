@@ -282,11 +282,36 @@ test('a user env MCP token added applies, in the user and the project file', asy
   expect(readEvents(r.root).some((e) => e.decision === 'config-change-blocked')).toBe(false);
 });
 
-test('a user hook added applies', async () => {
+const MINE = { hooks: [{ type: 'command', command: 'echo done' }] };
+test('a hook added to any settings file is held; editing or removing the person\'s own hook applies (owner, 2026-11-16)', async () => {
+  const r = repo();
+  write(join(r.root, '.claude/settings.local.json'), { hooks: { Stop: [MINE] } });
+  await prompt(r);
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, hooks: { ...SETTINGS.hooks, Stop: [MINE] } });
+  expect(parsed(await change(r, 'project_settings'))?.reason).toContain('`.claude/settings.json` (newHooks)');
+  write(join(r.home, '.claude/settings.json'), { hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo new' }] }] } });
+  expect(parsed(await change(r, 'user_settings'))?.reason).toContain('(newHooks)');
+  write(join(r.root, '.claude/settings.local.json'), { hooks: { Stop: [{ hooks: [{ ...MINE.hooks[0], timeout: 30 }] }] } });
+  expect(await change(r, 'local_settings')).toBe('');
+  write(join(r.root, '.claude/settings.local.json'), {});
+  expect(await change(r, 'local_settings')).toBe('');
+});
+
+test('an excludedCommands entry added in the local file is held; removing one applies (owner M3)', async () => {
+  const r = repo();
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { excludedCommands: ['docker'] } });
+  await prompt(r);
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { excludedCommands: ['docker', 'python3'] } });
+  expect(parsed(await change(r, 'local_settings'))?.reason).toContain('(excludedCommands)');
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { excludedCommands: [] } });
+  expect(await change(r, 'local_settings')).toBe('');
+});
+
+test('HOME set in the user file env is held (owner M2)', async () => {
   const r = repo();
   await prompt(r);
-  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, hooks: { ...SETTINGS.hooks, Stop: [{ hooks: [{ type: 'command', command: 'echo done' }] }] } });
-  expect(await change(r, 'project_settings')).toBe('');
+  write(join(r.home, '.claude/settings.json'), { env: { HOME: '/tmp/x' } });
+  expect(parsed(await change(r, 'user_settings'))?.reason).toContain('(env)');
 });
 
 test('a /sandbox-style local network.allowedDomains edit applies', async () => {
@@ -299,7 +324,8 @@ test('a /sandbox-style local network.allowedDomains edit applies', async () => {
 });
 
 test('a change with no baseline that keeps every harness entry applies', async () => {
-  const r = repo();
+  // The manifest records harness's hook groups: with no baseline, a hook it doesn't record counts as added.
+  const r = repo([{ event: 'PreToolUse', group: SETTINGS.hooks.PreToolUse[0] }, { event: 'ConfigChange', group: GROUP }]);
   write(join(r.root, '.claude/settings.json'), { ...SETTINGS, env: { MCP_TOKEN: 'x' }, permissions: { deny: [FORCE], allow: ['Bash(ls)'] } });
   expect(await change(r, 'project_settings')).toBe('');
   write(join(r.root, '.claude/settings.json'), { ...SETTINGS, permissions: { deny: [] } });

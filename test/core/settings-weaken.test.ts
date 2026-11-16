@@ -32,20 +32,27 @@ test.each([
   ['local sandbox.enabled true does not', {}, { sandbox: { enabled: true } }, []],
   ['project sandbox.enabled removed weakens', FULL, { ...FULL, sandbox: { filesystem: FULL.sandbox.filesystem } }, ['sandbox']],
   ['network.allowedDomains added does not', FULL, { ...FULL, sandbox: { ...FULL.sandbox, network: { allowedDomains: ['example.com'] } } }, []],
-  ['excludedCommands added does not', FULL, { ...FULL, sandbox: { ...FULL.sandbox, excludedCommands: ['docker'] } }, []],
+  ['excludedCommands added weakens (owner M3)', FULL, { ...FULL, sandbox: { ...FULL.sandbox, excludedCommands: ['docker'] } }, ['excludedCommands']],
+  ['excludedCommands entry removed does not', { ...FULL, sandbox: { ...FULL.sandbox, excludedCommands: ['docker'] } }, FULL, []],
   ['a harness denyWrite path removed weakens', FULL, { ...FULL, sandbox: { ...FULL.sandbox, filesystem: { denyWrite: [] } } }, ['denyWrite']],
   ['a denyWrite path added does not', FULL, { ...FULL, sandbox: { ...FULL.sandbox, filesystem: { denyWrite: ['./.harness', './x'] } } }, []],
   ['a harness deny rule removed weakens', FULL, { ...FULL, permissions: { deny: [USER_DENY] } }, ['deny']],
   ['a user deny rule removed does not', FULL, { ...FULL, permissions: { deny: [FORCE] } }, []],
-  ['the user\'s own hook added does not', FULL, { ...FULL, hooks: { PreToolUse: [GROUP, MINE], Stop: [MINE] } }, []],
+  ['the user\'s own hook added weakens (owner: no new hooks mid-session)', FULL, { ...FULL, hooks: { PreToolUse: [GROUP, MINE] } }, ['newHooks']],
   ['the user\'s own hook removed does not', { ...FULL, hooks: { PreToolUse: [GROUP, MINE] } }, FULL, []],
   ['a harness hook group removed weakens', FULL, { ...FULL, hooks: {} }, ['hooks']],
-  ['a harness hook group\'s onFailure changed weakens', FULL, { ...FULL, hooks: { PreToolUse: [{ ...GROUP, hooks: [{ ...H, onFailure: 'continue' }] }] } }, ['hooks']],
+  ['a harness hook group\'s onFailure changed weakens', FULL, { ...FULL, hooks: { PreToolUse: [{ ...GROUP, hooks: [{ ...H, onFailure: 'continue' }] }] } }, ['hooks', 'newHooks']],
+  ['the user\'s own hook timeout edited does not', { ...FULL, hooks: { PreToolUse: [GROUP, MINE] } }, { ...FULL, hooks: { PreToolUse: [GROUP, { ...MINE, hooks: [{ ...MINE.hooks[0], timeout: 5, statusMessage: 'hi' }] }] } }, []],
+  ['the user\'s own hook command changed is a new hook', { ...FULL, hooks: { PreToolUse: [GROUP, MINE] } }, { ...FULL, hooks: { PreToolUse: [GROUP, { ...MINE, hooks: [{ type: 'command', command: 'echo other' }] }] } }, ['newHooks']],
+  ['a known hook under another event is a new hook', { ...FULL, hooks: { PreToolUse: [GROUP, MINE] } }, { ...FULL, hooks: { PreToolUse: [GROUP, MINE], Stop: [MINE] } }, ['newHooks']],
   ['NODE_OPTIONS added weakens', {}, { env: { NODE_OPTIONS: '--require x.js' } }, ['env']],
   ['a guarded prefix key changed weakens', { env: { GIT_DIR: 'a' } }, { env: { GIT_DIR: 'b' } }, ['env']],
   ['a guarded key removed weakens', { env: { PATH: '/bin' } }, {}, ['env']],
   ['a guarded key in another case weakens', {}, { env: { node_options: '--require x.js' } }, ['env']],
   ['MCP_TOKEN added does not', {}, { env: { MCP_TOKEN: 'abc' } }, []],
+  ['TMPDIR added weakens (owner M2)', {}, { env: { TMPDIR: '/home/x' } }, ['env']],
+  ['ComSpec changed weakens, in any case', { env: { ComSpec: 'cmd.exe' } }, { env: { ComSpec: 'x.exe' } }, ['env']],
+  ['USERPROFILE removed weakens', { env: { USERPROFILE: 'C:/u' } }, {}, ['env']],
   ['ANTHROPIC_MODEL changed does not', { env: { ANTHROPIC_MODEL: 'a' } }, { env: { ANTHROPIC_MODEL: 'b' } }, []],
   ['unreadable JSON is [\'unreadable\']', {}, '{"disableAllHooks": true,', ['unreadable']],
 ])('%s', (_, base, cur, want) => {
@@ -81,6 +88,8 @@ test.each([
   ['project strictAllowlist false (a scope Claude Code ignores for it) does not', {}, { sandbox: { network: { strictAllowlist: false } } }, { user: USER_STRICT }, 'project', []],
   ['user strictAllowlist removed weakens', USER_STRICT, { sandbox: { enabled: true, allowUnsandboxedCommands: false } }, { user: USER_STRICT }, 'user', ['sandbox']],
   ['local enabled true over a user false does not', {}, { sandbox: { enabled: true } }, { user: { sandbox: { enabled: false } } }, 'local', []],
+  ['local excludedCommands adds an entry the user file lacks: weakens', {}, { sandbox: { excludedCommands: ['python3'] } }, { user: { sandbox: { excludedCommands: ['docker'] } } }, 'local', ['excludedCommands']],
+  ['local excludedCommands repeats an entry the user file has: does not', {}, { sandbox: { excludedCommands: ['docker'] } }, { user: { sandbox: { excludedCommands: ['docker'] } } }, 'local', []],
 ] as const)('layered: %s', (_, base, cur, others, key, want) => {
   const layers = { base: stack({ ...others, [key]: view(base) }), cur: stack({ ...others, [key]: view(cur) }) };
   expect(weakened(view(base), view(cur), NONE, layers)).toEqual(want);
@@ -108,7 +117,7 @@ test('no baseline: a missing hook group, owned sandbox key, denyWrite path or a 
 });
 
 test('the guarded env list is the Q7 A list', () => {
-  expect(GUARDED_ENV.keys).toEqual(['PATH', 'PATHEXT', 'NODE_OPTIONS', 'NODE_PATH', 'CI', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_STOP_HOOK_BLOCK_CAP', 'AGENT_GUARD_ALLOW_INSTALL', 'XDG_RUNTIME_DIR']);
+  expect(GUARDED_ENV.keys).toEqual(['PATH', 'PATHEXT', 'NODE_OPTIONS', 'NODE_PATH', 'CI', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_STOP_HOOK_BLOCK_CAP', 'AGENT_GUARD_ALLOW_INSTALL', 'XDG_RUNTIME_DIR', 'HOME', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'COMSPEC']);
   expect(GUARDED_ENV.prefixes).toEqual(['HARNESS_', 'GIT_', 'LD_', 'DYLD_']);
 });
 

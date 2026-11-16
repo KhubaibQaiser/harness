@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { type GuardedPart, type GuardedView, settingsBlocks } from './harness-files.js';
+import { type GuardedPart, type GuardedView, hookIds, settingsBlocks } from './harness-files.js';
 import { effective, type Layer } from './settings-layers.js';
 
 // Plan ruling R11 (CC7): which settings changes weaken harness. Everything else in a settings file is the person's and
@@ -8,7 +8,9 @@ import { effective, type Layer } from './settings-layers.js';
 // Owner answer Q7 = A (2026-11-16): settings `env` reaches the hook processes, so only the keys that steer them stay
 // guarded. Matched case-insensitively, as Windows reads env names (`Path`).
 export const GUARDED_ENV: { keys: readonly string[]; prefixes: readonly string[] } = {
-  keys: ['PATH', 'PATHEXT', 'NODE_OPTIONS', 'NODE_PATH', 'CI', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_STOP_HOOK_BLOCK_CAP', 'AGENT_GUARD_ALLOW_INSTALL', 'XDG_RUNTIME_DIR'],
+  keys: ['PATH', 'PATHEXT', 'NODE_OPTIONS', 'NODE_PATH', 'CI', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_STOP_HOOK_BLOCK_CAP', 'AGENT_GUARD_ALLOW_INSTALL', 'XDG_RUNTIME_DIR',
+    // Owner answer M2 (2026-11-16): home, temp and shell paths steer the Stop gate's srt profile and runner.
+    'HOME', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'COMSPEC'],
   prefixes: ['HARNESS_', 'GIT_', 'LD_', 'DYLD_'],
 };
 const guardedKey = (k: string): boolean => {
@@ -27,6 +29,10 @@ const TRUSTED: [string[], unknown, Layer['name'][]][] = [
   [['network', 'allowManagedDomainsOnly'], true, ['managed']],
 ];
 // Precedence (settings docs): managed, then --settings (a hook can't see it), local, project, user: the first that sets it.
+// Owner answer M3 (2026-11-16): excludedCommands entries run outside the sandbox; lists merge across layers, so an entry
+// new to the union is held, and a removal applies.
+const excluded = (layers: Layer[]): Set<string> =>
+  new Set(layers.flatMap((x) => { const v = effective([x], ['sandbox', 'excludedCommands']); return Array.isArray(v) ? v.map((e) => JSON.stringify(e)) : []; }));
 const winning = (layers: Layer[], path: string[], from: Layer['name'][]): unknown =>
   from === ANY ? effective(layers, ['sandbox', ...path]) : layers.some((l) => from.includes(l.name) && effective([l], ['sandbox', ...path]) === true) || undefined;
 
@@ -57,7 +63,7 @@ function fromManifest(o: Owned): GuardedView {
     const { event, group } = JSON.parse(raw);
     hooks.set(event, [...(hooks.get(event) ?? []), group]);
   }
-  return { hooks: [...hooks], deny: [...(o.deny ?? [])], disableAllHooks: null, sandbox: { ...o.sandbox, filesystem: { denyWrite: o.denyWrite } }, env: {} };
+  return { hooks: [...hooks], deny: [...(o.deny ?? [])], disableAllHooks: null, sandbox: { ...o.sandbox, filesystem: { denyWrite: o.denyWrite } }, env: {}, hookIds: hookIds(Object.fromEntries(hooks)) };
 }
 
 /**
@@ -78,6 +84,7 @@ export function weakened(base: GuardedView | undefined, cur: GuardedView, owned:
   const [eb, ec] = [env(b), env(cur)];
   const parts: GuardedPart[] = [];
   if (groups(b).some((g) => !groups(cur).some((c) => isDeepStrictEqual(c, g)))) parts.push('hooks');
+  if (b.hookIds && cur.hookIds?.some((h) => !b.hookIds!.includes(h))) parts.push('newHooks'); // a state from before them: skipped
   if (b.deny.some((r) => !cur.deny.includes(r))) parts.push('deny');
   if (cur.disableAllHooks && !b.disableAllHooks) parts.push('disableAllHooks');
   if (
@@ -85,6 +92,7 @@ export function weakened(base: GuardedView | undefined, cur: GuardedView, owned:
     Object.entries(owned.sandbox).some(([k, v]) => !isDeepStrictEqual(box(b)[k], box(cur)[k]) && !isDeepStrictEqual(box(cur)[k], v)) ||
     TRUSTED.some(([path, safe, from]) => winning(l.base, path, from) === safe && winning(l.cur, path, from) !== safe)
   ) parts.push('sandbox');
+  if ([...excluded(l.cur)].some((e) => !excluded(l.base).has(e))) parts.push('excludedCommands');
   if (owned.denyWrite.some((p) => denyWrite(b).includes(p) && !denyWrite(cur).includes(p))) parts.push('denyWrite');
   if ([...new Set([...Object.keys(eb), ...Object.keys(ec)])].some((k) => eb[k] !== ec[k])) parts.push('env');
   return parts;

@@ -2,7 +2,7 @@
 // only on the branch that dialog named.
 import { createHash } from 'node:crypto';
 import { esc, type HarnessConfig, isObj } from '../../core/config.js';
-import { appendEvent } from '../../core/events.js';
+import { appendEventSafe } from '../../core/events.js';
 import type { Ctx } from '../../hooks/dispatch.js';
 import type { Decision } from '../../hooks/types.js';
 import type { PrTarget, RaiseArgs } from './detect.js';
@@ -107,7 +107,7 @@ export function postRaise(ctx: Ctx, command: string, targets: PrTarget[], cur: (
   if (asked) writeAsked(ctx.root, key, null);
   const why = skipReason(ctx, r, cur(), asked);
   const ts = new Date().toISOString();
-  if (why) return appendEvent(ctx.root, { ts, session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-raise-skipped', reason: why });
+  if (why) return appendEventSafe(ctx.root, { ts, session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-raise-skipped', reason: why });
   recordRaise(ctx, r, asked!.branch, ts);
 }
 
@@ -116,5 +116,5 @@ function recordRaise(ctx: Ctx, r: Limits, branch: string, ts: string): void {
   const all = readProgress(ctx.root);
   const { pending: _, ...prev } = Object.hasOwn(all, branch) ? all[branch]! : { base: ctx.config.stop.base_ref, fired: [], lines: 0, files: 0, ts };
   writeProgress(ctx.root, branch, { ...prev, raise: { lines: r.lines, files: r.files, ts } });
-  appendEvent(ctx.root, { ts, session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-raised', reason: `${esc(branch)} ${count(r.lines, 'line')} ${count(r.files, 'file')}` });
+  appendEventSafe(ctx.root, { ts, session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-raised', reason: `${esc(branch)} ${count(r.lines, 'line')} ${count(r.files, 'file')}` });
 }

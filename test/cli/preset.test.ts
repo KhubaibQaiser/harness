@@ -183,3 +183,19 @@ test('check refuses a skill file outside its own .claude/skills/<name>/ folder, 
   retarget(ok, 'alpha', '.claude/skills/alpha/refs/more.md');
   expect(go(['check', ok]).out).toBe('ok');
 });
+
+test('install never writes through a planted .harness/presets link, and a dangling link counts as taken', async () => {
+  const d = copyTiny();
+  const root = tmp(), away = tmp();
+  mkdirSync(join(root, '.harness'));
+  symlinkSync(away, join(root, '.harness/presets'));
+  expect((await install([d, '--yes'], root)).code).toBe(1);
+  expect(existsSync(join(away, 'tiny.yaml'))).toBe(false);
+  const root2 = tmp(), gone = join(tmp(), 'nowhere.yaml');
+  mkdirSync(join(root2, '.harness/presets'), { recursive: true });
+  symlinkSync(gone, join(root2, '.harness/presets/tiny.yaml')); // dangling
+  const r = await install([d, '--yes'], root2);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('already exists');
+  expect(existsSync(gone)).toBe(false);
+});

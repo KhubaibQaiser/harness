@@ -1,4 +1,5 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendNoFollow, ensureRealDir } from './atomic.js';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface HarnessEvent {
@@ -17,8 +18,8 @@ export interface HarnessEvent {
 const file = (root: string) => join(root, '.harness/logs/events.jsonl');
 
 export function appendEvent(root: string, e: HarnessEvent): void {
-  mkdirSync(join(root, '.harness/logs'), { recursive: true });
-  appendFileSync(file(root), JSON.stringify(e) + '\n');
+  ensureRealDir(root, '.harness/logs');
+  appendNoFollow(file(root), JSON.stringify(e) + '\n');
 }
 
 export function readEvents(root: string): HarnessEvent[] {
@@ -51,5 +52,14 @@ export function lastConfigChangeBlocked(root: string): { ts: string; reason: str
     return e ? { ts: e.ts, reason: e.reason ?? '' } : null;
   } catch {
     return null;
+  }
+}
+
+/** A log line that must never decide a check: a failed write (a planted link, a full disk) is reported on stderr and the check goes on. */
+export function appendEventSafe(root: string, e: HarnessEvent): void {
+  try {
+    appendEvent(root, e);
+  } catch (err) {
+    process.stderr.write(`harness: event log failed: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 }

@@ -23,7 +23,7 @@ export function review(args: string[], cli: CliEnv, deps: GatherDeps = {}): numb
   if (args.length !== 3 || args[1] !== '--out' || args[0]!.startsWith('-')) return out(`Usage: ${REVIEW_USAGE}`), 2;
   const tmp = join(root, '.harness', 'tmp'), p = resolve(root, args[2]!);
   const linked = [dirname(tmp), tmp, p].some((x) => existsSync(x) && lstatSync(x).isSymbolicLink());
-  if (linked || dirname(p) !== tmp || basename(p) === '.gitignore' || !existsSync(p) || !lstatSync(p).isDirectory() || readdirSync(p).length)
+  if (linked || dirname(p) !== tmp || basename(p) === '.gitignore' || !existsSync(p) || !lstatSync(p).isDirectory() || readdirSync(p).some((n) => n !== '.harness-workdir')) // the marker `harness workdir` leaves is the only thing allowed
     return out(`review: --out must be an empty folder from harness workdir, directly under ${tmp}: ${p}`), 2;
   return gather(args, cli, deps);
 }

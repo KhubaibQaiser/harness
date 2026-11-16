@@ -15,12 +15,13 @@ const dir = (files: Record<string, string>) => {
 test('vitest and jest fixtures parse to the same structure', () => {
   const v = readResults(root, dir({ 'v.json': fx('vitest.json') }));
   const j = readResults(root, dir({ 'j.json': fx('jest.json') }));
-  const strip = (r: TestFileResult[]) => r.map(({ writtenAt: _w, ...x }) => x);
+  const strip = (r: TestFileResult[]) => r.map(({ writtenAt: _w, changedAt: _c, ...x }) => x);
   expect(strip(v)).toEqual([
     { file: 'src/a.test.ts', status: 'failed', tests: [{ fullName: 'adds', status: 'passed' }, { fullName: 'fails', status: 'failed' }] },
   ]);
   expect(strip(j)).toEqual(strip(v));
   expect(v[0]!.writtenAt).toBeGreaterThan(0);
+  expect(v[0]!.changedAt).toBeGreaterThan(0);
 });
 
 test('skips malformed and unreadable files, missing dir gives []', () => {

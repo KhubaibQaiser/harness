@@ -130,7 +130,8 @@ test('asks before deleting .harness and keeps logs on no', async () => {
   writeFileSync(join(root, '.harness/logs.txt'), 'log');
   const prompt = fake([false]);
   const r = await un(root, [], prompt);
-  expect(prompt.asked).toEqual(['Delete .harness/ including logs? (y/N)']);
+  expect(prompt.asked).toHaveLength(1);
+  expect(prompt.asked[0]).toContain('Delete the rest of .harness/');
   expect(r.code).toBe(0);
   expect(existsSync(join(root, '.harness/logs.txt'))).toBe(true);
   expect(existsSync(join(root, '.harness/manifest.json'))).toBe(false);
@@ -379,4 +380,33 @@ test('decision rules: --force removes an edited one, and the emptied .claude/rul
   expect((await un(root, ['--yes', '--force'])).code).toBe(0);
   expect(existsSync(join(root, '.claude/rules'))).toBe(false);
   expect(readdirSync(join(root, 'docs/decisions'))).toHaveLength(2);
+});
+
+test('uninstall keeps .harness/tasks, and the prompt lists what goes and what stays', async () => {
+  const root = await installed();
+  mkdirSync(join(root, '.harness/tasks'), { recursive: true });
+  writeFileSync(join(root, '.harness/tasks/t1.json'), '{"approved":true}');
+  const prompt = fake([true]);
+  const r = await un(root, [], prompt);
+  expect(readFileSync(join(root, '.harness/tasks/t1.json'), 'utf8')).toBe('{"approved":true}');
+  expect(prompt.asked).toHaveLength(1);
+  expect(prompt.asked[0]).toMatch(/logs/);
+  expect(prompt.asked[0]).toMatch(/keeps .*\.harness\/tasks\//);
+  expect(prompt.asked[0]).toMatch(/keeps .*\.harness\/presets\//);
+  expect(r.out).toContain('.harness/tasks/');
+});
+
+test('a linked .harness is refused before anything is removed', async () => {
+  const root = await installed();
+  const before = readFileSync(join(root, '.harness/manifest.json'), 'utf8');
+  const away = mkdtempSync(join(tmpdir(), 'harness-un-away-'));
+  const moved = join(away, 'real');
+  const { renameSync, symlinkSync } = await import('node:fs');
+  renameSync(join(root, '.harness'), moved);
+  symlinkSync(moved, join(root, '.harness'));
+  const r = await un(root, ['--yes']);
+  expect(r.code).toBe(1);
+  expect(r.out).toContain('symlink');
+  expect(readFileSync(join(moved, 'manifest.json'), 'utf8')).toBe(before);
+  expect(readdirSync(join(moved, 'hooks')).length).toBeGreaterThan(0); // nothing removed
 });

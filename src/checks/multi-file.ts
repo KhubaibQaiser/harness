@@ -2,7 +2,7 @@
 // ponytail: Bash writes are not counted in M1 (spec 9b).
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { basename } from 'node:path';
-import { appendEvent } from '../core/events.js';
+import { appendEventSafe } from '../core/events.js';
 import { isAnyTestFile, matches, pairKey, toRepoPath } from '../core/paths.js';
 import { clearTurn, readState, withSessionLock, writeState } from '../core/state.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
@@ -115,7 +115,7 @@ async function reasonsFoundLate(ctx: Ctx, locked: boolean): Promise<void> {
   const recs = readTranscript(input.transcript_path);
   for (const p of pending) {
     const line = recs && reasonIn(recs, p.rel, Date.parse(p.ts));
-    appendEvent(root, {
+    appendEventSafe(root, {
       ts: new Date().toISOString(), session: input.session_id, check: 'multi-file', files: [p.rel], of: p.ts,
       ...(line ? { decision: 'reason-found-late', reason: `${p.rel}: ${line}` } : { decision: 'reason-not-found', reason: `${p.rel}: ${recs ? NO_REASON : 'transcript unreadable'}` }),
     });
@@ -164,7 +164,7 @@ export const multiFile: Check = {
       const note = !approved && !ctx.unattended && !ctx.state.askNoted && units.size === 1;
       ctx.save({ ...ctx.state, files: next, approved: approved || units.size >= 2, ...(note ? { askNoted: true as const } : {}) });
       // Attended, a second unit only gets here after the user approved the ask; unattended runs log allow-log instead.
-      if (!approved && units.size >= 2 && !ctx.unattended) appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'approved', files: next });
+      if (!approved && units.size >= 2 && !ctx.unattended) appendEventSafe(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'approved', files: next });
       if (note) {
         const name = `\`${shown(rel).replace(/[\n\r\t]/g, (c) => (c === '\n' ? '\\n' : c === '\r' ? '\\r' : '\\t'))}\``; // a newline in a file name must not add lines to the agent's text
         const why = `This turn has touched ${name}. The next edit to a different source file will ask you once; your yes covers the rest of the turn.`;
@@ -189,13 +189,13 @@ export const multiFile: Check = {
           else if (denied.includes(rel)) why = NO_REASON;
           else {
             ctx.save({ ...ctx.state, reasonDenied: [...denied, rel] });
-            appendEvent(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'reason-required', files: [...files, rel] });
+            appendEventSafe(ctx.root, { ts: new Date().toISOString(), session, check: 'multi-file', decision: 'reason-required', files: [...files, rel] });
             return { kind: 'deny', reason: 'State why each extra file is necessary, then retry. Write one line per file: "<file> because <reason>".', check: 'multi-file' };
           }
         }
         const ts = new Date().toISOString();
         if (why === NO_REASON) ctx.save({ ...ctx.state, lateReasons: [...(ctx.state.lateReasons ?? []), { ts, rel }] });
-        appendEvent(ctx.root, { ts, session, check: 'multi-file', decision: 'allow-log', files: [...files, rel], ...(why ? { reason: `${rel}: ${why}` } : {}) });
+        appendEventSafe(ctx.root, { ts, session, check: 'multi-file', decision: 'allow-log', files: [...files, rel], ...(why ? { reason: `${rel}: ${why}` } : {}) });
       }
       return { kind: 'allow' };
     }

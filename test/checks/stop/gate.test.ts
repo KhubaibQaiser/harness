@@ -769,3 +769,16 @@ test('a record write that fails warns and never changes the decision', async () 
   }
   expect(stopEvents(b.root, 'stop-gave-up')).toHaveLength(1);
 });
+
+test("pickRunner's runner forwards the all option to the runner it wraps; runStop itself never sets it", async () => {
+  const s = setup();
+  s.ctx.platform = 'win32'; // unwrapped, so the real runUnwrapped runs behind noted()
+  const e = s.exec(SRC, 'lint');
+  const step = (label: string) => ({ label, cmd: 'pnpm', args: ['run', label], cwd: s.root, timeoutMs: 1000 });
+  const r = await pickRunner(s.ctx, e, Date.now, NOPROBE)([step('lint'), step('test')], Date.now() + 5000, { all: true });
+  expect(r).toMatchObject({ kind: 'ran', results: [{ label: 'lint', status: 1 }, { label: 'test', status: 0 }] });
+  const seen: unknown[] = [];
+  const spy = Object.assign(async (steps: { label: string }[], _d: number, o?: { all?: boolean }) => (seen.push(o), { kind: 'ran' as const, results: steps.map((x) => ({ label: x.label, status: 0, timedOut: false, ms: 1, output: '' })) }), { notes: [] as string[] });
+  await runStopReal(s.ctx, s.exec(SRC), Date.now, (c) => c, spy);
+  expect(seen).toEqual([undefined]);
+});

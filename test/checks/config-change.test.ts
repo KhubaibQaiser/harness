@@ -410,3 +410,20 @@ test('M1: a manifest that only gains records (a harness update) does not block a
   write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { autoAllowBashIfSandboxed: false, filesystem: { denyWrite: [DW] } }, env: { MCP_TOKEN: 'x' } });
   expect(await change(r, 'project_settings')).toBe('');
 });
+
+test('R2-M1: a conflicting record appended to the manifest mid-session doesn\'t override the session-start value', async () => {
+  const OWN = { set: ['sandbox', 'autoAllowBashIfSandboxed'], value: false };
+  const r = repo([OWN]);
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { autoAllowBashIfSandboxed: false } });
+  await prompt(r);
+  manifest(r, [{ deny: FORCE }, OWN, { set: ['sandbox', 'autoAllowBashIfSandboxed'], value: true }]);
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { autoAllowBashIfSandboxed: true } });
+  expect(parsed(await change(r, 'project_settings'))?.reason).toContain('`.claude/settings.json` (sandbox)');
+});
+
+test('owner round 3: enableWeakerNestedSandbox turned on in the user file is held', async () => {
+  const r = repo();
+  await prompt(r);
+  write(join(r.home, '.claude/settings.json'), { sandbox: { enableWeakerNestedSandbox: true } });
+  expect(parsed(await change(r, 'user_settings'))?.reason).toContain('(sandbox)');
+});

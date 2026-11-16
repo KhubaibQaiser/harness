@@ -46,7 +46,7 @@ export const configChange: Check = {
     const snap = base && ctx.state?.guardedOwned !== undefined ? ctx.state.guardedOwned : live;
     const has = (list: unknown[] | null, b: unknown) => !!list?.some((x) => isDeepStrictEqual(x, b));
     const lost = !!snap && snap.some((b) => !has(live, b));
-    const owned = ownedFrom(snap && [...snap, ...(live ?? []).filter((b) => !has(snap, b))]);
+    const owned = ownedFrom(snap && [...(live ?? []).filter((b) => !has(snap, b)), ...snap]); // later blocks win: the snapshot's value stands (review R2-M1)
     const deny = owned.deny;
     let text: string | null = null;
     let cur: GuardedView = null;

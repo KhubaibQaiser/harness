@@ -90,6 +90,16 @@ test.each([
   ['local enabled true over a user false does not', {}, { sandbox: { enabled: true } }, { user: { sandbox: { enabled: false } } }, 'local', []],
   ['local excludedCommands adds an entry the user file lacks: weakens', {}, { sandbox: { excludedCommands: ['python3'] } }, { user: { sandbox: { excludedCommands: ['docker'] } } }, 'local', ['excludedCommands']],
   ['local excludedCommands repeats an entry the user file has: does not', {}, { sandbox: { excludedCommands: ['docker'] } }, { user: { sandbox: { excludedCommands: ['docker'] } } }, 'local', []],
+  // Owner (round 3): these weaken the sandbox when the winning value loosens; tightening applies.
+  ['user httpProxyPort set weakens', {}, { sandbox: { network: { httpProxyPort: 8080 } } }, {}, 'user', ['sandbox']],
+  ['local socksProxyPort moved weakens', {}, { sandbox: { network: { socksProxyPort: 1081 } } }, { user: { sandbox: { network: { socksProxyPort: 1080 } } } }, 'local', ['sandbox']],
+  ['user httpProxyPort removed does not', { sandbox: { network: { httpProxyPort: 8080 } } }, {}, {}, 'user', []],
+  ['project allowAllUnixSockets true weakens', {}, { sandbox: { network: { allowAllUnixSockets: true } } }, {}, 'project', ['sandbox']],
+  ['local allowAllUnixSockets false under a project true does not', {}, { sandbox: { network: { allowAllUnixSockets: false } } }, { project: { sandbox: { network: { allowAllUnixSockets: true } } } }, 'local', []],
+  ['user enableWeakerNestedSandbox true weakens', {}, { sandbox: { enableWeakerNestedSandbox: true } }, {}, 'user', ['sandbox']],
+  ['user enableWeakerNestedSandbox turned off does not', { sandbox: { enableWeakerNestedSandbox: true } }, { sandbox: { enableWeakerNestedSandbox: false } }, {}, 'user', []],
+  ['local allowUnixSockets adds a path weakens', {}, { sandbox: { network: { allowUnixSockets: ['/var/run/docker.sock'] } } }, {}, 'local', ['sandbox']],
+  ['user allowUnixSockets path removed does not', { sandbox: { network: { allowUnixSockets: ['/a.sock'] } } }, { sandbox: { network: { allowUnixSockets: [] } } }, {}, 'user', []],
 ] as const)('layered: %s', (_, base, cur, others, key, want) => {
   const layers = { base: stack({ ...others, [key]: view(base) }), cur: stack({ ...others, [key]: view(cur) }) };
   expect(weakened(view(base), view(cur), NONE, layers)).toEqual(want);

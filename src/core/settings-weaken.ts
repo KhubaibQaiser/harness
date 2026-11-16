@@ -28,11 +28,18 @@ const TRUSTED: [string[], unknown, Layer['name'][]][] = [
   [['network', 'strictAllowlist'], true, ['managed', 'user']], // any honoured true wins
   [['network', 'allowManagedDomainsOnly'], true, ['managed']],
 ];
+// Owner answer M3 (2026-11-16): excludedCommands entries run outside the sandbox, and (round 3) allowUnixSockets paths open
+// sockets to sandboxed commands. Lists merge across layers, so an entry new to the union is held, and a removal applies.
+const union = (layers: Layer[], path: string[]): Set<string> =>
+  new Set(layers.flatMap((x) => { const v = effective([x], ['sandbox', ...path]); return Array.isArray(v) ? v.map((e) => JSON.stringify(e)) : []; }));
+const added = (l: { base: Layer[]; cur: Layer[] }, path: string[]) => [...union(l.cur, path)].some((e) => !union(l.base, path).has(e));
+// Owner (round 3): scalar keys that loosen the sandbox when the winning value turns on, or when a proxy port is set or moved.
+const on = (b: unknown, c: unknown) => c === true && b !== true;
+const port = (b: unknown, c: unknown) => c !== undefined && !isDeepStrictEqual(b, c);
+const LOOSER: [string[], (b: unknown, c: unknown) => boolean][] = [
+  [['network', 'httpProxyPort'], port], [['network', 'socksProxyPort'], port], [['network', 'allowAllUnixSockets'], on], [['enableWeakerNestedSandbox'], on],
+];
 // Precedence (settings docs): managed, then --settings (a hook can't see it), local, project, user: the first that sets it.
-// Owner answer M3 (2026-11-16): excludedCommands entries run outside the sandbox; lists merge across layers, so an entry
-// new to the union is held, and a removal applies.
-const excluded = (layers: Layer[]): Set<string> =>
-  new Set(layers.flatMap((x) => { const v = effective([x], ['sandbox', 'excludedCommands']); return Array.isArray(v) ? v.map((e) => JSON.stringify(e)) : []; }));
 const winning = (layers: Layer[], path: string[], from: Layer['name'][]): unknown =>
   from === ANY ? effective(layers, ['sandbox', ...path]) : layers.some((l) => from.includes(l.name) && effective([l], ['sandbox', ...path]) === true) || undefined;
 
@@ -90,9 +97,11 @@ export function weakened(base: GuardedView | undefined, cur: GuardedView, owned:
   if (
     (owned.deny === null && !isDeepStrictEqual(b.sandbox, cur.sandbox)) ||
     Object.entries(owned.sandbox).some(([k, v]) => !isDeepStrictEqual(box(b)[k], box(cur)[k]) && !isDeepStrictEqual(box(cur)[k], v)) ||
-    TRUSTED.some(([path, safe, from]) => winning(l.base, path, from) === safe && winning(l.cur, path, from) !== safe)
+    TRUSTED.some(([path, safe, from]) => winning(l.base, path, from) === safe && winning(l.cur, path, from) !== safe) ||
+    LOOSER.some(([path, looser]) => looser(winning(l.base, path, ANY), winning(l.cur, path, ANY))) ||
+    added(l, ['network', 'allowUnixSockets'])
   ) parts.push('sandbox');
-  if ([...excluded(l.cur)].some((e) => !excluded(l.base).has(e))) parts.push('excludedCommands');
+  if (added(l, ['excludedCommands'])) parts.push('excludedCommands');
   if (owned.denyWrite.some((p) => denyWrite(b).includes(p) && !denyWrite(cur).includes(p))) parts.push('denyWrite');
   if ([...new Set([...Object.keys(eb), ...Object.keys(ec)])].some((k) => eb[k] !== ec[k])) parts.push('env');
   return parts;

@@ -515,7 +515,7 @@ Today the gate (`src/checks/config-change.ts`) blocks a mid-session change to ha
 Each record is `{v, id, file, action, entries, before, after, fragment, ts}`, written with `writeAtomic` and mode 0600:
 - `file`: `project_settings` or `user_settings`;
 - `action`: `on`, `off` or `rotate` (`--rotate-key`);
-- `entries`: the exact list of entries harness adds or removes, each as its JSON path and value: for team, the record hook groups and the `.harness/telemetry` deny and `denyWrite` entries; for global, the §9 `env` pairs and the eight deny entries above; for `rotate`, the old and new `OTEL_EXPORTER_OTLP_HEADERS` values;
+- `entries`: the list of entries the CLI added or removed, **for diagnostics only**. The gate builds the expected set itself (check 2) and ignores this field (U1);
 - `before` and `after`: `settingsFingerprint` (`src/core/harness-files.ts`) of the file text the CLI read and of the text it is about to write, **for diagnostics only**. The gate never trusts them (S1): they are computed with the deny set of the repo the CLI ran in, and another repo's gate filters deny rules differently;
 - `fragment`: the SHA-256 of the fragment the CLI wrote from (team only), informational; the gate checks the groups it finds in the file, not this field (S2);
 - `id`: 16 random bytes in base64url.
@@ -524,16 +524,22 @@ Each record is `{v, id, file, action, entries, before, after, fragment, ts}`, wr
 
 **What the gate guards.** The gate's view (`guardedView`) holds harness's dispatcher hook groups, the deny rules in the repo manifest, `disableAllHooks`, `sandbox` as one value and `env` with hashed values. Two owner decisions widen it:
 - **The `record.mjs` groups are guarded like harness's other hooks** (owner, §28.5): `guardedView` also keeps groups whose JSON names `.harness/hooks/record.mjs`, so removing or changing them mid-session is blocked. Turning telemetry off through harness still works, through this allowance.
-- **Any hook added to any settings file mid-session is blocked** by Claude Code compatibility PR CC7, and takes effect in the next session. This allowance is the only exception, and covers only harness's own telemetry block.
+- **Any hook added to any settings file mid-session is blocked** by Claude Code compatibility PR CC7 (`fix/cc7-config-change-narrow`), and takes effect in the next session. CC7 provides the ConfigChange check that blocks new hook groups in any settings file; P2.9 depends on it, and until it lands check 2's "another hook" claim holds only for harness's own hook groups. This allowance is the only exception, and covers only harness's own telemetry block.
 
 The global deny entries are filtered out by each repo's deny set, so they don't change that repo's view; the `env`, `denyWrite` and hook changes do.
 
 **The gate allows a change only when all of these hold:**
 1. the reported source matches the record's `file`, and the file is the one the gate watches (the existing `elsewhere` rule is unchanged);
-2. **the gate derives the bound itself**, with its own view function and its own repo's deny set on both sides, so no fingerprint from another repo is compared: for `on`, the guarded view of the current file **with `entries` removed** equals the session baseline; for `off`, the current file **with `entries` added back** equals the baseline; for `rotate`, the current file with the header swapped back equals the baseline. Anything else that changed in a guarded part (a deny rule, `disableAllHooks`, `sandbox`, another hook or `env` key) makes the views differ, so a forged record can't carry it;
+2. **the gate builds the expected entry set itself and derives the bound from it** (U1). It never uses the record's `entries`, so nothing outside this self-built set can pass:
+   - **team `on`:** the `record.mjs` group set it finds in the raw file, which must be hash-listed (check 5), plus exactly the deny rule `Edit(./.harness/telemetry/**)` and the `denyWrite` entry `./.harness/telemetry`;
+   - **team `off`:** the `record.mjs` group set in the session baseline, which must be hash-listed, plus the same two entries;
+   - **global `on` and `off`:** the seven §9 `env` pairs, built with the port and key from `receiver.json`, plus the eight deny entries of §9.1. Global `off` removes `receiver.json` only after its settings write, so the gate can still read it;
+   - **`rotate`:** only the `OTEL_EXPORTER_OTLP_HEADERS` pair, old key from the baseline and new key from `receiver.json`.
+
+   Then, with its own view function: for `on`, the guarded view of the current file **with that set removed** equals the session baseline; for `off`, the current file **with that set added back** equals the baseline; for `rotate`, the current file with the header swapped back equals the baseline. **Both sides are filtered with the deny set recorded at session start** (a new `guardedDeny` session-state field, kept with `guardedBase`), never the current manifest's, so the order in which the CLI writes the manifest and the settings file doesn't matter (U2), and no fingerprint from another repo is compared. Anything else that changed in a guarded part (a deny rule, `disableAllHooks`, `sandbox`, another hook or `env` key) makes the views differ;
 3. an unrelated write Claude Code makes to the file (a `/model` or permission save) is outside the guarded view, so it doesn't affect check 2;
 4. the record's `id` hasn't been used in this session. A new `guardedTelemetry` session-state field holds used ids, as `guardedCli` does for the CLI record, so a record is used once;
-5. **on the raw current file text**, parsed as JSON: for `on` and `rotate`, every item in `entries` is present at its path with its exact value; for `off`, none is; and the entries are harness's shape, so a forged record can't pass anything else: for team, the gate collects the `record.mjs` groups it finds in the raw file, canonicalizes the set (sorted keys, events in order, no whitespace) and checks its SHA-256 against `TELEMETRY_FRAGMENT_HASHES`. Each list entry is the SHA-256 of the same canonical form of one released harness version's hook-group set, and the list ships in the package. Exec form and every field are part of the hash, so an added `asyncRewake`, `if`, `timeout`, `shell` or other matcher fails; for `off`, no `record.mjs` group may remain; for global, the deny entries are exactly the eight above, the keys are exactly the §9 `env` list with the §9 values, the endpoint is `http://127.0.0.1:<port>` with `<port>` from `receiver.json`, and `OTEL_EXPORTER_OTLP_HEADERS` is exactly `x-harness-key=<key>` with `<key>` from `receiver.json`.
+5. **on the raw current file text**, parsed as JSON: for `on` and `rotate`, every item of the check 2 set is present at its path with its exact value; for `off`, none is; and the entries are harness's shape, so a forged record can't pass anything else: for team, the gate collects the `record.mjs` groups it finds in the raw file, canonicalizes the set (sorted keys, events in order, no whitespace) and checks its SHA-256 against `TELEMETRY_FRAGMENT_HASHES`. Each list entry is the SHA-256 of the same canonical form of one released harness version's hook-group set, and the list ships in the package. Exec form and every field are part of the hash, so an added `asyncRewake`, `if`, `timeout`, `shell` or other matcher fails; for `off`, no `record.mjs` group may remain; for global, the deny entries are exactly the eight above, the keys are exactly the §9 `env` list with the §9 values, the endpoint is `http://127.0.0.1:<port>` with `<port>` from `receiver.json`, and `OTEL_EXPORTER_OTLP_HEADERS` is exactly `x-harness-key=<key>` with `<key>` from `receiver.json`.
 
 When it allows, the current view becomes the session's baseline for that file, as the CLI allowance does, and Claude Code applies the change as it applies any allowed one, so the new `record.mjs` hooks run in the open session right away (owner, Q-CC7 A). When any check fails, today's block and notice apply unchanged. Telemetry relies on the hooks only from the next session either way: an open session has no `session-start` line, so the reverse check skips it and its OTel isn't routed (§7.1, §8.2).
 
@@ -542,8 +548,12 @@ When it allows, the current view becomes the session's baseline for that file, a
 - global `on` and `off`: the same, for `user_settings`;
 - one byte changed in the block after harness wrote it: blocked;
 - the telemetry block plus any other change (a deny rule removed, another `env` key, `disableAllHooks`): blocked;
-- a record whose `after` doesn't match the file's fingerprint: blocked;
-- a record whose `before` doesn't match the session baseline (the file changed before harness's write): blocked;
+- a mismatched `before` or `after` alone neither allows nor blocks: the outcome follows checks 1 to 5;
+- the record's `entries` alone neither allows nor blocks: a record listing extra entries gets the same outcome as one listing none;
+- team `on` with `disableAllHooks: true` written next to the telemetry entries (and listed in the record's `entries`): blocked;
+- team `off` with a harness deny rule removed (and listed as an entry to add back): blocked;
+- global `on` with `sandbox.enabled: false` written next to the entries: blocked;
+- team `off` mid-session: allowed whether the CLI writes the manifest before or after the settings file;
 - a team group set from an older released harness version (its canonical hash in `TELEMETRY_FRAGMENT_HASHES`): allowed; a group set whose canonical hash isn't listed: blocked;
 - a record naming a listed `fragment` hash while the file holds a group with `asyncRewake` added: blocked, since the gate hashes the groups it finds;
 - a forged record whose `before` and `after` cover an extra guarded change (a harness deny rule removed, `disableAllHooks`, sandbox off) next to valid telemetry entries: blocked by check 2;
@@ -1146,7 +1156,7 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 | P2.6b | Data health view, banners, the per-model OTel sources and metric cross-check (§7.4) | P2.6a | — | ~330 | 7 |
 | P2.7 | Sessions and the live session view: SSE, tokens-in-context gauge, timeline, per-skill and per-hook cost | P2.6b | — | ~360 | 8 |
 | P2.8 | Inventory panel: hooks registered, plugins loaded, MCP connections (OTel), plus agents, commands and MCP from repo files | P2.7 | — | ~200 | 5 |
-| P2.9 | ConfigChange allowance for harness's own telemetry block, team, global and `rotate`, on before and after fingerprints plus a raw-text shape check with `TELEMETRY_FRAGMENT_HASHES` (§9.1), its tests, and the home-relative Q-I4 deny entries added to the global opt-in's user-settings block (preview, approval, exact removal) | P2.4b | L7 (mid-session) | ~300 | 7 |
+| P2.9 | ConfigChange allowance for harness's own telemetry block, team, global and `rotate`: the gate's self-built entry set, the bound checked against the baseline with the session-start deny set (`guardedDeny`), and the raw-text shape check with `TELEMETRY_FRAGMENT_HASHES` (§9.1); `guardedView` extended to the `record.mjs` groups, which also changes the existing CLI allowance's fingerprints; its tests; and the home-relative Q-I4 deny entries added to the global opt-in's user-settings block (preview, approval, exact removal) | P2.4b, CC7 | L7 (mid-session) | ~320 | 7 |
 | **Phase 3: Control** | | | | | |
 | P3.1 | `harness config set` (§11.3): validation, preview, backup, manifest, guard deny and ask classes, unattended refusal (D12) | P2.8, P2.9 | — | ~300 | 6 |
 | P3.2 | Action runner: templates, preview, apply, hash recheck, audit event, copy-command path; the client side of the fragment secret (Q-C2) | P3.1 | — | ~370 | 8 |
@@ -1386,3 +1396,11 @@ The re-review confirmed N1 to N8 fixed and raised R1 to R7. Each was checked aga
 | Question | Answer | Change |
 |---|---|---|
 | Q-CC7 do the allowed telemetry hooks run in the open session? | A: yes | The §9.1 allowance lets harness's own telemetry change through mid-session, so the new `record.mjs` hooks run in the open session right away; every other added hook waits for the next session (CC7). Telemetry still relies on them only from the next session, since the open session has no `session-start` line (§9, §9.1). Q-CC7 left §24. |
+
+### 28.7 Revision 4d re-review (2026-11-16)
+
+| Finding | Change |
+|---|---|
+| U1 a forged record could list extra guarded changes as `entries` | The gate builds the expected set itself from the level, the action, the hash-listed `record.mjs` groups, the two `.harness/telemetry` entries, and `receiver.json`, and uses only that in check 2; the record's `entries` are diagnostics only. Tests: team `on` with `disableAllHooks`, team `off` with a removed deny rule, global `on` with `sandbox.enabled: false`, all blocked. |
+| U2 write order could cause a spurious block on team `off` | Both sides of check 2 are filtered with the deny set recorded at session start (`guardedDeny`); test that team `off` is allowed in either write order. |
+| U3 stale tests, P2.9 row, CC7 dependency | The `before`/`after` tests now say those fields alone neither allow nor block; the P2.9 row names the self-built set, `guardedDeny` and the `record.mjs` groups in `guardedView`; CC7 (`fix/cc7-config-change-narrow`, blocks new hooks mid-session) is P2.9's dependency (§9.1, §21). |

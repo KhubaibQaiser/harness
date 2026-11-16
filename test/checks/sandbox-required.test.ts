@@ -133,6 +133,20 @@ describe('the check', () => {
     expect(await bash()).toBe('deny'); // the requirement still reads the session-start files
   });
 
+  test('OQ1: the user file rewritten to sandbox.enabled false mid-run is blocked, so Bash keeps running sandboxed', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    const user = join(home, '.claude/settings.json');
+    writeFileSync(user, JSON.stringify(CONFIRMED_STRICT));
+    const opts = { home, managed, platform: 'darwin' as const };
+    expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)).toBe(''); // sandboxed at the start: allowed
+    writeFileSync(user, JSON.stringify({ sandbox: { enabled: false } }));
+    const cc = JSON.stringify({ hook_event_name: 'ConfigChange', session_id: 's', cwd: root, source: 'user_settings', file_path: user });
+    const out = JSON.parse(await dispatch(cc, registry, {}, opts));
+    expect(out.decision).toBe('block'); // Claude Code keeps the sandbox on, so allowing Bash stays right
+    expect(out.reason).toContain('(sandbox)');
+  });
+
   test('a sandbox confirmed at the session start allows; managed is still read from disk', async () => {
     const { root, home, managed } = setup();
     mkdirSync(join(home, '.claude'));

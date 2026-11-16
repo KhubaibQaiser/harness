@@ -15,6 +15,10 @@ const guardedKey = (k: string): boolean => {
   return GUARDED_ENV.keys.includes(u) || GUARDED_ENV.prefixes.some((p) => u.startsWith(p));
 };
 
+// Owner answer OQ1 = A (2026-11-16): sandbox-required judges the session-start files, so a loosening of the keys it relies
+// on stays held in any file, whoever wrote it. Each key with its safe value; turning one on applies live.
+const TRUSTED: [string[], unknown][] = [[['enabled'], true], [['allowUnsandboxedCommands'], false], [['network', 'strictAllowlist'], true], [['network', 'allowManagedDomainsOnly'], true]];
+
 /** What harness wrote to `.claude/settings.json`, from the manifest. `deny` is null when the manifest is unknown. */
 export type Owned = { sandbox: Record<string, unknown>; denyWrite: string[]; deny: Set<string> | null; hookGroups: string[] };
 
@@ -51,14 +55,15 @@ function fromManifest(o: Owned): GuardedView {
 
 /**
  * The parts of harness that `cur` weakens against `base`: a harness hook group changed or gone, a harness deny rule gone,
- * disableAllHooks turned on, an owned sandbox key moved off harness's value, an owned denyWrite path gone, or a guarded
- * env key added, removed or changed. `base === undefined` compares against the manifest's records.
+ * disableAllHooks turned on, an owned sandbox key moved off harness's value, a TRUSTED sandbox key loosened, an owned
+ * denyWrite path gone, or a guarded env key added, removed or changed. `base === undefined` compares against the manifest's records.
  */
 export function weakened(base: GuardedView | undefined, cur: GuardedView, owned: Owned): GuardedPart[] {
   const b = base === undefined ? fromManifest(owned) : base;
   if (!b || !cur) return ['unreadable'];
   const groups = (v: NonNullable<GuardedView>) => v.hooks.flatMap(([event, gs]) => gs.map((group) => ({ event, group })));
   const box = (v: NonNullable<GuardedView>) => (isObj(v.sandbox) ? v.sandbox : {});
+  const at = (v: NonNullable<GuardedView>, path: string[]): unknown => path.reduce((o: unknown, k) => (isObj(o) ? o[k] : undefined), box(v));
   const denyWrite = (v: NonNullable<GuardedView>): unknown[] => (Array.isArray(box(v).filesystem?.denyWrite) ? box(v).filesystem.denyWrite : []);
   const env = (v: NonNullable<GuardedView>) => Object.fromEntries(Object.entries(isObj(v.env) ? v.env : {}).filter(([k]) => guardedKey(k)));
   const [eb, ec] = [env(b), env(cur)];
@@ -66,7 +71,10 @@ export function weakened(base: GuardedView | undefined, cur: GuardedView, owned:
   if (groups(b).some((g) => !groups(cur).some((c) => isDeepStrictEqual(c, g)))) parts.push('hooks');
   if (b.deny.some((r) => !cur.deny.includes(r))) parts.push('deny');
   if (cur.disableAllHooks && !b.disableAllHooks) parts.push('disableAllHooks');
-  if (Object.entries(owned.sandbox).some(([k, v]) => !isDeepStrictEqual(box(b)[k], box(cur)[k]) && !isDeepStrictEqual(box(cur)[k], v))) parts.push('sandbox');
+  if (
+    Object.entries(owned.sandbox).some(([k, v]) => !isDeepStrictEqual(box(b)[k], box(cur)[k]) && !isDeepStrictEqual(box(cur)[k], v)) ||
+    TRUSTED.some(([path, safe]) => at(b, path) === safe && at(cur, path) !== safe)
+  ) parts.push('sandbox');
   if (owned.denyWrite.some((p) => denyWrite(b).includes(p) && !denyWrite(cur).includes(p))) parts.push('denyWrite');
   if ([...new Set([...Object.keys(eb), ...Object.keys(ec)])].some((k) => eb[k] !== ec[k])) parts.push('env');
   return parts;

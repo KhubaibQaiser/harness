@@ -51,6 +51,24 @@ test.each([
   expect(weakened(view(base), view(cur), OWNED)).toEqual(want);
 });
 
+// Owner answer OQ1 = A (2026-11-16): the keys sandbox-required relies on stay guarded in any file, whoever wrote them.
+const NONE: Owned = { sandbox: {}, denyWrite: [], deny: new Set(), hookGroups: [] };
+const STRICT = { sandbox: { enabled: true, allowUnsandboxedCommands: false, network: { strictAllowlist: true, allowManagedDomainsOnly: true } } };
+const without = (patch: Record<string, unknown>, net: Record<string, unknown> = {}) => ({ sandbox: { ...STRICT.sandbox, ...patch, network: { ...STRICT.sandbox.network, ...net } } });
+test.each([
+  ['enabled true to false weakens, though harness did not write it', STRICT, without({ enabled: false }), ['sandbox']],
+  ['enabled true removed weakens', STRICT, without({ enabled: undefined }), ['sandbox']],
+  ['allowUnsandboxedCommands false to true weakens', STRICT, without({ allowUnsandboxedCommands: true }), ['sandbox']],
+  ['network.strictAllowlist true to false weakens', STRICT, without({}, { strictAllowlist: false }), ['sandbox']],
+  ['network.allowManagedDomainsOnly true removed weakens', STRICT, without({}, { allowManagedDomainsOnly: undefined }), ['sandbox']],
+  ['the whole sandbox removed weakens', STRICT, {}, ['sandbox']],
+  ['enabled false to true does not', { sandbox: { enabled: false } }, { sandbox: { enabled: true } }, []],
+  ['strictAllowlist added does not', {}, { sandbox: { network: { strictAllowlist: true } } }, []],
+  ['allowedDomains changed with the trusted keys kept does not', STRICT, without({}, { allowedDomains: ['example.com'] }), []],
+])('trusted sandbox key: %s', (_, base, cur, want) => {
+  expect(weakened(view(base), view(cur), NONE)).toEqual(want);
+});
+
 test('no baseline: a file with every harness entry passes', () => {
   expect(weakened(undefined, view({ ...FULL, permissions: { deny: [FORCE] }, env: { MCP_TOKEN: 'x' } }), OWNED)).toEqual([]);
 });

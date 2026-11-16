@@ -39,6 +39,9 @@ export const matches = (rel: string, globs: string[]): boolean => globs.length >
 
 export const isTestFile = (rel: string): boolean => /\.(test|spec)\.[^/]+$/.test(rel) || /(^|\/)__tests__\//.test(rel);
 
+/** Globs for the test files isTestFile and isAnyTestFile name, plus `test/`, `tests/` folders and Go `*_test.go`; pinned to them by test/core/paths.test.ts. */
+export const TEST_FILE_GLOBS: string[] = ['**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/test/**', '**/tests/**', '**/test_*.py', '**/*_test.py', '**/*_test.go', '**/conftest.py'];
+
 /** JS/TS tests (isTestFile) plus Python tests: test_*.py, *_test.py, conftest.py, any .py under a tests/ dir. */
 export const isAnyTestFile = (rel: string): boolean => isTestFile(rel) || /(^|\/)(test_[^/]*|[^/]*_test|conftest)\.py$/.test(rel) || /(^|\/)tests\/(.*\/)?[^/]*\.py$/.test(rel);
 

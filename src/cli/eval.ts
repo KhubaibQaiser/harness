@@ -1,5 +1,5 @@
 import { ensureRealDir } from '../core/atomic.js';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildEvalPlugin, EVAL_MODEL, type CaseInfo, type EvalKind } from '../eval/build.js';
@@ -66,6 +66,9 @@ function planEstimate(saved: EvalSummary[], model: string, builds: Build[], runs
   return known ? { usd, missing } : null;
 }
 
+/** `2026-11-16T101530`: the day plus the time, so two runs on one day get two folders. */
+const stamp = (d = new Date()) => d.toISOString().slice(0, DATE_LEN) + 'T' + d.toISOString().slice(11, 19).replace(/:/g, '');
+
 interface RunOpts { runs: number; model: string; maxCost: number; root: string; date: string }
 
 function runOne(b: Build, o: RunOpts, exec: Exec, out: (s: string) => void): { code: number; summary: EvalSummary | null } | 'missing' {
@@ -77,8 +80,12 @@ function runOne(b: Build, o: RunOpts, exec: Exec, out: (s: string) => void): { c
   const r = exec('claude', evalArgs(b.dir, { ...o, out: b.out, scaffold: b.kind === 'gates', tools }), { timeoutMs: HOUR_MS });
   if (r.missing) return 'missing';
   if (!existsSync(join(b.out, 'result.json'))) return out(`${b.kind}: no result (exit ${r.status}). ${r.stderr ?? ''}`.trim()), { code: EXIT_FAIL, summary: null };
-  const name = `${o.date}-${folderSafe(o.model)}-${b.kind}`;
-  ensureRealDir(o.root, EVALS_DIR); // refuses a planted link
+  // Time in the date, and a counter if even that exists: a rerun never overwrites an earlier result.
+  const evals = ensureRealDir(o.root, EVALS_DIR); // refuses a planted link
+  const taken = (n: string) => { try { lstatSync(join(evals, n)); return true; } catch { return false; } }; // a link counts as taken
+  let date = o.date, i = 1;
+  while (taken(`${date}-${folderSafe(o.model)}-${b.kind}`)) date = `${o.date}-${++i}`;
+  const name = `${date}-${folderSafe(o.model)}-${b.kind}`;
   cpSync(b.out, join(o.root, EVALS_DIR, name), { recursive: true });
   out(`${b.kind}: exit ${r.status}, saved to ${join(o.root, EVALS_DIR, name)}`);
   const summary = readEvalResults(o.root).find((s) => `${s.date}-${folderSafe(s.model)}-${s.kind}` === name) ?? null;
@@ -134,7 +141,7 @@ export async function evalCmd(args: string[], cli: Env): Promise<number> {
     const est = planEstimate(readEvalResults(cli.root), model, builds, opts.runs);
     planLines(builds.flatMap((b) => b.cases), opts.runs, model, opts.maxCost, est).forEach(cli.out);
     if ((await cli.prompt.edit('This spends money. Type yes to run', '')).trim() !== 'yes') return cli.out('Not run. Nothing was spent.'), EXIT_FAIL;
-    const o = { runs: opts.runs, model, maxCost: opts.maxCost, root: cli.root, date: new Date().toISOString().slice(0, DATE_LEN) };
+    const o = { runs: opts.runs, model, maxCost: opts.maxCost, root: cli.root, date: stamp() };
     return await runAll(builds, o, opts.maxCost, cli);
   } catch (e) {
     return cli.out(`harness eval: ${(e as Error).message}`), EXIT_FAIL;

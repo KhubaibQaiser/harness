@@ -1,5 +1,6 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { ensureRealDir } from '../core/atomic.js';
 import { join, posix, relative, resolve } from 'node:path';
 import { DEFAULT_CONTEXT_BUDGET, fmt } from '../budget/measure.js';
 import { loadCatalog } from '../catalog/load.js';
@@ -97,9 +98,10 @@ export async function presetInstall(args: string[], cli: PresetEnv): Promise<num
   if (errors.length) return out(errors.join('\n')), 1;
   if (global) return globalInstall(dir, results.map((r) => r.id), cli, { dryRun, take: take?.split(',').map((t) => t.replace(/^~\//, '')) });
   const dest = join(root, '.harness', 'presets');
+  try { if (lstatSync(dest).isSymbolicLink()) return out('.harness/presets is a symlink; harness does not write through it.'), 1; } catch { /* missing: made below */ }
   const rel = (p: string) => relative(root, p).split('\\').join('/');
   for (const { id } of results) {
-    const taken = [join(dest, id), join(dest, `${id}.yaml`)].find(existsSync);
+    const taken = [join(dest, id), join(dest, `${id}.yaml`)].find((p) => { try { lstatSync(p); return true; } catch { return false; } }); // lstat: a link counts as taken
     if (taken) return out(`${rel(taken)}${taken.endsWith('.yaml') ? '' : '/'} already exists; remove it first.`), 1;
   }
   const copies = results.flatMap(({ id }) => [[join(dir, `${id}.yaml`), join(dest, `${id}.yaml`)], ...(existsSync(join(dir, id)) ? filesUnder(join(dir, id)).map((f) => [f, join(dest, id, relative(join(dir, id), f))]) : [])]);
@@ -110,7 +112,7 @@ export async function presetInstall(args: string[], cli: PresetEnv): Promise<num
     if (!(await cli.prompt.confirm(`Copy these ${copies.length} files into .harness/presets/? [y/N]`))) return out('Cancelled. Nothing was written.'), 0;
   }
   // ponytail: the check and the copy read the tree at different times; safe unless someone races the person's own local install.
-  for (const [from, to] of copies) { mkdirSync(join(to, '..'), { recursive: true }); cpSync(from, to); }
+  for (const [from, to] of copies) { ensureRealDir(root, rel(join(to, '..'))); copyFileSync(from, to, constants.COPYFILE_EXCL); }
   return out(`Installed: ${results.map((r) => r.id).join(', ')}. Choose it in /harness:init or /harness:update.`), 0;
 }
 

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -157,6 +157,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   const opened = openInstall(cli, 'Not a git repository. Run harness uninstall inside a git repo.');
   if (typeof opened === 'number') return opened;
   const { root, m } = opened;
+  if (existsSync(join(root, '.harness')) && lstatSync(join(root, '.harness')).isSymbolicLink()) return out('`.harness` is a symlink; harness does not delete or write through it. Nothing was changed.'), 1; // before any removal
 
   const { changes, kept, notes, imported } = removalChanges(root, m, force);
   const importedWhy = `${list(imported)} kept because your edited eslint config still imports them. Delete them after you remove its harness lines.`;

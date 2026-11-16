@@ -110,7 +110,7 @@ Steps, all fail-closed:
    - Attended: reuse a fresh ledger row that the hooks recorded, and re-run anything missing or stale.
    - `--ci`: always re-run everything.
 
-   Commands run through the existing stop-step runner, with time limits. `person` criteria are listed, never auto-passed.
+   Commands run through the existing stop-step runner, with time limits, in one `srt` call with the plan's `all` option (every command runs and reports; isolation §4.2). Verify (done PR 5b) builds that plan. `person` criteria are listed, never auto-passed.
 4. **Review.**
    - Inputs: staff-reviewer in task mode gets the contract, the diff, and an evidence summary, fenced as data, as in M2a.
    - Questions it answers:
@@ -123,6 +123,7 @@ Steps, all fail-closed:
    - Exit codes: 0 is done, 1 is not done, 3 is blocked, 2 is a usage error.
    - The verdict is valid only for that commit and tree.
    - In CI it is also uploaded as a build artifact, with a job summary.
+   - **Trust model.** The real `harness verify` records the hash of the verdict bytes it just wrote, in `.harness/state/`, and a verdict counts only when its file's hash matches the recorded one. The PostToolUse hook records nothing. That folder is protected (protect, the Edit deny rule and the sandbox's `denyWrite`), so a verify or a fake CLI run from the agent's sandboxed Bash can't write it; a real verify run by the person outside the sandbox can. If the hash can't be recorded, verify still writes and prints the verdict with the line `Verdict not recorded: harness verify can only record a verdict outside the agent's sandbox (run it in your own terminal).`, and a `done` that can't be recorded exits 1, since an unrecorded done isn't trusted. Known limit: with the sandbox off, on native Windows, or under the attended default `sandbox: unattended`, the agent's Bash can write `.harness/state`, so a verdict forged there could be trusted by the attended PR gate; CI re-runs every check.
 
 ### 4.5 Blocked: `harness done --blocked "<reason>"`
 

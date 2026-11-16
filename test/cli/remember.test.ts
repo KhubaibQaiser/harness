@@ -120,6 +120,14 @@ test('add: a dead --path is refused', async () => {
   expect(r).toEqual({ code: 1, out: 'harness remember: lib/** matches no tracked file. Fix the path, or retire the decision.' });
 });
 
+test('remember add refuses under the scrub', async () => {
+  const root = await repo();
+  const r = await go(root, ADD, { env: { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' } });
+  expect(r.code).toBe(1);
+  expect(r.out).toMatch(/does not write in unattended runs/);
+  expect(existsSync(join(root, 'docs/decisions'))).toBe(false);
+});
+
 test('refusals: unattended, guard off, secret, no manifest', async () => {
   const root = await repo();
   expect(await go(root, ADD, { env: { CI: 'true' } })).toEqual({ code: 1, out: 'harness remember does not write in unattended runs (CI, cloud or no-prompt sessions). A person can save it later.' });

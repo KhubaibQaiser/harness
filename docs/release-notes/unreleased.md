@@ -118,3 +118,8 @@ New since 0.2.0-beta.0, unchanged in this release:
 ### Stop gate on Ubuntu 26.04
 
 - The message no longer tells you to install `srt` when `srt` is installed and failed a check (`srt exit`, `srt warning`, preflight checks and the like): it points at `harness doctor` and `srt`'s own error. `harness doctor` now detects Ubuntu's loaded `bwrap-userns-restrict` AppArmor profile (the cause of `srt exit (apply-seccomp: write /proc/self/setgroups)` on 25.04 and newer) and prints the fix and its cost; it never applies it. CI now also runs the real-`srt` job on `ubuntu-26.04`.
+
+### Claude Code compatibility
+
+- The PR size question clears the pause only on a documented `answers` entry; the undocumented `response` text no longer clears it alone. An unknown key in the question's call or result logs `ask-shape-unknown` once per session.
+- `harness remember add` now says "harness couldn't check whether this text quotes tool output" when the transcript can't be read, or shows tool calls but no recognised tool result. It was already a deny without `--quoted`.

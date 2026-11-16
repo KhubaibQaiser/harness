@@ -16,7 +16,7 @@
 |---|---|
 | D1 | **Guide while the change grows, plus an ask at PR time** (amended 2026-11-05, section 14). Harness warns once when the branch's change passes `target_lines`, and once when it passes the max. The agent then asks the person whether to split now (the `pr-ship` skill suggests the breakdown), keep going, or raise the limit for this branch. The PR-time ask stays as the last check: the check asks when the agent runs `gh pr create`, or pushes a recorded PR branch, over the limit. Unattended runs get a note while the change grows and are refused at PR time. |
 | D2 | **Limit.** Aim for 200 changed lines or fewer. Ask above 400 changed lines or above 20 files. Configurable per repo. |
-| D3 | **Counting.** Tests count. Everything counts except lockfiles and non-critical ignore files (`.gitignore`, `.prettierignore`, `.dockerignore` and the like). |
+| D3 | **Counting.** Tests are excluded by default (owner ruling 2026-11-16, reversing the original "tests count"): big test suites shouldn't trip the limit, and the review checks test quality. Everything else counts except lockfiles and non-critical ignore files (`.gitignore`, `.prettierignore`, `.dockerignore` and the like). |
 | D4 | **Left to this spec:** whether snapshots, `multi_file_gate.generated` paths and whole-file deletions count. The owner decided these on 2026-11-03 (section 12, O1 to O3). |
 
 ## 2. Scope
@@ -92,7 +92,7 @@ With `-z`, a numstat entry is `added\tdeleted\tpath\0`. For a rename it is `adde
 ## 5. Counting rules
 
 - Changed lines for a file = added + deleted lines, from numstat (the sum GitHub shows). The PR's lines are the sum over the counted files. Its files are the number of counted files.
-- **Tests count** (D3), including `*.test.*`, `__tests__/` and Python tests. This differs from the multi-file gate, which skips them.
+- **Tests are excluded by default** (D3, owner ruling 2026-11-16, reversing the original "tests count"): `*.test.*`, `*.spec.*`, `__tests__/`, `test/`, `tests/`, Python `test_*.py` and `*_test.py`, and Go `*_test.go`, as `TEST_FILE_GLOBS` in `src/core/paths.ts`, pinned to `isTestFile`. Why: big test suites shouldn't trip the limit, and the review checks test quality. They stay listed under "Not counted", and the PR reviewer still reads them. A `pr_size.exclude` a person sets replaces the whole default, so tests count again unless they list them.
 - **Excluded** paths count toward neither lines nor files: a path that matches `pr_size.exclude` (picomatch, `dot: true`, through the existing `matches`). For a rename, the new path is judged.
 - **Binary** files count as one file and 0 lines.
 - **A pure rename** counts as one file with its numstat lines (0 when the content is unchanged).

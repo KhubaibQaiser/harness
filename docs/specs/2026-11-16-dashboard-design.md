@@ -146,7 +146,7 @@ The owner asked for a built-in source of the window size other than the status l
 | `.harness/logs/events.jsonl` | harness hooks and CLI | **Yes**, from sandboxed Bash through harness commands. `.harness/logs` is in `DENY_WRITE_SKIPPED` (`src/checks/protect.ts:31`), so protect guards the raw text only. | gate decisions, reasons, files |
 | `.harness/logs/timing.jsonl` | dispatcher | Yes: same folder | hook latency |
 | `.harness/state/*` (stop record, session state) | hooks | No: denyWrite and Edit deny | Stop sandbox, gates |
-| `.harness/telemetry/**` (new) | record hook, receiver | No: denyWrite, Edit deny and protect (§13) | invocations, OTel |
+| `.harness/telemetry/**` (new) | record hook, receiver | No, in a repo with team opt-in: `denyWrite`, Edit deny and protect from `TELEMETRY_PROTECTED` (§13) | invocations, OTel |
 | Session transcripts (`~/.claude/projects/…`) | Claude Code | The content yes (its own words and tool calls); the files no | per-request tokens, tool uses, compactions |
 | `.claude/skills`, settings, config | person or harness | Settings and config are Edit-denied; skills are repo files | installed inventory, budget |
 
@@ -486,8 +486,8 @@ The owner confirmed this list as written, including `OTEL_LOG_TOOL_DETAILS=1` an
 - **Preview first.**
   - `--dry-run`, or the dashboard's preview, prints the exact diff of each file and what it turns on.
   - For team, it says the change binds every teammate, in these words: "Once this is merged, every teammate's Claude Code sessions in this repo will log skill, command, subagent and model names (never prompts or content) to `.harness/telemetry/` on their own machine, and run its retention cleanup there. Nothing is written outside the repo on their machine unless they turn on global telemetry themselves." The preview ends with a ready-to-paste paragraph for the commit message or PR description that says the same; harness doesn't commit it (owner, Q-P1 B).
-  - For global, it lists every variable (§15 T1), the deny entries added to `~/.claude/settings.json` (§9.1), the binary copy, `receiver.json`, the always-on background receiver (no idle exit), and the retention rules, and says: "In most sessions these settings override `OTEL_*` variables set in your shell" (Env, §2.2).
-  - For team, it lists the hook groups, `record.mjs`, the `.harness/telemetry` deny and `denyWrite` entries, the `.gitignore` line, and the retention rules (§13).
+  - For global, it lists every variable (§15 T1), the deny entries added to `~/.claude/settings.json` (§9.1), the binary copy, `receiver.json`, `state/telemetry-write.json`, the entries added to `~/.claude/harness/manifest.json` (`GLOBAL_STATE`: the opt-in record and the binary's hash) and its backup, the always-on background receiver (no idle exit), the files it and the record hooks write over time under `receiver/` (`lock/`, `heartbeat`, `announce/`, `uptime.jsonl`, `receiver.log`), and the retention rules, and says: "In most sessions these settings override `OTEL_*` variables set in your shell" (Env, §2.2).
+  - For team, it lists the hook groups, `record.mjs`, the `.harness/telemetry` deny and `denyWrite` entries, the `.gitignore` line, `.harness/state/telemetry-write.json`, the manifest and backup entries, the files written over time under `.harness/telemetry/` (`invocations.jsonl`, `otel/`, `daily/` rollups and `cache/`, including those the dashboard and `harness report` write, §12.1), and the retention rules (§13).
   - A team opt-in also says: "OTel can only be turned on in your user settings (Claude Code ignores it in repo files). Turn on global too?" That is a second, separate confirm.
 - **Takes effect in new sessions.** OTel reads its variables once at startup (Env). From P2.9, harness's ConfigChange gate allows harness's own telemetry change in open sessions without a blocked-change notice (§9.1), and Claude Code then applies it as it applies any allowed settings change. Nothing relies on that: an open session had no SessionStart with `otel: harness`, so it isn't announced, its OTel isn't routed, and gap detection doesn't expect OTel for it (§7.1, §8.2). The preview says "takes effect in new sessions".
 - **Never clobber.** Global opt-in refuses, naming the layer, when managed settings, user settings or the CLI's own environment already sets `CLAUDE_CODE_ENABLE_TELEMETRY` or an `OTEL_EXPORTER_OTLP_*` endpoint. Run from Claude Code's Bash, the CLI's environment has no `OTEL_*` (§2.2), so the preview then says "shell variables can't be checked from inside Claude Code; run this from your terminal to check them". It also refuses when any of those sets `OTEL_METRICS_INCLUDE_SESSION_ID=false` (nothing could be routed, §7.2.3) or `otelHeadersHelper` (the key header wouldn't be sent, §2.2). Doctor then says "OTel goes to `<host>`; harness uses its hooks and transcripts". Fan-out to both is deferred until after phase 4 (Q16), so this refusal stays until then.
@@ -496,7 +496,7 @@ The owner confirmed this list as written, including `OTEL_LOG_TOOL_DETAILS=1` an
   - the global level uses `GLOBAL_STATE` (`~/.claude/harness/manifest.json`, `src/cli/preset.ts:61`), so `harness uninstall --global` or `off --level global` removes it.
 - **`off` is the same preview and confirm, in reverse.**
   - Only global `off` stops the receiver, with `/shutdown`. Team `off` never touches the machine-wide receiver.
-  - It never deletes the collected `.harness/telemetry/` data. That is a separate, explicit confirm that lists the files.
+  - It never deletes the collected `.harness/telemetry/` data, and nothing sweeps it afterwards (§13). Deletion is a separate, explicit confirm that lists the files; until then team `off` keeps the `.gitignore` line (§13).
 - **Key rotation** (owner, Q-M13). Re-running `on --level global` keeps the existing key. Only `--rotate-key` makes a new one: it writes `receiver.json` and the write record first, then rewrites `OTEL_EXPORTER_OTLP_HEADERS` (§9.1 `rotate`), then hands over to a receiver with the new key, and the preview says open sessions keep the old key, so their exports get 403 until they restart.
 - **Global changes refuse inside Claude Code.** `telemetry on|off --level global` (with or without `--rotate-key`) and, while global telemetry is on, `uninstall --global`, refuse before any write when run inside a Claude Code session (`insideClaude`), with: `Run this from your own terminal or the dashboard, not inside Claude Code.` The Q-I4 `denyWrite` entries would make the apply fail partway in sandboxed Bash. `--dry-run` still works. The dashboard spawns the CLI without `CLAUDECODE` (§11.1), so its buttons work.
 - **Guard.** `telemetry` joins `PERSON_ONLY` (`src/checks/guard.ts:93`) as `ask`, allowed for `status` and `--dry-run`, like `context apply`. Unattended turns the ask into a deny, as today.
@@ -512,19 +512,26 @@ Today the gate (`src/checks/config-change.ts`) blocks a mid-session change to ha
 | team | `.harness/state/telemetry-write.json` | the existing `.harness/state` protection: Edit deny, sandbox `denyWrite`, protect table |
 | global | `~/.claude/harness/state/telemetry-write.json` | the telemetry deny entries (owner, Q-I4 and D14), written into the person's own user settings (`userSettingsPath()`) **by global opt-in only**, as part of the same harness-owned block as the global `env`: `Edit(~/.claude/harness/bin/**)`, `Edit(~/.claude/harness/receiver.json)`, `Edit(~/.claude/harness/receiver/**)`, `Edit(~/.claude/harness/state/**)` in `permissions.deny`, and `~/.claude/harness/bin`, `~/.claude/harness/receiver.json`, `~/.claude/harness/receiver` and `~/.claude/harness/state` in the sandbox `denyWrite`. `~/` resolves to the person's home in both rule kinds (permissions: `~/path` is a "Path from home directory"; a single leading `/` anchors at the settings source). The global preview lists them; they are written only after the person approves, and removed exactly by global `off` and `uninstall --global`, through `GLOBAL_STATE`. Team opt-in, `harness init` and `harness update` never write them. When `CLAUDE_CONFIG_DIR` moves `globalHarnessDir()`, the entries still name the default folder, so the moved files are unprotected on that machine; doctor says so (§19, §22). The global-preset files in the same folder get no entries |
 
-Each record is `{v, id, file, action, block, after, ts}`, written with `writeAtomic` and mode 0600:
+Each record is `{v, id, file, action, entries, before, after, fragment, ts}`, written with `writeAtomic` and mode 0600:
 - `file`: `project_settings` or `user_settings`;
 - `action`: `on`, `off` or `rotate` (`--rotate-key`);
-- `block`: SHA-256 of the canonical JSON (sorted keys, no whitespace) of the **whole set** of entries harness added or removed, as one sorted array: for team, the record hook groups and the `.harness/telemetry` deny and `denyWrite` entries; for global, the §9 `env` key and value pairs and the eight deny entries above;
-- `after`: `settingsFingerprint` (`src/core/harness-files.ts`) of the planned file's guarded view, as the CLI record uses, so an unrelated write Claude Code makes to the file (a `/model` or permission save) doesn't break the match;
+- `entries`: the exact list of entries harness adds or removes, each as its JSON path and value: for team, the record hook groups and the `.harness/telemetry` deny and `denyWrite` entries; for global, the §9 `env` pairs and the eight deny entries above; for `rotate`, the old and new `OTEL_EXPORTER_OTLP_HEADERS` values;
+- `before` and `after`: `settingsFingerprint` (`src/core/harness-files.ts`) of the file text the CLI read and of the text it is about to write. These are opaque fingerprints of the same view the gate keeps as its session baseline, so the gate compares fingerprints and never looks for entries inside that view;
+- `fragment`: the SHA-256 of the `templates/telemetry.fragment.json` the CLI wrote from (team only, R7);
 - `id`: 16 random bytes in base64url.
+
+**What the CLI guarantees when it writes.** Its before text and after text, parsed, differ in exactly `entries` and nothing else. A unit test asserts this for every action and level; the gate doesn't re-derive it.
+
+**What the gate can and can't see.** The gate's view (`guardedView`) holds harness's dispatcher hook groups, the deny rules in the repo manifest, `disableAllHooks`, `sandbox` as one value and `env` with hashed values. It doesn't hold the `record.mjs` groups, and it doesn't count added deny rules. So:
+- the `record.mjs` groups stay unguarded by the ConfigChange gate, like any other non-dispatcher hook today; doctor checks their shape and `record.mjs`'s hash instead (§19);
+- the global deny entries don't change the fingerprint; the `env` and `denyWrite` changes do.
 
 **The gate allows a change only when all of these hold:**
 1. the reported source matches the record's `file`, and the file is the one the gate watches (the existing `elsewhere` rule is unchanged);
-2. the current file's `settingsFingerprint` equals `after`;
-3. the set of entries that differ between the session baseline and the current guarded view, as one sorted canonical array, hashes to `block`; and for `on`, baseline plus that set equals the current view, for `off`, current view plus that set equals the baseline, for `rotate`, the set is exactly the old `OTEL_EXPORTER_OTLP_HEADERS` pair removed and the new one added, and baseline with that swap equals the current view;
+2. the fingerprint of the session baseline for that file equals the record's `before`;
+3. the current file's `settingsFingerprint` equals the record's `after`, so an unrelated write Claude Code makes to the file (a `/model` or permission save) doesn't break the match;
 4. the record's `id` hasn't been used in this session. A new `guardedTelemetry` session-state field holds used ids, as `guardedCli` does for the CLI record, so a record is used once;
-5. the entries themselves are harness's shape, so a forged record can't pass anything else: for team, each hook group is deep-equal to its group in `templates/telemetry.fragment.json` (exec form, every field, so an added `asyncRewake`, `if`, `timeout`, `shell` or other matcher fails); for global, the deny entries are exactly the eight above, the keys are exactly the §9 `env` list with the §9 values, the endpoint is `http://127.0.0.1:<port>` with `<port>` from `receiver.json`, and `OTEL_EXPORTER_OTLP_HEADERS` is exactly `x-harness-key=<key>` with `<key>` from `receiver.json`.
+5. **on the raw current file text**, parsed as JSON: for `on` and `rotate`, every item in `entries` is present at its path with its exact value; for `off`, none is; and the entries are harness's shape, so a forged record can't pass anything else: for team, each hook group is deep-equal to its group in a known `telemetry.fragment.json` (exec form, every field, so an added `asyncRewake`, `if`, `timeout`, `shell` or other matcher fails), where "known" means the record's `fragment` hash is in `TELEMETRY_FRAGMENT_HASHES`, the list of every released fragment's SHA-256 that ships in the package; for global, the deny entries are exactly the eight above, the keys are exactly the §9 `env` list with the §9 values, the endpoint is `http://127.0.0.1:<port>` with `<port>` from `receiver.json`, and `OTEL_EXPORTER_OTLP_HEADERS` is exactly `x-harness-key=<key>` with `<key>` from `receiver.json`.
 
 When it allows, the current view becomes the session's baseline for that file, as the CLI allowance does. When any check fails, today's block and notice apply unchanged.
 
@@ -534,6 +541,9 @@ When it allows, the current view becomes the session's baseline for that file, a
 - one byte changed in the block after harness wrote it: blocked;
 - the telemetry block plus any other change (a deny rule removed, another `env` key, `disableAllHooks`): blocked;
 - a record whose `after` doesn't match the file's fingerprint: blocked;
+- a record whose `before` doesn't match the session baseline (the file changed before harness's write): blocked;
+- a team group written from an older released fragment (its hash in `TELEMETRY_FRAGMENT_HASHES`): allowed; a fragment hash not in the list: blocked;
+- the CLI's before and after texts differ in exactly `entries`, for every action and level;
 - the gate firing straight after the settings write: the record already exists, so allowed;
 - a settings write that fails after the record is written: the previous record is restored, and a later unrelated change is blocked;
 - an unrelated Claude Code write to the same file (a `model` key) between harness's write and the gate: still allowed, because the fingerprint covers the guarded view only;
@@ -565,7 +575,7 @@ When it allows, the current view becomes the session's baseline for that file, a
   - **The CSRF secret is only in that fragment.** It is 32 random bytes in base64url. Browsers never send a fragment to a server, so no response body or header after the 303 contains it. The client JS reads it, stores it in `sessionStorage` (inside try/catch), removes it from the address bar with `history.replaceState`, and sends it as `x-harness-csrf`.
   - Reading works without JS; actions need it. A tab without the secret (opened without an opener, or with storage blocked) shows actions disabled with "open actions from the launch tab, or launch again".
   - A second exchange is refused, and shown on the page and in the terminal. Using another browser means another launch.
-- **Lifetime.** The server ends on Ctrl-C or SIGHUP and keeps no state on disk. It writes only harness's own telemetry files (rollups, cache) in repos whose hook log is on, and changes nothing else without a click (D14).
+- **Lifetime.** The server ends on Ctrl-C or SIGHUP and keeps no server state on disk. It writes only harness's own telemetry files (rollups, cache) in repos whose hook log is on, and changes nothing else without a click (D14).
 
 ### 10.2 Request checks (every request)
 
@@ -753,8 +763,8 @@ The list is cached for the server's lifetime, with a refresh button.
 
 ## 13. On-disk formats and retention
 
-**Where new repo files go:** all of them live under `.harness/telemetry/`. Harness's code adds that folder to `PROTECTED` and `PROTECTED_CONCRETE`. The entries that land in the person's files are written by `harness telemetry on --level team` only, listed in its preview, and removed by team `off` and `harness uninstall`; `harness init` and `harness update` don't write them (D14):
-- the `.gitignore` line `.harness/telemetry/` (not through `HARNESS_LOCAL`, which init and update append);
+**Where new repo files go:** all of them live under `.harness/telemetry/`. **That folder is not added to `PROTECTED`**: `denyWritePaths()` is derived from `PROTECTED` (`src/checks/protect.ts`), `init` and `update` write every one of those paths into `sandbox.filesystem.denyWrite` (`src/install/merge.ts`), and doctor reports any that are missing (`src/cli/doctor.ts`), so it would reach every repo without opt-in. It goes in a separate list, `TELEMETRY_PROTECTED`, that `denyWritePaths()`, `merge.ts` and doctor's base check don't read. Only `harness telemetry on --level team` writes its entries into the person's files, listed in its preview; team `off` and `harness uninstall` remove them (D14). Protect's text check and the Stop fence consult `TELEMETRY_PROTECTED` only where the manifest records team opt-in, which changes no file. The entries are:
+- the `.gitignore` line `.harness/telemetry/` (not through `HARNESS_LOCAL`, which init and update append). Team `off` and `harness uninstall` keep this line while any `.harness/telemetry/` data remains, and remove it only after the person confirms deleting that data (R5); the preview says which;
 - the `Edit(./.harness/telemetry/**)` deny;
 - the sandbox `denyWrite`.
 
@@ -776,11 +786,11 @@ It is **not** in `DENY_WRITE_SKIPPED`: only the record hook and the receiver wri
 | `~/.claude/harness/receiver/receiver.log` | one line per error class, with counts, never payloads | 1 MB, two files |
 | `~/.claude/harness/receiver/lock/heartbeat` | empty; its mtime is the heartbeat (§7.2.1) | one file |
 | `~/.claude/harness/receiver/uptime.jsonl` | `{v, ts, state: "up" or "down", reason}` (§7.2.1) | 1 MB, two files |
-| `.harness/state/telemetry-write.json`, `~/.claude/harness/state/telemetry-write.json` | `{v, id, file, action, block, after, ts}` (§9.1), mode 0600 | one file each, replaced on each write |
+| `.harness/state/telemetry-write.json`, `~/.claude/harness/state/telemetry-write.json` | `{v, id, file, action, entries, before, after, fragment, ts}` (§9.1), mode 0600 | one file each, replaced on each write |
 
 **Valid `event` values** in `invocations.jsonl`: `skill`, `prompt`, `command`, `subagent-start`, `subagent-stop`, `compact-pre`, `compact-post`, `model-pre`, `model-post`, `session-start`, `session-end`, `receiver-start-failed`, `receiver-hash-mismatch`. Valid `otel` values: `harness`, `repo-off`, `other`, `off` (§7.1).
 
-**The retention sweep** runs in the receiver (hourly) and, best-effort, in the async SessionEnd record hook (killed at `-p` teardown, §2.2; the receiver's hourly run catches up). It deletes only:
+**The retention sweep** runs in the receiver (hourly) and, best-effort, in the async SessionEnd record hook (killed at `-p` teardown, §2.2; the receiver's hourly run catches up). **It acts only on scopes that are still opted in:** `~/.claude/harness/receiver/` only while `GLOBAL_STATE` records global opt-in, and a repo's `.harness/telemetry/` only while that repo's manifest records team opt-in. Data kept after `off` or uninstall is never swept; it stays until the person confirms deleting it or opts in again. Within those scopes it deletes only:
 - harness-created files under `.harness/telemetry/` and `~/.claude/harness/receiver/`;
 - that match the exact name patterns above;
 - that `lstat` shows to be regular files.
@@ -798,7 +808,7 @@ It never follows a symlink. These are harness's own logs, not the person's files
 | It tries to | Answer |
 |---|---|
 | Inject script through a file name, skill name, reason text, transcript text, or another repo's `.harness` | `h()` on the server (HTML plus control, zero-width and bidi characters); `textContent` only in the client; Trusted Types required; `script-src 'self'` with no inline script. Hostile fixtures are fed to every view (§20.2). |
-| Plant numbers the dashboard trusts | `.harness/telemetry/` is outside the sandbox write set and Edit-denied. `events.jsonl` and `timing.jsonl` stay plantable (§4), so their rows are labelled `harness log` and cross-checked against OTel hook counts. Every parser caps line length (`MAX_LINE`) and key count (`MAX_KEYS`). |
+| Plant numbers the dashboard trusts | in a repo with team opt-in, `.harness/telemetry/` is outside the sandbox write set and Edit-denied (`TELEMETRY_PROTECTED`, §13). `events.jsonl` and `timing.jsonl` stay plantable (§4), so their rows are labelled `harness log` and cross-checked against OTel hook counts. Every parser caps line length (`MAX_LINE`) and key count (`MAX_KEYS`). |
 | Make the dashboard or receiver write elsewhere: a symlinked folder or file, or a forged announcement | `ensureRealDir` plus `APPEND_NOFOLLOW` (§14.3); the announced root must have a manifest and match the transcript `cwd` before anything is written (§7.2.3), the one bounded exception to "no write path from file content" (§4); no other write path comes from file content, config values or the page. |
 | Drive a control | §11.4; a cookie leaked to another loopback port can't post, because the CSRF secret is only in the launch fragment (§10.1, Q-C2) |
 | Replace the receiver binary, `receiver.json` or an announcement | `ensureReceiver()` refuses a binary whose SHA-256 doesn't match the global manifest (§7.2.5); the announcement checks (§7.2.3); Edit deny and `denyWrite` on `bin/`, `receiver.json`, `receiver/` and `state/` (§9.1, owner Q-I4). Unsandboxed Bash can still write them; the hash check covers the binary |
@@ -932,6 +942,7 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - `harness uninstall --global` stops the receiver with `/shutdown` (its own exit removes `receiver/lock/`), then removes the global env entries, the bin file, `receiver.json` and `state/telemetry-write.json`;
   - `receiver/announce/`, `receiver.log` and `uptime.jsonl` are listed and kept unless the person confirms, under the same confirm as collected data;
   - collected data is listed and kept unless the person confirms.
+- **Upgrades of the team pieces** (R7). `harness update` refreshes `.harness/hooks/record.mjs` and the committed `record.mjs` hook groups only in a repo whose manifest records team opt-in, and lists both in update's preview; elsewhere it writes nothing for telemetry. That stays within the team's approval (Q-P1 B). The new groups' fragment hash is added to `TELEMETRY_FRAGMENT_HASHES` in the release, so teammates on older or newer harness versions still pass §9.1 check 5. Doctor checks `record.mjs` against the version the manifest records.
 - **Two global folders when `CLAUDE_CONFIG_DIR` is set** (Q-I11). The global manifest stays at `~/.claude/harness/manifest.json` (`GLOBAL_STATE`, home-relative), while the telemetry files live under `globalHarnessDir()` = `claudeConfigDir()/harness`. Without `CLAUDE_CONFIG_DIR` both are `~/.claude/harness/`. `uninstall --global` and doctor always resolve both and name each path they act on:
 
   | Location | `uninstall --global` removes | Listed and kept unless the person confirms | Doctor checks |
@@ -1002,10 +1013,13 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
 - **Opt-in:**
   - an exact preview per level;
   - any `--level` value other than `team` or `global` exits 2 and writes nothing;
+  - `init` and `update` on a repo without team opt-in leave `sandbox.filesystem.denyWrite` and `permissions.deny` without any `.harness/telemetry` entry, and doctor reports none missing there;
+  - team `off` and `uninstall` keep the `.gitignore` line while `.harness/telemetry/` data remains, and remove it after a confirmed deletion;
   - global opt-in refuses for each §9 case, naming the layer: an existing endpoint, `OTEL_METRICS_INCLUDE_SESSION_ID=false`, `otelHeadersHelper`; and run with no `OTEL_*` in its environment it prints the "can't check shell variables" line;
   - team `off` never sends `/shutdown`; global `off` does;
+  - after team `off`, neither the receiver's hourly sweep nor any SessionEnd hook deletes that repo's kept `.harness/telemetry/` files; after global `off`, nothing under `~/.claude/harness/receiver/` is swept;
   - no level ever creates or changes `.claude/settings.local.json`, asserted on the file's bytes and mtime;
-  - the telemetry write record (§9.1) is written per level, with `after` equal to the `settingsFingerprint` of the planned file's guarded view;
+  - the telemetry write record (§9.1) is written per level, with `before` and `after` equal to the `settingsFingerprint` of the read and planned file texts, `entries` exactly the change, and the team `fragment` hash in `TELEMETRY_FRAGMENT_HASHES`;
   - the Q-I4 deny entries appear only in `userSettingsPath()`, only after global opt-in is approved, start with `~/.claude/harness/`, and are removed byte for byte by global `off` and `uninstall --global`; team opt-in, `init` and `update` never write them, and no repo file ever gets them;
   - D14: with no opt-in, `init`, `update`, every hook, doctor and every dashboard `GET` leave the person's files unchanged (a snapshot of the repo, `~/.claude/settings.json` and `~/.claude/harness/` before and after); a teammate's machine with the committed team hooks but no global opt-in gets nothing under `~/.claude/harness/`;
   - the team preview contains the teammate statement and the commit or PR paragraph (§9, Q-P1 B);
@@ -1115,8 +1129,8 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 | P1.4 | Context, Tokens and Stop sandbox views; the per-model tables from transcripts (§7.4) | P1.2 | — | ~340 | 7 |
 | P1.5 | Repo switcher (discovery, index only, re-root); docs | P1.3, P1.4 | — | ~250 | 6 |
 | **Phase 2: Live** | | | | | |
-| P2.1 | `.harness/telemetry/` in the code's protect tables; the `record.mjs` bundle with the file-based `otel` value (§7.1); `telemetry.fragment.json` in exec form; allowlist; rotation; modes | P1.5, #250 | L4, L7 (hook environment) | ~380 | 10 |
-| P2.2 | `harness telemetry on\|off\|status` for the team level: previews, the `.harness/telemetry` deny, `denyWrite` and `.gitignore` entries, manifest, backups, the team write record (§9.1), uninstall; doctor and status lines | P2.1 | — | ~340 | 9 |
+| P2.1 | `TELEMETRY_PROTECTED`, read by protect and the Stop fence only where team opt-in is recorded (not in `PROTECTED`, §13); the `record.mjs` bundle with the file-based `otel` value (§7.1); `telemetry.fragment.json` in exec form; allowlist; rotation; modes | P1.5, #250 | L4, L7 (hook environment) | ~380 | 10 |
+| P2.2 | `harness telemetry on\|off\|status` for the team level: previews, the `TELEMETRY_PROTECTED` deny, `denyWrite` and `.gitignore` entries, `update`'s refresh of `record.mjs` and the groups in opted-in repos, manifest, backups, the team write record (§9.1), uninstall; doctor and status lines | P2.1 | — | ~340 | 9 |
 | P2.3 | Receiver core: OTLP/HTTP JSON, request checks, allowlist with the bounded parameter parse, announcements, routing held until the `cwd` cross-check, metric dedupe, lock, log; `dist/receiver.mjs` | P2.2 | L1, L2, L5 | ~390 | 9 |
 | P2.4a | Receiver lifecycle: ensure from hooks and `harness dashboard`, heartbeat, bin hash check, foreign-listener check, `uptime.jsonl`, no idle exit (Q-I5), version handoff (Q-I7), restart, retention sweep and caps | P2.3 | L7 (reaping) | ~360 | 8 |
 | P2.4b | The global level: env, port 4320 or a free one, the §9 refusals, bin copy and hash, `receiver.json`, the global write record, global manifest, `uninstall --global`; doctor's global checks (§19) | P2.4a | L6 | ~380 | 10 |
@@ -1125,7 +1139,7 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 | P2.6b | Data health view, banners, the per-model OTel sources and metric cross-check (§7.4) | P2.6a | — | ~330 | 7 |
 | P2.7 | Sessions and the live session view: SSE, tokens-in-context gauge, timeline, per-skill and per-hook cost | P2.6b | — | ~360 | 8 |
 | P2.8 | Inventory panel: hooks registered, plugins loaded, MCP connections (OTel), plus agents, commands and MCP from repo files | P2.7 | — | ~200 | 5 |
-| P2.9 | ConfigChange allowance for harness's own telemetry block, team, global and `rotate` (§9.1), its tests, and the home-relative Q-I4 deny entries added to the global opt-in's user-settings block (preview, approval, exact removal) | P2.4b | L7 (mid-session) | ~260 | 6 |
+| P2.9 | ConfigChange allowance for harness's own telemetry block, team, global and `rotate`, on before and after fingerprints plus a raw-text shape check with `TELEMETRY_FRAGMENT_HASHES` (§9.1), its tests, and the home-relative Q-I4 deny entries added to the global opt-in's user-settings block (preview, approval, exact removal) | P2.4b | L7 (mid-session) | ~300 | 7 |
 | **Phase 3: Control** | | | | | |
 | P3.1 | `harness config set` (§11.3): validation, preview, backup, manifest, guard deny and ask classes, unattended refusal (D12) | P2.8, P2.9 | — | ~300 | 6 |
 | P3.2 | Action runner: templates, preview, apply, hash recheck, audit event, copy-command path; the client side of the fragment secret (Q-C2) | P3.1 | — | ~370 | 8 |
@@ -1302,7 +1316,7 @@ The re-review confirmed all 32 revision 3 findings fixed and raised N1 to N8. Ea
 
 | Finding | Change |
 |---|---|
-| N1 deny entries as absolute paths in a committed file | Confirmed: permissions says a single leading `/` anchors at the settings source and `//` is absolute, and `~/` is home-relative. The entries are now `~/.claude/harness/...`, written by `harness telemetry on --level team` and removed by team `off` and `uninstall`; never an absolute path. With `CLAUDE_CONFIG_DIR` moved, doctor and §22 state the files are unprotected (§9.1, T5, §19, §20.1, P2.9). |
+| N1 deny entries as absolute paths in a committed file | Confirmed: permissions says a single leading `/` anchors at the settings source and `//` is absolute, and `~/` is home-relative. The entries are now `~/.claude/harness/...`, never an absolute path. (§28.2 later moved them to the person's user settings, written by global opt-in only and removed by global `off` and `uninstall --global`.) With `CLAUDE_CONFIG_DIR` moved, doctor and §22 state the files are unprotected (§9.1, T5, §19, §20.1, P2.9). |
 | N2 heartbeat after sleep | A candidate binds before breaking a lock; on `EADDRINUSE` it adopts the live receiver through `/health` (`heartbeat-resumed`) or reports `port-foreign`; ensure writes no `down` line; a blind window opens only on a confirmed `down`; the heartbeat is touched on a timer jump (§7.2.1, §7.2.5, §8.2); tests. |
 | N3 rotation and `receiver.json` order | `receiver.json` and the record are written before the settings file; a `rotate` action swaps only the header pair (§9, §9.1); tests. |
 | N4 stale test line | Reworded to `settingsFingerprint` (§20.1). |
@@ -1335,3 +1349,17 @@ Checked and compliant: doctor and `telemetry status` only read; every phase 3 ac
 | Question | Answer | Change |
 |---|---|---|
 | Q-P1 team hooks on a teammate's machine before they approve | B: merging the team opt-in commit is the team's approval | The committed hooks log names-only lines to `.harness/telemetry/` and run its retention cleanup on a teammate's machine after they pull, with no per-person step. The team preview, and a ready-to-paste commit or PR paragraph, say so plainly (§9). Writes outside the repo, under `~/.claude/harness`, still need that person's own global opt-in (§7.2.3). D14 records the exception; Q-P1 left §24. |
+
+### 28.4 Final re-review (revision 4b, 2026-11-16)
+
+The re-review confirmed N1 to N8 fixed and raised R1 to R7. Each was checked against the code it cites (`src/core/harness-files.ts`, `src/checks/protect.ts`, `src/install/merge.ts`, `src/cli/doctor.ts`); all held. The changes follow the coordinator's rulings.
+
+| Finding | Change |
+|---|---|
+| R1 §9.1 checks over entries `guardedView` doesn't hold | Confirmed: `guardedView` keeps only dispatcher hook groups, manifest deny rules, `sandbox` as one value and hashed `env`, and `guardedDiff` ignores added deny rules. The record now carries `entries`, `before` and `after` fingerprints and the `fragment` hash; the gate compares the baseline with `before` and the current file with `after`, and runs check 5 on the raw file text. The `record.mjs` groups stay unguarded by the gate, as other non-dispatcher hooks are; doctor checks them. P2.9 re-sized to ~300. |
+| R2 `PROTECTED` reaches every repo | Confirmed: `denyWritePaths()` comes from `PROTECTED`, `merge.ts` writes it at `init` and `update`, and doctor checks it. `.harness/telemetry` moves to `TELEMETRY_PROTECTED`, written only by team opt-in and consulted by protect and the Stop fence only where team opt-in is recorded; test. |
+| R3 sweep deletes kept data | The sweep acts only on scopes still opted in; data kept after `off` or uninstall is never swept; tests. |
+| R4 previews incomplete | Both previews list every write, including the record, the manifest entries and the files written over time. |
+| R5 `.gitignore` line removed while data is kept | Kept while `.harness/telemetry/` data remains; removed only after a confirmed deletion; test. |
+| R6 stale text | The §28.1 N1 row and §10.1's "no state on disk" corrected. |
+| R7 upgrade path | `harness update` refreshes `record.mjs` and the groups only where team opt-in is recorded, in its preview; check 5 accepts every released fragment through `TELEMETRY_FRAGMENT_HASHES`. |

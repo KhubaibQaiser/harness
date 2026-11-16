@@ -115,7 +115,7 @@ test('bad config and unwired event named', async () => {
   expect(r.out).toMatch(/^fix .*bogus/m);
 });
 
-test('settings without the SessionStart compact group: the per-group fix line', async () => {
+test('settings without the SessionStart group: the per-group fix line', async () => {
   const root = await installed();
   const sp = join(root, '.claude/settings.json');
   const s = JSON.parse(readFileSync(sp, 'utf8'));
@@ -123,7 +123,7 @@ test('settings without the SessionStart compact group: the per-group fix line', 
   writeFileSync(sp, JSON.stringify(s));
   const r = run(root, { path: bin('npm') });
   expect(r.out).toMatch(/^fix .*SessionStart/m);
-  expect(r.out).toMatch(/missing the harness group for `compact`/);
+  expect(r.out).toMatch(/missing the harness group for `all tools`/);
 });
 
 test('missing reporter output for a TDD package', async () => {

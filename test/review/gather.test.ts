@@ -65,9 +65,9 @@ function fakeGh(s: { base: string; head: string }, view: Record<string, unknown>
   };
   return { exec, calls };
 }
-function run(s: ReturnType<typeof setup>, exec: Exec, env: NodeJS.ProcessEnv = {}, nonce?: () => string) {
+function run(s: ReturnType<typeof setup>, exec: Exec, env: NodeJS.ProcessEnv = {}, nonce?: () => string, version?: string) {
   const lines: string[] = [];
-  const code = review(['7', '--out', s.dir], { root: s.root, env, out: (l) => lines.push(l) }, { exec, ...(nonce && { nonce }) });
+  const code = review(['7', '--out', s.dir], { root: s.root, env, out: (l) => lines.push(l) }, { exec, ...(nonce && { nonce }), ...(version && { version }) });
   return { code, lines, read: (f: string) => readFileSync(join(s.root, s.dir, f), 'utf8') };
 }
 
@@ -105,6 +105,18 @@ describe('gather: §8 rows', () => {
   test('a project staff-reviewer that differs from the plugin\'s copy is gathered (the project agent wins, and the drift check covers it)', () => {
     const t = setup({ base: { '.claude/agents/staff-reviewer.md': 'an older or edited agent\n' } });
     expect(run(t, fakeGh(t).exec)).toMatchObject({ code: 0 });
+  });
+  test('a harness CLI whose version differs from the base install\'s is refused early', () => {
+    const t = setup({ base: { '.harness/manifest.json': '{"version":"0.2.0-beta.1"}' } });
+    expect(run(t, fakeGh(t).exec, {}, undefined, '0.2.0-beta.2')).toMatchObject({ code: 1, lines: ['review: harness CLI 0.2.0-beta.2 and plugin 0.2.0-beta.1 differ; run /harness:update on main and review again'] });
+  });
+  test('the same version, an unknown CLI version, or no readable manifest version is not refused', () => {
+    const same = setup({ base: { '.harness/manifest.json': '{"version":"0.2.0-beta.2"}' } });
+    expect(run(same, fakeGh(same).exec, {}, undefined, '0.2.0-beta.2')).toMatchObject({ code: 0 });
+    const unset = setup({ base: { '.harness/manifest.json': '{"version":"0.2.0-beta.1"}' } });
+    expect(run(unset, fakeGh(unset).exec)).toMatchObject({ code: 0 });
+    const bad = setup({ base: { '.harness/manifest.json': 'not json' } });
+    expect(run(bad, fakeGh(bad).exec, {}, undefined, '0.2.0-beta.2')).toMatchObject({ code: 0 });
   });
   test('a base without the review agents (an older install) asks for /harness:update', () => {
     const t = setup({ base: { '.claude/agents/review-judge.md': null } });

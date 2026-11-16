@@ -24,7 +24,7 @@ export interface GatherJson {
   files: { path: string; old_path?: string; status: string; binary: boolean; skipped?: true }[];
   lines: Record<string, { RIGHT: number[]; LEFT: number[] }>; map: Record<string, string>; omitted: { path: string; why: string }[];
 }
-export interface GatherDeps { exec?: Exec; bytes?: ExecBytes; nonce?: () => string }
+export interface GatherDeps { exec?: Exec; bytes?: ExecBytes; nonce?: () => string; /** This CLI's version; unset in tests and source runs. */ version?: string }
 
 const SPECS = 3, SPEC_BYTES = 50 * 1024;
 const STATE = '.harness/state/review-gather.json';
@@ -109,6 +109,10 @@ export function gather(args: string[], { root, env, out }: CliEnv, deps: GatherD
     const drift = driftCheck(root, bytes, base, commits);
     if ('error' in drift) return fail(drift.error);
     const { blobs } = drift;
+    // The base install's recorded version stands in for the plugin's: /harness:update brings both up to the CLI's.
+    let installed: unknown;
+    try { installed = (JSON.parse(blobs['.harness/manifest.json'] ?? 'null') as { version?: unknown } | null)?.version; } catch { /* unreadable: no version check */ }
+    if (deps.version && typeof installed === 'string' && installed !== deps.version) return fail(`review: harness CLI ${esc(deps.version)} and plugin ${esc(installed)} differ; run /harness:update on ${esc(base)} and review again`);
     const judge = '.claude/agents/review-judge.md';
     if (blobs[judge] == null) return fail(`review: base branch ${esc(base)} has no ${judge} (an older harness install); run /harness:update on ${esc(base)} first`);
 

@@ -130,7 +130,7 @@ export function run(argv: string[], cli: CliEnv): number {
   if (cmd === 'git') return gitStep(rest, cli);
   if (cmd === 'guide') return guide(rest, cli);
   if (cmd === 'workdir') return workdir(rest, cli);
-  if (cmd === 'review') return review(rest, cli);
+  if (cmd === 'review') return review(rest, cli, { version: VERSION });
   if (cmd === 'done') return done(rest, cli);
   cli.out(USAGE);
   return 2;

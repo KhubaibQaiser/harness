@@ -169,7 +169,7 @@ The done contract's `harness verify` reuses the same runner (done contract §4.4
      - writes one JSON line per check and step to stdout, tagged with the nonce, each step that ran with its start time;
      - writes the sealed end line last.
 
-     The outer runner enforces `stop.timeout_s` on the whole call. Outside a timeout, any non-zero `srt` exit, or exit 0 with incomplete lines, is unavailable (a ruling: `srt` can exit 0 when its child is killed, so complete lines are required).
+     The outer runner enforces `stop.timeout_s` on the whole call. Outside a timeout, any non-zero `srt` exit, or exit 0 with incomplete lines, is unavailable (plan ruling R13: `srt` exits 0 when its child dies of SIGTERM, so complete lines are required).
 
      **Result lines are checked strictly (R3-M3).** It accepts exactly one line per expected check and step, in plan order, each with the nonce, and rejects the run on a missing, extra, out-of-order, duplicate or malformed line. The nonce isn't secret from step code (on Linux the runner is visible under `/proc`), so it binds a line's origin but proves nothing.
 

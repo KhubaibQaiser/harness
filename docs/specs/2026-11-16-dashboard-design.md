@@ -921,6 +921,16 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - `harness uninstall --global` stops the receiver with `/shutdown` (its own exit removes `receiver/lock/`), then removes the global env entries, the bin file, `receiver.json` and `state/telemetry-write.json`;
   - `receiver/announce/`, `receiver.log` and `uptime.jsonl` are listed and kept unless the person confirms, under the same confirm as collected data;
   - collected data is listed and kept unless the person confirms.
+- **Two global folders when `CLAUDE_CONFIG_DIR` is set** (Q-I11). The global manifest stays at `~/.claude/harness/manifest.json` (`GLOBAL_STATE`, home-relative), while the telemetry files live under `globalHarnessDir()` = `claudeConfigDir()/harness`. Without `CLAUDE_CONFIG_DIR` both are `~/.claude/harness/`. `uninstall --global` and doctor always resolve both and name each path they act on:
+
+  | Location | `uninstall --global` removes | Listed and kept unless the person confirms | Doctor checks |
+  |---|---|---|---|
+  | `~/.claude/harness/manifest.json` (`GLOBAL_STATE`) | only the telemetry entries: the global opt-in record and the receiver binary's hash. The manifest file and any global-preset entries stay, as the preset commands leave them | — | that the opt-in record exists when the global `env` entries do, and the reverse |
+  | `userSettingsPath()` (`claudeConfigDir()/settings.json`) | the §9 global `env` entries, through the manifest's backup and block records | — | that the entries match what the manifest records |
+  | `globalHarnessDir()` | `bin/receiver.mjs`, `receiver.json`, `state/telemetry-write.json`; `receiver/lock/` goes when the receiver exits on `/shutdown` | `receiver/announce/`, `receiver.log`, `uptime.jsonl` | the missing-file, hash, nonce and mode checks above |
+  | `~/.claude/harness/` telemetry files, when it differs from `globalHarnessDir()` (left from an opt-in made before `CLAUDE_CONFIG_DIR` was set) | nothing | every telemetry file found there, named by path | reports them as strays, with "not used while `CLAUDE_CONFIG_DIR` is set" |
+
+  `harness uninstall` in a repo also removes that repo's Q-I4 deny entries from its `.claude/settings.json`. Neither command ever recreates or moves a file between the two folders.
 - **README:** updated in each PR.
 
 ## 20. Testing
@@ -986,6 +996,7 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - `off` restores byte for byte;
   - manifest and backup entries;
   - `uninstall` and `uninstall --global`;
+  - with `CLAUDE_CONFIG_DIR` set to a temp folder and a fake `HOME`: `uninstall --global` removes the telemetry entries from `$HOME/.claude/harness/manifest.json` (keeping a global-preset entry), the `env` entries from `claudeConfigDir()/settings.json` and the §19 files under `globalHarnessDir()`; it lists and keeps `receiver/announce/`, `receiver.log`, `uptime.jsonl` and a stray `$HOME/.claude/harness/bin/receiver.mjs`; doctor names the stray and every path it checked;
   - **no `statusLine` key is ever written at any level** (D11).
 - **`config set`:**
   - a key path that isn't in the table is refused;

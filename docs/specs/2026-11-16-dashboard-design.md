@@ -1,9 +1,10 @@
 # Harness dashboard: design
 
-- Status: revision 3, for the owner's review, 2026-11-16. No code. Draft PR #252.
-  - Revision 1: 35730e1. Revision 2: 8d0f80b.
+- Status: revision 4, for the owner's review, 2026-11-16. No code. Draft PR #252.
+  - Revision 1: 35730e1. Revision 2: 8d0f80b. Revision 3: 641a3b9.
   - Revision 2 applies the owner's answers of 2026-11-16 (§25).
   - Revision 3 applies the owner's later answers of 2026-11-16 (§26).
+  - Revision 4 fixes an independent review of revision 3 (§27) and adds six owner questions (§24).
 - Research and owner intent: `.superpowers/sdd/dashboard/research.md` (local, not committed), cited as "R".
 - Claude Code facts come from the official docs, read on 2026-11-16, and are cited by URL:
   - monitoring and OpenTelemetry: https://code.claude.com/docs/en/monitoring-usage ("Mon");
@@ -68,26 +69,35 @@ What follows:
   - `compaction`: `trigger`, `pre_tokens`, `post_tokens`;
   - `subagent_completed`, `tool_decision`, `tool_result` and `user_prompt`;
   - `plugin_loaded` and `mcp_server_connection`.
-- **Metrics harness uses:** `claude_code.token.usage` and `claude_code.cost.usage`, with `model`, `query_source` (`main`, `subagent`, `auxiliary`), `agent.name` and `skill.name`.
+- **Metrics harness uses:** `claude_code.token.usage` and `claude_code.cost.usage`, with `model`, `query_source` (on metrics: `main`, `subagent`, `auxiliary`, `plugin_model_complete` or `plugin_model_classify`), `agent.name` and `skill.name`.
+  - **Events use another `query_source` vocabulary.** Mon gives only examples for events: `repl_main_thread`, `compact`, or a subagent name. L1 records the full list (Q3); harness treats `repl_main_thread` as the main thread on events.
   - `claude_code.token.usage` (unit `tokens`) has a `type` attribute: `input`, `output`, `cacheRead` or `cacheCreation`. Mon: `input` excludes cache reads and writes, and `cacheCreation` counts the five-minute and one-hour cache writes together.
   - `claude_code.cost.usage` (unit `USD`) has no `type` attribute.
-  - Mon's per-session guidance: group by `session.id`, which `/clear` replaces, and which `OTEL_METRICS_INCLUDE_SESSION_ID=false` removes from metrics. Mon gives no per-day method; harness buckets by timestamp (§7.4).
+  - Mon's per-session guidance: group by `session.id`, which `/clear` replaces, and which `OTEL_METRICS_INCLUDE_SESSION_ID=false` removes from metrics **and events** (Mon). Mon gives no per-day method; harness buckets by timestamp (§7.4).
 - **Correlation keys:**
-  - `session.id` is on everything;
+  - `session.id` is on every metric and event unless `OTEL_METRICS_INCLUDE_SESSION_ID=false` (§9 refuses opt-in then);
   - `prompt.id` is on events, never on metrics;
   - `event.sequence` counts per process (Mon).
 - **Context window size:** no built-in source outside the status line (§2.3). The live gauge shows tokens in context, not a percentage (§7.3).
 - **`OTEL_LOG_TOOL_DETAILS=1` also adds content:** Bash commands, tool input and `tool_parameters` (Mon). D5 wants names only, so the receiver drops those attributes before anything reaches disk (§7.2.4).
-- **Always-on identity attributes:** `user.email` and `user.id`, plus `user.account_uuid` by default (Mon). The receiver drops them too.
+- **Identity attributes** (Mon): `user.id` always; `user.email` and `organization.id` when available; `terminal.type` when detected; `user.account_uuid` and `user.account_id` by default (`OTEL_METRICS_INCLUDE_ACCOUNT_UUID`). The receiver drops all of them.
+- **`app.version`** is sent only with `OTEL_METRICS_INCLUDE_VERSION` (default `false`, Mon). Harness doesn't set it, so nothing relies on it.
+- **Subprocess environment** (Mon; Hooks): "Claude Code doesn't pass `OTEL_*` environment variables to the subprocesses it spawns, including the Bash tool, hooks, MCP servers, and language servers." **So no hook and no CLI run from Claude Code's Bash can see the OTel settings in its environment** (§7.1, §9).
+- **A repo can turn a signal off** (Mon): a repository can set an exporter selector such as `OTEL_LOGS_EXPORTER` to `none`, unless managed settings, a `--settings` file or the launch environment sets it. That works from `.claude/settings.json` or `.claude/settings.local.json` (§17).
+- **Shell against settings** (Env): "the settings file value applies in most sessions" when both set a variable. Harness's global entries therefore override `OTEL_*` set in the person's shell in most sessions (§9, Q5).
+- **`otelHeadersHelper`** (Mon): a settings script that generates the export headers at startup and every 29 minutes. With it set, harness's key header isn't what gets sent (§9).
 - **Skill-name redaction:** the docs contradict themselves on custom skill names (three statements, quoted in Q2). Harness sets `OTEL_LOG_TOOL_DETAILS=1`, so names should be verbatim. That is unverified.
 - **Hooks** (Hooks):
   - `UserPromptSubmit` carries `prompt_id`. Harness records only that id, never the prompt.
   - `UserPromptExpansion` gives `expansion_type`, `command_name`, `command_args`, `command_source` and `prompt`.
-  - `SubagentStart` and `SubagentStop` give `agent_id` and `agent_type`.
+  - `SubagentStart` and `SubagentStop` give `agent_id` and `agent_type`. `SubagentStart` also fires when a subagent is resumed and each time an in-process agent-team teammate handles a new message.
   - `PreCompact` gives `custom_instructions`; `PostCompact` gives `compact_summary`.
   - The model-switch hooks give `from_model` and `to_model`.
   - `SessionStart` gives `source` and `model`; `SessionEnd` gives `reason`.
-  - **Async hooks:** `async: true` runs a command hook "in the background without blocking", with no enforced timeout. In `-p` mode, async hooks still running at teardown are killed. Async output is delivered on the next turn. Completion notices show only in verbose mode.
+  - **Async hooks:** `async: true` runs a command hook in the background, with no enforced timeout. "Async hooks can't block or control Claude's behavior: response fields like `decision`, `permissionDecision`, and `continue` have no effect." Only `additionalContext` and `systemMessage` are delivered, on the next turn. In `-p` mode, async hooks still running at teardown are killed; work that must outlive the session should "start a fully detached process". Completion notices show only in verbose mode.
+  - **Exec form:** a command hook with `args` spawns `command` directly with no shell. Harness's hooks use it (`templates/settings.fragment.json`).
+  - **Transcripts may lag:** the transcript "is written asynchronously and may lag the in-memory conversation" (§8.2 settle delay).
+- **OTel event counting** (Mon): `hook_execution_start` and `hook_execution_complete` are logged "once per hook event, covering every matching hook". `compaction` is logged for failed compactions too, with `success` `"false"`.
 - **Status line:** not used (D11). SL notes that a custom status line also hides most of Claude Code's footer hints. That is one reason the owner ruled it out.
 - **Transcripts** change format between versions (R). Harness reads them defensively (`src/report/transcript.ts`, tested range `TESTED` 2.1.286 to 2.1.317).
   - Usage fields, checked read-only against a local transcript written by Claude Code 2.1.309 on 2026-11-16: an assistant line has top-level `requestId`, and `message.id`, `message.model` and `message.usage` with `input_tokens`, `output_tokens`, `cache_read_input_tokens` and `cache_creation_input_tokens`. `src/report/transcript.ts` already reads those four.
@@ -141,7 +151,7 @@ The owner asked for a built-in source of the window size other than the status l
 
 Rules:
 - **Every value is untrusted for display.** It is escaped and capped.
-- **No value from any source is ever used as a write path or as a command argument** (§14).
+- **No value from any source is ever used as a write path or as a command argument** (§14), with one bounded exception: the receiver writes under the root named in an announcement, and only after the checks in §7.2.3 pass (manifest, hook log on, real folders, and the transcript `cwd` cross-check).
 
 ## 5. Components at a glance
 
@@ -196,7 +206,7 @@ Both capture sources are opt-in (§9) and append-only. There are exactly two: th
 
 ### 7.1 Invocation log (record hook)
 
-`harness telemetry on --level team` adds new hook groups to `.claude/settings.json` (§9). Each runs `node ${CLAUDE_PROJECT_DIR}/.harness/hooks/record.mjs` with `"async": true`. The existing hooks stay as they are.
+`harness telemetry on --level team` adds new hook groups to `.claude/settings.json` (§9). Each is in exec form, as the existing hooks are (`templates/settings.fragment.json`): `"command": "node"`, `"args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/record.mjs"]`, `"async": true`, so a project path with spaces works. The groups are kept in `templates/telemetry.fragment.json`. The existing hooks stay as they are.
 
 | Event | Matcher | Recorded |
 |---|---|---|
@@ -207,7 +217,7 @@ Both capture sources are opt-in (§9) and append-only. There are exactly two: th
 | `PreCompact`, `PostCompact` | all | `trigger`. **Never `custom_instructions` or `compact_summary`.** The pre event waits on Q7. |
 | `PreModelSwitch`, `PostModelSwitch` | all | `from`, `to` (model ids). The pre event waits on Q7. |
 | `SessionStart` | all | `source`, `model`, `otel` (below). It also ensures the receiver and announces the session (§7.2). |
-| `SessionEnd` | all | `reason`. It also runs the rollup and the retention sweep (§12.1, §13). |
+| `SessionEnd` | all | `reason`. It also runs the rollup and the retention sweep, best-effort (§12.1, §13). |
 
 Rules:
 - **A small separate bundle.** `record.mjs` imports no check. It parses stdin, keeps only the listed fields, appends one line, and exits 0.
@@ -215,26 +225,31 @@ Rules:
 - **Names are validated** so content can't ride in a name field:
   - names: at most 128 characters matching `^[A-Za-z0-9:._@/-]+$`, else `other`;
   - model ids: must match `MODEL_RE` (`src/report/export.ts`), else `other`.
-- **`otel` on SessionStart** tells gap detection whether to expect OTel for the session (only `harness` sessions):
-  - `harness` when the hook's environment has `CLAUDE_CODE_ENABLE_TELEMETRY=1` and an endpoint equal to the URL in `~/.claude/harness/receiver.json`;
-  - `other` when telemetry is on with another endpoint;
+- **`otel` on SessionStart** tells gap detection whether to expect OTel for the session. **It is read from settings files, never from the hook's environment**, because Claude Code strips `OTEL_*` from hooks (§2.2). The hook reads the `env` of managed settings and the user settings at the §7.2.1 path (the layers `src/core/settings-layers.ts` reads), with managed first. It reads the repo's project and local settings only for exporter selectors set to `none`, because Claude Code ignores the other OTel variables there (§2.1) but honours `none` (§2.2). It records:
+  - `harness` when the merged `env` has `CLAUDE_CODE_ENABLE_TELEMETRY=1`, both exporters `otlp`, and an endpoint equal to the URL in `receiver.json`;
+  - `repo-off` when that holds but a repo layer sets `OTEL_LOGS_EXPORTER` or `OTEL_METRICS_EXPORTER` to `none` (§17);
+  - `other` when the files turn telemetry on with another endpoint;
   - `off` otherwise.
+- **The shell can't be seen.** A session started from a shell that sets `OTEL_*` itself may differ from what the files say. The receiver settles it: a `harness` session with no OTel record within 5 minutes of its first prompt is a gap (§8.2), and an `off` session whose records do arrive is relabelled `harness (shell)` in Data health.
 - **No turn latency.** Async means Claude Code doesn't wait (Hooks). `-p` runs can lose in-flight lines at teardown, and gap detection shows that (§8).
 
 ### 7.2 OTel receiver
 
 #### 7.2.1 Process
 
-- **Where.** Throughout this spec, `~/.claude/harness/` means `claudeConfigDir()/harness/` (`src/core/settings-layers.ts`), so `CLAUDE_CONFIG_DIR` is honoured. The owner approved keeping `bin/`, `receiver/` and `receiver.json` there (Q-T8), with the limit in §22.
-- **One per user.** `record.mjs` starts it detached (owner-approved, Q-T4). Global opt-in copies the bundle to `~/.claude/harness/bin/receiver.mjs`. It runs with `process.execPath`, `stdio: 'ignore'` and a minimal environment.
-- **Bind:** `127.0.0.1:<port>`, with `<port>` taken from `~/.claude/harness/receiver.json`. Global opt-in tries the default `4320`; if that port is busy at opt-in, it picks a free loopback port and the preview names it. A port that later becomes busy fails closed (`EADDRINUSE`, below) and shows as a gap. The owner's Q-T4 approval covers this (Q13).
+- **Where.** Throughout this spec, `~/.claude/harness/` means one resolver, `globalHarnessDir(home, env)` = `claudeConfigDir(home, env)/harness` (`src/core/settings-layers.ts`). It honours `CLAUDE_CONFIG_DIR`, and in hooks `HARNESS_CLAUDE_CONFIG_DIR`, the launcher's mirror, because the env scrub strips `CLAUDE_CONFIG_DIR` from hooks (that file's comment). The CLI, the record hook and the dashboard all call it; the receiver gets the absolute folder as an argument from whoever spawns it. Where `GLOBAL_STATE` lives is owner question Q-I11. The owner approved keeping `bin/`, `receiver/` and `receiver.json` there (Q-T8), with the limit in §22.
+- **One per user.** `record.mjs` starts it detached (owner-approved, Q-T4). Global opt-in copies the bundle to `~/.claude/harness/bin/receiver.mjs` and records its SHA-256 in the global manifest. It runs with `process.execPath`, `stdio: 'ignore'` and a minimal environment.
+- **Bind:** `127.0.0.1:<port>`, with `<port>` taken from `~/.claude/harness/receiver.json`. Global opt-in tries the default `4320`; if that port is busy at opt-in, it picks a free loopback port and the preview names it. A port that later becomes busy fails closed (`EADDRINUSE`, below) and shows as a gap. The owner's Q-T4 approval covers this (Q13, §26).
 - **Single instance:**
   - a lock folder `~/.claude/harness/receiver/lock` holds the owner pid, nonce, port, version and start time;
-  - it uses the `withSessionLock` pattern: `mkdir`, an owner file, and a stale break when the pid is dead;
-  - `EADDRINUSE` on bind is a second guard: the receiver exits 0 and logs.
-- **Idle exit** after 30 minutes with no accepted request. The next record hook (SessionStart, UserPromptSubmit or any recorded event) or the next `harness dashboard` start restarts it.
+  - it uses the `withSessionLock` pattern: `mkdir`, an owner file, and a stale break when the receiver is dead;
+  - **liveness is the pid plus a heartbeat,** because a dead receiver's pid can be reused: the receiver touches `lock/heartbeat` every 60 s, and the receiver counts as dead when `kill(pid, 0)` fails **or** the heartbeat is older than 3 minutes;
+  - `EADDRINUSE` on bind is a second guard: the receiver exits 0 and logs `port-in-use`.
+- **Foreign listener.** Doctor and the dashboard call `/health` and compare the returned `nonce` with the lock's. A bound port that doesn't answer with that nonce is reported as "port <n> held by another process: OTel goes there" (§14.1, §22). Hooks don't make this check (budget, §16).
+- **Idle exit** after 30 minutes with no accepted request. That frees the port for anyone to bind (§22); whether to keep it is owner question Q-I5. The next record hook (SessionStart, UserPromptSubmit or any recorded event) or the next `harness dashboard` start restarts it.
 - **Crash restart:** the next record hook or `harness dashboard` start sees a dead pid and starts it again. The data missed while it was down is a gap, back-filled with a notice (§8).
-- **Never killed by harness.** A hook never kills a receiver. A newer harness version takes over only after the old receiver exits.
+- **Never killed by harness.** A hook never kills a receiver. A newer harness version takes over only after the old receiver exits, so an old receiver with an old allowlist can keep running on a busy machine. How a newer version takes over is owner question Q-I7.
+- **Up and down intervals.** The receiver appends `{v, ts, state, reason}` to `receiver/uptime.jsonl` on start, `/shutdown`, idle exit and fatal error. Ensure appends `down` with reason `heartbeat-stale` when it finds a stale heartbeat. Gap detection uses these as blind windows (§8.2).
 
 #### 7.2.2 Endpoints and request checks
 
@@ -242,7 +257,7 @@ Rules:
 |---|---|---|
 | `/v1/logs`, `/v1/metrics` | POST | `application/json` or `application/x-protobuf` (§7.2.6) |
 | `/v1/traces` | any | 404 (tracing is beta, and off) |
-| `/health` | GET | `{ ok, version, pid }`, for doctor |
+| `/health` | GET | `{ ok, version, pid, nonce }`, for doctor and the dashboard |
 | `/shutdown` | POST | Used by `harness telemetry off --level global` |
 
 **Every request must have:**
@@ -265,10 +280,12 @@ Rules:
   - its `realpath` has a regular-file `.harness/manifest.json`;
   - the hook log is on there;
   - `ensureRealDir(root, '.harness/telemetry/otel')` succeeds, so no folder is a symlink.
-- **Cross-check.** Once the session's transcript exists, its first `cwd` (read as `locate.ts`'s `firstCwd` does) must be inside the root. A mismatch drops the announcement and logs `announce-mismatch`.
+- **Cross-check before any write.** The announced root is the one write path that comes from file content (§4, §14.1), so nothing is written for a session until its transcript exists and its first `cwd` (read as `locate.ts`'s `firstCwd` does) is inside the root. Until then the session's records stay in the unannounced buffer below. A mismatch drops the announcement and the buffered records and logs `announce-mismatch`.
+- **`/clear`** gives a new `session.id` with a new SessionStart, so it is announced and routed like any new session.
+- **No `session.id`.** Records without one (`OTEL_METRICS_INCLUDE_SESSION_ID=false`) can't be routed. They are dropped and counted as `no-session-id`, which Data health and doctor show (§17).
 - **Unannounced sessions** (other repos, or a missed SessionStart):
-  - held in memory for up to 10 minutes, 5 MB in total;
-  - written if an announcement arrives, else dropped;
+  - held in memory for up to 10 minutes, 5 MB in total, together with announced sessions still waiting for the cross-check;
+  - written once an announcement arrives and the cross-check passes, else dropped and counted (`unrouted-dropped`);
   - **so data from repos without harness never reaches disk** (D9).
 - **Bounds.** Announcements are pruned after 7 days, and the folder is capped at 10,000 files.
 
@@ -280,29 +297,32 @@ Records are reduced before any write. **Any attribute not listed is dropped**, i
 
 | Record | Kept |
 |---|---|
-| all | `session.id`, `prompt.id`, `event.sequence`, `event.timestamp`, `app.version` if present |
+| all | `session.id`, `prompt.id`, `event.sequence`, `event.timestamp` (`app.version` is never sent, §2.2) |
 | `api_request` | `model`, `cost_usd`, `duration_ms`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `request_id`, `query_source`, `speed` |
 | `skill_activated` | `skill.name`, `invocation_trigger`, `skill.source`, `skill.kind`, `plugin.name`, `marketplace.name` |
 | `hook_execution_start` / `_complete` | `hook_event`, `hook_name`, `num_*` counts, `total_duration_ms`, `*_chars` counts, `hook_source` |
 | `hook_registered` | `hook_event`, `hook_type`, `hook_source`, `hook_matcher`, `plugin.name` |
 | `compaction` | `trigger`, `success`, `duration_ms`, `pre_tokens`, `post_tokens` |
 | `subagent_completed` | `agent_type`, `agent.source`, `is_built_in`, `is_async`, `total_tokens`, `total_tool_uses`, `duration_ms`, `model`, `final_model`, `model_swapped` |
-| `tool_decision` / `tool_result` | `tool_name`, `decision`, `source`, `decision_source`, `success`, `duration_ms`, `tool_use_id`, plus names only from the parameters: `mcp_server_name`, `mcp_tool_name`, `skill_name`, `subagent_type` |
+| `tool_decision` | `tool_name`, `tool_use_id`, `decision`, `source`, `tool_source`, plus the parameter names below |
+| `tool_result` | `tool_name`, `tool_use_id`, `success`, `duration_ms`, `decision_type`, `decision_source`, plus the parameter names below |
 | `user_prompt` | `prompt_length`, and command names under the §7.1 name rule |
 | `plugin_loaded`, `mcp_server_connection` | name, source and status fields (exact names pinned in L1) |
 | `token.usage`, `cost.usage` metrics | value, `type`, `model`, `query_source`, `agent.name`, `skill.name`, `plugin.name`, `mcp_server.name`, `mcp_tool.name` |
 
 Further rules:
 - **Name values** pass the §7.1 name rule, else `other`.
+- **Parameter names.** `mcp_server_name`, `mcp_tool_name`, `skill_name` and `subagent_type` live inside the JSON string `tool_parameters` (Mon). The receiver parses it only when it is at most 16 KB, reads only those four top-level keys (depth 1, strings only), applies the name rule, and then drops `tool_parameters` whole. Anything larger or malformed gives no names and is counted.
 - **Token attribute names** on `api_request` are Mon's (§2.2). L1 confirms them in recorded payloads before P2.3 merges (Q3).
 - **Content variables:** harness never sets `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_CONTENT`, `OTEL_LOG_RAW_API_BODIES` or the beta tracing variables. Doctor warns when any of them is set in a layer harness reads.
 
 #### 7.2.5 Ensure
 
-`ensureReceiver()` runs in `record.mjs` only when the machine opted in globally and the session's `otel` is `harness`, and in `harness dashboard` at start when the machine opted in globally. It:
+`ensureReceiver()` runs in `record.mjs` when the global manifest records global opt-in and the session's `otel` (read from files, §7.1) is `harness`, and in `harness dashboard` at start when the global manifest records global opt-in. Nothing here reads `OTEL_*` from the environment. It:
 1. reads the lock owner;
-2. runs `kill(pid, 0)`;
-3. if the receiver isn't running, spawns it detached and returns **without waiting**.
+2. runs `kill(pid, 0)` and stats `lock/heartbeat` (§7.2.1);
+3. if the receiver isn't running, hashes `bin/receiver.mjs` and compares the global manifest's SHA-256. On a mismatch it doesn't spawn, and writes one invocation-log line, `receiver-hash-mismatch`;
+4. otherwise spawns it detached and returns **without waiting**.
 
 - **Budget:** under 15 ms on top of the record work (§16).
 - **A spawn failure** becomes one invocation-log line, `receiver-start-failed`, with the error `code` only.
@@ -321,19 +341,21 @@ Further rules:
 
 - The receiver answers 200 with `{}` (JSON) or an empty protobuf body as soon as the body parses.
 - Writes are queued and flushed every 1 s.
+- **Metric points are deduped** by session, metric name, attribute set, start time and end time, so an exporter retry (Q4) can't count a delta twice. A repeat is dropped and counted as `duplicate`.
 - A write failure is logged and counted, never returned as a 5xx. The exporter's retry behaviour is unknown (Q4), and a retry storm would cost more than the gap check recovers.
 
 ### 7.3 Live session numbers (no status line, D11)
 
 | Number | Source | Label |
 |---|---|---|
-| Tokens in context now | `input + cache read + cache creation` of the latest `api_request` with `query_source: main`, from OTel. Fallback: the latest main-thread transcript response, by the same formula as `usageAcc`'s peak | estimate (the next request's input isn't known yet) |
+| Tokens in context now | `input + cache read + cache creation + output` of the latest main-thread `api_request` (`query_source` `repl_main_thread`, §2.2), from OTel. Fallback: the latest main-thread transcript response, same formula. This matches Claude Code's own `context_tokens` definition in `PreModelSwitch` ("the input, cache read, cache creation, and output tokens of the last response … combined"), because the next request re-sends that output. The report's peak context counts the input side only; the tooltip states both | estimate (the next request's own input isn't known yet) |
 | Context gauge | tokens in context against `context.budget_tokens` for the always-loaded part, and against the last `compaction`'s `pre_tokens` as the observed compaction point. **No window percentage**: Claude Code's built-in data has no window size outside the status line (§2.3) | estimate |
-| Session cost | sum of `claude_code.cost.usage` deltas, or the sum of `api_request.cost_usd` | estimate (list price) |
-| Tokens by model, destination, skill or agent | `claude_code.token.usage` deltas by `model`, `query_source`, `skill.name` and `agent.name` | exact |
+| Session cost | sum of `api_request.cost_usd` (§7.4) | estimate |
+| Tokens by model and destination | `api_request` sums by `model` and `query_source` (§7.4) | exact |
+| Tokens by skill, agent, plugin or MCP tool | `claude_code.token.usage` deltas by `skill.name`, `agent.name`, `plugin.name`, `mcp_server.name` and `mcp_tool.name`. Metrics only here: these attribute names are verified on metrics (§2.2) | exact, badge `OTel metric` |
 | Model now | the latest `api_request.model`; else `PostModelSwitch.to` or SessionStart `model` from hooks; else the transcript | exact |
 | Timeline | prompts (hooks), skills, subagents, compactions, model switches (hooks and OTel), gate decisions (`events.jsonl`), requests (OTel, else the transcript) | per-row source |
-| Per-skill cost | `cost.usage` by `skill.name` | estimate |
+| Per-skill cost | `claude_code.cost.usage` deltas by `skill.name` | estimate, badge `OTel metric` |
 | Per-hook cost | `hook_execution_complete`: `total_duration_ms` by `hook_event`, and `additional_context_chars` as tokens | time exact; tokens "estimate, characters / 4" |
 | Rate limits | **not available.** The status line was the only source, and D11 removes it (§22) | — |
 
@@ -365,9 +387,10 @@ The owner asked for per-model visibility from Claude Code's own data, because ac
 - **Labels (§8.4):** tokens are `exact` from events and from transcripts. Cost is `est.` because Mon calls `cost_usd` an estimate. A row mixing sources shows the split.
 - **Totals:** total tokens is the sum of the four columns. Mon's `input` excludes cache reads and writes, so nothing is counted twice.
 - **Day:** a request belongs to the local calendar day of its `event.timestamp` (transcript: its `timestamp`). Mon gives no per-day method.
-- **Session:** grouped by `session.id` (transcript: top-level `sessionId`). Mon notes that `/clear` replaces it, so one conversation can span two rows. If `OTEL_METRICS_INCLUDE_SESSION_ID=false` is set, the metric cross-check loses its session key and shows per model only; doctor says so.
+- **Session:** grouped by `session.id` (transcript: top-level `sessionId`). Mon notes that `/clear` replaces it, so one conversation can span two rows. `OTEL_METRICS_INCLUDE_SESSION_ID=false` removes `session.id` from metrics and events, so nothing could be routed: global opt-in refuses it (§9), and if it is set later the records are counted as `no-session-id` (§7.2.3) and doctor reports an error.
+- **Metric deltas** are deduped before summing (§7.2.7).
 - **Model ids** pass `MODEL_RE`, else `other`.
-- **Phase 1** renders the same tables from transcripts only (P1.4): tokens exact, cost "unknown until OTel is on". P2.6 adds the OTel sources and the back-fill.
+- **Phase 1** renders the same tables from transcripts only (P1.4): tokens exact, cost "unknown until OTel is on". P2.6b adds the OTel sources and the cross-check; P2.6a adds the back-fill.
 
 ## 8. Gap detection and back-fill
 
@@ -382,15 +405,20 @@ The owner asked for per-model visibility from Claude Code's own data, because ac
 
 | Check | Harness hooks say | OTel must have | Missed when |
 |---|---|---|---|
-| Session | SessionStart with `otel: harness` | any record | no OTel record for the session |
+| Session | SessionStart with `otel: harness` (read from files, §7.1) | any record within 5 minutes of the first prompt | no OTel record for the session |
 | Prompts | UserPromptSubmit `prompt_id`s | an event with that `prompt.id` | the id is absent |
-| Skills | Skill `PreToolUse` and `UserPromptExpansion` names | `skill_activated` with that name, in that prompt | absent |
-| Subagents | `SubagentStop` count | `subagent_completed` count | fewer |
-| Compactions | `PostCompact` count | `compaction` count | fewer |
-| Hooks | harness `timing.jsonl` lines per event | `hook_execution_complete` per `hook_event` | fewer |
+| Skills | Skill `PreToolUse` (`use`) and `UserPromptExpansion` names, **excluding** a `use` that a harness gate denied (`events.jsonl`) or that OTel `tool_decision` shows refused for that `tool_use_id` | `skill_activated` with that name, in that prompt | absent |
+| Subagents | distinct `agent_id`s on `SubagentStop`. `SubagentStart` also fires on resume and per teammate message (§2.2), so only distinct ids count | `subagent_completed` count | OTel has fewer than the distinct ids |
+| Compactions | `PostCompact` count | `compaction` with `success: "true"`; failed compactions are logged too (§2.2) and don't count | fewer |
+| Hooks | distinct firings of each event in harness's `timing.jsonl` (one line per dispatch; plantable, so badged `harness log`) | `hook_execution_complete` per `hook_event`, which Mon logs once per firing covering every matching hook, so harness's async record hooks share the firing and add nothing | OTel has fewer firings |
 | Requests | — (hooks see no requests) | `api_request` for each transcript response's request id | absent |
 
-**The reverse check** catches the hook log failing: an OTel or transcript skill use, prompt, subagent or compaction with no record-hook line is flagged as "hook log missed N", for example an async hook killed in `-p`.
+**Matching rules that apply to every row:**
+- **Settle delay.** Nothing is counted as missed for the last 2 minutes of a session that is still active (its newest record is under 2 minutes old). Logs batch every 5 s, metrics every 15 s, and transcripts may lag (§2.2).
+- **Blind windows.** `receiver/uptime.jsonl` (§7.2.1) gives the periods the receiver was down. Data health shows "OTel blind from t1 to t2" for each session overlapping one. In that window, OTel-only figures (hook executions, plugin and MCP inventory, tool decisions, and requests that never reach the main transcript: `auxiliary` and `plugin_model_*` usage, agent-hook requests) show as `unknown`, never 0 (§22).
+- **Repo-off sessions.** A session with `otel: repo-off` isn't a gap; it shows "off (repo setting)" (§17).
+
+**The reverse check** catches the hook log failing: an OTel or transcript skill use, prompt, subagent or successful compaction with no record-hook line is flagged as "hook log missed N", for example an async hook killed in `-p`. It runs only for sessions with a `session-start` line, and only from that session's first record line onward, so a mid-session opt-in doesn't flag everything before it.
 
 ### 8.3 Back-fill order: OTel, then hooks for counts, then transcripts for tokens
 
@@ -443,21 +471,21 @@ The global `env` entries:
 | `OTEL_LOG_TOOL_DETAILS` | `1` |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `15000` |
 
-The owner confirmed this list as written, including `OTEL_LOG_TOOL_DETAILS=1` and the 15 s interval (Q-T1, which also answers Q13's interval).
+The owner confirmed this list as written, including `OTEL_LOG_TOOL_DETAILS=1` and the 15 s interval (Q-T1, which also answers Q13's interval; §26).
 
 **Rules:**
 - **Preview first.**
   - `--dry-run`, or the dashboard's preview, prints the exact diff of each file and what it turns on.
   - For team, it says the change binds every teammate.
-  - For global, it lists every variable (§15 T1).
+  - For global, it lists every variable (§15 T1), and says: "In most sessions these settings override `OTEL_*` variables set in your shell" (Env, §2.2).
   - A team opt-in also says: "OTel can only be turned on in your user settings (Claude Code ignores it in repo files). Turn on global too?" That is a second, separate confirm.
 - **Takes effect in new sessions.** OTel reads its variables once at startup (Env). From P2.9, harness's ConfigChange gate allows harness's own telemetry change in open sessions without a blocked-change notice (§9.1), and Claude Code then applies it as it applies any allowed settings change. Nothing relies on that: an open session had no SessionStart with `otel: harness`, so it isn't announced, its OTel isn't routed, and gap detection doesn't expect OTel for it (§7.1, §8.2). The preview says "takes effect in new sessions".
-- **Never clobber.** Global opt-in refuses, naming the layer, when any layer the hook can see already sets `CLAUDE_CODE_ENABLE_TELEMETRY` or an `OTEL_EXPORTER_OTLP_*` endpoint. Doctor then says "OTel goes to `<host>`; harness uses its hooks and transcripts". Fan-out to both is deferred until after phase 4 (Q16), so this refusal stays until then.
+- **Never clobber.** Global opt-in refuses, naming the layer, when managed settings, user settings or the CLI's own environment already sets `CLAUDE_CODE_ENABLE_TELEMETRY` or an `OTEL_EXPORTER_OTLP_*` endpoint. Run from Claude Code's Bash, the CLI's environment has no `OTEL_*` (§2.2), so the preview then says "shell variables can't be checked from inside Claude Code; run this from your terminal to check them". It also refuses when any of those sets `OTEL_METRICS_INCLUDE_SESSION_ID=false` (nothing could be routed, §7.2.3) or `otelHeadersHelper` (the key header wouldn't be sent, §2.2). Doctor then says "OTel goes to `<host>`; harness uses its hooks and transcripts". Fan-out to both is deferred until after phase 4 (Q16), so this refusal stays until then.
 - **Recorded like every harness change:**
   - the team level uses the manifest blocks (`mergeSettings` style) and backups in `.harness/backup/<ts>`, so `harness uninstall` or `off` removes them;
   - the global level uses `GLOBAL_STATE` (`~/.claude/harness/manifest.json`, `src/cli/preset.ts:61`), so `harness uninstall --global` or `off --level global` removes it.
 - **`off` is the same preview and confirm, in reverse.**
-  - It stops the receiver with `/shutdown`.
+  - Only global `off` stops the receiver, with `/shutdown`. Team `off` never touches the machine-wide receiver.
   - It never deletes the collected `.harness/telemetry/` data. That is a separate, explicit confirm that lists the files.
 - **Guard.** `telemetry` joins `PERSON_ONLY` (`src/checks/guard.ts:93`) as `ask`, allowed for `status` and `--dry-run`, like `context apply`. Unattended turns the ask into a deny, as today.
 
@@ -465,7 +493,7 @@ The owner confirmed this list as written, including `OTEL_LOG_TOOL_DETAILS=1` an
 
 Today the gate (`src/checks/config-change.ts`) blocks a mid-session change to harness's hooks, deny rules, sandbox or `env`. It allows one thing already: a project-file change the harness CLI recorded in `.harness/state/files-snapshot.json`. Telemetry adds a second, narrower allowance. **Every other change stays blocked.**
 
-**The record.** `harness telemetry on|off` writes it, after the settings write and in the same apply lock:
+**The record.** `harness telemetry on|off` writes it **before** the settings write, in the same apply lock, so a ConfigChange hook fired by the settings write always finds it. The record's hashes are computed from the planned file text, so nothing needs the write first. If the settings write fails or rolls back, the previous record is put back from the apply backup (or the new one removed if there was none), as every other file in the apply is:
 
 | Level | Record path | Protected by |
 |---|---|---|
@@ -475,16 +503,16 @@ Today the gate (`src/checks/config-change.ts`) blocks a mid-session change to ha
 Each record is `{v, id, file, action, block, after, ts}`, written with `writeAtomic` and mode 0600:
 - `file`: `project_settings` or `user_settings`;
 - `action`: `on` or `off`;
-- `block`: SHA-256 of the canonical JSON (sorted keys, no whitespace) of exactly the entries harness added or removed: the record hook groups for team, the §9 `env` keys and values for global;
-- `after`: SHA-256 of the whole settings file text right after harness's write;
+- `block`: SHA-256 of the canonical JSON (sorted keys, no whitespace) of the **whole set** of entries harness added or removed, as one sorted array: the record hook groups for team, the §9 `env` key and value pairs for global;
+- `after`: `settingsFingerprint` (`src/core/harness-files.ts`) of the planned file's guarded view, as the CLI record uses, so an unrelated write Claude Code makes to the file (a `/model` or permission save) doesn't break the match;
 - `id`: 16 random bytes in base64url.
 
 **The gate allows a change only when all of these hold:**
 1. the reported source matches the record's `file`, and the file is the one the gate watches (the existing `elsewhere` rule is unchanged);
-2. the file's current text hashes to `after`;
-3. the guarded diff between the session baseline and the current view is exactly the recorded block: for `on`, removing entries whose canonical hash equals `block` gives back the baseline; for `off`, adding them back does;
+2. the current file's `settingsFingerprint` equals `after`;
+3. the set of entries that differ between the session baseline and the current guarded view, as one sorted canonical array, hashes to `block`; and for `on`, baseline plus that set equals the current view, for `off`, current view plus that set equals the baseline;
 4. the record's `id` hasn't been used in this session. A new `guardedTelemetry` session-state field holds used ids, as `guardedCli` does for the CLI record, so a record is used once;
-5. the entries themselves are harness's shape, so a forged record can't pass anything else: for team, each hook group's command is exactly `node ${CLAUDE_PROJECT_DIR}/.harness/hooks/record.mjs` with `"async": true` on a §7.1 event; for global, the keys are exactly the §9 `env` list, with the §9 values and an endpoint of `http://127.0.0.1:<port>` where `<port>` is the one in `receiver.json`.
+5. the entries themselves are harness's shape, so a forged record can't pass anything else: for team, each hook group is deep-equal to its group in `templates/telemetry.fragment.json` (exec form, every field, so an added `asyncRewake`, `if`, `timeout`, `shell` or other matcher fails); for global, the keys are exactly the §9 `env` list with the §9 values, the endpoint is `http://127.0.0.1:<port>` with `<port>` from `receiver.json`, and `OTEL_EXPORTER_OTLP_HEADERS` is exactly `x-harness-key=<key>` with `<key>` from `receiver.json`.
 
 When it allows, the current view becomes the session's baseline for that file, as the CLI allowance does. When any check fails, today's block and notice apply unchanged.
 
@@ -493,7 +521,12 @@ When it allows, the current view becomes the session's baseline for that file, a
 - global `on` and `off`: the same, for `user_settings`;
 - one byte changed in the block after harness wrote it: blocked;
 - the telemetry block plus any other change (a deny rule removed, another `env` key, `disableAllHooks`): blocked;
-- a record whose `after` doesn't match the file: blocked;
+- a record whose `after` doesn't match the file's fingerprint: blocked;
+- the gate firing straight after the settings write: the record already exists, so allowed;
+- a settings write that fails after the record is written: the previous record is restored, and a later unrelated change is blocked;
+- an unrelated Claude Code write to the same file (a `model` key) between harness's write and the gate: still allowed, because the fingerprint covers the guarded view only;
+- a team group with `asyncRewake`, `if`, `timeout` or `shell` added, or a shell-form command: blocked;
+- a global header key that doesn't match `receiver.json`: blocked;
 - a consistent record and file whose block isn't harness's shape (another command, another endpoint or port, an extra `env` key, `OTEL_LOG_USER_PROMPTS`): blocked;
 - the same record replayed a second time in the session: blocked;
 - a record for `project_settings` used for a `user_settings` change, and the reverse: blocked;
@@ -501,7 +534,7 @@ When it allows, the current view becomes the session's baseline for that file, a
 - a record path that is a symlink: not read (`ensureRealDir` and `lstat`), so blocked;
 - `local_settings` changes: unchanged behaviour (harness never writes that file).
 
-**Where it ships:** P2.9 (§21), after P2.4, so both levels exist. Until P2.9 merges, a mid-session opt-in logs today's blocked-change notice; the preview says so.
+**Where it ships:** P2.9 (§21), after P2.4b, so both levels exist. Until P2.9 merges, a mid-session opt-in logs today's blocked-change notice; the preview says so.
 
 ## 10. Server and page
 
@@ -513,7 +546,7 @@ When it allows, the current view becomes the session's baseline for that file, a
 - **It binds `127.0.0.1` on a random port** (`listen(0)`), never IPv6 or another interface.
 - **Launch token.**
   - It is 32 random bytes in base64url. The launch URL `http://127.0.0.1:<port>/launch?t=<token>` is opened with `openCommand` (`src/cli/report.ts`).
-  - The URL is printed only when stdout is a TTY, or with `--print-url` (for tests).
+  - The URL is printed only when stdout is a TTY, or with `--print-url`, which works only when `HARNESS_TEST_PRINT_URL=1` is also set (tests only).
   - It is good for one use. The exchange sets a session cookie `hd=<random>` (`HttpOnly`, `SameSite=Strict`, `Path=/`) and answers 303 to `/`.
   - A second exchange is refused, and shown on the page and in the terminal. Using another browser means another launch.
 - **Lifetime.** The server ends on Ctrl-C or SIGHUP and keeps no state on disk.
@@ -600,7 +633,7 @@ The list is cached for the server's lifetime, with a refresh button.
 | Dependencies | none |
 | Integrity | `sha512-KIMVnG68zvu5XXUbC4LQEPnhwOxBuLyW1AHtpm6IKTXImkbLgkMy+jabjLgSLMasNuGGzQm/ep3tOkyTxpiQIw==` |
 | Size | `dist/uPlot.iife.min.js` is 51,081 bytes (22,009 gzipped at level 9); `dist/uPlot.min.css` is 1,857 bytes (772 gzipped); the whole package unpacked is 545,468 bytes, of which only the two files above ship |
-| CSP fit | a search of `dist/uPlot.esm.js` found no `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `eval(`, `new Function` or `cssText`, so it should run under `script-src 'self'` with Trusted Types required. P4.1 confirms this in a browser |
+| CSP fit | a search of `dist/uPlot.esm.js` (the ESM build, not the file that ships) found no `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `eval(`, `new Function` or `cssText`. P4.1 repeats the search on the shipped `dist/uPlot.iife.min.js` as a §20.1 test, and its §20.7 browser check loads that file under `script-src 'self'` with Trusted Types required |
 
 **How it ships:**
 - `package.json` gets `"uplot": "1.6.32"` in `devDependencies`, exact with no range. The lockfile pins the integrity above.
@@ -676,9 +709,10 @@ The list is cached for the server's lifetime, with a refresh button.
 ### 11.4 Why an agent can't drive it
 
 - **It can't start the dashboard:** `PERSON_ONLY.dashboard` denies it, and the dashboard refuses inside Claude Code and in unattended runs.
-- **The launch token is one-use.** By the time an agent could read the opener's argv or the browser history, it is spent. A second exchange is refused and shown.
+- **The launch token is one-use.** By the time an agent could read the opener's argv or the browser history, it is spent. A second exchange is refused and shown. A process that fakes a TTY (`script`) or sets the test variable gets the URL printed, but only after it is already past the guard (`env -u CLAUDECODE` and similar), so that adds no power the bypass doesn't already have.
 - **The session lives in an `HttpOnly`, `SameSite=Strict` cookie** (§22).
 - **A `POST` needs the CSRF value.**
+- **Known flaw, open: the cookie reaches every `127.0.0.1` port.** Browsers scope cookies by host, not port (RFC 6265 §8.5), so `hd` is also sent to any other loopback server the person opens, such as a dev server the agent started. `SameSite=Strict` doesn't help, since other ports on the same IP are the same site, and `__Host-` needs `Secure`, which plain `http` can't have. If the CSRF value is ever in a page, a cookie holder can read it with curl and post actions. The fix has more than one design, so it is owner question **Q-C2**. **P3.2 (the action runner) doesn't merge until Q-C2 is answered.** Phases 1 and 2 have no write actions, so a leaked cookie there exposes read-only views of data the agent can already read on disk.
 - **Cross-site requests and DNS rebinding are refused** (§10.2).
 - **Whether sandboxed Bash can reach a `127.0.0.1` port** is Q8.
 
@@ -688,7 +722,7 @@ The list is cached for the server's lifetime, with a refresh button.
 
 - **File:** `.harness/telemetry/daily/<YYYY-MM-DD>.json`, counts only, one for each completed day not yet rolled.
 - **Built by:**
-  - the async SessionEnd record hook, from harness's own logs (events, timing, invocations, OTel);
+  - the async SessionEnd record hook, from harness's own logs (events, timing, invocations, OTel), best-effort: Claude Code kills async hooks still running at `-p` teardown (§2.2), so a missed rollup is built later by the next SessionEnd, the dashboard or `harness report`;
   - the dashboard and `harness report`, which add transcript counts for days whose transcripts still exist.
 - **Schema:** the report export's counters (`buildExport`), plus the invocation, OTel and gap counters.
 - **Retention:** `telemetry.rollup_days`, default 400. Rollups outlive transcripts, which Claude Code's retention sweep removes.
@@ -697,7 +731,7 @@ The list is cached for the server's lifetime, with a refresh button.
 
 - **Trends:** tokens, cost, gates, false blocks, the skills hit rate, the context total and hook p95, by day and by week, drawn with uPlot (D10, §10.6).
 - **Done-contract verdicts over time:**
-  - from `.harness/verdicts/<commit>.json` (done PR 4 and later, not on `main` yet): outcomes, the false-done rate (done spec §6), tamper denies and blocked reasons;
+  - from `.harness/verdicts/<commit>.json`: `harness verify` writes them from done PR 4, and done PR 7 completes them (the pr-ship verdict fill, metrics). P4.2 waits for done PR 7. Neither is on `main` yet. It shows outcomes, the false-done rate (done spec §6), tamper denies and blocked reasons;
   - until then, it shows the `false-done-claim` events that exist today (`src/checks/stop/done-claim.ts:74`).
 - **Team export:** `harness report --export` at schema 2, adding the invocation, OTel and gap counters under the same allowlist (`exportProblems`). Counts only.
 
@@ -713,6 +747,8 @@ It is **not** in `DENY_WRITE_SKIPPED`: only the record hook and the receiver wri
 
 **How lines are written:** every line starts with `"v":1`, and all writes use the #250 helpers (§14.3).
 
+**Modes.** Every folder harness creates under `.harness/telemetry/` and `~/.claude/harness/` (`bin/`, `receiver/`, `receiver/lock/`, `receiver/announce/`, `state/`) is created with mode 0700, and every file with 0600, through the `mkdir` and `open` mode arguments, never a later `chmod`. On Windows the modes don't apply (§22).
+
 | File | Line | Bound |
 |---|---|---|
 | `telemetry/invocations.jsonl` | `{v, ts, session, prompt?, event, name?, source?, kind?, agent?, aid?, trigger?, from?, to?, reason?, model?, otel?, use?}` | rotated at 5 MB to `.1` (two files) |
@@ -723,11 +759,13 @@ It is **not** in `DENY_WRITE_SKIPPED`: only the record hook and the receiver wri
 | `~/.claude/harness/receiver/lock/owner` | `{pid, nonce, port, version, started}` | one file |
 | `~/.claude/harness/receiver/announce/<session>.json` | `{v, root, ts}`, mode 0600 | 7 days, 10,000 files |
 | `~/.claude/harness/receiver/receiver.log` | one line per error class, with counts, never payloads | 1 MB, two files |
+| `~/.claude/harness/receiver/lock/heartbeat` | empty; its mtime is the heartbeat (§7.2.1) | one file |
+| `~/.claude/harness/receiver/uptime.jsonl` | `{v, ts, state: "up" or "down", reason}` (§7.2.1) | 1 MB, two files |
 | `.harness/state/telemetry-write.json`, `~/.claude/harness/state/telemetry-write.json` | `{v, id, file, action, block, after, ts}` (§9.1), mode 0600 | one file each, replaced on each write |
 
-**Valid `event` values** in `invocations.jsonl`: `skill`, `prompt`, `command`, `subagent-start`, `subagent-stop`, `compact-pre`, `compact-post`, `model-pre`, `model-post`, `session-start`, `session-end`, `receiver-start-failed`.
+**Valid `event` values** in `invocations.jsonl`: `skill`, `prompt`, `command`, `subagent-start`, `subagent-stop`, `compact-pre`, `compact-post`, `model-pre`, `model-post`, `session-start`, `session-end`, `receiver-start-failed`, `receiver-hash-mismatch`. Valid `otel` values: `harness`, `repo-off`, `other`, `off` (§7.1).
 
-**The retention sweep** runs in the receiver (hourly) and in the SessionEnd record hook. It deletes only:
+**The retention sweep** runs in the receiver (hourly) and, best-effort, in the async SessionEnd record hook (killed at `-p` teardown, §2.2; the receiver's hourly run catches up). It deletes only:
 - harness-created files under `.harness/telemetry/` and `~/.claude/harness/receiver/`;
 - that match the exact name patterns above;
 - that `lstat` shows to be regular files.
@@ -746,8 +784,10 @@ It never follows a symlink. These are harness's own logs, not the person's files
 |---|---|
 | Inject script through a file name, skill name, reason text, transcript text, or another repo's `.harness` | `h()` on the server (HTML plus control, zero-width and bidi characters); `textContent` only in the client; Trusted Types required; `script-src 'self'` with no inline script. Hostile fixtures are fed to every view (§20.2). |
 | Plant numbers the dashboard trusts | `.harness/telemetry/` is outside the sandbox write set and Edit-denied. `events.jsonl` and `timing.jsonl` stay plantable (§4), so their rows are labelled `harness log` and cross-checked against OTel hook counts. Every parser caps line length (`MAX_LINE`) and key count (`MAX_KEYS`). |
-| Make the dashboard or receiver write elsewhere: a symlinked folder or file, or a forged announcement | `ensureRealDir` plus `APPEND_NOFOLLOW` (§14.3); the announced root must have a manifest and match the transcript `cwd`; no write path ever comes from file content, config values or the page. |
-| Drive a control | §11.4 |
+| Make the dashboard or receiver write elsewhere: a symlinked folder or file, or a forged announcement | `ensureRealDir` plus `APPEND_NOFOLLOW` (§14.3); the announced root must have a manifest and match the transcript `cwd` before anything is written (§7.2.3), the one bounded exception to "no write path from file content" (§4); no other write path comes from file content, config values or the page. |
+| Drive a control | §11.4; the cookie leak to other loopback ports is open (Q-C2), and P3.2 waits on it |
+| Replace the receiver binary, `receiver.json` or an announcement | `ensureReceiver()` refuses a binary whose SHA-256 doesn't match the global manifest (§7.2.5); the announcement checks (§7.2.3); which `~/.claude/harness` paths also get Edit-deny and `denyWrite` entries is owner question Q-I4 |
+| Bind the receiver port while it is free (after idle exit, a crash, or before the first start) | doctor and the dashboard detect a listener without the lock's nonce (§7.2.1). The squatter receives every session's export, including what `OTEL_LOG_TOOL_DETAILS=1` adds and the key header; this is a known limit (§22) and Q-I5 decides the idle exit |
 | Turn content capture on | the receiver's allowlist drops content whatever Claude Code sends; doctor flags content variables in any layer. |
 | Post fake OTel from a web page or another local process | the header key, no `Origin`, the `Host` check and the refused CORS preflight (§7.2.2). A same-uid process that reads `~/.claude/settings.json` can still post fake OTel (§22). |
 | DNS rebinding or CSRF | an exact `Host` check; a `SameSite=Strict` cookie plus a CSRF header; `frame-ancestors 'none'`. |
@@ -757,7 +797,9 @@ Out of scope, as in the isolation spec: the person, kernel escapes, and a compro
 
 ### 14.2 Other local users
 
-Other uids on the same machine can connect to `127.0.0.1`. The dashboard needs the one-use token and then the cookie. The receiver needs the key, stored with mode 0600.
+Other uids on the same machine can connect to `127.0.0.1`. The dashboard needs the one-use token and then the cookie. The receiver needs the key.
+- **The key isn't only in `receiver.json` (0600).** It is also in `~/.claude/settings.json`, whose mode belongs to Claude Code and the person and may be group- or world-readable. Doctor warns when it is, and never changes it (D13).
+- **Another uid can squat the port** while no receiver holds it, and then needs no key at all (§14.1, §22).
 
 ### 14.3 No-follow writes (depends on PR #250)
 
@@ -768,24 +810,24 @@ PR #250 (`fix/safe-writes`, open) adds to `src/core/atomic.ts`:
 This spec uses them for every new write:
 - appends use `ensureRealDir` plus `APPEND_NOFOLLOW`;
 - whole-file writes (rollups, cache, announcements, `receiver.json`) use `ensureRealDir` plus `writeAtomic`, whose rename replaces a planted link instead of writing through it;
-- `~/.claude/harness/...` paths use the home folder as `root`.
+- `~/.claude/harness/...` paths use `claudeConfigDir()` as `root` (§7.2.1).
 
 **#250 must merge before P2.1.** PR #250 itself states the remaining limit, a microsecond race between the check and the open.
 
 ## 15. Touchpoints with Claude Code's own configuration (D13)
 
-Every place this feature touches Claude Code's config or behaviour, whether it could conflict with Claude Code's own harness or agentic tools, and whether the owner must confirm it. Revision 3 records the owner's answers for T1, T3, T4, T7 and T8. **T2 is the only touchpoint still open; it waits on live check L4 (Q7 in §24).**
+Every place this feature touches Claude Code's config or behaviour, whether it could conflict with Claude Code's own harness or agentic tools, and whether the owner must confirm it. Revision 3 records the owner's answers for T1, T3, T4, T7 and T8. **T2 waits on live check L4 (Q7 in §24).** Revision 4 adds owner question Q-I4 under T5 and Q-I11 under T8.
 
 | # | Touchpoint | Could it conflict? | Owner confirms |
 |---|---|---|---|
 | T1 | **Global settings `env`** (§9): `CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*_EXPORTER`, the endpoint, the protocol, the headers, `OTEL_LOG_TOOL_DETAILS=1` and `OTEL_METRIC_EXPORT_INTERVAL=15000`, in `~/.claude/settings.json` | **Yes.** It applies to every Claude Code session on the machine, in every repo. `OTEL_LOG_TOOL_DETAILS=1` makes Claude Code put Bash commands and tool input in its OTel events; the receiver drops them, but if the person later points OTel elsewhere without removing the variable, that content goes there. The 15 s interval changes export cadence for all sessions. A managed or org OTel setup takes precedence, so global opt-in refuses then. | **Resolved:** the owner confirmed the list as written, with `OTEL_LOG_TOOL_DETAILS=1` and the 15 s interval (Q-T1) |
-| T2 | **Async hooks in repo settings** (§7.1): `PreToolUse` with the `Skill` matcher, `UserPromptSubmit`, `UserPromptExpansion`, `SubagentStart`/`Stop`, `PreCompact`/`PostCompact`, `PreModelSwitch`/`PostModelSwitch`, `SessionStart` (all sources) and `SessionEnd` | **Low for most.** They are async and print nothing, so they can't decide or inject. They count in Claude Code's own `hook_execution_*` telemetry and show in `/hooks`. `disableAllHooks` or `allowManagedHooksOnly` turns them off, and then OTel isn't routed. **Possible on the pre events:** PreCompact stdout becomes compaction instructions, and a PreModelSwitch hook cancelled at its timeout blocks the switch (Hooks). Harness prints nothing and uses `async`, but whether async fully avoids both is unverified. | **Yes, for the pre events:** keep them or record the post events only (Q7) |
+| T2 | **Async hooks in repo settings** (§7.1): `PreToolUse` with the `Skill` matcher, `UserPromptSubmit`, `UserPromptExpansion`, `SubagentStart`/`Stop`, `PreCompact`/`PostCompact`, `PreModelSwitch`/`PostModelSwitch`, `SessionStart` (all sources) and `SessionEnd` | **Low for most.** They are async and print nothing, so they can't decide or inject. They count in Claude Code's own `hook_execution_*` telemetry and show in `/hooks`. `disableAllHooks` or `allowManagedHooksOnly` turns them off, and then OTel isn't routed. **Mostly answered by Hooks:** "Async hooks can't block or control Claude's behavior", `decision`, `permissionDecision` and `continue` have no effect, and no timeout is enforced on them, so a PreModelSwitch timeout can't block the switch. Only `additionalContext` and `systemMessage` are delivered, on the next turn. Hooks doesn't say whether an async PreCompact's stdout still becomes compaction instructions; harness prints nothing anyway. | **Yes, for the pre events:** L4 confirms before P2.1 merges (Q7) |
 | T3 | **`.claude/settings.local.json`** | **None now.** Claude Code writes that file itself, so a harness write could race with it. The owner dropped the level that needed it: harness never writes this file (§9). | **Resolved** by dropping the level (Q-T3) |
 | T4 | **SessionStart and other record hooks start the receiver**: a detached background process that outlives the session and listens on a loopback port | **Possible.** It is a long-lived process started from a Claude Code hook. Whether Claude Code reaps a hook's detached children, in `-p` teardown or otherwise, is unverified. The port could collide with another local tool (default 4320, a free one picked at opt-in, and a busy port fails closed). | **Resolved:** approved. A dead receiver is restarted by the next record hook or `harness dashboard`, and gaps are back-filled with a notice (§7.2.1, §8). L7 still checks reaping (Q-T4) |
-| T5 | **Permission and sandbox entries:** the `Edit(./.harness/telemetry/**)` deny, the `.harness/telemetry` entry in the sandbox `denyWrite`, the `~/.claude/harness/state` Edit deny and `denyWrite` entries (§9.1), all in the repo's `.claude/settings.json`; the protect table; and guard `PERSON_ONLY` entries (`dashboard` deny, `telemetry` ask, `config` ask or deny) | **No.** They follow the existing harness pattern and narrow only harness's own files and commands. The guard asks show in Claude Code's permission prompt, as today's do. | No |
-| T6 | **Reading Claude Code's files:** transcripts (`~/.claude/projects`), the settings layers (for refusal checks and doctor) and the projects list for the switcher, all read-only | **No.** Read-only, bounded, symlink-refusing, as `locate.ts` does today. | No |
+| T5 | **Permission and sandbox entries:** the `Edit(./.harness/telemetry/**)` deny, the `.harness/telemetry` entry in the sandbox `denyWrite`, the `~/.claude/harness/state` Edit deny and `denyWrite` entries (§9.1), all in the repo's `.claude/settings.json`; the protect table; and guard `PERSON_ONLY` entries (`dashboard` deny, `telemetry` ask, `config` ask or deny) | **No.** They follow the existing harness pattern and narrow only harness's own files and commands. The guard asks show in Claude Code's permission prompt, as today's do. Widening the `~/.claude/harness` entries beyond `state/` changes what Claude Code reads, so it is owner question Q-I4. | No; **Q-I4** for any widening |
+| T6 | **Reading Claude Code's files:** transcripts (`~/.claude/projects`), the settings layers, including managed settings (for the record hook's `otel` value, refusal checks and doctor, §7.1), and the projects list for the switcher, all read-only | **No.** Read-only, bounded, symlink-refusing, as `locate.ts` does today. | No |
 | T7 | **Settings changed mid-session** by `harness telemetry` or dashboard actions | **Harness against harness, visible in Claude Code,** until P2.9. Without it, harness's own ConfigChange gate blocks the mid-session hook or env change and the person may see the notice. OTel picks up env only at startup anyway. The preview says "takes effect in new sessions". | **Resolved:** the gate allows harness's own telemetry block, matched by content hash of exactly what harness wrote; every other change stays blocked (§9.1, P2.9) (Q-T7) |
-| T8 | **Files under `~/.claude/harness/`** (`bin/`, `receiver/`, `receiver.json`, `state/telemetry-write.json`) | **Possible.** They are inside Claude Code's config folder, in harness's existing subfolder (global presets already use it). Whether Claude Code's retention sweep or plugin sync ever touches unknown subfolders is unverified. `CLAUDE_CONFIG_DIR` is honoured through `claudeConfigDir()`. | **Resolved:** kept there, as a known limit (§22); doctor detects missing files (§19) (Q-T8) |
+| T8 | **Files under `~/.claude/harness/`** (`bin/`, `receiver/`, `receiver.json`, `state/telemetry-write.json`) | **Possible.** They are inside Claude Code's config folder, in harness's existing subfolder (global presets already use it). Whether Claude Code's retention sweep or plugin sync ever touches unknown subfolders is unverified. `CLAUDE_CONFIG_DIR` is honoured through `claudeConfigDir()`. | **Resolved:** kept there, as a known limit (§22); doctor detects missing files (§19) (Q-T8). Where `GLOBAL_STATE` lives is **Q-I11** |
 | T9 | **Claude Code's UI** | **No.** There is no status line (D11), no `systemMessage` or `additionalContext` from record hooks, and the dashboard runs outside Claude Code. Async hook completion notices appear only in verbose mode (Hooks). | No |
 | T10 | **Claude Code's sandbox and network:** the dashboard and receiver run outside it; harness doesn't add loopback or domains to any allowlist | **No change.** Whether sandboxed Bash can reach them is a security question (Q8), not a config change. | No |
 
@@ -797,7 +839,7 @@ Budgets reuse `test/perf/overhead.ts` (paired spawns against a bare `node`). The
 |---|---|
 | Turn latency added by the record hooks | 0: they are async, so Claude Code doesn't wait (Hooks) |
 | `record.mjs` process above bare node | under `OVERHEAD_MS` (100 ms on Linux, 150 on macOS, 450 on Windows); the median is printed |
-| Ensure step | under 15 ms |
+| Ensure step | under 15 ms, including the heartbeat stat and the bin hash (only when a spawn is needed) |
 | Existing sync hooks | unchanged: no new code in `dispatch.mjs` |
 | `record.mjs` bundle | under 60 KB |
 | Receiver memory | RSS under 80 MB steady after 50,000 records; unannounced buffer at most 5 MB |
@@ -821,6 +863,10 @@ The rule: **capture fails open and quiet, and is shown; controls fail closed.**
 | A transcript is deleted by retention | the rollups remain | "transcript deleted (retention)" |
 | A teammate has no global opt-in | no OTel for them | "OTel off on this machine", with the opt-in |
 | The hook log is off in a repo with global OTel on | sessions aren't announced, so nothing is written | Data health: "turn on the hook log to receive OTel here" |
+| A repo layer turns a signal off (`OTEL_LOGS_EXPORTER` or `OTEL_METRICS_EXPORTER` set to `none`, §2.2) | that signal never arrives from that repo; sessions record `otel: repo-off` | "off (repo setting)", naming the file and key; never a gap |
+| `OTEL_METRICS_INCLUDE_SESSION_ID=false` set after opt-in | records carry no `session.id` and can't be routed | Data health "no-session-id N"; doctor error |
+| The receiver binary doesn't match its recorded hash | no spawn | `receiver-hash-mismatch`; doctor names the file |
+| Another process holds the receiver port | OTel goes to it, not to harness | doctor and Data health: "port <n> held by another process: OTel goes there" |
 | The dashboard crashes | nothing is lost; restart it | — |
 | An action fails: preview and apply differ, the CLI exits non-zero, or the lock is held | not applied, or the CLI rolls back | the CLI's message, verbatim |
 
@@ -836,7 +882,7 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
 
 **Not in config:**
 - the opt-in state, which is the settings entries themselves;
-- the receiver port, which lives in `receiver.json` (default 4320, §7.2.1).
+- the receiver port, which lives in `receiver.json` (default 4320, §7.2.1; Q13, §26).
 
 ## 19. CLI, guard, doctor, status, uninstall
 
@@ -847,12 +893,17 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
 | `harness telemetry status` | anyone | levels on, sources and last record, receiver state, gap counts |
 | `harness config set <key> <value> [--dry-run\|--yes]` | person (guard `ask`, or `deny` when it loosens enforcement) | §11.3 |
 | `node record.mjs` | hooks only | §7.1 |
-| `node receiver.mjs` | spawned by `record.mjs` | §7.2 |
+| `node receiver.mjs <globalHarnessDir>` | spawned by `record.mjs` or `harness dashboard` | §7.2 |
 
 - **Doctor** gains:
   - receiver health, version, port and lock;
   - on a machine that opted in globally (per `GLOBAL_STATE`), a missing `receiver.json`, `bin/receiver.mjs` or `receiver/` folder under `~/.claude/harness/`, named by path, with "re-run `harness telemetry on --level global` to restore it". Claude Code's sweeps may remove unknown subfolders (§22), so this is reported, never silently recreated by doctor;
-  - `OTEL_METRICS_INCLUDE_SESSION_ID=false` in a layer harness reads (§7.4);
+  - `OTEL_METRICS_INCLUDE_SESSION_ID=false` in a layer harness reads, as an error (§7.4);
+  - a repo layer setting `OTEL_LOGS_EXPORTER` or `OTEL_METRICS_EXPORTER` to `none`, naming the file and key (§17);
+  - `otelHeadersHelper` in any layer: the key header won't be sent, so every export gets 403 (§9);
+  - a `bin/receiver.mjs` hash mismatch, and a listener on the receiver port without the lock's nonce (§7.2.1);
+  - a group- or world-readable `~/.claude/settings.json`, as a warning; doctor never changes its mode (§14.2);
+  - `CLAUDE_CONFIG_DIR` set in doctor's own environment while hooks won't see a `HARNESS_CLAUDE_CONFIG_DIR` mirror, so the record hook would look in another folder (§7.2.1, §22);
   - a foreign OTel endpoint;
   - content variables that are set;
   - `.harness/telemetry` protection;
@@ -862,7 +913,8 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
 - **Status** gains one line: `Live data: hook log on (team), OTel on (global, receiver running), gaps last 7 days: 3`.
 - **Uninstall:**
   - `harness uninstall` removes the repo entries and `record.mjs`;
-  - `harness uninstall --global` removes the global env entries, the bin file, `receiver.json` and `state/telemetry-write.json`;
+  - `harness uninstall --global` stops the receiver with `/shutdown` (its own exit removes `receiver/lock/`), then removes the global env entries, the bin file, `receiver.json` and `state/telemetry-write.json`;
+  - `receiver/announce/`, `receiver.log` and `uptime.jsonl` are listed and kept unless the person confirms, under the same confirm as collected data;
   - collected data is listed and kept unless the person confirms.
 - **README:** updated in each PR.
 
@@ -884,18 +936,28 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - the field allowlist per event. These never reach the file, asserted on the bytes: prompt text, `command_args`, `prompt`, `custom_instructions`, `compact_summary` and `last_assistant_message`;
   - the name rule;
   - no stdout ever;
-  - the `otel` values;
+  - the `otel` values, **with no `OTEL_*` in the hook's environment**: settings files alone give `harness`, `repo-off`, `other` and `off` (C1);
+  - the hook command in exec form with a project path containing spaces;
   - rotation;
-  - ensure, with a live pid, a dead pid, and a spawn failure.
+  - ensure, with a live pid, a dead pid, a live pid with a stale heartbeat (pid reuse), a bin hash mismatch (no spawn, `receiver-hash-mismatch`), and a spawn failure;
+  - every global path resolved through `globalHarnessDir()` with `CLAUDE_CONFIG_DIR` set in the CLI's environment and only `HARNESS_CLAUDE_CONFIG_DIR` in the hook's: CLI, hook and receiver agree.
 - **Receiver:**
   - the allowlist drops identity and content attributes;
   - routing, the `cwd` cross-check, and the unannounced TTL and cap;
+  - a forged announcement routes nothing before the transcript exists;
+  - `/clear` mid-process: the new `session.id` from the new SessionStart routes to the same repo;
+  - records without `session.id` are counted, not written;
+  - the bounded `tool_parameters` parse: names only, the 16 KB cap, malformed input;
+  - duplicate metric points (an exporter retry) are counted once;
+  - `/health` returns the lock's nonce, and the foreign-listener check flags a listener without it;
+  - `uptime.jsonl` gets `up` and `down` lines for start, `/shutdown`, idle exit and a stale heartbeat;
+  - folder and file modes are 0700 and 0600 at creation (POSIX);
   - a symlink at each path component is refused (through `ensureRealDir`);
   - the key, `Origin`, `Host` and 413;
   - the lock, a stale break, `EADDRINUSE`, idle exit and `/shutdown`;
   - the sweep deletes only pattern-matched regular files.
-- **Gaps:** every §8.2 check, the reverse check, and the §8.3 matrix with one source missing at a time; labels and splits; "deleted (retention)" vs "unknown".
-- **Live numbers:** tokens in context from OTel and from the transcript fallback; cost sums; no percentage is ever rendered (§2.3).
+- **Gaps:** every §8.2 check, the reverse check, and the §8.3 matrix with one source missing at a time; labels and splits; "deleted (retention)" vs "unknown". A fixture for each §8.2 matching rule: a resumed subagent and teammate messages (distinct ids), a failed compaction, a hook event with several matching hooks, a denied Skill use, a mid-session opt-in (no reverse-check flags before the first line), the settle delay on a live session, a blind window (OTel-only figures `unknown`), and a `repo-off` session (not a gap).
+- **Live numbers:** tokens in context from OTel and from the transcript fallback, both including output tokens; cost sums; the live view and the Tokens view show the same session totals; no percentage is ever rendered (§2.3).
 - **Per-model breakdown (§7.4):**
   - per day, per session and window totals from `api_request` fixtures, one row per model, with the four token columns and cost;
   - a request seen twice (same `request_id`) counts once;
@@ -906,6 +968,8 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
 - **Opt-in:**
   - an exact preview per level;
   - any `--level` value other than `team` or `global` exits 2 and writes nothing;
+  - global opt-in refuses for each §9 case, naming the layer: an existing endpoint, `OTEL_METRICS_INCLUDE_SESSION_ID=false`, `otelHeadersHelper`; and run with no `OTEL_*` in its environment it prints the "can't check shell variables" line;
+  - team `off` never sends `/shutdown`; global `off` does;
   - no level ever creates or changes `.claude/settings.local.json`, asserted on the file's bytes and mtime;
   - the telemetry write record (§9.1) is written per level, with `after` equal to the file's hash;
   - a foreign OTel setup refuses;
@@ -922,8 +986,10 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - the guard denies every loosening class and asks for the rest;
   - an unattended run is refused.
 - **ConfigChange allowance:** the §9.1 cases.
-- **Doctor:** each missing `~/.claude/harness/` file (§19) is named; nothing is recreated.
-- **uPlot asset:** the inlined bytes equal `dist/uPlot.iife.min.js` and `dist/uPlot.min.css` from `uplot@1.6.32`; the version in `package.json` is exact; the MIT header is present; no served byte loads a remote URL.
+- **Doctor:** each missing `~/.claude/harness/` file (§19) is named; nothing is recreated. Each new §19 check has a fixture: `OTEL_METRICS_INCLUDE_SESSION_ID=false`, a repo selector `none`, `otelHeadersHelper`, a bin hash mismatch, a foreign listener, a world-readable settings file, and `CLAUDE_CONFIG_DIR` without a mirror.
+- **SSE:** a ninth client is refused while eight are connected.
+- **`--print-url`** prints nothing without `HARNESS_TEST_PRINT_URL=1`.
+- **uPlot asset:** the shipped `dist/uPlot.iife.min.js` contains none of the §10.6 CSP-breaking calls; the inlined bytes equal `dist/uPlot.iife.min.js` and `dist/uPlot.min.css` from `uplot@1.6.32`; the version in `package.json` is exact; the MIT header is present; no served byte loads a remote URL.
 - **Actions:**
   - arguments come from templates only;
   - a hash mismatch refuses;
@@ -941,6 +1007,7 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - SSE shows an appended line within 2 s;
   - the switcher lists exactly the two harness repos out of three;
   - `context apply` and `config set`, each through preview, apply and backup.
+- **Platforms.** The existing `test` job in `.github/workflows/ci.yml` runs unit and e2e on `macos-latest` and `windows-latest`, so these e2e cases, including the detached receiver and the folder checks that stand in for `O_NOFOLLOW` on Windows, run on Windows too. Mode assertions are skipped there (§22).
 - **Receiver:** a real receiver fed recorded payloads, with the files then checked on disk. After a kill, the next record hook restarts it, and so does a `harness dashboard` start; the gap between shows in Data health.
 
 ### 20.3 Transcript parser fixtures
@@ -968,12 +1035,13 @@ The §16 rows.
 
 | Batch | Checks | Gates |
 |---|---|---|
-| L1 OTel capture | JSON and protobuf payloads with `OTEL_LOG_TOOL_DETAILS=1`: the names of the `api_request` token attributes; the `plugin_loaded` and `mcp_server_connection` fields; whether `Origin` is sent; payload sizes; retry when the receiver is down (Q3, Q4) | P2.3, P2.5 |
+| L1 OTel capture | JSON and protobuf payloads with `OTEL_LOG_TOOL_DETAILS=1`: the names of the `api_request` token attributes; the event `query_source` values, including the main thread's; the `plugin_loaded` and `mcp_server_connection` fields; whether `Origin` is sent; payload sizes; retry when the receiver is down (Q3, Q4) | P2.3, P2.5 |
 | L2 Skill names | project, user and plugin skills, verbatim or placeholder (Q2); `UserPromptExpansion` on a typed `/skill` (Q18) | P2.3 |
+| L3 | removed in revision 2 with the status line (D11); the number is kept so later batches keep their names | — |
 | L4 Async hooks | `async` on `PreCompact` and `PreModelSwitch` neither blocks nor injects; loss in `-p` (Q7) | P2.1 |
-| L5 Sandbox and loopback | whether sandboxed Bash can reach the dashboard or receiver port (Q8) | P1.1, P2.3 |
-| L6 Env precedence | shell `OTEL_*` against the user-settings `env` (Q5) | P2.4 |
-| L7 Touchpoints | whether the receiver survives `-p` teardown and session end, and is restarted by the next hook or `harness dashboard` (Q-T4); a mid-session team and global opt-in in an open session shows no blocked-change notice, and a hand edit next to it still does (Q-T7) | P2.4, P2.9 |
+| L5 Sandbox and loopback | whether sandboxed Bash can reach the dashboard or receiver port (Q8) | P1.1b, P2.3 |
+| L6 Env precedence | shell `OTEL_*` against the user-settings `env`: which sessions keep the shell value (Q5) | P2.4b |
+| L7 Touchpoints | what a real hook's environment holds: no `OTEL_*`, and whether `CLAUDE_CODE_ENABLE_TELEMETRY` and `HARNESS_CLAUDE_CONFIG_DIR` arrive (C1, §7.1); whether the receiver survives `-p` teardown and session end, and is restarted by the next hook or `harness dashboard` (Q-T4); a mid-session team and global opt-in in an open session shows no blocked-change notice, and a hand edit next to it still does (Q-T7) | P2.1, P2.4a, P2.9 |
 
 ### 20.7 Browser tests (CI only)
 
@@ -990,45 +1058,52 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 
 ## 21. Rollout
 
-- **Size.** Each PR is cut from `main`, stays within 400 changed non-test lines and 20 non-test files, and updates the README in the same PR. Sizes are estimates.
+- **Size.** Each PR is cut from `main`, stays within 400 changed non-test lines and 20 non-test files, and updates the README in the same PR.
+  - **Changed lines** are additions plus deletions from `git diff --numstat main`, excluding `test/`. A moved block counts twice.
+  - Line and file counts below are estimates.
 - **Order.** PRs go in phase order. Each depends only on earlier rows and on #250 where noted. Each phase ends shippable.
 
-| # | PR | After | Live gate | Size (est.) |
-|---|---|---|---|---|
-| **Phase 1: See** | | | | |
-| P1.1 | `collect()` to `src/report/collect.ts`; the `harness dashboard` server: bind, one-use token, cookie, Host/Origin/CSRF checks, headers, refusals, `PERSON_ONLY.dashboard`, opening the browser, the Overview view | — | L5 | ~380 |
-| P1.2 | Design system: tokens, dark and light, shell, nav, keyboard client JS, focus, theme, contrast test; `build.mjs` inlines the client; Playwright and axe devDependencies, `test:browser` and the `dashboard-browser` CI job (§20.7) | P1.1 | — | ~390 |
-| P1.3 | Gates view (blocked what and why, tallies, false blocks, latency, Stop steps) and Skills view | P1.2 | — | ~300 |
-| P1.4 | Context, Tokens and Stop sandbox views; the per-model tables from transcripts (§7.4) | P1.2 | — | ~340 |
-| P1.5 | Repo switcher (discovery, index only, re-root); docs | P1.3, P1.4 | — | ~250 |
-| **Phase 2: Live** | | | | |
-| P2.1 | `.harness/telemetry/` in protect, Edit deny, `denyWrite` and `HARNESS_LOCAL`; the `record.mjs` bundle; async hooks (`telemetry.fragment.json`); allowlist; rotation | P1.5, #250 | L4 | ~350 |
-| P2.2 | `harness telemetry on\|off\|status` for the team level: previews, manifest, backups, the team write record (§9.1), uninstall; doctor and status lines | P2.1 | — | ~340 |
-| P2.3 | Receiver core: OTLP/HTTP JSON, request checks, allowlist, announcements and routing, lock, idle exit, log; `dist/receiver.mjs` | P2.2 | L1, L2, L5 | ~390 |
-| P2.4 | Receiver lifecycle (ensure from hooks and `harness dashboard`, restart), retention sweep and caps; the global level (env, port 4320 or a free one, bin copy, `receiver.json`, the global write record, global manifest, `uninstall --global`); doctor's missing-file checks | P2.3 | L6, L7 | ~390 |
-| P2.5 | OTLP protobuf decoder, tested on recorded payloads | P2.3 | L1 | ~300 |
-| P2.6 | Gap detection (hooks against OTel), reverse check, transcript back-fill, labels, Data health view, banners; transcript cache; OTel sources and metric cross-check for the per-model tables (§7.4) | P2.4 | — | ~395 |
-| P2.7 | Sessions and the live session view: SSE, tokens-in-context gauge, timeline, per-skill and per-hook cost | P2.6 | — | ~360 |
-| P2.8 | Inventory panel: hooks registered, plugins loaded, MCP connections (OTel), plus agents, commands and MCP from repo files | P2.7 | — | ~200 |
-| P2.9 | ConfigChange allowance for harness's own telemetry block, team and global (§9.1), its tests, and the `~/.claude/harness/state` deny entries | P2.4 | L7 | ~250 |
-| **Phase 3: Control** | | | | |
-| P3.1 | `harness config set` (§11.3): validation, preview, backup, manifest, guard deny and ask classes, unattended refusal (D12) | P2.8, P2.9 | — | ~300 |
-| P3.2 | Action runner: templates, preview, apply, hash recheck, audit event, copy-command path | P3.1 | — | ~350 |
-| P3.3 | The §11.2 action table: task, tdd, context, config, remove, telemetry and uninstall flows | P3.2 | — | ~300 |
-| **Phase 4: History and proof** | | | | |
-| P4.1 | Daily rollups (SessionEnd, dashboard, report), retention, the Trends view with uPlot (exact-pinned devDependency, bundled asset, notices, a CSP and Trusted Types browser check) | P3.3 | — | ~380 |
-| P4.2 | Done-contract verdicts over time, and the false-done trend | P4.1, done PR 7 | — | ~250 |
-| P4.3 | Export schema 2 (counts only) and the export action | P4.1 | — | ~250 |
-| P4.4 | Known limits, reference, README wrap-up, release | All | — | ~150 |
+| # | PR | After | Live gate | Lines (est.) | Files (est.) |
+|---|---|---|---|---|---|
+| **Phase 1: See** | | | | | |
+| P1.1a | `collect()` moved to `src/report/collect.ts`, unchanged; `src/cli/report.ts` imports it | — | — | ~190 | 3 |
+| P1.1b | The `harness dashboard` server skeleton: bind, one-use token, cookie, Host/Origin/CSRF checks, headers, refusals, `PERSON_ONLY.dashboard`, `--print-url` gating | P1.1a | L5 | ~370 | 8 |
+| P1.1c | Opening the browser and the Overview view | P1.1b | — | ~220 | 5 |
+| P1.2 | Design system: tokens, dark and light, shell, nav, keyboard client JS, focus, theme, contrast test; `build.mjs` inlines the client; Playwright and axe devDependencies, `test:browser` and the `dashboard-browser` CI job (§20.7) | P1.1c | — | ~390 | 12 |
+| P1.3 | Gates view (blocked what and why, tallies, false blocks, latency, Stop steps) and Skills view | P1.2 | — | ~300 | 6 |
+| P1.4 | Context, Tokens and Stop sandbox views; the per-model tables from transcripts (§7.4) | P1.2 | — | ~340 | 7 |
+| P1.5 | Repo switcher (discovery, index only, re-root); docs | P1.3, P1.4 | — | ~250 | 6 |
+| **Phase 2: Live** | | | | | |
+| P2.1 | `.harness/telemetry/` in protect, Edit deny, `denyWrite` and `HARNESS_LOCAL`; the `record.mjs` bundle with the file-based `otel` value (§7.1); `telemetry.fragment.json` in exec form; allowlist; rotation; modes | P1.5, #250 | L4, L7 (hook environment) | ~380 | 10 |
+| P2.2 | `harness telemetry on\|off\|status` for the team level: previews, manifest, backups, the team write record (§9.1), uninstall; doctor and status lines | P2.1 | — | ~340 | 9 |
+| P2.3 | Receiver core: OTLP/HTTP JSON, request checks, allowlist with the bounded parameter parse, announcements, routing held until the `cwd` cross-check, metric dedupe, lock, log; `dist/receiver.mjs` | P2.2 | L1, L2, L5 | ~390 | 9 |
+| P2.4a | Receiver lifecycle: ensure from hooks and `harness dashboard`, heartbeat, bin hash check, foreign-listener check, `uptime.jsonl`, idle exit as Q-I5 decides, restart, retention sweep and caps | P2.3 | L7 (reaping) | ~360 | 8 |
+| P2.4b | The global level: env, port 4320 or a free one, the §9 refusals, bin copy and hash, `receiver.json`, the global write record, global manifest, `uninstall --global`; doctor's global checks (§19) | P2.4a | L6 | ~380 | 10 |
+| P2.5 | OTLP protobuf decoder, tested on recorded payloads | P2.3 | L1 | ~300 | 4 |
+| P2.6a | Gap detection (hooks against OTel) with the §8.2 matching rules, settle delay, blind windows, reverse check, transcript back-fill, labels; transcript cache | P2.4b | — | ~380 | 8 |
+| P2.6b | Data health view, banners, the per-model OTel sources and metric cross-check (§7.4) | P2.6a | — | ~330 | 7 |
+| P2.7 | Sessions and the live session view: SSE, tokens-in-context gauge, timeline, per-skill and per-hook cost | P2.6b | — | ~360 | 8 |
+| P2.8 | Inventory panel: hooks registered, plugins loaded, MCP connections (OTel), plus agents, commands and MCP from repo files | P2.7 | — | ~200 | 5 |
+| P2.9 | ConfigChange allowance for harness's own telemetry block, team and global (§9.1), its tests, and the `~/.claude/harness` deny entries as Q-I4 decides | P2.4b | L7 (mid-session) | ~260 | 6 |
+| **Phase 3: Control** | | | | | |
+| P3.1 | `harness config set` (§11.3): validation, preview, backup, manifest, guard deny and ask classes, unattended refusal (D12) | P2.8, P2.9 | — | ~300 | 6 |
+| P3.2 | Action runner: templates, preview, apply, hash recheck, audit event, copy-command path, and the Q-C2 cookie and CSRF design. **Doesn't merge before Q-C2 is answered** | P3.1 | — | ~370 | 8 |
+| P3.3 | The §11.2 action table: task, tdd, context, config, remove, telemetry and uninstall flows | P3.2 | — | ~300 | 7 |
+| **Phase 4: History and proof** | | | | | |
+| P4.1 | Daily rollups (SessionEnd best-effort, dashboard, report), retention, the Trends view with uPlot (exact-pinned devDependency, bundled asset, notices, a CSP and Trusted Types browser check) | P3.3 | — | ~380 | 9 |
+| P4.2 | Done-contract verdicts over time, and the false-done trend | P4.1, done PR 7 | — | ~250 | 5 |
+| P4.3 | Export schema 2 (counts only) and the export action | P4.1 | — | ~250 | 5 |
+| P4.4 | Known limits, reference, README wrap-up, release | All | — | ~150 | 4 |
 
-**That is 21 PRs.** Compared with revision 1, the status line PR and D0 are gone (D11 and #250), and `config set` is added. Revision 3 adds P2.9, and P2.2 covers the team level only.
+**That is 25 PRs.** Revision 3 had 21; revision 4 splits P1.1 into three, and P2.4 and P2.6 into two each, up front rather than "if one grows" (review I12). The size grew because the review's fixes add receiver lifecycle and gap rules.
 
-**Closest to the limit:** P2.6, P2.3, P1.2, P2.4 and P1.1. If one grows past it:
-- P2.6's banners move to P2.7;
-- P2.3's log and `/shutdown` move to P2.4;
+**Closest to the limit:** P1.2, P2.3, P2.1, P2.4b, P2.6a and P4.1. If one grows past it:
 - P1.2's browser job becomes its own PR before P1.3;
-- P2.4's sweep becomes its own PR;
-- P1.1's Overview moves to P1.2.
+- P2.3's log and metric dedupe move to P2.4a;
+- P2.1's rotation moves to P2.2;
+- P2.4b's doctor checks become their own PR;
+- P2.6a's transcript cache moves to P2.6b;
+- P4.1's Trends view becomes its own PR.
 
 ## 22. Known limits
 
@@ -1038,25 +1113,30 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
   - rate limits came only from the status line, which D11 removes;
   - **a context-window percentage isn't possible from Claude Code's built-in data without the status line.** No OTel metric, event or attribute and no hook input reports the window size; the related env variables and settings are overrides, not reports (§2.3). The gauge shows tokens only.
 - **Files under `~/.claude/harness/` may be swept** (Q-T8). `bin/`, `receiver/`, `receiver.json` and `state/` sit inside Claude Code's config folder. The effect of Claude Code's retention sweep or plugin sync on unknown subfolders is unverified. Doctor detects a missing `receiver.json`, `bin/receiver.mjs` or `receiver/` folder and says so (§19). Until the person restores them, OTel isn't received.
-- **Same-uid processes can read the receiver key and the dashboard cookie.**
+- **Same-uid processes can read the receiver key and the dashboard cookie.** The key's copy in `~/.claude/settings.json` has whatever mode that file has (§14.2).
   - The key is in `~/.claude/settings.json` and `receiver.json`, so a process with them can post fake OTel. That includes unsandboxed agent Bash in an attended session with the sandbox off.
   - The dashboard cookie lives in the browser profile.
   - The isolation spec's read block narrows both.
 - **Gate rows can be planted.** They come from `events.jsonl`, which sandboxed Bash can append through harness commands (§4). They are labelled `harness log` and cross-checked.
 - **Some data can be lost**, shown, and filled only where another source has the metric:
   - async hook lines in `-p` runs;
-  - OTel data while the receiver is down.
+  - OTel data while the receiver is down. Requests that never reach the main transcript (`auxiliary` and `plugin_model_*` usage, agent-hook requests) and OTel-only kinds (hook executions, inventory, tool decisions) can't be back-filled; their figures in a blind window show `unknown` (§8.2).
+- **Hooks can't see the OTel environment** (§2.2). The record hook reads settings files instead (§7.1), so a session whose shell alone sets `OTEL_*` is classified only once its records arrive or don't.
+- **Harness's global entries override a shell-set endpoint** in most sessions (Env). The global preview says so.
+- **The dashboard cookie reaches every `127.0.0.1` port** (§11.4). Until Q-C2 is answered and P3.2 merges, there are no write actions, so a leaked cookie exposes read-only views.
+- **The receiver port can be squatted** while no receiver holds it: after idle exit, after a crash, or before the first start. The squatter, including another local uid, gets every session's export with what `OTEL_LOG_TOOL_DETAILS=1` adds, and the key header. Doctor and the dashboard detect it (§7.2.1); hooks don't. Q-I5 decides the idle exit.
+- **`CLAUDE_CONFIG_DIR` without the launcher's mirror.** Hooks lose `CLAUDE_CONFIG_DIR` to the env scrub, so without `HARNESS_CLAUDE_CONFIG_DIR` the record hook looks under `~/.claude/harness`. Doctor reports it (§19).
 - **Costs are estimates** from every source.
 - **Transcript parsing breaks on format changes.** It shows as unknown, never zero, and CI catches it only for recorded versions.
 - **Skill names may read as placeholders** if Q2 resolves against verbatim names.
 - **A second browser needs a second launch.**
-- **On Windows:** no `O_NOFOLLOW` (the folder checks stand alone), and the detached receiver's behaviour is unverified.
+- **On Windows:** no `O_NOFOLLOW` (the folder checks stand alone), and POSIX modes don't apply. CI's `windows-latest` job runs the receiver e2e (§20.2), but not against a real Claude Code session.
 
 ## 23. Spec points the owner can overrule
 
 1. `http/json` set by harness; protobuf accepted; gRPC refused.
 2. Logs left at Claude Code's 5 s default. (The 15 s metrics interval is now owner-confirmed, Q-T1.)
-3. Receiver idle exit at 30 minutes; unannounced sessions held 10 minutes, 5 MB at most.
+3. Unannounced and not-yet-verified sessions held 10 minutes, 5 MB at most. (The idle exit is owner question Q-I5.)
 4. Retention: OTel 30 days and 50 MB per repo; rollups 400 days; the invocation log rotates at 5 MB, two files.
 5. A one-use launch token.
 6. Server-rendered pages, client JS for enhancement only, no framework. uPlot only for phase 4 trends (D10).
@@ -1065,19 +1145,51 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 9. Collected data kept on `off` unless the person confirms deletion separately.
 10. The Gates view lists the last 500 decisions.
 11. `UserPromptSubmit` is added to the record hooks, to key prompts and keep the receiver up.
+12. Gap timing: a 2-minute settle delay before "missed", and 5 minutes for a `harness` session's first record (§8.2).
+13. Receiver heartbeat every 60 s, dead after 3 minutes (§7.2.1).
+14. The `tool_parameters` parse cap of 16 KB (§7.2.4).
 
 ## 24. Open questions
 
-Only questions that still need a live check remain. Every other question is answered or closed; §25 and §26 record where.
+### 24.1 Owner decisions needed (revision 4)
+
+These came from the revision 3 review. Each one involves a trade-off, a Claude Code touchpoint or more than one reasonable design, so the spec doesn't choose. The recommendation comes first.
+
+- **Q-C2: How should the dashboard keep a cookie leaked to another `127.0.0.1` port from driving actions?** (§11.4; blocks P3.2)
+  - **A (recommended): CSRF secret only in the URL fragment.** `/launch` answers 303 to `/#k=<secret>`. Fragments are never sent to a server, so no page or header contains the secret. The client JS keeps it in `sessionStorage` and sends it as `x-harness-csrf`. The cookie is renamed per launch, `hd_<port>`. Why: a stolen cookie then gives read-only views and no actions, and the page still works without JS for reading.
+  - **B: a random `*.localhost` host per launch** (`http://h<random>.localhost:<port>`), so the cookie's host differs from any other loopback server. Why not first: it needs the browser to resolve `*.localhost` to loopback, which harness hasn't verified for every browser it supports, and it changes the §10.2 Host check.
+  - **C: no cookie; every request carries the fragment secret in a header,** and pages load through client JS. Why not first: it drops the "every link works without JS" rule (§10.3) and the server-rendered pages.
+- **Q-I4: Which `~/.claude/harness` paths get Edit-deny and sandbox `denyWrite` entries in each repo's `.claude/settings.json`?** (§9.1, §14.1, T5) Today only `state/` does. The binary is spawned outside the sandbox and outlives the session, so a planted `bin/receiver.mjs` would run as a persistent process; the hash check refuses it, but only at spawn.
+  - **A (recommended): the telemetry files only** (`bin/`, `receiver.json`, `receiver/`, `state/`). Why: it covers everything the receiver trusts without touching the global-preset files that share the folder.
+  - **B: the whole `~/.claude/harness` folder.** Why not first: it would also block `harness preset install --global` run from Claude Code's sandboxed Bash.
+  - **C: no new entries; rely on the bin hash check and the announcement checks.** Why not first: `receiver.json` and announcements stay writable from sandboxed Bash.
+- **Q-I5: Should the receiver keep its 30-minute idle exit, given that a free port can be squatted?** (§7.2.1, §22)
+  - **A (recommended): no idle exit while global opt-in is on.** Why: the port stays held except before the first start and after a crash, which are the windows doctor already reports. The cost is one idle Node process (RSS budget under 80 MB, §16).
+  - **B: a 24-hour idle exit.** Why not first: it narrows the window to machines left idle a day, but doesn't close it.
+  - **C: keep 30 minutes and document the risk.** Why not first: the window opens on every lunch break.
+- **Q-I7: How does a newer harness version replace an older running receiver?** (§7.2.1)
+  - **A (recommended): `harness dashboard` and `harness telemetry on --level global` send `/shutdown` to an older-version receiver and start the new one; hooks never do.** Why: only a person-run command stops a receiver that other sessions are using, and the dashboard is run often.
+  - **B: the ensure step in every hook does the same handoff.** Why not first: a hook in one session would stop the receiver for all sessions, and whether the exporter retries the gap is unknown (Q4).
+  - **C: only after the old one exits on its own.** Why not first: with Q-I5 A it never exits, so an old allowlist could run forever.
+- **Q-I11: Where should the global manifest (`GLOBAL_STATE`) live when `CLAUDE_CONFIG_DIR` is set?** (§7.2.1) Today it is `statePaths('.claude/harness')`, home-relative (`src/cli/preset.ts:61`), while the telemetry files use `claudeConfigDir()/harness`.
+  - **A (recommended): keep `GLOBAL_STATE` where it is and record the telemetry entries there; telemetry files use `globalHarnessDir()`.** Why: no change to where existing global presets keep their manifest, and no migration.
+  - **B: move `GLOBAL_STATE` onto `globalHarnessDir()`, migrating an existing manifest once.** Why not first: one location for everything, but it changes global-preset behaviour for people who set `CLAUDE_CONFIG_DIR`, and needs a migration.
+- **Q-M13: Should the receiver key ever rotate?** (§7.2.2) Rotating rewrites `OTEL_EXPORTER_OTLP_HEADERS` in `~/.claude/settings.json`, and open sessions keep the old key until restart, so their exports get 403.
+  - **A (recommended): only with an explicit `harness telemetry on --level global --rotate-key`.** Why: the person chooses when open sessions lose OTel until restart.
+  - **B: rotate on every re-run of global `on`.** Why not first: re-running for an upgrade (Q-I7 A) would silently break open sessions' exports.
+  - **C: never rotate.** Why not first: a leaked key stays valid until uninstall.
+
+### 24.2 Live checks still open
 
 - **Q2:** The docs contradict each other on custom skill names. The cost-counter section says some names become "custom" or "third-party"; the `skill.name` bullet says user-defined names are verbatim; `skill_activated` says they are `custom_skill` unless `OTEL_LOG_TOOL_DETAILS=1` is set. Verify live (L2).
-- **Q3:** Mon now names the `api_request` token attributes (§2.2). L1 confirms them in recorded payloads and measures typical payload sizes.
-- **Q4:** Does Claude Code's OTLP exporter retry or buffer when the receiver is down? (L1)
-- **Q5:** When shell `OTEL_*` variables and the user-settings `env` disagree, which wins? (L6)
-- **Q7:** Does `async: true` keep `PreModelSwitch` and `PreCompact` from blocking or injecting output? If not, record only the post events. (L4; the last open touchpoint, T2)
+- **Q3:** Mon names the `api_request` token attributes (§2.2). L1 confirms them in recorded payloads, records the event `query_source` values (Mon gives only examples for events), and measures typical payload sizes.
+- **Q4:** Does Claude Code's OTLP exporter retry or buffer when the receiver is down? Mon doesn't say. (L1)
+- **Q5:** Env says the settings value "applies in most sessions" when the shell and a settings `env` disagree. Which sessions keep the shell value? (L6)
+- **Q7:** Hooks says async hooks can't block or control behaviour, and that no timeout is enforced on them (§15 T2). L4 confirms that an async `PreCompact` injects nothing and an async `PreModelSwitch` never blocks; if not, record only the post events.
 - **Q8:** Can sandboxed Bash reach `127.0.0.1` ports? (L5)
 - **Q18:** Does `UserPromptExpansion` fire for a typed `/skill`? (L2)
 - **Q-T4 reaping:** approved, but whether Claude Code reaps a hook's detached child in `-p` teardown or at session end is still checked live (L7).
+- **C1 hook environment:** what a real hook sees (no `OTEL_*`; whether `CLAUDE_CODE_ENABLE_TELEMETRY` and `HARNESS_CLAUDE_CONFIG_DIR` arrive). Nothing relies on them (§7.1). (L7)
 
 ## 25. Revision 2 changes (owner answers, 2026-11-16)
 
@@ -1108,3 +1220,44 @@ Only questions that still need a live check remain. Every other question is answ
 | Q-new 1: window percentage | Flagged: not possible from Claude Code's built-in data without the status line (§2.3, §22). The gauge shows tokens only; no per-model window table ships. |
 | Answered questions | Q-T1, Q-T3, Q-T7, Q-T8, Q12, Q13, Q14, Q16 and Q-new 1 leave §24. Q3 narrows to a live confirmation. |
 | PR count | 20 to 21 (P2.9). |
+
+## 27. Revision 4 changes (independent review of revision 3, 2026-11-16)
+
+Every finding was checked against Mon, Hooks, Env and the code before changing anything. None was rejected.
+
+| Finding | Change |
+|---|---|
+| C1 hooks don't see `OTEL_*` | Mon and Hooks confirm it. §2.2 states it; §7.1 reads `otel` from settings files (managed, user, repo) with a new `repo-off` value; the receiver settles shell-only cases; §7.2.5 ensure keys on the global manifest and the file-read `otel`; §9's refusal checks settings layers and the CLI's own environment and says when it can't see the shell; tests (§20.1), L7. |
+| C2 cookie reaches every loopback port | Confirmed (cookies aren't isolated by port, RFC 6265 §8.5). The design has three reasonable options, so it is owner question Q-C2; §11.4 and §22 state the flaw, and P3.2 doesn't merge before the answer. |
+| I1 `OTEL_METRICS_INCLUDE_SESSION_ID` covers events | Mon confirms "metrics and events". §2.2 and §7.4 corrected; global opt-in refuses it (§9); records without `session.id` are counted (§7.2.3); doctor error; §17 row. |
+| I2 repo turns a signal off | Mon confirms. `otel: repo-off`, "off (repo setting)" not a gap (§8.2, §17); doctor names the file and key (§19); tests. |
+| I3 record order, shape, check 3 | Record written before the settings write, restored on rollback; check 3 defined on the whole sorted set; check 5 deep-equal to `templates/telemetry.fragment.json` in exec form and the header key compared with `receiver.json`; new tests (§9.1). |
+| I4 receiver files unprotected | The bin's SHA-256 is recorded at opt-in and checked before every spawn (`receiver-hash-mismatch`, §7.2.5); doctor shows it. The deny-entry scope changes what Claude Code reads, so it is owner question Q-I4. |
+| I5 port squatting | Foreign-listener detection by the lock's nonce on `/health` (§7.2.1); §14.1, §14.2 and §22 state the risk. The idle exit is a trade-off, owner question Q-I5. |
+| I6 modes | 0700 folders and 0600 files at creation (§13); §14.2 corrected about the key's copy in `~/.claude/settings.json`; doctor warns on its mode, never changes it. |
+| I7 pid reuse, upgrades | Heartbeat liveness (§7.2.1, §7.2.5); tests. The version handoff has more than one design: owner question Q-I7. |
+| I8 blind windows, false gaps | `receiver/uptime.jsonl`; "OTel blind from t1 to t2" with OTel-only figures `unknown`; a 2-minute settle delay; §22 names what can't be back-filled; tests. |
+| I9 count checks | Hooks and Mon confirm each case. §8.2 matching rules for subagents (distinct ids), compactions (`success: "true"`), hooks (firings), denied skills, and the reverse check only after a session's first record line; fixtures. |
+| I10 §7.3 against §7.4 | Totals and cost come from `api_request` sums everywhere; metrics only for skill, agent, plugin and MCP splits, badged `OTel metric`; a test that both views agree. Also corrected: events use `repl_main_thread`, not `main`, for the main thread (Mon). |
+| I11 `CLAUDE_CONFIG_DIR` paths | One resolver, `globalHarnessDir()`, used by CLI, hooks and receiver, honouring `HARNESS_CLAUDE_CONFIG_DIR` in hooks (§7.2.1); doctor check; test. `GLOBAL_STATE`'s location is owner question Q-I11. |
+| I12 PR sizes | P1.1, P2.4 and P2.6 split up front; a files column; "changed lines" defined; 21 to 25 PRs (§21). |
+| I13 test gaps | Each listed case added to §20.1 or §20.2 next to its PR. Windows: the existing `windows-latest` CI job runs the receiver e2e (§20.2). |
+| I14 announced root as a write path | Nothing is written before the transcript `cwd` cross-check; §4 and §14.1 state the one bounded exception; test. |
+| M1 done PR number | Verdicts from done PR 4, completed by done PR 7; P4.2 waits for PR 7 (§12.2). |
+| M2 `off` and `/shutdown` | Only global `off` stops the receiver (§9). |
+| M3 async hooks | Hooks' "can't block or control" sentence cited in §2.2 and T2; L4 kept as confirmation. |
+| M4 shell against settings | §2.2, the global preview, Q5 and §22 updated. |
+| M5 attribute facts | `query_source` values and the identity list corrected (§2.2). |
+| M6 context formula | Output included, matching Claude Code's `context_tokens`; the tooltip states it (§7.3). |
+| M7 `tool_parameters` | Bounded parse, names only, then dropped; `tool_decision` and `tool_result` attribute names corrected (§7.2.4). |
+| M8 uPlot CSP scan | P4.1's browser check runs the shipped `dist/uPlot.iife.min.js`; §10.6 says the earlier scan was of the ESM build. |
+| M9 leftovers | L3 marked removed; Q13 cites §26. |
+| M10 uninstall `receiver/` | Lock removed by the receiver's exit; announcements and logs listed and kept unless confirmed (§19). |
+| M11 async SessionEnd | Rollup and sweep marked best-effort and caught up elsewhere (§12.1, §13). |
+| M12 `--print-url` | Needs `HARNESS_TEST_PRINT_URL=1`; §11.4 states the no-extra-power argument. |
+| M13 `otelHeadersHelper`, rotation | Opt-in refuses and doctor reports `otelHeadersHelper` (§9, §19). Rotation rewrites user settings: owner question Q-M13. |
+| M14 whole-file hash | `after` uses `settingsFingerprint` of the guarded view (§9.1). |
+| M15 duplicate deltas | Metric points deduped (§7.2.7). |
+| M16 `app.version` | Stated as never sent, since harness doesn't set `OTEL_METRICS_INCLUDE_VERSION` (§2.2, §7.2.4). |
+| Owner questions | Q-C2, Q-I4, Q-I5, Q-I7, Q-I11 and Q-M13 added (§24.1). |
+| PR count | 21 to 25. |

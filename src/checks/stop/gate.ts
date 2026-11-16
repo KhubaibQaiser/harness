@@ -262,10 +262,10 @@ export function pickRunner(ctx: Ctx, exec: Exec, now: () => number, srt: SrtProb
   };
   const noted = (inner: RunSteps, before: (notes: string[]) => void): NotedRun => {
     const notes: string[] = [];
-    const f = ((steps, deadline) => {
+    const f = ((steps, deadline, o) => {
       notes.length = 0;
       before(notes);
-      return inner(steps, deadline);
+      return inner(steps, deadline, o);
     }) as NotedRun;
     f.notes = notes;
     return f;

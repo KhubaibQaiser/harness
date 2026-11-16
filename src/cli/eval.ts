@@ -1,3 +1,4 @@
+import { ensureRealDir } from '../core/atomic.js';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,6 +78,7 @@ function runOne(b: Build, o: RunOpts, exec: Exec, out: (s: string) => void): { c
   if (r.missing) return 'missing';
   if (!existsSync(join(b.out, 'result.json'))) return out(`${b.kind}: no result (exit ${r.status}). ${r.stderr ?? ''}`.trim()), { code: EXIT_FAIL, summary: null };
   const name = `${o.date}-${folderSafe(o.model)}-${b.kind}`;
+  ensureRealDir(o.root, EVALS_DIR); // refuses a planted link
   cpSync(b.out, join(o.root, EVALS_DIR, name), { recursive: true });
   out(`${b.kind}: exit ${r.status}, saved to ${join(o.root, EVALS_DIR, name)}`);
   const summary = readEvalResults(o.root).find((s) => `${s.date}-${folderSafe(s.model)}-${s.kind}` === name) ?? null;

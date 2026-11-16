@@ -7,6 +7,7 @@ export interface TestFileResult {
   status: 'passed' | 'failed';
   tests: { fullName: string; status: string }[];
   writtenAt: number;
+  changedAt?: number; // ctime: userland can't set it
 }
 
 export function readResults(root: string, dir: string): TestFileResult[] {
@@ -21,7 +22,7 @@ export function readResults(root: string, dir: string): TestFileResult[] {
     try {
       const p = join(dir, n);
       const json = JSON.parse(readFileSync(p, 'utf8'));
-      const writtenAt = statSync(p).mtimeMs;
+      const st = statSync(p), writtenAt = st.mtimeMs;
       const parsed: TestFileResult[] = [];
       for (const r of json.testResults) {
         const file = toRepoPath(root, r.name);
@@ -29,7 +30,7 @@ export function readResults(root: string, dir: string): TestFileResult[] {
         const tests = r.assertionResults.map((a: { fullName: string; status: string }) => ({ fullName: a.fullName, status: a.status }));
         // red only on a real failed test, or a load failure (failed file, zero tests)
         const red = r.status === 'failed' && (tests.length === 0 || tests.some((t: { status: string }) => t.status === 'failed'));
-        parsed.push({ file, status: red ? 'failed' : 'passed', tests, writtenAt });
+        parsed.push({ file, status: red ? 'failed' : 'passed', tests, writtenAt, changedAt: st.ctimeMs });
       }
       out.push(...parsed);
     } catch {

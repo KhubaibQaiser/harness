@@ -3,7 +3,6 @@
 import { readTranscript, TRANSCRIPT_TAIL } from './multi-file.js';
 
 export const QUOTE_WORDS = 8;
-export const UNREADABLE = "transcript unreadable, so harness can't check";
 const URL = /\bhttps?:\/\/\S*/i;
 
 /** Lowercase, NFKC, no zero-width (format) characters, every run of non-letters-or-digits one space. Final sigma
@@ -36,8 +35,9 @@ export function draftWords(text: string): { w: string; from: number; to: number 
 /** At most 80 UTF-16 units, never ending in half a surrogate pair. */
 const cut = (s: string): string => s.slice(0, 80).replace(/[\uD800-\uDBFF]$/, '');
 
-/** The first field that quotes tool output, with the draft's own words that do (cut to 80 characters), or null. */
-export function findQuote(fields: Record<string, string>, transcriptPath: unknown): { field: string; excerpt: string } | null {
+/** The first field that quotes tool output, with the draft's own words that do (cut to 80 characters), or null. `unknown` when
+ *  the transcript can't be read, or has tool calls but no tool_result we recognise (its format isn't a documented API). */
+export function findQuote(fields: Record<string, string>, transcriptPath: unknown): { field: string; excerpt: string } | { unknown: true } | null {
   for (const field of ['--rule', '--why']) {
     const url = fields[field]?.match(URL);
     if (url) return { field, excerpt: cut(url[0]) };
@@ -53,7 +53,7 @@ export function findQuote(fields: Record<string, string>, transcriptPath: unknow
   }
   if (!windows.size) return null; // no field of 8 words: nothing can be a quote, so no transcript is read
   const recs = readTranscript(transcriptPath, TRANSCRIPT_TAIL);
-  if (!recs) return { field: 'the transcript', excerpt: UNREADABLE };
+  if (!recs) return { unknown: true };
   const firsts = new Set([...windows.keys()].map((w) => w.slice(0, w.indexOf(' '))));
   for (const r of recs) {
     for (const t of r.tool) {
@@ -65,5 +65,5 @@ export function findQuote(fields: Record<string, string>, transcriptPath: unknow
       }
     }
   }
-  return null;
+  return recs.some((r) => r.use) && !recs.some((r) => r.tool.length) ? { unknown: true } : null;
 }

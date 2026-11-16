@@ -72,7 +72,7 @@ describe('fixture repos', () => {
     expect(existsSync(join(root, DISPATCH))).toBe(true);
     const ss = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8')).hooks.SessionStart;
     expect(ss).toHaveLength(1);
-    expect(ss[0].matcher).toBe('compact');
+    expect(ss[0]).not.toHaveProperty('matcher');
     expect(ss[0].hooks[0]).toMatchObject({ command: 'node', args: ['${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs'] });
 
     // The session's first hook fixes its start time; results must be written after it.

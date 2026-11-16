@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { PR_SIZE_EXCLUDE } from '../../src/core/config.js';
 import { defaultExec } from '../../src/core/exec.js';
 import { SAFE_GIT } from '../../src/core/git-safe.js';
-import { capDiff, commentable, DIFF_CAP, diffArgs, parseDiff, type DiffFile } from '../../src/review/diff.js';
+import { capDiff, commentable, DIFF_CAP, diffArgs, parseDiff, type DiffFile, reviewExclude } from '../../src/review/diff.js';
 import { repoWith, type Files } from './repo.js';
 
 const lines = (n: number, tag = 'l') => Array.from({ length: n }, (_, i) => `${tag}${i + 1}`).join('\n') + '\n';
@@ -79,5 +79,11 @@ describe('capDiff', () => {
     const r = capDiff([file('pnpm-lock.yaml', 5), file('a.ts', 1)], 3000, PR_SIZE_EXCLUDE);
     expect(r.sent.map((f) => f.path)).toEqual(['a.ts']);
     expect(r.omitted).toEqual([{ path: 'pnpm-lock.yaml', why: 'excluded by pr_size.exclude' }]);
+  });
+  test('with the default exclude, tests are sent to the reviewer while lockfiles and snapshots are not', () => {
+    const paths = ['a.ts', 'a.test.ts', 'src/__tests__/b.ts', 'test/c.ts', 'tests/d.ts', 'p/test_e.py', 'p/f_test.go', 'pnpm-lock.yaml', 'x/__snapshots__/y.snap'];
+    const r = capDiff(paths.map((p) => file(p, 1)), 3000, reviewExclude(PR_SIZE_EXCLUDE));
+    expect(r.sent.map((f) => f.path)).toEqual(paths.slice(0, 7));
+    expect(r.omitted.map((o) => o.path)).toEqual(['pnpm-lock.yaml', 'x/__snapshots__/y.snap']);
   });
 });

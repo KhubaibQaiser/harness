@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { HARNESS_LOCAL } from '../core/paths.js';
 import { loadCatalog } from '../catalog/load.js';
 import { loadConfig } from '../core/config.js';
-import { writeAtomic } from '../core/atomic.js';
+import { ensureRealDir, writeAtomic } from '../core/atomic.js';
 import { readEvents } from '../core/events.js';
 import { defaultExec } from '../core/exec.js';
 import { readTiming } from '../core/timing.js';
@@ -149,7 +149,7 @@ export async function report(args: string[], cli: ReportEnv): Promise<number> {
   }
   const dir = join(cli.root, REPORTS), html = join(dir, `${day}.html`);
   try {
-    mkdirSync(dir, { recursive: true });
+    ensureRealDir(cli.root, REPORTS);
     if (!rootIgnores(cli.root) && !existsSync(join(dir, '.gitignore'))) writeAtomic(join(dir, '.gitignore'), '*'); // fallback until `harness update` adds the root line
     writeAtomic(html, renderReport(data));
     if (exported) writeAtomic(join(dir, `${day}-export.json`), JSON.stringify(exported, null, INDENT) + '\n');

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { validateVetReview, type VetReview } from '../ai/vet-review.js';
-import { writeAtomic } from '../core/atomic.js';
+import { ensureRealDir, writeAtomic } from '../core/atomic.js';
 import { CONTROL, esc, isObj } from '../core/config.js';
 import { defaultExec, defaultExecBytes, type Exec, type ExecBytes } from '../core/exec.js';
 import { cleanAllTmp, cleanTmp, fetchTarball, isVetTmp, tmpPrefix } from '../vet/fetch.js';
@@ -49,7 +49,7 @@ export function vet(args: string[], { root, out }: CliEnv, deps: { exec?: Exec; 
 
 function report(root: string, out: Out, s: ScanResult, r: Resolved, review: VetReview | null, install: string[]): number {
   const rel = `.harness/vet/${vetId(r)}-${s.sha}.md`;
-  mkdirSync(join(root, '.harness', 'vet'), { recursive: true });
+  ensureRealDir(root, '.harness/vet');
   writeAtomic(join(root, ...rel.split('/')), reportMarkdown(s, review, install));
   for (const l of summaryLines(s, review, rel)) out(l);
   return 0;

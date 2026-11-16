@@ -320,3 +320,15 @@ describe('applyChanges: state paths', () => {
     expect(() => applyChanges(root, [], '1', undefined, undefined, { state: sp })).toThrow(ApplyError);
   });
 });
+
+describe('applyChanges temp files', () => {
+  it('never truncates or removes a file the person already has at <file>.harness-tmp', () => {
+    const root = makeRepo({ 'a.txt': 'old', 'a.txt.harness-tmp': 'mine' }, { git: false });
+    applyChanges(root, [{ kind: 'update', rel: 'a.txt', before: 'old', after: 'new', blocks: ['new'] }], '1', NOW);
+    expect(readFileSync(join(root, 'a.txt.harness-tmp'), 'utf8')).toBe('mine');
+    const root2 = makeRepo({ 'a.txt': 'old', 'a.txt.harness-tmp': 'mine' }, { git: false });
+    expect(() => applyChanges(root2, [{ kind: 'update', rel: 'a.txt', before: 'old', after: 'new', blocks: ['new'] }], '1', NOW, failingRename(1))).toThrow(ApplyError);
+    expect(readFileSync(join(root2, 'a.txt.harness-tmp'), 'utf8')).toBe('mine');
+    expect(readFileSync(join(root2, 'a.txt'), 'utf8')).toBe('old');
+  });
+});

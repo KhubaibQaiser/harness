@@ -5,8 +5,11 @@ import { join } from 'node:path';
 import { afterAll, expect, test } from 'vitest';
 import type { TeamDecision } from '../../src/core/decision-file.js';
 import { staleness } from '../../src/core/decisions-stale.js';
+import { medianOf } from './overhead.js';
 
 // doctor and status run this on every call: git work must not grow with the number of decisions. Aim: under 1 s locally; the ceiling only catches per-decision git spawns.
+// The median of 3 after a warm-up (it was one sample). Ceilings unchanged: the one CI failure (10 Nov) was vitest's 5 s
+// test timeout on the setup, fixed in 12fd9d8; the timed part has no failure in 9-16 Nov.
 const CEILING_MS = { win32: 6000, darwin: 2000 }[process.platform as string] ?? 3000;
 const root = mkdtempSync(join(tmpdir(), 'stale-perf-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -25,10 +28,8 @@ test('500 decisions over 3000 tracked files stay fast', () => {
   const sha = git('rev-parse', 'HEAD');
   writeFileSync(join(root, 'src/d1/f1.ts'), 'y'); git('add', '-A'); git('commit', '-q', '-m', 'two');
   ds.forEach((d, i) => { d.verified_at = i % 20 ? sha : 'b'.repeat(40); });
-  const t0 = performance.now();
-  const { states, note } = staleness(root, ds, { today: '2026-11-10', expiryDays: 90, cap: 20 });
-  const ms = performance.now() - t0;
-  expect(note).toBeNull();
-  expect(states).toHaveLength(500);
-  expect(ms, `staleness took ${ms.toFixed(0)} ms`).toBeLessThan(CEILING_MS);
-}, 120_000); // the timed part is only staleness(); setting up 3000 files and two commits is slow on Windows runners
+  const { ms, result } = medianOf('decisions-stale 500 decisions', () => staleness(root, ds, { today: '2026-11-10', expiryDays: 90, cap: 20 }), 3);
+  expect(result.note).toBeNull();
+  expect(result.states).toHaveLength(500);
+  expect(ms, `staleness median ${ms.toFixed(0)} ms`).toBeLessThan(CEILING_MS);
+}, 120_000); // the timed part is only staleness() (4 calls); setting up 3000 files and two commits is slow on Windows runners

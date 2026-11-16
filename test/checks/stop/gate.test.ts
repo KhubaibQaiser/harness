@@ -11,7 +11,7 @@ vi.mock('node:child_process', async (orig) => {
   return { ...real, spawn: ((...a: Parameters<typeof real.spawn>) => (fake.make ? fake.make() : real.spawn(...a))) as typeof real.spawn };
 });
 import { defaultExec, type Exec, killTree, pickRunner, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
-import { readStopRecord } from '../../../src/checks/stop/record.js';
+import { readStopRecord, writeStopRecord } from '../../../src/checks/stop/record.js';
 import { runUnwrapped } from '../../../src/checks/stop/steps.js';
 import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
@@ -189,6 +189,13 @@ test('timeouts end within max_attempts: it blocks max times, then allows with ch
   expect(kinds).toEqual(['block', 'block', 'allow']);
   expect(s.ctx.state.stopAttempts).toBe(0);
   expect(stopEvents(s.root, 'stop-gave-up').map((e) => e.reason)).toEqual(['checks never ran (timeout)']);
+  expect(readStopRecord(s.root)).toMatchObject({ outcome: 'never-ran', reason: 'checks never ran (timeout)' });
+});
+
+test('a timeout give-up records exactly checks never ran (timeout), not a stale unavailable reason', async () => {
+  const s = setup({ yaml: 'stop:\n  max_attempts: 1\n', attempts: 1 });
+  writeStopRecord(s.root, { ts: new Date().toISOString(), srt: null, outcome: 'unavailable', checks: {}, reason: 'srt is not installed' });
+  expect((await runStop(s.ctx, s.exec(SRC, '', 'lint'))).kind).toBe('allow');
   expect(readStopRecord(s.root)).toMatchObject({ outcome: 'never-ran', reason: 'checks never ran (timeout)' });
 });
 

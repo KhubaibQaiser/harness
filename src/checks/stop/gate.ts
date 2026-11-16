@@ -92,6 +92,8 @@ export const tail = (text: string) => {
 
 const realWhich = (cmd: string) => (/[\\/]/.test(cmd) ? cmd : findOnPath(cmd, process.env, process.platform));
 
+const TIMEOUT_NEVER = 'checks never ran (timeout)'; // recorded exactly: a stale unavailable reason would hide the real cause
+
 export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now, which: (cmd: string) => string | null = realWhich, run: RunSteps | NotedRun): Promise<Decision> {
   const { root, config, input } = ctx;
   const { steps, package_manager: pm, max_attempts: max, timeout_s } = config.stop;
@@ -149,7 +151,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       log('stop-gave-up', never);
       if (never) {
         const old = readStopRecord(root);
-        const why = old?.outcome === 'unavailable' && old.reason ? `${never}: ${old.reason}` : never; // keep which check failed
+        const why = old?.outcome === 'unavailable' && old.reason && never !== TIMEOUT_NEVER ? `${never}: ${old.reason}` : never; // keep which check failed
         writeStopRecord(root, { srt: null, checks: {}, ...old, ts: new Date().toISOString(), outcome: 'never-ran', reason: why });
       }
       return done(allow);
@@ -211,7 +213,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   // A hung step must not pass: a test the agent wrote could hang on purpose. It blocks and counts like a failing step.
   const timedOut = (label: string): Decision => {
     log('stop-timeout', label);
-    return failStep(`${label} timed out after ${timeout_s}s (attempt {n}). Speed it up, raise stop.timeout_s in .harness/config.yaml, or end with harness done --blocked "<reason>" if it can't finish.`, 'checks never ran (timeout)');
+    return failStep(`${label} timed out after ${timeout_s}s (attempt {n}). Speed it up, raise stop.timeout_s in .harness/config.yaml, or end with harness done --blocked "<reason>" if it can't finish.`, TIMEOUT_NEVER);
   };
   if (res.kind === 'timeout') return timedOut('the checks');
   if (res.kind === 'unavailable') {

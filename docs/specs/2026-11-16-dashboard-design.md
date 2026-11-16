@@ -43,7 +43,7 @@ It stays local, and **there is still no remote telemetry**:
 | D11 | Don't touch the status line. The dashboard never adds, wraps or chains a `statusLine`. Live context use and cost come from OTel `api_request` events and token metrics, with transcripts as the labelled fallback. Was open question 9. | §7.3, §8 |
 | D12 | Add `harness config set <key> <value>`, with the same validation, preview, backup, protect rules and person-only gating as other config changes, as its own PR before phase 3's controls. Was open question 10. | §11.3, §21 |
 | D13 | Standing rule: nothing may go in that directly conflicts with Claude Code's own harness or agentic tools. Any such case is flagged and confirmed with the owner first. | §15 |
-| D14 | **Principle, in the owner's words: "for users there shouldnt be anything changed or any safety concerns raised without user explicit optin approval".** Every write to a person's own settings or files, and every background process started for them, happens only inside a step that person explicitly approves, with the exact changes listed in that step's preview. No init, update, hook, doctor or dashboard view changes anyone's setup on its own. §28.2 lists the places checked. | §9, §28.2 |
+| D14 | **Principle, in the owner's words: "for users there shouldnt be anything changed or any safety concerns raised without user explicit optin approval".** Every write to a person's own settings or files, and every background process started for them, happens only inside a step that person explicitly approves, with the exact changes listed in that step's preview. No init, update, hook, doctor or dashboard view changes anyone's setup on its own. One owner-approved exception: merging a team opt-in counts as the team's approval for repo-local, names-only logging on every teammate's machine (Q-P1 B, §28.3); anything outside the repo, under `~/.claude/harness`, still needs that person's own global opt-in. §28.2 lists the places checked. | §9, §28.2 |
 
 ## 2. What the docs settled
 
@@ -485,7 +485,7 @@ The owner confirmed this list as written, including `OTEL_LOG_TOOL_DETAILS=1` an
 **Rules:**
 - **Preview first.**
   - `--dry-run`, or the dashboard's preview, prints the exact diff of each file and what it turns on.
-  - For team, it says the change binds every teammate.
+  - For team, it says the change binds every teammate, in these words: "Once this is merged, every teammate's Claude Code sessions in this repo will log skill, command, subagent and model names (never prompts or content) to `.harness/telemetry/` on their own machine, and run its retention cleanup there. Nothing is written outside the repo on their machine unless they turn on global telemetry themselves." The preview ends with a ready-to-paste paragraph for the commit message or PR description that says the same; harness doesn't commit it (owner, Q-P1 B).
   - For global, it lists every variable (§15 T1), the deny entries added to `~/.claude/settings.json` (§9.1), the binary copy, `receiver.json`, the always-on background receiver (no idle exit), and the retention rules, and says: "In most sessions these settings override `OTEL_*` variables set in your shell" (Env, §2.2).
   - For team, it lists the hook groups, `record.mjs`, the `.harness/telemetry` deny and `denyWrite` entries, the `.gitignore` line, and the retention rules (§13).
   - A team opt-in also says: "OTel can only be turned on in your user settings (Claude Code ignores it in repo files). Turn on global too?" That is a second, separate confirm.
@@ -1008,6 +1008,7 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - the telemetry write record (§9.1) is written per level, with `after` equal to the `settingsFingerprint` of the planned file's guarded view;
   - the Q-I4 deny entries appear only in `userSettingsPath()`, only after global opt-in is approved, start with `~/.claude/harness/`, and are removed byte for byte by global `off` and `uninstall --global`; team opt-in, `init` and `update` never write them, and no repo file ever gets them;
   - D14: with no opt-in, `init`, `update`, every hook, doctor and every dashboard `GET` leave the person's files unchanged (a snapshot of the repo, `~/.claude/settings.json` and `~/.claude/harness/` before and after); a teammate's machine with the committed team hooks but no global opt-in gets nothing under `~/.claude/harness/`;
+  - the team preview contains the teammate statement and the commit or PR paragraph (§9, Q-P1 B);
   - the team and global previews list every file and entry they write, including the `.gitignore` line, the deny entries, the binary, `receiver.json` and the background receiver;
   - `telemetry on|off --level global` and `uninstall --global` (with global telemetry on) refuse with `CLAUDECODE` set, before any write; `--dry-run` works;
   - a foreign OTel setup refuses;
@@ -1198,15 +1199,8 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 
 ## 24. Open questions
 
-Every other question is answered or closed; §25, §26 and §28 record where.
+Only questions that still need a live check remain. Every other question is answered or closed; §25, §26 and §28 record where.
 
-**Owner decision needed (D14):**
-- **Q-P1: May a committed team opt-in run the record hook on a teammate's machine before that teammate approves anything?** The hooks live in the committed `.claude/settings.json`, so a teammate who pulls the repo runs them. After §28.2 they write nothing under the teammate's `~/.claude`, but they still append names-only lines to the repo's `.harness/telemetry/invocations.jsonl` on that machine, and the SessionEnd hook runs the retention sweep there.
-  - **A (recommended): the hook does nothing on a machine until that person approves.** It exits at once unless the person ran `harness telemetry on --level team` (or global opt-in) on this machine, which records consent in `GLOBAL_STATE` after a preview. Why: it meets D14 exactly, and the team setting still saves teammates the settings edit.
-  - **B: treat the reviewed commit as the team's approval.** The preview already says the change binds every teammate. Why not first: a teammate never sees a preview of their own.
-  - **C: drop the team level; the hook log becomes part of global opt-in, written to user settings per person.** Why not first: hooks in user settings run in every repo, so the hook must also check the repo has harness, and the owner chose the team level in Q-T3.
-
-**Live checks still open:**
 
 - **Q2:** The docs contradict each other on custom skill names. The cost-counter section says some names become "custom" or "third-party"; the `skill.name` bullet says user-defined names are verbatim; `skill_activated` says they are `custom_skill` unless `OTEL_LOG_TOOL_DETAILS=1` is set. Verify live (L2).
 - **Q3:** Mon names the `api_request` token attributes (§2.2). L1 confirms them in recorded payloads, records the event `query_source` values (Mon gives only examples for events), and measures typical payload sizes.
@@ -1332,6 +1326,12 @@ The whole spec was checked against D14. Places that changed a person's setup wit
 | Dashboard rollups and transcript cache (§12.1, §13) | `harness dashboard` and `harness report` wrote `.harness/telemetry/` files in any repo, contradicting "keeps no state on disk" | written only where the team hook log is on; in memory elsewhere |
 | Dashboard version handoff (§7.2.1) | the dashboard stopped and started the receiver on load | a banner and a click |
 | Previews (§9) | didn't list the binary, `receiver.json`, the background receiver, the deny entries or the retention sweep | both previews list every file, entry and process |
-| Team hooks on teammates' machines | still append repo-local lines and run the sweep before the teammate approves | **open: owner question Q-P1 (§24)** |
+| Team hooks on teammates' machines | still append repo-local lines and run the sweep before the teammate approves | owner chose Q-P1 B: the merge is the team's approval (§28.3) |
 
 Checked and compliant: doctor and `telemetry status` only read; every phase 3 action is preview and click (§11); global `on`/`off`, `--rotate-key` and `uninstall` are previewed and confirmed; hook restarts and the retention sweep act only inside an approved opt-in; Claude Code's own files are read-only (T6); `~/.claude/settings.json` modes are never changed (§14.2).
+
+### 28.3 Owner answer: Q-P1 (2026-11-16)
+
+| Question | Answer | Change |
+|---|---|---|
+| Q-P1 team hooks on a teammate's machine before they approve | B: merging the team opt-in commit is the team's approval | The committed hooks log names-only lines to `.harness/telemetry/` and run its retention cleanup on a teammate's machine after they pull, with no per-person step. The team preview, and a ready-to-paste commit or PR paragraph, say so plainly (§9). Writes outside the repo, under `~/.claude/harness`, still need that person's own global opt-in (§7.2.3). D14 records the exception; Q-P1 left §24. |

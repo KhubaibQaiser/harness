@@ -51,10 +51,12 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   } catch (e) {
     return out(`harness verify: ${msg(e)}`), 1;
   }
+  let unrecordable: string | null = null;
   try {
     recordVerdictHash(root, commit, null);
-  } catch {
+  } catch (e) {
     // In the agent's sandbox the state is read-only; the record step below says so, and the file it vouched for is gone.
+    unrecordable = msg(e); // the same write the record step makes, so the review below knows before it spends a model call
   }
   if (!(args.length === 0 || (args.length === 2 && args[0] === '--task' && TASK_ID.test(args[1]!)))) return out(`Usage: ${VERIFY_USAGE}`), 2;
   const { config, errors } = loadConfig(root);
@@ -111,9 +113,13 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   // Step 4, the review: only after everything else passed, fresh every run (never a cached or reported result).
   let review: ReviewResult | null = null;
   if (c && !filesOnly) {
-    const model = c.review.model;
+    const model = c.review.model, linked = linkedFolder(root); // checked again here: a folder can become a link mid-run
+    const noRecord = unrecordable ?? (linked && folderError(linked).message);
     if (reasons.length || tamper.length || blocked) review = { model, status: 'skipped', findings: [] };
-    else {
+    else if (noRecord) {
+      review = { model, status: 'failed', error: `not run, since this verdict can't be recorded here (${noRecord}); run harness verify in your own terminal`, findings: [] };
+      reasons.push(`review failed: ${review.error}`);
+    } else {
       const rg: Exec = (cmd, a, o) => git(cmd, a, { env: { ...process.env, ...GIT_ENV }, ...o });
       try {
         review = await runTaskReview(root, taskBasis(root, rg, base, t, config.pr_size.exclude), c, {

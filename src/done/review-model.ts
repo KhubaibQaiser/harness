@@ -14,7 +14,7 @@ export const claudeArgs = (model: string, system: string): string[] => ['-p', '-
 
 const short = (s: string) => esc(s.split('\n').find((l) => l.trim())?.trim() ?? '').slice(0, 300);
 
-export function claudeModel(exec: Exec = defaultExec): ReviewModel {
+export function claudeModel(exec: Exec = defaultExec, env: NodeJS.ProcessEnv = process.env): ReviewModel {
   return async ({ system, message, model, timeoutMs }) => {
     // An empty folder: no repo CLAUDE.md, settings or files reach the reviewer.
     const cwd = mkdtempSync(join(tmpdir(), 'harness-review-'));
@@ -22,11 +22,13 @@ export function claudeModel(exec: Exec = defaultExec): ReviewModel {
       const r = exec('claude', claudeArgs(model, system), { cwd, input: message, timeoutMs });
       if (r.missing) return { error: 'claude is not on PATH' };
       if (r.timedOut) return { error: `review timed out after ${Math.round(timeoutMs / 1000)}s` };
-      let env: unknown;
-      try { env = JSON.parse(r.stdout); } catch { env = null; }
-      if (!isObj(env) || env.type !== 'result') return { error: `claude exited ${r.status} without a result: ${short(r.stderr ?? '') || 'no stderr'}` };
-      if (env.is_error || typeof env.result !== 'string') return { error: `claude: ${short(typeof env.result === 'string' ? env.result : String(env.subtype ?? 'error'))}` };
-      return { text: env.result };
+      let out: unknown;
+      try { out = JSON.parse(r.stdout); } catch { out = null; }
+      // ponytail: unverified whether claude -p starts under CLAUDECODE; its env is left alone (no bypass of Claude Code's own check).
+      const hint = env.CLAUDECODE ? ' (inside Claude Code: run harness verify in your own terminal)' : '';
+      if (!isObj(out) || out.type !== 'result') return { error: `claude exited ${r.status} without a result: ${short(r.stderr ?? '') || 'no stderr'}${hint}` };
+      if (out.is_error || typeof out.result !== 'string') return { error: `claude: ${short(typeof out.result === 'string' ? out.result : String(out.subtype ?? 'error'))}` };
+      return { text: out.result };
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

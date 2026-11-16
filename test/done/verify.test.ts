@@ -219,8 +219,11 @@ test('verify records the hash of the verdict it wrote; a record that fails is re
   expect(readVerdict(ok.root, head(ok.root))?.outcome).toBe('done');
   expect(ok.text).not.toContain(NOT_RECORDED);
   const blockRecord = (root: string) => mkdirSync(join(root, '.harness/state/verdict-hashes.json'), { recursive: true }); // the write throws
-  const unrecorded = await runVerify({ setup: blockRecord });
-  expect([unrecorded.code, unrecorded.outcome]).toEqual([1, 'done']); // the verdict is still written and printed
+  let calls = 0;
+  const unrecorded = await runVerify({ setup: blockRecord, deps: { model: async (c) => (calls++, CLEAN(c)) } });
+  // Unrecordable: the paid review never runs, so a would-be done is not done; the verdict is still written and printed.
+  expect([unrecorded.code, unrecorded.outcome, calls, unrecorded.review?.status]).toEqual([1, 'not-done', 0, 'failed']);
+  expect(unrecorded.reasons).toEqual([expect.stringMatching(/^review failed: not run, since this verdict can't be recorded here \(.+\); run harness verify in your own terminal$/)]);
   expect(unrecorded.text).toContain(NOT_RECORDED);
   expect(readVerdict(unrecorded.root, head(unrecorded.root))).toBeNull();
   const notDone = await runVerify({ criteria: [run('C1', 'node fail.js')], setup: blockRecord });
@@ -319,11 +322,12 @@ test('a verdicts folder swapped for a link during the run is refused before the 
     symlinkSync(mine, d); // what a background process or a check step could do mid-run
     return { kind: 'ran', results: steps.map((x) => ({ label: x.label, status: 0, timedOut: false, ms: 1, output: '' })) };
   };
+  let calls = 0;
   const v = await runVerify({
-    deps: { runSteps },
+    deps: { runSteps, model: async (c) => (calls++, CLEAN(c)) },
     setup: (r) => { root = r; file = join(mine, `${head(r)}.json`); writeFileSync(file, 'a user file'); },
   });
-  expect(v.code).toBe(1);
+  expect([v.code, calls]).toEqual([1, 0]); // checked again right before the review: no paid call for a verdict that can't be written
   expect(v.text).toContain('.harness/verdicts is not a real folder');
   expect(readFileSync(file, 'utf8')).toBe('a user file');
   expect(readdirSync(mine)).toEqual([`${head(root)}.json`]); // no temp file left there either

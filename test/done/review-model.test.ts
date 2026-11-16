@@ -18,17 +18,19 @@ test('claudeArgs is exactly the pinned argv', () => expect(claudeArgs('sonnet', 
 
 test('claudeModel parses a result envelope, and maps missing, timeout, is_error and non-JSON to errors', async () => {
   const ok = reply(envelope({ result: 'the reply' }));
-  expect(await claudeModel(ok.exec)(CALL)).toEqual({ text: 'the reply' });
+  expect(await claudeModel(ok.exec, {})(CALL)).toEqual({ text: 'the reply' });
   const s = ok.seen[0]!;
   expect([s.cmd, s.args, s.input, s.timeoutMs]).toEqual(['claude', claudeArgs('sonnet', 'S'), CALL.message, 2000]);
   expect(s.cwdExisted).toBe(true); // a fresh empty folder, so no repo settings or files load
   expect(existsSync(s.cwd!)).toBe(false); // removed after
-  expect(await claudeModel(reply({ status: 127, stdout: '', missing: true }).exec)(CALL)).toEqual({ error: 'claude is not on PATH' });
-  expect(await claudeModel(reply({ status: 1, stdout: '', timedOut: true }).exec)(CALL)).toEqual({ error: 'review timed out after 2s' });
-  expect(await claudeModel(reply(envelope({ is_error: true, result: 'Invalid API key' })).exec)(CALL)).toEqual({ error: 'claude: Invalid API key' });
-  expect(await claudeModel(reply(envelope({ is_error: true, subtype: 'error_max_turns', result: undefined })).exec)(CALL)).toEqual({ error: 'claude: error_max_turns' });
-  expect(await claudeModel(reply({ status: 1, stdout: 'not json', stderr: 'boom\nmore' }).exec)(CALL)).toEqual({ error: 'claude exited 1 without a result: boom' });
-  expect(await claudeModel(reply({ status: 0, stdout: JSON.stringify({ type: 'system' }) }).exec)(CALL)).toEqual({ error: 'claude exited 0 without a result: no stderr' });
+  expect(await claudeModel(reply({ status: 127, stdout: '', missing: true }).exec, {})(CALL)).toEqual({ error: 'claude is not on PATH' });
+  expect(await claudeModel(reply({ status: 1, stdout: '', timedOut: true }).exec, {})(CALL)).toEqual({ error: 'review timed out after 2s' });
+  expect(await claudeModel(reply(envelope({ is_error: true, result: 'Invalid API key' })).exec, {})(CALL)).toEqual({ error: 'claude: Invalid API key' });
+  expect(await claudeModel(reply(envelope({ is_error: true, subtype: 'error_max_turns', result: undefined })).exec, {})(CALL)).toEqual({ error: 'claude: error_max_turns' });
+  expect(await claudeModel(reply({ status: 1, stdout: 'not json', stderr: 'boom\nmore' }).exec, {})(CALL)).toEqual({ error: 'claude exited 1 without a result: boom' });
+  expect(await claudeModel(reply({ status: 0, stdout: JSON.stringify({ type: 'system' }) }).exec, {})(CALL)).toEqual({ error: 'claude exited 0 without a result: no stderr' });
+  // Inside a Claude Code session (CLAUDECODE set) harness leaves claude's env alone; a refusal says where to run verify instead.
+  expect(await claudeModel(reply({ status: 1, stdout: '', stderr: 'nested session' }).exec, { CLAUDECODE: '1' })(CALL)).toEqual({ error: 'claude exited 1 without a result: nested session (inside Claude Code: run harness verify in your own terminal)' });
 });
 
 test('fencedJson needs exactly one json block', () => {

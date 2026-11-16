@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { dirname, join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { run } from '../../src/cli/index.js';
 import { saveDebug } from '../../src/ai/debug.js';
-import { ensureRealDir } from '../../src/core/atomic.js';
+import { NOFOLLOW, appendNoFollow, ensureRealDir } from '../../src/core/atomic.js';
 import { appendEvent } from '../../src/core/events.js';
 import { appendTiming } from '../../src/core/timing.js';
 import { appendRow } from '../../src/done/ledger.js';
@@ -82,4 +83,57 @@ test('appendEventSafe reports a planted link on stderr instead of throwing', asy
   const v = planted('logs');
   expect(() => appendEventSafe(v.root, { ts: 't', session: 's', check: 'c', decision: 'd' } as never)).not.toThrow();
   intact(v);
+});
+
+// Windows has no O_NOFOLLOW: the same refusals must hold on the lstat + handle-identity path, forced here on any OS.
+describe('without O_NOFOLLOW (as on Windows)', () => {
+  const saved = NOFOLLOW.flag;
+  beforeEach(() => void (NOFOLLOW.flag = undefined));
+  afterEach(() => void (NOFOLLOW.flag = saved));
+  const linked = (name: string) => { const r = mk(), w = victim(); mkdirSync(join(r, '.harness', dirname(name)), { recursive: true }); symlinkSync(w.f, join(r, '.harness', name)); return { r, w }; };
+
+  test('event log, timing log and evidence ledger refuse a linked file', () => {
+    const e = linked('logs/events.jsonl');
+    expect(() => appendEvent(e.r, { ts: 't', session: 's', check: 'c', decision: 'd' } as never)).toThrow(/does not write through/);
+    expect(readFileSync(e.w.f, 'utf8')).toBe('mine');
+    const t = linked('logs/timing.jsonl');
+    appendTiming(t.r, { ts: 't', session: 's', event: 'e', outcome: 'o', ms: 1 } as never);
+    expect(readFileSync(t.w.f, 'utf8')).toBe('mine');
+    const l = linked('state/evidence.jsonl');
+    expect(() => appendRow(l.r, { kind: 'blocked' } as never)).toThrow(/does not write through/);
+    expect(readFileSync(l.w.f, 'utf8')).toBe('mine');
+  });
+
+  test('a dangling link is refused, not followed to create its target', () => {
+    const r = mk(), d = mk(), f = join(r, 'events.jsonl');
+    symlinkSync(join(d, 'new.txt'), f);
+    expect(() => appendNoFollow(f, 'x')).toThrow(/does not write through/);
+    expect(readdirSync(d)).toEqual([]);
+  });
+
+  test('creates a missing file, then appends to it', () => {
+    const f = join(mk(), 'events.jsonl');
+    appendNoFollow(f, 'a\n');
+    appendNoFollow(f, 'b\n');
+    expect(readFileSync(f, 'utf8')).toBe('a\nb\n');
+  });
+
+  test('a link swapped in after the check is opened but refused before any write', () => {
+    const r = mk(), w = victim(), f = join(r, 'events.jsonl');
+    writeFileSync(f, 'old\n');
+    const real = fs.openSync;
+    fs.openSync = ((p: string, flags: number) => {
+      if (p === f) { renameSync(f, `${f}.old`); symlinkSync(w.f, f); }
+      return real(p, flags);
+    }) as typeof fs.openSync;
+    syncBuiltinESMExports();
+    try {
+      expect(() => appendNoFollow(f, 'x')).toThrow(/does not write through/);
+    } finally {
+      fs.openSync = real;
+      syncBuiltinESMExports();
+    }
+    expect(readFileSync(w.f, 'utf8')).toBe('mine');
+    expect(readFileSync(`${f}.old`, 'utf8')).toBe('old\n');
+  });
 });

@@ -66,6 +66,38 @@ export function ensureRealDir(root: string, rel: string): string {
   return p;
 }
 
-/** Flags for an append that fails (ELOOP) instead of following a symlink at the file; O_NOFOLLOW is 0 where Node lacks it. */
-// Node takes the numeric flags; its types only list the string forms.
-export const APPEND_NOFOLLOW = (nodeFs.constants.O_WRONLY | nodeFs.constants.O_APPEND | nodeFs.constants.O_CREAT | (nodeFs.constants.O_NOFOLLOW ?? 0)) as unknown as string;
+/** Test seam: O_NOFOLLOW, which Node leaves undefined on Windows. */
+export const NOFOLLOW: { flag: number | undefined } = { flag: nodeFs.constants.O_NOFOLLOW };
+
+const refuse = (path: string) => new Error(`${path} is a symlink or not a file; harness does not write through it.`);
+
+// Without O_NOFOLLOW: lstat the name, open it, and refuse unless the opened handle is that same plain file.
+// A link swapped in between is opened but closed before any byte is written.
+function openChecked(path: string, flags: number): number {
+  const { O_CREAT, O_EXCL } = nodeFs.constants;
+  const look = () => { try { return nodeFs.lstatSync(path, { bigint: true }); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw e; } };
+  let before = look();
+  if (!before) {
+    try { return nodeFs.openSync(path, flags | O_CREAT | O_EXCL); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+    before = look(); // made by someone else meanwhile: check what is there now
+  }
+  if (!before || before.isSymbolicLink() || !before.isFile()) throw refuse(path);
+  const fd = nodeFs.openSync(path, flags);
+  const after = nodeFs.fstatSync(fd, { bigint: true });
+  if (after.dev !== before.dev || after.ino !== before.ino || !after.isFile()) {
+    nodeFs.closeSync(fd);
+    throw refuse(path);
+  }
+  return fd;
+}
+
+/** Appends `data` to `path`, creating it if missing, and throws instead of writing through a symlink at the file. */
+export function appendNoFollow(path: string, data: string, write: (fd: number, d: string) => void = nodeFs.appendFileSync): void {
+  const { O_WRONLY, O_APPEND, O_CREAT } = nodeFs.constants;
+  const fd = NOFOLLOW.flag === undefined ? openChecked(path, O_WRONLY | O_APPEND) : nodeFs.openSync(path, O_WRONLY | O_APPEND | O_CREAT | NOFOLLOW.flag);
+  try {
+    write(fd, data);
+  } finally {
+    nodeFs.closeSync(fd);
+  }
+}

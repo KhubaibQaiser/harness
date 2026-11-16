@@ -1,7 +1,7 @@
 // The evidence ledger (spec §4.2): one row per exact check run, written only by the evidenceLedger hook into protected state.
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { APPEND_NOFOLLOW, ensureRealDir } from '../core/atomic.js';
+import { appendNoFollow, ensureRealDir } from '../core/atomic.js';
 import { isObj } from '../core/config.js';
 import { plainArgv } from './commands.js';
 import type { Contract } from './contract.js';
@@ -16,7 +16,7 @@ export const LEDGER = '.harness/state/evidence.jsonl';
 export function appendRow(root: string, row: LedgerRow): void {
   const p = join(root, LEDGER);
   ensureRealDir(root, '.harness/state');
-  appendFileSync(p, JSON.stringify(row) + '\n', { flag: APPEND_NOFOLLOW });
+  appendNoFollow(p, JSON.stringify(row) + '\n');
 }
 
 const isRow = (r: unknown): r is LedgerRow =>

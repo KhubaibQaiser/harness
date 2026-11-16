@@ -4,7 +4,7 @@
   - Revision 1: 35730e1. Revision 2: 8d0f80b. Revision 3: 641a3b9.
   - Revision 2 applies the owner's answers of 2026-11-16 (§25).
   - Revision 3 applies the owner's later answers of 2026-11-16 (§26).
-  - Revision 4 fixes an independent review of revision 3 (§27) and adds six owner questions (§24).
+  - Revision 4 fixes an independent review of revision 3 (§27). The owner answered its six questions (§28).
 - Research and owner intent: `.superpowers/sdd/dashboard/research.md` (local, not committed), cited as "R".
 - Claude Code facts come from the official docs, read on 2026-11-16, and are cited by URL:
   - monitoring and OpenTelemetry: https://code.claude.com/docs/en/monitoring-usage ("Mon");
@@ -237,7 +237,7 @@ Rules:
 
 #### 7.2.1 Process
 
-- **Where.** Throughout this spec, `~/.claude/harness/` means one resolver, `globalHarnessDir(home, env)` = `claudeConfigDir(home, env)/harness` (`src/core/settings-layers.ts`). It honours `CLAUDE_CONFIG_DIR`, and in hooks `HARNESS_CLAUDE_CONFIG_DIR`, the launcher's mirror, because the env scrub strips `CLAUDE_CONFIG_DIR` from hooks (that file's comment). The CLI, the record hook and the dashboard all call it; the receiver gets the absolute folder as an argument from whoever spawns it. Where `GLOBAL_STATE` lives is owner question Q-I11. The owner approved keeping `bin/`, `receiver/` and `receiver.json` there (Q-T8), with the limit in §22.
+- **Where.** Throughout this spec, `~/.claude/harness/` means one resolver, `globalHarnessDir(home, env)` = `claudeConfigDir(home, env)/harness` (`src/core/settings-layers.ts`). It honours `CLAUDE_CONFIG_DIR`, and in hooks `HARNESS_CLAUDE_CONFIG_DIR`, the launcher's mirror, because the env scrub strips `CLAUDE_CONFIG_DIR` from hooks (that file's comment). The CLI, the record hook and the dashboard all call it; the receiver gets the absolute folder as an argument from whoever spawns it. **One exception (owner, Q-I11):** the global manifest `GLOBAL_STATE` stays at `statePaths('.claude/harness')` (`src/cli/preset.ts:61`), home-relative, with no migration. It holds the global opt-in record and the receiver binary's hash; every other global file uses `globalHarnessDir()`. The owner approved keeping `bin/`, `receiver/` and `receiver.json` there (Q-T8), with the limit in §22.
 - **One per user.** `record.mjs` starts it detached (owner-approved, Q-T4). Global opt-in copies the bundle to `~/.claude/harness/bin/receiver.mjs` and records its SHA-256 in the global manifest. It runs with `process.execPath`, `stdio: 'ignore'` and a minimal environment.
 - **Bind:** `127.0.0.1:<port>`, with `<port>` taken from `~/.claude/harness/receiver.json`. Global opt-in tries the default `4320`; if that port is busy at opt-in, it picks a free loopback port and the preview names it. A port that later becomes busy fails closed (`EADDRINUSE`, below) and shows as a gap. The owner's Q-T4 approval covers this (Q13, §26).
 - **Single instance:**
@@ -246,10 +246,12 @@ Rules:
   - **liveness is the pid plus a heartbeat,** because a dead receiver's pid can be reused: the receiver touches `lock/heartbeat` every 60 s, and the receiver counts as dead when `kill(pid, 0)` fails **or** the heartbeat is older than 3 minutes;
   - `EADDRINUSE` on bind is a second guard: the receiver exits 0 and logs `port-in-use`.
 - **Foreign listener.** Doctor and the dashboard call `/health` and compare the returned `nonce` with the lock's. A bound port that doesn't answer with that nonce is reported as "port <n> held by another process: OTel goes there" (§14.1, §22). Hooks don't make this check (budget, §16).
-- **Idle exit** after 30 minutes with no accepted request. That frees the port for anyone to bind (§22); whether to keep it is owner question Q-I5. The next record hook (SessionStart, UserPromptSubmit or any recorded event) or the next `harness dashboard` start restarts it.
+- **No idle exit while global opt-in is on** (owner, Q-I5), so the port stays held. The receiver exits only on `/shutdown` (global `off`, `uninstall --global`, or a version handoff), on a fatal error, or when its hourly check finds `receiver.json` gone. The next record hook (SessionStart, UserPromptSubmit or any recorded event) or the next `harness dashboard` start restarts it after a crash.
 - **Crash restart:** the next record hook or `harness dashboard` start sees a dead pid and starts it again. The data missed while it was down is a gap, back-filled with a notice (§8).
-- **Never killed by harness.** A hook never kills a receiver. A newer harness version takes over only after the old receiver exits, so an old receiver with an old allowlist can keep running on a busy machine. How a newer version takes over is owner question Q-I7.
-- **Up and down intervals.** The receiver appends `{v, ts, state, reason}` to `receiver/uptime.jsonl` on start, `/shutdown`, idle exit and fatal error. Ensure appends `down` with reason `heartbeat-stale` when it finds a stale heartbeat. Gap detection uses these as blind windows (§8.2).
+- **Version handoff** (owner, Q-I7). A hook never stops a receiver. Only two person-run commands hand over to a newer one, by sending `/shutdown` (with the key header), waiting up to 5 s for the lock to clear, and starting the new binary:
+  - `harness telemetry on --level global` first copies its own receiver bundle to `bin/receiver.mjs` and records the new hash, then hands over when the running receiver's version is older;
+  - `harness dashboard` hands over when the running receiver's version is older than the installed `bin/receiver.mjs` (hash-checked). It writes no files, so when the installed binary itself is older than the dashboard's harness version it only says: "receiver is version X; run `harness telemetry on --level global` to upgrade it".
+- **Up and down intervals.** The receiver appends `{v, ts, state, reason}` to `receiver/uptime.jsonl` on start, `/shutdown`, a missing `receiver.json` and fatal error. Ensure appends `down` with reason `heartbeat-stale` when it finds a stale heartbeat. Gap detection uses these as blind windows (§8.2).
 
 #### 7.2.2 Endpoints and request checks
 
@@ -258,7 +260,7 @@ Rules:
 | `/v1/logs`, `/v1/metrics` | POST | `application/json` or `application/x-protobuf` (§7.2.6) |
 | `/v1/traces` | any | 404 (tracing is beta, and off) |
 | `/health` | GET | `{ ok, version, pid, nonce }`, for doctor and the dashboard |
-| `/shutdown` | POST | Used by `harness telemetry off --level global` |
+| `/shutdown` | POST | Used by global `off`, `uninstall --global`, and the version handoff in `harness telemetry on --level global` and `harness dashboard` (§7.2.1) |
 
 **Every request must have:**
 - `Host` exactly `127.0.0.1:<port>`;
@@ -487,6 +489,7 @@ The owner confirmed this list as written, including `OTEL_LOG_TOOL_DETAILS=1` an
 - **`off` is the same preview and confirm, in reverse.**
   - Only global `off` stops the receiver, with `/shutdown`. Team `off` never touches the machine-wide receiver.
   - It never deletes the collected `.harness/telemetry/` data. That is a separate, explicit confirm that lists the files.
+- **Key rotation** (owner, Q-M13). Re-running `on --level global` keeps the existing key. Only `--rotate-key` makes a new one: it rewrites `OTEL_EXPORTER_OTLP_HEADERS` and `receiver.json`, hands over to a receiver with the new key, and the preview says open sessions keep the old key, so their exports get 403 until they restart.
 - **Guard.** `telemetry` joins `PERSON_ONLY` (`src/checks/guard.ts:93`) as `ask`, allowed for `status` and `--dry-run`, like `context apply`. Unattended turns the ask into a deny, as today.
 
 ### 9.1 ConfigChange: harness's own telemetry block is allowed (Q-T7)
@@ -498,7 +501,7 @@ Today the gate (`src/checks/config-change.ts`) blocks a mid-session change to ha
 | Level | Record path | Protected by |
 |---|---|---|
 | team | `.harness/state/telemetry-write.json` | the existing `.harness/state` protection: Edit deny, sandbox `denyWrite`, protect table |
-| global | `~/.claude/harness/state/telemetry-write.json` | an `Edit(~/.claude/harness/state/**)` deny and a `denyWrite` entry for that folder, added to the harness block of each repo's `.claude/settings.json` (§15 T5 pattern; nothing extra goes in user settings) |
+| global | `~/.claude/harness/state/telemetry-write.json` | the telemetry deny entries (owner, Q-I4): `Edit` denies and sandbox `denyWrite` entries for `bin/`, `receiver.json`, `receiver/` and `state/` under `globalHarnessDir()`, written as resolved absolute paths into the harness block of each repo's `.claude/settings.json` (§15 T5 pattern; nothing extra goes in user settings). The global-preset files in the same folder get no entries |
 
 Each record is `{v, id, file, action, block, after, ts}`, written with `writeAtomic` and mode 0600:
 - `file`: `project_settings` or `user_settings`;
@@ -547,7 +550,9 @@ When it allows, the current view becomes the session's baseline for that file, a
 - **Launch token.**
   - It is 32 random bytes in base64url. The launch URL `http://127.0.0.1:<port>/launch?t=<token>` is opened with `openCommand` (`src/cli/report.ts`).
   - The URL is printed only when stdout is a TTY, or with `--print-url`, which works only when `HARNESS_TEST_PRINT_URL=1` is also set (tests only).
-  - It is good for one use. The exchange sets a session cookie `hd=<random>` (`HttpOnly`, `SameSite=Strict`, `Path=/`) and answers 303 to `/`.
+  - It is good for one use. The exchange sets a session cookie `hd_<port>=<random>` (`HttpOnly`, `SameSite=Strict`, `Path=/`), named per launch, and answers 303 to `/#k=<secret>` (owner, Q-C2).
+  - **The CSRF secret is only in that fragment.** It is 32 random bytes in base64url. Browsers never send a fragment to a server, so no response body or header after the 303 contains it. The client JS reads it, stores it in `sessionStorage` (inside try/catch), removes it from the address bar with `history.replaceState`, and sends it as `x-harness-csrf`.
+  - Reading works without JS; actions need it. A tab without the secret (opened without an opener, or with storage blocked) shows actions disabled with "open actions from the launch tab, or launch again".
   - A second exchange is refused, and shown on the page and in the terminal. Using another browser means another launch.
 - **Lifetime.** The server ends on Ctrl-C or SIGHUP and keeps no state on disk.
 
@@ -556,7 +561,7 @@ When it allows, the current view becomes the session's baseline for that file, a
 - **Host:** must equal `127.0.0.1:<port>`, else 421. This blocks DNS rebinding.
 - **Origin:** when present, must equal `http://127.0.0.1:<port>`, else 403.
 - **Cookie:** required everywhere except `/launch`, else 401.
-- **Writes:** a `POST` also needs `x-harness-csrf` with the per-session value. JSON bodies only, at most 64 KB.
+- **Writes:** a `POST` also needs `x-harness-csrf` equal to the launch's fragment secret (§10.1). JSON bodies only, at most 64 KB.
 - **Headers on every response:**
   - `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; require-trusted-types-for 'script'`;
   - `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`;
@@ -711,8 +716,8 @@ The list is cached for the server's lifetime, with a refresh button.
 - **It can't start the dashboard:** `PERSON_ONLY.dashboard` denies it, and the dashboard refuses inside Claude Code and in unattended runs.
 - **The launch token is one-use.** By the time an agent could read the opener's argv or the browser history, it is spent. A second exchange is refused and shown. A process that fakes a TTY (`script`) or sets the test variable gets the URL printed, but only after it is already past the guard (`env -u CLAUDECODE` and similar), so that adds no power the bypass doesn't already have.
 - **The session lives in an `HttpOnly`, `SameSite=Strict` cookie** (§22).
-- **A `POST` needs the CSRF value.**
-- **Known flaw, open: the cookie reaches every `127.0.0.1` port.** Browsers scope cookies by host, not port (RFC 6265 §8.5), so `hd` is also sent to any other loopback server the person opens, such as a dev server the agent started. `SameSite=Strict` doesn't help, since other ports on the same IP are the same site, and `__Host-` needs `Secure`, which plain `http` can't have. If the CSRF value is ever in a page, a cookie holder can read it with curl and post actions. The fix has more than one design, so it is owner question **Q-C2**. **P3.2 (the action runner) doesn't merge until Q-C2 is answered.** Phases 1 and 2 have no write actions, so a leaked cookie there exposes read-only views of data the agent can already read on disk.
+- **A `POST` needs the CSRF secret,** which only the launch's fragment carries (§10.1).
+- **The cookie still reaches every `127.0.0.1` port.** Browsers scope cookies by host, not port (RFC 6265 §8.5), so `hd_<port>` is also sent to any other loopback server the person opens, such as a dev server the agent started. `SameSite=Strict` doesn't help, and `__Host-` needs `Secure`, which plain `http` can't have. The owner's answer (Q-C2) keeps the CSRF secret out of every server response, so a stolen cookie gives read-only views of data the agent can already read on disk, and no actions (§22).
 - **Cross-site requests and DNS rebinding are refused** (§10.2).
 - **Whether sandboxed Bash can reach a `127.0.0.1` port** is Q8.
 
@@ -785,12 +790,12 @@ It never follows a symlink. These are harness's own logs, not the person's files
 | Inject script through a file name, skill name, reason text, transcript text, or another repo's `.harness` | `h()` on the server (HTML plus control, zero-width and bidi characters); `textContent` only in the client; Trusted Types required; `script-src 'self'` with no inline script. Hostile fixtures are fed to every view (§20.2). |
 | Plant numbers the dashboard trusts | `.harness/telemetry/` is outside the sandbox write set and Edit-denied. `events.jsonl` and `timing.jsonl` stay plantable (§4), so their rows are labelled `harness log` and cross-checked against OTel hook counts. Every parser caps line length (`MAX_LINE`) and key count (`MAX_KEYS`). |
 | Make the dashboard or receiver write elsewhere: a symlinked folder or file, or a forged announcement | `ensureRealDir` plus `APPEND_NOFOLLOW` (§14.3); the announced root must have a manifest and match the transcript `cwd` before anything is written (§7.2.3), the one bounded exception to "no write path from file content" (§4); no other write path comes from file content, config values or the page. |
-| Drive a control | §11.4; the cookie leak to other loopback ports is open (Q-C2), and P3.2 waits on it |
-| Replace the receiver binary, `receiver.json` or an announcement | `ensureReceiver()` refuses a binary whose SHA-256 doesn't match the global manifest (§7.2.5); the announcement checks (§7.2.3); which `~/.claude/harness` paths also get Edit-deny and `denyWrite` entries is owner question Q-I4 |
-| Bind the receiver port while it is free (after idle exit, a crash, or before the first start) | doctor and the dashboard detect a listener without the lock's nonce (§7.2.1). The squatter receives every session's export, including what `OTEL_LOG_TOOL_DETAILS=1` adds and the key header; this is a known limit (§22) and Q-I5 decides the idle exit |
+| Drive a control | §11.4; a cookie leaked to another loopback port can't post, because the CSRF secret is only in the launch fragment (§10.1, Q-C2) |
+| Replace the receiver binary, `receiver.json` or an announcement | `ensureReceiver()` refuses a binary whose SHA-256 doesn't match the global manifest (§7.2.5); the announcement checks (§7.2.3); Edit deny and `denyWrite` on `bin/`, `receiver.json`, `receiver/` and `state/` (§9.1, owner Q-I4). Unsandboxed Bash can still write them; the hash check covers the binary |
+| Bind the receiver port while it is free (after a crash, or before the first start) | no idle exit (owner, Q-I5), so the port is free only then; doctor and the dashboard detect a listener without the lock's nonce (§7.2.1). The squatter receives every session's export, including what `OTEL_LOG_TOOL_DETAILS=1` adds and the key header; a known limit (§22) |
 | Turn content capture on | the receiver's allowlist drops content whatever Claude Code sends; doctor flags content variables in any layer. |
 | Post fake OTel from a web page or another local process | the header key, no `Origin`, the `Host` check and the refused CORS preflight (§7.2.2). A same-uid process that reads `~/.claude/settings.json` can still post fake OTel (§22). |
-| DNS rebinding or CSRF | an exact `Host` check; a `SameSite=Strict` cookie plus a CSRF header; `frame-ancestors 'none'`. |
+| DNS rebinding or CSRF | an exact `Host` check; a `SameSite=Strict` cookie plus a CSRF header whose secret no server response contains; `frame-ancestors 'none'`. |
 | Exhaust disk or memory | §13 bounds, body caps, the unannounced-session cap, at most 64 polled files, at most 8 SSE clients. |
 
 Out of scope, as in the isolation spec: the person, kernel escapes, and a compromised Claude Code or Node.
@@ -816,7 +821,7 @@ This spec uses them for every new write:
 
 ## 15. Touchpoints with Claude Code's own configuration (D13)
 
-Every place this feature touches Claude Code's config or behaviour, whether it could conflict with Claude Code's own harness or agentic tools, and whether the owner must confirm it. Revision 3 records the owner's answers for T1, T3, T4, T7 and T8. **T2 waits on live check L4 (Q7 in §24).** Revision 4 adds owner question Q-I4 under T5 and Q-I11 under T8.
+Every place this feature touches Claude Code's config or behaviour, whether it could conflict with Claude Code's own harness or agentic tools, and whether the owner must confirm it. Revision 3 records the owner's answers for T1, T3, T4, T7 and T8. **T2 waits on live check L4 (Q7 in §24).** Revision 4's owner answers settle the T5 entry scope (Q-I4) and the `GLOBAL_STATE` location under T8 (Q-I11).
 
 | # | Touchpoint | Could it conflict? | Owner confirms |
 |---|---|---|---|
@@ -824,10 +829,10 @@ Every place this feature touches Claude Code's config or behaviour, whether it c
 | T2 | **Async hooks in repo settings** (§7.1): `PreToolUse` with the `Skill` matcher, `UserPromptSubmit`, `UserPromptExpansion`, `SubagentStart`/`Stop`, `PreCompact`/`PostCompact`, `PreModelSwitch`/`PostModelSwitch`, `SessionStart` (all sources) and `SessionEnd` | **Low for most.** They are async and print nothing, so they can't decide or inject. They count in Claude Code's own `hook_execution_*` telemetry and show in `/hooks`. `disableAllHooks` or `allowManagedHooksOnly` turns them off, and then OTel isn't routed. **Mostly answered by Hooks:** "Async hooks can't block or control Claude's behavior", `decision`, `permissionDecision` and `continue` have no effect, and no timeout is enforced on them, so a PreModelSwitch timeout can't block the switch. Only `additionalContext` and `systemMessage` are delivered, on the next turn. Hooks doesn't say whether an async PreCompact's stdout still becomes compaction instructions; harness prints nothing anyway. | **Yes, for the pre events:** L4 confirms before P2.1 merges (Q7) |
 | T3 | **`.claude/settings.local.json`** | **None now.** Claude Code writes that file itself, so a harness write could race with it. The owner dropped the level that needed it: harness never writes this file (§9). | **Resolved** by dropping the level (Q-T3) |
 | T4 | **SessionStart and other record hooks start the receiver**: a detached background process that outlives the session and listens on a loopback port | **Possible.** It is a long-lived process started from a Claude Code hook. Whether Claude Code reaps a hook's detached children, in `-p` teardown or otherwise, is unverified. The port could collide with another local tool (default 4320, a free one picked at opt-in, and a busy port fails closed). | **Resolved:** approved. A dead receiver is restarted by the next record hook or `harness dashboard`, and gaps are back-filled with a notice (§7.2.1, §8). L7 still checks reaping (Q-T4) |
-| T5 | **Permission and sandbox entries:** the `Edit(./.harness/telemetry/**)` deny, the `.harness/telemetry` entry in the sandbox `denyWrite`, the `~/.claude/harness/state` Edit deny and `denyWrite` entries (§9.1), all in the repo's `.claude/settings.json`; the protect table; and guard `PERSON_ONLY` entries (`dashboard` deny, `telemetry` ask, `config` ask or deny) | **No.** They follow the existing harness pattern and narrow only harness's own files and commands. The guard asks show in Claude Code's permission prompt, as today's do. Widening the `~/.claude/harness` entries beyond `state/` changes what Claude Code reads, so it is owner question Q-I4. | No; **Q-I4** for any widening |
+| T5 | **Permission and sandbox entries:** the `Edit(./.harness/telemetry/**)` deny, the `.harness/telemetry` entry in the sandbox `denyWrite`, the Edit deny and `denyWrite` entries for `bin/`, `receiver.json`, `receiver/` and `state/` under `globalHarnessDir()` (§9.1, owner Q-I4), all in the repo's `.claude/settings.json`; the protect table; and guard `PERSON_ONLY` entries (`dashboard` deny, `telemetry` ask, `config` ask or deny) | **No.** They follow the existing harness pattern and narrow only harness's own files and commands. The guard asks show in Claude Code's permission prompt, as today's do. The record hook and the receiver write `receiver/` from outside the sandbox, so the entries don't affect them; they block the agent's Edit tool and sandboxed Bash. Global opt-in therefore runs from the person's terminal or the dashboard, not from Claude Code's sandboxed Bash. | No; the scope was owner-confirmed (Q-I4) |
 | T6 | **Reading Claude Code's files:** transcripts (`~/.claude/projects`), the settings layers, including managed settings (for the record hook's `otel` value, refusal checks and doctor, §7.1), and the projects list for the switcher, all read-only | **No.** Read-only, bounded, symlink-refusing, as `locate.ts` does today. | No |
 | T7 | **Settings changed mid-session** by `harness telemetry` or dashboard actions | **Harness against harness, visible in Claude Code,** until P2.9. Without it, harness's own ConfigChange gate blocks the mid-session hook or env change and the person may see the notice. OTel picks up env only at startup anyway. The preview says "takes effect in new sessions". | **Resolved:** the gate allows harness's own telemetry block, matched by content hash of exactly what harness wrote; every other change stays blocked (§9.1, P2.9) (Q-T7) |
-| T8 | **Files under `~/.claude/harness/`** (`bin/`, `receiver/`, `receiver.json`, `state/telemetry-write.json`) | **Possible.** They are inside Claude Code's config folder, in harness's existing subfolder (global presets already use it). Whether Claude Code's retention sweep or plugin sync ever touches unknown subfolders is unverified. `CLAUDE_CONFIG_DIR` is honoured through `claudeConfigDir()`. | **Resolved:** kept there, as a known limit (§22); doctor detects missing files (§19) (Q-T8). Where `GLOBAL_STATE` lives is **Q-I11** |
+| T8 | **Files under `~/.claude/harness/`** (`bin/`, `receiver/`, `receiver.json`, `state/telemetry-write.json`) | **Possible.** They are inside Claude Code's config folder, in harness's existing subfolder (global presets already use it). Whether Claude Code's retention sweep or plugin sync ever touches unknown subfolders is unverified. `CLAUDE_CONFIG_DIR` is honoured through `claudeConfigDir()`. | **Resolved:** kept there, as a known limit (§22); doctor detects missing files (§19) (Q-T8). `GLOBAL_STATE` stays home-relative (Q-I11, §7.2.1) |
 | T9 | **Claude Code's UI** | **No.** There is no status line (D11), no `systemMessage` or `additionalContext` from record hooks, and the dashboard runs outside Claude Code. Async hook completion notices appear only in verbose mode (Hooks). | No |
 | T10 | **Claude Code's sandbox and network:** the dashboard and receiver run outside it; harness doesn't add loopback or domains to any allowlist | **No change.** Whether sandboxed Bash can reach them is a security question (Q8), not a config change. | No |
 
@@ -856,7 +861,7 @@ The rule: **capture fails open and quiet, and is shown; controls fail closed.**
 |---|---|---|
 | The record hook crashes or can't write | the line is lost; Claude Code is unaffected | "hook log missed N" (§8.2 reverse check) |
 | An async hook is killed at `-p` teardown | the line is lost | a gap |
-| The receiver is down, crashed, idle-exited, or its port is busy | OTel data for that window is lost; the next record hook restarts it | a gap with back-fill; doctor shows `receiver: not running (<reason>)` |
+| The receiver is down, crashed, or its port is busy | OTel data for that window is lost; the next record hook restarts it | a gap with back-fill; doctor shows `receiver: not running (<reason>)` |
 | A receiver write fails, or the disk is full | the record is dropped and counted | Data health shows "dropped N" |
 | Malformed OTLP, or an unknown field | skipped and counted; the rest gets 200 | Data health |
 | The transcript format changes | counts show unknown, never zero; the untested-version banner appears | banner |
@@ -889,7 +894,7 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
 | Command | Who | What |
 |---|---|---|
 | `harness dashboard [--days N] [--repo <path>] [--no-open] [--print-url]` | person only (guard `deny`; refuses inside Claude Code and in unattended runs) | §10 |
-| `harness telemetry on\|off --level team\|global [--dry-run\|--yes]` | person (guard `ask`; preview allowed) | §9 |
+| `harness telemetry on\|off --level team\|global [--rotate-key] [--dry-run\|--yes]` | person (guard `ask`; preview allowed) | §9; `--rotate-key` only with `on --level global` |
 | `harness telemetry status` | anyone | levels on, sources and last record, receiver state, gap counts |
 | `harness config set <key> <value> [--dry-run\|--yes]` | person (guard `ask`, or `deny` when it loosens enforcement) | §11.3 |
 | `node record.mjs` | hooks only | §7.1 |
@@ -926,6 +931,9 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - the Host, Origin and cookie matrix;
   - the one-use exchange;
   - CSRF and body caps;
+  - no response body or header after the `/launch` 303 contains the CSRF secret; the 303's `Location` is the only place it appears;
+  - a `POST` with the cookie and no secret, or a wrong one, is refused;
+  - the cookie is named `hd_<port>`;
   - every security header on every route;
   - the refusals;
   - `PERSON_ONLY.dashboard` in the guard's spellings;
@@ -950,11 +958,13 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - the bounded `tool_parameters` parse: names only, the 16 KB cap, malformed input;
   - duplicate metric points (an exporter retry) are counted once;
   - `/health` returns the lock's nonce, and the foreign-listener check flags a listener without it;
-  - `uptime.jsonl` gets `up` and `down` lines for start, `/shutdown`, idle exit and a stale heartbeat;
+  - `uptime.jsonl` gets `up` and `down` lines for start, `/shutdown`, a missing `receiver.json` and a stale heartbeat;
+  - no idle exit: a receiver with no requests for hours keeps running while `receiver.json` exists;
+  - version handoff: global `on` and `harness dashboard` stop an older receiver and start the new one; a hook never does; the dashboard only reports an installed binary older than itself;
   - folder and file modes are 0700 and 0600 at creation (POSIX);
   - a symlink at each path component is refused (through `ensureRealDir`);
   - the key, `Origin`, `Host` and 413;
-  - the lock, a stale break, `EADDRINUSE`, idle exit and `/shutdown`;
+  - the lock, a stale break, `EADDRINUSE` and `/shutdown`;
   - the sweep deletes only pattern-matched regular files.
 - **Gaps:** every §8.2 check, the reverse check, and the §8.3 matrix with one source missing at a time; labels and splits; "deleted (retention)" vs "unknown". A fixture for each §8.2 matching rule: a resumed subagent and teammate messages (distinct ids), a failed compaction, a hook event with several matching hooks, a denied Skill use, a mid-session opt-in (no reverse-check flags before the first line), the settle delay on a live session, a blind window (OTel-only figures `unknown`), and a `repo-off` session (not a gap).
 - **Live numbers:** tokens in context from OTel and from the transcript fallback, both including output tokens; cost sums; the live view and the Tokens view show the same session totals; no percentage is ever rendered (§2.3).
@@ -1004,6 +1014,7 @@ New keys in `.harness/config.yaml` (protected). They are added to the rule table
   - CSP and the other headers;
   - no URL in any served byte except `127.0.0.1`;
   - a rebinding `Host`, a cross-site `POST`, and a missing CSRF header are each refused;
+  - a second server on another `127.0.0.1` port receives the cookie (documents the §22 limit), and a `POST` replayed with that cookie is refused;
   - SSE shows an appended line within 2 s;
   - the switcher lists exactly the two harness repos out of three;
   - `context apply` and `config set`, each through preview, apply and backup.
@@ -1067,7 +1078,7 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 |---|---|---|---|---|---|
 | **Phase 1: See** | | | | | |
 | P1.1a | `collect()` moved to `src/report/collect.ts`, unchanged; `src/cli/report.ts` imports it | — | — | ~190 | 3 |
-| P1.1b | The `harness dashboard` server skeleton: bind, one-use token, cookie, Host/Origin/CSRF checks, headers, refusals, `PERSON_ONLY.dashboard`, `--print-url` gating | P1.1a | L5 | ~370 | 8 |
+| P1.1b | The `harness dashboard` server skeleton: bind, one-use token, the `hd_<port>` cookie and fragment secret, Host/Origin/CSRF checks, headers, refusals, `PERSON_ONLY.dashboard`, `--print-url` gating | P1.1a | L5 | ~370 | 8 |
 | P1.1c | Opening the browser and the Overview view | P1.1b | — | ~220 | 5 |
 | P1.2 | Design system: tokens, dark and light, shell, nav, keyboard client JS, focus, theme, contrast test; `build.mjs` inlines the client; Playwright and axe devDependencies, `test:browser` and the `dashboard-browser` CI job (§20.7) | P1.1c | — | ~390 | 12 |
 | P1.3 | Gates view (blocked what and why, tallies, false blocks, latency, Stop steps) and Skills view | P1.2 | — | ~300 | 6 |
@@ -1077,17 +1088,17 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 | P2.1 | `.harness/telemetry/` in protect, Edit deny, `denyWrite` and `HARNESS_LOCAL`; the `record.mjs` bundle with the file-based `otel` value (§7.1); `telemetry.fragment.json` in exec form; allowlist; rotation; modes | P1.5, #250 | L4, L7 (hook environment) | ~380 | 10 |
 | P2.2 | `harness telemetry on\|off\|status` for the team level: previews, manifest, backups, the team write record (§9.1), uninstall; doctor and status lines | P2.1 | — | ~340 | 9 |
 | P2.3 | Receiver core: OTLP/HTTP JSON, request checks, allowlist with the bounded parameter parse, announcements, routing held until the `cwd` cross-check, metric dedupe, lock, log; `dist/receiver.mjs` | P2.2 | L1, L2, L5 | ~390 | 9 |
-| P2.4a | Receiver lifecycle: ensure from hooks and `harness dashboard`, heartbeat, bin hash check, foreign-listener check, `uptime.jsonl`, idle exit as Q-I5 decides, restart, retention sweep and caps | P2.3 | L7 (reaping) | ~360 | 8 |
+| P2.4a | Receiver lifecycle: ensure from hooks and `harness dashboard`, heartbeat, bin hash check, foreign-listener check, `uptime.jsonl`, no idle exit (Q-I5), version handoff (Q-I7), restart, retention sweep and caps | P2.3 | L7 (reaping) | ~360 | 8 |
 | P2.4b | The global level: env, port 4320 or a free one, the §9 refusals, bin copy and hash, `receiver.json`, the global write record, global manifest, `uninstall --global`; doctor's global checks (§19) | P2.4a | L6 | ~380 | 10 |
 | P2.5 | OTLP protobuf decoder, tested on recorded payloads | P2.3 | L1 | ~300 | 4 |
 | P2.6a | Gap detection (hooks against OTel) with the §8.2 matching rules, settle delay, blind windows, reverse check, transcript back-fill, labels; transcript cache | P2.4b | — | ~380 | 8 |
 | P2.6b | Data health view, banners, the per-model OTel sources and metric cross-check (§7.4) | P2.6a | — | ~330 | 7 |
 | P2.7 | Sessions and the live session view: SSE, tokens-in-context gauge, timeline, per-skill and per-hook cost | P2.6b | — | ~360 | 8 |
 | P2.8 | Inventory panel: hooks registered, plugins loaded, MCP connections (OTel), plus agents, commands and MCP from repo files | P2.7 | — | ~200 | 5 |
-| P2.9 | ConfigChange allowance for harness's own telemetry block, team and global (§9.1), its tests, and the `~/.claude/harness` deny entries as Q-I4 decides | P2.4b | L7 (mid-session) | ~260 | 6 |
+| P2.9 | ConfigChange allowance for harness's own telemetry block, team and global (§9.1), its tests, and the Q-I4 deny entries (`bin/`, `receiver.json`, `receiver/`, `state/`) | P2.4b | L7 (mid-session) | ~260 | 6 |
 | **Phase 3: Control** | | | | | |
 | P3.1 | `harness config set` (§11.3): validation, preview, backup, manifest, guard deny and ask classes, unattended refusal (D12) | P2.8, P2.9 | — | ~300 | 6 |
-| P3.2 | Action runner: templates, preview, apply, hash recheck, audit event, copy-command path, and the Q-C2 cookie and CSRF design. **Doesn't merge before Q-C2 is answered** | P3.1 | — | ~370 | 8 |
+| P3.2 | Action runner: templates, preview, apply, hash recheck, audit event, copy-command path; the client side of the fragment secret (Q-C2) | P3.1 | — | ~370 | 8 |
 | P3.3 | The §11.2 action table: task, tdd, context, config, remove, telemetry and uninstall flows | P3.2 | — | ~300 | 7 |
 | **Phase 4: History and proof** | | | | | |
 | P4.1 | Daily rollups (SessionEnd best-effort, dashboard, report), retention, the Trends view with uPlot (exact-pinned devDependency, bundled asset, notices, a CSP and Trusted Types browser check) | P3.3 | — | ~380 | 9 |
@@ -1123,8 +1134,10 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
   - OTel data while the receiver is down. Requests that never reach the main transcript (`auxiliary` and `plugin_model_*` usage, agent-hook requests) and OTel-only kinds (hook executions, inventory, tool decisions) can't be back-filled; their figures in a blind window show `unknown` (§8.2).
 - **Hooks can't see the OTel environment** (§2.2). The record hook reads settings files instead (§7.1), so a session whose shell alone sets `OTEL_*` is classified only once its records arrive or don't.
 - **Harness's global entries override a shell-set endpoint** in most sessions (Env). The global preview says so.
-- **The dashboard cookie reaches every `127.0.0.1` port** (§11.4). Until Q-C2 is answered and P3.2 merges, there are no write actions, so a leaked cookie exposes read-only views.
-- **The receiver port can be squatted** while no receiver holds it: after idle exit, after a crash, or before the first start. The squatter, including another local uid, gets every session's export with what `OTEL_LOG_TOOL_DETAILS=1` adds, and the key header. Doctor and the dashboard detect it (§7.2.1); hooks don't. Q-I5 decides the idle exit.
+- **The dashboard cookie reaches every `127.0.0.1` port** (§11.4). A server that gets it can read the dashboard's views, but can't post actions without the fragment secret (Q-C2).
+- **Actions need JS** and the launch tab's `sessionStorage` (§10.1).
+- **The receiver port can be squatted** while no receiver holds it: after a crash or before the first start (there is no idle exit, Q-I5). The squatter, including another local uid, gets every session's export with what `OTEL_LOG_TOOL_DETAILS=1` adds, and the key header. Doctor and the dashboard detect it (§7.2.1); hooks don't.
+- **An always-on receiver** costs one idle Node process while global opt-in is on (§16 budgets).
 - **`CLAUDE_CONFIG_DIR` without the launcher's mirror.** Hooks lose `CLAUDE_CONFIG_DIR` to the env scrub, so without `HARNESS_CLAUDE_CONFIG_DIR` the record hook looks under `~/.claude/harness`. Doctor reports it (§19).
 - **Costs are estimates** from every source.
 - **Transcript parsing breaks on format changes.** It shows as unknown, never zero, and CI catches it only for recorded versions.
@@ -1136,7 +1149,7 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 
 1. `http/json` set by harness; protobuf accepted; gRPC refused.
 2. Logs left at Claude Code's 5 s default. (The 15 s metrics interval is now owner-confirmed, Q-T1.)
-3. Unannounced and not-yet-verified sessions held 10 minutes, 5 MB at most. (The idle exit is owner question Q-I5.)
+3. Unannounced and not-yet-verified sessions held 10 minutes, 5 MB at most.
 4. Retention: OTel 30 days and 50 MB per repo; rollups 400 days; the invocation log rotates at 5 MB, two files.
 5. A one-use launch token.
 6. Server-rendered pages, client JS for enhancement only, no framework. uPlot only for phase 4 trends (D10).
@@ -1148,38 +1161,14 @@ The owner approved Playwright for keyboard and axe tests, in CI only and never s
 12. Gap timing: a 2-minute settle delay before "missed", and 5 minutes for a `harness` session's first record (§8.2).
 13. Receiver heartbeat every 60 s, dead after 3 minutes (§7.2.1).
 14. The `tool_parameters` parse cap of 16 KB (§7.2.4).
+15. Tokens in context include the last response's output, matching Claude Code's `context_tokens` (§7.3).
+16. Rollup and retention sweep in the async SessionEnd hook are best-effort, caught up by the receiver, the dashboard and `harness report` (§12.1, §13).
+17. `uninstall --global` lists and keeps `receiver/announce/`, `receiver.log` and `uptime.jsonl` unless the person confirms (§19).
+18. The version handoff waits up to 5 s for the old receiver's lock to clear (§7.2.1).
 
 ## 24. Open questions
 
-### 24.1 Owner decisions needed (revision 4)
-
-These came from the revision 3 review. Each one involves a trade-off, a Claude Code touchpoint or more than one reasonable design, so the spec doesn't choose. The recommendation comes first.
-
-- **Q-C2: How should the dashboard keep a cookie leaked to another `127.0.0.1` port from driving actions?** (§11.4; blocks P3.2)
-  - **A (recommended): CSRF secret only in the URL fragment.** `/launch` answers 303 to `/#k=<secret>`. Fragments are never sent to a server, so no page or header contains the secret. The client JS keeps it in `sessionStorage` and sends it as `x-harness-csrf`. The cookie is renamed per launch, `hd_<port>`. Why: a stolen cookie then gives read-only views and no actions, and the page still works without JS for reading.
-  - **B: a random `*.localhost` host per launch** (`http://h<random>.localhost:<port>`), so the cookie's host differs from any other loopback server. Why not first: it needs the browser to resolve `*.localhost` to loopback, which harness hasn't verified for every browser it supports, and it changes the §10.2 Host check.
-  - **C: no cookie; every request carries the fragment secret in a header,** and pages load through client JS. Why not first: it drops the "every link works without JS" rule (§10.3) and the server-rendered pages.
-- **Q-I4: Which `~/.claude/harness` paths get Edit-deny and sandbox `denyWrite` entries in each repo's `.claude/settings.json`?** (§9.1, §14.1, T5) Today only `state/` does. The binary is spawned outside the sandbox and outlives the session, so a planted `bin/receiver.mjs` would run as a persistent process; the hash check refuses it, but only at spawn.
-  - **A (recommended): the telemetry files only** (`bin/`, `receiver.json`, `receiver/`, `state/`). Why: it covers everything the receiver trusts without touching the global-preset files that share the folder.
-  - **B: the whole `~/.claude/harness` folder.** Why not first: it would also block `harness preset install --global` run from Claude Code's sandboxed Bash.
-  - **C: no new entries; rely on the bin hash check and the announcement checks.** Why not first: `receiver.json` and announcements stay writable from sandboxed Bash.
-- **Q-I5: Should the receiver keep its 30-minute idle exit, given that a free port can be squatted?** (§7.2.1, §22)
-  - **A (recommended): no idle exit while global opt-in is on.** Why: the port stays held except before the first start and after a crash, which are the windows doctor already reports. The cost is one idle Node process (RSS budget under 80 MB, §16).
-  - **B: a 24-hour idle exit.** Why not first: it narrows the window to machines left idle a day, but doesn't close it.
-  - **C: keep 30 minutes and document the risk.** Why not first: the window opens on every lunch break.
-- **Q-I7: How does a newer harness version replace an older running receiver?** (§7.2.1)
-  - **A (recommended): `harness dashboard` and `harness telemetry on --level global` send `/shutdown` to an older-version receiver and start the new one; hooks never do.** Why: only a person-run command stops a receiver that other sessions are using, and the dashboard is run often.
-  - **B: the ensure step in every hook does the same handoff.** Why not first: a hook in one session would stop the receiver for all sessions, and whether the exporter retries the gap is unknown (Q4).
-  - **C: only after the old one exits on its own.** Why not first: with Q-I5 A it never exits, so an old allowlist could run forever.
-- **Q-I11: Where should the global manifest (`GLOBAL_STATE`) live when `CLAUDE_CONFIG_DIR` is set?** (§7.2.1) Today it is `statePaths('.claude/harness')`, home-relative (`src/cli/preset.ts:61`), while the telemetry files use `claudeConfigDir()/harness`.
-  - **A (recommended): keep `GLOBAL_STATE` where it is and record the telemetry entries there; telemetry files use `globalHarnessDir()`.** Why: no change to where existing global presets keep their manifest, and no migration.
-  - **B: move `GLOBAL_STATE` onto `globalHarnessDir()`, migrating an existing manifest once.** Why not first: one location for everything, but it changes global-preset behaviour for people who set `CLAUDE_CONFIG_DIR`, and needs a migration.
-- **Q-M13: Should the receiver key ever rotate?** (§7.2.2) Rotating rewrites `OTEL_EXPORTER_OTLP_HEADERS` in `~/.claude/settings.json`, and open sessions keep the old key until restart, so their exports get 403.
-  - **A (recommended): only with an explicit `harness telemetry on --level global --rotate-key`.** Why: the person chooses when open sessions lose OTel until restart.
-  - **B: rotate on every re-run of global `on`.** Why not first: re-running for an upgrade (Q-I7 A) would silently break open sessions' exports.
-  - **C: never rotate.** Why not first: a leaked key stays valid until uninstall.
-
-### 24.2 Live checks still open
+Only questions that still need a live check remain. Every other question is answered or closed; §25, §26 and §28 record where.
 
 - **Q2:** The docs contradict each other on custom skill names. The cost-counter section says some names become "custom" or "third-party"; the `skill.name` bullet says user-defined names are verbatim; `skill_activated` says they are `custom_skill` unless `OTEL_LOG_TOOL_DETAILS=1` is set. Verify live (L2).
 - **Q3:** Mon names the `api_request` token attributes (§2.2). L1 confirms them in recorded payloads, records the event `query_source` values (Mon gives only examples for events), and measures typical payload sizes.
@@ -1259,5 +1248,18 @@ Every finding was checked against Mon, Hooks, Env and the code before changing a
 | M14 whole-file hash | `after` uses `settingsFingerprint` of the guarded view (§9.1). |
 | M15 duplicate deltas | Metric points deduped (§7.2.7). |
 | M16 `app.version` | Stated as never sent, since harness doesn't set `OTEL_METRICS_INCLUDE_VERSION` (§2.2, §7.2.4). |
-| Owner questions | Q-C2, Q-I4, Q-I5, Q-I7, Q-I11 and Q-M13 added (§24.1). |
+| Owner questions | Q-C2, Q-I4, Q-I5, Q-I7, Q-I11 and Q-M13 added; answered in §28. |
 | PR count | 21 to 25. |
+
+## 28. Owner answers to revision 4 (2026-11-16)
+
+The owner chose option A for all six questions. They are decisions now and have left §24.
+
+| Question | Answer | Change |
+|---|---|---|
+| Q-C2 cookie leak to other loopback ports | A: CSRF secret only in the URL fragment, cookie `hd_<port>` | §10.1 delivers the secret in the `/launch` 303 fragment, kept in `sessionStorage` and never in a server response; §10.2, §11.4, §14.1 and §22 updated; tests in §20.1 and §20.2. P3.2 is unblocked. |
+| Q-I4 deny-entry scope | A: telemetry files only | Edit deny and `denyWrite` for `bin/`, `receiver.json`, `receiver/` and `state/` under `globalHarnessDir()`, in each repo's harness block (§9.1, §14.1, T5); P2.9 carries them. Global opt-in runs outside Claude Code's sandboxed Bash. |
+| Q-I5 idle exit | A: none while global opt-in is on | §7.2.1: the receiver exits only on `/shutdown`, a fatal error or a missing `receiver.json`; §14.1, §17, §22, §23 and the tests updated. |
+| Q-I7 version handoff | A: only `harness dashboard` and `harness telemetry on --level global` | §7.2.1 defines both handoffs; hooks never stop a receiver; tests in §20.1. |
+| Q-I11 `GLOBAL_STATE` location | A: stays home-relative, no migration | §7.2.1 states the one exception to `globalHarnessDir()`; T8 updated. |
+| Q-M13 key rotation | A: only with `--rotate-key` | §9 and §19 add `--rotate-key` on `on --level global`, with the 403 notice for open sessions. |

@@ -69,7 +69,7 @@ export function ensureRealDir(root: string, rel: string): string {
 /** Test seam: O_NOFOLLOW, which Node leaves undefined on Windows. */
 export const NOFOLLOW: { flag: number | undefined } = { flag: nodeFs.constants.O_NOFOLLOW };
 
-const refuse = (path: string) => new Error(`${path} is a symlink or not a file; harness does not write through it.`);
+const refuse = (path: string) => new Error(`${path} is a link or not a plain file; harness does not write through it.`);
 
 // Without O_NOFOLLOW: lstat the name, open it, and refuse unless the opened handle is that same plain file.
 // A link swapped in between is opened but closed before any byte is written.
@@ -91,11 +91,13 @@ function openChecked(path: string, flags: number): number {
   return fd;
 }
 
-/** Appends `data` to `path`, creating it if missing, and throws instead of writing through a symlink at the file. */
+/** Appends `data` to `path`, creating it if missing, and throws instead of writing through a symlink or hard link at the file. */
 export function appendNoFollow(path: string, data: string, write: (fd: number, d: string) => void = nodeFs.appendFileSync): void {
   const { O_WRONLY, O_APPEND, O_CREAT } = nodeFs.constants;
   const fd = NOFOLLOW.flag === undefined ? openChecked(path, O_WRONLY | O_APPEND) : nodeFs.openSync(path, O_WRONLY | O_APPEND | O_CREAT | NOFOLLOW.flag);
   try {
+    const st = nodeFs.fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1) throw refuse(path); // a hard link would append into another file the person owns
     write(fd, data);
   } finally {
     nodeFs.closeSync(fd);

@@ -1,4 +1,4 @@
-import fs, { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -135,5 +135,25 @@ describe('without O_NOFOLLOW (as on Windows)', () => {
     }
     expect(readFileSync(w.f, 'utf8')).toBe('mine');
     expect(readFileSync(`${f}.old`, 'utf8')).toBe('old\n');
+  });
+});
+
+// A hard link at a log path would append into any file the person owns on the same volume: refused on both paths.
+describe.each([['native', () => {}], ['without O_NOFOLLOW', () => void (NOFOLLOW.flag = undefined)]])('hard link at a log (%s)', (_, force) => {
+  const saved = NOFOLLOW.flag;
+  beforeEach(force);
+  afterEach(() => void (NOFOLLOW.flag = saved));
+  const hard = (name: string) => { const r = mk(), w = victim(); mkdirSync(join(r, '.harness', dirname(name)), { recursive: true }); linkSync(w.f, join(r, '.harness', name)); return { r, w }; };
+
+  test('event log, timing log and evidence ledger refuse a hard-linked file', () => {
+    const e = hard('logs/events.jsonl');
+    expect(() => appendEvent(e.r, { ts: 't', session: 's', check: 'c', decision: 'd' } as never)).toThrow(/does not write through/);
+    expect(readFileSync(e.w.f, 'utf8')).toBe('mine');
+    const t = hard('logs/timing.jsonl');
+    appendTiming(t.r, { ts: 't', session: 's', event: 'e', outcome: 'o', ms: 1 } as never);
+    expect(readFileSync(t.w.f, 'utf8')).toBe('mine');
+    const l = hard('state/evidence.jsonl');
+    expect(() => appendRow(l.r, { kind: 'blocked' } as never)).toThrow(/does not write through/);
+    expect(readFileSync(l.w.f, 'utf8')).toBe('mine');
   });
 });

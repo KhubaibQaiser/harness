@@ -20,7 +20,10 @@ test.each([
   [{ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' }, { permission_mode: 'default' }, true],
   [{ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '0' }, {}, false],
   [{ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '' }, {}, false],
-  [{ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: 'yes' }, {}, false],
+  [{ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: 'yes' }, {}, true],
+  [{ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: 'TRUE' }, {}, true],
+  [{ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: 'off' }, {}, false],
+  [{ CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: 'False' }, {}, false],
 ])('isUnattended(%o, %o) = %s', (env, input, expected) => {
   expect(isUnattended({ hook_event_name: 'PreToolUse', session_id: 's', cwd: '/r', ...input }, env)).toBe(expected);
 });

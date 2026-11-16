@@ -98,7 +98,7 @@ for (const sub of ['confirm', 'retire']) {
   test(`${sub}: the write gate (unattended, guard off) writes nothing`, async () => {
     const root = await repo();
     const before = readFileSync(join(root, rel(A)), 'utf8');
-    expect(await go(root, [sub, A, '--yes'], { env: { CI: 'true' } })).toEqual({ code: 1, out: 'harness remember does not write in unattended runs (CI, cloud or no-prompt sessions). A person can save it later.' });
+    expect(await go(root, [sub, A, '--yes'], { env: { CI: 'true' } })).toEqual({ code: 1, out: 'harness remember does not write in unattended runs (CI, cloud, no-prompt sessions or CLAUDE_CODE_SUBPROCESS_ENV_SCRUB set). A person can save it later.' });
     expect(events(root).at(-1)).toMatchObject({ decision: 'refused', reason: 'unattended' });
     writeFileSync(join(root, '.harness/config.yaml'), readFileSync(join(root, '.harness/config.yaml'), 'utf8').replace(/guard: true/, 'guard: false'));
     expect((await go(root, [sub, A, '--yes'], { env: { CLAUDECODE: '1' } })).out).toBe("harness remember won't write from inside Claude Code while checks.guard is off, because nobody would be asked. Run it in your own terminal.");

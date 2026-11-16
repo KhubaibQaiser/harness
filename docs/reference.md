@@ -245,7 +245,7 @@ Harness treats a run as unattended when any of these is true:
 - `CI` is `true` or `1`
 - `HARNESS_UNATTENDED` is `1` or `true`
 - `CLAUDE_CODE_REMOTE` is `true`
-- `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is `1` or `true`. A scrubbed `claude -p` launch keeps it in hooks even in `default` mode. When it is the only cause, SessionStart shows (and gives the agent) this note: `harness: this session is treated as unattended because CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 is set; questions become denies and the unattended gates apply. Unset it in your shell profile for interactive work.` The CLI refusals (`harness remember`, `task`, `review`) count it too.
+- `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is set to anything but empty, `0`, `false`, `no` or `off` (case-insensitive; wider than Claude Code may read, so an unexpected spelling errs on unattended). A scrubbed `claude -p` launch keeps it in hooks even in `default` mode. When it is the only cause, SessionStart shows (and gives the agent) this note: `harness: this session is treated as unattended because CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 is set; questions become denies and the unattended gates apply. Unset it in your shell profile for interactive work.` `harness remember` and `task` refuse, `add`/`init`/`update`/`sync` refuse to go over the budget, and `review` treats the run as unattended.
 - Claude Code runs with permission mode `dontAsk` or `bypassPermissions`
 
 In an unattended run, every hook question becomes a deny, because nobody can answer it. The multi-file gate follows `unattended.multi_file_gate`: `block` (the default) denies a second source file, `allow-log` allows it and logs it, and `off` skips the gate. Background subagents are not detected as unattended.

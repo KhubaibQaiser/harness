@@ -3,7 +3,7 @@ import type { HookInput } from '../hooks/types.js';
 // Background subagents are not detected: hook input does not say whether one runs in the background.
 /** A scrubbed `claude -p` launch keeps this in hooks even in default mode (spec 10.5, 15 item 23). */
 export const scrubOn = (env: NodeJS.ProcessEnv): boolean =>
-  env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB === '1' || env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB === 'true';
+  !['', '0', 'false', 'no', 'off'].includes((env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB ?? '').trim().toLowerCase()); // fail closed: any other value counts; narrow after live check L0a
 
 /** The env parts of isUnattended, for CLI commands that have no hook input. */
 export const unattendedEnv = (env: NodeJS.ProcessEnv): boolean =>

@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { guardedView } from '../../src/core/harness-files.js';
+import { guardedView, harnessDenyRules } from '../../src/core/harness-files.js';
+import type { Layer } from '../../src/core/settings-layers.js';
 import { GUARDED_ENV, type Owned, ownedSettings, weakened } from '../../src/core/settings-weaken.js';
 
 // Plan ruling R11 (CC7): a settings change weakens harness only when it removes or loosens what harness owns.
@@ -60,13 +61,38 @@ test.each([
   ['enabled true removed weakens', STRICT, without({ enabled: undefined }), ['sandbox']],
   ['allowUnsandboxedCommands false to true weakens', STRICT, without({ allowUnsandboxedCommands: true }), ['sandbox']],
   ['network.strictAllowlist true to false weakens', STRICT, without({}, { strictAllowlist: false }), ['sandbox']],
-  ['network.allowManagedDomainsOnly true removed weakens', STRICT, without({}, { allowManagedDomainsOnly: undefined }), ['sandbox']],
+  ['allowManagedDomainsOnly removed from a non-managed file does not: Claude Code reads it from managed only', STRICT, without({}, { allowManagedDomainsOnly: undefined }), []],
   ['the whole sandbox removed weakens', STRICT, {}, ['sandbox']],
   ['enabled false to true does not', { sandbox: { enabled: false } }, { sandbox: { enabled: true } }, []],
   ['strictAllowlist added does not', {}, { sandbox: { network: { strictAllowlist: true } } }, []],
   ['allowedDomains changed with the trusted keys kept does not', STRICT, without({}, { allowedDomains: ['example.com'] }), []],
 ])('trusted sandbox key: %s', (_, base, cur, want) => {
   expect(weakened(view(base), view(cur), NONE)).toEqual(want);
+});
+
+// Review H1: the trusted keys are judged on the value that wins across layers (settings docs: managed, --settings, local,
+// project, user), with strictAllowlist honoured from user and managed only, as sandbox-required reads it.
+const stack = (o: Partial<Record<Layer['name'], unknown>>): Layer[] => (['managed', 'local', 'project', 'user'] as const).map((name) => ({ name, json: o[name] ?? null }));
+const USER_STRICT = { sandbox: { enabled: true, allowUnsandboxedCommands: false, network: { strictAllowlist: true } } };
+test.each([
+  ['local enabled false over a user true weakens', {}, { sandbox: { enabled: false } }, { user: USER_STRICT }, 'local', ['sandbox']],
+  ['project allowUnsandboxedCommands true over a user false weakens', {}, { sandbox: { allowUnsandboxedCommands: true } }, { user: USER_STRICT }, 'project', ['sandbox']],
+  ['local enabled false under a managed true does not', {}, { sandbox: { enabled: false } }, { managed: { sandbox: { enabled: true } }, user: USER_STRICT }, 'local', []],
+  ['project strictAllowlist false (a scope Claude Code ignores for it) does not', {}, { sandbox: { network: { strictAllowlist: false } } }, { user: USER_STRICT }, 'project', []],
+  ['user strictAllowlist removed weakens', USER_STRICT, { sandbox: { enabled: true, allowUnsandboxedCommands: false } }, { user: USER_STRICT }, 'user', ['sandbox']],
+  ['local enabled true over a user false does not', {}, { sandbox: { enabled: true } }, { user: { sandbox: { enabled: false } } }, 'local', []],
+] as const)('layered: %s', (_, base, cur, others, key, want) => {
+  const layers = { base: stack({ ...others, [key]: view(base) }), cur: stack({ ...others, [key]: view(cur) }) };
+  expect(weakened(view(base), view(cur), NONE, layers)).toEqual(want);
+});
+
+// Review M1: with what harness owns unknown, every sandbox change counts, as before CC7.
+test.each([
+  ['an unowned sandbox key added', { sandbox: { autoAllowBashIfSandboxed: true, filesystem: FULL.sandbox.filesystem } }],
+  ['a denyWrite path removed', { sandbox: { filesystem: { denyWrite: [] } } }],
+])('unknown ownership: %s weakens', (_, cur) => {
+  const unknown: Owned = { sandbox: {}, denyWrite: [], deny: null, hookGroups: [] };
+  expect(weakened(view({ sandbox: { filesystem: FULL.sandbox.filesystem } }), view(cur), unknown)).toEqual(['sandbox']);
 });
 
 test('no baseline: a file with every harness entry passes', () => {
@@ -95,6 +121,14 @@ test('ownedSettings reads the project file\'s blocks from the manifest; created 
   ].map((b) => JSON.stringify(b));
   writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ files: [{ rel: '.claude/settings.json', blocks }] }));
   expect(ownedSettings(root)).toEqual(OWNED);
+});
+
+test('L1: a malformed manifest block makes ownership unknown for the baseline and ConfigChange alike', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-sw-'));
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ files: [{ rel: '.claude/settings.json', blocks: [JSON.stringify({ deny: FORCE }), '{bad'] }] }));
+  expect(harnessDenyRules(root)).toBeNull();
+  expect(ownedSettings(root).deny).toBeNull();
 });
 
 test('ownedSettings with no manifest knows nothing: deny is null', () => {

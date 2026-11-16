@@ -34,12 +34,15 @@ function hooksFiles(root: string, rel = '.harness/hooks'): string[] {
   return entries.flatMap((e) => (e.isDirectory() ? hooksFiles(root, `${rel}/${e.name}`) : e.isFile() ? [`${rel}/${e.name}`] : []));
 }
 
-/** The manifest's blocks for `.claude/settings.json`; null when unknown (no manifest, no entry, not JSON). */
-export function settingsBlocks(root: string): string[] | null {
+/**
+ * The manifest's blocks for `.claude/settings.json`, parsed; null when unknown (no manifest, no entry, a block that isn't
+ * JSON). One parser for the session baseline and ConfigChange, so both read a damaged manifest the same way.
+ */
+export function settingsBlocks(root: string): unknown[] | null {
   try {
     const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
     const f = m.files.find((x: { rel: string }) => x.rel === '.claude/settings.json');
-    return f ? (f.blocks ?? []) : null;
+    return f ? (f.blocks ?? []).map((b: string) => JSON.parse(b)) : null;
   } catch {
     return null;
   }
@@ -47,12 +50,8 @@ export function settingsBlocks(root: string): string[] | null {
 
 /** The deny rules harness installed, from the manifest's settings blocks; null when unknown (then every rule counts). */
 export function harnessDenyRules(root: string): Set<string> | null {
-  try {
-    const blocks = settingsBlocks(root);
-    return blocks && new Set(blocks.map((b) => JSON.parse(b)?.deny).filter((d: unknown) => typeof d === 'string'));
-  } catch {
-    return null;
-  }
+  const blocks = settingsBlocks(root);
+  return blocks && new Set(blocks.map((b) => (b as { deny?: unknown } | null)?.deny).filter((d): d is string => typeof d === 'string'));
 }
 
 export type GuardedPart = 'hooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'denyWrite' | 'env' | 'unreadable';

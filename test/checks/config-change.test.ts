@@ -319,3 +319,68 @@ test('the pending notice names only the weakened parts and says the whole file c
   expect(parsed(await change(r, 'local_settings'))?.decision).toBe('block');
   expect(readState(r.root, 's').pendingNotice).toBe('Harness blocked a change to `.claude/settings.local.json` (env): the whole file change was held for this session, not only those parts. The file is still changed on disk, so the next session loads it: review it first.');
 });
+
+// Review H1 with a known manifest: the effective value counts, and changes already applied this session count too.
+test('H1: two allowed removals that together turn the sandbox off: the second is blocked', async () => {
+  const r = repo();
+  write(join(r.home, '.claude/settings.json'), {});
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { enabled: true } });
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { enabled: true } });
+  await prompt(r);
+  write(join(r.root, '.claude/settings.json'), SETTINGS); // local still turns it on: applies
+  expect(await change(r, 'project_settings')).toBe('');
+  write(join(r.root, '.claude/settings.local.json'), {}); // now nothing turns it on
+  expect(parsed(await change(r, 'local_settings'))?.reason).toContain('`.claude/settings.local.json` (sandbox)');
+});
+
+test('H1: a local allowUnsandboxedCommands true over the project file\'s false is blocked', async () => {
+  const r = repo();
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { enabled: true, allowUnsandboxedCommands: false } });
+  await prompt(r);
+  write(join(r.root, '.claude/settings.local.json'), { sandbox: { allowUnsandboxedCommands: true } });
+  expect(parsed(await change(r, 'local_settings'))?.reason).toContain('(sandbox)');
+});
+
+// Review M1: what harness owns comes from the session start; a manifest that breaks or loses records mid-session blocks.
+const DW = './.harness/hooks';
+const owning = () => {
+  const r = repo([{ set: ['sandbox', 'autoAllowBashIfSandboxed'], value: false }, { denyWrite: DW }]);
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { autoAllowBashIfSandboxed: false, filesystem: { denyWrite: [DW] } } });
+  return r;
+};
+const manifest = (r: Repo, blocks: object[]) =>
+  write(join(r.root, '.harness/manifest.json'), { version: '1', createdAt: 'x', files: [{ rel: '.claude/settings.json', kind: 'create', hash: 'x', blocks: blocks.map((b) => JSON.stringify(b)) }] });
+
+test('M1: a manifest made unreadable mid-session blocks, even an MCP token change', async () => {
+  const r = owning();
+  await prompt(r);
+  write(join(r.root, '.harness/manifest.json'), '{');
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { autoAllowBashIfSandboxed: false, filesystem: { denyWrite: [DW] } }, env: { MCP_TOKEN: 'x' } });
+  expect(parsed(await change(r, 'project_settings'))?.reason).toContain('harness manifest unreadable or missing records');
+});
+
+test('M1: a spoofed manifest that drops harness records does not unguard them', async () => {
+  const r = owning();
+  await prompt(r);
+  manifest(r, [{ deny: FORCE }]); // the sandbox and denyWrite records are gone
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { autoAllowBashIfSandboxed: true, filesystem: { denyWrite: [] } } });
+  const reason = parsed(await change(r, 'project_settings'))?.reason;
+  expect(reason).toContain('sandbox, denyWrite');
+  expect(reason).toContain('harness manifest unreadable or missing records');
+});
+
+test('M1: a manifest unreadable at the session start: every sandbox change blocks, as before CC7', async () => {
+  const r = owning();
+  write(join(r.root, '.harness/manifest.json'), '{');
+  await prompt(r);
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { autoAllowBashIfSandboxed: false, filesystem: { denyWrite: [DW] }, network: { allowedDomains: ['x.dev'] } } });
+  expect(parsed(await change(r, 'project_settings'))?.reason).toContain('(sandbox)');
+});
+
+test('M1: a manifest that only gains records (a harness update) does not block an allowed change', async () => {
+  const r = owning();
+  await prompt(r);
+  manifest(r, [{ deny: FORCE }, { set: ['sandbox', 'autoAllowBashIfSandboxed'], value: false }, { denyWrite: DW }, { deny: 'Bash(x)' }]);
+  write(join(r.root, '.claude/settings.json'), { ...SETTINGS, sandbox: { autoAllowBashIfSandboxed: false, filesystem: { denyWrite: [DW] } }, env: { MCP_TOKEN: 'x' } });
+  expect(await change(r, 'project_settings')).toBe('');
+});

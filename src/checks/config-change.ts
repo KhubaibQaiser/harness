@@ -1,8 +1,10 @@
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { appendEvent } from '../core/events.js';
-import { GUARDED, type GuardedView, guardedView, readGuarded, readRepoSnapshot, settingsFingerprint } from '../core/harness-files.js';
-import { ownedSettings, weakened } from '../core/settings-weaken.js';
+import { GUARDED, type GuardedView, guardedView, readGuarded, readRepoSnapshot, settingsBlocks, settingsFingerprint } from '../core/harness-files.js';
+import { type Layer, readManagedLayers } from '../core/settings-layers.js';
+import { ownedFrom, weakened } from '../core/settings-weaken.js';
 import type { Check } from '../hooks/dispatch.js';
 
 // Source values from the hooks reference (ConfigChange input). policy_settings can't be blocked, and skills aren't guarded.
@@ -16,6 +18,12 @@ const real = (p: string, home: string): string => {
   } catch {
     return abs;
   }
+};
+
+// Every settings layer, highest precedence first, as sandbox-required reads them: managed from disk, then the views given.
+const layers = (managed: string, before: Record<string, GuardedView>, after: Record<string, GuardedView>) => {
+  const stack = (v: Record<string, GuardedView>): Layer[] => [...readManagedLayers(managed), ...(['local', 'project', 'user'] as const).map((name) => ({ name, json: v[name] ?? null }))];
+  return { base: stack(before), cur: stack(after) };
 };
 
 // Spec 3.3 (D6, C5), narrowed by plan ruling R11 (CC7): a mid-session change that weakens harness (settings-weaken.ts) is
@@ -32,7 +40,13 @@ export const configChange: Check = {
     const user = GUARDED.user(ctx.home, ctx.env);
     const rel = key !== 'user' ? GUARDED[key] : user === join(ctx.home, '.claude', 'settings.json') ? '~/.claude/settings.json' : user;
     const base = ctx.state?.guardedBase;
-    const owned = ownedSettings(ctx.root);
+    // With a baseline, what harness owns is what the manifest said at its start, plus records added since; a manifest
+    // that is now unreadable or lost a record blocks, as before CC7 (review M1). A state without the snapshot uses live.
+    const live = settingsBlocks(ctx.root);
+    const snap = base && ctx.state?.guardedOwned !== undefined ? ctx.state.guardedOwned : live;
+    const has = (list: unknown[] | null, b: unknown) => !!list?.some((x) => isDeepStrictEqual(x, b));
+    const lost = !!snap && snap.some((b) => !has(live, b));
+    const owned = ownedFrom(snap && [...snap, ...(live ?? []).filter((b) => !has(snap, b))]);
     const deny = owned.deny;
     let text: string | null = null;
     let cur: GuardedView = null;
@@ -46,10 +60,13 @@ export const configChange: Check = {
     const elsewhere = reported !== undefined && real(reported, ctx.home) !== real(user, ctx.home);
     const parts = elsewhere
       ? [`not the watched \`${rel}\`: launch with HARNESS_CLAUDE_CONFIG_DIR set`]
-      : base ? weakened(base[key] ?? null, cur, owned)
+      : base ? [...weakened(base[key] ?? null, cur, owned, layers(ctx.managed, base, { ...base, ...ctx.state?.guardedApplied, [key]: cur })), ...(lost ? ['harness manifest unreadable or missing records'] : [])]
       // No baseline: the project file against the manifest's records, the others against an empty file.
       : deny ? weakened(key === 'project' ? undefined : guardedView('{}', deny), cur, owned) : ['no session baseline'];
-    if (!parts.length) return { kind: 'allow' };
+    if (!parts.length) {
+      if (base) ctx.save({ ...ctx.state, guardedApplied: { ...ctx.state?.guardedApplied, [key]: cur } }); // Claude Code applies it
+      return { kind: 'allow' };
+    }
     if (base && rel === GUARDED.project && cur) {
       // A change the harness CLI recorded (init, update, uninstall) is allowed, and becomes this file's baseline. Only the
       // project file: the CLI never writes the others, so a record of them would cover a script's earlier change.
@@ -58,7 +75,8 @@ export const configChange: Check = {
       const cli = readRepoSnapshot(ctx.root).cli;
       const settings = cli?.id && cli.id !== ctx.state?.guardedCli ? cli.settings : undefined;
       if (settings && rel in settings && settings[rel] === (text === null ? null : settingsFingerprint(text, deny))) {
-        ctx.save({ ...ctx.state, guardedBase: { ...base, [key]: cur }, guardedCli: cli!.id }); // the record is used up once accepted
+        // The record is used up once accepted; the manifest the CLI left is now what harness owns.
+        ctx.save({ ...ctx.state, guardedBase: { ...base, [key]: cur }, guardedCli: cli!.id, guardedOwned: live, guardedApplied: { ...ctx.state?.guardedApplied, [key]: cur } });
         return { kind: 'allow' };
       }
     }

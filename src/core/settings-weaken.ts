@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { type GuardedPart, type GuardedView, settingsBlocks } from './harness-files.js';
+import { effective, type Layer } from './settings-layers.js';
 
 // Plan ruling R11 (CC7): which settings changes weaken harness. Everything else in a settings file is the person's and
 // applies live, as Claude Code intends. ConfigChange uses it now; the settings-edit check (CC6) will too.
@@ -15,33 +16,39 @@ const guardedKey = (k: string): boolean => {
   return GUARDED_ENV.keys.includes(u) || GUARDED_ENV.prefixes.some((p) => u.startsWith(p));
 };
 
-// Owner answer OQ1 = A (2026-11-16): sandbox-required judges the session-start files, so a loosening of the keys it relies
-// on stays held in any file, whoever wrote it. Each key with its safe value; turning one on applies live.
-const TRUSTED: [string[], unknown][] = [[['enabled'], true], [['allowUnsandboxedCommands'], false], [['network', 'strictAllowlist'], true], [['network', 'allowManagedDomainsOnly'], true]];
+// Owner answer OQ1 = A (2026-11-16): sandbox-required judges the session-start files, so a change that makes the value
+// Claude Code uses for a key it relies on looser is held, in any file, whoever wrote it. Each key with its safe value and
+// the layers Claude Code honours it from, read the way sandbox-required reads it; turning one on applies live.
+const ANY: Layer['name'][] = ['managed', 'local', 'project', 'user'];
+const TRUSTED: [string[], unknown, Layer['name'][]][] = [
+  [['enabled'], true, ANY],
+  [['allowUnsandboxedCommands'], false, ANY],
+  [['network', 'strictAllowlist'], true, ['managed', 'user']], // any honoured true wins
+  [['network', 'allowManagedDomainsOnly'], true, ['managed']],
+];
+// Precedence (settings docs): managed, then --settings (a hook can't see it), local, project, user: the first that sets it.
+const winning = (layers: Layer[], path: string[], from: Layer['name'][]): unknown =>
+  from === ANY ? effective(layers, ['sandbox', ...path]) : layers.some((l) => from.includes(l.name) && effective([l], ['sandbox', ...path]) === true) || undefined;
 
-/** What harness wrote to `.claude/settings.json`, from the manifest. `deny` is null when the manifest is unknown. */
+/** What harness wrote to `.claude/settings.json`, from the manifest. `deny` is null when it is unknown. */
 export type Owned = { sandbox: Record<string, unknown>; denyWrite: string[]; deny: Set<string> | null; hookGroups: string[] };
 
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-export function ownedSettings(root: string): Owned {
-  const blocks = settingsBlocks(root);
+/** Owned from parsed manifest blocks (`settingsBlocks`); null blocks mean unknown. */
+export function ownedFrom(blocks: unknown[] | null): Owned {
   const owned: Owned = { sandbox: {}, denyWrite: [], deny: blocks ? new Set() : null, hookGroups: [] };
-  for (const raw of blocks ?? []) {
-    let b: any;
-    try {
-      b = JSON.parse(raw);
-    } catch {
-      continue;
-    }
+  for (const b of (blocks ?? []) as any[]) {
     if (typeof b?.deny === 'string') owned.deny!.add(b.deny);
     else if (typeof b?.denyWrite === 'string') owned.denyWrite.push(b.denyWrite);
-    else if (typeof b?.event === 'string' && isObj(b.group)) owned.hookGroups.push(raw);
+    else if (typeof b?.event === 'string' && isObj(b.group)) owned.hookGroups.push(JSON.stringify(b));
     // A created parent (`value: {}`) is not a value harness relies on.
     else if (Array.isArray(b?.set) && b.set.length === 2 && b.set[0] === 'sandbox' && !isObj(b.value)) owned.sandbox[b.set[1]] = b.value;
   }
   return owned;
 }
+
+export const ownedSettings = (root: string): Owned => ownedFrom(settingsBlocks(root));
 
 // No baseline: the project file as harness wrote it.
 function fromManifest(o: Owned): GuardedView {
@@ -56,14 +63,16 @@ function fromManifest(o: Owned): GuardedView {
 /**
  * The parts of harness that `cur` weakens against `base`: a harness hook group changed or gone, a harness deny rule gone,
  * disableAllHooks turned on, an owned sandbox key moved off harness's value, a TRUSTED sandbox key loosened, an owned
- * denyWrite path gone, or a guarded env key added, removed or changed. `base === undefined` compares against the manifest's records.
+ * denyWrite path gone, or a guarded env key added, removed or changed. `base === undefined` compares against the manifest's
+ * records. `layers` (every settings layer before and after) judges the TRUSTED keys on the value that wins; without it,
+ * on this file alone. With ownership unknown (`owned.deny === null`), every sandbox change counts.
  */
-export function weakened(base: GuardedView | undefined, cur: GuardedView, owned: Owned): GuardedPart[] {
+export function weakened(base: GuardedView | undefined, cur: GuardedView, owned: Owned, layers?: { base: Layer[]; cur: Layer[] }): GuardedPart[] {
   const b = base === undefined ? fromManifest(owned) : base;
   if (!b || !cur) return ['unreadable'];
   const groups = (v: NonNullable<GuardedView>) => v.hooks.flatMap(([event, gs]) => gs.map((group) => ({ event, group })));
   const box = (v: NonNullable<GuardedView>) => (isObj(v.sandbox) ? v.sandbox : {});
-  const at = (v: NonNullable<GuardedView>, path: string[]): unknown => path.reduce((o: unknown, k) => (isObj(o) ? o[k] : undefined), box(v));
+  const l = layers ?? { base: [{ name: 'user', json: b }], cur: [{ name: 'user', json: cur }] };
   const denyWrite = (v: NonNullable<GuardedView>): unknown[] => (Array.isArray(box(v).filesystem?.denyWrite) ? box(v).filesystem.denyWrite : []);
   const env = (v: NonNullable<GuardedView>) => Object.fromEntries(Object.entries(isObj(v.env) ? v.env : {}).filter(([k]) => guardedKey(k)));
   const [eb, ec] = [env(b), env(cur)];
@@ -72,8 +81,9 @@ export function weakened(base: GuardedView | undefined, cur: GuardedView, owned:
   if (b.deny.some((r) => !cur.deny.includes(r))) parts.push('deny');
   if (cur.disableAllHooks && !b.disableAllHooks) parts.push('disableAllHooks');
   if (
+    (owned.deny === null && !isDeepStrictEqual(b.sandbox, cur.sandbox)) ||
     Object.entries(owned.sandbox).some(([k, v]) => !isDeepStrictEqual(box(b)[k], box(cur)[k]) && !isDeepStrictEqual(box(cur)[k], v)) ||
-    TRUSTED.some(([path, safe]) => at(b, path) === safe && at(cur, path) !== safe)
+    TRUSTED.some(([path, safe, from]) => winning(l.base, path, from) === safe && winning(l.cur, path, from) !== safe)
   ) parts.push('sandbox');
   if (owned.denyWrite.some((p) => denyWrite(b).includes(p) && !denyWrite(cur).includes(p))) parts.push('denyWrite');
   if ([...new Set([...Object.keys(eb), ...Object.keys(ec)])].some((k) => eb[k] !== ec[k])) parts.push('env');

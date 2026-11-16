@@ -120,6 +120,7 @@ Steps, all fail-closed:
    - Checks on its findings: code checks verify each finding's quote, as M2a's `verify.ts` does, and a judge then drops findings without evidence.
    - Outcome: a surviving critical finding means not done. A review that can't run (no key, timeout, malformed output) means not done, never skipped.
 5. **Verdict.** It writes `.harness/verdicts/<commit>.json`, holding the commit, tree, contract hash, each criterion with its evidence (command, exit code, time, reused or re-run), the review findings, the person items, and the outcome.
+   - Verify records the verdict's hash in protected `.harness/state`, and only a verdict whose hash matches is trusted. The agent's sandbox can't write there, so only a verify the person runs outside it records one (amended in Task 11 fix round 1; the PostToolUse hook records nothing).
    - Exit codes: 0 is done, 1 is not done, 3 is blocked, 2 is a usage error.
    - The verdict is valid only for that commit and tree.
    - In CI it is also uploaded as a build artifact, with a job summary.

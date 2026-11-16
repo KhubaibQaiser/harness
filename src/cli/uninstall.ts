@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -193,6 +193,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   if (deleteHarness) {
     // .harness/presets/ and .harness/tasks/ (approved task contracts) are the person's own, not something harness wrote: they stay.
     const own = ['presets', 'tasks'].map((d) => join(root, '.harness', d)).filter((d) => existsSync(d));
+    if (existsSync(join(root, '.harness')) && lstatSync(join(root, '.harness')).isSymbolicLink()) return out('`.harness` is a symlink; harness does not delete through it. Nothing under it was removed.'), 1;
     pruneExcept(join(root, '.harness'), [...kept, ...imported].map((k) => join(root, k)).concat(own));
     const edited = [...kept, ...imported].some((k) => k.startsWith('.harness/'));
     const stays = [...(edited ? ['the kept files'] : []), ...own.map((d) => `\`.harness/${basename(d)}/\``)];

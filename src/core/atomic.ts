@@ -48,3 +48,20 @@ export function writeAtomic(path: string, data: string, fs: WriteFs = nodeFs): v
     throw e;
   }
 }
+
+/** Makes `rel` (e.g. `.harness/logs`) under `root` if missing, and throws when it or any folder above it inside `root` is a symlink: a planted link must never send a harness write or delete onto someone else's files. Returns the absolute path. */
+export function ensureRealDir(root: string, rel: string): string {
+  let p = root;
+  for (const part of rel.split('/').filter(Boolean)) {
+    p = `${p}/${part}`;
+    let st: nodeFs.Stats | undefined;
+    try { st = nodeFs.lstatSync(p); } catch { /* missing: made below */ }
+    if (st?.isSymbolicLink() || (st && !st.isDirectory())) throw new Error(`${p} is a symlink or not a folder; harness does not write through it.`);
+    if (!st) nodeFs.mkdirSync(p);
+  }
+  return p;
+}
+
+/** Flags for an append that fails (ELOOP) instead of following a symlink at the file; O_NOFOLLOW is 0 where Node lacks it. */
+// Node takes the numeric flags; its types only list the string forms.
+export const APPEND_NOFOLLOW = (nodeFs.constants.O_WRONLY | nodeFs.constants.O_APPEND | nodeFs.constants.O_CREAT | (nodeFs.constants.O_NOFOLLOW ?? 0)) as unknown as string;

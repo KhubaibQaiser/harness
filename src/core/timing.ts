@@ -1,4 +1,5 @@
 // Timing log: one line per hook call, no paths, no command text. Best effort; it never changes a hook's decision.
+import { ensureRealDir, APPEND_NOFOLLOW } from './atomic.js';
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -24,18 +25,14 @@ export function appendTiming(root: string, t: TimingLine, fs: TimingFs = realFs)
   try {
     const { ts, session, event, tool, step, outcome, ms } = t; // whitelist: nothing else can reach the file
     const text = JSON.stringify({ ts, session, event, ...(tool ? { tool } : {}), ...(step ? { step } : {}), outcome, ms }) + '\n';
+    ensureRealDir(root, '.harness/logs'); // throws on a planted link: nothing is written through it
     const file = join(root, TIMING_REL);
     try {
       if (fs.statSync(file).size > TIMING_MAX_BYTES) fs.renameSync(file, join(root, OLD_REL));
     } catch {
       // no file yet, or another process rotated first: append to whatever is current
     }
-    try {
-      fs.appendFileSync(file, text);
-    } catch {
-      fs.mkdirSync(join(root, '.harness/logs'), { recursive: true });
-      fs.appendFileSync(file, text);
-    }
+    fs.appendFileSync(file, text, { flag: APPEND_NOFOLLOW });
   } catch (e) {
     process.stderr.write(`harness: timing log failed: ${e instanceof Error ? e.message : String(e)}\n`);
   }

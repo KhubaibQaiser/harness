@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { writeAtomic } from '../core/atomic.js';
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { ensureRealDir, writeAtomic } from '../core/atomic.js';
 import { basename, dirname, join, resolve } from 'node:path';
 import { packageDir } from '../core/package-dir.js';
 import type { CliEnv } from './index.js';
@@ -37,7 +37,7 @@ function recorded(root: string): string[] {
   }
 }
 function record(root: string, names: string[]): void {
-  mkdirSync(dirname(recordFile(root)), { recursive: true });
+  ensureRealDir(root, '.harness/state');
   writeAtomic(recordFile(root), JSON.stringify(names));
 }
 const linked = (p: string) => existsSync(p) && lstatSync(p).isSymbolicLink();
@@ -47,8 +47,9 @@ export function workdir(args: string[], { root, out }: CliEnv): number {
   const tmp = join(root, '.harness', 'tmp');
   if (linked(dirname(tmp)) || linked(tmp)) return out('`.harness` or `.harness/tmp` is a symlink; harness does not write through it.'), 2;
   if (!args.length) {
-    mkdirSync(tmp, { recursive: true });
-    if (!existsSync(join(tmp, '.gitignore'))) writeFileSync(join(tmp, '.gitignore'), '*\n');
+    ensureRealDir(root, '.harness/tmp');
+    const ig = join(tmp, '.gitignore');
+    try { lstatSync(ig); } catch { writeAtomic(ig, '*\n'); } // lstat: a planted link there counts as present and is never written through
     const dir = mkdtempSync(join(tmp, 'w-'));
     record(root, [...recorded(root), basename(dir)]);
     return out(dir), 0;

@@ -1,4 +1,5 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { ensureRealDir } from '../core/atomic.js';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildEvalPlugin, EVAL_MODEL, type CaseInfo, type EvalKind } from '../eval/build.js';
@@ -80,7 +81,8 @@ function runOne(b: Build, o: RunOpts, exec: Exec, out: (s: string) => void): { c
   if (r.missing) return 'missing';
   if (!existsSync(join(b.out, 'result.json'))) return out(`${b.kind}: no result (exit ${r.status}). ${r.stderr ?? ''}`.trim()), { code: EXIT_FAIL, summary: null };
   // Time in the date, and a counter if even that exists: a rerun never overwrites an earlier result.
-  const taken = (n: string) => existsSync(join(o.root, EVALS_DIR, n));
+  const evals = ensureRealDir(o.root, EVALS_DIR); // refuses a planted link
+  const taken = (n: string) => { try { lstatSync(join(evals, n)); return true; } catch { return false; } }; // a link counts as taken
   let date = o.date, i = 1;
   while (taken(`${date}-${folderSafe(o.model)}-${b.kind}`)) date = `${o.date}-${++i}`;
   const name = `${date}-${folderSafe(o.model)}-${b.kind}`;

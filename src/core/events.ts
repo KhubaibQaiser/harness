@@ -1,3 +1,4 @@
+import { ensureRealDir, APPEND_NOFOLLOW } from './atomic.js';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -17,8 +18,8 @@ export interface HarnessEvent {
 const file = (root: string) => join(root, '.harness/logs/events.jsonl');
 
 export function appendEvent(root: string, e: HarnessEvent): void {
-  mkdirSync(join(root, '.harness/logs'), { recursive: true });
-  appendFileSync(file(root), JSON.stringify(e) + '\n');
+  ensureRealDir(root, '.harness/logs');
+  appendFileSync(file(root), JSON.stringify(e) + '\n', { flag: APPEND_NOFOLLOW });
 }
 
 export function readEvents(root: string): HarnessEvent[] {

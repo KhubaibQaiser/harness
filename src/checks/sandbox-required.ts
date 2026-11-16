@@ -1,5 +1,5 @@
 import type { SandboxMode } from '../core/config.js';
-import { appendEvent } from '../core/events.js';
+import { appendEventSafe } from '../core/events.js';
 import { type Layer, effective, readManagedLayers } from '../core/settings-layers.js';
 import { isShell } from '../hooks/edit-target.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
@@ -70,7 +70,7 @@ export const sandboxRequired: Check = {
     if (verdict === 'deny') return { kind: 'deny', reason: MSG, check: 'sandbox-required' };
     if (verdict === 'no-strict') return { kind: 'deny', reason: STRICT_MSG, check: 'sandbox-required' };
     if (verdict === 'unavailable' && !ctx.state?.sandboxUnavailableLogged) {
-      appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'sandbox-required', decision: 'sandbox-unavailable' });
+      appendEventSafe(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'sandbox-required', decision: 'sandbox-unavailable' });
       ctx.save({ ...ctx.state, sandboxUnavailableLogged: true });
     }
     return { kind: 'allow' };

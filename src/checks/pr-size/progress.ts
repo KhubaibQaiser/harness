@@ -1,6 +1,6 @@
 // In-progress size warnings (spec §14): after a counted edit, and once at Stop, measure the working tree and announce each threshold crossing once.
 import { esc, type HarnessConfig, isObj } from '../../core/config.js';
-import { appendEvent } from '../../core/events.js';
+import { appendEventSafe } from '../../core/events.js';
 import { matches, toRepoPath } from '../../core/paths.js';
 import type { Ctx } from '../../hooks/dispatch.js';
 import { editTarget, isEdit } from '../../hooks/edit-target.js';
@@ -181,7 +181,7 @@ function announce(ctx: Ctx, branch: string, s: Size): Decision {
     writeProgress(ctx.root, branch, { base: s.base, fired, lines: s.lines, files: s.files, ts: new Date().toISOString(), ...(prev?.raise ? { raise: prev.raise } : {}), ...(pending ? { pending } : {}) });
   }
   if (!mark) return ALLOW;
-  appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-warned', reason: `${esc(branch)} ${mark} ${s.lines}/${s.files}` });
+  appendEventSafe(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-warned', reason: `${esc(branch)} ${mark} ${s.lines}/${s.files}` });
   const c = copy({ branch, base: s.base, lines: s.lines, files: s.files, lim }, mark);
   if (ctx.unattended) return stop ? ALLOW : { kind: 'context', check: 'pr-size', text: c.unattended };
   return stop ? { kind: 'context', check: 'pr-size', text: c.person } : { kind: 'context', check: 'pr-size', text: c.agent, notice: c.person };

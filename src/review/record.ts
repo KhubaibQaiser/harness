@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PrFinding } from '../ai/pr-review.js';
-import { writeAtomic } from '../core/atomic.js';
+import { ensureRealDir, writeAtomic } from '../core/atomic.js';
 
 export interface Payload { body: string; comments: { path: string; line: number; side: 'RIGHT' | 'LEFT'; body: string }[] }
 export interface Posted { review_id: number; at: string; mode: 'new' | 'add' | 'discard' }
@@ -42,10 +42,10 @@ export function writeRecord(root: string, rec: ReviewRecord): void {
   // A changed earlier record is untrusted, so its history is not carried over (readRecord's message says to finish again).
   if (!('error' in old)) rec = { ...rec, history: [...old.history, ...(old.posted ? [old.posted] : [])] };
   const text = JSON.stringify(rec, null, 2) + '\n';
-  mkdirSync(join(root, '.harness', 'reviews'), { recursive: true });
+  ensureRealDir(root, '.harness/reviews');
   writeAtomic(join(root, ...rel(rec.pr).split('/')), text);
   const h = hashes(root);
   h[String(rec.pr)] = sha256(text);
-  mkdirSync(join(root, '.harness', 'state'), { recursive: true });
+  ensureRealDir(root, '.harness/state');
   writeAtomic(join(root, ...HASHES.split('/')), JSON.stringify(h, null, 2) + '\n');
 }

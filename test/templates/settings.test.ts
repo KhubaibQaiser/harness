@@ -10,8 +10,8 @@ test('hooks: events, matchers, exec form, timeouts and onFailure (spec section 2
   expect(s.hooks.PreToolUse[0].matcher).toBe('Bash|PowerShell|Monitor|Read|Grep|Edit|Write|MultiEdit|NotebookEdit|mcp__.*');
   expect(s.hooks.PostToolUse[0].matcher).toBe('Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit');
   expect(s.hooks.PostToolUseFailure[0].matcher).toBe('Bash|PowerShell'); // the evidence ledger's failed runs
-  expect(s.hooks.SessionStart[0].matcher).toBe('compact');
-  for (const e of ['UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd']) expect(s.hooks[e][0]).not.toHaveProperty('matcher');
+  expect(s.hooks.SessionStart[0]).not.toHaveProperty('matcher'); // runs at every session start: the scrub note (P0b R5)
+  for (const e of ['UserPromptSubmit', 'ConfigChange', 'Stop', 'SessionEnd', 'SessionStart']) expect(s.hooks[e][0]).not.toHaveProperty('matcher');
   for (const [event, groups] of Object.entries<any[]>(s.hooks)) {
     expect(groups).toHaveLength(event === 'PreToolUse' || event === 'PostToolUse' ? 2 : 1);
     expect(groups[0].hooks).toEqual([
@@ -38,9 +38,9 @@ test('permissions.deny is the spec section 2 list, in order', () => {
   expect(s.permissions.deny).toEqual([
     'Read(./.env)', 'Read(./.env.*)', 'Read(./**/.env)', 'Read(./**/.env.*)',
     'Edit(./.harness/hooks/**)', 'Edit(./.harness/state/**)', 'Edit(./.harness/logs/**)', 'Edit(./.harness/backup/**)',
-    'Edit(./.harness/config.yaml)', 'Edit(./.harness/manifest.json)', 'Edit(./.harness/reviews/**)', 'Edit(./.harness/tasks/**)',
+    'Edit(./.harness/config.yaml)', 'Edit(./.harness/manifest.json)', 'Edit(./.harness/reviews/**)', 'Edit(./.harness/tasks/**)', 'Edit(./.harness/verdicts/**)',
     'Edit(./.claude/settings.json)', 'Edit(./.claude/settings.local.json)',
     ...push('Bash'), ...push('PowerShell'),
   ]);
-  expect(s.permissions.deny).toHaveLength(36);
+  expect(s.permissions.deny).toHaveLength(37);
 });

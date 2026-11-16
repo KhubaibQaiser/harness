@@ -1,6 +1,6 @@
 // Done-contract costs, measured on a real temp repo. Runs in the `perf` project (no file parallelism). No retries: a slow result is real.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, onTestFinished, test } from 'vitest';
@@ -8,9 +8,7 @@ import { type Contract, contractHash, setActiveTask, writeContract } from '../..
 import { readLedger } from '../../src/done/ledger.js';
 import { treeHash } from '../../src/done/tree.js';
 import { commit, git } from '../review/repo.js';
-import { CEILING_MS, COUNTED_EDIT_OVERHEAD_MS, DISPATCH, measure, OVERHEAD_MS, report as reportOverhead } from './overhead.js';
-
-const report = (name: string, ms: number) => writeSync(2, `[perf] ${name} ${process.platform}: ${ms.toFixed(1)} ms\n`);
+import { CEILING_MS, COUNTED_EDIT_OVERHEAD_MS, DISPATCH, measure, medianOf, OVERHEAD_MS, report as reportOverhead } from './overhead.js';
 
 const PERF_CONTRACT: Contract = {
   id: 'perf', title: 'Perf', base: 'a'.repeat(40), approved_by: 'person', approved_at: '2026-11-14T00:00:00Z', closed_at: null,
@@ -35,14 +33,11 @@ function repo500(done = false): string {
 const bashPost = (root: string, command: string) =>
   JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'lat', cwd: root, tool_name: 'Bash', tool_input: { command }, tool_response: { stdout: '', stderr: '', interrupted: false, isImage: false } });
 
+// One sample took macOS 60-150 ms and Windows 268-602 ms (14-16 Nov 2026), against 1000; the failures on 14-15 Nov were
+// vitest's old 5 s test timeout, not this ceiling. The median of 5 keeps one slow git spawn from deciding it.
 test('tree hash of a 500-file repo stays under the ceiling', () => {
   const root = repo500();
-  treeHash(root); // warm the file-system cache
-  const t = performance.now();
-  treeHash(root);
-  const ms = performance.now() - t;
-  report('tree hash (500 files)', ms);
-  expect(ms).toBeLessThan(CEILING_MS);
+  expect(medianOf('tree hash (500 files)', () => treeHash(root)).ms).toBeLessThan(CEILING_MS);
 });
 
 test('a non-check Bash PostToolUse with an active contract stays within the plain hook overhead', () => {

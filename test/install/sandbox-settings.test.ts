@@ -83,3 +83,17 @@ test('protect loaded on its own lists the task contracts folder (TASKS_DIR comes
   expect(fresh.PROTECTED.join()).not.toMatch(/undefined/);
   expect(CONTRACT_TASKS_DIR).toBe(TASKS_DIR); // contract.ts re-exports the one constant
 });
+
+test('denyWritePaths skips .harness/verdicts; PROTECTED and the Edit deny list include it', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { protect } = await import('../../src/checks/protect.js');
+  const { loadConfig } = await import('../../src/core/config.js');
+  expect(PROTECTED).toContain('.harness/verdicts/**');
+  expect(DENY_WRITE_SKIPPED).toContain('.harness/verdicts');
+  expect(denyWritePaths()).not.toContain('./.harness/verdicts');
+  expect(JSON.parse(readFileSync('templates/settings.fragment.json', 'utf8')).permissions.deny).toContain('Edit(./.harness/verdicts/**)');
+  // Verdicts are per checkout (and in CI an artifact), never committed.
+  expect(HARNESS_LOCAL).toContain('.harness/verdicts/');
+  const input = { hook_event_name: 'PreToolUse', session_id: 's', cwd: '/p', tool_name: 'Write', tool_input: { file_path: '.harness/verdicts/abc.json' } };
+  expect((protect.run({ input, root: '/p', config: loadConfig('/nonexistent-harness-root').config, env: {}, unattended: false } as never) as { kind: string }).kind).toBe('deny');
+});

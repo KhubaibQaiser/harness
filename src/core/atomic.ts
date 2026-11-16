@@ -66,6 +66,48 @@ export function ensureRealDir(root: string, rel: string): string {
   return p;
 }
 
-/** Flags for an append that fails (ELOOP) instead of following a symlink at the file; O_NOFOLLOW is 0 where Node lacks it. */
-// Node takes the numeric flags; its types only list the string forms.
-export const APPEND_NOFOLLOW = (nodeFs.constants.O_WRONLY | nodeFs.constants.O_APPEND | nodeFs.constants.O_CREAT | (nodeFs.constants.O_NOFOLLOW ?? 0)) as unknown as string;
+/** Test seam: O_NOFOLLOW, which Node leaves undefined on Windows. */
+export const NOFOLLOW: { flag: number | undefined } = { flag: nodeFs.constants.O_NOFOLLOW };
+
+const refuse = (path: string) => new Error(`${path} is a link or not a plain file; harness does not write through it.`);
+const lookUp = (path: string) => { try { return nodeFs.lstatSync(path, { bigint: true }); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw e; } };
+const code = (e: unknown) => (e as NodeJS.ErrnoException).code;
+
+/** Opens for append, or undefined when the name vanished or appeared mid-open (a log rotation): the caller tries again. */
+function openOnce(path: string, flags: number): number | undefined {
+  const { O_CREAT, O_EXCL } = nodeFs.constants;
+  if (NOFOLLOW.flag !== undefined) return nodeFs.openSync(path, flags | O_CREAT | NOFOLLOW.flag);
+  // No O_NOFOLLOW (Windows): create a missing file exclusively, and open an existing one only if lstat calls it a plain file.
+  const st = lookUp(path);
+  try {
+    if (!st) return nodeFs.openSync(path, flags | O_CREAT | O_EXCL);
+    if (st.isSymbolicLink() || !st.isFile()) throw refuse(path);
+    return nodeFs.openSync(path, flags);
+  } catch (e) {
+    if (code(e) === (st ? 'ENOENT' : 'EEXIST')) return undefined;
+    throw e;
+  }
+}
+
+const TRIES_OPEN = 3;
+/**
+ * Appends `data` to `path`, creating it if missing, and throws instead of writing through a symlink or hard link.
+ * After the open, the handle and the name (lstat again) must be the same plain file with one name and no link at the name;
+ * a name that vanished or now holds another plain file (a rotation) is tried again, a few times.
+ */
+export function appendNoFollow(path: string, data: string, write: (fd: number, d: string) => void = nodeFs.appendFileSync): void {
+  const { O_WRONLY, O_APPEND } = nodeFs.constants;
+  for (let i = 0; i < TRIES_OPEN; i++) {
+    const fd = openOnce(path, O_WRONLY | O_APPEND);
+    if (fd === undefined) continue;
+    try {
+      const h = nodeFs.fstatSync(fd, { bigint: true }), n = lookUp(path);
+      if (h.nlink === 0n) continue; // the name was deleted after the open: a vanished name, tried again
+      if (!h.isFile() || h.nlink !== 1n || (n && (n.isSymbolicLink() || !n.isFile() || n.nlink !== 1n))) throw refuse(path);
+      if (n && n.dev === h.dev && n.ino === h.ino) return write(fd, data);
+    } finally {
+      nodeFs.closeSync(fd);
+    }
+  }
+  throw new Error(`${path} kept changing while harness opened it; nothing was written.`);
+}

@@ -4,6 +4,7 @@ import { join, posix, relative, resolve } from 'node:path';
 import { parse } from 'yaml';
 import { ID_RE, PROJECT_TYPES, type ProjectType } from '../catalog/schema.js';
 import { hostProblem } from './hosts.js';
+import { TEST_FILE_GLOBS } from './paths.js';
 import { PREFIX_RE, type PresetGit } from './branch-prefix.js';
 
 export type StopStep = string | { name: string; run: string[] };
@@ -73,7 +74,7 @@ export const LEGACY_RESULTS_DIR = '.harness/state/test-results';
 /** Globs not counted toward a PR's size, in this order. */
 export const PR_SIZE_EXCLUDE: string[] = [
   '**/pnpm-lock.yaml', '**/package-lock.json', '**/npm-shrinkwrap.json', '**/yarn.lock', '**/bun.lock', '**/bun.lockb', '**/Cargo.lock', '**/poetry.lock',
-  '**/uv.lock', '**/Pipfile.lock', '**/Gemfile.lock', '**/composer.lock', '**/go.sum', '**/.!(npm|harness)ignore', '**/__snapshots__/**', '**/*.snap',
+  '**/uv.lock', '**/Pipfile.lock', '**/Gemfile.lock', '**/composer.lock', '**/go.sum', '**/.!(npm|harness)ignore', '**/__snapshots__/**', '**/*.snap', ...TEST_FILE_GLOBS,
 ];
 
 export const defaults = (): HarnessConfig => ({

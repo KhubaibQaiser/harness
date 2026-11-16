@@ -92,6 +92,8 @@ export const tail = (text: string) => {
 
 const realWhich = (cmd: string) => (/[\\/]/.test(cmd) ? cmd : findOnPath(cmd, process.env, process.platform));
 
+const TIMEOUT_NEVER = 'checks never ran (timeout)'; // recorded exactly: a stale unavailable reason would hide the real cause
+
 export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now, which: (cmd: string) => string | null = realWhich, run: RunSteps | NotedRun): Promise<Decision> {
   const { root, config, input } = ctx;
   const { steps, package_manager: pm, max_attempts: max, timeout_s } = config.stop;
@@ -149,7 +151,7 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
       log('stop-gave-up', never);
       if (never) {
         const old = readStopRecord(root);
-        const why = old?.outcome === 'unavailable' && old.reason ? `${never}: ${old.reason}` : never; // keep which check failed
+        const why = old?.outcome === 'unavailable' && old.reason && never !== TIMEOUT_NEVER ? `${never}: ${old.reason}` : never; // keep which check failed
         writeStopRecord(root, { srt: null, checks: {}, ...old, ts: new Date().toISOString(), outcome: 'never-ran', reason: why });
       }
       return done(allow);
@@ -208,15 +210,19 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   }
   const res = await run(plan, stepsStart + timeout_s * 1000);
   runNotes.push(...((run as Partial<NotedRun>).notes ?? []));
-  const timeoutText = [`Stop gate timed out after ${timeout_s}s; checks did not finish.`, ...runNotes].join('\n');
-  if (res.kind === 'timeout') return { kind: 'context', text: timeoutText, check: 'stop' };
+  // A hung step must not pass: a test the agent wrote could hang on purpose. It blocks and counts like a failing step.
+  const timedOut = (label: string): Decision => {
+    log('stop-timeout', label);
+    return failStep(`${label} timed out after ${timeout_s}s (attempt {n}). Speed it up, raise stop.timeout_s in .harness/config.yaml, or end with harness done --blocked "<reason>" if it can't finish.`, TIMEOUT_NEVER);
+  };
+  if (res.kind === 'timeout') return timedOut('the checks');
   if (res.kind === 'unavailable') {
     log('stop-srt-unavailable', res.reason);
     return failStep(`${res.message} (attempt {n})`, `checks never ran (${res.reason === 'native Windows unattended' ? res.reason : 'srt unavailable'})`); // counts toward max_attempts like any failing step
   }
   for (const r of res.results) {
     appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: r.label, outcome: r.timedOut ? 'timeout' : r.status === 0 ? 'allow' : 'block', ms: Math.max(0, r.ms) });
-    if (r.timedOut) return { kind: 'context', text: timeoutText, check: 'stop' };
+    if (r.timedOut) return timedOut(r.label);
     if (r.status !== 0) return failStep(`${r.label} failed (attempt {n}). Fix it, then finish again.\n${tail(r.output)}`);
   }
 
@@ -256,10 +262,10 @@ export function pickRunner(ctx: Ctx, exec: Exec, now: () => number, srt: SrtProb
   };
   const noted = (inner: RunSteps, before: (notes: string[]) => void): NotedRun => {
     const notes: string[] = [];
-    const f = ((steps, deadline) => {
+    const f = ((steps, deadline, o) => {
       notes.length = 0;
       before(notes);
-      return inner(steps, deadline);
+      return inner(steps, deadline, o);
     }) as NotedRun;
     f.notes = notes;
     return f;

@@ -30,7 +30,7 @@ export const REMEMBER_USAGE = [
   'harness remember list',
   'harness remember check',
 ];
-const UNATTENDED = 'harness remember does not write in unattended runs (CI, cloud or no-prompt sessions). A person can save it later.';
+const UNATTENDED = 'harness remember does not write in unattended runs (CI, cloud, no-prompt sessions or CLAUDE_CODE_SUBPROCESS_ENV_SCRUB set). A person can save it later.';
 const GUARD_OFF = "harness remember won't write from inside Claude Code while checks.guard is off, because nobody would be asked. Run it in your own terminal.";
 const NOT_INSTALLED = 'Harness is not installed here (no .harness/manifest.json). Run /harness:init first.';
 const NO_TTY = 'No terminal to answer prompts. Run with --yes, or use --dry-run to preview.';

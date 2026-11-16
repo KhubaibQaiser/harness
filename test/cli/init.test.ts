@@ -267,7 +267,7 @@ test('the jest reporter creates the results folder and writes what the TDD gate 
     testResults: [{ testFilePath: join(root, 'src/a.test.js'), numFailingTests: 1, testResults: [{ fullName: 'a adds', status: 'failed' }, { fullName: 'a ok', status: 'passed' }] }],
   });
   const r = readResults(root, join(root, '.harness/results'));
-  expect(r).toEqual([{ file: 'src/a.test.js', status: 'failed', tests: [{ fullName: 'a adds', status: 'failed' }, { fullName: 'a ok', status: 'passed' }], writtenAt: expect.any(Number) }]);
+  expect(r).toEqual([{ file: 'src/a.test.js', status: 'failed', tests: [{ fullName: 'a adds', status: 'failed' }, { fullName: 'a ok', status: 'passed' }], writtenAt: expect.any(Number), changedAt: expect.any(Number) }]);
 });
 
 test('vitest without a coverage provider: init says the coverage gate is off and how to turn it on', async () => {

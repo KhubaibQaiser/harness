@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { scan } from '../../src/vet/scan.js';
 import { makeRepo } from '../install/helpers.js';
+import { medianOf } from './overhead.js';
 
 const MB = 1_000_000;
 const QUARTER = MB / 4;
@@ -34,31 +35,26 @@ const cases: Case[] = [
   ['frontmatter hooks in a skill, then a long body', 'skills/a/SKILL.md', (n) => '---\nname: a\nhooks:\n  Stop:\n    - hooks:\n        - type: command\n          command: x\n---\n' + rep('hooks: x\n', n)],
 ];
 
-// Median of three scans, after one warm-up.
-const time = (name: string, body: string): number => {
+// Median of five scans, after one warm-up. It was three: the ratio failed once in 9-16 Nov (macOS fc0cdf3, "permissionDecision:"
+// in a skill, 6.2 ms -> 723.6 ms, 117x), where a laptop measures 4 -> 59 ms (15x), so two of three large scans were slow.
+const time = (label: string, name: string, body: string): number => {
   const dir = makeRepo({ [name]: body }, { git: false });
-  const run = () => {
-    const t = performance.now();
-    scan({ dir, files: [name], map: { [name]: name }, skipped: [], large: [] }, '');
-    return performance.now() - t;
-  };
-  run();
-  return [run(), run(), run()].sort((a, b) => a - b)[1]!;
+  return medianOf(`vet-scan ${label}`, () => scan({ dir, files: [name], map: { [name]: name }, skipped: [], large: [] }, '')).ms;
 };
 
 // 250 KB against 4 MB is 16x the input: a linear scan grows about 16-20x (measured per 4x step: about 3.8-5.8x, newline-heavy
 // files highest; macOS CI hit 8.2-9.4x for one 4x step), a quadratic one about 256x. 50 sits well between the two, and the
 // ceiling only catches gross blowups.
 describe('vet scan time grows linearly', () => {
-  it.each(cases)('%s', (_n, name, build) => {
+  it.each(cases)('%s', (n, name, build) => {
     const big = build(BIG);
     expect(big.length).toBeGreaterThan(BIG * 0.9);
-    const small = time(name, build(QUARTER));
-    const large = time(name, big);
+    const small = time(`${n.slice(0, 40)} 250 KB`, name, build(QUARTER));
+    const large = time(`${n.slice(0, 40)} 4 MB`, name, big);
     expect(large, `4 MB took ${large.toFixed(0)} ms`).toBeLessThan(4000);
     // 16x the input: linear is ~16x and quadratic ~256x. Hosted macOS measured 50.3x and 56x on a ~30 ms small run, so 100 keeps headroom and still fails a quadratic path.
     expect(large / Math.max(small, 2), `${small.toFixed(1)} ms -> ${large.toFixed(1)} ms`).toBeLessThan(100);
-    // Four 4 MB scans (warm-up plus median of 3) can pass vitest's 5 s default on a slow CI runner; the 4000 ms assert above is the real ceiling.
+    // Six 4 MB scans (warm-up plus median of 5) can pass vitest's 5 s default on a slow CI runner; the 4000 ms assert above is the real ceiling.
   }, 60_000);
 });
 
@@ -67,9 +63,7 @@ describe('vet scan with many files', () => {
     const run = (n: number) => {
       const names = Array.from({ length: n }, (_, i) => `agents/a${i}.md`);
       const dir = makeRepo(Object.fromEntries(names.map((p) => [p, '---\nname: a\ndescription: d\n---\nbody\n'])), { git: false });
-      const t = performance.now();
-      scan({ dir, files: names, map: Object.fromEntries(names.map((p) => [p, p])), skipped: [], large: [] }, '');
-      return performance.now() - t;
+      return medianOf(`vet-scan ${n} small agents`, () => scan({ dir, files: names, map: Object.fromEntries(names.map((p) => [p, p])), skipped: [], large: [] }, ''), 3).ms;
     };
     run(100);
     const small = run(1250), large = run(5000);

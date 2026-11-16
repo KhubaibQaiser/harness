@@ -14,14 +14,13 @@
     "ConfigChange": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10, "onFailure": "block" }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 600 }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] }],
-    "SessionStart": [{ "matcher": "compact",
-      "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.harness/hooks/dispatch.mjs"], "timeout": 10 }] }]
   },
   "permissions": {
     "deny": [
       "Read(./.env)", "Read(./.env.*)", "Read(./**/.env)", "Read(./**/.env.*)",
       "Edit(./.harness/hooks/**)", "Edit(./.harness/state/**)", "Edit(./.harness/logs/**)", "Edit(./.harness/backup/**)",
-      "Edit(./.harness/config.yaml)", "Edit(./.harness/manifest.json)", "Edit(./.harness/reviews/**)", "Edit(./.harness/tasks/**)",
+      "Edit(./.harness/config.yaml)", "Edit(./.harness/manifest.json)", "Edit(./.harness/reviews/**)", "Edit(./.harness/tasks/**)", "Edit(./.harness/verdicts/**)",
       "Edit(./.claude/settings.json)", "Edit(./.claude/settings.local.json)",
       "Bash(git push *--force*)", "Bash(git push * -f*)", "Bash(git push * +*)", "Bash(git push -f*)", "Bash(git push +*)",
       "Bash(git push * main)", "Bash(git push * main *)", "Bash(git push *:main*)",

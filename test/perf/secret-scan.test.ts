@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterAll, expect, test } from 'vitest';
@@ -9,7 +9,9 @@ import type { Ctx } from '../../src/hooks/dispatch.js';
 
 // A full secret scan before `git commit` (git calls, the throwaway index, gitleaks) has to fit the ~9 s hook budget on
 // every platform. A stand-in gitleaks runs gitleaks's own git diff, so the git work is real; the real gitleaks adds its
-// own start-up and rule compile on top. The ceiling catches extra git spawns, not a few ms.
+// own start-up and rule compile on top. The ceiling catches extra git spawns, not a few ms. Medians in CI, 13-16 Nov 2026:
+// macOS up to 222 ms (one index) and 379 (two), Windows up to 340 and 457, so the ceilings keep 4x and 8x. The one failure
+// (13 Nov, Windows) was Git for Windows' textconv config, not time; the empty git config below fixed it.
 const CEILING_MS = { win32: 4000, darwin: 1500 }[process.platform as string] ?? 1500;
 const RUNS = 7;
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
@@ -54,7 +56,7 @@ test('a full scan before git commit stays well inside the hook budget', () => {
   const one = time('git commit -m x'); // the worktree adds nothing: one gitleaks run
   writeFileSync(join(root, 'f2.txt'), 'unstaged\n');
   const two = time('git commit -m x'); // an unstaged change: the real and the throwaway index are both scanned
-  console.log(`secret scan median: ${one.toFixed(0)} ms (one index), ${two.toFixed(0)} ms (two), ceiling ${CEILING_MS} ms`);
+  writeSync(2, `[perf] secret scan ${process.platform}: median ${one.toFixed(0)} ms (one index), ${two.toFixed(0)} ms (two), ceiling ${CEILING_MS} ms\n`);
   expect(one).toBeLessThan(CEILING_MS);
   expect(two).toBeLessThan(CEILING_MS);
 }, 120_000); // setting up the repo is slow on Windows runners; only the scans are timed

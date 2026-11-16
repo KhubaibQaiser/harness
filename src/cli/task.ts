@@ -20,7 +20,7 @@ import type { CliEnv } from './index.js';
 export type TaskEnv = CliEnv & { prompt: Prompt; git?: Exec; now?: () => Date };
 
 export const TASK_USAGE = 'harness task draft <file> | approve <file> [--replace] [--yes] | edit <id> --from <file> [--yes] | close <id> [--yes]';
-const UNATTENDED = 'harness task does not approve, edit or close in unattended runs (CI, cloud or no-prompt sessions): a person must say yes.';
+const UNATTENDED = 'harness task does not approve, edit or close in unattended runs (CI, cloud, no-prompt sessions or CLAUDE_CODE_SUBPROCESS_ENV_SCRUB set): a person must say yes.';
 const GUARD_OFF = "harness task won't approve, edit or close from inside Claude Code while checks.guard is off, because the agent could run it. Run it in your own terminal.";
 const NOT_WORKDIR = 'harness task: the draft must be inside a harness workdir folder (.harness/tmp/<id>/); run harness workdir to make one.';
 const LAND = (id: string) => `Commit ${TASKS_DIR}/${id}.json and land it on the base branch before the work PR: CI reads contracts only from there.`;

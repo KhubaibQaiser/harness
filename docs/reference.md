@@ -902,7 +902,7 @@ pnpm typecheck
 node scripts/gen-config-docs.mjs --write   # after changing a config key
 ```
 
-CI runs the tests on macOS and Windows with Node 22, plus Linux jobs for gitleaks, a pack check, real Vitest and Jest installs, and `claude plugin validate`, and a job on Linux and macOS that runs the Stop gate against a real `srt` (the `HARNESS_E2E_SRT=1` e2e and perf files, which skip without that flag). A `v*` tag publishes to npm after an approval step, then mirrors the package to GitHub Packages and creates a GitHub release. See [release.md](release.md).
+CI runs the tests on macOS and Windows with Node 22, plus Linux jobs for gitleaks, a pack check, real Vitest and Jest installs, and `claude plugin validate`, and a job on Linux and macOS that runs the Stop gate against a real `srt` (the `HARNESS_E2E_SRT=1` e2e and perf files, which skip without that flag). The `test` job also fails if a project's passed-test count drops below its floor for that platform in `.github/test-floor.json` (floors are per platform, since some tests skip on Windows) or a test file fails to load (`scripts/check-test-count.mjs`); raise the floor by hand in the PR that adds tests, and lower it only in a PR that removes them on purpose. A `v*` tag publishes to npm after an approval step, then mirrors the package to GitHub Packages and creates a GitHub release. See [release.md](release.md).
 
 ## Roadmap
 

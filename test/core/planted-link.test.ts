@@ -150,6 +150,13 @@ test('a hard link unlinked right after the open is never appended to', () => {
   expect(readFileSync(f, 'utf8')).toBe('x'); // the retry made a fresh log
 });
 
+test('a log deleted right after the open is tried again, not refused', () => {
+  const f = join(mk(), 'events.jsonl');
+  writeFileSync(f, 'old\n');
+  onOpen(f, 'after', () => unlinkSync(f), () => appendNoFollow(f, 'x'));
+  expect(readFileSync(f, 'utf8')).toBe('x');
+});
+
 /** Runs `body` with the first fs.openSync of `file` wrapped: `race` runs just before or just after the real open. */
 function onOpen(file: string, when: 'before' | 'after', race: () => void, body: () => void): void {
   const real = fs.openSync;

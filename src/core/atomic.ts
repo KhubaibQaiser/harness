@@ -102,6 +102,7 @@ export function appendNoFollow(path: string, data: string, write: (fd: number, d
     if (fd === undefined) continue;
     try {
       const h = nodeFs.fstatSync(fd, { bigint: true }), n = lookUp(path);
+      if (h.nlink === 0n) continue; // the name was deleted after the open: a vanished name, tried again
       if (!h.isFile() || h.nlink !== 1n || (n && (n.isSymbolicLink() || !n.isFile() || n.nlink !== 1n))) throw refuse(path);
       if (n && n.dev === h.dev && n.ino === h.ino) return write(fd, data);
     } finally {

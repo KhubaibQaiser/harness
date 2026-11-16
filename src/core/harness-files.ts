@@ -34,19 +34,28 @@ function hooksFiles(root: string, rel = '.harness/hooks'): string[] {
   return entries.flatMap((e) => (e.isDirectory() ? hooksFiles(root, `${rel}/${e.name}`) : e.isFile() ? [`${rel}/${e.name}`] : []));
 }
 
-/** The deny rules harness installed, from the manifest's settings blocks; null when unknown (then every rule counts). */
-export function harnessDenyRules(root: string): Set<string> | null {
+/** The manifest's blocks for `.claude/settings.json`; null when unknown (no manifest, no entry, not JSON). */
+export function settingsBlocks(root: string): string[] | null {
   try {
     const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
     const f = m.files.find((x: { rel: string }) => x.rel === '.claude/settings.json');
-    if (!f) return null;
-    return new Set((f.blocks ?? []).map((b: string) => JSON.parse(b)?.deny).filter((d: unknown) => typeof d === 'string'));
+    return f ? (f.blocks ?? []) : null;
   } catch {
     return null;
   }
 }
 
-export type GuardedPart = 'hooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'env' | 'unreadable';
+/** The deny rules harness installed, from the manifest's settings blocks; null when unknown (then every rule counts). */
+export function harnessDenyRules(root: string): Set<string> | null {
+  try {
+    const blocks = settingsBlocks(root);
+    return blocks && new Set(blocks.map((b) => JSON.parse(b)?.deny).filter((d: unknown) => typeof d === 'string'));
+  } catch {
+    return null;
+  }
+}
+
+export type GuardedPart = 'hooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'denyWrite' | 'env' | 'unreadable';
 export type GuardedView = { hooks: [string, unknown[]][]; deny: string[]; disableAllHooks: unknown; sandbox: unknown; env?: unknown } | null;
 
 /**

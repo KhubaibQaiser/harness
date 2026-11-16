@@ -55,8 +55,8 @@ const TEST_C1 = [{ id: 'C1', text: 'works', check: { test: 'test/a.test.ts::a wo
 const FORGE = "const fs=require('fs');fs.mkdirSync('.harness/results',{recursive:true});fs.writeFileSync('.harness/results/forged.json',JSON.stringify({testResults:[{name:require('path').resolve('test/a.test.ts'),status:'passed',assertionResults:[{fullName:'a works',status:'passed'}]}]}))\n";
 
 test('fresh ledger rows are reused, stale ones re-run; the verdict records both', async () => {
-  const mark = join(mkdtempSync(join(tmpdir(), 'mark-')), 'm');
-  dirs.push(mark.slice(0, -2));
+  // A relative mark path: a tmpdir path has \\ on Windows and ~ in its 8.3 name (RUNNER~1), which plainArgv never counts.
+  const mark = '.git/mark';
   const steps = ['s1', 's2'].map((n) => ({ name: n, run: ['node', 'mark.js', mark, n] }));
   const v = await runVerify({
     steps, files: { 'mark.js': "require('fs').appendFileSync(process.argv[2], process.argv[3] + '\\n')\n" },
@@ -64,11 +64,23 @@ test('fresh ledger rows are reused, stale ones re-run; the verdict records both'
   });
   expect(v.outcome, v.text).toBe('done');
   expect(v.checks.map((x) => [x.name, x.evidence?.source, x.evidence?.status])).toEqual([['s1', 'reused', 'pass'], ['s2', 're-run', 'pass']]);
-  expect(readFileSync(mark, 'utf8')).toBe('s2\n'); // only the stale one ran
+  expect(readFileSync(join(v.root, mark), 'utf8')).toBe('s2\n'); // only the stale one ran
   expect(v.criteria[0]!.evidence).toMatchObject({ command: 'node pass.js', exit: 0, source: 're-run', status: 'pass' });
   expect(v.text).toContain(`- s1 pass: node mark.js ${mark} s1 exit 0 (reused)`);
   expect(v.text).toContain(`- s2 pass: node mark.js ${mark} s2 exit 0 (re-run)`);
   expect(v.text).toContain('--- How to verify ---');
+});
+
+test('a fresh row whose command has a Windows path (\\ or an 8.3 ~) is re-run, never reused', async () => {
+  const mark = '.git/mark';
+  const steps = ['C:\\Users\\x', 'RUNNER~1'].map((n) => ({ name: n, run: ['node', 'mark.js', mark, n] }));
+  const v = await runVerify({
+    steps, files: { 'mark.js': "require('fs').appendFileSync(process.argv[2], process.argv[3] + '\\n')\n" },
+    setup: (root, c) => { for (const s of steps) row(root, c, s.run.join(' ')); },
+  });
+  expect(v.outcome, v.text).toBe('done');
+  expect(v.checks.map((x) => x.evidence?.source)).toEqual(['re-run', 're-run']);
+  expect(readFileSync(join(v.root, mark), 'utf8')).toBe('C:\\Users\\x\nRUNNER~1\n');
 });
 
 test('exit codes: done 0, failing criterion 1, blocked 3, bad flag 2', async () => {

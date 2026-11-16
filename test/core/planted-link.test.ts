@@ -1,4 +1,4 @@
-import fs, { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -121,22 +121,55 @@ describe('without O_NOFOLLOW (as on Windows)', () => {
   test('a link swapped in after the check is opened but refused before any write', () => {
     const r = mk(), w = victim(), f = join(r, 'events.jsonl');
     writeFileSync(f, 'old\n');
-    const real = fs.openSync;
-    fs.openSync = ((p: string, flags: number) => {
-      if (p === f) { renameSync(f, `${f}.old`); symlinkSync(w.f, f); }
-      return real(p, flags);
-    }) as typeof fs.openSync;
-    syncBuiltinESMExports();
-    try {
-      expect(() => appendNoFollow(f, 'x')).toThrow(/does not write through/);
-    } finally {
-      fs.openSync = real;
-      syncBuiltinESMExports();
-    }
+    onOpen(f, 'before', () => { renameSync(f, `${f}.old`); symlinkSync(w.f, f); }, () => expect(() => appendNoFollow(f, 'x')).toThrow(/does not write through/));
     expect(readFileSync(w.f, 'utf8')).toBe('mine');
     expect(readFileSync(`${f}.old`, 'utf8')).toBe('old\n');
   });
+
+  test('a hard link swapped for a symlink to the same file before the open is refused', () => {
+    const r = mk(), w = victim(), f = join(r, 'events.jsonl');
+    linkSync(w.f, f);
+    onOpen(f, 'before', () => { unlinkSync(f); symlinkSync(w.f, f); }, () => expect(() => appendNoFollow(f, 'x')).toThrow(/does not write through/));
+    expect(readFileSync(w.f, 'utf8')).toBe('mine');
+  });
+
+  test('a rotation between the check and the open is tried again, not refused', () => {
+    const f = join(mk(), 'timing.jsonl');
+    writeFileSync(f, 'old\n');
+    onOpen(f, 'before', () => renameSync(f, `${f}.1`), () => appendNoFollow(f, 'x'));
+    expect(readFileSync(f, 'utf8')).toBe('x');
+    expect(readFileSync(`${f}.1`, 'utf8')).toBe('old\n');
+  });
 });
+
+test('a hard link unlinked right after the open is never appended to', () => {
+  const r = mk(), w = victim(), f = join(r, 'events.jsonl');
+  linkSync(w.f, f);
+  onOpen(f, 'after', () => unlinkSync(f), () => appendNoFollow(f, 'x'));
+  expect(readFileSync(w.f, 'utf8')).toBe('mine');
+  expect(readFileSync(f, 'utf8')).toBe('x'); // the retry made a fresh log
+});
+
+/** Runs `body` with the first fs.openSync of `file` wrapped: `race` runs just before or just after the real open. */
+function onOpen(file: string, when: 'before' | 'after', race: () => void, body: () => void): void {
+  const real = fs.openSync;
+  let armed = true;
+  fs.openSync = ((p: string, flags: number) => {
+    const hit = p === file && armed;
+    armed &&= !hit;
+    if (hit && when === 'before') race();
+    const fd = real(p, flags);
+    if (hit && when === 'after') race();
+    return fd;
+  }) as typeof fs.openSync;
+  syncBuiltinESMExports();
+  try {
+    body();
+  } finally {
+    fs.openSync = real;
+    syncBuiltinESMExports();
+  }
+}
 
 // A hard link at a log path would append into any file the person owns on the same volume: refused on both paths.
 describe.each([['native', () => {}], ['without O_NOFOLLOW', () => void (NOFOLLOW.flag = undefined)]])('hard link at a log (%s)', (_, force) => {

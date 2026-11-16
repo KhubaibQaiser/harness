@@ -70,36 +70,43 @@ export function ensureRealDir(root: string, rel: string): string {
 export const NOFOLLOW: { flag: number | undefined } = { flag: nodeFs.constants.O_NOFOLLOW };
 
 const refuse = (path: string) => new Error(`${path} is a link or not a plain file; harness does not write through it.`);
+const lookUp = (path: string) => { try { return nodeFs.lstatSync(path, { bigint: true }); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw e; } };
+const code = (e: unknown) => (e as NodeJS.ErrnoException).code;
 
-// Without O_NOFOLLOW: lstat the name, open it, and refuse unless the opened handle is that same plain file.
-// A link swapped in between is opened but closed before any byte is written.
-function openChecked(path: string, flags: number): number {
+/** Opens for append, or undefined when the name vanished or appeared mid-open (a log rotation): the caller tries again. */
+function openOnce(path: string, flags: number): number | undefined {
   const { O_CREAT, O_EXCL } = nodeFs.constants;
-  const look = () => { try { return nodeFs.lstatSync(path, { bigint: true }); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw e; } };
-  let before = look();
-  if (!before) {
-    try { return nodeFs.openSync(path, flags | O_CREAT | O_EXCL); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
-    before = look(); // made by someone else meanwhile: check what is there now
+  if (NOFOLLOW.flag !== undefined) return nodeFs.openSync(path, flags | O_CREAT | NOFOLLOW.flag);
+  // No O_NOFOLLOW (Windows): create a missing file exclusively, and open an existing one only if lstat calls it a plain file.
+  const st = lookUp(path);
+  try {
+    if (!st) return nodeFs.openSync(path, flags | O_CREAT | O_EXCL);
+    if (st.isSymbolicLink() || !st.isFile()) throw refuse(path);
+    return nodeFs.openSync(path, flags);
+  } catch (e) {
+    if (code(e) === (st ? 'ENOENT' : 'EEXIST')) return undefined;
+    throw e;
   }
-  if (!before || before.isSymbolicLink() || !before.isFile()) throw refuse(path);
-  const fd = nodeFs.openSync(path, flags);
-  const after = nodeFs.fstatSync(fd, { bigint: true });
-  if (after.dev !== before.dev || after.ino !== before.ino || !after.isFile()) {
-    nodeFs.closeSync(fd);
-    throw refuse(path);
-  }
-  return fd;
 }
 
-/** Appends `data` to `path`, creating it if missing, and throws instead of writing through a symlink or hard link at the file. */
+const TRIES_OPEN = 3;
+/**
+ * Appends `data` to `path`, creating it if missing, and throws instead of writing through a symlink or hard link.
+ * After the open, the handle and the name (lstat again) must be the same plain file with one name and no link at the name;
+ * a name that vanished or now holds another plain file (a rotation) is tried again, a few times.
+ */
 export function appendNoFollow(path: string, data: string, write: (fd: number, d: string) => void = nodeFs.appendFileSync): void {
-  const { O_WRONLY, O_APPEND, O_CREAT } = nodeFs.constants;
-  const fd = NOFOLLOW.flag === undefined ? openChecked(path, O_WRONLY | O_APPEND) : nodeFs.openSync(path, O_WRONLY | O_APPEND | O_CREAT | NOFOLLOW.flag);
-  try {
-    const st = nodeFs.fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1) throw refuse(path); // a hard link would append into another file the person owns
-    write(fd, data);
-  } finally {
-    nodeFs.closeSync(fd);
+  const { O_WRONLY, O_APPEND } = nodeFs.constants;
+  for (let i = 0; i < TRIES_OPEN; i++) {
+    const fd = openOnce(path, O_WRONLY | O_APPEND);
+    if (fd === undefined) continue;
+    try {
+      const h = nodeFs.fstatSync(fd, { bigint: true }), n = lookUp(path);
+      if (!h.isFile() || h.nlink !== 1n || (n && (n.isSymbolicLink() || !n.isFile() || n.nlink !== 1n))) throw refuse(path);
+      if (n && n.dev === h.dev && n.ino === h.ino) return write(fd, data);
+    } finally {
+      nodeFs.closeSync(fd);
+    }
   }
+  throw new Error(`${path} kept changing while harness opened it; nothing was written.`);
 }

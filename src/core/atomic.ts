@@ -49,7 +49,7 @@ export function writeAtomic(path: string, data: string, fs: WriteFs = nodeFs): v
   }
 }
 
-// ponytail: a link swapped in between this check and the open that follows is a bounded race. O_NOFOLLOW covers only the last path part, and the agent can already write what it could reach this way.
+// ponytail: a link swapped in between this check and the open that follows is a bounded race. O_NOFOLLOW covers only the last path part. The file names are fixed harness names (events.jsonl, timing.jsonl, evidence.jsonl), so the race can only aim a write for one of those names at a planted link's target, in a window of microseconds.
 /** Makes `rel` (e.g. `.harness/logs`) under `root` if missing, and throws when it or any folder above it inside `root` is a symlink: a planted link must never send a harness write or delete onto someone else's files. Returns the absolute path. */
 export function ensureRealDir(root: string, rel: string): string {
   let p = root;

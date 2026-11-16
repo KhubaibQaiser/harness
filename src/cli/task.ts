@@ -1,5 +1,5 @@
 // `harness task` (done-contract spec §4.1): the agent drafts a contract in its work folder; only a person approves, edits or closes it.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { inWorkdir } from '../checks/protect.js';
@@ -106,14 +106,15 @@ function writeGate(cli: TaskEnv, cfg: HarnessConfig): string | null {
 }
 
 function draft(file: string, cli: TaskEnv, cfg: HarnessConfig): number {
-  if (!existsSync(resolve(cli.root, file))) {
+  const gone = (() => { try { lstatSync(resolve(cli.root, file)); return false; } catch { return true; } })(); // a dangling link is not gone
+  if (gone) {
     const base = head(cli);
     if (!base) return cli.out('harness task: no commit to use as the base. Commit once, then run it again.'), 1;
     const pm = cfg.stop.package_manager, s = scripts(cli.root);
     const checks = cfg.stop.steps.map((st) => resolveStep(st, pm, s)?.label).filter((l): l is string => l !== undefined);
     const skeleton = { id: '', title: '', base, approved_by: null, approved_at: null, closed_at: null, criteria: featuresCriteria(cli.root), checks, review: { model: cfg.done.review_model }, sha256: null };
     mkdirSync(dirname(resolve(cli.root, file)), { recursive: true });
-    writeFileSync(resolve(cli.root, file), JSON.stringify(skeleton, null, 2) + '\n');
+    try { writeFileSync(resolve(cli.root, file), JSON.stringify(skeleton, null, 2) + '\n', { flag: 'wx' }); } catch { return cli.out(`harness task: ${file} exists or is a link; nothing was written.`), 1; } // wx: never truncates or follows a link
     cli.out(`Wrote ${file}. Fill in id, title and criteria: each is { "id": "C1", "text": "…", "check": … } with check one of { "test": "<file>::<test name>" }, { "run": "<command>", "expect_exit": 0 } or { "person": "<what to check by hand>" }. Then run harness task draft ${file} again to check it.`);
     log(cli.root, 'task-drafted');
     return 0;

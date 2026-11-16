@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, sep } from 'node:path';
+import { basename, join, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, LOCK_RECOVERY, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
 import { STRUCTURAL, TSCONFIG, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig } from '../install/merge.js';
@@ -167,12 +167,12 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     for (const n of notes) out(`Note: ${n}`);
     if (kept.length) out(`Would keep ${list(kept)} because you edited them (--force removes them too).`);
     if (imported.length) out(`Would keep ${importedWhy}`);
-    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length || imported.length ? ', except the kept files above' : ''}${existsSync(join(root, '.harness', 'presets')) ? ' (`.harness/presets/` stays: it holds your committed presets)' : ''}.`);
+    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length || imported.length ? ', except the kept files above' : ''} (\`.harness/presets/\` and \`.harness/tasks/\` stay: your own presets and approved task contracts).`);
     return out('Dry run: nothing was written.'), 0;
   }
 
   // Asked first: with .harness/ kept, its .gitignore lines stay too, so logs, state and backups stay untracked.
-  const deleteHarness = yes || (await prompt.confirm('Delete .harness/ including logs? (y/N)'));
+  const deleteHarness = yes || (await prompt.confirm('Delete the rest of .harness/ (everything in it: config, hooks, logs, state, backups, work folders, results, debug files, reviews, reports, vet reports, eslint files and context)? It keeps .harness/presets/ and .harness/tasks/, your own files. (y/N)'));
   if (!deleteHarness && changes.some((c) => c.rel === '.gitignore')) {
     changes.splice(changes.findIndex((c) => c.rel === '.gitignore'), 1);
     notes.push('Kept the `.harness/` lines in `.gitignore`, so its logs, state and backups stay out of git.');
@@ -192,12 +192,12 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   // Edited files are kept like any other user edit, but harness is fully uninstalled either way: the manifest always
   // goes, so init, status and doctor see a repo without harness.
   if (deleteHarness) {
-    // .harness/presets/ is the person's own committed source, not something harness wrote: it stays.
-    const presets = join(root, '.harness', 'presets');
-    const keepPresets = existsSync(presets);
-    pruneExcept(join(root, '.harness'), [...kept, ...imported].map((k) => join(root, k)).concat(presets));
+    // .harness/presets/ and .harness/tasks/ (approved task contracts) are the person's own, not something harness wrote: they stay.
+    const own = ['presets', 'tasks'].map((d) => join(root, '.harness', d)).filter((d) => existsSync(d));
+    pruneExcept(join(root, '.harness'), [...kept, ...imported].map((k) => join(root, k)).concat(own));
     const edited = [...kept, ...imported].some((k) => k.startsWith('.harness/'));
-    out(`Removed \`.harness/\`${edited ? ' except the kept files' : ''}${keepPresets ? `${edited ? ' and' : ' except'} \`.harness/presets/\`, your committed presets` : ''}.`);
+    const stays = [...(edited ? ['the kept files'] : []), ...own.map((d) => `\`.harness/${basename(d)}/\``)];
+    out(`Removed \`.harness/\`${stays.length ? ` except ${stays.join(' and ')}, your own files` : ''}.`);
   } else {
     // Keep the logs but mark harness as uninstalled so init can run again.
     rmSync(join(root, MANIFEST_REL), { force: true });

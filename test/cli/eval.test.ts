@@ -38,7 +38,7 @@ test('yes runs claude with the pinned flags', async () => {
   const a = h.calls[0]!.join(' ');
   for (const s of ['claude plugin eval', '--ablation none', '--no-publish', '--model claude-x', '--max-cost-usd 2', '--runs 3', '--allow-tools Bash Write Edit']) expect(a).toContain(s);
   const dir = join(h.root, '.harness/reports/evals');
-  expect(readdirSync(dir)).toEqual([expect.stringMatching(/^\d{4}-\d\d-\d\d-claude-x-rules$/)]);
+  expect(readdirSync(dir)).toEqual([expect.stringMatching(/^\d{4}-\d\d-\d\dT\d{6}-claude-x-rules$/)]);
   expect(existsSync(join(dir, readdirSync(dir)[0]!, 'result.json'))).toBe(true);
   expect(h.lines.join('\n')).toContain('No estimate yet');
 });

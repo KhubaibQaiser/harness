@@ -108,7 +108,7 @@ describe('gather: §8 rows', () => {
   });
   test('a harness CLI whose version differs from the base install\'s is refused early', () => {
     const t = setup({ base: { '.harness/manifest.json': '{"version":"0.2.0-beta.1"}' } });
-    expect(run(t, fakeGh(t).exec, {}, undefined, '0.2.0-beta.2')).toMatchObject({ code: 1, lines: ['review: harness CLI 0.2.0-beta.2 and plugin 0.2.0-beta.1 differ; run /harness:update on main and review again'] });
+    expect(run(t, fakeGh(t).exec, {}, undefined, '0.2.0-beta.2')).toMatchObject({ code: 1, lines: ['review: harness CLI 0.2.0-beta.2 and the base install (harness 0.2.0-beta.1) differ; run /harness:update on main and review again'] });
   });
   test('the same version, an unknown CLI version, or no readable manifest version is not refused', () => {
     const same = setup({ base: { '.harness/manifest.json': '{"version":"0.2.0-beta.2"}' } });
@@ -117,6 +117,8 @@ describe('gather: §8 rows', () => {
     expect(run(unset, fakeGh(unset).exec)).toMatchObject({ code: 0 });
     const bad = setup({ base: { '.harness/manifest.json': 'not json' } });
     expect(run(bad, fakeGh(bad).exec, {}, undefined, '0.2.0-beta.2')).toMatchObject({ code: 0 });
+    const dev = setup({ base: { '.harness/manifest.json': '{"version":"0.2.0-beta.1"}' } });
+    expect(run(dev, fakeGh(dev).exec, {}, undefined, '0.0.0-dev')).toMatchObject({ code: 0 });
   });
   test('a base without the review agents (an older install) asks for /harness:update', () => {
     const t = setup({ base: { '.claude/agents/review-judge.md': null } });

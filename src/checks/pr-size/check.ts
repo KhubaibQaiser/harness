@@ -1,6 +1,6 @@
 // pr-size (spec §6, §10): asks before `gh pr create`, or a push to a PR branch harness recorded, goes over the limit.
 import { esc, type HarnessConfig } from '../../core/config.js';
-import { appendEvent } from '../../core/events.js';
+import { appendEventSafe } from '../../core/events.js';
 import { unquote, words } from '../../core/shell-words.js';
 import type { Check, Ctx } from '../../hooks/dispatch.js';
 import { isEdit, isShell } from '../../hooks/edit-target.js';
@@ -83,7 +83,7 @@ function unmeasured(ctx: Ctx, why: string, bases: (string | undefined)[]): strin
   const { max_lines: ml, max_files: mf } = ctx.config.pr_size;
   const base = bases.find((b) => b !== undefined && plainBranch(b));
   try {
-    appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-unmeasured', reason: why });
+    appendEventSafe(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'pr-size', decision: 'pr-size-unmeasured', reason: why });
   } catch (e) {
     process.stderr.write(`harness: pr-size event log failed: ${String((e as Error)?.message ?? e)}\n`);
   }

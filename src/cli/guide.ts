@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { ensureRealDir, writeAtomic } from '../core/atomic.js';
 import { packageDir } from '../core/package-dir.js';
 import type { CliEnv } from './index.js';
 
@@ -31,8 +32,9 @@ export function workdir(args: string[], { root, out }: CliEnv): number {
   const tmp = join(root, '.harness', 'tmp');
   if (linked(dirname(tmp)) || linked(tmp)) return out('`.harness` or `.harness/tmp` is a symlink; harness does not write through it.'), 2;
   if (!args.length) {
-    mkdirSync(tmp, { recursive: true });
-    if (!existsSync(join(tmp, '.gitignore'))) writeFileSync(join(tmp, '.gitignore'), '*\n');
+    ensureRealDir(root, '.harness/tmp');
+    const ig = join(tmp, '.gitignore');
+    try { lstatSync(ig); } catch { writeAtomic(ig, '*\n'); } // lstat: a planted link there counts as present and is never written through
     return out(mkdtempSync(join(tmp, 'w-'))), 0;
   }
   const p = args.length === 2 && args[0] === '--clean' ? resolve(root, args[1]!) : null;

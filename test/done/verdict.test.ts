@@ -98,3 +98,9 @@ test('the ledger hook records no verdict hash after harness verify: only verify 
   expect(existsSync(join(root, VERDICT_HASHES))).toBe(false);
   expect(readVerdict(root, head)).toBeNull();
 });
+
+test('the verify skill tells the person to run it in their own terminal when the verdict was not recorded', () => {
+  const t = readFileSync('skills/verify/SKILL.md', 'utf8');
+  expect(t).toContain('Verdict not recorded');
+  expect(t).toContain('own terminal');
+});

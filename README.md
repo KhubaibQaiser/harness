@@ -112,7 +112,7 @@ When the team agrees on a rule for some paths, ask Claude to remember it (`/harn
 
 ## Unattended runs and CI
 
-A run is unattended when `CI` is `true` or `1`, `HARNESS_UNATTENDED` is `1` or `true`, `CLAUDE_CODE_REMOTE` is `true`, or the permission mode is `dontAsk` or `bypassPermissions`. Every question then becomes a deny. Shell commands are denied unless Claude Code's sandbox is on. Start the run like this:
+A run is unattended when `CI` is `true` or `1`, `HARNESS_UNATTENDED` is `1` or `true`, `CLAUDE_CODE_REMOTE` is `true`, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is `1` or `true` (SessionStart then says so), or the permission mode is `dontAsk` or `bypassPermissions`. Every question then becomes a deny. Shell commands are denied unless Claude Code's sandbox is on. Start the run like this:
 
 ```sh
 HARNESS_SANDBOX=1 HARNESS_UNATTENDED=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude -p "…" --allowedTools "Bash,Edit,Write" --settings '{"sandbox":{

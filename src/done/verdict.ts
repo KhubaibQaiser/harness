@@ -12,7 +12,7 @@ import { taskFileProblem } from './contract.js';
 
 export type Outcome = 'done' | 'not-done' | 'blocked' | 'harness-files-only';
 export interface Evidence { command: string; exit: number | null; ts: string; source: 'reused' | 're-run'; status: 'pass' | 'fail' | 'timeout' | 'missing' }
-export interface ReviewResult { model: string; status: 'ran' | 'failed' | 'skipped'; error?: string; findings: RecordFinding[] }
+export interface ReviewResult { model: string; judge_model?: string; status: 'ran' | 'failed' | 'skipped'; error?: string; findings: RecordFinding[]; steering?: { source: string; text: string }[] }
 export interface Verdict {
   schema: 'harness-verdict/1'; mode: 'attended' | 'ci'; part: 'all' | 'evidence' | 'review'; task: string; contract_sha256: string;
   commit: string; tree: string; clean: boolean; base: string; outcome: Outcome; reasons: string[]; tamper: string[];
@@ -103,7 +103,12 @@ function reviewLines(r: ReviewResult | null): string[] {
   if (!r || r.status !== 'ran') return r ? [`Review ${r.status} (${r.model})`] : [];
   const kept = r.findings.filter((f) => f.placement !== 'dropped');
   // A kept critical is already a reason; the rest are shown so the person sees them.
-  return [`Review ran (${r.model}): ${kept.length} findings, ${r.findings.length - kept.length} dropped`, ...kept.filter((f) => f.severity !== 'critical').map((f) => `- review ${f.severity}: ${f.file}:${f.line} ${f.title}`)];
+  return [
+    `Review ran (reviewer ${r.model}, judge ${r.judge_model ?? r.model}): ${kept.length} findings, ${r.findings.length - kept.length} dropped`,
+    ...kept.filter((f) => f.severity !== 'critical').map((f) => `- review ${f.severity}: ${f.file}:${f.line} ${f.title}`),
+    // Task text that tried to steer the reviewer, as M2a shows it: the person judges it.
+    ...(r.steering ?? []).map((s) => `- review steering (${s.source}): ${s.text}`),
+  ];
 }
 
 export function verdictLines(v: Verdict): string[] {

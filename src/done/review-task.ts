@@ -8,6 +8,7 @@ import { SAFE_GIT } from '../core/git-safe.js';
 import { redactSecrets } from '../core/secrets.js';
 import { diffText, envelope, escPath, newNonce, nonceIn } from '../review/context.js';
 import { capDiff, commentable, DIFF_CAP, diffArgs, parseDiff, reviewExclude } from '../review/diff.js';
+import { STEERING_MAX } from '../review/render.js';
 import type { RecordFinding } from '../review/record.js';
 import { judgeMd, type ReviewBasis, verifyFindings } from '../review/verify.js';
 import type { Contract } from './contract.js';
@@ -17,13 +18,15 @@ import type { ReviewResult } from './verdict.js';
 export interface TaskBasis extends ReviewBasis { omitted: { path: string; why: string }[]; diffText: string }
 
 const OVER_CAP = 'not reviewed: over the size cap';
+// Not counted toward PR size, but exactly where a weakened check hides (a rewritten snapshot, a path added to .eslintignore): sent.
+const TASK_SENT = new Set(['**/.!(npm|harness)ignore', '**/__snapshots__/**', '**/*.snap']);
 const msg = (e: unknown) => String((e as Error)?.message ?? e);
 
 /** The diff from `from` (the contract's merge base) to `to` (the verified tree id), capped as M2a caps a PR. */
 export function taskBasis(root: string, git: Exec, from: string, to: string, exclude: string[], nonce: string = newNonce()): TaskBasis {
   const r = git('git', [...SAFE_GIT, ...diffArgs(from, to)], { cwd: root, timeoutMs: 120_000 });
   if (r.status !== 0 || r.missing || r.timedOut) throw new Error(`review: git diff failed (${r.status}): ${esc((r.stderr ?? '').trim().split('\n')[0] ?? '')}`);
-  const files = parseDiff(r.stdout), cap = capDiff(files, DIFF_CAP, reviewExclude(exclude));
+  const files = parseDiff(r.stdout), cap = capDiff(files, DIFF_CAP, reviewExclude(exclude).filter((g) => !TASK_SENT.has(g)));
   return { head_sha: to, merge_base: from, nonce, files, lines: commentable(cap.sent), omitted: cap.omitted, diffText: diffText(cap.sent) };
 }
 
@@ -60,9 +63,10 @@ export async function runTaskReview(
   const failed = (error: string): ReviewResult => ({ model: o.reviewModel, status: 'failed', error, findings: [] });
   const over = b.omitted.filter((x) => x.why === OVER_CAP);
   if (over.length) return failed(`${over.length} file${over.length > 1 ? 's' : ''} over the review cap of ${DIFF_CAP} diff lines (${over.map((x) => escPath(x.path)).join(', ')}); split the task`);
+  const judgeModel = agentPrompt('review-judge').model ?? o.reviewModel;
   const ask = async (name: 'staff-reviewer' | 'review-judge', message: string, label = ''): Promise<unknown> => {
     const p = agentPrompt(name);
-    const r = await o.model({ system: p.system, message, model: name === 'review-judge' ? (p.model ?? o.reviewModel) : o.reviewModel, timeoutMs: o.timeoutMs });
+    const r = await o.model({ system: p.system, message, model: name === 'review-judge' ? judgeModel : o.reviewModel, timeoutMs: o.timeoutMs });
     const j = 'error' in r ? r : fencedJson(r.text);
     if ('error' in j) throw new Error(label + j.error);
     return j.value;
@@ -84,7 +88,7 @@ export async function runTaskReview(
       }),
       ...dropped.map(({ f, reason }): RecordFinding => ({ ...f, placement: 'dropped', dropped_reason: reason })),
     ];
-    return { model: o.reviewModel, status: 'ran', findings };
+    return { model: o.reviewModel, judge_model: judgeModel, status: 'ran', findings, steering: v.review.steering.slice(0, STEERING_MAX) };
   } catch (e) {
     return failed(msg(e));
   }

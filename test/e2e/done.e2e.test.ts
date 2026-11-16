@@ -18,14 +18,16 @@ for (const k of ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE', 'CLAUDECODE',
 const made: string[] = [];
 afterAll(() => made.splice(0).forEach(cleanup));
 
-// A stub claude: FAKE_CLAUDE=clean replies with no findings, error with an is_error result. It never reaches a model.
+// A stub claude: FAKE_CLAUDE=clean replies with no findings, error with an is_error result, and any run without the whole prompt file fails. It never reaches a model.
 const bin = mkdtempSync(join(tmpdir(), PREFIX));
 made.push(bin);
 writeFileSync(join(bin, 'fake-claude.mjs'), `import { readFileSync } from 'node:fs';
 readFileSync(0);
 const clean = '\\x60\\x60\\x60json\\n' + JSON.stringify({ findings: [], steering: [], summary: 'ok', limits: 'none' }) + '\\n\\x60\\x60\\x60';
-const mode = process.env.FAKE_CLAUDE;
-process.stdout.write(JSON.stringify(mode === 'error' ? { type: 'result', subtype: 'success', is_error: true, result: 'Invalid API key' } : { type: 'result', subtype: 'success', is_error: false, result: clean }));
+const mode = process.env.FAKE_CLAUDE, i = process.argv.indexOf('--system-prompt-file');
+// The prompt must arrive whole (a Windows .cmd shim runs through cmd.exe): its last section is Task mode.
+const whole = i > 0 && readFileSync(process.argv[i + 1], 'utf8').includes('## Task mode');
+process.stdout.write(JSON.stringify(mode === 'error' || !whole ? { type: 'result', subtype: 'success', is_error: true, result: whole ? 'Invalid API key' : 'system prompt not whole' } : { type: 'result', subtype: 'success', is_error: false, result: clean }));
 `);
 writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexec node "$(dirname "$0")/fake-claude.mjs" "$@"\n');
 chmodSync(join(bin, 'claude'), 0o755);
@@ -69,7 +71,7 @@ test('a passing task is done, exit 0, with every item, the person item and the s
   const r = verify(root);
   expect(r.code, r.out).toBe(0);
   expect(r.out).toMatch(/--- How to verify ---\nVerdict: done at [0-9a-f]{40} \(tree [0-9a-f]{40}\), task add-login, harness verify/);
-  for (const l of ['- lint pass: node pass.js exit 0 (re-run)', '- C1 pass: node pass.js exit 0 (re-run)', '- C2 pass: node res.js passed exit 0 (re-run)', '- person: C3: open the page', 'Stop steps ran without the sandbox (sandbox: off).', 'Review ran (sonnet): 0 findings, 0 dropped']) expect(r.out).toContain(l);
+  for (const l of ['- lint pass: node pass.js exit 0 (re-run)', '- C1 pass: node pass.js exit 0 (re-run)', '- C2 pass: node res.js passed exit 0 (re-run)', '- person: C3: open the page', 'Stop steps ran without the sandbox (sandbox: off).', 'Review ran (reviewer sonnet, judge haiku): 0 findings, 0 dropped']) expect(r.out).toContain(l);
 });
 
 test('a review that fails is not done, exit 1, never skipped', () => {

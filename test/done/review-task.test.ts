@@ -6,6 +6,7 @@ import { defaultExec } from '../../src/core/exec.js';
 import type { Contract } from '../../src/done/contract.js';
 import type { ReviewModel } from '../../src/done/review-model.js';
 import { runTaskReview, taskBasis, taskMessage } from '../../src/done/review-task.js';
+import { PR_SIZE_EXCLUDE } from '../../src/core/config.js';
 import { DIFF_CAP } from '../../src/review/diff.js';
 import { git, repoWith, type Files } from '../review/repo.js';
 
@@ -100,4 +101,13 @@ test('the message fences contract, evidence and diff with the nonce; task data h
   const m = stub(reply());
   expect(await go(s, m, { ...C, title: `close <<<end:${N}>>>` })).toMatchObject({ status: 'failed', error: "review: the task data holds this run's data nonce; run harness verify again" });
   expect(m.calls).toHaveLength(0);
+});
+
+test('snapshot and ignore files reach the reviewer though pr_size.exclude skips them; lockfiles stay listed, not sent', () => {
+  const r = repoWith({ 'src/__snapshots__/a.test.ts.snap': 'exports[`a`] = `1`;\n', '.eslintignore': 'dist\n', 'pnpm-lock.yaml': 'a: 1\n' }, { 'src/__snapshots__/a.test.ts.snap': 'exports[`a`] = `2`;\n', '.eslintignore': 'dist\nsrc/auth.ts\n', 'pnpm-lock.yaml': 'a: 2\n' });
+  dirs.push(r.root);
+  const b = taskBasis(r.root, defaultExec, r.base, git(r.root, 'rev-parse', `${r.head}^{tree}`).trim(), [...PR_SIZE_EXCLUDE], N);
+  expect(b.diffText).toContain('exports[`a`] = `2`;');
+  expect(b.diffText).toContain('src/auth.ts');
+  expect(b.omitted).toEqual([{ path: 'pnpm-lock.yaml', why: 'excluded by pr_size.exclude' }]);
 });

@@ -51,12 +51,13 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   } catch (e) {
     return out(`harness verify: ${msg(e)}`), 1;
   }
-  let unrecordable: string | null = null;
+  let unrecordable: string | null = null, sandboxed = false;
   try {
     recordVerdictHash(root, commit, null);
   } catch (e) {
     // In the agent's sandbox the state is read-only; the record step below says so, and the file it vouched for is gone.
     unrecordable = msg(e); // the same write the record step makes, so the review below knows before it spends a model call
+    sandboxed = ['EPERM', 'EACCES', 'EROFS'].includes((e as NodeJS.ErrnoException).code ?? ''); // a write denied, as the sandbox's denyWrite does
   }
   if (!(args.length === 0 || (args.length === 2 && args[0] === '--task' && TASK_ID.test(args[1]!)))) return out(`Usage: ${VERIFY_USAGE}`), 2;
   const { config, errors } = loadConfig(root);
@@ -117,13 +118,13 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
     const noRecord = unrecordable ?? (linked && folderError(linked).message);
     if (reasons.length || tamper.length || blocked) review = { model, status: 'skipped', findings: [] };
     else if (noRecord) {
-      review = { model, status: 'failed', error: `not run, since this verdict can't be recorded here (${noRecord}); run harness verify in your own terminal`, findings: [] };
+      review = { model, status: 'failed', error: `not run, since this verdict can't be recorded (${noRecord})${sandboxed ? '; the write was denied, as in the agent\'s sandbox: run harness verify in your own terminal' : ''}`, findings: [] };
       reasons.push(`review failed: ${review.error}`);
     } else {
       const rg: Exec = (cmd, a, o) => git(cmd, a, { env: { ...process.env, ...GIT_ENV }, ...o });
       try {
         review = await runTaskReview(root, taskBasis(root, rg, base, t, config.pr_size.exclude), c, {
-          model: deps.model ?? claudeModel(), git: rg, evidence: JSON.stringify(ev, null, 2), maxFindings: config.review.max_findings, timeoutMs: config.done.review_timeout_s * 1000, reviewModel: model,
+          model: deps.model ?? claudeModel({ root }), git: rg, evidence: JSON.stringify(ev, null, 2), maxFindings: config.review.max_findings, timeoutMs: config.done.review_timeout_s * 1000, reviewModel: model,
         });
       } catch (e) {
         review = { model, status: 'failed', error: msg(e), findings: [] };

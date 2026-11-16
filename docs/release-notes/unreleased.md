@@ -7,7 +7,7 @@ docs/release-notes/<version>.md: the release workflow's check-tag step needs tha
 
 Not yet listed here: changes merged before this file existed (the pr-body check, the review judge agent).
 
-Run `/harness:update` in each repo after upgrading: `.claude/agents/staff-reviewer.md` gained a task mode (done contract), and the PR review (`harness review`) refuses while the installed copy differs from the package's.
+Run `/harness:update` in each repo after upgrading: `.claude/agents/staff-reviewer.md` gained a task mode and `review-judge.md` an inline-input rule (done contract), and the PR review (`harness review`) refuses while an installed copy differs from the package's.
 
 ### Secrets scanning
 

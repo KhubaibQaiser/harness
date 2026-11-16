@@ -1,4 +1,4 @@
-// Task 11: harness verify, attended, without the review. Steps are node scripts run unwrapped (sandbox: off) or a fake runner.
+// Tasks 11 and 13: harness verify, attended; the review's model is a stub (a clean reply unless a test passes its own). Steps are node scripts run unwrapped (sandbox: off) or a fake runner.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import { type Contract, type Criterion, setActiveTask, TASKS_DIR, writeContract 
 import { appendRow } from '../../src/done/ledger.js';
 import { treeHash } from '../../src/done/tree.js';
 import { readVerdict, recordVerdictHash, type Verdict, verdictPath, writeVerdict } from '../../src/done/verdict.js';
+import type { ReviewModel } from '../../src/done/review-model.js';
 import { verify, VERIFY_USAGE, type VerifyDeps } from '../../src/done/verify.js';
 import { git, repoWith, type Files } from '../review/repo.js';
 
@@ -38,12 +39,14 @@ async function runVerify(o: Opts = {}): Promise<Verdict & { code: number; text: 
   if (!o.filesOnly) writeFileSync(join(root, 'src/a.ts'), 'export const a = 2;\n'); // the work: not only harness files
   o.setup?.(root, c);
   const lines: string[] = [];
-  const code = await verify(o.args ?? [], { root, cwd: root, env: {}, out: (l) => lines.push(l), platform: o.platform }, o.deps);
+  const code = await verify(o.args ?? [], { root, cwd: root, env: {}, out: (l) => lines.push(l), platform: o.platform }, { model: CLEAN, ...o.deps });
   const p = join(root, verdictPath(git(root, 'rev-parse', 'HEAD').trim(), 'all'));
   let v = {} as Verdict;
   try { v = JSON.parse(readFileSync(p, 'utf8')) as Verdict; } catch { /* no verdict, or the symlink case's user file */ }
   return { ...v, code, text: lines.join('\n'), root };
 }
+const fenced = (v: unknown) => ({ text: '```json\n' + JSON.stringify(v) + '\n```' });
+const CLEAN: ReviewModel = async () => fenced({ findings: [], steering: [], summary: 'ok', limits: 'none' });
 const row = (root: string, c: Contract, command: string, tree = treeHash(root), criteria: string[] = []) =>
   appendRow(root, { kind: 'run', ts: '2026-11-16T00:00:00Z', session: 's', command, exit: 0, tree, contract: c.sha256!, criteria });
 const blockedRow = (root: string, c: Contract) =>
@@ -330,4 +333,36 @@ test('a verdicts folder swapped for a link during the run is refused before the 
 test('a results file written by the step just before the test step does not count', async () => {
   const v = await runVerify({ steps: [{ name: 'lint', run: ['node', 'forge.js'] }, { name: 'test', run: ['node', 'pass.js'] }], checks: ['lint'], criteria: TEST_C1, files: { 'forge.js': FORGE } });
   expect([v.outcome, v.criteria[0]!.evidence?.status]).toEqual(['not-done', 'fail']);
+});
+
+test('the review runs fresh after the checks pass; a surviving critical is not done', async () => {
+  const calls: Parameters<ReviewModel>[0][] = [];
+  const clean = await runVerify({ deps: { model: async (c) => (calls.push(c), CLEAN(c)) } });
+  expect([clean.outcome, clean.review]).toEqual(['done', { model: 'sonnet', status: 'ran', findings: [] }]);
+  expect([calls.length, calls[0]!.model, calls[0]!.timeoutMs]).toEqual([1, 'sonnet', 600_000]);
+  expect(calls[0]!.message).toContain('"command": "node pass.js"'); // the evidence summary
+  expect(clean.text).toContain('Review ran (sonnet): 0 findings, 0 dropped');
+  const F = { id: 'f1', severity: 'critical', category: 'unrequested-scope', file: 'src/a.ts', line: 1, side: 'RIGHT', title: 'Changes <a>', evidence: { kind: 'quote', text: 'export const a = 2;' }, fix: 'Revert it.' };
+  const M = { ...F, id: 'f2', severity: 'medium', title: 'Minor' };
+  const model: ReviewModel = async (c) => (c.message.startsWith('Mode: judge') ? fenced({ verdicts: [{ id: 'f1', supported: true, why: 'shown' }, { id: 'f2', supported: true, why: 'shown' }] }) : fenced({ findings: [F, M], steering: [], summary: 's', limits: 'l' }));
+  const bad = await runVerify({ deps: { model } });
+  expect([bad.code, bad.outcome, bad.reasons]).toEqual([1, 'not-done', ['review: src/a.ts:1 Changes <a>']]);
+  expect(bad.review!.findings.map((f) => f.placement)).toEqual(['inline', 'inline']);
+  expect(bad.text).toContain('- review medium: src/a.ts:1 Minor');
+});
+
+test('review fails or times out: not done, never skipped', async () => {
+  for (const error of ['review timed out after 600s', 'claude is not on PATH']) {
+    const v = await runVerify({ deps: { model: async () => ({ error }) } });
+    expect([v.code, v.outcome, v.reasons, v.review]).toEqual([1, 'not-done', [`review failed: ${error}`], { model: 'sonnet', status: 'failed', error, findings: [] }]);
+  }
+});
+
+test('an earlier failure or a block skips the review; a harness-files-only change has none', async () => {
+  let called = 0;
+  const model: ReviewModel = async (c) => (called++, CLEAN(c));
+  expect((await runVerify({ criteria: [run('C1', 'node fail.js')], deps: { model } })).review).toEqual({ model: 'sonnet', status: 'skipped', findings: [] });
+  expect((await runVerify({ setup: blockedRow, deps: { model } })).review!.status).toBe('skipped');
+  expect((await runVerify({ filesOnly: true, deps: { model } })).review).toBeNull();
+  expect(called).toBe(0);
 });

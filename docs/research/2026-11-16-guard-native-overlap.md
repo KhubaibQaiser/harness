@@ -133,13 +133,13 @@ By verdict:
 - rule + delete code: 0;
 - code only: 34. This includes P2, P3 and D1: a rule could express part of each, but it would hit the sandbox merge (F3).
 
-That confirms the plan's expectation, and goes one step further: no row qualifies for "rule + delete code" today. The file-tool rows (G1, G2, P1 to P3) were the only candidates, and each misses a form the code catches. G1 and G2 miss case, Windows short names and streams, and the Grep `glob` parameter. P1 to P3 miss case, and P2 and P3 also hit the sandbox merge. Deletes can only follow live checks L1 and L2 and the owner's answers to Q5 and Q6.
+That confirms the plan's expectation, and goes one step further: no row qualifies for "rule + delete code" today. The file-tool rows (G1, G2, P1 to P3) were the only candidates, and each misses a form the code catches. G1 and G2 miss case, Windows short names and streams, and the Grep `glob` parameter. P1 to P3 miss case, and P2 and P3 also hit the sandbox merge. The owner answered A to Q5 and A to Q6, so no code is deleted.
 
 ## Rules that change what a person sees
 
 - Every home-directory or `**/*.pem` Read deny (G1, Q3). It blocks `@` mentions, IDE context and pasted paths (N9). Through the sandbox it also blocks sandboxed processes from reading the files (F5).
 - Changing the force-push rule (Q1). `--force-with-lease` then starts to pass natively.
-- A `.env.example` carve-out (Q2). Claude may then read example env files.
+- A `.env.example` carve-out (Q2). Decided B, so there is no carve-out and no change: example env files stay unreadable to Claude's file tools.
 - Native ask rules (group 1b) prompt in `bypassPermissions` (N12). Today harness denies in that mode, because it treats bypass as unattended. That shows only for forms the code misses, since the hook denies first.
 - Any delete (Q5, Q6). The deny message becomes Claude Code's, and the denial no longer appears in harness's event log (F8).
 
@@ -148,8 +148,8 @@ That confirms the plan's expectation, and goes one step further: no row qualifie
 Run with the owner's yes, per batch.
 - **L1.** Does `Edit(./x/**)` in `.claude/settings.json` make sandboxed Bash fail to write `x/`? Try `.harness/logs` with the current fragment (F3).
 - **L2.** Is Read and Edit rule matching case-insensitive on macOS (`.ENV`, `.HARNESS/config.yaml`)?
-- **L3.** Does `Read(!**/.env.example)` after `Read(./**/.env.*)` in the same file re-open `.env.example`?
-- **L4.** Are tool-name globs (`mcp__*__*auto*merge*`) case-sensitive?
+- **L3.** Dropped: Q2 = B, so no carve-out is added.
+- **L4.** Dropped: Q4 = A, so only exact tool names are used.
 - **L5.** Does `PowerShell(*.env*)` match an assignment `$p = '.env'; Get-Content $p`? Do Read deny rules cover `Get-Content .env`?
 - **L6.** Is `git push --force-with-lease origin feat` denied by the current `Bash(git push *--force*)`?
 - **L7.** In `claude -p` with no permission prompt tool, does a native ask become a denial?
@@ -158,11 +158,24 @@ Run with the owner's yes, per batch.
 
 | PR | Branch | Content | Est. non-test lines, files | After |
 |---|---|---|---|---|
-| CC10-1 | `feat/cc10-native-rules` | `{"ask": r}` merge blocks mirroring deny (`merge.ts`), `harnessAskRules` (`harness-files.ts`), weakening on removal (`settings-weaken.ts`), uninstall, docs and release note; plus the G1 in-project Read denies per Q3, M1 per Q4, and the F1 force-push fix per Q1 (an update drops the old rules via R13's `removeSets`) | about 140, 8 | CC10-0 approved; CC6 (fragment, merge); L1, L2, L6 |
-| CC10-1b | `feat/cc10-bash-ask-rules` | Fragment-only Bash and PowerShell rules for G4a, G4c, G10, G13c, G13d, G17 to G20m and G23, about 70 rules; the table test `each generated rule matches its row's canonical form`; README limits line | about 90 (mostly fragment JSON), 4 | CC10-1; L5, L7 |
-| CC10-2+ | `refactor/cc10-*` | None proposed. Possible only on Q5 = B (delete the G1/G2 Read and Grep branch and drop `Read\|Grep` from the matcher: about 25 lines, 3 files) or Q6 = B (delete the G23 PowerShell ask: about 10 lines, 2 files). Each runs the guard compare with the native rule as a pre-filter, and the result must be `0 looser than base`. | 0, or about 35, 5 | CC9c; guard token; L2, L5 |
+| CC10-1 | `feat/cc10-native-rules` | `{"ask": r}` merge blocks that mirror deny (`merge.ts`), `harnessAskRules` (`harness-files.ts`), weakening on removal (`settings-weaken.ts`), uninstall, docs and the release note. Plus three rule changes:<br>- Q3 = A: the 12 in-project Read denies (`**/id_rsa`, `**/id_ed25519`, `**/id_ecdsa`, `**/id_dsa`, `**/*.p12`, `**/*.pfx`, `**/*.keystore`, `**/*.tfstate`, `**/*.tfstate.*`, `**/*.tfvars`, `**/.netrc`, `**/.pgpass`), with no `*.pem` and no home rules.<br>- Q4 = A: the exact deny `mcp__ccd_pr__set_auto_merge`.<br>- Q1 = A: `git push *--force*` is replaced, in Bash and in PowerShell, by four token-bounded rules: `git push --force`, `git push --force *`, `git push * --force` and `git push * --force *`. The `-f` and `+` rules stay as they are. An update drops the old rule through R13's `removeSets`.<br>Under Q2 = B, the `.env` rules stay as they are, with no carve-outs. | about 140, 8 | CC10-0 approved; CC6 (fragment, merge); L1, L2, L6 |
+| CC10-1b | `feat/cc10-bash-ask-rules` | Fragment-only Bash and PowerShell rules for G4a, G4c, G10, G13c, G13d, G17 to G20m and G23, about 70 rules. Under Q6 = A, the G23 PowerShell rules sit beside the code's ask. Includes the table test `each generated rule matches its row's canonical form` and a README limits line. | about 90 (mostly fragment JSON), 4 | CC10-1; L5, L7 |
+| CC10-2+ | none | No PRs. Q5 = A keeps the Read/Grep secrets code and the matcher. Q6 = A keeps the PowerShell ask. No row is "rule + delete code". | 0 | n/a |
 
-## Owner questions
+## Owner answers (2026-11-16)
+
+These are decisions, not recommendations.
+
+| Q | Answer | Decision |
+|---|---|---|
+| Q1 | A | Replace the force-push deny with token-bounded `--force` rules, in Bash and PowerShell, so `--force-with-lease` is allowed natively. Guard still denies `--force` and `-f`. |
+| Q2 | B | Keep the native `.env` rules stricter than guard. No `.env.example`, `.sample`, `.template` or `.dist` carve-outs. L3 is dropped. |
+| Q3 | A | Native Read denies for in-project secret paths only. No `**/*.pem` and no home rules: code keeps those. |
+| Q4 | A | Native auto-merge deny on exact tool names only (`mcp__ccd_pr__set_auto_merge`). Code keeps the general word rule. L4 is dropped. |
+| Q5 | A | Keep the Read/Grep secrets code and `Read\|Grep` in the PreToolUse matcher. No delete. |
+| Q6 | A | Keep both PowerShell layers: the code's text ask and the native rules. No delete. |
+
+## Owner questions (answered above)
 
 **Q1 (G13a, F1). Should the force-push deny let `--force-with-lease` through?** The current `Bash(git push *--force*)` also denies `--force-with-lease`, which guard allows and recommends.
 - **A (recommended): replace it with token-bounded rules.** These are `git push --force`, `git push --force *`, `git push * --force` and `git push * --force *`, in Bash and PowerShell. Why: the native rule and guard then agree, and guard still denies `--force`. Moving loosens the native layer for `--force-with-lease` only.

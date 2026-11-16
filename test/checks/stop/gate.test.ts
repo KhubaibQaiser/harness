@@ -11,7 +11,7 @@ vi.mock('node:child_process', async (orig) => {
   return { ...real, spawn: ((...a: Parameters<typeof real.spawn>) => (fake.make ? fake.make() : real.spawn(...a))) as typeof real.spawn };
 });
 import { defaultExec, type Exec, killTree, pickRunner, runStop as runStopReal, stopGate } from '../../../src/checks/stop/gate.js';
-import { readStopRecord } from '../../../src/checks/stop/record.js';
+import { readStopRecord, writeStopRecord } from '../../../src/checks/stop/record.js';
 import { runUnwrapped } from '../../../src/checks/stop/steps.js';
 import { loadConfig } from '../../../src/core/config.js';
 import { readEvents } from '../../../src/core/events.js';
@@ -153,28 +153,58 @@ test('each step gets the remaining share of timeout_s (injected clock)', async (
   expect(ms.every((m) => m > 0 && m <= 100000)).toBe(true);
 });
 
-test('timeout from exec: context text, stop-timeout event, attempts unchanged', async () => {
+const reasonOf = (d: { kind: string }) => (d as unknown as { reason: string }).reason;
+
+test('a timed-out step blocks, counts an attempt, names the step and stop.timeout_s, and logs stop-timeout with the label', async () => {
   const s = setup({ attempts: 1 });
   const d = await runStop(s.ctx, s.exec(SRC, '', 'lint'));
-  expect(d).toEqual({ kind: 'context', text: 'Stop gate timed out after 540s; checks did not finish.', check: 'stop' });
-  expect(s.saved).toEqual([]);
-  expect(s.ctx.state.stopAttempts).toBe(1);
-  expect(readEvents(s.root)).toEqual([]); // the dispatcher logs the one `context` event
+  expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+  expect(reasonOf(d)).toBe('lint timed out after 540s (attempt 2 of 3). Speed it up, raise stop.timeout_s in .harness/config.yaml, or end with harness done --blocked "<reason>" if it can\'t finish.');
+  expect(s.saved).toEqual([2]);
+  expect(stopEvents(s.root, 'stop-timeout').map((e) => e.reason)).toEqual(['lint']);
 });
 
-test('timeout when the budget is spent before a step starts', async () => {
+test('a spent budget blocks naming the step that did not start', async () => {
   const s = setup({ yaml: 'stop:\n  timeout_s: 30\n' });
   let t = 0;
   const d = await runStop(s.ctx, s.exec(SRC), () => (t += 60000));
-  expect(d.kind).toBe('context');
+  expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+  expect(reasonOf(d)).toMatch(/^format:check timed out after 30s \(attempt 1 of 3\)\. /);
   expect(s.steps()).toEqual([]);
 });
 
-test('timeout is emitted as a Stop systemMessage through the dispatcher', async () => {
+test('a whole-run timeout from the runner blocks as "the checks" and counts an attempt', async () => {
+  const s = setup();
+  const d = await runStopReal(s.ctx, s.exec(SRC), Date.now, (c) => c, async () => ({ kind: 'timeout' }));
+  expect(d).toMatchObject({ kind: 'block', check: 'stop' });
+  expect(reasonOf(d)).toMatch(/^the checks timed out after 540s \(attempt 1 of 3\)\. /);
+  expect(s.ctx.state.stopAttempts).toBe(1);
+  expect(stopEvents(s.root, 'stop-timeout').map((e) => e.reason)).toEqual(['the checks']);
+});
+
+test('timeouts end within max_attempts: it blocks max times, then allows with checks never ran (timeout)', async () => {
+  const s = setup({ yaml: 'stop:\n  max_attempts: 2\n' });
+  const kinds: string[] = [];
+  for (let i = 0; i < 4 && kinds.at(-1) !== 'allow'; i++) kinds.push((await runStop(s.ctx, s.exec(SRC, '', 'lint'))).kind);
+  expect(kinds).toEqual(['block', 'block', 'allow']);
+  expect(s.ctx.state.stopAttempts).toBe(0);
+  expect(stopEvents(s.root, 'stop-gave-up').map((e) => e.reason)).toEqual(['checks never ran (timeout)']);
+  expect(readStopRecord(s.root)).toMatchObject({ outcome: 'never-ran', reason: 'checks never ran (timeout)' });
+});
+
+test('a timeout give-up records exactly checks never ran (timeout), not a stale unavailable reason', async () => {
+  const s = setup({ yaml: 'stop:\n  max_attempts: 1\n', attempts: 1 });
+  writeStopRecord(s.root, { ts: new Date().toISOString(), srt: null, outcome: 'unavailable', checks: {}, reason: 'srt is not installed' });
+  expect((await runStop(s.ctx, s.exec(SRC, '', 'lint'))).kind).toBe('allow');
+  expect(readStopRecord(s.root)).toMatchObject({ outcome: 'never-ran', reason: 'checks never ran (timeout)' });
+});
+
+test('a timeout block is emitted as a Stop block through the dispatcher', async () => {
   const s = setup();
   const timeoutGate = { ...stopGate, run: (c: Ctx) => runStop(c, s.exec(SRC, '', 'lint')) };
-  const out = await dispatch(JSON.stringify(s.ctx.input), [timeoutGate], {});
-  expect(JSON.parse(out)).toEqual({ systemMessage: 'Stop gate timed out after 540s; checks did not finish.' });
+  const out = JSON.parse(await dispatch(JSON.stringify(s.ctx.input), [timeoutGate], {}));
+  expect(out.decision).toBe('block');
+  expect(out.reason).toContain('lint timed out after 540s');
 });
 
 test('stop_hook_active does not bypass the gate', async () => {
@@ -191,7 +221,8 @@ test('dispatcher logs exactly one event per block, timeout and give-up', async (
     return readEvents(s.root).map((e) => `${e.check}/${e.decision}`);
   };
   expect(await run('lint', '', 0)).toEqual(['stop/block']);
-  expect(await run('', 'lint', 0)).toEqual(['stop/context']);
+  expect(await run('', 'lint', 0)).toEqual(['stop/stop-timeout', 'stop/block']);
+  expect(await run('', 'lint', 3)).toEqual(['stop/stop-timeout', 'stop/stop-gave-up']);
   expect(await run('lint', '', 3)).toEqual(['stop/stop-gave-up']);
 });
 
@@ -719,11 +750,13 @@ test('a coverage block after unwrapped steps carries the unwrapped note', async 
   expect((d as { reason: string }).reason).toContain('Stop steps ran without the sandbox (native Windows).');
 });
 
-test('a timeout carries the notes, and a refusal note is not lost to it', async () => {
+test('a timeout block carries the notes, and a refusal note is not lost to it', async () => {
   const s = setup();
   s.ctx.platform = 'win32';
   const d = await wrapped(s, NOPROBE)(s.exec(SRC, '', 'lint'));
-  expect(d).toEqual({ kind: 'context', text: 'Stop gate timed out after 540s; checks did not finish.\nStop steps ran without the sandbox (native Windows).', check: 'stop' });
+  expect(d.kind).toBe('block');
+  expect(reasonOf(d)).toContain('lint timed out after 540s');
+  expect(reasonOf(d)).toContain('Stop steps ran without the sandbox (native Windows).');
 });
 
 test.skipIf(winSkip)('attempts exhausted on srt unavailable: allow, stop-gave-up reason checks never ran (srt unavailable), record never-ran', async () => {

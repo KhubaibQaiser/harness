@@ -24,6 +24,10 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 - The launch also sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, which strips credential-looking variables from Bash, the hooks and the Stop gate's test commands, and on Linux blocks reading other processes' env through `/proc`. Tests that need such a variable must get it another way. The scrub also strips `CLAUDE_CONFIG_DIR`: if you use it, add `HARNESS_CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"` to the launch. Harness now reads the user config dir from `CLAUDE_CONFIG_DIR`, else `HARNESS_CLAUDE_CONFIG_DIR`, else `~/.claude`, and blocks a mid-session user-settings change that Claude Code reports in a file it doesn't watch.
 - The scrub forces the permission mode to `default` (checked live on Claude Code 2.1.322), so `bypassPermissions` is ignored and `claude -p` refuses every tool that needs approval. The launch now passes `--allowedTools "Bash,Edit,Write"` (add what your run needs) and `HARNESS_UNATTENDED=1`, without which harness would treat a non-CI run in `default` mode as attended.
 
+### Changed
+
+- Test files no longer count toward the PR size limit by default (owner ruling 2026-11-16, reversing the pr-size spec's D3): `*.test.*`, `*.spec.*`, `__tests__/`, `test/` and `tests/` folders, Python `test_*.py` and `*_test.py`, Go `*_test.go` and `conftest.py` join the default `pr_size.exclude`. They are still named in the size warning's "Not counted" list, and the PR reviewer still reads them. A `pr_size.exclude` you set replaces the whole default, so tests count again unless you list them.
+
 ### Breaking
 
 - The Stop gate's steps now run inside Anthropic's sandbox-runtime (`srt`) by default, so attended macOS and Linux Stop gates need `srt` installed. Install `@anthropic-ai/sandbox-runtime@0.0.83` globally with npm, outside the repo. Linux also needs bubblewrap 0.8 or newer, socat and ripgrep; macOS needs ripgrep. Until `srt` is installed, Stop blocks with the fix. A Stop with nothing to run (a docs-only change, a clean tree) still passes without `srt`.
@@ -32,6 +36,7 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 - When the attempts run out, Stop passes by its existing rule and logs `checks never ran (srt unavailable)` in `.harness/state/stop-sandbox.json`; it is never a pass.
 - Attended native Windows keeps running steps unwrapped, with a note on every Stop. An unattended native Windows Stop now blocks (`checks never ran (native Windows unattended)` on give-up); run in WSL2 or the harness dev container.
 - `harness doctor` has a Stop sandbox section (the `srt` version and its dependencies, the refused `stop.allow_write` entries, the last preflight result per check, and on native Windows a warning, plus the never-ran fix after an unattended give-up), and `harness status` has a `Stop sandbox:` line that adds `last stop: checks never ran` when it applies.
+- A Stop step that runs past `stop.timeout_s` now blocks and counts as an attempt toward `stop.max_attempts`, instead of letting the Stop through with a note, so a hanging test can't skip the checks. Listed under Breaking because the default is stricter: a suite slower than `stop.timeout_s` (default 540) blocks until you raise it. After the last attempt the Stop passes by the existing rule and logs `checks never ran (timeout)`; the event log gets `stop-timeout` with the step name.
 
 ## Catalog
 

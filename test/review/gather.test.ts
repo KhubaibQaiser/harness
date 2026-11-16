@@ -102,9 +102,9 @@ describe('gather: §8 rows', () => {
     writeFileSync(join(t.root, '.claude/agents/staff-reviewer.md'), 'agent edited by the PR\n');
     expect(run(t, fakeGh(t).exec)).toMatchObject({ code: 1, lines: [`review: .claude/agents/staff-reviewer.md differs from main (${t.base.slice(0, 7)}); run the review from main or a clean worktree of it`] });
   });
-  test('an installed staff-reviewer that differs from the plugin\'s is refused: Claude Code may start either', () => {
+  test('a project staff-reviewer that differs from the plugin\'s copy is gathered (the project agent wins, and the drift check covers it)', () => {
     const t = setup({ base: { '.claude/agents/staff-reviewer.md': 'an older or edited agent\n' } });
-    expect(run(t, fakeGh(t).exec)).toMatchObject({ code: 1, lines: ["review: .claude/agents/staff-reviewer.md differs from the harness plugin's copy, and Claude Code may start either; run /harness:update on main and review again"] });
+    expect(run(t, fakeGh(t).exec)).toMatchObject({ code: 0 });
   });
   test('a base without the review agents (an older install) asks for /harness:update', () => {
     const t = setup({ base: { '.claude/agents/review-judge.md': null } });

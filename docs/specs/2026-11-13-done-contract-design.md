@@ -110,7 +110,7 @@ Steps, all fail-closed:
    - Attended: reuse a fresh ledger row that the hooks recorded, and re-run anything missing or stale.
    - `--ci`: always re-run everything.
 
-   Commands run through the existing stop-step runner, with time limits, in one `srt` call with the plan's `all` option (every command runs and reports; isolation §4.2). `person` criteria are listed, never auto-passed.
+   Commands run through the existing stop-step runner, with time limits, in one `srt` call with the plan's `all` option (every command runs and reports; isolation §4.2). Verify (done PR 5b) builds that plan. `person` criteria are listed, never auto-passed.
 4. **Review.**
    - Inputs: staff-reviewer in task mode gets the contract, the diff, and an evidence summary, fenced as data, as in M2a.
    - Questions it answers:

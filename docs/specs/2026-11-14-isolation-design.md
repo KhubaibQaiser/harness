@@ -155,7 +155,7 @@ The done contract's `harness verify` reuses the same runner (done contract §4.4
 
 ### 4.2 How steps are wrapped: one `srt` call per run
 
-- The wrap lives in `src/checks/stop/wrap.ts` (`runWrapped`), behind the same `RunSteps` interface as the unwrapped runner (`steps.ts`). The Stop gate picks one (`pickRunner`), and verify takes the same one, so Stop steps and verify's command runs are both covered. The preflight is in `preflight.ts` and the step runner in `step-runner.ts`.
+- The wrap lives in `src/checks/stop/wrap.ts` (`runWrapped`), behind the same `RunSteps` interface as the unwrapped runner (`steps.ts`). The Stop gate picks one (`pickRunner`). Both runners take an `all` option, which the Stop gate never sets; verify (done PR 5b) runs one plan with `all`. Stop steps and verify's command runs are both covered by the wrap. The preflight is in `preflight.ts` and the step runner in `step-runner.ts`.
 - **Per run** (a Stop run, or one verify):
   1. Write the `srt` settings (§4.3) and a plan to `.harness/state/srt-<nonce>.json` and `.harness/state/plan-<nonce>.json`. That folder is protected by protect, `denyWrite` and ConfigChange. The plan lists each step's command, arguments, absolute working directory and time limit, the outer deadline, the preflight's canary and socket paths and, for verify, the `all` flag. Both files are new for every run (exclusive create, mode 0600) and deleted afterwards. The outer runner also creates the preflight's canaries and socket (§4.4) and a random seal, held in memory.
   2. Run `srt --settings <abs settings> <node> --no-warnings [--disable-sigusr1] <step runner> --stop-steps <abs plan> <nonce>` **once**, with the seal written to its stdin.
@@ -166,10 +166,10 @@ The done contract's `harness verify` reuses the same runner (done contract §4.4
      - reads the seal from stdin, one bounded line, before the preflight and before any step runs; steps get no stdin;
      - runs the behavioural preflight (§4.4) first;
      - runs each step with its time limit, capturing its output, and stops after the first failing step (with `all`, it runs every step, §4.2 "Verify" below);
-     - writes one JSON line per check and step to stdout, tagged with the nonce, each step line with its start time;
+     - writes one JSON line per check and step to stdout, tagged with the nonce, each step that ran with its start time;
      - writes the sealed end line last.
 
-     The outer runner enforces `stop.timeout_s` on the whole call. Any non-zero `srt` exit, or exit 0 with incomplete lines, is unavailable (`srt` exits 0 when its child dies of SIGTERM).
+     The outer runner enforces `stop.timeout_s` on the whole call. Outside a timeout, any non-zero `srt` exit, or exit 0 with incomplete lines, is unavailable (a ruling: `srt` can exit 0 when its child is killed, so complete lines are required).
 
      **Result lines are checked strictly (R3-M3).** It accepts exactly one line per expected check and step, in plan order, each with the nonce, and rejects the run on a missing, extra, out-of-order, duplicate or malformed line. The nonce isn't secret from step code (on Linux the runner is visible under `/proc`), so it binds a line's origin but proves nothing.
 
@@ -194,7 +194,7 @@ All keys and the `literal` entry form were checked against the srt README "Confi
 {
   "network": { "allowedDomains": [], "deniedDomains": [], "allowLocalBinding": false },
   "filesystem": {
-    "allowWrite": [ {"path": "<repo realpath>", "literal": true}, "<os temp dir>", "/tmp", "<stop.allow_write…>" ],
+    "allowWrite": [ {"path": "<repo realpath>", "literal": true}, {"path": "<os temp dir>", "literal": true}, {"path": "/tmp", "literal": true}, {"path": "<stop.allow_write…>", "literal": true} ],
     "denyWrite": [ "<each protected path, absolute, literal>", {"path": "<token base>", "literal": true}, {"path": "<canary>", "literal": true} ],
     "denyRead": [ {"path": "<token base>", "literal": true}, {"path": "<read canary>", "literal": true}, {"path": "<settings file>", "literal": true} ]
   },
@@ -219,14 +219,14 @@ All keys and the `literal` entry form were checked against the srt README "Confi
 
 ### 4.4 Preflight: behavioural, and fail closed (R2-I3)
 
-Inside the single `srt` call, before any step, the step runner checks that the fence holds. Each name is random per run. A check passes only on positive evidence of a deny: a listed deny errno, or (for the read) an empty read. Getting through, any other error, and any other exception fail the check. A probe that hangs is cut off by a time limit.
+Inside the single `srt` call, before any step, the step runner checks that the fence holds. Each name is random per run. A check passes only on positive evidence of a deny: a listed deny errno, or (for the read) an empty read. Getting through, any other error, and any other exception fail the check. The socket connect (2 s), network (3 s) and `bwrap` (5 s) probes have time limits: a hung socket connect or `bwrap` fails its check, while a network probe with no connection in 3 s counts as blocked.
 
 | Check | Must |
 |---|---|
 | Write the `denyWrite` canary (a file the outer runner created under `.harness/state/`) | Fail with `EPERM`, `EROFS` or `EACCES`. The outer runner also checks afterwards that the file is unchanged (below) |
-| Read the `denyRead` canary (a file the outer runner created in the OS temp dir with a random, non-empty value) | Fail with `EPERM` or `EACCES`, or read back empty (`srt` on Linux may mask a denied file with `/dev/null`). Any content fails |
-| Connect to a Unix socket the outer runner listens on, in the OS temp dir | Fail with `EPERM` or `EACCES`. The outer runner also checks that no connection arrived |
-| An HTTPS request to `example.com`, direct (no proxy, no redirects) | Not reach it. A TCP connection that gets established counts as reached, whatever follows (a certificate error, silence, a non-TLS reply), so a TLS-intercepting proxy reads as open. Blocked only on `ENOTFOUND`, `EAI_AGAIN`, `ECONNREFUSED`, `ENETUNREACH`, `EHOSTUNREACH`, `EPERM`, `EACCES`, or 3 seconds without a connection. An offline machine therefore reads as blocked, which is acceptable: steps can't reach the network either. The probe tests direct egress only; `srt`'s proxy domain filter is not tested here, and config validation (§7.4) guards `allowedDomains` instead |
+| Read the `denyRead` canary (a file the outer runner created in a temp dir with a random, non-empty value; the temp dir is the shorter of the OS temp dir and `/tmp`, for the socket path limit) | Fail with `EPERM` or `EACCES`, or read back empty (`srt` on Linux may mask a denied file with `/dev/null`). Any content fails |
+| Connect to a Unix socket the outer runner listens on, in that temp dir | Fail with `EPERM` or `EACCES`. The outer runner also checks that no connection arrived |
+| An HTTPS request to `example.com`, direct (no proxy, no redirects) | Not reach it. A TCP connection that gets established counts as reached, whatever follows (a certificate error, silence, a non-TLS reply), so a TLS-intercepting proxy reads as open. Blocked only on `ENOTFOUND`, `EAI_AGAIN`, `ECONNREFUSED`, `ENETUNREACH`, `EHOSTUNREACH`, `EPERM`, `EACCES`, or 3 seconds without a connection. An offline machine therefore reads as blocked, which is acceptable: steps can't reach the network either. The probe tests direct egress to the name `example.com` only: a DNS-only block reads as blocked, and raw-IP egress isn't probed; `srt`'s proxy domain filter is not tested here, and config validation (§7.4) guards `allowedDomains` instead |
 | Linux: `bwrap --unshare-user --ro-bind / / true` (bubblewrap is a dependency of `srt`) | Exit with a non-zero status. A missing binary, a timeout or a signal fails the check |
 
 The outer runner's checks run whatever the inner lines say:
@@ -243,7 +243,7 @@ Each line names the check that failed. A plain shim fails it. The names are: `wr
 | Case | What happens |
 |---|---|
 | `srt` missing, inside the repo or a write root, older than the pin, or the preflight fails | No step runs. Stop blocks with the message below; the block counts toward `stop.max_attempts`. A `stop-srt-unavailable` event is logged with the failed check. |
-| Attempts run out on that cause | The Stop gate lets the agent stop, by its existing rule, and logs `stop-gave-up` with `checks never ran (srt unavailable)` (with the failed check from the last record appended as `: <reason>`). The "never ran" record is `.harness/state/stop-sandbox.json`: the time, the `srt` version, the outcome (`ran`, `unavailable` or `never-ran`), each check's result and the reason. It is informational only: no done-ledger row, never a pass, and no gate reads it as evidence (R2-M6). It is validated strictly when read, written only into a real `.harness/state` folder, and shown by doctor and status with its text escaped and capped. A timeout leaves the previous record. |
+| Attempts run out on that cause | The Stop gate lets the agent stop, by its existing rule, and logs `stop-gave-up` with `checks never ran (srt unavailable)`. The "never ran" record is `.harness/state/stop-sandbox.json`: the time, the `srt` version, the outcome (`ran`, `unavailable` or `never-ran`), each check's result and the reason (`checks never ran (srt unavailable): <check>` when the previous record was unavailable with a reason). It is informational only: no done-ledger row, never a pass, and no gate treats it as evidence (R2-M6; the Stop gate reads the old record only to keep its reason). It is validated strictly when read, written only into a real `.harness/state` folder, and shown by doctor and status with its text escaped and capped. A timeout leaves the previous record. |
 | A step fails inside `srt` | The same as a failing step today. The output tail includes `srt`'s "Operation not permitted" lines. |
 | `sandbox: off` | Steps run unwrapped, as today, but only when `off` was already in force when the session started. Set mid-session (an edit, a branch switch, a pull), it is refused: the steps still run in `srt` and the Stop shows a note once. `stop-unwrapped` is logged once per session, and doctor shows a note. |
 | `harness verify` (attended or `--ci`) | The same rules. A verify that can't wrap exits "not done" (exit 1) with the message. |
@@ -251,7 +251,7 @@ Each line names the check that failed. A plain shim fails it. The names are: `wr
 Message:
 `Stop gate: the checks run inside sandbox-runtime (srt), and srt <is not installed | is inside the repo or a writable folder (<path>) | is <ver>, older than <pin> | failed its check: <check> (<first line>)>. <fix> To run the checks unsandboxed instead, set sandbox: off in .harness/config.yaml (logged).`
 
-The `<fix>` depends on the cause. When `srt` itself is the problem (missing, inside a writable folder, old, or failing the `launcher` or `version` check): `Install @anthropic-ai/sandbox-runtime@<pin> globally, outside the repo (Linux also needs bubblewrap 0.8 or newer, socat and ripgrep; macOS needs ripgrep), then stop again.` The `launcher` form adds `Install it with npm i -g @anthropic-ai/sandbox-runtime@<pin> so srt is a node script, not a shim.` For any other failed check, `srt` was found and version-checked, so the cause is the machine or the run: `srt is installed, so read srt's error above and run harness doctor to see what this machine is missing, then stop again.`
+The `<fix>` depends on the cause. When `srt` itself is the problem (missing, inside a writable folder, old, or failing the `launcher` or `version` check): `Install @anthropic-ai/sandbox-runtime@<pin> globally, outside the repo (Linux also needs bubblewrap 0.8 or newer, socat and ripgrep; macOS needs ripgrep), then stop again.` The `launcher` form adds, last, `Install it with npm i -g @anthropic-ai/sandbox-runtime@<pin> so srt is a node script, not a shim.` (appended after the `sandbox: off` sentence). For any other failed check, `srt` was found and version-checked, so the cause is the machine or the run: `srt is installed, so read srt's error above and run harness doctor to see what this machine is missing, then stop again.`
 
 The Stop hook itself fails open by Claude Code's design (done contract §2.3). Fail closed here means the gate never runs steps unwrapped, and verify never passes without the wrap.
 
@@ -270,7 +270,7 @@ The Stop hook itself fails open by Claude Code's design (done contract §2.3). F
   - **Ubuntu 26.04 needs more.** It loads AppArmor's `bwrap-userns-restrict` profile by default (since 25.04), which denies capabilities to bubblewrap's children, so `srt`'s seccomp helper is refused writing `/proc/self/setgroups` and every Stop blocks (fail closed, correct). The sysctl alone doesn't lift it. The fix is `sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict`, which turns off Ubuntu's AppArmor user-namespace restriction for bubblewrap on that machine: fine on a throwaway CI runner, a real tradeoff on a shared or personal one. Harness never runs it. Doctor detects the loaded profile (or its file, when it can't read the profile list) and prints the command with that cost. `network.allowAllUnixSockets: true` is rejected as a workaround: it drops Unix-socket and `io_uring` blocking and the nested PID namespace, which is close to no sandbox with `docker.sock` reachable.
 - macOS needs `ripgrep`.
 - Doctor finds each case and prints the fix (`rg`, and on Linux bubblewrap 0.8 or newer, the machine blocker `sandboxBlocker` reports, and the AppArmor profile above); until then the Stop gate blocks. Attended Linux users whose Stop gate worked unwrapped see this change, so it goes in the release note under "Breaking".
-- **CI:** done-contract PR 6's `harness-verify` workflow installs `srt` at the pin and runs the `sysctl` line on `ubuntu-24.04` (Q5 ruling). On `ubuntu-26.04` it also unloads the AppArmor profile, verified by a real run.
+- **CI:** done-contract PR 6's `harness-verify` workflow installs `srt` at the pin and runs the `sysctl` line on `ubuntu-24.04` (Q5 ruling). Harness's own CI also runs a `ubuntu-26.04` leg, where a step unloads the AppArmor profile when its file exists, verified by a real run. The unload lasts until reboot.
 
 ### 4.7 Performance
 
@@ -1038,7 +1038,7 @@ The generated table in `docs/reference.md` picks these up from `src/core/config.
 ### 10.4 Doctor and status
 
 **Doctor gains these sections:**
-- Stop sandbox (skipped with `checks.stop: false`): `srt` found, outside writable roots, at least the pin; `rg` on `PATH`; on Linux, bubblewrap 0.8 or newer (strict version parse), the machine blocker and the AppArmor `bwrap-userns-restrict` profile (§4.6); each `stop.allow_write` entry's refusal; `stop.allow_local`; credential paths `srt` can't deny (globs); the last Stop's record (each preflight check's result, `srt unavailable (<reason>)` or `checks never ran (<reason>)`, as fixes, with its text escaped and capped at 200 characters; no record is a note); on native Windows the warning and any never-ran record, and with `sandbox: off` a note. Neither Windows nor `off` looks up `srt`. A check that fails inside doctor is a fix naming it, never a crash.
+- Stop sandbox (skipped with `checks.stop: false`): `srt` found, outside writable roots, at least the pin; `rg` on `PATH`; on Linux, bubblewrap 0.8 or newer (strict version parse), the machine blocker and the AppArmor `bwrap-userns-restrict` profile (§4.6); each `stop.allow_write` entry's refusal; `stop.allow_local`; credential paths `srt` can't deny (globs); the last Stop's record (each passing preflight check as an ok line and each failure as a fix, then `srt unavailable (<reason>)` or `checks never ran (<reason>)` as fixes, with its text escaped and capped at 200 characters; no record is a note); on native Windows the warning and any never-ran record, and with `sandbox: off` a note. Neither Windows nor `off` looks up `srt`. Doctor and status read `sandbox: off` from the config, so a mid-session `off` that the Stop refuses (§4.4) still shows as `off` while the steps run in `srt`. A check that fails inside doctor is a fix naming it, never a crash.
 - Server side (§5.5), with the identity used.
 - Agent identity:
   - the App configured;
@@ -1053,7 +1053,7 @@ The generated table in `docs/reference.md` picks these up from `src/core/config.
 
 **Status gains** (the Stop sandbox line is omitted with `checks.stop: false`):
 ```
-Stop sandbox: srt <ver>                                  (or: UNAVAILABLE - stop gate blocks | off - logged | off - native Windows; each wrapped form adds "; last stop: checks never ran" when the record says so, and " - stop.allow_local on" when set)
+Stop sandbox: srt <ver>                                  (or: UNAVAILABLE - stop gate blocks | off - logged | off - native Windows; the wrapped forms and the native Windows form add "; last stop: checks never ran" when the record says so, and " - stop.allow_local on" when set)
 Server side: rulesets ok
 Agent identity: <slug>[bot], token fresh until 14:05 UTC (or: no App | broker failing: <last_error> | broker stopped)
 App key: reachable only with a prompt                    (or: REACHABLE BY UNSANDBOXED CODE on this host)
@@ -1258,7 +1258,7 @@ They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch 
 | Batch | Where | Checks | Gates |
 |---|---|---|---|
 | L0 unattended detection (#231 follow-up) | macOS, Linux | **The headless `-p` signal (R2-I7).** In the hook's environment for `claude -p`, an interactive session and an SDK run, record `CLAUDE_CODE_ENTRYPOINT` and any other variable Claude Code sets. Check whether `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` reaches hooks under the scrub, and that a scrubbed `-p --allowedTools "Bash,Edit,Write"` run without `HARNESS_UNATTENDED` is judged unattended once the fix lands | P0b |
-| LS Stop in `srt` | macOS; Linux (Ubuntu 24.04 with and without the `sysctl`) | See below | PS1, PS2 |
+| LS Stop in `srt` | macOS; Linux (Ubuntu 24.04 with and without the `sysctl`; Ubuntu 26.04 with and without the AppArmor unload) | See below | PS1, PS2 |
 | L1 read block | macOS; Linux; WSL2 if available | With the block and the sandbox on: nvm or volta `node -v`, pyenv, `cargo`, `~/.local/bin`, `npm ci` and `pnpm install` from cache, Playwright, `gh auth status` (keyring and file), an HTTPS push with the App helper, an SSH push, the Read tool on a home file, then Fix A and Fix B, recording which lifts each. **With the sandbox off:** the prompt rate in an attended session, and the denial rate of a scripted `-p` task (review I6) | P14 |
 | L2 credentials and keys | macOS; Linux | The full §8.3 lists are accepted without warnings; each present path fails `cat` in Bash; the variables are absent; **macOS:** a `-T ""` item prompts for `security` too, and sandboxed Bash can't read it silently; reading the broker's memory from unsandboxed code of the same uid fails without debugger rights; sandboxed Bash can or can't write `DARWIN_USER_TEMP_DIR`; **Linux:** `secret-tool lookup` from sandboxed Bash with and without the seccomp filter (review I7) | P3, P10, P11 |
 | L3 broker on the host | macOS | `app create` for one repo on a scratch public repo (the person edits the name); the broker mints; an attended agent pushes `agent/x` and opens a PR as `<slug>[bot]`; `GIT_TRACE` shows only the harness helper; VS Code's terminal askpass isn't used; `gh` doesn't migrate the folder; a 2.5-hour run with pushes every 20 minutes crosses about 3 refreshes and old tokens are revoked; SIGHUP from a closed terminal revokes; a second broker is refused; a killed broker gives the §11.2 messages | P11, P12 |
@@ -1284,6 +1284,7 @@ They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch 
   - an `srt` shim earlier on `PATH` that answers `--version` and execs the command.
 - **The R2-I3 cases:** `srt` without its seccomp helper, and bubblewrap older than 0.8, each failing the preflight on its warning.
 - The agent's `harness verify` from sandboxed Bash exits not done with the `!` message.
+- **The seal residual (§4.2).** On Linux, whether a step can ptrace its parent (Yama `ptrace_scope`, and `srt`'s own ptrace and seccomp policy), `ulimit -c` and `core_pattern` inside `srt` (whether a core dump of the runner can be read), and whether a step can reach `srt`'s stdout.
 - The overhead on a large repo.
 - `srt` missing gives the §4.4 message.
 
@@ -1337,7 +1338,7 @@ They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch 
 | P18 | `harness-run`, `/harness:init --container`, update and uninstall of the files, user-settings hash, `container-smoke` job (made required after it passes on `main`, I18) | P17 | L4 | ~320 |
 | P19 | Known limits and reference wrap-up; L5; release | All | L5 | ~150 |
 
-PS1 and PS2 ship in the same release, so no release has the wrap without the behavioural preflight. They landed as PS1a (config keys, credential lists, renderer, `allow_write` validation, `srt` probe; inert until wired), PS1b (the wrap and gate wiring), PS2a (preflight, sealed end line, never-ran fixes) and PS2b (the record, doctor and status lines, real-`srt` CI), each off `main`, with the Ubuntu 26.04 follow-up after. The Windows rows were applied up front: PS1 kept native Windows unwrapped, and PS2 added the unattended block and the doctor warning. P11, PS1 and P13 are the closest to 400 lines. If one grows past, the split is: P11's docs and `sandbox-required` change move into P12; PS1's Windows rows move into PS2; P13's doctor checks become their own PR.
+PS1 and PS2 ship in the same release, so no release has the wrap without the behavioural preflight. They landed as PS1a (config keys, credential lists, renderer, `allow_write` validation, `srt` probe; inert until wired), PS1b (the wrap and gate wiring), PS2a (preflight, sealed end line, never-ran fixes) and PS2b (the record, doctor and status lines, real-`srt` CI), each off `main`, with the Ubuntu 26.04 follow-up after. The Windows rows moved into PS2, as the split rule below allows: PS1 kept native Windows unwrapped, and PS2 added the unattended block and the doctor warning. P11, PS1 and P13 are the closest to 400 lines. If one grows past, the split is: P11's docs and `sandbox-required` change move into P12; PS1's Windows rows move into PS2; P13's doctor checks become their own PR.
 
 ## 14. Known limits
 
@@ -1366,7 +1367,7 @@ PS1 and PS2 ship in the same release, so no release has the wrap without the beh
   - in the container, and when the agent runs verify from sandboxed Bash, steps run inside that fence and its network allowlist, not the Stop settings;
   - I12 holds only against an agent with no unsandboxed write: an `srt` shim written against harness's preflight, on a user-writable `PATH`, defeats it in attended sandbox-off sessions;
   - the network probe is direct: it doesn't test `srt`'s proxy filter, and an offline machine reads as blocked; the `user namespace` check passes on any non-zero `bwrap` exit; the canary check flags any ctime move;
-  - the sealed end line has a residual on Linux: a step that could read its parent's memory (ptrace attach with Yama `ptrace_scope=0`, or a core dump of the runner) could learn the seal. Live batch LS checks `srt`'s ptrace and seccomp policy, `ulimit -c` and `core_pattern`;
+  - the sealed end line has a residual on Linux: a step that could read its parent's memory (ptrace attach with Yama `ptrace_scope=0`, or a core dump of the runner) could learn the seal. Live batch LS checks `srt`'s ptrace and seccomp policy, `ulimit -c` and `core_pattern` ("LS in full");
   - a step that outlasts `stop.timeout_s` passes on the Stop gate's existing timeout rule, as before;
   - Ubuntu 26.04 works only with the host setting in §4.6 (AppArmor's `bwrap-userns-restrict` unloaded);
   - `sandbox: off` is honoured only when it was in force at session start, but a git ref move that brings it in, which protect can't see (a script file), still lands it, and a child `claude -p` session then starts with `off`;

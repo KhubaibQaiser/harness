@@ -208,15 +208,19 @@ export async function runStop(ctx: Ctx, exec: Exec, now: () => number = Date.now
   }
   const res = await run(plan, stepsStart + timeout_s * 1000);
   runNotes.push(...((run as Partial<NotedRun>).notes ?? []));
-  const timeoutText = [`Stop gate timed out after ${timeout_s}s; checks did not finish.`, ...runNotes].join('\n');
-  if (res.kind === 'timeout') return { kind: 'context', text: timeoutText, check: 'stop' };
+  // A hung step must not pass: a test the agent wrote could hang on purpose. It blocks and counts like a failing step.
+  const timedOut = (label: string): Decision => {
+    log('stop-timeout', label);
+    return failStep(`${label} timed out after ${timeout_s}s (attempt {n}). Speed it up, raise stop.timeout_s in .harness/config.yaml, or end with harness done --blocked "<reason>" if it can't finish.`, 'checks never ran (timeout)');
+  };
+  if (res.kind === 'timeout') return timedOut('the checks');
   if (res.kind === 'unavailable') {
     log('stop-srt-unavailable', res.reason);
     return failStep(`${res.message} (attempt {n})`, `checks never ran (${res.reason === 'native Windows unattended' ? res.reason : 'srt unavailable'})`); // counts toward max_attempts like any failing step
   }
   for (const r of res.results) {
     appendTiming(root, { ts: new Date().toISOString(), session: input.session_id, event: 'Stop', step: r.label, outcome: r.timedOut ? 'timeout' : r.status === 0 ? 'allow' : 'block', ms: Math.max(0, r.ms) });
-    if (r.timedOut) return { kind: 'context', text: timeoutText, check: 'stop' };
+    if (r.timedOut) return timedOut(r.label);
     if (r.status !== 0) return failStep(`${r.label} failed (attempt {n}). Fix it, then finish again.\n${tail(r.output)}`);
   }
 

@@ -17,7 +17,7 @@ export interface EvalSummary {
 export const EVALS_DIR = '.harness/reports/evals';
 // result.json is untrusted: cap what is read.
 const MAX_BYTES = 5_000_000, MAX_CASES = 500, MAX_RUNS = 50, MAX_NAME = 200, MAX_SUMMARIES = 50;
-const FOLDER = /^(\d{4}-\d{2}-\d{2})-(.+)-(skills|rules|gates)$/;
+const FOLDER = /^(\d{4}-\d{2}-\d{2}(?:T\d{6}(?:-\d+)?)?)-(.+)-(skills|rules|gates)$/;
 const VARIANT = /^(.+)-(rules|bare)$/;
 const PERCENT = 100, USD_DECIMALS = 2;
 

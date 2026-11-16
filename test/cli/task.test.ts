@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -291,4 +291,13 @@ test('bad arguments print the usage and exit 2', async () => {
     expect(await task(a, s.cli), a.join(' ')).toBe(2);
     expect(s.text()).toContain('Usage: harness task draft <file>');
   }
+});
+
+test('draft never writes through a dangling link at the draft path', async () => {
+  const s = setup();
+  mkdirSync(join(s.root, wd), { recursive: true });
+  const target = join(s.root, 'outside.json');
+  symlinkSync(target, join(s.root, `${wd}/task.json`));
+  await task(['draft', `${wd}/task.json`], s.cli);
+  expect(existsSync(target)).toBe(false);
 });

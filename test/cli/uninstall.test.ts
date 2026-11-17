@@ -200,7 +200,8 @@ test('uninstall --dry-run lists what it would do and writes nothing', async () =
   const r = await un(root, ['--dry-run']);
   expect(r.code).toBe(0);
   expect(r.out).toContain('Would remove `.harness/hooks/dispatch.mjs`');
-  expect(r.out).toContain('`.harness/` is deleted too, including its logs');
+  expect(r.out).toContain("harness's own files in `.harness/` go too");
+  expect(r.out).toContain('Would remove `.harness/manifest.json`');
   expect(r.out).toContain('Dry run: nothing was written.');
   expect(hashes(root)).toEqual(before);
   expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
@@ -409,4 +410,75 @@ test('a linked .harness is refused before anything is removed', async () => {
   expect(r.out).toContain('symlink');
   expect(readFileSync(join(moved, 'manifest.json'), 'utf8')).toBe(before);
   expect(readdirSync(join(moved, 'hooks')).length).toBeGreaterThan(0); // nothing removed
+});
+
+// M1 (ship audit 2026-11-18): uninstall removes only what harness recorded or generates, never the person's files.
+describe('uninstall keeps files harness did not create', () => {
+  const files = (root: string, dir = '.harness'): string[] => {
+    try {
+      return readdirSync(join(root, dir), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(root, `${dir}/${e.name}`) : [`${dir}/${e.name}`]));
+    } catch {
+      return [];
+    }
+  };
+  const all = (root: string) => [...files(root), ...files(root, '.claude'), ...git(root, 'ls-files', '-co').split('\n').filter(Boolean)];
+
+  test('a committed .harness/notes.md from before init survives uninstall --yes, and is named', async () => {
+    const root = makeRepo({ ...REPO, '.harness/notes.md': 'my own notes\n' });
+    expect(await init(['--yes'], { ...base, root, out: () => {}, prompt: fake() })).toBe(0);
+    const r = await un(root, ['--yes']);
+    expect(r.code).toBe(0);
+    expect(readFileSync(join(root, '.harness/notes.md'), 'utf8')).toBe('my own notes\n');
+    expect(files(root)).toEqual(['.harness/notes.md']);
+    expect(r.out).toContain('`.harness/notes.md`');
+    expect(git(root, 'status', '--porcelain')).toBe('');
+  });
+
+  test('a file the person adds inside a harness folder after install survives', async () => {
+    const root = await installed();
+    writeFileSync(join(root, '.harness/hooks/mine.sh'), 'echo mine\n');
+    expect((await un(root, ['--yes'])).code).toBe(0);
+    expect(files(root)).toEqual(['.harness/hooks/mine.sh']);
+  });
+
+  test("harness's own files are all removed: manifest records, logs, state, backups, work folders, vet reports", async () => {
+    const root = await installed();
+    for (const rel of ['.harness/logs/events.jsonl', '.harness/results/root.json', '.harness/reviews/r.md', '.harness/verdicts/v.json', '.harness/debug/d.txt', '.harness/reports/x.md', '.harness/vet/a-1.md', '.harness/tmp/w-1/answers.json']) {
+      mkdirSync(dirname(join(root, rel)), { recursive: true });
+      writeFileSync(join(root, rel), 'x');
+    }
+    mkdirSync(join(root, '.harness/state/empty'), { recursive: true });
+    expect((await un(root, ['--yes'])).code).toBe(0);
+    expect(existsSync(join(root, '.harness'))).toBe(false);
+  });
+
+  test('the dry run lists exactly the files uninstall --yes removes', async () => {
+    const root = makeRepo({ ...REPO, '.harness/notes.md': 'mine\n' });
+    await init(['--yes'], { ...base, root, out: () => {}, prompt: fake() });
+    writeFileSync(join(root, '.harness/hooks/mine.sh'), 'mine');
+    mkdirSync(join(root, '.harness/logs'), { recursive: true });
+    writeFileSync(join(root, '.harness/logs/events.jsonl'), '{}\n');
+    const dry = await un(root, ['--dry-run']);
+    const listed = [...dry.out.matchAll(/^Would remove `([^`]+)`$/gm)].map((x) => x[1]).sort();
+    const before = new Set(all(root));
+    expect((await un(root, ['--yes'])).code).toBe(0);
+    const after = new Set(all(root));
+    expect(listed).toEqual([...before].filter((f) => !after.has(f)).sort());
+    expect(listed).toContain('.harness/logs/events.jsonl');
+    expect(listed).toContain('.harness/manifest.json');
+    expect(listed).not.toContain('.harness/notes.md');
+    expect(dry.out).toContain('`.harness/hooks/mine.sh`'); // named as staying
+  });
+
+  test('a linked runtime folder is unlinked, never followed', async () => {
+    const root = await installed();
+    const outside = mkdtempSync(join(tmpdir(), 'h-un-out-'));
+    writeFileSync(join(outside, 'keep.txt'), 'keep');
+    rmSync(join(root, '.harness/state'), { recursive: true, force: true });
+    execFileSync('ln', ['-s', outside, join(root, '.harness/state')]);
+    expect((await un(root, ['--yes'])).code).toBe(0);
+    expect(readFileSync(join(outside, 'keep.txt'), 'utf8')).toBe('keep');
+    expect(existsSync(join(root, '.harness'))).toBe(false);
+    rmSync(outside, { recursive: true, force: true });
+  });
 });

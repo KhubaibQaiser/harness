@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, sep } from 'node:path';
+import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ApplyError, LOCK_RECOVERY, type FsLike, applyChanges, removeEmptyDirs, type Change } from '../install/apply.js';
 import { STRUCTURAL, TSCONFIG, removeBlocks, removeFromMcp, removeFromSettings, removeFromTsconfig } from '../install/merge.js';
@@ -10,6 +10,7 @@ import { matchesHash, eolOf, withEol } from '../install/text.js';
 import { MANIFEST_REL, ManifestError, REPO_STATE, backupText, readManifest, type Manifest, type StatePaths } from '../install/manifest.js';
 import { ESLINT } from '../install/plan.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
+import { HARNESS_LOCAL } from '../core/paths.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall } from './preamble.js';
 import { GLOBAL_LOCK_RECOVERY, GLOBAL_STATE } from './preset.js';
@@ -50,16 +51,30 @@ function badGlobalEntry(m: Manifest, sp: StatePaths): { bad: unknown } | undefin
 
 const list = (rels: string[]) => rels.map((k) => `\`${k}\``).join(', ');
 
-/** Deletes everything under `dir` except the `keep` files (absolute paths) and the folders that hold them. */
-function pruneExcept(dir: string, keep: string[]): void {
-  for (const e of (() => { try { return readdirSync(dir, { withFileTypes: true }); } catch { return []; } })()) {
-    const p = join(dir, e.name);
-    if (keep.includes(p)) continue;
-    if (e.isDirectory() && keep.some((k) => k.startsWith(p + sep))) pruneExcept(p, keep);
-    else rmSync(p, { recursive: true, force: true });
+// Harness writes these folders at run time, outside the manifest's records, so they go whole with `.harness/`. Anything
+// else in `.harness/` that the manifest does not record is the person's (M1, ship audit 2026-11-18): it stays.
+const RUNTIME = [...HARNESS_LOCAL.map((d) => d.slice(0, -1)), '.harness/tmp', '.harness/vet'];
+
+/** The files (repo-relative) under `rel`, its folders pushed onto `dirs` parents first; a link is a file, never followed. */
+function walk(root: string, rel: string, dirs: string[] = []): string[] {
+  let es;
+  try {
+    if (lstatSync(join(root, rel)).isSymbolicLink()) return [rel];
+    es = readdirSync(join(root, rel), { withFileTypes: true });
+  } catch {
+    return [];
   }
-  try { rmdirSync(dir); } catch {} // only when nothing was kept in it
+  dirs.push(rel);
+  return es.flatMap((e) => (e.isDirectory() ? walk(root, `${rel}/${e.name}`, dirs) : [`${rel}/${e.name}`]));
 }
+
+/** What removing `.harness/` takes besides the manifest's records: the manifest itself and every file in the runtime folders. */
+const runtimeFiles = (root: string, dirs: string[] = []): string[] =>
+  [...(existsSync(join(root, MANIFEST_REL)) ? [MANIFEST_REL] : []), ...RUNTIME.flatMap((d) => walk(root, d, dirs))];
+
+/** The files left in `.harness/` that harness did not create, with presets and task contracts named by folder. */
+const ownFiles = (root: string, skip: Set<string>): string[] =>
+  [...new Set(walk(root, '.harness').filter((f) => !skip.has(f)).map((f) => f.replace(/^(\.harness\/(?:presets|tasks)\/).*/, '$1')))];
 
 /** What uninstall writes for each file `m` records: deletes and restores, the edited files it keeps, and notes. Backups are read through `sp`. */
 export function removalChanges(root: string, m: Manifest, force: boolean, sp: StatePaths = REPO_STATE): { changes: Change[]; kept: string[]; notes: string[]; /** harness ESLint files kept because a config still imports them */ imported: string[] } {
@@ -167,12 +182,17 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     for (const n of notes) out(`Note: ${n}`);
     if (kept.length) out(`Would keep ${list(kept)} because you edited them (--force removes them too).`);
     if (imported.length) out(`Would keep ${importedWhy}`);
-    out(`With --yes, \`.harness/\` is deleted too, including its logs${kept.length || imported.length ? ', except the kept files above' : ''} (\`.harness/presets/\` and \`.harness/tasks/\` stay: your own presets and approved task contracts).`);
+    const runtime = runtimeFiles(root);
+    out("With --yes (or a yes when asked), harness's own files in `.harness/` go too: its manifest, logs, state, backups, results and work folders.");
+    for (const rel of runtime) out(`Would remove \`${rel}\``);
+    const gone = new Set([...runtime, ...changes.filter((c) => c.kind === 'delete').map((c) => c.rel), ...kept, ...imported]);
+    const stays = ownFiles(root, gone);
+    if (stays.length) out(`Would keep ${list(stays)}: harness did not create them.`);
     return out('Dry run: nothing was written.'), 0;
   }
 
   // Asked first: with .harness/ kept, its .gitignore lines stay too, so logs, state and backups stay untracked.
-  const deleteHarness = yes || (await prompt.confirm('Delete the rest of .harness/ (everything in it: config, hooks, logs, state, backups, work folders, results, debug files, reviews, reports, vet reports, eslint files and context)? It keeps .harness/presets/ and .harness/tasks/, your own files. (y/N)'));
+  const deleteHarness = yes || (await prompt.confirm("Delete the rest of .harness/ (harness's own files: config, hooks, logs, state, backups, work folders, results, debug files, reviews, reports, vet reports, eslint files and context)? It keeps .harness/presets/ and .harness/tasks/, and any file harness did not create. (y/N)"));
   if (!deleteHarness && changes.some((c) => c.rel === '.gitignore')) {
     changes.splice(changes.findIndex((c) => c.rel === '.gitignore'), 1);
     notes.push('Kept the `.harness/` lines in `.gitignore`, so its logs, state and backups stay out of git.');
@@ -185,19 +205,22 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
       throw e;
     }
   }
-  removeEmptyDirs(root, changes);
+  const dirs: string[] = [];
+  const runtime = deleteHarness ? runtimeFiles(root, dirs) : [];
+  for (const rel of runtime) rmSync(join(root, rel), { force: true }); // not recursive: a link is removed, never followed
+  for (const d of dirs.reverse()) try { rmdirSync(join(root, d)); } catch {} // only an emptied folder
+  removeEmptyDirs(root, [...changes, ...runtime.map((rel): Change => ({ kind: 'delete', rel, before: '' }))]);
   for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} \`${c.rel}\``);
   for (const n of notes) out(`Note: ${n}`);
 
   // Edited files are kept like any other user edit, but harness is fully uninstalled either way: the manifest always
   // goes, so init, status and doctor see a repo without harness.
   if (deleteHarness) {
-    // .harness/presets/ and .harness/tasks/ (approved task contracts) are the person's own, not something harness wrote: they stay.
-    const own = ['presets', 'tasks'].map((d) => join(root, '.harness', d)).filter((d) => existsSync(d));
-    pruneExcept(join(root, '.harness'), [...kept, ...imported].map((k) => join(root, k)).concat(own));
-    const edited = [...kept, ...imported].some((k) => k.startsWith('.harness/'));
-    const stays = [...(edited ? ['the kept files'] : []), ...own.map((d) => `\`.harness/${basename(d)}/\``)];
-    out(`Removed \`.harness/\`${stays.length ? ` except ${stays.join(' and ')}, your own files` : ''}.`);
+    // What harness did not create stays: .harness/presets/, .harness/tasks/ (approved task contracts) and any other file of the person's.
+    const stays = ownFiles(root, new Set([...kept, ...imported]));
+    out(existsSync(join(root, '.harness'))
+      ? `Removed harness's files from \`.harness/\`.${stays.length ? ` Kept ${list(stays)}: harness did not create them, so they are your own files.` : ''}`
+      : 'Removed `.harness/`.');
   } else {
     // Keep the logs but mark harness as uninstalled so init can run again.
     rmSync(join(root, MANIFEST_REL), { force: true });

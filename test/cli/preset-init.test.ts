@@ -139,7 +139,7 @@ test('uninstall --yes keeps .harness/presets/ and says so', async () => {
   const root = repo();
   expect((await run(root, aiArgs(CHOSEN))).code).toBe(0);
   const out = await un(root, ['--yes']);
-  expect(out).toContain('Removed `.harness/` except `.harness/presets/`, your own files.');
+  expect(out).toContain("Removed harness's files from `.harness/`. Kept `.harness/presets/`: harness did not create them, so they are your own files.");
   expect(existsSync(join(root, '.harness/presets/stacks.yaml'))).toBe(true);
   expect(existsSync(join(root, '.harness/config.yaml'))).toBe(false);
 });
@@ -147,7 +147,7 @@ test('uninstall --yes keeps .harness/presets/ and says so', async () => {
 test('uninstall --dry-run says presets stay', async () => {
   const root = repo();
   expect((await run(root, aiArgs(CHOSEN))).code).toBe(0);
-  expect(await un(root, ['--dry-run'])).toContain('`.harness/presets/` and `.harness/tasks/` stay');
+  expect(await un(root, ['--dry-run'])).toContain('Would keep `.harness/presets/`: harness did not create them.');
 });
 
 // ---- Task 8: preview and budget lines ----

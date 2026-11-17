@@ -27,6 +27,7 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 
 ### Changed
 
+- `uninstall` no longer deletes your own files in `.harness/` (ship audit M1). It removes only what the manifest lists, plus the manifest and harness's run-time folders (`state`, `logs`, `backup`, `results`, `debug`, `reports`, `reviews`, `verdicts`, `tmp`, `vet`), then a folder only once it is empty. A `.harness/notes.md` from before `init`, or a file you added to `.harness/hooks/`, now stays and is named. `--dry-run` lists every file it would remove.
 - Test files no longer count toward the PR size limit by default (owner ruling 2026-11-16, reversing the pr-size spec's D3): `*.test.*`, `*.spec.*`, `__tests__/`, `test/` and `tests/` folders, Python `test_*.py` and `*_test.py`, Go `*_test.go` and `conftest.py` join the default `pr_size.exclude`. They are still named in the size warning's "Not counted" list, and the PR reviewer still reads them. A `pr_size.exclude` you set replaces the whole default, so tests count again unless you list them.
 
 ### Breaking

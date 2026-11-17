@@ -95,9 +95,13 @@ test('agentPrompt reads the package template, not the repo copy', () => {
   }
 });
 
-test('the unit setup refuses a real claude -p spawn, and lets a free claude call through', () => {
-  expect(() => spawnSync('claude', ['-p', '--model', 'sonnet'])).toThrow('the test spawned claude -p (a paid model call)');
-  expect(() => spawnSync('/opt/x/claude', ['--print'])).toThrow('paid model call');
-  expect(() => spawnSync('cmd.exe', ['/d', '/s', '/c', '"C:\\x\\claude.cmd "-p" "--model""'])).toThrow('paid model call');
-  expect(() => spawnSync('claude', ['--version'], { env: { PATH: '' } })).not.toThrow(); // empty PATH: nothing real starts
+test('the unit setup refuses a paid claude -p spawn by its arguments, whatever the binary, and lets a free call through', () => {
+  const msg = 'the test spawned claude -p (a paid model call)';
+  expect(() => spawnSync('claude', claudeArgs('sonnet', '/t/s.md'))).toThrow(msg);
+  expect(() => spawnSync('/home/u/.local/share/claude/versions/2.1.300', claudeArgs('sonnet', '/t/s.md'))).toThrow(msg); // native installer
+  expect(() => spawnSync('/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js', ['-p', '--output-format', 'json'])).toThrow(msg); // npm, renamed
+  expect(() => spawnSync('/opt/x/renamed-bin', ['--print', 'q', '--output-format', 'json'])).toThrow(msg);
+  expect(() => spawnSync('cmd.exe', ['/d', '/s', '/c', '"C:\\x\\claude.cmd "-p" "--system-prompt-file" "C:\\t\\s.md""'])).toThrow(msg);
+  expect(() => spawnSync('/opt/x/renamed-bin', ['--version'], { env: { PATH: '' } })).not.toThrow(); // free: nothing real starts
+  expect(() => spawnSync('claude', ['-p'], { env: { PATH: '' } })).not.toThrow(); // -p alone isn't the review's call shape
 });

@@ -1,9 +1,10 @@
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { appendEvent } from '../core/events.js';
-import {
-  GUARDED, type GuardedView, guardedDiff, guardedView, harnessDenyRules, readGuarded, readRepoSnapshot, settingsFingerprint,
-} from '../core/harness-files.js';
+import { GUARDED, type GuardedView, guardedView, readGuarded, readRepoSnapshot, settingsBlocks, settingsFingerprint } from '../core/harness-files.js';
+import { type Layer, readManagedLayers } from '../core/settings-layers.js';
+import { ownedFrom, weakened } from '../core/settings-weaken.js';
 import type { Check } from '../hooks/dispatch.js';
 
 // Source values from the hooks reference (ConfigChange input). policy_settings can't be blocked, and skills aren't guarded.
@@ -19,8 +20,16 @@ const real = (p: string, home: string): string => {
   }
 };
 
-// Spec 3.3 (D6, C5): a mid-session change to harness's hooks, its deny rules, disableAllHooks, sandbox or env is not applied
-// to the running session, measured against the guarded views at the session's first other hook (plan ruling 4).
+// Every settings layer, highest precedence first, as sandbox-required reads them: managed from disk, then the views given.
+const layers = (managed: string, before: Record<string, GuardedView>, after: Record<string, GuardedView>) => {
+  const stack = (v: Record<string, GuardedView>): Layer[] => [...readManagedLayers(managed), ...(['local', 'project', 'user'] as const).map((name) => ({ name, json: v[name] ?? null }))];
+  return { base: stack(before), cur: stack(after) };
+};
+
+// Spec 3.3 (D6, C5), narrowed by plan ruling R11 (CC7): a mid-session change that weakens harness (settings-weaken.ts) is
+// not applied to the running session, measured against the guarded views at the session's first other hook (plan ruling
+// 4). Any other change applies live. Claude Code shows nothing for a blocked change (hooks reference, ConfigChange), so the
+// next prompt's notice is the only signal.
 export const configChange: Check = {
   name: 'config-change',
   events: ['ConfigChange'],
@@ -31,7 +40,14 @@ export const configChange: Check = {
     const user = GUARDED.user(ctx.home, ctx.env);
     const rel = key !== 'user' ? GUARDED[key] : user === join(ctx.home, '.claude', 'settings.json') ? '~/.claude/settings.json' : user;
     const base = ctx.state?.guardedBase;
-    const deny = harnessDenyRules(ctx.root);
+    // With a baseline, what harness owns is what the manifest said at its start, plus records added since; a manifest
+    // that is now unreadable or lost a record blocks, as before CC7 (review M1). A state without the snapshot uses live.
+    const live = settingsBlocks(ctx.root);
+    const snap = base && ctx.state?.guardedOwned !== undefined ? ctx.state.guardedOwned : live;
+    const has = (list: unknown[] | null, b: unknown) => !!list?.some((x) => isDeepStrictEqual(x, b));
+    const lost = !!snap && snap.some((b) => !has(live, b));
+    const owned = ownedFrom(snap && [...(live ?? []).filter((b) => !has(snap, b)), ...snap]); // later blocks win: the snapshot's value stands (review R2-M1)
+    const deny = owned.deny;
     let text: string | null = null;
     let cur: GuardedView = null;
     try {
@@ -44,8 +60,13 @@ export const configChange: Check = {
     const elsewhere = reported !== undefined && real(reported, ctx.home) !== real(user, ctx.home);
     const parts = elsewhere
       ? [`not the watched \`${rel}\`: launch with HARNESS_CLAUDE_CONFIG_DIR set`]
-      : base ? guardedDiff(base[key] ?? null, cur) : ['no session baseline'];
-    if (!parts.length) return { kind: 'allow' };
+      : base ? [...weakened(base[key] ?? null, cur, owned, layers(ctx.managed, base, { ...base, ...ctx.state?.guardedApplied, [key]: cur })), ...(lost ? ['harness manifest unreadable or missing records'] : [])]
+      // No baseline: the project file against the manifest's records, the others against an empty file.
+      : deny ? weakened(key === 'project' ? undefined : guardedView('{}', deny), cur, owned) : ['no session baseline'];
+    if (!parts.length) {
+      if (base) ctx.save({ ...ctx.state, guardedApplied: { ...ctx.state?.guardedApplied, [key]: cur } }); // Claude Code applies it
+      return { kind: 'allow' };
+    }
     if (base && rel === GUARDED.project && cur) {
       // A change the harness CLI recorded (init, update, uninstall) is allowed, and becomes this file's baseline. Only the
       // project file: the CLI never writes the others, so a record of them would cover a script's earlier change.
@@ -54,7 +75,8 @@ export const configChange: Check = {
       const cli = readRepoSnapshot(ctx.root).cli;
       const settings = cli?.id && cli.id !== ctx.state?.guardedCli ? cli.settings : undefined;
       if (settings && rel in settings && settings[rel] === (text === null ? null : settingsFingerprint(text, deny))) {
-        ctx.save({ ...ctx.state, guardedBase: { ...base, [key]: cur }, guardedCli: cli!.id }); // the record is used up once accepted
+        // The record is used up once accepted; the manifest the CLI left is now what harness owns.
+        ctx.save({ ...ctx.state, guardedBase: { ...base, [key]: cur }, guardedCli: cli!.id, guardedOwned: live, guardedApplied: { ...ctx.state?.guardedApplied, [key]: cur } });
         return { kind: 'allow' };
       }
     }
@@ -63,13 +85,13 @@ export const configChange: Check = {
     try {
       appendEvent(ctx.root, { ts: new Date().toISOString(), session: ctx.input.session_id, check: 'config-change', decision: 'config-change-blocked', reason: `${shown}: ${list}` });
     } catch {} // the block stands without the log
-    const notice = `Harness blocked a change to \`${shown}\` (${list}) in this session. The file is still changed on disk, so the next session loads it: review it first.`;
+    const notice = `Harness blocked a change to \`${shown}\` (${list}): the whole file change was held for this session, not only those parts. The file is still changed on disk, so the next session loads it: review it first.`;
     const pending = ctx.state?.pendingNotice;
     if (ctx.state) ctx.save({ ...ctx.state, pendingNotice: pending?.split('\n').includes(notice) ? pending : [pending, notice].filter(Boolean).join('\n') });
     return {
       kind: 'block',
       check: 'config-change',
-      reason: `Harness keeps its hooks, its deny rules, disableAllHooks, the sandbox settings and \`env\` as they were when this session started, so this change to \`${shown}\` (${list}) is not applied to the session. Ask the person to make this change outside the session.`,
+      reason: `Harness keeps its own hooks, deny rules, sandbox keys and hook-steering \`env\` keys as they were when this session started, and disableAllHooks off, so this change to \`${shown}\` (${list}) is not applied to the session. Ask the person to make this change outside the session.`,
     };
   },
 };

@@ -3,7 +3,7 @@
 // next Stop once (the snapshot is then renewed, and the block counts within stop.max_attempts). Each Stop and
 // SessionEnd records what the session has accounted for as the next session's baseline, so a change between
 // sessions is reported too. Changes the harness CLI made match its own record and don't count.
-import { changedFiles, gitHead, guardedViews, readRepoSnapshot, recordLastSeen, snapshotHarnessFiles, type Snapshot } from '../core/harness-files.js';
+import { changedFiles, gitHead, guardedViews, readRepoSnapshot, recordLastSeen, settingsBlocks, snapshotHarnessFiles, type Snapshot } from '../core/harness-files.js';
 import type { Check, Ctx } from './check.js';
 import { type Log, warn } from './event-log.js';
 import { emit } from './io.js';
@@ -26,7 +26,7 @@ const maxAttempts = (ctx: Ctx): number => ctx.config?.stop.max_attempts ?? DEFAU
 export function seedBaselines(ctx: Ctx, event: HookEvent, checks: Check[]): string {
   let pending = '';
   try {
-    if (!ctx.state.guardedBase && event !== 'ConfigChange' && checks.some((c) => c.events.includes('ConfigChange') || c.name === 'sandbox-required')) ctx.save({ ...ctx.state, guardedBase: guardedViews(ctx.root, ctx.home, ctx.env), guardedCli: readRepoSnapshot(ctx.root).cli?.id });
+    if (!ctx.state.guardedBase && event !== 'ConfigChange' && checks.some((c) => c.events.includes('ConfigChange') || c.name === 'sandbox-required')) ctx.save({ ...ctx.state, guardedBase: guardedViews(ctx.root, ctx.home, ctx.env), guardedCli: readRepoSnapshot(ctx.root).cli?.id, guardedOwned: settingsBlocks(ctx.root) });
     if (event === 'UserPromptSubmit' && ctx.state.pendingNotice) {
       pending = ctx.state.pendingNotice;
       ctx.save({ ...ctx.state, pendingNotice: undefined });

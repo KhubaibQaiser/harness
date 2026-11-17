@@ -20,9 +20,12 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
 
 ## Each release
 
-1. Merge the version bump to main. The same PR adds `docs/release-notes/<version>.md` and updates the README status line.
-2. Tag that commit `vX.Y.Z` (a version with `-` publishes under the `beta` tag, and also moves `latest` while there is no stable version; otherwise `latest`) and push the tag. A tag that is not on main fails in the first job, before the approval step.
-3. When the run reaches `publish`, approve it in the Actions tab.
+1. Before the bump, run `pnpm audit` with devDependencies included (not `--omit=dev`): esbuild bundles them into `dist/`, so a devDependency advisory ships.
+2. Merge the version bump to main. The same PR adds `docs/release-notes/<version>.md` and updates the README status line.
+   - The bump also moves the version in `.claude-plugin/marketplace.json`, and the plugin marketplace reads main. So from this merge until the npm publish is approved, `claude plugin install harness@harness` asks npm for a version that isn't there yet, and fails. Keep that window short: tag and approve the publish right after the merge.
+3. Tag that commit `vX.Y.Z` (a version with `-` publishes under the `beta` tag, and also moves `latest` while there is no stable version; otherwise `latest`) and push the tag. A tag that is not on main fails in the first job, before the approval step.
+4. When the run reaches `publish`, approve it in the Actions tab.
+5. Check `npm view @khubaibqaiser/harness dist-tags`: while there is no stable version, `latest` must name this release. If the job couldn't move it, run `npm dist-tag add @khubaibqaiser/harness@<version> latest` yourself.
 
 ## If publish fails
 

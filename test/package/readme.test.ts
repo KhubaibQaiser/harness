@@ -168,3 +168,25 @@ test('the reference carries every team-decisions known limit (spec section 12) a
   ]) expect(limits, s).toContain(s);
   expect(reference.match(/^## Team decisions$/gm)).toHaveLength(1);
 });
+
+test('README names every Stop gate requirement and what teammates need (ship audit S4)', () => {
+  expect(readme).toContain('ripgrep');
+  expect(readme).toContain('@anthropic-ai/sandbox-runtime@0.0.83');
+  expect(readme).toMatch(/\*\*Teammates\*\* need Node 22\.11 or newer/);
+});
+
+test('README stays user-first: no paragraph over 800 characters (ship audit S4)', () => {
+  const long = readme.split('\n').filter((l) => !l.startsWith('|') && !l.startsWith('  ') && l.length > 800);
+  expect(long).toEqual([]);
+});
+
+test('the release notes list no gaps of their own (ship audit S2)', () => {
+  expect(notes).not.toContain('Not yet listed');
+  for (const s of ['### Done contract', '### PR review', 'harness eval --kind gates', 'checks.prBody']) expect(notes, s).toContain(s);
+});
+
+test('tracked docs carry no machine paths or session folders (ship audit S13)', () => {
+  const docs = execFileSync('git', ['ls-files', 'README.md', 'docs'], { encoding: 'utf8' }).split('\n').filter((f) => f.endsWith('.md'));
+  const bad = docs.filter((f) => /\/Users\/[\w-]+\/Documents|-Users-[\w-]+-Documents|~\/Documents/i.test(readFileSync(f, 'utf8')));
+  expect(bad).toEqual([]);
+});

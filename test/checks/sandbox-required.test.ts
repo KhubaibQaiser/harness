@@ -122,6 +122,8 @@ describe('the check', () => {
   test('C1: a Write to the user settings mid-session does not turn the requirement off', async () => {
     const { root, home, managed } = setup();
     mkdirSync(join(home, '.claude'));
+    mkdirSync(join(root, '.harness')); // a manifest that owns no sandbox key: with none, every sandbox change blocks (M1)
+    writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ files: [{ rel: '.claude/settings.json', blocks: [] }] }));
     const opts = { home, managed, platform: 'darwin' as const };
     const bash = async () => JSON.parse((await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)) || '{}').hookSpecificOutput?.permissionDecision;
     const user = join(home, '.claude/settings.json');
@@ -129,8 +131,36 @@ describe('the check', () => {
     expect(await dispatch(call(root, 'Write', { file_path: user, content: JSON.stringify(CONFIRMED) }), registry, {}, opts)).toBe('');
     writeFileSync(user, JSON.stringify(CONFIRMED)); // what the allowed Write does
     const cc = JSON.stringify({ hook_event_name: 'ConfigChange', session_id: 's', cwd: root, source: 'user_settings', file_path: user });
+    expect(await dispatch(cc, registry, {}, opts)).toBe(''); // turning the sandbox on weakens nothing: it applies (CC7)
+    expect(await bash()).toBe('deny'); // the requirement still reads the session-start files
+  });
+
+  test('OQ1: the user file rewritten to sandbox.enabled false mid-run is blocked, so Bash keeps running sandboxed', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    const user = join(home, '.claude/settings.json');
+    writeFileSync(user, JSON.stringify(CONFIRMED_STRICT));
+    const opts = { home, managed, platform: 'darwin' as const };
+    expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)).toBe(''); // sandboxed at the start: allowed
+    writeFileSync(user, JSON.stringify({ sandbox: { enabled: false } }));
+    const cc = JSON.stringify({ hook_event_name: 'ConfigChange', session_id: 's', cwd: root, source: 'user_settings', file_path: user });
+    const out = JSON.parse(await dispatch(cc, registry, {}, opts));
+    expect(out.decision).toBe('block'); // Claude Code keeps the sandbox on, so allowing Bash stays right
+    expect(out.reason).toContain('(sandbox)');
+  });
+
+  test('H1: a local enabled false over the user file\'s sandbox is blocked (the effective value would be off)', async () => {
+    const { root, home, managed } = setup();
+    mkdirSync(join(home, '.claude'));
+    mkdirSync(join(root, '.claude'));
+    mkdirSync(join(root, '.harness')); // harness owns no sandbox key here, so only the layered reading can catch it
+    writeFileSync(join(root, '.harness/manifest.json'), JSON.stringify({ files: [{ rel: '.claude/settings.json', blocks: [] }] }));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify(CONFIRMED_STRICT));
+    const opts = { home, managed, platform: 'darwin' as const };
+    expect(await dispatch(call(root, 'Bash', { command: 'ls' }), registry, {}, opts)).toBe('');
+    writeFileSync(join(root, '.claude/settings.local.json'), JSON.stringify({ sandbox: { enabled: false } }));
+    const cc = JSON.stringify({ hook_event_name: 'ConfigChange', session_id: 's', cwd: root, source: 'local_settings' });
     expect(JSON.parse(await dispatch(cc, registry, {}, opts)).decision).toBe('block');
-    expect(await bash()).toBe('deny');
   });
 
   test('a sandbox confirmed at the session start allows; managed is still read from disk', async () => {

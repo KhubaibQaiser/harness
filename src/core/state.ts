@@ -27,6 +27,8 @@ export interface SessionState {
   harnessNoticed?: string; // the change set already shown at a prompt (Stop still blocks once)
   guardedBase?: Record<string, GuardedView>; // ConfigChange's baseline: the guarded settings views at the first other hook
   guardedCli?: string; // cli.id when guardedBase was taken: only a later CLI record allows a ConfigChange
+  guardedOwned?: unknown[] | null; // the manifest's settings blocks when guardedBase was taken (null: unknown)
+  guardedApplied?: Record<string, GuardedView>; // settings views a ConfigChange let through since guardedBase
   pendingNotice?: string; // a blocked ConfigChange, shown at the next prompt
   decisionHits?: { pattern: string; excerpt: string }[]; // team-decision signals from prompts, at most 3
   decisionNudged?: true; // the team-decision nudge was shown this session

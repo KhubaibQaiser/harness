@@ -34,20 +34,40 @@ function hooksFiles(root: string, rel = '.harness/hooks'): string[] {
   return entries.flatMap((e) => (e.isDirectory() ? hooksFiles(root, `${rel}/${e.name}`) : e.isFile() ? [`${rel}/${e.name}`] : []));
 }
 
-/** The deny rules harness installed, from the manifest's settings blocks; null when unknown (then every rule counts). */
-export function harnessDenyRules(root: string): Set<string> | null {
+/**
+ * The manifest's blocks for `.claude/settings.json`, parsed; null when unknown (no manifest, no entry, a block that isn't
+ * JSON). One parser for the session baseline and ConfigChange, so both read a damaged manifest the same way.
+ */
+export function settingsBlocks(root: string): unknown[] | null {
   try {
     const m = JSON.parse(readFileSync(join(root, '.harness/manifest.json'), 'utf8'));
     const f = m.files.find((x: { rel: string }) => x.rel === '.claude/settings.json');
-    if (!f) return null;
-    return new Set((f.blocks ?? []).map((b: string) => JSON.parse(b)?.deny).filter((d: unknown) => typeof d === 'string'));
+    return f ? (f.blocks ?? []).map((b: string) => JSON.parse(b)) : null;
   } catch {
     return null;
   }
 }
 
-export type GuardedPart = 'hooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'env' | 'unreadable';
-export type GuardedView = { hooks: [string, unknown[]][]; deny: string[]; disableAllHooks: unknown; sandbox: unknown; env?: unknown } | null;
+/** The deny rules harness installed, from the manifest's settings blocks; null when unknown (then every rule counts). */
+export function harnessDenyRules(root: string): Set<string> | null {
+  const blocks = settingsBlocks(root);
+  return blocks && new Set(blocks.map((b) => (b as { deny?: unknown } | null)?.deny).filter((d): d is string => typeof d === 'string'));
+}
+
+export type GuardedPart = 'hooks' | 'newHooks' | 'deny' | 'disableAllHooks' | 'sandbox' | 'excludedCommands' | 'denyWrite' | 'env' | 'unreadable';
+export type GuardedView = { hooks: [string, unknown[]][]; deny: string[]; disableAllHooks: unknown; sandbox: unknown; env?: unknown; hookIds?: string[] } | null;
+
+const isRecord = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
+/**
+ * Every hook in a settings `hooks` object, harness's and the person's, as a hash of its event, its group's matcher and the
+ * hook without `timeout` and `statusMessage`: ConfigChange holds a change that adds one (owner, 2026-11-16).
+ */
+export const hookIds = (hooks: unknown): string[] =>
+  [...new Set(Object.entries(isRecord(hooks) ? hooks : {}).flatMap(([ev, groups]) => (Array.isArray(groups) ? groups : []).flatMap((g) =>
+    (Array.isArray(g?.hooks) ? g.hooks : []).map((h: unknown) => {
+      const { timeout: _t, statusMessage: _s, ...rest } = isRecord(h) ? h : { value: h };
+      return sha(JSON.stringify([ev, g.matcher ?? null, rest]));
+    }))))].sort();
 
 /**
  * Only what harness relies on in a Claude settings file: the hook groups that run its dispatcher, its own deny rules,
@@ -70,20 +90,7 @@ export function guardedView(text: string | null, deny: Set<string> | null): Guar
   // env keeps each key with a hash of its value: the session state must not hold the secrets env often carries.
   // ponytail: unsalted sha-256, so a low-entropy value (CI=false) can be guessed from .harness/state; salt it if that matters.
   const env = s?.env && typeof s.env === 'object' && !Array.isArray(s.env) ? Object.fromEntries(Object.entries(s.env).map(([k, v]) => [k, sha(JSON.stringify(v))])) : s?.env;
-  return { hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null, sandbox: s?.sandbox, env };
-}
-
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-/** The guarded parts changed from base to cur. A deny rule counts only when a base rule is gone (removed or narrowed). */
-export function guardedDiff(base: GuardedView, cur: GuardedView): GuardedPart[] {
-  if (!base || !cur) return ['unreadable'];
-  const parts: GuardedPart[] = [];
-  if (!same(base.hooks, cur.hooks)) parts.push('hooks');
-  if (base.deny.some((r) => !cur.deny.includes(r))) parts.push('deny');
-  if (!same(base.disableAllHooks, cur.disableAllHooks)) parts.push('disableAllHooks');
-  if (!same(base.sandbox, cur.sandbox)) parts.push('sandbox');
-  if (!same(base.env, cur.env)) parts.push('env');
-  return parts;
+  return { hooks, deny: rules, disableAllHooks: s?.disableAllHooks ?? null, sandbox: s?.sandbox, env, hookIds: hookIds(s?.hooks) };
 }
 
 export const GUARDED = { user: userSettingsPath, project: '.claude/settings.json', local: '.claude/settings.local.json' } as const;
@@ -112,7 +119,9 @@ export function guardedViews(root: string, home: string, env: NodeJS.ProcessEnv)
 
 export function settingsFingerprint(text: string, deny: Set<string> | null): string {
   const v = guardedView(text, deny);
-  return v ? sha(JSON.stringify(v)) : sha(lf(text)); // not JSON: any change counts
+  if (!v) return sha(lf(text)); // not JSON: any change counts
+  const { hookIds: _, ...rest } = v; // the person's own hooks aren't harness's files
+  return sha(JSON.stringify(rest));
 }
 
 const EMPTY_SETTINGS = settingsFingerprint('{}', null);

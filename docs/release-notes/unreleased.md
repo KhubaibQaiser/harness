@@ -132,4 +132,4 @@ New since 0.2.0-beta.0, unchanged in this release:
 
 ### CI
 
-- Main is green again on macOS and Windows (ship audit M2). The macOS ceiling for the `git checkout` hook-latency case moves from 150 to 300 ms, from 32 CI runs (median 120 ms, slowest 210); #263 did not slow it. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows. Test-only: no product change.
+- Main is green again on macOS and Windows (ship audit M2). protect's check of a `git checkout` or `git switch` to a branch, tag or hash now looks up the ref and its hooks in one git call, not two, so the hook is faster; every decision is unchanged. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows.

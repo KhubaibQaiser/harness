@@ -248,7 +248,15 @@ test('uninstall after an edit inside a harness block removes none of its blocks 
   // init again, then uninstall again: the config still imports the file, so it stays
   git(root, 'add', '-A');
   git(root, 'commit', '-qm', 'uninstalled');
+  // With no manifest, init refuses the kept harness file (owner, 2026-11-18), and uninstall said so up front.
+  expect(r.out).toContain('To reinstall later, move `.harness/eslint` aside first.');
+  let refused = '';
+  expect(await init(['--yes'], { ...base, root, out: (s) => (refused += s + '\n'), prompt: prompt() })).toBe(1);
+  expect(refused).toContain('`.harness/eslint`');
+  git(root, 'mv', '.harness/eslint', 'eslint-aside');
+  git(root, 'commit', '-qm', 'aside');
   await init(['--yes'], { ...base, root, out: () => {}, prompt: prompt() });
+  git(root, 'mv', 'eslint-aside', '.harness/eslint'); // and back, so the config's import loads again
   expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
   git(root, 'add', '-A');
   git(root, 'commit', '-qm', 'again');

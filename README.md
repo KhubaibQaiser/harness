@@ -44,7 +44,7 @@ You need Node 22.11 or newer, git, and Claude Code 2.1.295 or newer.
 - `.gitignore`, and your format and lint ignore files: entries for `.harness/`.
 - Your Vitest config or Jest `test` script, when TDD is on, so tests write JSON results.
 
-`init` backs up every file it touches. `uninstall` removes what harness added and restores the rest. Files you edited are kept and listed. The full list: [docs/reference.md](docs/reference.md#what-init-changes-in-your-repo).
+`init` backs up every file it touches. `uninstall` removes what harness added and restores the rest. Files you edited are kept and listed, as is anything in `.harness/` that harness didn't create. `init` refuses a `.harness/` folder it can't tell is its own and names what to move aside. The full list: [docs/reference.md](docs/reference.md#what-init-changes-in-your-repo).
 
 ## What you get
 

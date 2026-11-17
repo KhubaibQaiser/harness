@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { unknownHarnessEntries } from '../core/paths.js';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { overlay } from '../core/config.js';
@@ -93,6 +94,8 @@ function preflight(cli: InitEnv): string | number {
     if (e instanceof ManifestError) return out(e.message), 1;
     throw e;
   }
+  const unknown = unknownHarnessEntries(root);
+  if (unknown.length) return out(`\`.harness/\` already holds files harness did not install: ${unknown.map((e) => `\`${e}\``).join(', ')}. Move them out of \`.harness/\`, or delete them yourself, then run init again. Nothing was changed.`), 1;
   return root;
 }
 

@@ -31,7 +31,7 @@ function hasName(line: string, name: string): boolean {
   return false;
 }
 
-type Rec = { at: number; prompt: boolean; texts: string[]; tool: string[] };
+type Rec = { at: number; prompt: boolean; texts: string[]; tool: string[]; use?: true }; // use: an assistant record that called a tool
 
 export const TRANSCRIPT_TAIL = 8 * 1024 * 1024; // team-decisions plan: read at most the last 8 MiB of a transcript
 
@@ -84,7 +84,8 @@ export function readTranscript(path: unknown, max = Infinity): Rec[] | undefined
       if (prompt || tool.length) recs.push({ at, prompt, texts: [], tool });
     } else if (rec.type === 'assistant' && Array.isArray(c)) {
       const texts = textsOf(c);
-      if (texts.length) recs.push({ at, prompt: false, texts, tool: [] });
+      const use = c.some((b) => obj(b).type === 'tool_use');
+      if (texts.length || use) recs.push({ at, prompt: false, texts, tool: [], ...(use ? { use: true as const } : {}) });
     }
   }
   return recs;

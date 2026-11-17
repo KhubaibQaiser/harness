@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import * as nodeFs from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { REPO_STATE, ManifestError, readManifest, type Manifest, type StatePaths } from './manifest.js';
@@ -40,6 +41,8 @@ export class ApplyError extends Error {
 }
 
 const TMP = '.harness-tmp';
+/** A random temp name next to `target`, so a file of the person's can never share it. */
+const newTmp = (target: string) => `${target}.${randomBytes(4).toString('hex')}${TMP}`;
 // A literal, not REPO_STATE.lock: manifest.ts imports this file, so REPO_STATE may not exist yet at load. A test pins it equal.
 export const LOCK_REL = '.harness/apply.lock';
 /** What the person does about a lock left by an interrupted run or a rollback that failed. */
@@ -123,6 +126,7 @@ export function applyChanges(
   const modes = new Map<string, number>(); // rel -> original mode
   const madeDirs: string[] = []; // dirs this apply created, shallowest first
   const backedUp = new Map<string, string>(); // rel -> backup path (absolute)
+  const madeTmp: string[] = []; // temp files this run created
   const touched: string[] = []; // rels whose target may differ from the original
   const mkParent = (p: string) => {
     const missing: string[] = [];
@@ -154,10 +158,12 @@ export function applyChanges(
         continue;
       }
       mkParent(target);
-      fs.writeFileSync(target + TMP, s.content);
+      const tmp = newTmp(target);
+      fs.writeFileSync(tmp, s.content, { flag: 'wx' }); // exclusive: never truncates a file that was already there
+      madeTmp.push(tmp);
       const mode = s.mode ?? modes.get(s.rel);
-      if (mode !== undefined && process.platform !== 'win32') fs.chmodSync(target + TMP, mode);
-      renameWithRetry(target + TMP, target, (a, b) => fs.renameSync(a, b));
+      if (mode !== undefined && process.platform !== 'win32') fs.chmodSync(tmp, mode);
+      renameWithRetry(tmp, target, (a, b) => fs.renameSync(a, b));
       touched.push(s.rel);
     }
     fs.rmSync(abs(LOCK), { force: true });
@@ -168,16 +174,18 @@ export function applyChanges(
         const b = backedUp.get(rel);
         if (b) {
           // temp + rename so a read-only target does not block the restore
-          fs.copyFileSync(b, abs(rel) + TMP);
-          if (process.platform !== 'win32') fs.chmodSync(abs(rel) + TMP, modes.get(rel)!);
-          renameWithRetry(abs(rel) + TMP, abs(rel), (a, b) => fs.renameSync(a, b));
+          const tmp = newTmp(abs(rel));
+          fs.copyFileSync(b, tmp, nodeFs.constants.COPYFILE_EXCL);
+          madeTmp.push(tmp);
+          if (process.platform !== 'win32') fs.chmodSync(tmp, modes.get(rel)!);
+          renameWithRetry(tmp, abs(rel), (a, b) => fs.renameSync(a, b));
         } else fs.rmSync(abs(rel), { force: true });
       } catch {
         failed.push(rel);
       }
     }
     const restoreFailed = failed.length > 0;
-    for (const s of steps) fs.rmSync(abs(s.rel) + TMP, { force: true });
+    for (const t of madeTmp) fs.rmSync(t, { force: true }); // only temp files this run created (a renamed one is already gone)
     if (!restoreFailed) fs.rmSync(abs(LOCK), { force: true }); // files and manifest may disagree: the next run refuses until the person recovers
     if (!restoreFailed) fs.rmSync(abs(backupRel), { recursive: true, force: true });
     for (const d of madeDirs.reverse()) {

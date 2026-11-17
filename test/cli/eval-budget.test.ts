@@ -27,7 +27,7 @@ function harness(write: Writer | null, over: { status?: number; missing?: true }
   const q = [...answers];
   const prompt = { confirm: async () => false, edit: async (_l: string, v: string) => q.shift() ?? v };
   const cli = { root, env: {}, out: (s: string) => lines.push(s), prompt, exec, tmp: mkdtempSync(join(tmpdir(), 'evb-tmp-')) };
-  return { root, lines, calls, run: (a: string[]) => evalCmd(a, cli) };
+  return { root, lines, calls, cli, run: (a: string[]) => evalCmd(a, cli) };
 }
 const ceiling = (args: string[]) => args[args.indexOf('--max-cost-usd') + 1];
 
@@ -126,4 +126,16 @@ test('temp folders are removed after a decline', async () => {
   const prompt = { confirm: async () => false, edit: async (_l: string, v: string) => (v === '' ? 'no' : v) };
   await evalCmd(['--kind', 'rules', '--model', 'claude-x'], { root, env: {}, out: () => {}, prompt });
   expect(readdirSync(tmpdir()).filter((n) => n.startsWith('harness-eval-')).length).toBe(before);
+});
+
+test('a rerun never overwrites an earlier result', async () => {
+  const h = harness(spend(0.1), {}, ['yes', 'yes']);
+  await h.run(['--kind', 'rules', '--model', 'claude-x']);
+  const evals = join(h.root, '.harness/reports/evals');
+  const first = readdirSync(evals)[0]!;
+  writeFileSync(join(evals, first, 'mine.txt'), 'earlier');
+  h.cli.tmp = mkdtempSync(join(tmpdir(), 'evb-tmp-')); // a rerun builds in a fresh folder
+  await h.run(['--kind', 'rules', '--model', 'claude-x']);
+  expect(readdirSync(evals)).toHaveLength(2);
+  expect(readdirSync(join(evals, first)).sort()).toEqual(['mine.txt', 'result.json']);
 });

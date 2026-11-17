@@ -2,6 +2,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
+import { readEvents } from '../../../src/core/events.js';
 import { FORGED } from '../../../src/checks/pr-size/answer.js';
 import { decidePrSize } from '../../../src/checks/pr-size/check.js';
 import { HAND_RUN } from '../../../src/checks/pr-size/hand-run.js';
@@ -233,6 +234,7 @@ describe("the agent's own AskUserQuestion is the one ask (I3)", () => {
       [post('PR size', { [Q]: 'Keep going' }, { afkTimeoutMs: 60000 })],
       [post('PR size', { [Q]: 'Keep going' }, { followUp: true })], // asked for more questions instead of (or after partially) answering
       [post('PR size', {}, { response: '(notes only)' })],
+      [post('PR size', {}, { response: 'keep going, I will split later' })], // undocumented `response` alone never clears (R16)
     ];
     for (const [t, header] of cases) await asked(root, t, header);
     expect(pending(root)).toEqual({ lines: 201, files: 1 });
@@ -265,13 +267,37 @@ describe("the agent's own AskUserQuestion is the one ask (I3)", () => {
     await hook(root, 'PostToolUse', post('PR size', { [Q]: 'Keep going' })); // the token was used once
     expect(pending(root)).toEqual({ lines: 401, files: 1 });
   });
-  test('a typed reply in `response` counts; a pre-filled `response` is denied', async () => {
+  test('`response` alone no longer clears; a pre-filled `response` is still denied', async () => {
     const root = repo();
     await posted(root, 201);
     expect(await pre(root, { ...preOf('PR size'), tool_input: { questions: [question('PR size')], response: 'keep going' } })).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: FORGED });
     expect(pending(root)).toEqual({ lines: 201, files: 1 });
     await asked(root, post('PR size', {}, { response: 'keep going, I will split later' }));
+    expect(pending(root)).toEqual({ lines: 201, files: 1 });
+  });
+  test('answers with an option label clears the pause, with or without `response` beside it', async () => {
+    const root = repo();
+    await posted(root, 201);
+    await asked(root, post('PR size', { [Q]: 'Keep going' }, { response: 'x' }));
     expect(pending(root)).toBeUndefined();
+  });
+  test('afkTimeoutMs or followUp with answers still does not clear', async () => {
+    const root = repo();
+    await posted(root, 201);
+    await asked(root, post('PR size', { [Q]: 'Keep going' }, { afkTimeoutMs: 1, response: 'yes' }));
+    await asked(root, post('PR size', { [Q]: 'Keep going' }, { followUp: true, response: 'yes' }));
+    expect(pending(root)).toEqual({ lines: 201, files: 1 });
+  });
+  test('an unknown tool_response key logs ask-shape-unknown once per session', async () => {
+    const root = repo();
+    await posted(root, 201);
+    const shape = () => readEvents(root).filter((e) => e.decision === 'ask-shape-unknown');
+    await asked(root, post('PR size', { [Q]: 'Keep going' }));
+    expect(shape()).toEqual([]);
+    const odd = { ...post('PR size', {}), tool_response: { newField: 1 } };
+    await asked(root, odd);
+    await asked(root, { ...odd, tool_input: { ...odd.tool_input, newInput: 1 } as typeof odd.tool_input });
+    expect(shape()).toMatchObject([{ check: 'pr-size', session: expect.any(String), reason: expect.stringContaining('newField') }]);
   });
   const Q2 = 'Which base should the first PR use?';
   const many = (qs: ReturnType<typeof question>[], answers: Record<string, unknown> = {}) => ({ tool_name: 'AskUserQuestion', tool_input: { questions: qs, answers }, tool_response: {} });

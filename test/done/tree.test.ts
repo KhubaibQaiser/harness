@@ -280,3 +280,27 @@ test.skipIf(process.platform === 'win32')('stock lfs plus an lfs extension spell
   expect(existsSync(marker)).toBe(false);
   expect(err).toBeUndefined();
 });
+
+// M4 (ship audit 2026-11-18): init's .gitignore ignores the excluded folders, and `git add -A` with exclude pathspecs
+// naming ignored paths exits 1, so every verify read not-done.
+test("hashes with init's .gitignore when the excluded folders exist, and they still don't count", () => {
+  const root = mk({ 'a.txt': 'a\n', '.gitignore': 'node_modules\n.harness/state/\n.harness/logs/\n.harness/backup/\n.harness/results/\n.harness/debug/\n.harness/reports/\n.harness/reviews/\n.harness/verdicts/\n' });
+  for (const d of TREE_EXCLUDES) put(root, `${d}/x.json`, '{}');
+  const h = treeHash(root);
+  expect(h).toMatch(/^[0-9a-f]{40,64}$/);
+  for (const d of TREE_EXCLUDES) put(root, `${d}/x.json`, '{"changed":1}');
+  put(root, '.harness/tmp/w-1/y.json', '{}');
+  expect(treeHash(root)).toBe(h);
+  put(root, 'a.txt', 'changed\n');
+  expect(treeHash(root)).not.toBe(h);
+});
+
+test('an excluded folder that is committed still does not count, and the real index is untouched', () => {
+  const root = mk({ 'a.txt': 'a\n', '.harness/state/x.json': '{}' });
+  const index = readFileSync(join(root, '.git', 'index'));
+  const h = treeHash(root);
+  put(root, '.harness/state/x.json', '{"changed":1}');
+  expect(treeHash(root)).toBe(h);
+  expect(readFileSync(join(root, '.git', 'index')).equals(index)).toBe(true);
+  expect(execFileSync('git', ['ls-files', '.harness/state'], { cwd: root, encoding: 'utf8' })).toBe('.harness/state/x.json\n');
+});

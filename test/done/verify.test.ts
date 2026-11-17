@@ -377,6 +377,10 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('a denied 
   chmodSync(join(v.root, '.harness/state'), 0o755); // so the folder can be cleaned up
   expect([v.code, v.outcome, calls]).toEqual([1, 'not-done', 0]);
   expect(v.reasons).toEqual([expect.stringMatching(/^review failed: not run, since this verdict can't be recorded \(.*EACCES.*\); the write was denied, as in the agent's sandbox: run harness verify in your own terminal$/)]);
+  // Native Windows has no agent sandbox: the same denied write gets no sandbox hint there.
+  const win = await runVerify({ platform: 'win32', setup: (root) => chmodSync(join(root, '.harness/state'), 0o555), deps: { which: (cmd) => cmd, model: async (c) => (calls++, CLEAN(c)) } });
+  chmodSync(join(win.root, '.harness/state'), 0o755);
+  expect([win.outcome, calls, win.reasons]).toEqual(['not-done', 0, [expect.stringMatching(/^review failed: not run, since this verdict can't be recorded \(.*EACCES.*\)$/)]]);
 });
 
 test('the verdict names both models and shows the steering list and kept non-critical findings', async () => {

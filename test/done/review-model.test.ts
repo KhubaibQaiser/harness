@@ -63,6 +63,9 @@ test('a claude inside the repo, or reached through a repo folder on PATH, is ref
   mkdirSync(linked);
   symlinkSync(join(w.bin, 'claude'), join(linked, 'claude'));
   if (process.platform !== 'win32') expect(reviewClaude(w.root, { PATH: linked }, 'linux')).toEqual(msg(join(linked, 'claude')));
+  // Windows finds claude.cmd by PATHEXT and runs it by name: the repo copy is refused there too, its path shown as is.
+  expect(reviewClaude(w.root, { PATH: inRepo, PATHEXT: '.CMD' }, 'win32')).toEqual(msg(join(inRepo, 'claude.cmd')));
+  expect(await claudeModel({ root: w.root, exec: r.exec, env: { PATH: inRepo, PATHEXT: '.CMD' }, platform: 'win32' })(CALL)).toEqual(msg(join(inRepo, 'claude.cmd')));
   expect(r.seen).toHaveLength(0);
   expect(reviewClaude(w.root, w.env, process.platform)).toMatchObject({ path: expect.stringContaining(w.bin) });
 });

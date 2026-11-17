@@ -57,7 +57,8 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   } catch (e) {
     // In the agent's sandbox the state is read-only; the record step below says so, and the file it vouched for is gone.
     unrecordable = msg(e); // the same write the record step makes, so the review below knows before it spends a model call
-    sandboxed = ['EPERM', 'EACCES', 'EROFS'].includes((e as NodeJS.ErrnoException).code ?? ''); // a write denied, as the sandbox's denyWrite does
+    // A write denied, as the sandbox's denyWrite does. Native Windows has no agent sandbox, and EPERM there means a lock or a folder in the way.
+    sandboxed = platform !== 'win32' && ['EPERM', 'EACCES', 'EROFS'].includes((e as NodeJS.ErrnoException).code ?? '');
   }
   if (!(args.length === 0 || (args.length === 2 && args[0] === '--task' && TASK_ID.test(args[1]!)))) return out(`Usage: ${VERIFY_USAGE}`), 2;
   const { config, errors } = loadConfig(root);

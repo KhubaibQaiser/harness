@@ -8,6 +8,7 @@ import { defaultExec, type Exec } from '../core/exec.js';
 import { packageDir } from '../core/package-dir.js';
 import { real, realish } from '../core/paths.js';
 import { findOnPath } from '../checks/stop/runner.js';
+import { escPath } from '../review/context.js';
 
 export type ReviewModel = (call: { system: string; message: string; model: string; timeoutMs: number }) => Promise<{ text: string } | { error: string }>;
 
@@ -27,7 +28,7 @@ export function reviewClaude(root: string, env: NodeJS.ProcessEnv, platform: Nod
   const bin = findOnPath('claude', env, platform);
   if (!bin) return { error: 'claude is not on PATH' };
   const repo = realish(root), at = real(bin);
-  if (under(repo, at) || under(repo, realish(dirname(bin)))) return { error: `claude resolves inside the repo (${esc(bin)}); put Claude Code's own claude first on PATH` };
+  if (under(repo, at) || under(repo, realish(dirname(bin)))) return { error: `claude resolves inside the repo (${escPath(bin)}); put Claude Code's own claude first on PATH` };
   return { path: at };
 }
 

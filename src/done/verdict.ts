@@ -12,7 +12,7 @@ import { taskFileProblem } from './contract.js';
 
 export type Outcome = 'done' | 'not-done' | 'blocked' | 'harness-files-only';
 export interface Evidence { command: string; exit: number | null; ts: string; source: 'reused' | 're-run'; status: 'pass' | 'fail' | 'timeout' | 'missing' }
-export interface ReviewResult { model: string; status: 'ran' | 'failed' | 'skipped'; error?: string; findings: RecordFinding[] }
+export interface ReviewResult { model: string; judge_model?: string; status: 'ran' | 'failed' | 'skipped'; error?: string; findings: RecordFinding[]; steering?: { source: string; text: string }[] }
 export interface Verdict {
   schema: 'harness-verdict/1'; mode: 'attended' | 'ci'; part: 'all' | 'evidence' | 'review'; task: string; contract_sha256: string;
   commit: string; tree: string; clean: boolean; base: string; outcome: Outcome; reasons: string[]; tamper: string[];
@@ -99,6 +99,18 @@ export function readVerdict(root: string, commit: string): Verdict | null {
 const oneLine = (s: string) => s.replace(new RegExp(`[\\u0000-\\u001f\\u2028\\u2029${HIDDEN_CLASS}]`, 'gu'), (c) => (c < ' ' ? JSON.stringify(c).slice(1, -1) : `\\u{${c.codePointAt(0)!.toString(16)}}`));
 const item = (id: string, e: Evidence | null) => (e ? `- ${id} ${e.status}: ${e.command} exit ${e.exit ?? 'none'} (${e.source})` : `- ${id} not run`);
 
+function reviewLines(r: ReviewResult | null): string[] {
+  if (!r || r.status !== 'ran') return r ? [`Review ${r.status} (${r.model})`] : [];
+  const kept = r.findings.filter((f) => f.placement !== 'dropped');
+  // A kept critical is already a reason; the rest are shown so the person sees them.
+  return [
+    `Review ran (reviewer ${r.model}, judge ${r.judge_model ?? r.model}): ${kept.length} findings, ${r.findings.length - kept.length} dropped`,
+    ...kept.filter((f) => f.severity !== 'critical').map((f) => `- review ${f.severity}: ${f.file}:${f.line} ${f.title}`),
+    // Task text that tried to steer the reviewer, as M2a shows it: the person judges it.
+    ...(r.steering ?? []).map((s) => `- review steering (${s.source}): ${s.text}`),
+  ];
+}
+
 export function verdictLines(v: Verdict): string[] {
   return [
     `Verdict: ${v.outcome} at ${v.commit} (tree ${v.tree}), task ${v.task}, harness verify${v.clean ? '' : ' (working tree not clean)'}`,
@@ -106,6 +118,7 @@ export function verdictLines(v: Verdict): string[] {
     ...v.checks.map((c) => item(c.name, c.evidence)),
     ...v.criteria.filter((c) => c.kind !== 'person').map((c) => item(c.id, c.evidence)),
     ...v.person.map((p) => `- person: ${p}`),
+    ...reviewLines(v.review),
     ...v.tamper.map((t) => `tamper: ${t}`),
     ...v.reasons,
   ].map(oneLine);

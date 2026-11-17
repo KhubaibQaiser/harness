@@ -7,6 +7,8 @@ docs/release-notes/<version>.md: the release workflow's check-tag step needs tha
 
 Not yet listed here: changes merged before this file existed (the pr-body check, the review judge agent).
 
+Run `/harness:update` in each repo after upgrading: `.claude/agents/staff-reviewer.md` gained a task mode and `review-judge.md` an inline-input rule (done contract), and the PR review (`harness review`) refuses while an installed copy differs from the package's.
+
 ### Secrets scanning
 
 - New catalog item `gitleaks-ci` (kind `ci`): a GitHub workflow that scans the full git history with gitleaks 8.30.1, checksum-verified, with `--redact`. `/harness:init` recommends it for `api` and `infra` repos.

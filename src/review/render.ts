@@ -5,7 +5,7 @@ import type { GatherJson } from './gather.js';
 
 export const CODE_ONLY = 'Code-only review: the app was not run.';
 export const NEEDS_HUMAN = 'Needs human action before merge; do not auto-merge.';
-const STEERING_MAX = 5;
+export const STEERING_MAX = 5;
 
 const ZW = '​';
 // Every ASCII punctuation character CommonMark can start markup with: escaped, no link, image, HTML, emphasis, heading,

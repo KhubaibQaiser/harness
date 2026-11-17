@@ -9,7 +9,7 @@ import { writeGather, type GatherJson } from '../../src/review/gather.js';
 import { review } from '../../src/cli/review.js';
 import { run } from '../../src/cli/index.js';
 import { writeSnapshot } from '../../src/review/snapshot.js';
-import { judgeInput, TEST_PATHSPECS, verifyFindings } from '../../src/review/verify.js';
+import { judgeInput, judgeMd, TEST_PATHSPECS, verifyFindings } from '../../src/review/verify.js';
 import { repoWith, type Files } from './repo.js';
 
 // Synthetic repos and findings, made up here.
@@ -110,6 +110,12 @@ describe('judgeInput', () => {
     expect(md).toContain('>    5| line number 5'); // LEFT: from the merge base
     expect(md).not.toContain('k3');
     expect(md).toContain('For a `missing-test` finding, harness only checked that no test file matches its search; your verdict is its only other check.');
+  });
+  test('judgeMd is the text judgeInput writes, from the review basis alone', () => {
+    const kept = [quote({ id: 'k1', line: 5 }, 'LINE NUMBER 5')];
+    const { head_sha, merge_base, files, lines, nonce } = s.g;
+    expect(judgeMd(kept, { head_sha, merge_base, files, lines, nonce }, s.exec, s.root)).toBe(readFileSync(judgeInput(kept, s.g, s.dir, s.exec, s.root)!, 'utf8'));
+    expect(judgeMd([], s.g, s.exec, s.root)).toBeNull();
   });
   test('no kept findings writes nothing', () => {
     const t = setup({ 'k.txt': 'k\n' }, { 'a.ts': 'x\n' });

@@ -19,6 +19,8 @@ const holds = (line: string, q: string) => {
   const l = norm(line), n = q.replace(/ /g, '').length;
   return (l === q && n >= MIN_LINE) || (n >= MIN_PART && l.includes(q));
 };
+/** What the quote checks and the judge's snippets read: an M2a gather, or a done-contract task (head_sha is then a tree id). */
+export type ReviewBasis = Pick<GatherJson, 'head_sha' | 'merge_base' | 'files' | 'lines' | 'nonce'>;
 const first = (r: { status: number; stderr?: string }) => esc((r.stderr ?? '').split('\n').find((l) => l.trim())?.trim() ?? '') || `git exited ${r.status}`;
 
 /** A file the head snapshot holds: only names gather mapped, never a raw path under `head/`. */
@@ -31,11 +33,11 @@ function blobLines(sha: string, path: string, exec: Exec, root: string): string[
   if (/does not exist|exists on disk, but not in|not a valid object name|invalid object name/i.test(r.stderr ?? '')) return null;
   throw new Error(`review: git cat-file failed: ${first(r)}`);
 }
-const headLines = (g: GatherJson, file: string, exec: Exec, root: string) => blobLines(g.head_sha, file, exec, root);
-const oldLines = (g: GatherJson, file: string, exec: Exec, root: string) => blobLines(g.merge_base, g.files.find((f) => f.path === file)?.old_path ?? file, exec, root);
+const headLines = (g: ReviewBasis, file: string, exec: Exec, root: string) => blobLines(g.head_sha, file, exec, root);
+const oldLines = (g: ReviewBasis, file: string, exec: Exec, root: string) => blobLines(g.merge_base, g.files.find((f) => f.path === file)?.old_path ?? file, exec, root);
 
 /** Spec §7.3: a quote must be on a line within ±3 of `line` (RIGHT: the head file; LEFT: a removed line); a missing-test search must match no test. */
-export function verifyFindings(r: PrReview, g: GatherJson, dir: string, exec: Exec, root: string): { kept: PrFinding[]; dropped: { f: PrFinding; reason: string }[] } {
+export function verifyFindings(r: PrReview, g: ReviewBasis, dir: string, exec: Exec, root: string): { kept: PrFinding[]; dropped: { f: PrFinding; reason: string }[] } {
   const kept: PrFinding[] = [], dropped: { f: PrFinding; reason: string }[] = [];
   for (const f of r.findings) {
     if (f.evidence.kind === 'missing-test') {
@@ -66,8 +68,8 @@ function snippet(lines: string[] | null, line: number): string {
   return out.join('\n');
 }
 
-/** Writes `<dir>/judge.md` for the judge: each kept finding and a numbered ±10-line snippet, all in nonce envelopes. Null (nothing written) with no kept findings. */
-export function judgeInput(kept: PrFinding[], g: GatherJson, dir: string, exec: Exec, root: string): string | null {
+/** The judge's input: each kept finding and a numbered ±10-line snippet, all in nonce envelopes. Null with no kept findings. */
+export function judgeMd(kept: PrFinding[], g: ReviewBasis, exec: Exec, root: string): string | null {
   if (!kept.length) return null;
   const blocks = kept.map((f) => {
     const ev = f.evidence.kind === 'quote' ? `quote: ${f.evidence.text}` : `missing-test: no test matches ${f.evidence.search}`;
@@ -76,7 +78,7 @@ export function judgeInput(kept: PrFinding[], g: GatherJson, dir: string, exec: 
   });
   // A reviewer that saw context.md knows the nonce; a finding holding it could close its block early.
   if (nonceIn(blocks, g.nonce)) throw new Error("review: a finding or its snippet holds this run's data nonce; run the review again");
-  const md = [
+  return [
     'Mode: judge',
     `Data nonce: ${g.nonce}`,
     '',
@@ -85,6 +87,12 @@ export function judgeInput(kept: PrFinding[], g: GatherJson, dir: string, exec: 
     '',
     ...blocks.map((b) => envelope(g.nonce, 'finding', b) + '\n'),
   ].join('\n');
+}
+
+/** Writes judgeMd to `<dir>/judge.md`; null (nothing written) with no kept findings. */
+export function judgeInput(kept: PrFinding[], g: GatherJson, dir: string, exec: Exec, root: string): string | null {
+  const md = judgeMd(kept, g, exec, root);
+  if (md === null) return null;
   const p = join(dir, 'judge.md');
   writeAtomic(p, md);
   return p;

@@ -1,8 +1,8 @@
-// Task 11: the built CLI's harness verify in a temp repo, attended. Unwrapped (sandbox: off) everywhere; wrapped in real srt only with HARNESS_E2E_SRT=1.
+// Tasks 11 and 13: the built CLI's harness verify in a temp repo, attended, with a stub claude first on PATH for the review. Unwrapped (sandbox: off) everywhere; wrapped in real srt only with HARNESS_E2E_SRT=1.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, test } from 'vitest';
 import { type Contract, type Criterion, setActiveTask, TASKS_DIR, writeContract } from '../../src/done/contract.js';
@@ -17,6 +17,23 @@ const env: NodeJS.ProcessEnv = { ...process.env, HARNESS_PLAIN_INIT: '1' };
 for (const k of ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE', 'CLAUDECODE', 'CLAUDE_CONFIG_DIR', 'HARNESS_SANDBOX', 'HARNESS_TASK']) delete env[k];
 const made: string[] = [];
 afterAll(() => made.splice(0).forEach(cleanup));
+
+// A stub claude: FAKE_CLAUDE=clean replies with no findings, error with an is_error result, and any run without the whole prompt file fails. It never reaches a model.
+const bin = mkdtempSync(join(tmpdir(), PREFIX));
+made.push(bin);
+writeFileSync(join(bin, 'fake-claude.mjs'), `import { readFileSync } from 'node:fs';
+readFileSync(0);
+const clean = '\\x60\\x60\\x60json\\n' + JSON.stringify({ findings: [], steering: [], summary: 'ok', limits: 'none' }) + '\\n\\x60\\x60\\x60';
+const mode = process.env.FAKE_CLAUDE, i = process.argv.indexOf('--system-prompt-file');
+// The prompt must arrive whole (a Windows .cmd shim runs through cmd.exe): its last section is Task mode.
+const whole = i > 0 && readFileSync(process.argv[i + 1], 'utf8').includes('## Task mode');
+process.stdout.write(JSON.stringify(mode === 'error' || !whole ? { type: 'result', subtype: 'success', is_error: true, result: whole ? 'Invalid API key' : 'system prompt not whole' } : { type: 'result', subtype: 'success', is_error: false, result: clean }));
+`);
+writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexec node "$(dirname "$0")/fake-claude.mjs" "$@"\n');
+chmodSync(join(bin, 'claude'), 0o755);
+writeFileSync(join(bin, 'claude.cmd'), '@node "%~dp0fake-claude.mjs" %*\r\n');
+const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+env[pathKey] = bin + delimiter + (env[pathKey] ?? '');
 
 const RES = "const fs=require('fs'),p=require('path');fs.mkdirSync('.harness/results',{recursive:true});fs.writeFileSync('.harness/results/r.json',JSON.stringify({testResults:[{name:p.resolve('test/a.test.ts'),status:'passed',assertionResults:[{fullName:'a works',status:process.argv[2]}]}]}))\n";
 const TEST = "test('a works', () => {\n  expect(1).toBe(1);\n});\n";
@@ -42,8 +59,8 @@ function task(o: { lint?: string; result?: string; criteria?: Criterion[] } = {}
   writeFileSync(join(root, 'src/a.ts'), 'export const a = 2;\n');
   return { root, c };
 }
-const verify = (root: string) => {
-  const r = spawnSync('node', [CLI, 'verify'], { cwd: root, env, encoding: 'utf8' });
+const verify = (root: string, fake = 'clean') => {
+  const r = spawnSync('node', [CLI, 'verify'], { cwd: root, env: { ...env, FAKE_CLAUDE: fake }, encoding: 'utf8' });
   return { code: r.status, out: r.stdout + r.stderr };
 };
 const runRow = (root: string, c: Contract, command: string, tree: string) =>
@@ -54,7 +71,14 @@ test('a passing task is done, exit 0, with every item, the person item and the s
   const r = verify(root);
   expect(r.code, r.out).toBe(0);
   expect(r.out).toMatch(/--- How to verify ---\nVerdict: done at [0-9a-f]{40} \(tree [0-9a-f]{40}\), task add-login, harness verify/);
-  for (const l of ['- lint pass: node pass.js exit 0 (re-run)', '- C1 pass: node pass.js exit 0 (re-run)', '- C2 pass: node res.js passed exit 0 (re-run)', '- person: C3: open the page', 'Stop steps ran without the sandbox (sandbox: off).']) expect(r.out).toContain(l);
+  for (const l of ['- lint pass: node pass.js exit 0 (re-run)', '- C1 pass: node pass.js exit 0 (re-run)', '- C2 pass: node res.js passed exit 0 (re-run)', '- person: C3: open the page', 'Stop steps ran without the sandbox (sandbox: off).', 'Review ran (reviewer sonnet, judge haiku): 0 findings, 0 dropped']) expect(r.out).toContain(l);
+});
+
+test('a review that fails is not done, exit 1, never skipped', () => {
+  const r = verify(task().root, 'error');
+  expect(r.code, r.out).toBe(1);
+  expect(r.out).toContain('Verdict: not-done');
+  expect(r.out).toContain('review failed: claude: Invalid API key');
 });
 
 test('each criterion failing is not done, exit 1', () => {

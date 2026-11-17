@@ -1,4 +1,4 @@
-// `harness verify` (spec §4.4), attended and without the review: a verdict bound to HEAD and the working tree, every step failing closed.
+// `harness verify` (spec §4.4), attended: a verdict bound to HEAD and the working tree, every step failing closed.
 import { rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, posix } from 'node:path';
@@ -17,12 +17,14 @@ import { checkArgvs, plainArgv } from './commands.js';
 import { activeTaskId, type Contract, contractHash, loadContract, TASK_ID, TASKS_DIR, validateContract } from './contract.js';
 import { collectEvidence, type StopExec } from './evidence.js';
 import { type BlockedRow, freshEvidence, latestBlocked, readLedger } from './ledger.js';
+import { claudeModel, type ReviewModel } from './review-model.js';
+import { runTaskReview, taskBasis } from './review-task.js';
 import { diffTamper, isHarnessOwned } from './tamper-diff.js';
 import { treeHash } from './tree.js';
-import { EXIT, folderError, linkedFolder, type Outcome, recordVerdictHash, type Verdict, verdictLines, verdictPath, writeVerdict } from './verdict.js';
+import { EXIT, folderError, linkedFolder, type Outcome, recordVerdictHash, type ReviewResult, type Verdict, verdictLines, verdictPath, writeVerdict } from './verdict.js';
 
 export const VERIFY_USAGE = 'harness verify [--task <id>]';
-export interface VerifyDeps { exec?: StopExec; git?: Exec; tree?: (root: string) => string; now?: () => number; which?: (cmd: string) => string | null; runSteps?: RunSteps }
+export interface VerifyDeps { exec?: StopExec; git?: Exec; tree?: (root: string) => string; now?: () => number; which?: (cmd: string) => string | null; runSteps?: RunSteps; model?: ReviewModel }
 
 // The same history diffTamper reads: no replace refs, no grafts.
 const GIT_ENV = { GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null/harness-no-grafts' };
@@ -49,10 +51,14 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   } catch (e) {
     return out(`harness verify: ${msg(e)}`), 1;
   }
+  let unrecordable: string | null = null, sandboxed = false;
   try {
     recordVerdictHash(root, commit, null);
-  } catch {
+  } catch (e) {
     // In the agent's sandbox the state is read-only; the record step below says so, and the file it vouched for is gone.
+    unrecordable = msg(e); // the same write the record step makes, so the review below knows before it spends a model call
+    // A write denied, as the sandbox's denyWrite does. Native Windows has no agent sandbox, and EPERM there means a lock or a folder in the way.
+    sandboxed = platform !== 'win32' && ['EPERM', 'EACCES', 'EROFS'].includes((e as NodeJS.ErrnoException).code ?? '');
   }
   if (!(args.length === 0 || (args.length === 2 && args[0] === '--task' && TASK_ID.test(args[1]!)))) return out(`Usage: ${VERIFY_USAGE}`), 2;
   const { config, errors } = loadConfig(root);
@@ -106,10 +112,32 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   } catch (e) {
     reasons.push(msg(e));
   }
+  // Step 4, the review: only after everything else passed, fresh every run (never a cached or reported result).
+  let review: ReviewResult | null = null;
+  if (c && !filesOnly) {
+    const model = c.review.model, linked = linkedFolder(root); // checked again here: a folder can become a link mid-run
+    const noRecord = unrecordable ?? (linked && folderError(linked).message);
+    if (reasons.length || tamper.length || blocked) review = { model, status: 'skipped', findings: [] };
+    else if (noRecord) {
+      review = { model, status: 'failed', error: `not run, since this verdict can't be recorded (${noRecord})${sandboxed ? '; the write was denied, as in the agent\'s sandbox: run harness verify in your own terminal' : ''}`, findings: [] };
+      reasons.push(`review failed: ${review.error}`);
+    } else {
+      const rg: Exec = (cmd, a, o) => git(cmd, a, { env: { ...process.env, ...GIT_ENV }, ...o });
+      try {
+        review = await runTaskReview(root, taskBasis(root, rg, base, t, config.pr_size.exclude), c, {
+          model: deps.model ?? claudeModel({ root }), git: rg, evidence: JSON.stringify(ev, null, 2), maxFindings: config.review.max_findings, timeoutMs: config.done.review_timeout_s * 1000, reviewModel: model,
+        });
+      } catch (e) {
+        review = { model, status: 'failed', error: msg(e), findings: [] };
+      }
+      if (review.status === 'failed') reasons.push(`review failed: ${review.error}`);
+      for (const f of review.findings) if (f.severity === 'critical' && f.placement !== 'dropped') reasons.push(`review: ${esc(f.file)}:${f.line} ${esc(f.title)}`);
+    }
+  }
   const outcome: Outcome = filesOnly && !reasons.length ? 'harness-files-only' : tamper.length ? 'not-done' : blocked ? 'blocked' : reasons.length ? 'not-done' : 'done';
   const v: Verdict = {
     schema: 'harness-verdict/1', mode: 'attended', part: 'all', task: id, contract_sha256: c?.sha256 ?? '', commit, tree: t, clean, base, outcome, reasons, tamper, ...ev,
-    person: (c?.criteria ?? []).flatMap((cr) => ('person' in cr.check ? [`${cr.id}: ${cr.check.person}`] : [])), review: null,
+    person: (c?.criteria ?? []).flatMap((cr) => ('person' in cr.check ? [`${cr.id}: ${cr.check.person}`] : [])), review,
     blocked: blocked && { reason: blocked.reason, failing_criteria: blocked.failing_criteria }, created: new Date().toISOString(),
   };
   let text: string;
@@ -130,7 +158,7 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   if (!recorded) out(`${NOT_RECORDED} (${why})`);
   const items = [...v.checks, ...v.criteria].map((x) => x.evidence?.source);
   try {
-    appendEvent(root, { ts: v.created, session: 'cli', check: 'verify', decision: `verify-${outcome}`, reason: `task ${id} ${commit.slice(0, 7)} attended reused ${items.filter((s) => s === 'reused').length} re-run ${items.filter((s) => s === 're-run').length} tamper ${tamper.length}` });
+    appendEvent(root, { ts: v.created, session: 'cli', check: 'verify', decision: `verify-${outcome}`, reason: `task ${id} ${commit.slice(0, 7)} attended reused ${items.filter((s) => s === 'reused').length} re-run ${items.filter((s) => s === 're-run').length} tamper ${tamper.length} review ${review?.status ?? 'none'}` });
   } catch (e) {
     out(`harness verify: the event log could not be written: ${msg(e)}`);
   }

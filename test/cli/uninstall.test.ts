@@ -461,7 +461,9 @@ describe('uninstall keeps files harness did not create', () => {
     const dry = await un(root, ['--dry-run']);
     const listed = [...dry.out.matchAll(/^Would remove `([^`]+)`$/gm)].map((x) => x[1]).sort();
     const before = new Set(all(root));
-    expect((await un(root, ['--yes'])).code).toBe(0);
+    const real = await un(root, ['--yes']);
+    expect(real.code).toBe(0);
+    expect([...real.out.matchAll(/^Removed `([^`]+)`$/gm)].map((x) => x[1]).sort()).toEqual(listed); // the final output names each one too
     const after = new Set(all(root));
     expect(listed).toEqual([...before].filter((f) => !after.has(f)).sort());
     expect(listed).toContain('.harness/logs/events.jsonl');

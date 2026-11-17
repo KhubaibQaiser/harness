@@ -197,6 +197,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     changes.splice(changes.findIndex((c) => c.rel === '.gitignore'), 1);
     notes.push('Kept the `.harness/` lines in `.gitignore`, so its logs, state and backups stay out of git.');
   }
+  const listed = deleteHarness ? new Set(runtimeFiles(root)) : new Set<string>(); // what the dry run named
   if (changes.length) {
     try {
       applyChanges(root, changes, m.version, undefined, cli.fs, { writeManifest: false });
@@ -211,6 +212,8 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   for (const d of dirs.reverse()) try { rmdirSync(join(root, d)); } catch {} // only an emptied folder
   removeEmptyDirs(root, [...changes, ...runtime.map((rel): Change => ({ kind: 'delete', rel, before: '' }))]);
   for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} \`${c.rel}\``);
+  for (const rel of runtime) if (listed.has(rel)) out(`Removed \`${rel}\``);
+  if (runtime.some((rel) => !listed.has(rel))) out('Removed the backup this uninstall made while it ran.');
   for (const n of notes) out(`Note: ${n}`);
 
   // Edited files are kept like any other user edit, but harness is fully uninstalled either way: the manifest always

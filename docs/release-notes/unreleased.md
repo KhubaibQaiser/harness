@@ -28,6 +28,7 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 ### Changed
 
 - `harness verify` and the evidence ledger work after a real `init` (ship audit M4). The tree hash used exclude pathspecs for harness's folders, and `git add` exits 1 when those name folders that init's `.gitignore` ignores, so every verify read not-done and the ledger wrote no rows. It now adds everything to its throwaway index, then drops harness's folders from that index; the real index is still never read or written. Files committed under those folders no longer count either.
+- Because the tree hash changed, a verdict or evidence-ledger row written by 0.2.0-beta.2 may not match the new hash after you upgrade, so it counts as stale and those checks run once more.
 - Test files no longer count toward the PR size limit by default (owner ruling 2026-11-16, reversing the pr-size spec's D3): `*.test.*`, `*.spec.*`, `__tests__/`, `test/` and `tests/` folders, Python `test_*.py` and `*_test.py`, Go `*_test.go` and `conftest.py` join the default `pr_size.exclude`. They are still named in the size warning's "Not counted" list, and the PR reviewer still reads them. A `pr_size.exclude` you set replaces the whole default, so tests count again unless you list them.
 
 ### Breaking

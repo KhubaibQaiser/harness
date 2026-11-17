@@ -1,7 +1,7 @@
 // The one offline always-loaded set every context-budget view reads (spec §3). measureRepo already counts every file
 // harness installed (the agents-md block, installed skills), so the selection side adds only what is not a file in the
 // repo: the harness plugin's own skills and agents, and catalog plugins, outside skills and MCP servers.
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { loadCatalog, type LoadedCatalog } from '../catalog/load.js';
 import type { Catalog } from '../catalog/schema.js';
@@ -9,7 +9,7 @@ import type { HarnessConfig } from '../core/config.js';
 import { ManifestError, readManifest, type Manifest } from '../install/manifest.js';
 import { selectedIds } from '../install/plan.js';
 import { realIO, type RepoIO } from './imports.js';
-import { alwaysLoadedText, measureSelectionSync } from './measure.js';
+import { alwaysLoadedText, measureSelectionSync, subdirs } from './measure.js';
 import { ownersFrom, type Owner } from './owners.js';
 import { measureRepo, type SourceEntry } from './sources.js';
 
@@ -35,7 +35,7 @@ function pluginLabel(plugin: string): string {
   const listedSkill = (d: string): boolean => {
     try { return alwaysLoadedText('skill', readFileSync(join(skills, d, 'SKILL.md'), 'utf8')) !== ''; } catch { return true; } // unreadable: keep the name, the row says what it can
   };
-  const names = (existsSync(skills) ? readdirSync(skills) : []).filter(listedSkill);
+  const names = subdirs(skills).filter(listedSkill);
   return `skills ${names.map((n) => `harness:${n}`).join(', ')}${agents.length ? ` + agents ${agents.map((a) => basename(a, '.md')).join(', ')}` : ''}`;
 }
 

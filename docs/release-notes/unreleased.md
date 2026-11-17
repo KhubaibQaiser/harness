@@ -129,3 +129,11 @@ New since 0.2.0-beta.0, unchanged in this release:
 - `harness review` no longer refuses when the project's `staff-reviewer` differs from the plugin's copy (the project agent takes priority); it now stops only when the CLI version differs from the base install's recorded version.
 - The PR size question clears the pause only on a documented `answers` entry; the undocumented `response` text no longer clears it alone. An unknown key in the question's call or result logs `ask-shape-unknown` once per session.
 - `harness remember add` now says "harness couldn't check whether this text quotes tool output" when the transcript can't be read, or shows tool calls but no recognised tool result. It was already a deny without `--quoted`.
+
+### Writes and scans
+
+- `harness verify` and `harness report` in a repo or folder where harness isn't installed (no `.harness/manifest.json`) now say so, exit 1 and write nothing. Before, they left `.harness/state/` or `.harness/reports/` behind, and `init` then refused (ship audit S1).
+- `init`, `update`, `sync`, `add`, `remove`, `context apply` and `rules --apply` no longer name a file they would create as uncommitted just because it sits in an untracked folder; only files that exist there count.
+- A write the OS refuses for a reason other than Claude Code's sandbox, such as a read-only folder (`EACCES`), now prints the real error ("apply failed and was rolled back: EACCES: permission denied …"), not "Claude Code's sandbox blocks harness's own files". The sandbox line needs `EPERM` or `EROFS` on one of harness's denyWrite paths, as the reference already said (ship audit S6).
+- `update` and `sync` keep a `checks.done: true` you set by hand. No catalog item owns that check, so it no longer reverts to `false`, and `doctor` no longer calls it a difference from the selected items (ship audit S7).
+- A file in the plugin's `skills/` folder, such as Finder's `.DS_Store`, is no longer listed or measured as a skill by `harness context`, `doctor` and the context budget (ship audit S9).

@@ -105,7 +105,7 @@ const pkgVersion = JSON.parse(readFileSync('package.json', 'utf8')).version as s
 // The notes of the release being prepared: unreleased.md until the version bump renames it to <version>.md (the
 // release workflow needs that name at tag time); a tagged version's notes describe what shipped and are never edited.
 const notes = readFileSync(existsSync('docs/release-notes/unreleased.md') ? 'docs/release-notes/unreleased.md' : `docs/release-notes/${pkgVersion}.md`, 'utf8');
-const catalogItems = readdirSync('catalog/items').map((f) => parseYaml(readFileSync(`catalog/items/${f}`, 'utf8')) as { id: string; source: { type: string }; plugin_version?: string });
+const catalogItems = readdirSync('catalog/items').filter((f) => f.endsWith('.yaml')).map((f) => parseYaml(readFileSync(`catalog/items/${f}`, 'utf8')) as { id: string; source: { type: string }; plugin_version?: string });
 
 test('README carries neither test variable and names the budget key', () => {
   expect(readme).not.toContain('HARNESS_PLAIN_INIT');

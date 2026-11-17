@@ -16,7 +16,7 @@ import { PRESET_ITEM } from '../install/plan-preset.js';
 import { reconcile } from '../install/reconcile.js';
 import { pinOf, resolveSelection } from '../install/select.js';
 import type { Picks } from '../ai/picks.js';
-import { budgetGate, isDenied, sandboxLine } from './init.js';
+import { budgetGate, deniedWrite, sandboxLine } from './init.js';
 import { recordedExtra, repoEntries } from './install-selection.js';
 import { refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
@@ -189,7 +189,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   try {
     applyChanges(root, changes, m.version, () => at, cli.fs, { manifest: { ...m, files }, manifestBefore: rawOf(m) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine(cmd as 'add' | 'remove', args, root) : e.message), 1;
+    if (e instanceof ApplyError) return out(deniedWrite(e, root) ? sandboxLine(cmd as 'add' | 'remove', args, root) : e.message), 1;
     throw e;
   }
   removeEmptyDirs(root, changes);

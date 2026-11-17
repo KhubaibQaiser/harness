@@ -121,6 +121,15 @@ test('dirty touched file refuses with the list', async () => {
   expect(existsSync(join(root, '.harness'))).toBe(false);
 });
 
+test('an untracked .harness/ folder makes init name only its real files, never ones it would create (ship audit S1)', async () => {
+  const root = makeRepo(NPM_VITEST);
+  mkdirSync(join(root, '.harness/state'), { recursive: true });
+  writeFileSync(join(root, '.harness/state/verdict-hashes.json'), '{}\n'); // left by an older harness verify
+  const r = await go(root, ['--yes']);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).not.toContain('Commit or stash');
+});
+
 test('--config with an invalid value exits 2 with every error', async () => {
   const root = makeRepo(NPM_VITEST);
   const f = join(root, '..', `bad-${Date.now()}.json`);
@@ -426,7 +435,7 @@ test('a write the OS refuses rolls back and prints the person\'s command', async
   const fs = {
     ...realFs,
     renameSync: (a: string, b: string) => {
-      if (b.replace(/\\/g, '/').endsWith('.claude/settings.json')) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+      if (b.replace(/\\/g, '/').endsWith('.claude/settings.json')) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM', path: a, dest: b });
       return realFs.renameSync(a, b);
     },
   };
@@ -435,6 +444,22 @@ test('a write the OS refuses rolls back and prints the person\'s command', async
   expect(r.out).toContain("Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's `!` prefix (a `!` command runs outside the sandbox): ");
   expect(r.out).toContain('init');
   expect(r.out).toContain('--yes');
+  expect(tree(root)).toBe('');
+});
+
+test('a read-only folder (EACCES) is reported as permission denied, not as Claude Code\'s sandbox (ship audit S6)', async () => {
+  const root = makeRepo(NPM_VITEST);
+  const fs = {
+    ...realFs,
+    renameSync: (a: string, b: string) => {
+      if (b.replace(/\\/g, '/').endsWith('.claude/settings.json')) throw Object.assign(new Error(`EACCES: permission denied, rename '${a}' -> '${b}'`), { code: 'EACCES', path: a, dest: b });
+      return realFs.renameSync(a, b);
+    },
+  };
+  const r = await ai(root, [...aiArgs(OWN), '--yes', '--over-budget'], { fs });
+  expect(r.code).toBe(1);
+  expect(r.out).not.toContain("Claude Code's sandbox blocks");
+  expect(r.out).toContain('apply failed and was rolled back: EACCES: permission denied');
   expect(tree(root)).toBe('');
 });
 

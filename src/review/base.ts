@@ -6,7 +6,7 @@ import type { ExecBytes } from '../core/exec.js';
 import { SAFE_GIT } from '../core/git-safe.js';
 
 // Trusted text comes from the base commit's blobs. Constants, never paths from the PR.
-export const BASE_PATHS = ['.harness/config.yaml', '.harnessignore', 'AGENTS.md', '.harness/context/product.md', '.claude/agents/staff-reviewer.md', '.claude/agents/review-judge.md', '.claude/skills/review-rubric/SKILL.md', '.claude/settings.json'];
+export const BASE_PATHS = ['.harness/config.yaml', '.harness/manifest.json', '.harnessignore', 'AGENTS.md', '.harness/context/product.md', '.claude/agents/staff-reviewer.md', '.claude/agents/review-judge.md', '.claude/skills/review-rubric/SKILL.md', '.claude/settings.json'];
 const DRIFT_FILES = ['.claude/agents/staff-reviewer.md', '.claude/agents/review-judge.md', '.claude/skills/review-rubric/SKILL.md'];
 const BIG = 256 * 1024 * 1024;
 

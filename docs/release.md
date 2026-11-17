@@ -21,11 +21,11 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
 ## Each release
 
 1. Before the bump, run `pnpm audit` with devDependencies included (not `--omit=dev`): esbuild bundles them into `dist/`, so a devDependency advisory ships.
-2. Merge the version bump to main. The same PR adds `docs/release-notes/<version>.md` and updates the README status line.
-   - The bump also moves the version in `.claude-plugin/marketplace.json`, and the plugin marketplace reads main. So from this merge until the npm publish is approved, `claude plugin install harness@harness` asks npm for a version that isn't there yet, and fails. Keep that window short: tag and approve the publish right after the merge.
+2. Merge the version bump to main. It changes `package.json` and `.claude-plugin/plugin.json`, adds `docs/release-notes/<version>.md` and updates the README status line. It leaves `.claude-plugin/marketplace.json` on the previous version: the plugin marketplace reads main, so a pin npm doesn't have yet would make `claude plugin install harness@harness` fail. A test allows the pin to be this version or exactly one release behind, never ahead.
 3. Tag that commit `vX.Y.Z` (a version with `-` publishes under the `beta` tag, and also moves `latest` while there is no stable version; otherwise `latest`) and push the tag. A tag that is not on main fails in the first job, before the approval step.
 4. When the run reaches `publish`, approve it in the Actions tab.
-5. Check `npm view @khubaibqaiser/harness dist-tags`: while there is no stable version, `latest` must name this release. If the job couldn't move it, run `npm dist-tag add @khubaibqaiser/harness@<version> latest` yourself.
+5. After npm has the version (`npm view @khubaibqaiser/harness@<version> version` prints it), open a small follow-up PR that moves the version in `.claude-plugin/marketplace.json`, and merge it. Plugin installs get the new version from then on.
+6. Check `npm view @khubaibqaiser/harness dist-tags`: while there is no stable version, `latest` must name this release. If the job couldn't move it, run `npm dist-tag add @khubaibqaiser/harness@<version> latest` yourself.
 
 ## If publish fails
 

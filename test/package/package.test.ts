@@ -23,13 +23,39 @@ const npm = (args: string[], o: { encoding?: 'utf8'; stdio?: 'ignore' }) => {
 const NPM_TIMEOUT = 60_000;
 const packDry = () => JSON.parse(npm(['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8' }) as string)[0].files.map((f: { path: string }) => f.path) as string[];
 
-test('versions equal: package.json, plugin.json and the marketplace pin', () => {
+// Release order (docs/release.md): the marketplace pin moves in a follow-up PR after npm has the version, so on main it
+// is this version or exactly the release before it, never ahead (a pin npm lacks breaks `claude plugin install`).
+const semverKey = (v: string) => {
+  const [core, pre] = v.split('-', 2) as [string, string | undefined];
+  return { core: core.split('.').map(Number), pre };
+};
+const olderVersion = (a: string, b: string): boolean => {
+  const x = semverKey(a), y = semverKey(b);
+  for (let i = 0; i < 3; i++) if (x.core[i] !== y.core[i]) return x.core[i]! < y.core[i]!;
+  if (!x.pre || !y.pre) return !!x.pre && !y.pre;
+  return x.pre.localeCompare(y.pre, 'en', { numeric: true }) < 0;
+};
+const previousRelease = (v: string, released: string[]): string | undefined =>
+  released.filter((r) => olderVersion(r, v)).sort((a, b) => (olderVersion(a, b) ? -1 : 1)).at(-1);
+const released = () => readdirSync('docs/release-notes').filter((f) => f !== 'unreleased.md').map((f) => f.replace(/\.md$/, ''));
+
+test('versions: package.json equals plugin.json; the marketplace pin is this version or exactly one release behind', () => {
   const plugin = json('.claude-plugin/plugin.json');
   const entry = json('.claude-plugin/marketplace.json').plugins[0];
   expect(plugin.name).toBe('harness');
   expect(plugin.version).toBe(pkg.version);
   expect(entry.name).toBe('harness');
-  expect(entry.source).toMatchObject({ source: 'npm', package: pkg.name, version: pkg.version });
+  expect(entry.source).toMatchObject({ source: 'npm', package: pkg.name });
+  expect([pkg.version, previousRelease(pkg.version, released())]).toContain(entry.source.version);
+});
+
+test('the release-order helpers: one release behind is allowed, two behind or ahead is not', () => {
+  const r = ['0.2.0-beta.0', '0.2.0-beta.1', '0.2.0-beta.2', '0.2.0-beta.10'];
+  expect(previousRelease('0.2.0-beta.3', r)).toBe('0.2.0-beta.2');
+  expect(previousRelease('0.2.0-beta.11', r)).toBe('0.2.0-beta.10');
+  expect(previousRelease('0.2.0', r)).toBe('0.2.0-beta.10');
+  expect(previousRelease('0.2.0-beta.0', r)).toBeUndefined();
+  expect(olderVersion('0.2.0-beta.3', '0.2.0-beta.2')).toBe(false); // ahead is never one behind
 });
 
 test('package is public, unlicensed and runs the build on prepack', () => {

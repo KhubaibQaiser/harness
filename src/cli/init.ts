@@ -24,7 +24,7 @@ import { type AiArgs, type AiInputs, EXIT_USAGE, loadAiInputs, missingAi, takeAi
 import { hasAiFlags, refuseOutsideClaude } from './claude-only.js';
 import { budgetGate, installSelected } from './install-selection.js';
 import { isDenied, sandboxLine } from './own-command.js';
-import { NO_TTY, type Prompt } from './prompt.js';
+import { NO_TTY_INIT, type Prompt } from './prompt.js';
 import { presetConfig } from './preset-inputs.js';
 import { gitRoot } from '../core/repo-root.js';
 import type { CliEnv } from './index.js';
@@ -74,7 +74,7 @@ function readFlags(args: string[], cli: InitEnv): Flags | number {
   if (!aiPath && (ai.installPlugins || ai.overBudget)) return out(USAGE), EXIT_USAGE;
   const lacking = aiPath ? missingAi('init', ai) : null;
   if (lacking) return out(lacking), EXIT_USAGE;
-  if (!opts.yes && !opts.dryRun && cli.tty === false) return out(NO_TTY), EXIT_USAGE;
+  if (!opts.yes && !opts.dryRun && cli.tty === false) return out(NO_TTY_INIT), EXIT_USAGE;
   return { ai, opts, aiPath };
 }
 

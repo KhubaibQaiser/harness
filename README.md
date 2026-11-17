@@ -160,6 +160,6 @@ The full list: [docs/reference.md](docs/reference.md#known-limits).
 
 ## Feedback and license
 
-Open an issue in `KhubaibQaiser/harness`. Say what you ran and what happened, and paste the output of `harness doctor` and `harness status`.
+Open an issue in `KhubaibQaiser/harness`. Say what you ran and what happened, and paste the output of `harness --version`, `harness doctor` and `harness status`.
 
 Apache License 2.0. See [LICENSE](LICENSE).

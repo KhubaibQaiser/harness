@@ -64,3 +64,23 @@ test('usage lists harness task', () => {
 test('usage lists harness done', () => {
   expect(usage()).toContain('harness done --blocked "<reason>"');
 });
+
+test('--version and -v print the version and exit 0', () => {
+  for (const flag of ['--version', '-v']) {
+    const lines: string[] = [];
+    expect(run([flag], { root: '/', env: {}, out: (l) => lines.push(l) }), flag).toBe(0);
+    expect(lines, flag).toEqual(['0.0.0-dev']);
+  }
+});
+
+test('usage has no stale "not yet" for shipped commands', () => {
+  expect(usage()).not.toContain('not yet');
+});
+
+test('a bad stats or tdd argument prints that command\'s own usage line, not the whole usage', () => {
+  for (const [argv, line] of [[['stats', '--days', 'abc'], 'Usage: harness stats [--days N]'], [['tdd', 'sideways'], 'Usage: harness tdd off|on|status']] as const) {
+    const lines: string[] = [];
+    expect(run([...argv], { root: mkdtempSync(join(tmpdir(), 'u-')), env: {}, out: (l) => lines.push(l) }), argv.join(' ')).toBe(2);
+    expect(lines, argv.join(' ')).toEqual([line]);
+  }
+});

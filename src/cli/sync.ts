@@ -48,7 +48,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   const { root, m: man } = opened;
   const config = readConfig(root, out);
   if (typeof config === 'number') return config;
-  if (!config.items.length) return out('This install predates the item catalog. Run /harness:update with recommendations first.'), 1;
+  if (!config.items.length) return out('This install has no catalog items yet. Run /harness:update with recommendations first.'), 1;
   const cat = readCatalog(cli.catalog, out);
   if (typeof cat === 'number') return cat;
   if (cli.version && cli.version !== man.version) return out(`Harness files are ${man.version} but this is ${cli.version}. Run /harness:update first; sync does not change the version.`), 1;

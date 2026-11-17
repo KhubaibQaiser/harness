@@ -212,7 +212,7 @@ test('npm/pnpm/yarn/bun run <script>: a script that runs harness is judged with 
   for (const c of ['npm run rm -- --yes', 'pnpm rm']) expect(k(c), c).toBe('ask');
   for (const c of ['npm run h -- tdd status', 'npm run rm -- --dry-run', 'npm run t', 'pnpm t -- --watch']) expect(k(c), c).toBe('allow');
 });
-const HINT = (sub: string) => `\`harness ${sub}\` (if harness is not on your PATH: \`npx @khubaibqaiser/harness ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
+const HINT = (sub: string) => `\`harness ${sub}\` (if harness is not on your PATH: \`npx @khubaibqaiser/harness@0.0.0-dev ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
 const fakeCli = (root: string, rel: string) => {
   const p = join(root, ...rel.split('/'));
   mkdirSync(dirname(p), { recursive: true });

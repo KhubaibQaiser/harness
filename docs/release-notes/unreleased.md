@@ -129,3 +129,10 @@ New since 0.2.0-beta.0, unchanged in this release:
 - `harness review` no longer refuses when the project's `staff-reviewer` differs from the plugin's copy (the project agent takes priority); it now stops only when the CLI version differs from the base install's recorded version.
 - The PR size question clears the pause only on a documented `answers` entry; the undocumented `response` text no longer clears it alone. An unknown key in the question's call or result logs `ask-shape-unknown` once per session.
 - `harness remember add` now says "harness couldn't check whether this text quotes tool output" when the transcript can't be read, or shows tool calls but no recognised tool result. It was already a deny without `--quoted`.
+
+### CLI version and messages
+
+- Every `npx @khubaibqaiser/harness …` command harness prints now names the running version (`npx @khubaibqaiser/harness@<version> …`). A bare `npx` runs npm's `latest` tag, which can be older and lack the command.
+- `harness update --check` reports an update only when npm has a newer version (semver, prerelease tags included), reading both the `latest` and `beta` tags. It never offers a downgrade, and it names the exact version to run.
+- `harness --version` (or `-v`) prints the version and exits 0.
+- Message fixes: `harness eval` usage drops the stale "(gates: not yet)"; a bad `stats` or `tdd` argument prints that command's own usage line; `doctor` labels a missing `claude` as a note, not "ok"; `verify` names an invalid `.harness/config.yaml` in a plain sentence; `uninstall`, `update` and the other commands no longer give init's `--config` hint without a terminal; `sync` and `add` no longer call an install with no catalog items old; Stop no longer prints a pr-size line to stderr in a repo with no base branch yet; with no Vitest config, init prints a whole `vitest.config.ts` to create, not a fragment.

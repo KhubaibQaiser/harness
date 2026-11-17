@@ -169,7 +169,7 @@ test('the tdd off deny names the CLI path only for the repo\'s node_modules inst
   expect(init(root, f).code).toBe(0); // dist/ of this source checkout: not trusted
   expect(existsSync(join(root, '.harness/state/cli-path'))).toBe(false);
   const deny = () => verdict(pre(root, 'Bash', { command: 'node "$CLAUDE_PLUGIN_ROOT/dist/cli.mjs" tdd off' }));
-  const hint = 'Only a person can pause TDD: run `harness tdd off` (if harness is not on your PATH: `npx @khubaibqaiser/harness tdd off`, or from a source checkout `node /path/to/harness/dist/cli.mjs tdd off`) in your own terminal.';
+  const hint = 'Only a person can pause TDD: run `harness tdd off` (if harness is not on your PATH: `npx @khubaibqaiser/harness@' + JSON.parse(readFileSync('package.json', 'utf8')).version + ' tdd off`, or from a source checkout `node /path/to/harness/dist/cli.mjs tdd off`) in your own terminal.';
   expect(deny().reason).toBe(hint);
   // CLAUDE_PLUGIN_ROOT set by the caller is not trusted any more
   const ran = (r: ReturnType<typeof spawnSync>) => expect(r.status, `${r.stdout}${r.stderr}`).toBe(0); // shows the output on failure

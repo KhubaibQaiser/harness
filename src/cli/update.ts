@@ -4,7 +4,7 @@ import { parse as parseYaml } from 'yaml';
 import { LEGACY_RESULTS_DIR } from '../core/config.js';
 import { migrateResultsDir, validateConfig } from '../core/config-io.js';
 import { answersToConfig, configToAnswers } from '../ai/answers.js';
-import { latestVersion } from '../core/registry.js';
+import { latestVersion, newer } from '../core/registry.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, removeEmptyDirs, readManifest, type Manifest } from '../install/apply.js';
@@ -109,7 +109,8 @@ async function checkLatest(cli: UpdateEnv): Promise<number> {
   const { out, version } = cli;
   const latest = await latestVersion(PKG, cli.fetchImpl);
   if (latest === null) return out('Could not reach npm to check for a newer version. Try again later.'), 1;
-  out(latest === version ? `Harness ${version} is the latest.` : `Harness ${latest} is available (you have ${version}). Plugin users: update the plugin, then run /harness:update. CLI users: npx ${PKG}@latest update.`);
+  // Only a newer version is news: npm's `latest` tag can lag behind the running beta, and that must never read as an update.
+  out(newer(latest, version) ? `Harness ${latest} is available (you have ${version}). Plugin users: update the plugin, then run /harness:update. CLI users: npx ${PKG}@${latest} update.` : `Harness ${version} is the latest.`);
   return 0;
 }
 

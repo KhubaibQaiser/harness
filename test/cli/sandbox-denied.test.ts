@@ -13,7 +13,7 @@ const err = (code: string, path?: string, dest?: string) => Object.assign(new Er
 test('EPERM on a denyWrite path gives the `!` line with that command, naming npx when no trusted CLI is recorded', () => {
   const root = repo();
   const h = deniedHint(['remember', 'add', '--title', 'x y'], err('EPERM', join(root, '.harness/state/memory.json')), root);
-  expect(h).toBe("Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's `!` prefix (a `!` command runs outside the sandbox): npx @khubaibqaiser/harness remember add --title 'x y'");
+  expect(h).toBe("Claude Code's sandbox blocks harness's own files. Run this yourself with Claude Code's `!` prefix (a `!` command runs outside the sandbox): npx @khubaibqaiser/harness@0.0.0-dev remember add --title 'x y'"); // pinned: a bare npx runs npm's latest, which can be older
   expect(h).not.toContain(process.argv[1]); // whatever ran this process could be the agent's own copy
   expect(deniedHint(['tdd', 'on'], { cause: err('EPERM', join(root, '.harness/config.yaml')) }, root)).toMatch(/ tdd on$/);
   // Linux bwrap mounts denied paths read-only, so the write fails with EROFS.
@@ -47,7 +47,7 @@ test('the `!` line names the recorded trusted CLI, never an untrusted one', () =
   mkdirSync(dirname(evil), { recursive: true });
   writeFileSync(evil, '');
   writeFileSync(join(root, '.harness/state/cli-path'), evil);
-  expect(ownCommand('tdd', ['on'], root)).toMatch(/: npx @khubaibqaiser\/harness tdd on$/);
+  expect(ownCommand('tdd', ['on'], root)).toMatch(/: npx @khubaibqaiser\/harness@0\.0\.0-dev tdd on$/);
 });
 
 test('isDenied (apply errors) counts EPERM, EACCES and EROFS', () => {

@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
+import { NPX } from '../core/version.js';
 import { cPayloads, remember, SHELLS, stdinPrograms } from '../core/shell-words.js';
 import { isTestFile, matches, toRepoPath } from '../core/paths.js';
 import type { Ctx } from '../hooks/dispatch.js';
@@ -114,7 +115,7 @@ function terminalCommand(tok: string, sub: string, w: Where): string {
   }
   const recorded = readCliPath(w.root);
   if (recorded) return `\`node "${recorded}" ${sub}\``;
-  return `\`harness ${sub}\` (if harness is not on your PATH: \`npx @khubaibqaiser/harness ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
+  return `\`harness ${sub}\` (if harness is not on your PATH: \`${NPX} ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
 }
 
 /**

@@ -56,7 +56,7 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   }
   if (!(args.length === 0 || (args.length === 2 && args[0] === '--task' && TASK_ID.test(args[1]!)))) return out(`Usage: ${VERIFY_USAGE}`), 2;
   const { config, errors } = loadConfig(root);
-  if (errors.length) return out(`harness verify: .harness/config.yaml ${errors.join('; ')}`), 1;
+  if (errors.length) return out(`harness verify: \`.harness/config.yaml\` is invalid: ${errors.join('; ')}`), 1;
   if (!config.checks.done) return out('The done contract is off (checks.done); there is nothing to verify.'), 1;
   try {
     id = args[1] ?? activeTaskId(root, cli.env);

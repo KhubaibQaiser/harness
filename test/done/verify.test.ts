@@ -17,6 +17,12 @@ afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, f
 
 type Step = { name: string; run: string[] };
 const NESTED = "harness verify can't run its checks inside another sandbox. Ask the person to run harness verify in their own terminal, or ! harness verify (outside the sandbox on macOS, and on Linux without the env scrub).";
+test('a config that is not valid YAML names the file and the problem in one plain sentence', async () => {
+  const v = await runVerify({ files: { '.harness/config.yaml': 'checks: [\n' } });
+  expect(v.code).toBe(1);
+  expect(v.text).toMatch(/^harness verify: `\.harness\/config\.yaml` is invalid: it is not valid YAML \(/);
+});
+
 const RES = "const fs=require('fs'),p=require('path');fs.mkdirSync('.harness/results',{recursive:true});fs.writeFileSync('.harness/results/r.json',JSON.stringify({testResults:[{name:p.resolve(process.argv[3]||'test/a.test.ts'),status:'passed',assertionResults:[{fullName:'a works',status:process.argv[2]}]}]}))\n";
 const T = (body: string) => `test('a', () => {\n${body}\n});\n`;
 const run = (id: string, cmd: string, expect_exit = 0): Criterion => ({ id, text: `${id} holds`, check: { run: cmd, expect_exit } });

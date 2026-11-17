@@ -97,6 +97,10 @@ describe('testConfigChange vitest fixes', () => {
     const r = testConfigChange(vt({ dir: 'packages/a', testConfig: undefined }), root, RD) as { manual: string[] };
     expect(r.manual[0]).toBe('Create `packages/a/vitest.config.ts` with:');
     expect(r.manual.join('\n')).not.toContain('undefined');
+    // a whole file to paste, not a fragment
+    expect(r.manual.slice(1, 4)).toEqual(["import { defineConfig } from 'vitest/config';", '', 'export default defineConfig({']);
+    expect(r.manual.at(-1)).toBe('});');
+    expect(r.manual).toContain('  test: {');
   });
 });
 

@@ -411,3 +411,11 @@ test('final review M1: a decision rule that would hold a secret stops sync, noth
   expect(r.out).toContain(`harness remember: ${RULE} would hold a secret (GitHub token).`);
   expect(tree(root)).toEqual(before);
 });
+
+test('an install with no catalog items (a plain init) is not called old; sync names the next step', async () => {
+  const root = installed([]);
+  const r = await run(root, ['--dry-run']);
+  expect(r.code).toBe(1);
+  expect(r.out).not.toContain('predates');
+  expect(r.out).toContain('This install has no catalog items yet. Run /harness:update with recommendations first.');
+});

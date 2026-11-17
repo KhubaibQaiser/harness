@@ -129,3 +129,7 @@ New since 0.2.0-beta.0, unchanged in this release:
 - `harness review` no longer refuses when the project's `staff-reviewer` differs from the plugin's copy (the project agent takes priority); it now stops only when the CLI version differs from the base install's recorded version.
 - The PR size question clears the pause only on a documented `answers` entry; the undocumented `response` text no longer clears it alone. An unknown key in the question's call or result logs `ask-shape-unknown` once per session.
 - `harness remember add` now says "harness couldn't check whether this text quotes tool output" when the transcript can't be read, or shows tool calls but no recognised tool result. It was already a deny without `--quoted`.
+
+### Glob cap
+
+- The bundled picomatch has an extglob ReDoS advisory with no fixed version (GHSA-fc5q-39xc-vjpf). Harness now never compiles a glob from agent text with more than 3 extglob groups or over 256 characters, so a crafted command can't stall a hook. Such a glob counts as a match: guard asks, protect asks or denies, and the report counts the skill as relevant. Ordinary globs behave as before.

@@ -24,6 +24,10 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
 2. Tag that commit `vX.Y.Z` (a version with `-` publishes under the `beta` tag, and also moves `latest` while there is no stable version; otherwise `latest`) and push the tag. A tag that is not on main fails in the first job, before the approval step.
 3. When the run reaches `publish`, approve it in the Actions tab.
 
+## Known advisories
+
+- **picomatch 4.0.7, [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)** (ReDoS through repeated extglobs, `<=4.0.7`, no patched version). It is a devDependency, but esbuild bundles it into `dist/`, so it ships. Harness never compiles a risky glob from agent text (`riskyGlob` in `src/core/paths.ts`; see the known limit in `docs/reference.md`). When a fixed version ships, bump it and keep the cap. `pnpm audit` keeps reporting this advisory until then.
+
 ## If publish fails
 
 - **`npm error 404 Not Found - PUT https://registry.npmjs.org/@khubaibqaiser%2fharness`.** npm rejected the trusted publisher. Usually the npmjs.com config expired (step 6 above) or a name doesn't match: the repository, `release.yml` or `npm-release`. Redo steps 4–6, then push a new tag for the next version. npm never accepts the same version twice.

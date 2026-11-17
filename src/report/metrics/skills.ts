@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import picomatch from 'picomatch';
 import { parse as parseYaml } from 'yaml';
-import { isAnyTestFile } from '../../core/paths.js';
+import { isAnyTestFile, riskyGlob } from '../../core/paths.js';
 import { bucketOf, type Acc, type Bucket, type SessionCtx } from '../acc.js';
 
 export interface SkillSpec { name: string; relevant: ((paths: string[]) => boolean) | null; label: 'paths' | 'proxy' | 'stack' | 'none'; stackUnknown?: true }
@@ -61,7 +61,8 @@ export function skillSpecs(root: string, installed: { name: string; paths?: stri
   };
   return installed.map(({ name, paths }): SkillSpec => {
     if (paths !== undefined && paths.length > 0) {
-      const m = picomatch(paths, { dot: true });
+      // SKILL.md is agent-writable: a risky glob is never compiled and counts as a match
+      const m = paths.some(riskyGlob) ? () => true : picomatch(paths, { dot: true });
       return { name, label: 'paths', relevant: any((p) => m(p)) };
     }
     const unk = (fws: string[]): { stackUnknown?: true } => (packages.some((k) => k.frameworks.some((f) => fws.includes(f))) ? {} : { stackUnknown: true });

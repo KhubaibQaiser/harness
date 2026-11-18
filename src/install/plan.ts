@@ -94,14 +94,15 @@ function gateItems(config: HarnessConfig, ctx: PlanCtx, notes: string[], current
   const on = (id: string) => !catalog || ids.has(id);
   const chosen = catalog ? catalog.items.filter((i) => ids.has(i.id)) : [];
   const kept = catalog ? keptItems(catalog, ids, ctx, notes, current) : { keepPlugins: [], keepServers: [] };
-  return { catalog, on, chosen, config: catalog ? { ...config, checks: checksOf(chosen) } : config, ...kept };
+  return { catalog, on, chosen, config: catalog ? { ...config, checks: checksOf(chosen, catalog, config.checks) } : config, ...kept };
 }
 
 type Gate = { catalog?: Catalog; on: (id: string) => boolean; chosen: Catalog['items']; config: HarnessConfig; keepPlugins: PinnedPlugin[]; keepServers: McpServer[] };
 
-/** checks come from the selected own items (any kind); sandbox is not derived */
-function checksOf(chosen: Catalog['items']): HarnessConfig['checks'] {
-  const checks = { guard: false, protect: false, depVerify: false, multiFile: false, tdd: false, stop: false, prSize: false, prBody: false, decisions: false, secretScan: false, done: false };
+/** checks come from the selected own items (any kind); a check no catalog item owns (done) keeps the person's value; sandbox is not derived */
+function checksOf(chosen: Catalog['items'], catalog: Catalog, current: HarnessConfig['checks']): HarnessConfig['checks'] {
+  const owned = new Set(catalog.items.flatMap((i) => (i.source.type === 'own' ? i.source.checks ?? [] : [])));
+  const checks = Object.fromEntries(Object.entries(current).map(([k, v]) => [k, owned.has(k as keyof typeof current) ? false : v])) as HarnessConfig['checks'];
   for (const i of chosen) if (i.source.type === 'own') for (const k of i.source.checks ?? []) checks[k] = true;
   return checks;
 }

@@ -25,7 +25,7 @@ import { approvedIds } from '../install/approved.js';
 import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
 import { presetContext, previewLines } from '../catalog/presets.js';
 import { updatePreset } from './preset-inputs.js';
-import { AI_USAGE, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
+import { AI_USAGE, deniedWrite, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
 import { budgetGate, installSelected, recordedExtra } from './install-selection.js';
 import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
@@ -205,7 +205,7 @@ function commit(r: Run, cs: Change[], manifest: Manifest): string | null {
     applyChanges(r.root, cs, r.cli.version, () => r.at, r.cli.fs, { manifest, manifestBefore: rawOf(r.m) });
     return null;
   } catch (e) {
-    if (e instanceof ApplyError) return isDenied(e) ? sandboxLine('update', r.args, r.root) : e.message;
+    if (e instanceof ApplyError) return deniedWrite(e, r.root) ? sandboxLine('update', r.args, r.root) : e.message;
     throw e;
   }
 }

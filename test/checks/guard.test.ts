@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
@@ -259,6 +259,10 @@ test('P1: only the repo\'s node_modules CLI is recorded, it is re-checked when p
   recordCliPath(root, nm);
   expect(readCliPath(root)).toBeNull(); // only the skills' work folders: still not installed
   rmSync(join(root, '.harness/tmp'), { recursive: true });
+  writeFileSync(join(root, '.harness/notes.md'), 'mine\n');
+  recordCliPath(root, nm);
+  expect(existsSync(join(root, '.harness/state'))).toBe(false); // a .harness/ of the person's, no manifest: nothing written (S1)
+  writeFileSync(join(root, '.harness/manifest.json'), '{"files":[]}\n');
   for (const bad of [fakeCli(root, 'tmp/evil/dist/cli.mjs'), fakeCli(root, 'plug/dist/cli.mjs'), fakeCli(realpathSync.native(mkdtempSync(join(tmpdir(), 'h-guard-p1o-'))), 'node_modules/@khubaibqaiser/harness/dist/cli.mjs')]) {
     recordCliPath(root, bad);
     expect(readCliPath(root), bad).toBeNull();

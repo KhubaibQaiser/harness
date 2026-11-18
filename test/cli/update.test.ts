@@ -895,7 +895,7 @@ test('update: plugin flags without AI flags are a usage error; an EPERM write pr
   const root = aiInstalled(REPO, [...OWN_IDS, 'impeccable']);
   expect((await up(root, ['--yes', '--install-plugins'])).code).toBe(2);
   const before = execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' });
-  const fs = { ...realFs, renameSync: (a: string, b: string) => { if (b.endsWith('dispatch.mjs')) throw Object.assign(new Error('EPERM: nope'), { code: 'EPERM' }); return realFs.renameSync(a, b); } } as unknown as FsLike;
+  const fs = { ...realFs, renameSync: (a: string, b: string) => { if (b.endsWith('dispatch.mjs')) throw Object.assign(new Error('EPERM: nope'), { code: 'EPERM', path: a, dest: b }); return realFs.renameSync(a, b); } } as unknown as FsLike;
   const r = await up(root, ['--yes'], { fs, distDir: newDist() });
   expect(r.code).toBe(1);
   expect(r.out).toContain("Run this yourself with Claude Code's `!` prefix");

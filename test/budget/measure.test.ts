@@ -6,8 +6,9 @@ import { defaults } from '../../src/core/config.js';
 import { loadCatalog } from '../../src/catalog/load.js';
 import type { Catalog, CatalogItem } from '../../src/catalog/schema.js';
 import { stripComments } from '../../src/budget/text.js';
-import { DEFAULT_CONTEXT_BUDGET, SKILL_DESCRIPTION_MAX, alwaysLoadedText, budgetLines, budgetVerdict, estimateTokens, itemContext, itemContextLine, measureSelection, measureSelectionSync, pluginEntry, type ContextMeasure } from '../../src/budget/measure.js';
+import { DEFAULT_CONTEXT_BUDGET, SKILL_DESCRIPTION_MAX, alwaysLoadedText, budgetLines, budgetVerdict, estimateTokens, itemContext, itemContextLine, measureSelection, measureSelectionSync, pluginEntry, subdirs, type ContextMeasure } from '../../src/budget/measure.js';
 import { budgetGate } from '../../src/cli/install-selection.js';
+import { contextSet } from '../../src/budget/summary.js';
 
 const templates = join(__dirname, '../../templates');
 const plugin = join(__dirname, '../..');
@@ -70,7 +71,7 @@ test("measureSelection always includes the harness plugin's own skills", async (
 });
 
 test('harness-plugin also counts the agents plugin.json registers', async () => {
-  const skills = readdirSync(join(plugin, 'skills')).reduce((n, d) => n + estimateTokens(alwaysLoadedText('skill', readFileSync(join(plugin, 'skills', d, 'SKILL.md'), 'utf8'))), 0);
+  const skills = subdirs(join(plugin, 'skills')).reduce((n, d) => n + estimateTokens(alwaysLoadedText('skill', readFileSync(join(plugin, 'skills', d, 'SKILL.md'), 'utf8'))), 0);
   const agent = estimateTokens(alwaysLoadedText('agent', readFileSync(join(templates, 'agents/staff-reviewer.md'), 'utf8')));
   const r = await measureSelection([], cat(), dirs);
   expect(r.entries[0]!.tokens).toBe(skills + agent);
@@ -279,4 +280,15 @@ test('budgetGate: a change that does not raise the total does not ask, even over
   const r = await gate({ before: ['p120'], yes: true, env: { CI: 'true' } });
   expect(r.code).toBeNull();
   expect(r.out).not.toContain('Over budget');
+});
+
+test('a file in the plugin skills folder (.DS_Store) is not a skill: not measured, not listed (ship audit S9)', () => {
+  const p = mkdtempSync(join(tmpdir(), 'h-plugin-'));
+  mkdirSync(join(p, 'skills/doctor'), { recursive: true });
+  writeFileSync(join(p, 'skills/doctor/SKILL.md'), '---\nname: doctor\ndescription: Checks the install.\n---\nbody\n');
+  const clean = pluginEntry(p);
+  writeFileSync(join(p, 'skills/.DS_Store'), 'Bud1\0\0');
+  expect(pluginEntry(p)).toEqual(clean);
+  const set = contextSet(p, defaults(), { templates, plugin: p }, undefined, { catalog: { catalog: cat(), excluded: [], errors: [] } });
+  expect(set.always.find((e) => e.id === 'harness-plugin')?.label).toBe('skills harness:doctor');
 });

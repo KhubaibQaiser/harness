@@ -10,7 +10,7 @@ import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { approvedIds } from '../install/approved.js';
 import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest } from '../install/apply.js';
 import { type Facts } from '../install/detect.js';
-import { dirtyPaths } from '../install/git-status.js';
+import { dirtyTouched } from '../install/finish.js';
 import { toSelected } from '../install/select.js';
 import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
@@ -23,7 +23,7 @@ import { findOnPath } from '../checks/stop/runner.js';
 import { type AiArgs, type AiInputs, EXIT_USAGE, loadAiInputs, missingAi, takeAiFlags } from './ai-inputs.js';
 import { hasAiFlags, refuseOutsideClaude } from './claude-only.js';
 import { budgetGate, installSelected } from './install-selection.js';
-import { isDenied, sandboxLine } from './own-command.js';
+import { deniedWrite, sandboxLine } from './own-command.js';
 import { NO_TTY_INIT, type Prompt } from './prompt.js';
 import { presetConfig } from './preset-inputs.js';
 import { gitRoot } from '../core/repo-root.js';
@@ -33,7 +33,7 @@ export type { Prompt };
 export { planChanges };
 export { type AiArgs, type AiInputs, loadAiInputs, missingAi, overlayAnswers, takeAiFlags } from './ai-inputs.js';
 export { budgetGate, installSelected } from './install-selection.js';
-export { isDenied, ownCommand, sandboxLine, shq } from './own-command.js';
+export { deniedWrite, ownCommand, sandboxLine, shq } from './own-command.js';
 
 export type InitEnv = CliEnv & { prompt: Prompt; version: string; templatesDir: string; distDir: string; nodeVersion?: string; exec?: Exec; fs?: FsLike; claudeVersion?: () => string | null };
 
@@ -167,8 +167,7 @@ function buildPlan({ cli, f, root, facts }: Run, config: HarnessConfig, sel: AiI
   } catch (e) {
     return cli.out(`Cannot build the install plan: ${(e as Error).message}`), 1;
   }
-  const dirty = dirtyPaths(root);
-  const touched = plan.changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
+  const touched = dirtyTouched(root, plan.changes);
   if (touched.length && !f.opts.dryRun) return cli.out(`Commit or stash these files first, so the install can be undone cleanly: ${touched.join(', ')}.`), 1;
   return { plan, touched };
 }
@@ -250,7 +249,7 @@ export async function init(args: string[], cli: InitEnv): Promise<number> {
   try {
     applyChanges(root, built.plan.changes, cli.version, undefined, cli.fs, { tddOff: p.tddOff.map((o) => o.dir) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('init', args, root) : e.message), 1;
+    if (e instanceof ApplyError) return out(deniedWrite(e, root) ? sandboxLine('init', args, root) : e.message), 1;
     throw e;
   }
   stampHarnessFiles(root); // change detection: these writes are harness's own

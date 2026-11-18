@@ -11,6 +11,7 @@ import { defaultExec } from '../core/exec.js';
 import { readTiming } from '../core/timing.js';
 import { detect } from '../install/detect.js';
 import { selectedIds } from '../install/plan.js';
+import { MANIFEST_REL, NOT_INSTALLED } from '../install/manifest.js';
 import { packageDir } from '../core/package-dir.js';
 import { buildExport, exportProblems, type Known } from '../report/export.js';
 import { NO_SESSIONS, renderReport, type ReportData } from '../report/html.js';
@@ -131,6 +132,7 @@ const rootIgnores = (root: string): boolean => {
 export async function report(args: string[], cli: ReportEnv): Promise<number> {
   const a = parseArgs(args);
   if (!a) return cli.out(USAGE), BAD_ARGS;
+  if (!existsSync(join(cli.root, MANIFEST_REL))) return cli.out(NOT_INSTALLED), 1; // writes nothing where harness isn't installed (S1)
   const now = (cli.now ?? Date.now)();
   let data: ReportData;
   try {

@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
-import { deniedHint, isDenied, ownCommand } from '../../src/cli/own-command.js';
+import { deniedHint, deniedWrite, ownCommand } from '../../src/cli/own-command.js';
 
 const repo = () => realpathSync.native(mkdtempSync(join(tmpdir(), 'h-denied-')));
 const err = (code: string, path?: string, dest?: string) => Object.assign(new Error(`${code}: operation not permitted`), { code, path, dest });
@@ -50,8 +50,10 @@ test('the `!` line names the recorded trusted CLI, never an untrusted one', () =
   expect(ownCommand('tdd', ['on'], root)).toMatch(/: npx @khubaibqaiser\/harness@0\.0\.0-dev tdd on$/);
 });
 
-test('isDenied (apply errors) counts EPERM, EACCES and EROFS', () => {
-  for (const c of ['EPERM', 'EACCES', 'EROFS']) expect(isDenied(err(c)), c).toBe(true);
-  expect(isDenied({ cause: err('EROFS') })).toBe(true);
-  expect(isDenied(err('ENOENT'))).toBe(false);
+test('apply errors: only EPERM or EROFS on a denyWrite path is the sandbox, never a plain EACCES (ship audit S6)', () => {
+  const root = repo(), at = join(root, '.harness/manifest.json');
+  for (const c of ['EPERM', 'EROFS']) expect(deniedWrite({ cause: err(c, at) }, root), c).toBe(true);
+  expect(deniedWrite({ cause: err('EACCES', at) }, root)).toBe(false);
+  expect(deniedWrite({ cause: err('EPERM') }, root)).toBe(false);
+  expect(deniedWrite({ cause: err('ENOENT', at) }, root)).toBe(false);
 });

@@ -14,7 +14,7 @@ import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
 import { reconcile } from '../install/reconcile.js';
 import { refuseOutsideClaude } from './claude-only.js';
-import { budgetGate, installSelected, isDenied, sandboxLine } from './init.js';
+import { budgetGate, deniedWrite, installSelected, sandboxLine } from './init.js';
 import { recordedExtra } from './install-selection.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall, readCatalog, readConfig } from './preamble.js';
@@ -99,7 +99,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
       rehashManifest(root, ['.claude/settings.json']);
     } catch (e) {
       if (!(e instanceof ApplyError)) throw e;
-      return out(isDenied(e) ? sandboxLine('sync', args, root) : e.message), 1;
+      return out(deniedWrite(e, root) ? sandboxLine('sync', args, root) : e.message), 1;
     }
     if (readFileSync(join(root, MANIFEST_REL), 'utf8') !== before) out('Recorded the plugin install in the manifest.');
     return null;
@@ -144,7 +144,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   try {
     applyChanges(root, changes, man.version, () => at, cli.fs, { manifest: { ...man, files }, manifestBefore: rawOf(man) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('sync', args, root) : e.message), 1;
+    if (e instanceof ApplyError) return out(deniedWrite(e, root) ? sandboxLine('sync', args, root) : e.message), 1;
     throw e;
   }
   removeEmptyDirs(root, changes);

@@ -13,7 +13,7 @@ import { readManifest, rehashManifest, settingsOnlyPluginEdits } from '../instal
 import { MergeError, pinnedPlugins, pinsAt } from '../install/merge.js';
 import { esc } from '../core/config.js';
 import { installPlugins } from '../install/plugin-install.js';
-import { isDenied, shq } from './own-command.js';
+import { deniedWrite, shq } from './own-command.js';
 
 const EXIT_OVER_BUDGET = 2;
 
@@ -105,7 +105,7 @@ export function installSelected({ root, chosen, cat, exec, out, applied = true, 
     }
   } catch (e) {
     if (!(e instanceof ApplyError)) throw e;
-    out(`${isDenied(e) ? "Claude Code's sandbox blocks harness's own files. " : ''}The install worked but harness could not record it (${e.message}). Run /harness:sync to record the install.`);
+    out(`${deniedWrite(e, root) ? "Claude Code's sandbox blocks harness's own files. " : ''}The install worked but harness could not record it (${e.message}). Run /harness:sync to record the install.`);
     return 1;
   }
   return r.failed.length ? 1 : 0;

@@ -138,6 +138,13 @@ New since 0.2.0-beta.0, unchanged in this release:
 - `harness update --check` reports an update only when npm has a newer version (semver, prerelease tags included), reading both the `latest` and `beta` tags. It never offers a downgrade, and it names the exact version to run.
 - `harness --version` (or `-v`) prints the version and exits 0.
 - Message fixes: `harness eval` usage drops the stale "(gates: not yet)"; a bad `stats` or `tdd` argument prints that command's own usage line; `doctor` labels a missing `claude` as a note, not "ok"; `verify` names an invalid `.harness/config.yaml` in a plain sentence; `uninstall`, `update` and the other commands no longer give init's `--config` hint without a terminal; `sync` and `add` no longer call an install with no catalog items old; Stop no longer prints a pr-size line to stderr in a repo with no base branch yet; with no Vitest config, init prints a whole `vitest.config.ts` to create, not a fragment.
+### Writes and scans
+
+- `harness verify` and `harness report` in a repo or folder where harness isn't installed (no `.harness/manifest.json`) now say so, exit 1 and write nothing. Before, they left `.harness/state/` or `.harness/reports/` behind, and `init` then refused (ship audit S1). The CLI also records its own path in `.harness/state/` only where a manifest exists.
+- `init`, `update`, `sync`, `add`, `remove`, `context apply` and `rules --apply` no longer name a file they would create as uncommitted just because it sits in an untracked folder; only files that exist there count.
+- A write the OS refuses for a reason other than Claude Code's sandbox, such as a read-only folder (`EACCES`), now prints the real error ("apply failed and was rolled back: EACCES: permission denied …"), not "Claude Code's sandbox blocks harness's own files". The sandbox line needs `EPERM` or `EROFS` on one of harness's denyWrite paths, as the reference already said (ship audit S6).
+- `update` and `sync` keep a `checks.done: true` you set by hand. No catalog item owns that check, so it no longer reverts to `false`, and `doctor` no longer calls it a difference from the selected items (ship audit S7).
+- A file in the plugin's `skills/` folder, such as Finder's `.DS_Store`, is no longer listed or measured as a skill by `harness context`, `doctor` and the context budget (ship audit S9).
 ### CI
 
 - Main is green again on macOS and Windows (ship audit M2). protect's check of a `git checkout` or `git switch` to a branch, tag or hash now looks up the ref and its hooks in one git call, not two, so the hook is faster; every decision is unchanged. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows.

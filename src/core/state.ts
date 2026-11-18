@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { renameWithRetry, retryTransient, writeAtomic } from './atomic.js';
+import { RETRY, RETRY_BUDGET_MS, renameWithRetry, retryTransient, writeAtomic } from './atomic.js';
 import { randomBytes } from 'node:crypto';
 import { appendEventSafe } from './events.js';
 import { join } from 'node:path';
@@ -46,7 +46,16 @@ export function statePath(root: string, session: string): string {
 }
 
 
+// A turn reset that couldn't get the write lock waits in `<session>.reset`: reads show it applied, the next write applies it.
+const resetMarker = (root: string, session: string) => `${statePath(root, session).slice(0, -'.json'.length)}.reset`;
+const turnReset = (s: SessionState): SessionState => ({ ...s, files: [], approved: false, askNoted: undefined, reasonDenied: [], stopAttempts: 0, doneClaimAttempts: undefined });
+
 export function readState(root: string, session: string, read: (p: string, e: 'utf8') => string = readFileSync): SessionState {
+  const s = readFile(root, session, read);
+  return existsSync(resetMarker(root, session)) ? turnReset(s) : s;
+}
+
+function readFile(root: string, session: string, read: (p: string, e: 'utf8') => string): SessionState {
   const fresh: SessionState = { startedAt: Date.now(), files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0 };
   const f = statePath(root, session);
   let text: string;
@@ -135,7 +144,13 @@ export function writeMerged(root: string, session: string, base: SessionState, n
 }
 
 export function clearTurn(root: string, session: string): void {
-  updateState(root, session, (cur) => ({ ...cur, files: [], approved: false, askNoted: undefined, reasonDenied: [], stopAttempts: 0, doneClaimAttempts: undefined }));
+  try {
+    updateState(root, session, turnReset);
+  } catch (e) {
+    if (!(e instanceof StateBusyError)) throw e;
+    writeFileSync(resetMarker(root, session), ''); // not lost: the next write applies it, and reads already show it
+    appendEventSafe(root, { ts: new Date().toISOString(), session, check: 'state-lock', decision: 'turn-reset-pending' });
+  }
 }
 
 const readOwner = (lock: string): { pid?: number; nonce?: string } | null => {
@@ -257,17 +272,37 @@ export function updateState(root: string, session: string, change: (cur: Session
   const nonce = randomBytes(8).toString('hex');
   mkdirSync(join(root, '.harness/state'), { recursive: true });
   let got: 'held' | 'busy' | 'unusable';
-  for (const deadline = Date.now() + WRITE_WAIT.ms; (got = tryTake(lock, nonce, ops)) === 'busy'; pause(1 + Math.random() * 3)) { // jittered, so no waiter starves
+  // A holder's reads and writes may retry transient Windows errors for up to RETRY_BUDGET_MS: the wait covers that too.
+  const bound = WRITE_WAIT.ms + (RETRY.platform === 'win32' ? RETRY_BUDGET_MS : 0);
+  for (const deadline = Date.now() + bound; (got = tryTake(lock, nonce, ops)) === 'busy'; pause(1 + Math.random() * 3)) { // jittered, so no waiter starves
     if (Date.now() < deadline) continue;
     // The update is lost: say so on stderr and in the event log, never silently.
     process.stderr.write('harness: state write lock timeout, an update was not saved\n');
     appendEventSafe(root, { ts: new Date().toISOString(), session, check: 'state-lock', decision: 'state-write-lost' });
     throw new StateBusyError();
   }
+  // Claim a pending turn reset (renamed, so one made meanwhile waits for the next write); put it back if the write fails.
+  const marker = resetMarker(root, session), claimed = `${marker}.${nonce}`;
+  let reset = false;
   try {
-    const next = change(readState(root, session));
+    try {
+      renameSync(marker, claimed);
+      reset = true;
+    } catch {
+      // none pending
+    }
+    const cur = readFile(root, session, readFileSync);
+    const next = change(reset ? turnReset(cur) : cur);
     writeState(root, session, next);
+    if (reset) rmSync(claimed, { force: true });
     return next;
+  } catch (e) {
+    try {
+      if (reset) renameSync(claimed, marker);
+    } catch {
+      // a newer marker took the name: it resets the turn as well
+    }
+    throw e;
   } finally {
     if (got === 'held') release(lock, nonce, ops);
   }

@@ -175,6 +175,18 @@ test.each([
   expect(ran).toBe(true);
 });
 
+test('forced lock timeout: a pending TDD pause (not yet bound to this session) still fails closed', async () => {
+  shortWait();
+  const root = tmp();
+  gated(root, 'checks:\n  tdd: true\n');
+  mkdirSync(join(root, '.harness/state'), { recursive: true });
+  writeFileSync(join(root, '.harness/state/tdd-pause.json'), JSON.stringify({ createdAt: new Date().toISOString() })); // pending
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  expect(JSON.parse((await captureErr(() => dispatch(pre(root), [], {}))).v).hookSpecificOutput.permissionDecision).toBe('ask');
+  writeFileSync(join(root, '.harness/state/tdd-pause.json'), JSON.stringify({ createdAt: new Date().toISOString(), session: 'other' }));
+  expect(JSON.parse((await captureErr(() => dispatch(pre(root), [], {}))).v).hookSpecificOutput.permissionDecision).toBe('ask');
+});
+
 test('forced lock timeout: an invalid config still fails closed', async () => {
   shortWait();
   const root = tmp();

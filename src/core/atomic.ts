@@ -13,7 +13,8 @@ export const RETRY: { platform: NodeJS.Platform; sleep: (ms: number) => void } =
 
 // One wait budget per process: a hook is one process, and the retries of all its reads and writes together stay
 // well under the 10 s hook timeout (a timed-out hook fails open).
-const BUDGET_MS = 3000;
+export const RETRY_BUDGET_MS = 3000;
+const BUDGET_MS = RETRY_BUDGET_MS;
 let budget = BUDGET_MS;
 /** Test seam: start a fresh budget (of `ms`). */
 export const resetRetryBudget = (ms = BUDGET_MS): void => void (budget = ms);

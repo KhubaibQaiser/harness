@@ -75,13 +75,13 @@ export async function dispatch(raw: string, checks: Check[], env: NodeJS.Process
   return withSessionLock(root, input.session_id, run, undefined, gate ? () => (stateGated(root, input.session_id) ? busyOut(input, env) : run()) : undefined);
 }
 
-// The PreToolUse gates that decide on per-turn session state: multi-file and TDD (not while TDD is paused). Config is
+// The PreToolUse gates that decide on per-turn session state: multi-file and TDD (not while a TDD pause is bound to this session). Config is
 // read without the lock; an unreadable or invalid config counts as gated.
 function stateGated(root: string, session: string): boolean {
   try {
     const { config, errors } = loadConfig(root);
     const pause = pauseStatus(root);
-    const paused = pause === 'pending' || (typeof pause === 'object' && pause.session === session);
+    const paused = typeof pause === 'object' && pause.session === session; // a pending pause may bind to another session
     return errors.length > 0 || config.checks.multiFile || (config.checks.tdd && !paused);
   } catch {
     return true;

@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSync } from 'esbuild';
 import { expect, onTestFinished, test } from 'vitest';
-import { type SessionState, mergeState, readState, StateBusyError, updateState, WRITE_WAIT, writeMerged, writeState } from '../../src/core/state.js';
+import { type SessionState, clearTurn, mergeState, readState, StateBusyError, updateState, WRITE_WAIT, writeMerged, writeState } from '../../src/core/state.js';
+import { RETRY } from '../../src/core/atomic.js';
 
 const s = (o: Partial<SessionState> = {}): SessionState => ({ startedAt: 1, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0, ...o });
 const merge = (k: keyof SessionState, base: unknown, next: unknown, cur: unknown) =>
@@ -122,3 +123,56 @@ for (let j = 0; j < Number(m); j++) {
   expect(codes).toEqual(Array(10).fill(0));
   expect(new Set(readState(root, 's').files).size).toBe(500);
 }, 60000);
+
+const holdWlock = (root: string) => {
+  const wlock = join(root, '.harness/state/s.wlock');
+  mkdirSync(wlock, { recursive: true });
+  writeFileSync(join(wlock, 'owner'), JSON.stringify({ pid: process.pid, nonce: 'live' }));
+  return wlock;
+};
+const silent = <T>(f: () => T): T => {
+  const orig = process.stderr.write;
+  process.stderr.write = (() => true) as typeof process.stderr.write;
+  try {
+    return f();
+  } finally {
+    process.stderr.write = orig;
+  }
+};
+
+test('clearTurn with the write lock busy: the reset is kept pending, shown by reads and applied by the next write', () => {
+  const saved = WRITE_WAIT.ms;
+  WRITE_WAIT.ms = 50;
+  onTestFinished(() => void (WRITE_WAIT.ms = saved));
+  const root = mkdtempSync(join(tmpdir(), 'h-reset-'));
+  writeState(root, 's', s({ files: ['a.ts', 'b.ts'], approved: true, stopAttempts: 3, doneClaimAttempts: 2, redTests: ['t.test.ts'] }));
+  const wlock = holdWlock(root);
+  expect(() => silent(() => clearTurn(root, 's'))).not.toThrow();
+  expect(readState(root, 's')).toMatchObject({ files: [], approved: false, stopAttempts: 0, redTests: ['t.test.ts'] });
+  expect(readFileSync(join(root, '.harness/logs/events.jsonl'), 'utf8')).toContain('turn-reset-pending');
+  rmSync(wlock, { recursive: true });
+  const base = readState(root, 's');
+  writeMerged(root, 's', base, { ...base, files: ['c.ts'] }); // the next hook's write
+  const raw = JSON.parse(readFileSync(join(root, '.harness/state/s.json'), 'utf8'));
+  expect(raw).toMatchObject({ files: ['c.ts'], approved: false, stopAttempts: 0, redTests: ['t.test.ts'] });
+  expect(raw.doneClaimAttempts).toBeUndefined();
+  expect(existsSync(join(root, '.harness/state/s.reset'))).toBe(false);
+});
+
+test('on Windows the write-lock wait also covers a holder\'s transient-error retries (no lost write under scanner contention)', async () => {
+  const saved = { ...RETRY, w: WRITE_WAIT.ms };
+  WRITE_WAIT.ms = 200;
+  onTestFinished(() => void (Object.assign(RETRY, { platform: saved.platform, sleep: saved.sleep }), (WRITE_WAIT.ms = saved.w)));
+  const root = mkdtempSync(join(tmpdir(), 'h-winwait-'));
+  writeState(root, 's', s());
+  // Another process holds the write lock for 800 ms, as a holder retrying a scanner-held file would.
+  const held = join(root, 'held');
+  const child = spawn(process.execPath, ['-e', `const fs=require('fs'),p=require('path');const l=${JSON.stringify(join(root, '.harness/state/s.wlock'))};fs.mkdirSync(l);fs.writeFileSync(p.join(l,'owner'),JSON.stringify({pid:process.pid,nonce:'c'}));fs.writeFileSync(${JSON.stringify(held)},'');setTimeout(()=>fs.rmSync(l,{recursive:true}),800)`]);
+  const exited = new Promise((r) => child.on('close', r));
+  while (!existsSync(held)) await new Promise((r) => setTimeout(r, 10));
+  RETRY.platform = 'linux';
+  expect(() => silent(() => updateState(root, 's', (c) => c))).toThrow(StateBusyError); // 200 ms alone is too short
+  RETRY.platform = 'win32';
+  expect(updateState(root, 's', (c) => ({ ...c, files: ['w.ts'] })).files).toEqual(['w.ts']);
+  await exited;
+});

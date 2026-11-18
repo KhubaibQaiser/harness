@@ -26,8 +26,8 @@ const packDry = () => JSON.parse(npm(['pack', '--dry-run', '--json', '--ignore-s
 // Release order (docs/release.md): the marketplace pin moves in a follow-up PR after npm has the version, so on main it
 // is this version or exactly the release before it, never ahead (a pin npm lacks breaks `claude plugin install`).
 const semverKey = (v: string) => {
-  const [core, pre] = v.split('-', 2) as [string, string | undefined];
-  return { core: core.split('.').map(Number), pre };
+  const i = v.indexOf('-'); // only the first hyphen ends the core: 1.0.0-rc-1 has the tag rc-1
+  return { core: (i < 0 ? v : v.slice(0, i)).split('.').map(Number), pre: i < 0 ? undefined : v.slice(i + 1) };
 };
 const olderVersion = (a: string, b: string): boolean => {
   const x = semverKey(a), y = semverKey(b);
@@ -56,6 +56,7 @@ test('the release-order helpers: one release behind is allowed, two behind or ah
   expect(previousRelease('0.2.0', r)).toBe('0.2.0-beta.10');
   expect(previousRelease('0.2.0-beta.0', r)).toBeUndefined();
   expect(olderVersion('0.2.0-beta.3', '0.2.0-beta.2')).toBe(false); // ahead is never one behind
+  expect([olderVersion('1.0.0-rc-1', '1.0.0-rc-2'), olderVersion('1.0.0-rc-2', '1.0.0-rc-1')]).toEqual([true, false]); // a second hyphen stays in the tag
 });
 
 test('package is public, unlicensed and runs the build on prepack', () => {

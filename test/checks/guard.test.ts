@@ -702,7 +702,7 @@ test('rereview2 M2: --prefix=, --dir= and -C= are read', () => {
   for (const c of ['npm --prefix=sub run s', 'pnpm --dir=sub s']) expect(decideCommand(c, { ...ctx(), root }).kind, c).toBe('ask');
 });
 test('rereview2: harness inside a path is not a command word', () => {
-  all(['cd /x/harness && git add -A', 'cd /x/harness && git push origin feat', 'git -C /x/harness push origin feat', 'cd ~/Documents/khubaib-personal/harness && git add -A', 'git -C /x/harness add -A', 'rg "update" ~/harness/src', 'grep -rn init src/harness', 'pnpm -C /x/harness test'], 'allow');
+  all(['cd /x/harness && git add -A', 'cd /x/harness && git push origin feat', 'git -C /x/harness push origin feat', 'cd ~/code/harness && git add -A', 'git -C /x/harness add -A', 'rg "update" ~/harness/src', 'grep -rn init src/harness', 'pnpm -C /x/harness test'], 'allow');
   for (const c of ['/x/harness/bin/harness init', 'node /x/harness/dist/cli.mjs init']) expect(kind(c), c).toBe('ask');
 });
 describe('IFS: unquoted $IFS splits words, $9 $@ $* are empty in a fresh shell', () => {

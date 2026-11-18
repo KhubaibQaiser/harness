@@ -185,8 +185,15 @@ test('the release notes list no gaps of their own (ship audit S2)', () => {
   for (const s of ['### Done contract', '### PR review', 'harness eval --kind gates', 'checks.prBody']) expect(notes, s).toContain(s);
 });
 
-test('tracked docs carry no machine paths or session folders (ship audit S13)', () => {
-  const docs = execFileSync('git', ['ls-files', 'README.md', 'docs'], { encoding: 'utf8' }).split('\n').filter((f) => f.endsWith('.md'));
-  const bad = docs.filter((f) => /\/Users\/[\w-]+\/Documents|-Users-[\w-]+-Documents|~\/Documents/i.test(readFileSync(f, 'utf8')));
-  expect(bad).toEqual([]);
+test('no tracked text file carries the owner\'s machine paths or work folders (ship audit S13)', () => {
+  // Built from pieces so this file doesn't match itself.
+  const bad = ['/Users/' + 'khubaib', '-Users-' + 'khubaib', 'khubaib' + '-personal', 'claude' + '-502', 'harness' + '-wt'];
+  const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+  const hits = files.flatMap((f) => {
+    let t: string;
+    try { t = readFileSync(f, 'utf8'); } catch { return []; } // a tracked file missing from the checkout
+    if (t.includes('\0')) return []; // binary
+    return bad.filter((b) => t.includes(b)).map((b) => `${f}: ${b}`);
+  });
+  expect(hits).toEqual([]);
 });

@@ -1253,7 +1253,7 @@ Temp repos with a stub `gh` and a stub GitHub API on a local port (a test-only b
 
 ### 12.4 Live batches (owner's subscription)
 
-They run from the Terminal panel, with scripts in `harness-wt/live`. Each batch needs a yes and records the Claude Code and `srt` versions.
+They run in the owner's own terminal, with scripts kept outside the repo. Each batch needs a yes and records the Claude Code and `srt` versions.
 
 | Batch | Where | Checks | Gates |
 |---|---|---|---|

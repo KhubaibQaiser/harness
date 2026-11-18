@@ -5,7 +5,7 @@ docs/release-notes/<version>.md: the release workflow's check-tag step needs tha
 
 ## What changed since 0.2.0-beta.2
 
-Run `/harness:update` in each repo after upgrading: this release changes `.claude/settings.json` (the sandbox's `denyWrite` list, new deny rules, the evidence-ledger hook and the pinned marketplace's name). Two changes need you to act: the Stop gate now needs `srt` (and ripgrep) on macOS and Linux, and a timed-out Stop step now blocks. Both are under Breaking.
+Run `/harness:update` in each repo after upgrading: this release changes `.claude/settings.json` (the sandbox's `denyWrite` list, new deny rules, the evidence-ledger hook and the pinned marketplace's name). Three changes need you to act: the Stop gate now needs `srt` (and ripgrep) on macOS and Linux, and a timed-out Stop step now blocks (both under Breaking); and if your scripts copy the documented unattended launch command, replace it with the new one (under Unattended launch).
 
 ### Breaking
 

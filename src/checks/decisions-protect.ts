@@ -6,7 +6,7 @@ import picomatch from 'picomatch';
 import { DECISIONS_DIR, isDecisionText, MAX_DECISION_BYTES } from '../core/decision-file.js';
 import { RULE_GLOB } from '../core/decision-rule.js';
 import type { HarnessConfig } from '../core/config.js';
-import { toRepoPath } from '../core/paths.js';
+import { riskyGlob, toRepoPath } from '../core/paths.js';
 import type { Decision } from '../hooks/types.js';
 
 export const DECISIONS_REASON = 'Team decisions change only through harness remember, which asks the person first. Edit a decision by hand yourself, then run harness remember sync.';
@@ -48,6 +48,7 @@ function holdsDecisions(root: string, p: string): boolean {
 /** A glob, read as protect reads `.harness` globs, that matches one of `names` (repo paths, lower case). */
 export const globHits = (root: string, t: string, names: string[]): boolean => {
   const rel = toRepoPath(root, t.replace(/^:\//, ''))?.toLowerCase().replace(/\[!/g, '[^'); // picomatch mishandles [!x]
+  if (rel && riskyGlob(rel)) return true; // never compiled; counts as a hit
   return !!rel && names.some((c) => picomatch(rel, { dot: true })(c));
 };
 

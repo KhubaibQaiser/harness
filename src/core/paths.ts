@@ -35,6 +35,13 @@ export function toRepoPath(root: string, p: string): string | null {
   return rel.split(sep).join('/');
 }
 
+/** picomatch <= 4.0.7 has an extglob ReDoS with no fixed version (GHSA-fc5q-39xc-vjpf). A glob from agent text is
+ *  never compiled when this is true (over 3 extglob groups, or over 256 characters); callers count it as a match.
+ *  The 3-group threshold is safe only because the hooks match against short, fixed names (ruled commands, protected
+ *  and decision paths). A call site that matches arbitrary or long paths needs a stricter check (see tooComplex in
+ *  src/report/metrics/skills.ts): `+(*)+(*)` against a 24-letter folder ran past 15 s. */
+export const riskyGlob = (g: string): boolean => g.length > 256 || (g.match(/[+*?@!]\(/g)?.length ?? 0) > 3;
+
 export const matches = (rel: string, globs: string[]): boolean => globs.length > 0 && picomatch(globs, { dot: true })(rel);
 
 export const isTestFile = (rel: string): boolean => /\.(test|spec)\.[^/]+$/.test(rel) || /(^|\/)__tests__\//.test(rel);

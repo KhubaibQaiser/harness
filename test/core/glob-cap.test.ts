@@ -8,7 +8,8 @@ import { globHits } from '../../src/checks/decisions-protect.js';
 import { OVER_BUDGET, skillSpecs, skillsAcc, TOO_COMPLEX } from '../../src/report/metrics/skills.js';
 
 const SLOW = ['+(a)'.repeat(12), '+(*)'.repeat(10), `${'+(*)'.repeat(12)}.json`, 'a'.repeat(257) + '*'];
-const fast = <T>(f: () => T, ms = 200): T => {
+// A hang check, not a speed test: the measured hangs ran 3 s or more; shared CI runners are slow, so the bound is loose.
+const fast = <T>(f: () => T, ms = 1000): T => {
   const t = Date.now();
   const r = f();
   expect(Date.now() - t).toBeLessThan(ms);
@@ -72,7 +73,7 @@ test('report: more than 4 star runs across the whole glob (braces included) is u
   for (const g of ['src/**/*.test.*', '**/*.{ts,tsx}', '*a*/**/*a*/**/b', '**/*a*a/**/*a*a/b']) {
     const [ok] = skillSpecs('/r', [{ name: 's', paths: [g] }], [], []);
     expect(ok!.label, g).toBe('paths');
-    fast(() => ok!.relevant!(deep), 1000); // 2-42 ms alone; slack for a loaded full-suite run, still far from a hang
+    fast(() => ok!.relevant!(deep), 2000); // 2-42 ms alone; slack for a loaded or Windows runner, still below the 3 s hangs
   }
 });
 
@@ -97,16 +98,26 @@ test('report: more than 16 paths globs in one skill is unmeasured', () => {
   expect(ok!.label).toBe('paths');
 });
 
-test('report: the budget is checked between paths, so 1000 slow-shaped paths and 8 patterns stop near the budget', () => {
+test('report: the budget is checked between paths, so 1000 slow-shaped paths and 8 patterns stop right after the budget (fake clock)', () => {
   const pats = ['*a*/**/*a*/**/b', '**/*a*/*a*/**/b', '*a*/**/*a*/**/c', '**/*a*/*a*/**/c', '*a*/**/*a*/**/d', '**/*a*/*a*/**/d', '*a*/**/*a*/**/e', '**/*a*/*a*/**/e'];
-  const specs = skillSpecs('/r', [{ name: 'slow', paths: pats }, { name: 'next', paths: pats }], [], []);
-  expect(specs[0]!.label).toBe('paths');
   const edited = Array.from({ length: 1000 }, (_, i) => `/r/${('a'.repeat(50) + '/').repeat(9)}${'a'.repeat(40)}${i}`);
-  const acc = skillsAcc(specs, { budgetMs: 300 });
-  const t = Date.now();
+  const specs = skillSpecs('/r', [{ name: 'slow', paths: pats }, { name: 'next', paths: pats }, { name: 'none' }], [], []);
+  expect(specs[0]!.label).toBe('paths');
+  // fake clock: each path checked costs 10 ms, so the run is the same on any machine
+  let t = 0, checked = 0;
+  for (const sp of specs) {
+    const real = sp.relevant;
+    if (real) sp.relevant = (ps, stop) => real(ps, () => (checked++, (t += 10), stop!()));
+  }
+  const acc = skillsAcc(specs, { budgetMs: 15, now: () => t }); // small, so one real slow-shaped match runs (about 0.3-0.7 s here)
+  const wall = Date.now();
   for (let i = 0; i < 3; i++) acc.endSession!({ id: `s${i}`, turns: 1, compactions: 0, edited });
-  expect(Date.now() - t).toBeLessThan(1500); // the budget plus at most one path against one skill's globs, with slack
-  expect(acc.result().map((r) => r.label)).toEqual([OVER_BUDGET, OVER_BUDGET]);
+  expect(Date.now() - wall).toBeLessThan(10_000); // a hang check only; the fake clock below is the real assertion
+  // the first skill matches one path, then stops on the next check (20 ms > 15 ms); nothing else is ever matched
+  expect(checked).toBe(2);
+  const rows = Object.fromEntries(acc.result().map((r) => [r.name, r]));
+  expect([rows.slow!.label, rows.next!.label, rows.none!.label]).toEqual([OVER_BUDGET, OVER_BUDGET, 'none']);
+  expect([rows.slow!.relevantIn, rows.next!.relevantIn]).toEqual([0, 0]);
 });
 
 test('report: a skill cut off by the budget feeds no counts, so it stays out of the chart and totals', () => {

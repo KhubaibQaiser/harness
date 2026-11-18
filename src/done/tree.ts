@@ -75,7 +75,11 @@ export function treeHash(root: string, o: { timeoutMs?: number } = {}): string {
     if (run(['rev-parse', '--verify', '-q', 'HEAD'], env, [0, 1]).status === 0) run(['read-tree', 'HEAD'], env);
     else if (!unborn(run, env)) throw new Error('tree hash: HEAD does not resolve to a commit');
     // write-tree runs the filters too: it rewrites the index and re-hashes racily clean entries through the clean filter.
-    run(['add', '-A', '--', ':/', ...TREE_EXCLUDES.map((p) => `:(top,exclude)${p}`)], env);
+    // Add everything, then drop harness's folders from the temp index: an exclude pathspec naming a folder that .gitignore
+    // ignores (init's own lines) makes `git add` exit 1 (ship audit M4). --cached: the working tree is never touched. -f: a file
+    // rewritten between the add and the rm differs from both HEAD and the index, and rm refuses it without -f.
+    run(['add', '-A', '--', ':/'], env);
+    run(['rm', '-r', '-q', '-f', '--cached', '--ignore-unmatch', '--', ...TREE_EXCLUDES.map((p) => `:(top,literal)${p}`)], env);
     const hash = run(['write-tree'], env).stdout.trim();
     if (!/^[0-9a-f]{40,64}$/.test(hash)) throw new Error(`tree hash: write-tree printed ${JSON.stringify(hash)}`);
     return hash;

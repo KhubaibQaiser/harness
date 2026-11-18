@@ -17,6 +17,8 @@ const N = 'c'.repeat(32);
 const ten = Array.from({ length: 10 }, (_, i) => `line number ${i + 1}`);
 function setup(base: Files, head: Files) {
   const r = repoWith(base, head);
+  mkdirSync(join(r.root, '.harness'), { recursive: true });
+  writeFileSync(join(r.root, '.harness/manifest.json'), '{}\n'); // installed: review refuses a repo without harness
   const dir = join(r.root, '.harness', 'tmp', 'w-1');
   mkdirSync(dir, { recursive: true });
   const snap = writeSnapshot(defaultExecBytes, r.root, r.head, join(dir, 'head'), { ignore: () => false });

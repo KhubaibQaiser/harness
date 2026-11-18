@@ -17,6 +17,8 @@ const fake = (answer = true): Prompt => ({ confirm: async () => answer, edit: as
 
 function setup(files: Record<string, string> = {}) {
   const { root } = repoWith({ 'package.json': PKG, 'test/old.test.ts': 'x', ...files }, {});
+  mkdirSync(join(root, '.harness'), { recursive: true });
+  writeFileSync(join(root, '.harness/manifest.json'), '{}\n'); // installed: task refuses without a manifest
   const lines: string[] = [];
   const cli = { root, env: {} as NodeJS.ProcessEnv, out: (l: string) => lines.push(l), prompt: fake(), now: () => new Date('2026-11-14T12:00:00Z') };
   const read = (rel: string) => readFileSync(join(root, rel), 'utf8');

@@ -109,12 +109,31 @@ test('a fresh held lock times out after the bounded wait, warns, and runs fn (no
   expect(ran).toBe(false);
 });
 
-test('the default wait stays bounded (no hangs) and long enough for a burst of hooks under load', () => {
-  expect(LOCK_WAIT.ms).toBeGreaterThanOrEqual(5000);
-  expect(LOCK_WAIT.ms).toBeLessThanOrEqual(15000);
+test('the default wait is 5 s: bounded (no hangs), and long enough for a burst of hooks under load', () => {
+  expect(LOCK_WAIT.ms).toBe(5000);
 });
 
 const pre = (root: string, extra: object = {}) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Edit', tool_input: { file_path: 'a.ts' }, ...extra });
+
+test.each(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'PowerShell', 'Monitor', 'mcp__github__create_issue', 'mcp__x__frobnicate'])('forced lock timeout: %s fails closed (a write, shell or unclassified MCP tool)', async (tool) => {
+  shortWait();
+  const root = tmp();
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  const out = JSON.parse((await captureErr(() => dispatch(pre(root, { tool_name: tool, tool_input: { command: 'ls', file_path: 'a.ts' } }), [], {}))).v);
+  expect(out.hookSpecificOutput.permissionDecision).toBe('ask');
+});
+
+test.each(['Read', 'Grep', 'Glob', 'mcp__github__get_issue', 'mcp__notion__search'])('forced lock timeout: read-only %s runs its checks (merged writes)', async (tool) => {
+  shortWait();
+  const root = tmp();
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  let ran = false;
+  const spy: Check = { name: 'spy', events: ['PreToolUse'], run: () => ((ran = true), { kind: 'allow' }) };
+  const { v, err } = await captureErr(() => dispatch(pre(root, { tool_name: tool, tool_input: { file_path: 'a.ts' } }), [spy], {}));
+  expect(err).toContain('state lock timeout');
+  expect(v).toBe('');
+  expect(ran).toBe(true);
+});
 
 test('forced lock timeout: a PreToolUse gate fails closed (ask attended, deny unattended) and never runs its checks', async () => {
   shortWait();

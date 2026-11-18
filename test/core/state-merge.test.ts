@@ -69,3 +69,9 @@ test('writeMerged re-reads the file right before writing, so another hook\'s upd
   expect(readState(root, 's')).toEqual(out);
   expect(out).toMatchObject({ files: ['a.ts', 'other.ts', 'mine.ts'], stopAttempts: 2, decisionNudged: true });
 });
+
+test('decisionHits: the cap of 3 holds after a merge, keeping the first 3 in order (disk first, then this hook)', () => {
+  const h = (n: number) => ({ pattern: `P${n}`, excerpt: `e${n}` });
+  expect(merge('decisionHits', [h(1)], [h(1), h(2), h(3)], [h(1), h(4)])).toEqual([h(1), h(4), h(2)]);
+  expect(merge('files', ['a'], ['a', 'b', 'c'], ['a', 'd', 'e'])).toHaveLength(5); // other lists have no cap
+});

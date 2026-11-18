@@ -2,7 +2,7 @@
 // write verb; auto-merge with a write verb is denied anywhere. Names are split at `_`, `-`, `.` and camelCase.
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
-import { mcpWrites } from '../../src/checks/mcp-writes.js';
+import { mcpIsRead, mcpWrites } from '../../src/checks/mcp-writes.js';
 import { loadConfig } from '../../src/core/config.js';
 import { type Ctx, registry } from '../../src/hooks/dispatch.js';
 
@@ -49,4 +49,9 @@ test('registered for PreToolUse, fail-closed, and the settings fragment routes m
   const main = s.hooks.PreToolUse[0];
   expect(new RegExp(`^(?:${main.matcher})$`).test('mcp__ccd_pr__set_auto_merge')).toBe(true);
   expect(main.hooks[0].onFailure).toBe('block');
+});
+
+test('mcpIsRead: the same verb rules as the check; a tool with no known verb counts as a write', () => {
+  for (const t of ['mcp__github__get_pull_request', 'mcp__notion__notion-search', 'mcp__x__list_items', 'mcp__x__file_get']) expect(mcpIsRead(t)).toBe(true);
+  for (const t of ['mcp__github__create_issue', 'mcp__x__frobnicate', 'mcp__x__update_get', 'mcp__x__']) expect(mcpIsRead(t)).toBe(false);
 });

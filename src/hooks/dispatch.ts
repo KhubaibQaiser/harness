@@ -8,7 +8,7 @@ import { prSize } from '../checks/pr-size/check.js';
 import { prSizeEntry } from '../checks/pr-size/entry.js';
 import { prBody } from '../checks/pr-body.js';
 import { secretScan } from '../checks/secret-scan.js';
-import { mcpWrites } from '../checks/mcp-writes.js';
+import { mcpIsRead, mcpWrites } from '../checks/mcp-writes.js';
 import { workdir } from '../cli/guide.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect } from '../checks/protect.js';
@@ -36,6 +36,7 @@ import { capMessage, emit, MAX_CONTEXT, parseInput } from './io.js';
 import { mergeContext, winner } from './notice.js';
 import { runAfterAllow, runChecks } from './run-checks.js';
 import { setupSession } from './session-setup.js';
+import { isEdit, isShell } from './edit-target.js';
 import type { HookEvent } from './types.js';
 
 export type { Check, Ctx } from './check.js';
@@ -63,12 +64,14 @@ export async function dispatch(raw: string, checks: Check[], env: NodeJS.Process
   const input = parseInput(raw);
   if (!input || !EVENTS.includes(input.hook_event_name) || !isSafeSessionId(input.session_id)) return '';
   if (!input.cwd || input.hook_event_name === 'Stop') return dispatchLocked(raw, checks, env, opts);
-  // One hook at a time per session, so parallel tool calls cannot race on the state file. Past the wait a tool call
-  // fails closed: its gates would decide on state another hook is changing. Other events run, their writes merged.
+  // One hook at a time per session, so parallel tool calls cannot race on the state file. Past the wait a write or shell
+  // call fails closed: its gates would decide on state another hook is changing. Reads and other events run, writes merged.
   const busy = () => (foreign(input) ? '' : emit('PreToolUse', { kind: isUnattended(input, env) ? 'deny' : 'ask', reason: 'harness: the session state is busy (another hook held its lock too long), so this call could not be checked. Retry it.', check: 'state-lock' }));
-  return withSessionLock(repoRoot(input.cwd), input.session_id, () => dispatchLocked(raw, checks, env, opts), undefined, input.hook_event_name === 'PreToolUse' ? busy : undefined);
+  return withSessionLock(repoRoot(input.cwd), input.session_id, () => dispatchLocked(raw, checks, env, opts), undefined, input.hook_event_name === 'PreToolUse' && writes(input.tool_name) ? busy : undefined);
 }
 
+// Write tools and shell tools; an MCP tool unless mcp-writes reads it as a read (unclassified counts as a write).
+const writes = (tool = ''): boolean => isEdit(tool) || isShell(tool) || (tool.startsWith('mcp__') && !mcpIsRead(tool));
 const foreign = (input: { tool_name?: string }): boolean => CURSOR_KEYS.some((k) => k in input) || input.tool_name === 'Shell';
 
 async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessEnv, opts: DispatchOpts): Promise<string> {

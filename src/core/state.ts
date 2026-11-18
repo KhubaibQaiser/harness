@@ -86,6 +86,7 @@ export { renameWithRetry }; // kept for existing importers
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const key = (v: unknown): string => JSON.stringify(v) ?? 'undefined';
+export const MAX_HITS = 3; // decisionHits kept per session (the decisions nudge)
 // Snapshots taken as a whole: never combined with another hook's value.
 const WHOLE = new Set(['guardedOwned']);
 
@@ -108,7 +109,8 @@ export function mergeState(base: SessionState, next: SessionState, cur: SessionS
       const nowKeys = new Set(now.map(key));
       const kept = ((cv ?? []) as unknown[]).filter((x) => !was.has(key(x)) || nowKeys.has(key(x)));
       const have = new Set(kept.map(key));
-      out[k] = [...kept, ...now.filter((x) => !was.has(key(x)) && !have.has(key(x)))];
+      const list = [...kept, ...now.filter((x) => !was.has(key(x)) && !have.has(key(x)))];
+      out[k] = k === 'decisionHits' ? list.slice(0, MAX_HITS) : list; // the cap holds after a merge too: disk's first, then ours
     } else if (!WHOLE.has(k) && isRecord(nv) && isRecord(cv) && (bv === undefined || isRecord(bv))) {
       const r: Record<string, unknown> = { ...cv };
       const br = (bv ?? {}) as Record<string, unknown>;
@@ -161,7 +163,7 @@ export type LockOps = {
 };
 const REAL_OPS: LockOps = { rename: renameSync, rm: rmSync, mkdir: mkdirSync };
 const BREAK_STALE_MS = 5000;
-export const LOCK_WAIT = { ms: 10000 }; // bounded: a hook never hangs on a stuck holder (tests shorten it)
+export const LOCK_WAIT = { ms: 5000 }; // bounded: a hook never hangs on a stuck holder (tests shorten it)
 
 // Breaks a stale lock with breakers serialised by `<lock>.break`. The lock is judged again under the break lock: only a
 // breaker or the lock's own (live) owner ever removes it, so a lock that was replaced since the first look (a new

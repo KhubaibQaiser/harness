@@ -6,6 +6,7 @@ import { inWorkdir } from '../checks/protect.js';
 import { resolveStep } from '../checks/stop/runner.js';
 import { esc, type HarnessConfig, isObj, loadConfig } from '../core/config.js';
 import { appendEvent } from '../core/events.js';
+import { MANIFEST_REL, NOT_INSTALLED } from '../install/manifest.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { SAFE_DIFF, SAFE_GIT } from '../core/git-safe.js';
 import { unattendedEnv } from '../core/unattended.js';
@@ -255,6 +256,7 @@ export async function task(args: string[], cli: TaskEnv): Promise<number> {
       : sub === 'edit' ? pos.length === 3 && plain(0) && pos[1] === '--from' && plain(2)
         : sub === 'close' && pos.length === 1 && plain(0));
   if (!ok) return usage(cli);
+  if (!existsSync(join(cli.root, MANIFEST_REL))) return cli.out(NOT_INSTALLED), 1; // contracts, drafts' logs and tasks/ need an install (R2-1)
   if ((sub === 'draft' || sub === 'approve') && !inWorkdir(cli.root, pos[0]!)) return cli.out(NOT_WORKDIR), 2;
   const cfg = config(cli);
   if (typeof cfg === 'number') return cfg;

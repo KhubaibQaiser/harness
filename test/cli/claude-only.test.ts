@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +30,7 @@ test('any non-empty CLAUDECODE counts as inside, for the gate and for tdd off', 
   expect(refuseOutsideClaude('init', { CLAUDECODE: '0' }, false)).toBeNull();
   const root = mkdtempSync(join(tmpdir(), 'h-claude-only-'));
   mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/manifest.json'), '{}\n'); // installed: tdd off refuses without a manifest
   let out = '';
   expect(run(['tdd', 'off'], { root, env: { CLAUDECODE: '0' }, out: (s) => (out += s) })).toBe(1);
   expect(out).toContain('plain terminal');

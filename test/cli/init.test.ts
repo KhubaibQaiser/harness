@@ -121,13 +121,16 @@ test('dirty touched file refuses with the list', async () => {
   expect(existsSync(join(root, '.harness'))).toBe(false);
 });
 
-test('an untracked .harness/ folder makes init name only its real files, never ones it would create (ship audit S1)', async () => {
+test('an older verify\'s untracked .harness/state/ makes init refuse, naming it and writing nothing (ship audit S1, owner 2026-11-18)', async () => {
   const root = makeRepo(NPM_VITEST);
   mkdirSync(join(root, '.harness/state'), { recursive: true });
   writeFileSync(join(root, '.harness/state/verdict-hashes.json'), '{}\n'); // left by an older harness verify
   const r = await go(root, ['--yes']);
-  expect(r.code, r.out).toBe(0);
+  // init stays strict (owner, 2026-11-18): with no manifest and no "keep" snapshot it names the folder and writes nothing.
+  expect(r.code, r.out).toBe(1);
+  expect(r.out).toContain("files harness can't tell are its own: `.harness/state`");
   expect(r.out).not.toContain('Commit or stash');
+  expect(existsSync(join(root, '.harness/manifest.json'))).toBe(false);
 });
 
 test('--config with an invalid value exits 2 with every error', async () => {

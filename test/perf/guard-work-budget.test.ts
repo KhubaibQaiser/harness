@@ -6,6 +6,7 @@ import { loadConfig } from '../../src/core/config.js';
 import { WORK_BUDGET_WHY } from '../../src/core/shell-words.js';
 import type { Ctx } from '../../src/hooks/dispatch.js';
 import { MAX_COMMAND_BYTES, runChecks, TOO_LARGE_WHY } from '../../src/hooks/run-checks.js';
+import { referenceMs, referenceNote } from './overhead.js';
 
 // Re-review 21, P1b: four nested shell bodies of 90 KB (`\` CR LF lines, or plain ones) took 3.5 to 11 s in the hook,
 // guard then protect, against its 10 s timeout. Each check now has a fixed work budget (WORK_BUDGET_CHARS of text
@@ -32,14 +33,18 @@ const hook = (command: string) => {
  *  straight to stderr, so the next calibration reads measured numbers from the CI log. */
 const timed = async (name: string, command: string) => {
   let ds = await hook(command);
+  referenceMs(); // its own warm-up
   const ms: number[] = [];
+  const ref: number[] = [];
   for (let i = 0; i < RUNS; i++) {
+    if (i % 2) ref.push(referenceMs()); // alternate which goes first
     const t = performance.now();
     ds = await hook(command);
     ms.push(performance.now() - t);
+    if (!(i % 2)) ref.push(referenceMs());
   }
   const median = [...ms].sort((a, b) => a - b)[RUNS >> 1]!;
-  writeSync(2, `[perf] guard-work-budget ${name} ${process.platform}: median ${median.toFixed(0)} ms (runs ${ms.map(Math.round).join(' ')}), ceiling ${CEILING_MS}\n`);
+  writeSync(2, `[perf] guard-work-budget ${name} ${process.platform}: median ${median.toFixed(0)} ms (runs ${ms.map(Math.round).join(' ')}), ceiling ${CEILING_MS}${referenceNote(median, ref)}\n`);
   return { ds, median };
 };
 

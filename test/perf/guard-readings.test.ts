@@ -21,7 +21,7 @@ const heredoc = (size: number) => {
 const big = `${alt32}; * a; s? b; ` + (pad + '; ').repeat(50); // about 100 KB, globs and an alternation in command position
 
 const time = (name: string, c: string) => {
-  const { ms, result } = medianOf(`guard-readings ${name}`, () => decideCommand(c, ctx));
+  const { ms, result } = medianOf(`guard-readings ${name}`, () => decideCommand(c, ctx), 5, true);
   return { kind: result.kind, ms };
 };
 

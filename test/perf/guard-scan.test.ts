@@ -1,22 +1,15 @@
 import { expect, it } from 'vitest';
 import { decideCommand } from '../../src/checks/guard.js';
 import { loadConfig } from '../../src/core/config.js';
+import { medianOf } from './overhead.js';
 
 // The quote and substitution scanner must stay linear on nested "$(…" spans (re-review 3, N4: depth 27 took 14 s).
 // Target is a few ms; the 20 ms ceiling on the median leaves headroom for slow CI machines.
 const ctx = { config: loadConfig('/nonexistent-harness-root').config, env: {}, root: '/p' };
 const CEILING_MS = 20;
-const RUNS = 5;
 const nested = (n: number) => 'echo "' + '$(echo "a '.repeat(n) + '")'.repeat(n) + '"; git push -f';
-const median = (c: string) => {
-  decideCommand(c, ctx); // warm up the regexes and the JIT
-  const ms = Array.from({ length: RUNS }, () => {
-    const t = performance.now();
-    decideCommand(c, ctx);
-    return performance.now() - t;
-  }).sort((a, b) => a - b);
-  return ms[RUNS >> 1];
-};
+// The median of 5 after a warm-up (the regexes and the JIT), logged with the reference workload's ratio.
+const median = (c: string) => medianOf(`guard-scan ${c.length} chars`, () => decideCommand(c, ctx), 5, true).ms;
 
 it.each([
   ['27 levels of nested "$(…" spans', nested(27)],

@@ -1,8 +1,10 @@
-import { mkdtempSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
-import { type SessionState, mergeState, readState, writeMerged, writeState } from '../../src/core/state.js';
+import { buildSync } from 'esbuild';
+import { expect, onTestFinished, test } from 'vitest';
+import { type SessionState, mergeState, readState, StateBusyError, updateState, WRITE_WAIT, writeMerged, writeState } from '../../src/core/state.js';
 
 const s = (o: Partial<SessionState> = {}): SessionState => ({ startedAt: 1, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0, ...o });
 const merge = (k: keyof SessionState, base: unknown, next: unknown, cur: unknown) =>
@@ -41,12 +43,16 @@ test.each(of('counter'))('%s: a raise takes the larger value, a reset stays a re
   expect(merge(k, 1, 4, 2)).toBe(4);
   expect(merge(k, 3, 0, 5)).toBe(0);
   expect(merge(k, 2, 2, 7)).toBe(7); // untouched here: disk wins
+  expect(merge(k, 2, 3, 0)).toBe(1); // another hook reset it meanwhile: the reset holds, plus this hook's raise
+  expect(merge(k, undefined, 1, 0)).toBe(1);
 });
 
 test.each(of('record'))('%s: merged per key; a key the hook removed stays removed', (k) => {
   expect(merge(k, { a: '1' }, { a: '1', b: '2' }, { a: '1', c: '3' })).toEqual({ a: '1', c: '3', b: '2' });
   expect(merge(k, { a: '1', b: '2' }, { b: '9' }, { a: '1', b: '2', c: '3' })).toEqual({ b: '9', c: '3' });
   expect(merge(k, undefined, { a: '1' }, { c: '3' })).toEqual({ c: '3', a: '1' });
+  expect(merge(k, { a: '1' }, undefined, { a: '1', c: '3' })).toEqual({ c: '3' }); // removed whole: other hooks' keys stay
+  expect(merge(k, { a: '1' }, undefined, { a: '1' })).toBeUndefined();
 });
 
 test('guardedOwned: a snapshot, taken whole from the hook that set it', () => {
@@ -75,3 +81,44 @@ test('decisionHits: the cap of 3 holds after a merge, keeping the first 3 in ord
   expect(merge('decisionHits', [h(1)], [h(1), h(2), h(3)], [h(1), h(4)])).toEqual([h(1), h(4), h(2)]);
   expect(merge('files', ['a'], ['a', 'b', 'c'], ['a', 'd', 'e'])).toHaveLength(5); // other lists have no cap
 });
+
+test('the write lock: a live holder makes a write fail after WRITE_WAIT, logged, never silently; a dead holder is broken', async () => {
+  const saved = WRITE_WAIT.ms;
+  WRITE_WAIT.ms = 100;
+  onTestFinished(() => void (WRITE_WAIT.ms = saved));
+  const root = mkdtempSync(join(tmpdir(), 'h-wlock-'));
+  const wlock = join(root, '.harness/state/s.wlock');
+  mkdirSync(wlock, { recursive: true });
+  writeFileSync(join(wlock, 'owner'), JSON.stringify({ pid: process.pid, nonce: 'live' }));
+  const orig = process.stderr.write;
+  let err = '';
+  process.stderr.write = ((x: string) => ((err += x), true)) as typeof process.stderr.write;
+  try {
+    expect(() => updateState(root, 's', (c) => c)).toThrow(StateBusyError);
+  } finally {
+    process.stderr.write = orig;
+  }
+  expect(err).toContain('state write lock timeout');
+  expect(readFileSync(join(root, '.harness/logs/events.jsonl'), 'utf8')).toContain('"decision":"state-write-lost"');
+  const dead = await new Promise<number>((r) => { const c = spawn(process.execPath, ['-e', '']); c.on('close', () => r(c.pid as number)); });
+  writeFileSync(join(wlock, 'owner'), JSON.stringify({ pid: dead, nonce: 'dead' }));
+  expect(updateState(root, 's', (c) => ({ ...c, files: ['ok.ts'] })).files).toEqual(['ok.ts']);
+  expect(existsSync(wlock)).toBe(false);
+});
+
+test('10 processes x 50 merged writes with no session lock: every entry survives', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'h-wrace-'));
+  const entry = join(dir, 'child.ts');
+  writeFileSync(entry, `import { readState, writeMerged } from ${JSON.stringify(join(process.cwd(), 'src/core/state.ts'))};
+const [root, id, m] = process.argv.slice(2);
+for (let j = 0; j < Number(m); j++) {
+  const base = readState(root, 's');
+  writeMerged(root, 's', base, { ...base, files: [...base.files, id + '-' + j] });
+}
+`);
+  buildSync({ entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', outfile: join(dir, 'child.mjs'), logLevel: 'silent' });
+  const root = join(dir, 'repo');
+  const codes = await Promise.all(Array.from({ length: 10 }, (_, i) => new Promise<number | null>((r) => spawn(process.execPath, [join(dir, 'child.mjs'), root, String(i), '50']).on('close', r))));
+  expect(codes).toEqual(Array(10).fill(0));
+  expect(new Set(readState(root, 's').files).size).toBe(500);
+}, 60000);

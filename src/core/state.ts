@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { renameWithRetry, retryTransient, writeAtomic } from './atomic.js';
 import { randomBytes } from 'node:crypto';
+import { appendEventSafe } from './events.js';
 import { join } from 'node:path';
 import type { GuardedView } from './harness-files.js';
 
@@ -111,13 +112,18 @@ export function mergeState(base: SessionState, next: SessionState, cur: SessionS
       const have = new Set(kept.map(key));
       const list = [...kept, ...now.filter((x) => !was.has(key(x)) && !have.has(key(x)))];
       out[k] = k === 'decisionHits' ? list.slice(0, MAX_HITS) : list; // the cap holds after a merge too: disk's first, then ours
-    } else if (!WHOLE.has(k) && isRecord(nv) && isRecord(cv) && (bv === undefined || isRecord(bv))) {
-      const r: Record<string, unknown> = { ...cv };
-      const br = (bv ?? {}) as Record<string, unknown>;
-      for (const f of new Set([...Object.keys(br), ...Object.keys(nv)])) if (key(br[f]) !== key(nv[f])) r[f] = nv[f];
-      out[k] = r;
+    } else if (!WHOLE.has(k) && [bv, nv, cv].every((v) => v === undefined || isRecord(v))) {
+      const [br, nr] = [(bv ?? {}) as Record<string, unknown>, (nv ?? {}) as Record<string, unknown>];
+      const r: Record<string, unknown> = { ...(cv as Record<string, unknown> | undefined) };
+      for (const f of new Set([...Object.keys(br), ...Object.keys(nr)])) {
+        if (key(br[f]) === key(nr[f])) continue;
+        if (nr[f] === undefined) delete r[f];
+        else r[f] = nr[f];
+      }
+      out[k] = nv === undefined && !Object.keys(r).length ? undefined : r; // a removed record keeps keys other hooks added
     } else if (typeof nv === 'number' && typeof cv === 'number' && nv > (typeof bv === 'number' ? bv : 0)) {
-      out[k] = Math.max(nv, cv);
+      const b0 = typeof bv === 'number' ? bv : 0;
+      out[k] = cv < b0 ? cv + (nv - b0) : Math.max(nv, cv); // reset by another hook meanwhile: keep the reset, add our raise
     } else out[k] = nv;
   }
   return out as unknown as SessionState;
@@ -125,13 +131,11 @@ export function mergeState(base: SessionState, next: SessionState, cur: SessionS
 
 /** Writes this hook's change (`base` to `next`) onto the state as it is on disk right now; returns what was written. */
 export function writeMerged(root: string, session: string, base: SessionState, next: SessionState): SessionState {
-  const merged = mergeState(base, next, readState(root, session));
-  writeState(root, session, merged);
-  return merged;
+  return updateState(root, session, (cur) => mergeState(base, next, cur));
 }
 
 export function clearTurn(root: string, session: string): void {
-  writeState(root, session, { ...readState(root, session), files: [], approved: false, askNoted: undefined, reasonDenied: [], stopAttempts: 0, doneClaimAttempts: undefined });
+  updateState(root, session, (cur) => ({ ...cur, files: [], approved: false, askNoted: undefined, reasonDenied: [], stopAttempts: 0, doneClaimAttempts: undefined }));
 }
 
 const readOwner = (lock: string): { pid?: number; nonce?: string } | null => {
@@ -192,67 +196,105 @@ function breakStale(lock: string, nonce: string, ops: LockOps): void {
   }
 }
 
-// Serialises read-modify-write of a session's state across hook processes via an exclusive, owner-tagged lock directory.
-// Waits up to LOCK_WAIT (10 ms steps), then warns and runs onTimeout (a gate's fail-closed answer) or, without one, fn
-// unlocked: its writes go through writeMerged, so they never overwrite another hook's update. Stop events skip the lock
+// One attempt at an exclusive, owner-tagged lock dir: 'held', 'busy' (a live holder; a stale one is broken first) or
+// 'unusable' (the dir can't be made for another reason).
+function tryTake(lock: string, nonce: string, ops: LockOps): 'held' | 'busy' | 'unusable' {
+  try {
+    ops.mkdir(lock);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') return 'unusable';
+    try {
+      if (isStale(lock)) breakStale(lock, nonce, ops);
+    } catch {
+      // lock or break lock vanished meanwhile: look again
+    }
+    return 'busy';
+  }
+  try {
+    writeFileSync(join(lock, 'owner'), JSON.stringify({ pid: process.pid, nonce }));
+  } catch {
+    // an owner-less lock still expires after 30 s
+  }
+  return 'held';
+}
+
+// Rename first, so the lock name is free at once; on Windows removing the dir fails while a waiter has `owner`
+// open, and a half-removed lock of a now-dead owner is what several waiters then break at the same time.
+function release(lock: string, nonce: string, ops: LockOps): void {
+  if (readOwner(lock)?.nonce !== nonce) return;
+  const freed = `${lock}.free.${nonce}`;
+  let renamed = false;
+  try {
+    renameWithRetry(lock, freed, ops.rename);
+    renamed = true;
+  } catch {
+    // could not rename: remove it in place (the name is still ours)
+  }
+  try {
+    // After the rename the lock name may already be a new holder's: only ever remove the freed dir then.
+    ops.rm(renamed ? freed : lock, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
+  } catch {
+    // a leftover .free.* dir is harmless; a leftover lock has a dead owner once this process exits (broken as stale)
+  }
+}
+
+const lockOf = (root: string, session: string, ext: string) => `${statePath(root, session).slice(0, -'.json'.length)}.${ext}`;
+
+export const WRITE_WAIT = { ms: 1000 }; // the write lock is held for milliseconds: a bounded synchronous spin (tests shorten it)
+export class StateBusyError extends Error {
+  constructor() {
+    super('session state write lock busy');
+  }
+}
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * Read, change and write a session's state under `<session>.wlock`, which every state writer takes (Stop and hooks
+ * past the session-lock wait included), so no two read-merge-writes overlap. Throws StateBusyError past WRITE_WAIT.
+ */
+export function updateState(root: string, session: string, change: (cur: SessionState) => SessionState, ops: LockOps = REAL_OPS): SessionState {
+  const lock = lockOf(root, session, 'wlock');
+  const nonce = randomBytes(8).toString('hex');
+  mkdirSync(join(root, '.harness/state'), { recursive: true });
+  let got: 'held' | 'busy' | 'unusable';
+  for (const deadline = Date.now() + WRITE_WAIT.ms; (got = tryTake(lock, nonce, ops)) === 'busy'; pause(1 + Math.random() * 3)) { // jittered, so no waiter starves
+    if (Date.now() < deadline) continue;
+    // The update is lost: say so on stderr and in the event log, never silently.
+    process.stderr.write('harness: state write lock timeout, an update was not saved\n');
+    appendEventSafe(root, { ts: new Date().toISOString(), session, check: 'state-lock', decision: 'state-write-lost' });
+    throw new StateBusyError();
+  }
+  try {
+    const next = change(readState(root, session));
+    writeState(root, session, next);
+    return next;
+  } finally {
+    if (got === 'held') release(lock, nonce, ops);
+  }
+}
+
+// Serialises a whole hook per session via the same kind of lock dir (`<session>.lock`). Waits up to LOCK_WAIT (10 ms
+// steps), then warns and runs onTimeout (a gate's fail-closed answer) or, without one, fn unlocked. Unlocked, a hook's
+// writes still take the write lock and merge onto the state on disk, so they don't overwrite another hook's update; a
+// write that can't get even the write lock is lost, and the dispatcher logs that. Stop events skip this lock
 // (long-running; they write only the attempt counters and the decision, tool-missing and notice fields, merged too).
 export async function withSessionLock<T>(root: string, session: string, fn: () => T | Promise<T>, ops: LockOps = REAL_OPS, onTimeout?: () => T | Promise<T>): Promise<T> {
-  const lock = `${statePath(root, session).slice(0, -'.json'.length)}.lock`;
+  const lock = lockOf(root, session, 'lock');
   const nonce = randomBytes(8).toString('hex');
-  let held = false;
-  let usable = true;
+  let got: 'held' | 'busy' | 'unusable' = 'unusable';
   try {
     try {
       mkdirSync(join(root, '.harness/state'), { recursive: true });
+      for (const deadline = Date.now() + LOCK_WAIT.ms; (got = tryTake(lock, nonce, ops)) === 'busy' && Date.now() < deadline; ) await new Promise((r) => setTimeout(r, 10));
     } catch {
-      usable = false; // unwritable state dir: run unlocked, the dispatcher's own write warnings cover it
+      got = 'unusable'; // unwritable state dir: run unlocked, the dispatcher's own write warnings cover it
     }
-    for (const deadline = Date.now() + LOCK_WAIT.ms; usable && !held; ) {
-      try {
-        ops.mkdir(lock);
-        held = true;
-        try {
-          writeFileSync(join(lock, 'owner'), JSON.stringify({ pid: process.pid, nonce }));
-        } catch {
-          // an owner-less lock still expires after 30 s
-        }
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') {
-          usable = false;
-          break;
-        }
-        try {
-          if (isStale(lock)) breakStale(lock, nonce, ops);
-        } catch {
-          // lock or break lock vanished meanwhile: look again
-        }
-        if (Date.now() >= deadline) break;
-        await new Promise((r) => setTimeout(r, 10));
-      }
-    }
-    if (usable && !held) {
+    if (got === 'busy') {
       process.stderr.write('harness: state lock timeout\n');
       if (onTimeout) return await onTimeout();
     }
     return await fn();
   } finally {
-    // Rename first, so the lock name is free at once; on Windows removing the dir fails while a waiter has `owner`
-    // open, and a half-removed lock of a now-dead owner is what several waiters then break at the same time.
-    if (held && readOwner(lock)?.nonce === nonce) {
-      const freed = `${lock}.free.${nonce}`;
-      let renamed = false;
-      try {
-        renameWithRetry(lock, freed, ops.rename);
-        renamed = true;
-      } catch {
-        // could not rename: remove it in place (the name is still ours)
-      }
-      try {
-        // After the rename the lock name may already be a new holder's: only ever remove the freed dir then.
-        ops.rm(renamed ? freed : lock, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
-      } catch {
-        // a leftover .free.* dir is harmless; a leftover lock has a dead owner once this process exits (broken as stale)
-      }
-    }
+    if (got === 'held') release(lock, nonce, ops);
   }
 }

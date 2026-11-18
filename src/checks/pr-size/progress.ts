@@ -131,8 +131,9 @@ function countedEdit(ctx: Ctx): boolean {
   return rel !== null && !matches(rel, [...ctx.config.pr_size.exclude, ...ctx.config.multi_file_gate.generated]);
 }
 
-// §14.6: no note, no event. No base yet (no remote) is a normal state, so it stays quiet rather than printing on every Stop.
-const unmeasured = (why: string): null => (why.startsWith('no base') || process.stderr.write(`harness: pr-size progress not measured: ${why}\n`), null);
+// §14.6: no note, no event. A repo with no origin/HEAD (no remote yet) is normal, so that one stays quiet on every Stop;
+// a remote whose base isn't fetched keeps its "fetch it first" hint.
+const unmeasured = (why: string): null => (why.startsWith('no base: origin/HEAD is not set') || process.stderr.write(`harness: pr-size progress not measured: ${why}\n`), null);
 
 /** The branch and its working-tree size, or null to stay silent: no counted edit, a detached HEAD, or unmeasured (logged). */
 function measureBranch(ctx: Ctx, git: Git, now: () => number): { branch: string; s: Size } | null {

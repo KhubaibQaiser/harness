@@ -217,6 +217,7 @@ test('latestVersion: the newest of the latest and beta tags, URL-encoded scope, 
   expect(url).toBe('https://registry.npmjs.org/-/package/@khubaibqaiser%2fharness/dist-tags');
   expect(await latestVersion('x', reply(200, { latest: '3.1.0', beta: '3.0.0-beta.5' }))).toBe('3.1.0');
   expect(await latestVersion('x', reply(200, { latest: '3.1.0', beta: 7 }))).toBe('3.1.0');
+  expect(await latestVersion('x', reply(200, { beta: '3.0.0-beta.1' }))).toBe('3.0.0-beta.1'); // a beta tag alone is an answer, not "could not reach npm"
   expect(await latestVersion('x', reply(404, {}))).toBeNull();
   expect(await latestVersion('x', reply(200, { latest: 3 }))).toBeNull();
   expect(await latestVersion('x', (async () => new Response('not json')) as unknown as typeof fetch)).toBeNull();

@@ -5,7 +5,7 @@ export async function latestVersion(pkg: string, fetchImpl: typeof fetch = fetch
     if (res.status !== 200) return null;
     const tags = (await res.json()) as { latest?: unknown; beta?: unknown } | null;
     const [latest, beta] = [tags?.latest, tags?.beta];
-    if (typeof latest !== 'string') return null;
+    if (typeof latest !== 'string') return typeof beta === 'string' ? beta : null; // a beta tag alone still answers
     return typeof beta === 'string' && newer(beta, latest) ? beta : latest;
   } catch {
     return null;

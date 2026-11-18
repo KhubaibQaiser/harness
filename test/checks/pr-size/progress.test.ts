@@ -143,6 +143,15 @@ describe('off, unmeasured, bad state, odd names', () => {
     expect(err.filter((l) => l.startsWith('harness: pr-size progress'))).toEqual([]);
   });
 
+  test('origin/HEAD set but its branch not fetched: the fetch-it-first line stays on stderr', async () => {
+    const root = makeRepo({ 'README.md': 'hi\n' }, { branch: 'feat' });
+    git(root, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
+    edit(root, 'src/a.ts', lines(300));
+    const err = stderr();
+    expect(await hook(root, 'Stop')).toEqual({});
+    expect(err.filter((l) => l.startsWith('harness: pr-size progress'))).toEqual([expect.stringMatching(/^harness: pr-size progress not measured: no base: origin\/HEAD \(origin\/trunk\).*fetch it first/)]);
+  });
+
   test('a throwing git allows with the failed line; a timed-out branch lookup allows with a not-measured line', () => {
     const root = repo();
     const err = stderr();

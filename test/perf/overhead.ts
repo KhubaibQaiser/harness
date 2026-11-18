@@ -7,18 +7,27 @@ import { join } from 'node:path';
 
 export const DISPATCH = join(process.cwd(), 'dist/hooks/dispatch.mjs');
 const RUNS = 21;
-// Ceilings are about 1.25x the slowest median the CI logs show, rounded up to 50 (13-16 Nov 2026: 126 macos-latest and 97
-// windows-latest runs of each latency case, the [perf] lines below). Hosted macOS runners vary: a median of 21 pairs still
-// moved 2x between runs of the same code.
-// Harness cost on top of a bare node spawn. macOS plain cases: medians 54-71 ms, slowest 147 (unattended Bash), so 150
-// had no margin. Windows: slowest 152 ms.
-export const OVERHEAD_MS = { win32: 450, darwin: 200 }[process.platform as string] ?? 100;
-// A counted edit runs about 7 git calls on purpose (spec §14.2), so it gets its own ceiling. macOS: median 141 ms, slowest
-// 324 (failed 300 on ab4ccc6), matched ledger check slowest 259. Windows: counted edit slowest 480, matched check 717.
-export const COUNTED_EDIT_OVERHEAD_MS = { win32: 1000, darwin: 450 }[process.platform as string] ?? 200;
+// Overhead ceilings are ratios: the harness overhead in units of the bare node spawn timed beside it in the same run, so a
+// slow runner moves both and only a slower harness moves the ratio. Absolute ms ceilings failed on slow hosted runners:
+// macOS overhead varied 0.24-0.31 (coefficient of variation) across runs, the ratio 0.10-0.18, and overhead and bare spawn
+// correlate at 0.78-0.90 (Windows 0.85-0.98). CI logs of the last 100 ci.yml runs, 15-18 Nov 2026 (43734056767 to
+// 44250315112), the [perf] lines below: 95 macos-latest and 78 windows-latest runs of each case. The 209.9 ms checkout that
+// failed 150 ms was 3.50x a 60 ms bare spawn, a normal ratio.
+// Each ratio is 1.25x the slowest the logs show, rounded up to 0.5, and at the median bare spawn (macOS about 35 ms,
+// Windows about 46.5) it allows no more ms than the old absolute ceiling did, so it is never looser on a typical runner.
+// A 200 ms slower hook adds about 5.8 (macOS) and 4.2 (Windows) to the ratio. Other platforms use the macOS numbers.
+export const ratio = (r: { win32: number; darwin: number }) => (process.platform === 'win32' ? r.win32 : r.darwin);
+// Plain cases (ungated, unattended Bash, git status, the non-check ledger cases): slowest 3.00 macOS, 2.86 Windows.
+// About 140 and 186 ms at the median bare spawn, against the old 200 and 450.
+export const OVERHEAD_RATIO = ratio({ darwin: 4, win32: 4 });
+// A counted edit runs about 7 git calls on purpose (spec §14.2): slowest 5.97 macOS, 9.55 Windows (old 450 and 1000 ms).
+export const COUNTED_EDIT_RATIO = ratio({ darwin: 7.5, win32: 12 });
+// A matched ledger check hashes a 500-file tree: slowest 5.07 macOS, 20.15 Windows. 1.25x would be 25.5 on Windows, 1200 ms
+// at the median bare spawn against the old 1000, so Windows stays at 21 (about 980 ms), above every logged run.
+export const LEDGER_CHECK_RATIO = ratio({ darwin: 6.5, win32: 21 });
 export const CEILING_MS = 1000; // gross-regression guard on the whole spawn
 // Each median is printed so the next calibration reads measured numbers from the CI log.
-export const report = (name: string, m: { overhead: number; total: number }) => writeSync(2, `[perf] ${name} ${process.platform}: overhead ${m.overhead.toFixed(1)} ms, total ${m.total.toFixed(1)} ms\n`); // straight to stderr: the reporter hides a passing test's console
+export const report = (name: string, m: { overhead: number; total: number } & Partial<Measured>) => writeSync(2, `[perf] ${name} ${process.platform}: overhead ${m.overhead.toFixed(1)} ms, total ${m.total.toFixed(1)} ms${m.ratio === undefined ? '' : `, bare ${m.bare!.toFixed(1)} ms, ratio ${m.ratio.toFixed(2)}`}\n`); // straight to stderr: the reporter hides a passing test's console
 
 export const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 /** One warm-up call (the regexes, the JIT, the file-system cache), then the median of `runs` timed calls, which drops a
@@ -40,7 +49,10 @@ export function medianOf<T>(name: string, fn: () => T, runs = 5): { ms: number; 
 const UNATTENDED_KEYS = ['CI', 'HARNESS_UNATTENDED', 'CLAUDE_CODE_REMOTE'];
 export const attendedEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => Object.fromEntries(Object.entries(env).filter(([k]) => !UNATTENDED_KEYS.includes(k)));
 
-export function measure(input: string, check: (r: ReturnType<typeof spawnSync>) => void, attended = false): { overhead: number; total: number } {
+export type Measured = { overhead: number; total: number; bare: number; ratio: number };
+/** The harness overhead (median paired difference), the totals, the bare spawn's median, and `ratio`: the overhead in
+ *  units of that bare spawn, measured in the same run. A slow runner slows both alike; a slower harness moves only the ratio. */
+export function measure(input: string, check: (r: ReturnType<typeof spawnSync>) => void, attended = false): Measured {
   const home = mkdtempSync(join(tmpdir(), 'h-lat-empty-')); // also the spawns' home: the hook never reads the real ~/.claude
   const empty = join(home, 'empty.mjs');
   writeFileSync(empty, '');
@@ -54,6 +66,7 @@ export function measure(input: string, check: (r: ReturnType<typeof spawnSync>) 
   };
   const diffs: number[] = [];
   const totals: number[] = [];
+  const bares: number[] = [];
   for (let i = 0; i < RUNS; i++) {
     // Alternate which goes first, so a drift in load hits both sides alike.
     let hook, bare;
@@ -62,6 +75,9 @@ export function measure(input: string, check: (r: ReturnType<typeof spawnSync>) 
     check(hook.r);
     diffs.push(hook.ms - bare.ms);
     totals.push(hook.ms);
+    bares.push(bare.ms);
   }
-  return { overhead: median(diffs), total: median(totals) };
+  const overhead = median(diffs);
+  const bare = median(bares);
+  return { overhead, total: median(totals), bare, ratio: overhead / bare };
 }

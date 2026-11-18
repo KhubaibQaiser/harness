@@ -136,6 +136,7 @@ The done contract makes an agent's "done" a verdict harness computes from eviden
 ### CI
 
 - Main is green again on macOS and Windows (ship audit M2). protect's check of a `git checkout` or `git switch` to a branch, tag or hash now looks up the ref and its hooks in one git call, not two, so the hook is faster; every decision is unchanged. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows.
+- CI is faster: the Windows suite runs in 3 shards, and the timing tests run in their own `perf` job on a fresh runner, in parallel with the suite. A `test-floor` job checks the passed-test floor over all shards together, so no shard passes it alone. Contributors only: nothing changes for users.
 
 ## Catalog
 

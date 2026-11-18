@@ -32,9 +32,24 @@ test('decisions-protect: a risky glob hits, fast; a normal one is matched as bef
   expect(globHits('/r', '/r/src/*.ts', ['docs/decisions'])).toBe(false);
 });
 
-test('report: a skill with a risky paths glob counts as relevant, fast; a normal one as before', () => {
-  const [risky, normal] = skillSpecs('/r', [{ name: 'a', paths: ['+(*)'.repeat(10)] }, { name: 'b', paths: ['src/**/*.ts'] }], [], []);
-  expect(fast(() => risky!.relevant!(['/r/' + 'x'.repeat(40)]))).toBe(true);
+test('report: any extglob or more than 2 star runs in a segment is unmeasured, never compiled, and returns fast on long paths', () => {
+  const long = ['/r/' + 'a'.repeat(4096), '/r/' + 'a'.repeat(24) + '/x.ts', '/r/' + 'a'.repeat(40) + '.ts'];
+  // the reviewer's bypasses of the hook cap: 2 groups, and no extglob at all
+  for (const g of ['+(*)+(*)', '*a'.repeat(14) + 'b', '+(a)', '@(x)', 'src/*a*a*b.ts']) {
+    const [spec] = skillSpecs('/r', [{ name: 's', paths: ['src/**/*.ts', g] }], [], []);
+    expect(spec!.label, g).toBe('unmeasured (pattern too complex)');
+    expect(spec!.relevant, g).toBeNull();
+  }
+  // under the bound: compiled, and still fast on long one-character paths
+  const [ok] = skillSpecs('/r', [{ name: 's', paths: ['a*a*b', '**/*.ts', 'src/**/*.test.*', '*.{ts,tsx}'] }], [], []);
+  expect(ok!.label).toBe('paths');
+  expect(fast(() => ok!.relevant!(long))).toBe(true);
+  expect(ok!.relevant!(['/r/' + 'a'.repeat(4096) + 'b'])).toBe(false); // a path over 512 characters is never matched
+});
+
+test('report: a normal paths glob is matched as before', () => {
+  const [normal] = skillSpecs('/r', [{ name: 'b', paths: ['src/**/*.ts'] }], [], []);
+  expect(normal!.label).toBe('paths');
   expect(normal!.relevant!(['/r/src/a.ts'])).toBe(true);
   expect(normal!.relevant!(['/r/docs/a.md'])).toBe(false);
 });

@@ -2,10 +2,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import picomatch from 'picomatch';
 import { parse as parseYaml } from 'yaml';
-import { isAnyTestFile, riskyGlob } from '../../core/paths.js';
+import { isAnyTestFile } from '../../core/paths.js';
 import { bucketOf, type Acc, type Bucket, type SessionCtx } from '../acc.js';
 
-export interface SkillSpec { name: string; relevant: ((paths: string[]) => boolean) | null; label: 'paths' | 'proxy' | 'stack' | 'none'; stackUnknown?: true }
+export interface SkillSpec { name: string; relevant: ((paths: string[]) => boolean) | null; label: 'paths' | 'proxy' | 'stack' | 'none' | typeof TOO_COMPLEX; stackUnknown?: true }
 /** Texts the page shows beside the splits. */
 export const SKILL_NOTES = {
   compact: 'Proxy: relevance is judged over the whole session, so a session counts as relevant before and after its first compaction alike.',
@@ -19,6 +19,14 @@ export interface SkillRow {
   byBucket: Record<Bucket, { r: number; i: number }>; byCompact: { pre: { r: number; i: number }; post: { r: number; i: number } };
 }
 
+export const TOO_COMPLEX = 'unmeasured (pattern too complex)';
+/** Stricter than the hooks' riskyGlob: here the agent shapes both the glob (SKILL.md) and the paths (files it edits).
+ *  Timed on picomatch 4.0.7 against a 4096-character one-letter path: any extglob, or 3 `*` runs in one segment
+ *  (`*a*a*ab`), ran past 20 s; 2 runs (`a*a*b`, `[a]*[a]*b`) took 44 ms or less. `?` is one character, so it adds no
+ *  backtracking, and a segment that is just `**` is picomatch's globstar, not a run. */
+export const tooComplex = (g: string): boolean =>
+  /[+*?@!]\(/.test(g) || g.length > 256 || g.split('/').some((seg) => seg !== '**' && (seg.match(/\*+/g)?.length ?? 0) > 2);
+const MAX_PATH = 512; // a longer edited path is never matched, so a long crafted path can't slow a 2-run glob either
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const EDIT_CAP = 1000; // turns.ts caps the edited list here
 const MAX_SKILLS = 500, MAX_SKILL_MD = 64 * 1024;
@@ -61,9 +69,10 @@ export function skillSpecs(root: string, installed: { name: string; paths?: stri
   };
   return installed.map(({ name, paths }): SkillSpec => {
     if (paths !== undefined && paths.length > 0) {
-      // SKILL.md is agent-writable: a risky glob is never compiled and counts as a match
-      const m = paths.some(riskyGlob) ? () => true : picomatch(paths, { dot: true });
-      return { name, label: 'paths', relevant: any((p) => m(p)) };
+      // SKILL.md is agent-writable: a glob that could hang is never compiled, and the skill is not measured
+      if (paths.some(tooComplex)) return { name, label: TOO_COMPLEX, relevant: null };
+      const m = picomatch(paths, { dot: true });
+      return { name, label: 'paths', relevant: any((p) => p.length <= MAX_PATH && m(p)) };
     }
     const unk = (fws: string[]): { stackUnknown?: true } => (packages.some((k) => k.frameworks.some((f) => fws.includes(f))) ? {} : { stackUnknown: true });
     if (name === 'frontend-nextjs') return { name, label: 'proxy', relevant: proxies[name]!, ...unk(['next']) };

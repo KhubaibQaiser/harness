@@ -75,6 +75,8 @@ The done contract makes an agent's "done" a verdict harness computes from eviden
 
 ### Safety
 
+- `uninstall` no longer deletes your own files in `.harness/` (ship audit M1). It removes only what the manifest lists, plus the manifest and harness's run-time folders (`state`, `logs`, `backup`, `results`, `debug`, `reports`, `reviews`, `verdicts`, `tmp`, `vet`), then a folder only once it is empty. A `.harness/notes.md` from before `init`, or a file you added to `.harness/hooks/`, now stays and is named. `--dry-run` lists every file it would remove, and the real run names each one it removed.
+- **Behaviour change:** `init` now refuses a `.harness/` folder that has no manifest unless it can tell the folder is harness's: a "keep" uninstall left `.harness/state/files-snapshot.json` there, or the folder holds only `presets/`, `tmp/` and `vet/`. It names each other entry, writes nothing, and asks you to move them out or delete them yourself. This covers a re-init after `uninstall --yes` that kept an edited `.harness/config.yaml` or your `.harness/tasks/`: move them aside first. That uninstall now says so. An interrupted install (`.harness/apply.lock` left) still gets the recovery steps instead. `harness review`, `harness tdd on|off` and every `harness task` subcommand now also refuse, and write nothing, where harness isn't installed, like `verify` and `report`, so no CLI command leaves `.harness/` behind before `init`. The `.harness/eslint/` files uninstall keeps because your ESLint config still imports them don't block a re-init, as long as they are exactly what `harness rules` wrote and nothing else is in that folder.
 - Harness never writes or deletes through a symlink planted in a folder the agent can write (`.harness/logs`, `tmp`, `state`, `reports` and the rest).
 - Harness removes only files it created: `harness workdir --clean` removes only a folder `workdir` made, temp files never truncate an existing file, and eval results, preset installs and task drafts never overwrite one.
 
@@ -131,9 +133,16 @@ The done contract makes an agent's "done" a verdict harness computes from eviden
 - A write the OS refuses for a reason other than Claude Code's sandbox, such as a read-only folder (`EACCES`), now prints the real error ("apply failed and was rolled back: EACCES: permission denied …"), not "Claude Code's sandbox blocks harness's own files". The sandbox line needs `EPERM` or `EROFS` on one of harness's denyWrite paths, as the reference already said (ship audit S6).
 - `update` and `sync` keep a `checks.done: true` you set by hand. No catalog item owns that check, so it no longer reverts to `false`, and `doctor` no longer calls it a difference from the selected items (ship audit S7).
 - A file in the plugin's `skills/` folder, such as Finder's `.DS_Store`, is no longer listed or measured as a skill by `harness context`, `doctor` and the context budget (ship audit S9).
+### Glob cap
+
+- The bundled picomatch has an extglob ReDoS advisory with no fixed version (GHSA-fc5q-39xc-vjpf). Harness now never compiles a glob from agent text with more than 3 extglob groups or over 256 characters, so a crafted command can't stall a hook. Such a glob counts as a match: guard asks, and protect asks or denies. In `harness report`, a skill whose `paths` has any extglob, more than 2 `*` runs in one segment, more than 4 across the glob, or more than 2 `**` shows as `unmeasured (pattern too complex)`, so a crafted SKILL.md can't hang the report. Ordinary globs behave as before.
+
 ### CI
 
 - Main is green again on macOS and Windows (ship audit M2). protect's check of a `git checkout` or `git switch` to a branch, tag or hash now looks up the ref and its hooks in one git call, not two, so the hook is faster; every decision is unchanged. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows.
+- The hook latency tests compare the harness overhead with a bare node spawn timed in the same run, as a ratio, instead of a fixed number of ms, so a slow CI runner no longer fails them while a slower hook still does. Contributors only: nothing changes for users.
+- CI is faster: the Windows suite runs in 3 shards, and the timing tests run in their own `perf` job on a fresh runner, in parallel with the suite. A `test-floor` job checks the passed-test floor over all shards together, so no shard passes it alone. Contributors only: nothing changes for users.
+- The in-process guard perf tests also log their time against a fixed reference workload measured in the same run, so their ceilings can become ratios once there is CI data. Contributors only.
 
 ## Catalog
 

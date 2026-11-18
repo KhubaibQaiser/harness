@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { mkdirSync, mkdtempSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -11,6 +11,7 @@ import { dispatch } from '../../src/hooks/dispatch.js';
 const mk = () => {
   const root = mkdtempSync(join(tmpdir(), 'h-tdd-'));
   mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/manifest.json'), '{}\n'); // installed: tdd on/off refuse without a manifest
   return root;
 };
 const cli = (root: string, args: string[], env: NodeJS.ProcessEnv = {}) => {

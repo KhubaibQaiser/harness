@@ -6,10 +6,16 @@ const dir = '.github/workflows';
 const raw = (f: string) => readFileSync(`${dir}/${f}`, 'utf8');
 const load = (f: string) => parse(raw(f));
 
-test('ci matrix runs macOS and Windows on node 22', () => {
-  const m = load('ci.yml').jobs.test.strategy.matrix;
-  expect(m.os).toEqual(['macos-latest', 'windows-latest']);
-  expect(m.node).toEqual([22]);
+test('ci matrix runs macOS whole and Windows in 3 shards on node 22, and perf on both in its own job', () => {
+  const ci = load('ci.yml').jobs;
+  expect(ci.test.strategy.matrix.include).toEqual([
+    { os: 'macos-latest', shard: '1/1' }, { os: 'windows-latest', shard: '1/3' }, { os: 'windows-latest', shard: '2/3' }, { os: 'windows-latest', shard: '3/3' },
+  ]);
+  expect(ci.test.steps.find((s: any) => /setup-node@/.test(s.uses ?? '')).with['node-version']).toBe(22);
+  expect(ci.test.steps.some((s: any) => s.run === 'pnpm test --shard=${{ matrix.shard }}')).toBe(true);
+  for (const j of ['test', 'perf']) expect(ci[j].strategy['fail-fast'], j).toBe(false);
+  expect(ci.perf.strategy.matrix.os).toEqual(['macos-latest', 'windows-latest']);
+  expect(ci.perf.needs).toBeUndefined(); // parallel with the suite, on a fresh runner
 });
 
 test('ci is callable and has least-privilege permissions', () => {
@@ -213,8 +219,9 @@ test('real-frameworks job runs the opt-in e2e on ubuntu with node 22', () => {
 });
 
 test('hook latency runs as its own CI step after the parallel suite, in a project without file parallelism', async () => {
-  const steps = load('ci.yml').jobs.test.steps.map((s: any) => s.run);
-  expect(steps.indexOf('pnpm test:perf')).toBeGreaterThan(steps.indexOf('pnpm test'));
+  const jobs = load('ci.yml').jobs;
+  expect(jobs.perf.steps.map((s: any) => s.run)).toContain('pnpm test:perf');
+  expect(jobs.test.steps.map((s: any) => s.run)).not.toContain('pnpm test:perf');
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
   expect(pkg.scripts.test).toMatch(/vitest run --project unit --project e2e$/); // perf is left out of the default run
   expect(pkg.scripts['test:perf']).toMatch(/vitest run --project perf$/);
@@ -239,7 +246,7 @@ test('ci runs the offline catalog check after pnpm build', () => {
 
 test('test steps set HARNESS_PLAIN_INIT so the Claude-Code-only gate does not block them', () => {
   for (const f of ['ci.yml', 'claude-code-weekly.yml'])
-    expect(allSteps(f).find((s: any) => s.run === 'pnpm test').env).toEqual({ HARNESS_PLAIN_INIT: '1' });
+    expect(allSteps(f).find((s: any) => /^pnpm test( |$)/.test(s.run ?? '')).env).toEqual({ HARNESS_PLAIN_INIT: '1' });
 });
 
 test('catalog-pins runs weekly and on catalog changes with --resolve --context', () => {

@@ -17,6 +17,8 @@ import { repoWith } from './repo.js';
 const lines = Array.from({ length: 20 }, (_, i) => `line number ${i + 1}`).join('\n') + '\n';
 function setup(g: Partial<GatherJson> = {}, gh: (a: string) => ReturnType<Exec> | undefined = () => undefined) {
   const r = repoWith({ 'b.ts': lines }, { 'a.ts': lines, 'img.bin': Buffer.from([0, 1, 2]) });
+  mkdirSync(join(r.root, '.harness'), { recursive: true });
+  writeFileSync(join(r.root, '.harness/manifest.json'), '{}\n'); // installed: review refuses a repo without harness
   const dir = join(r.root, '.harness', 'tmp', 'w-1');
   mkdirSync(dir, { recursive: true });
   const snap = writeSnapshot(defaultExecBytes, r.root, r.head, join(dir, 'head'), { ignore: () => false });

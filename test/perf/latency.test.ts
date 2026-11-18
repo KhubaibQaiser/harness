@@ -6,23 +6,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, onTestFinished, test } from 'vitest';
-import { attendedEnv, CEILING_MS, COUNTED_EDIT_OVERHEAD_MS, DISPATCH, measure, OVERHEAD_MS, report } from './overhead.js';
+import { attendedEnv, CEILING_MS, COUNTED_EDIT_RATIO, DISPATCH, measure, OVERHEAD_RATIO, ratio, report } from './overhead.js';
 
-// An attended Stop reads git state and the transcript tail, so it gets its own ceilings, set as in overhead.ts (1.25x the
-// slowest median, 13-16 Nov 2026). 50 MB transcript: macOS median 129 ms, slowest 328 (04bd10c, failed 250); Windows
-// median 374, slowest 422 against 450. 500 decisions: macOS median 411, slowest 864 (04bd10c) and 649 against 650 (b2f7636);
-// Windows median 940, slowest 1045, so 1350 stays.
-const STOP_OVERHEAD_MS = { win32: 550, darwin: 450 }[process.platform as string] ?? 100;
-const WARN_OVERHEAD_MS = { win32: 1350, darwin: 1100 }[process.platform as string] ?? 300;
-// 40 result files to read: macOS median 101 ms, slowest 220 (87ab33e); it failed 150 in 10 runs from 9 to 15 Nov, and its
-// daily medians did not move (89-106). Windows: median 193, slowest 243.
-const GATED_OVERHEAD_MS = { win32: 450, darwin: 300 }[process.platform as string] ?? 100;
-// protect's ref-move check (e82410a) spawned git four times; a switch's two lookups are now one cat-file (owner, 2026-11-18:
-// speed up, then set the ceiling from CI). macOS over 32 runs at four spawns (16-17 Nov): median 120 ms, slowest 210, which
-// failed 150 in 3 runs on slow runners; 1.25x 210 rounded up to 50 is 300. Windows: median about 295, slowest 331.
-const CHECKOUT_OVERHEAD_MS = { win32: 450, darwin: 300 }[process.platform as string] ?? 100;
-// The warning run's total holds its own overhead plus the bare spawn, so it can't share the 1000 ms ceiling where that overhead may reach 1350.
-const WARN_CEILING_MS = Math.max(CEILING_MS, WARN_OVERHEAD_MS + 300);
+// Ratios to the paired bare spawn, set as in overhead.ts (1.25x the slowest the CI logs show, 15-18 Nov 2026; in ms at the
+// median bare spawn, each is under the old absolute ceiling it replaces).
+// An attended Stop reads git state and the transcript tail. 50 MB transcript: slowest 6.79 macOS, 8.27 Windows (old 450
+// and 550 ms). 500 decisions: slowest 14.72 macOS, 21.36 Windows (old 1100 and 1350 ms).
+const STOP_RATIO = ratio({ darwin: 8.5, win32: 10.5 });
+const WARN_RATIO = ratio({ darwin: 18.5, win32: 27 });
+// 40 result files to read: slowest 4.12 macOS, 4.94 Windows (old 300 and 450 ms).
+const GATED_RATIO = ratio({ darwin: 5.5, win32: 6.5 });
+// protect's ref-move check looks the ref and its hooks up in one git call: slowest 4.83 macOS, 6.41 Windows (old 300 and 450 ms).
+const CHECKOUT_RATIO = ratio({ darwin: 6.5, win32: 8.5 });
+// The warning run's total holds its own overhead plus the bare spawn, so it keeps the old totals above the 1000 ms ceiling.
+const WARN_CEILING_MS = { win32: 1650, darwin: 1400 }[process.platform as string] ?? CEILING_MS;
 
 test('ungated PreToolUse: harness overhead over a bare node spawn', () => {
   const repo = mkdtempSync(join(tmpdir(), 'h-lat-'));
@@ -35,7 +32,7 @@ test('ungated PreToolUse: harness overhead over a bare node spawn', () => {
     expect(r.stdout).toBe('');
   });
   report('ungated-pretooluse', m);
-  expect(m.overhead, `overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.ratio, `overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(OVERHEAD_RATIO);
   expect(m.total, `total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 
@@ -52,7 +49,7 @@ test('unattended Bash (sandbox-required reads managed settings): harness overhea
     else expect(JSON.parse(String(r.stdout)).hookSpecificOutput.permissionDecision).toBe('deny');
   });
   report('unattended-bash', m);
-  expect(m.overhead, `unattended overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.ratio, `unattended overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(OVERHEAD_RATIO);
   expect(m.total, `unattended total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 
@@ -78,7 +75,7 @@ test('gated PreToolUse with 40 result files: harness overhead over a bare node s
     expect(r.stdout).toBe(''); // allowed: fresh failing related result
   });
   report('gated-40-results', m);
-  expect(m.overhead, `gated overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(GATED_OVERHEAD_MS);
+  expect(m.ratio, `gated overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(GATED_RATIO);
   expect(m.total, `gated total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
   // Control: a passing related result must deny, proving the gate ran on this path.
   const failing = join(repo, '.harness/results/r7.json');
@@ -108,7 +105,7 @@ test('counted PostToolUse Edit in a 20-file repo with checks.prSize on: harness 
   // Control: the edit was measured, so the progress file holds this branch's size.
   expect(JSON.parse(readFileSync(join(repo, '.harness/state/pr-progress.json'), 'utf8')).feat).toMatchObject({ lines: 50, files: 1 });
   report('counted-edit', m);
-  expect(m.overhead, `counted edit overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(COUNTED_EDIT_OVERHEAD_MS);
+  expect(m.ratio, `counted edit overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(COUNTED_EDIT_RATIO);
   expect(m.total, `counted edit total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 
@@ -129,7 +126,7 @@ test.each(['git status', 'git checkout feat'])('attended Bash `%s`: harness over
     expect(r.stdout).toBe('');
   }, true);
   report(`ref-move-${command.replace(/\W+/g, '-')}`, m);
-  expect(m.overhead, `overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(command === 'git checkout feat' ? CHECKOUT_OVERHEAD_MS : OVERHEAD_MS);
+  expect(m.ratio, `overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(command === 'git checkout feat' ? CHECKOUT_RATIO : OVERHEAD_RATIO);
   expect(m.total, `total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 
@@ -153,7 +150,7 @@ test('attended Stop with a 50 MB transcript and no stored hit: harness overhead 
   const ctl = spawnSync(process.execPath, [DISPATCH], { input: input('ctl', hit), encoding: 'utf8', env: { ...attendedEnv(process.env), HOME: repo, USERPROFILE: repo } });
   expect(ctl.stdout).toContain('team decision');
   report('stop-50mb', m);
-  expect(m.overhead, `stop overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(STOP_OVERHEAD_MS);
+  expect(m.ratio, `stop overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(STOP_RATIO);
   expect(m.total, `stop total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 120000);
 
@@ -176,7 +173,7 @@ test('attended Stop with 500 team decisions covering the changed file: harness o
     rmSync(join(repo, '.harness/state/lat.json'), { force: true }); // every run is the session's first warning
   }, true);
   report('stop-500-decisions', m);
-  expect(m.overhead, `warning overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(WARN_OVERHEAD_MS);
+  expect(m.ratio, `warning overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(WARN_RATIO);
   expect(m.total, `warning total median ${m.total.toFixed(1)} ms`).toBeLessThan(WARN_CEILING_MS);
 }, 120000);
 

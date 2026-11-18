@@ -10,7 +10,7 @@ import { medianOf } from './overhead.js';
 // these cases on a laptop (1500 graphql reads 16-21 to 40-46 ms), so the margin is smaller than it was.
 const ctx = { config: loadConfig('/nonexistent-harness-root').config, env: {}, root: '/p' };
 const time = (name: string, c: string) => {
-  const { ms, result } = medianOf(`gh-writes ${name}`, () => decideCommand(c, ctx));
+  const { ms, result } = medianOf(`gh-writes ${name}`, () => decideCommand(c, ctx), 5, true);
   return { kind: result.kind, ms };
 };
 

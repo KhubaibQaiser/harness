@@ -1,5 +1,6 @@
 import type { ReportData } from './html.js';
 import { COUNT_FIELDS, COUNTERS, type WindowRule, type WindowsResult } from './windows.js';
+import { OVER_BUDGET, TOO_COMPLEX } from './metrics/skills.js';
 
 // Counts-only export (spec §6.4, owner Q9). Allowlist: every string is a known id, a version, a model id, an ISO week, a date or a schema enum; all else is `other`.
 export interface Known { ids: Set<string> }
@@ -14,7 +15,10 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SOURCES = ['timing', 'transcript', 'events'];
 const EVENTS = ['PreToolUse', 'PostToolUse', 'Stop', 'SubagentStop', 'UserPromptSubmit', 'SessionStart', 'SessionEnd', 'PreCompact', 'Notification'];
 const ALWAYS_CLASSES = ['harness', 'preset', 'repo', 'catalog'];
-const ENUMS = new Set([OTHER, ...ALWAYS_CLASSES, ...SOURCES, ...EVENTS]);
+// A skill the report could not measure: its reason, and only its listing counts (never zeros that read as "not relevant").
+const UNMEASURED: Record<string, string> = { [OVER_BUDGET]: 'time budget', [TOO_COMPLEX]: 'pattern too complex' };
+const LISTING_FIELDS = ['listedIn', 'sessionsWithListing', 'typedOrCarried'];
+const ENUMS = new Set([OTHER, ...ALWAYS_CLASSES, ...SOURCES, ...EVENTS, ...Object.values(UNMEASURED)]);
 const DATE_LEN = 10;
 const MS_DAY = 86_400_000, DAYS_WEEK = 7, THURSDAY = 4, PAD = 2;
 
@@ -41,7 +45,7 @@ const LATENCY = ['n', 'p50', 'p95', 'max', 'timeouts'];
 const OUT_KEYS = new Set([
   'schema', 'harness', 'window_days', 'generated_on', 'claude_versions', 'models', 'sessions', 'scanned', 'skipped', 'unknown', 'skills', 'rules',
   'tokens', 'total', 'main', 'sub', 'always', 'always_measured', 'gates', 'tally', 'v', 'false_blocks', 'hallucination', 'notes', 'latency', 'source', 'event', 'weekly',
-  'id', 'week', 'counters', 'byBucket', 'byCompact', 'pre', 'post', ...COUNT_FIELDS.rule, ...COUNT_FIELDS.top,
+  'id', 'unmeasured', 'week', 'counters', 'byBucket', 'byCompact', 'pre', 'post', ...COUNT_FIELDS.rule, ...COUNT_FIELDS.top,
   ...BUCKETS, ...SPLIT, ...COUNTER_KEYS, ...HALLUCINATION, ...GATE_NOTES, ...WINDOW_NOTES, ...USAGE, ...SKILL_FIELDS, ...LATENCY, 'tokens',
 ]);
 
@@ -122,7 +126,11 @@ export function buildExport(d: ReportData, known: Known): Record<string, unknown
     claude_versions: m.claudeVersions.map((v) => (VERSION_RE.test(v) ? v : OTHER)),
     models: fold(Object.entries(u.byModel).map(([n, v]) => ({ n, ...v })), (r) => (MODEL_RE.test(r.n) ? r.n : OTHER), USAGE),
     sessions: { scanned: num(m.sessions.scanned), skipped: Object.values(m.sessions.skipped).reduce((a, b) => a + num(b), 0), unknown: num(m.sessions.unknown) },
-    skills: fold(d.skills, (s) => id(s.name, known), SKILL_FIELDS),
+    skills: [
+      ...fold(d.skills.filter((s) => !UNMEASURED[s.label]), (s) => id(s.name, known), SKILL_FIELDS),
+      ...fold(d.skills.filter((s) => UNMEASURED[s.label]), (s) => `${id(s.name, known)}\n${UNMEASURED[s.label]}`, LISTING_FIELDS)
+        .map(({ id: k, ...c }) => ({ id: (k as string).split('\n')[0], unmeasured: (k as string).split('\n')[1], ...c })),
+    ],
     rules: rules(d, known),
     tokens: { total: only(u.total, USAGE), main: only(u.main, USAGE), sub: only(u.sub, USAGE), always: fold(d.always, (a) => alwaysClass(a.owner, known), ['tokens']), always_measured: d.alwaysNote === undefined },
     gates: gates(d, known),

@@ -6,7 +6,7 @@ A line in `CLAUDE.md` saying "write the test first" or "never read `.env`" is a 
 
 Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, and in every session with `sandbox: always`. Elsewhere, and on native Windows always, the guard and protect checks are a seatbelt.
 
-**Status:** beta, version `0.2.0-beta.2`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. Release notes: [docs/release-notes/0.2.0-beta.2.md](docs/release-notes/0.2.0-beta.2.md).
+**Status:** beta, version `0.2.0-beta.3`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. Release notes: [docs/release-notes/0.2.0-beta.3.md](docs/release-notes/0.2.0-beta.3.md).
 
 ## Who it's for
 

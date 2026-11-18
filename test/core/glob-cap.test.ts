@@ -5,7 +5,7 @@ import { riskyGlob } from '../../src/core/paths.js';
 import '../../src/checks/guard.js'; // load order: guard-readings and guard import each other
 import { globReadings } from '../../src/checks/guard-readings.js';
 import { globHits } from '../../src/checks/decisions-protect.js';
-import { skillSpecs } from '../../src/report/metrics/skills.js';
+import { skillSpecs, TOO_COMPLEX } from '../../src/report/metrics/skills.js';
 
 const SLOW = ['+(a)'.repeat(12), '+(*)'.repeat(10), `${'+(*)'.repeat(12)}.json`, 'a'.repeat(257) + '*'];
 const fast = <T>(f: () => T): T => {
@@ -45,6 +45,21 @@ test('report: any extglob or more than 2 star runs in a segment is unmeasured, n
   expect(ok!.label).toBe('paths');
   expect(fast(() => ok!.relevant!(long))).toBe(true);
   expect(ok!.relevant!(['/r/' + 'a'.repeat(4096) + 'b'])).toBe(false); // a path over 512 characters is never matched
+});
+
+test('report: more than 2 globstars (anywhere, braces included) is unmeasured, and returns fast on a deep path', () => {
+  const deep = ['/r/' + 'a/'.repeat(255)];
+  for (const g of ['**/a/**/a/**/a/**/b', '**/a/**/a/**/a/**/a/**/b', '**/*/**/*/**/*/**/*/**/b', '**/*a*/**/*a*/**/*a*/**/*a*/**/b', 'src/**/*a*/**/*a*/**/*a*/**/b', 'a**/a**/a**/b', '{**/a,**/b}/**/c']) {
+    const [spec] = skillSpecs('/r', [{ name: 's', paths: [g] }], [], []);
+    expect(spec!.label, g).toBe(TOO_COMPLEX);
+    expect(spec!.relevant, g).toBeNull();
+  }
+  // a real 2-globstar glob stays measured, and fast on the same deep path
+  for (const g of ['src/**/a*a/**/*.test.ts', '**/*a*/**/*a*b', '**/a/**/b']) {
+    const [ok] = skillSpecs('/r', [{ name: 's', paths: [g] }], [], []);
+    expect(ok!.label, g).toBe('paths');
+    expect(fast(() => ok!.relevant!(deep)), g).toBe(false);
+  }
 });
 
 test('report: a normal paths glob is matched as before', () => {

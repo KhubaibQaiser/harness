@@ -21,11 +21,14 @@ export interface SkillRow {
 
 export const TOO_COMPLEX = 'unmeasured (pattern too complex)';
 /** Stricter than the hooks' riskyGlob: here the agent shapes both the glob (SKILL.md) and the paths (files it edits).
- *  Timed on picomatch 4.0.7 against a 4096-character one-letter path: any extglob, or 3 `*` runs in one segment
- *  (`*a*a*ab`), ran past 20 s; 2 runs (`a*a*b`, `[a]*[a]*b`) took 44 ms or less. `?` is one character, so it adds no
- *  backtracking, and a segment that is just `**` is picomatch's globstar, not a run. */
+ *  Timed on picomatch 4.0.7: against a 4096-character one-letter path, any extglob, or 3 `*` runs in one segment
+ *  (`*a*a*ab`), ran past 20 s, while 2 runs (`a*a*b`, `[a]*[a]*b`) took 44 ms or less. Against `a/` x 255, globstars
+ *  stack too: 2 took 57 ms, 3 took 3.6 s and 4 hung. So more than 2 `**` anywhere in the glob (in any segment, such as
+ *  `a**`, and counted in the raw text, so a brace like `{**\/a,**\/b}` can't hide them) is too complex. A segment that is
+ *  exactly `**` doesn't count toward that segment's run limit. `?` matches one character, so it adds no backtracking. */
 export const tooComplex = (g: string): boolean =>
-  /[+*?@!]\(/.test(g) || g.length > 256 || g.split('/').some((seg) => seg !== '**' && (seg.match(/\*+/g)?.length ?? 0) > 2);
+  /[+*?@!]\(/.test(g) || g.length > 256 || (g.match(/\*\*/g)?.length ?? 0) > 2 ||
+  g.split('/').some((seg) => seg !== '**' && (seg.match(/\*+/g)?.length ?? 0) > 2);
 const MAX_PATH = 512; // a longer edited path is never matched, so a long crafted path can't slow a 2-run glob either
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const EDIT_CAP = 1000; // turns.ts caps the edited list here

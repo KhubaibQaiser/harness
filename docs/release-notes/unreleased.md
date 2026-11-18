@@ -132,4 +132,4 @@ New since 0.2.0-beta.0, unchanged in this release:
 
 ### Glob cap
 
-- The bundled picomatch has an extglob ReDoS advisory with no fixed version (GHSA-fc5q-39xc-vjpf). Harness now never compiles a glob from agent text with more than 3 extglob groups or over 256 characters, so a crafted command can't stall a hook. Such a glob counts as a match: guard asks, and protect asks or denies. In `harness report`, a skill whose `paths` has any extglob or more than 2 `*` runs in one segment shows as `unmeasured (pattern too complex)`, so a crafted SKILL.md can't hang the report. Ordinary globs behave as before.
+- The bundled picomatch has an extglob ReDoS advisory with no fixed version (GHSA-fc5q-39xc-vjpf). Harness now never compiles a glob from agent text with more than 3 extglob groups or over 256 characters, so a crafted command can't stall a hook. Such a glob counts as a match: guard asks, and protect asks or denies. In `harness report`, a skill whose `paths` has any extglob, more than 2 `*` runs in one segment or more than 2 `**` shows as `unmeasured (pattern too complex)`, so a crafted SKILL.md can't hang the report. Ordinary globs behave as before.

@@ -5,7 +5,7 @@ import { evalsSection, type EvalSummary } from './evals.js';
 import { enforcedLine, type RuleRow } from './rules.js';
 import { rulesSection } from './html-rules.js';
 import { gatesSection, MS_NOTE, tokensSection } from './html-tokens-gates.js';
-import { SKILL_NOTES, type SkillRow } from './metrics/skills.js';
+import { OVER_BUDGET, SKILL_NOTES, type SkillRow } from './metrics/skills.js';
 import type { GatesResult } from './metrics/gates.js';
 import type { UsageResult } from './metrics/usage.js';
 import { hbars } from './svg.js';
@@ -62,8 +62,8 @@ function skillNote(s: SkillRow): string {
 function skillsSection(skills: SkillRow[]): string {
   const rows = [...skills].sort((a, b) => Number(b.dropped) - Number(a.dropped));
   const cells = rows.map((s) => [
-    s.name, `${s.listedIn} of ${s.sessionsWithListing}`, rate(s.invokedRelevant, s.relevantIn, NO_RELEVANT),
-    s.invokedOther, s.typedOrCarried, s.unknown, skillNote(s),
+    s.name, `${s.listedIn} of ${s.sessionsWithListing}`, s.label === OVER_BUDGET ? 'unmeasured' : rate(s.invokedRelevant, s.relevantIn, NO_RELEVANT),
+    s.label === OVER_BUDGET ? 'unmeasured' : s.invokedOther, s.typedOrCarried, s.unknown, skillNote(s),
   ]);
   const bars = rows.filter((s) => s.relevantIn > 0)
     .map((s) => ({ label: s.name, value: s.invokedRelevant, max: s.relevantIn, note: `r=${s.relevantIn}` }));

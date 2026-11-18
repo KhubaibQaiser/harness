@@ -8,10 +8,10 @@ import { globHits } from '../../src/checks/decisions-protect.js';
 import { OVER_BUDGET, skillSpecs, skillsAcc, TOO_COMPLEX } from '../../src/report/metrics/skills.js';
 
 const SLOW = ['+(a)'.repeat(12), '+(*)'.repeat(10), `${'+(*)'.repeat(12)}.json`, 'a'.repeat(257) + '*'];
-const fast = <T>(f: () => T): T => {
+const fast = <T>(f: () => T, ms = 200): T => {
   const t = Date.now();
   const r = f();
-  expect(Date.now() - t).toBeLessThan(200);
+  expect(Date.now() - t).toBeLessThan(ms);
   return r;
 };
 
@@ -72,7 +72,7 @@ test('report: more than 4 star runs across the whole glob (braces included) is u
   for (const g of ['src/**/*.test.*', '**/*.{ts,tsx}', '*a*/**/*a*/**/b', '**/*a*a/**/*a*a/b']) {
     const [ok] = skillSpecs('/r', [{ name: 's', paths: [g] }], [], []);
     expect(ok!.label, g).toBe('paths');
-    fast(() => ok!.relevant!(deep));
+    fast(() => ok!.relevant!(deep), 1000); // 2-42 ms alone; slack for a loaded full-suite run, still far from a hang
   }
 });
 
@@ -88,6 +88,43 @@ test('report: skill matching stops after its time budget and labels the rest unm
   expect(rows.slow!.label).toBe(OVER_BUDGET);
   expect(rows.later!.label).toBe(OVER_BUDGET);
   expect(rows.later!.relevantIn).toBe(0); // never matched once the budget ran out
+});
+
+test('report: more than 16 paths globs in one skill is unmeasured', () => {
+  const [many] = skillSpecs('/r', [{ name: 's', paths: Array.from({ length: 17 }, (_, i) => `src/${i}/*.ts`) }], [], []);
+  expect(many!.label).toBe(TOO_COMPLEX);
+  const [ok] = skillSpecs('/r', [{ name: 's', paths: Array.from({ length: 16 }, (_, i) => `src/${i}/*.ts`) }], [], []);
+  expect(ok!.label).toBe('paths');
+});
+
+test('report: the budget is checked between paths, so 1000 slow-shaped paths and 8 patterns stop near the budget', () => {
+  const pats = ['*a*/**/*a*/**/b', '**/*a*/*a*/**/b', '*a*/**/*a*/**/c', '**/*a*/*a*/**/c', '*a*/**/*a*/**/d', '**/*a*/*a*/**/d', '*a*/**/*a*/**/e', '**/*a*/*a*/**/e'];
+  const specs = skillSpecs('/r', [{ name: 'slow', paths: pats }, { name: 'next', paths: pats }], [], []);
+  expect(specs[0]!.label).toBe('paths');
+  const edited = Array.from({ length: 1000 }, (_, i) => `/r/${('a'.repeat(50) + '/').repeat(9)}${'a'.repeat(40)}${i}`);
+  const acc = skillsAcc(specs, { budgetMs: 300 });
+  const t = Date.now();
+  for (let i = 0; i < 3; i++) acc.endSession!({ id: `s${i}`, turns: 1, compactions: 0, edited });
+  expect(Date.now() - t).toBeLessThan(1500); // the budget plus at most one path against one skill's globs, with slack
+  expect(acc.result().map((r) => r.label)).toEqual([OVER_BUDGET, OVER_BUDGET]);
+});
+
+test('report: a skill cut off by the budget feeds no counts, so it stays out of the chart and totals', () => {
+  let t = 0;
+  const specs = skillSpecs('/r', [{ name: 'a', paths: ['src/**'] }], [], []);
+  const real = specs[0]!.relevant!;
+  let calls = 0;
+  specs[0]!.relevant = (ps, stop) => (++calls === 2 ? (t += 2500) : 0, real(ps, stop));
+  const acc = skillsAcc(specs, { budgetMs: 2000, now: () => t });
+  const use = { k: 'assistant', side: false, ts: 0, tools: [{ name: 'Skill', skill: 'a' }] } as never;
+  for (let i = 0; i < 3; i++) {
+    const s = { id: `s${i}`, turns: 1, compactions: 0, edited: ['/r/src/a.ts'] };
+    acc.rec!(s, use);
+    acc.endSession!(s);
+  }
+  const [row] = acc.result();
+  expect(row!.label).toBe(OVER_BUDGET);
+  expect([row!.relevantIn, row!.invokedRelevant, row!.invokedOther]).toEqual([0, 0, 0]); // the first session's counts are dropped too
 });
 
 test('report: a normal paths glob is matched as before', () => {

@@ -95,6 +95,7 @@ The done contract makes an agent's "done" a verdict harness computes from eviden
 ### Hooks and the report
 
 - After the first file of a turn, the multi-file gate sends a note that the next file will ask, because Claude Code's Edit dialog doesn't show a hook's reason.
+- Parallel hooks no longer lose a session-state update under heavy load (such as a file the multi-file and TDD gates count). A hook now waits up to 10 s for the session lock instead of 2 s, and every state write re-reads the file and merges its own change into it (lists by set-union, counters by the larger value, a reset stays a reset). If the lock still isn't free, a tool call fails closed: harness asks, or denies in an unattended run, and says the state was busy. Other events still run, with merged writes.
 - The dispatcher writes per-call timing to `.harness/logs/timing.jsonl` (event, tool, outcome, ms; no paths or command text), and the usage report shows it.
 
 ### Changed

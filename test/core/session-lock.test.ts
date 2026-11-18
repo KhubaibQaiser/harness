@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, onTestFinished, test } from 'vitest';
 import { RETRY } from '../../src/core/atomic.js';
-import { readState, withSessionLock, writeState } from '../../src/core/state.js';
+import { LOCK_WAIT, readState, withSessionLock, writeState } from '../../src/core/state.js';
+import type { Check } from '../../src/hooks/check.js';
 import { dispatch } from '../../src/hooks/dispatch.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'h-lock-'));
@@ -38,7 +39,24 @@ const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
   }
 };
 
+const shortWait = (ms = 300) => {
+  const saved = LOCK_WAIT.ms;
+  LOCK_WAIT.ms = ms;
+  onTestFinished(() => void (LOCK_WAIT.ms = saved));
+};
+const captureErr = async <T>(f: () => Promise<T>): Promise<{ v: T; err: string }> => {
+  let err = '';
+  const orig = process.stderr.write;
+  process.stderr.write = ((s: string) => ((err += s), true)) as typeof process.stderr.write;
+  try {
+    return { v: await f(), err };
+  } finally {
+    process.stderr.write = orig;
+  }
+};
+
 test('a live holder\'s lock is never removed by a waiter, however old', async () => {
+  shortWait(); // waits the live lock out
   const root = tmp();
   mkLock(root, { pid: process.pid, nonce: 'live' }, 60000);
   expect(await quiet(() => withSessionLock(root, 's', () => 'ran'))).toBe('ran');
@@ -77,21 +95,60 @@ test('Stop dispatch does not wait on a held lock', async () => {
   expect(Date.now() - t).toBeLessThan(500);
 });
 
-test('a fresh held lock times out after ~2 s, runs fn anyway and warns', async () => {
+test('a fresh held lock times out after the bounded wait, warns, and runs fn (no onTimeout) or onTimeout instead', async () => {
+  shortWait();
   const root = tmp();
   mkdirSync(join(root, '.harness/state/s.lock'), { recursive: true });
-  const w: string[] = [];
-  const orig = process.stderr.write;
-  process.stderr.write = ((s: string) => (w.push(String(s)), true)) as typeof process.stderr.write;
-  try {
-    const t = Date.now();
-    expect(await withSessionLock(root, 's', () => 'ran')).toBe('ran');
-    expect(Date.now() - t).toBeGreaterThanOrEqual(1900);
-  } finally {
-    process.stderr.write = orig;
-  }
-  expect(w.join('')).toContain('harness: state lock timeout');
-}, 10000);
+  const t = Date.now();
+  const a = await captureErr(() => withSessionLock(root, 's', () => 'ran'));
+  expect(Date.now() - t).toBeGreaterThanOrEqual(250);
+  expect(a).toEqual({ v: 'ran', err: 'harness: state lock timeout\n' });
+  let ran = false;
+  const b = await captureErr(() => withSessionLock(root, 's', () => ((ran = true), 'ran'), undefined, () => 'closed'));
+  expect(b.v).toBe('closed');
+  expect(ran).toBe(false);
+});
+
+test('the default wait stays bounded (no hangs) and long enough for a burst of hooks under load', () => {
+  expect(LOCK_WAIT.ms).toBeGreaterThanOrEqual(5000);
+  expect(LOCK_WAIT.ms).toBeLessThanOrEqual(15000);
+});
+
+const pre = (root: string, extra: object = {}) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Edit', tool_input: { file_path: 'a.ts' }, ...extra });
+
+test('forced lock timeout: a PreToolUse gate fails closed (ask attended, deny unattended) and never runs its checks', async () => {
+  shortWait();
+  const root = tmp();
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  let ran = false;
+  const spy: Check = { name: 'spy', events: ['PreToolUse'], run: () => ((ran = true), { kind: 'allow' }) };
+  const ask = JSON.parse((await captureErr(() => dispatch(pre(root), [spy], {}))).v);
+  expect(ask.hookSpecificOutput).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'ask' });
+  expect(ask.hookSpecificOutput.permissionDecisionReason).toContain('busy');
+  const deny = JSON.parse((await captureErr(() => dispatch(pre(root), [spy], { CI: 'true' }))).v);
+  expect(deny.hookSpecificOutput.permissionDecision).toBe('deny');
+  const bypass = JSON.parse((await captureErr(() => dispatch(pre(root, { permission_mode: 'bypassPermissions' }), [spy], {}))).v);
+  expect(bypass.hookSpecificOutput.permissionDecision).toBe('deny');
+  expect(ran).toBe(false);
+});
+
+test('forced lock timeout: a non-gate hook still runs, and its save merges with what another hook wrote meanwhile', async () => {
+  shortWait();
+  const root = tmp();
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  const rec: Check = {
+    name: 'rec', events: ['PostToolUse'],
+    run(ctx) {
+      writeState(root, 's', { ...readState(root, 's'), files: ['other.ts'] }); // another process, after this hook read the state
+      ctx.save({ ...ctx.state, files: [...ctx.state.files, 'mine.ts'] });
+      return { kind: 'allow' };
+    },
+  };
+  const post = JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', cwd: root, tool_name: 'Edit', tool_input: { file_path: 'mine.ts' } });
+  const { err } = await captureErr(() => dispatch(post, [rec], {}));
+  expect(err).toContain('state lock timeout');
+  expect(readState(root, 's').files).toEqual(['other.ts', 'mine.ts']);
+});
 
 test('10 parallel dispatcher processes for one session: no lost state updates', async () => {
   const repo = tmp();
@@ -154,6 +211,7 @@ const swapToFreshLock = (root: string) => {
 };
 
 test('stale owner-less lock: a new holder that has not written its owner file yet is never robbed', async () => {
+  shortWait(); // waits the live lock out
   const root = tmp();
   mkLock(root, undefined, 31000);
   const swap = swapToFreshLock(root);
@@ -167,6 +225,7 @@ test('stale owner-less lock: a new holder that has not written its owner file ye
 }, 10000);
 
 test('stale dead-owner lock: a new live lock made in the race window is never renamed away', async () => {
+  shortWait(); // waits the live lock out
   const root = tmp();
   mkLock(root, { pid: await deadPid(), nonce: 'dead' });
   let swapped = false;

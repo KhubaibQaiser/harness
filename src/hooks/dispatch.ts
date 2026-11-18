@@ -23,7 +23,8 @@ import { stopGate } from '../checks/stop/gate.js';
 import { runPlanEntry } from '../checks/stop/step-runner.js';
 import { evidenceLedger } from '../done/ledger-hook.js';
 import { testLock } from '../checks/tdd/test-lock.js';
-import { type SessionState, isSafeSessionId, withSessionLock, writeState } from '../core/state.js';
+import { type SessionState, isSafeSessionId, withSessionLock, writeMerged } from '../core/state.js';
+import { isUnattended } from '../core/unattended.js';
 import { repoRoot } from '../core/repo-root.js';
 import { appendTiming, type TimingLine } from '../core/timing.js';
 import { managedSettingsPath, withoutRepoMirror } from '../core/settings-layers.js';
@@ -62,25 +63,30 @@ export async function dispatch(raw: string, checks: Check[], env: NodeJS.Process
   const input = parseInput(raw);
   if (!input || !EVENTS.includes(input.hook_event_name) || !isSafeSessionId(input.session_id)) return '';
   if (!input.cwd || input.hook_event_name === 'Stop') return dispatchLocked(raw, checks, env, opts);
-  // One hook at a time per session, so parallel tool calls cannot race on the state file.
-  return withSessionLock(repoRoot(input.cwd), input.session_id, () => dispatchLocked(raw, checks, env, opts));
+  // One hook at a time per session, so parallel tool calls cannot race on the state file. Past the wait a tool call
+  // fails closed: its gates would decide on state another hook is changing. Other events run, their writes merged.
+  const busy = () => (foreign(input) ? '' : emit('PreToolUse', { kind: isUnattended(input, env) ? 'deny' : 'ask', reason: 'harness: the session state is busy (another hook held its lock too long), so this call could not be checked. Retry it.', check: 'state-lock' }));
+  return withSessionLock(repoRoot(input.cwd), input.session_id, () => dispatchLocked(raw, checks, env, opts), undefined, input.hook_event_name === 'PreToolUse' ? busy : undefined);
 }
+
+const foreign = (input: { tool_name?: string }): boolean => CURSOR_KEYS.some((k) => k in input) || input.tool_name === 'Shell';
 
 async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessEnv, opts: DispatchOpts): Promise<string> {
   const input = parseInput(raw);
   if (!input) return '';
-  const rec = input as unknown as Record<string, unknown>;
-  if (CURSOR_KEYS.some((k) => k in rec) || input.tool_name === 'Shell') return '';
+  if (foreign(input)) return '';
 
   const event = input.hook_event_name as HookEvent;
   const { root, config, state, unattended, configErrors, fallback, degraded } = setupSession(input, event, env);
   const platform = opts.platform ?? process.platform;
   const hookEnv = withoutRepoMirror(root, env); // only the launcher's HARNESS_CLAUDE_CONFIG_DIR counts
+  let base = structuredClone(state); // what this hook last read or wrote: its saves are merged onto the state on disk
   const ctx = {
     input, root, config, state, unattended, env: hookEnv, configErrors, startedAt: PROCESS_START,
     home: opts.home ?? homedir(), platform, managed: opts.managed ?? managedSettingsPath(platform),
     save(s: SessionState) {
-      if (!fallback) writeState(root, input.session_id, s);
+      if (!fallback && base) s = writeMerged(root, input.session_id, base, s);
+      base = structuredClone(s);
       ctx.state = s;
     },
   } as Ctx;

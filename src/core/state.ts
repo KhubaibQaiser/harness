@@ -84,6 +84,50 @@ export function writeState(root: string, session: string, s: SessionState): void
 
 export { renameWithRetry }; // kept for existing importers
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const key = (v: unknown): string => JSON.stringify(v) ?? 'undefined';
+// Snapshots taken as a whole: never combined with another hook's value.
+const WHOLE = new Set(['guardedOwned']);
+
+/**
+ * Three-way merge of one hook's change (`base` to `next`) into the state now on disk (`cur`). A field the hook left as
+ * it was keeps `cur`'s value. A list keeps `cur`'s items minus the ones the hook removed, plus the ones it added; a
+ * record does the same per key; a raised counter takes the larger value (a reset stays a reset); anything else takes
+ * the hook's value.
+ */
+export function mergeState(base: SessionState, next: SessionState, cur: SessionState): SessionState {
+  const b = base as unknown as Record<string, unknown>;
+  const n = next as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...cur };
+  for (const k of new Set([...Object.keys(b), ...Object.keys(n)])) {
+    const [bv, nv, cv] = [b[k], n[k], out[k]];
+    if (key(bv) === key(nv)) continue;
+    if (!WHOLE.has(k) && [bv, nv, cv].every((v) => v === undefined || Array.isArray(v))) {
+      const was = new Set(((bv ?? []) as unknown[]).map(key));
+      const now = (nv ?? []) as unknown[];
+      const nowKeys = new Set(now.map(key));
+      const kept = ((cv ?? []) as unknown[]).filter((x) => !was.has(key(x)) || nowKeys.has(key(x)));
+      const have = new Set(kept.map(key));
+      out[k] = [...kept, ...now.filter((x) => !was.has(key(x)) && !have.has(key(x)))];
+    } else if (!WHOLE.has(k) && isRecord(nv) && isRecord(cv) && (bv === undefined || isRecord(bv))) {
+      const r: Record<string, unknown> = { ...cv };
+      const br = (bv ?? {}) as Record<string, unknown>;
+      for (const f of new Set([...Object.keys(br), ...Object.keys(nv)])) if (key(br[f]) !== key(nv[f])) r[f] = nv[f];
+      out[k] = r;
+    } else if (typeof nv === 'number' && typeof cv === 'number' && nv > (typeof bv === 'number' ? bv : 0)) {
+      out[k] = Math.max(nv, cv);
+    } else out[k] = nv;
+  }
+  return out as unknown as SessionState;
+}
+
+/** Writes this hook's change (`base` to `next`) onto the state as it is on disk right now; returns what was written. */
+export function writeMerged(root: string, session: string, base: SessionState, next: SessionState): SessionState {
+  const merged = mergeState(base, next, readState(root, session));
+  writeState(root, session, merged);
+  return merged;
+}
+
 export function clearTurn(root: string, session: string): void {
   writeState(root, session, { ...readState(root, session), files: [], approved: false, askNoted: undefined, reasonDenied: [], stopAttempts: 0, doneClaimAttempts: undefined });
 }
@@ -117,6 +161,7 @@ export type LockOps = {
 };
 const REAL_OPS: LockOps = { rename: renameSync, rm: rmSync, mkdir: mkdirSync };
 const BREAK_STALE_MS = 5000;
+export const LOCK_WAIT = { ms: 10000 }; // bounded: a hook never hangs on a stuck holder (tests shorten it)
 
 // Breaks a stale lock with breakers serialised by `<lock>.break`. The lock is judged again under the break lock: only a
 // breaker or the lock's own (live) owner ever removes it, so a lock that was replaced since the first look (a new
@@ -146,8 +191,10 @@ function breakStale(lock: string, nonce: string, ops: LockOps): void {
 }
 
 // Serialises read-modify-write of a session's state across hook processes via an exclusive, owner-tagged lock directory.
-// Waits up to 2 s (10 ms steps), then runs fn unlocked with a warning. Stop events skip the lock (long-running; they write only the attempt counters and the decision, tool-missing and notice fields).
-export async function withSessionLock<T>(root: string, session: string, fn: () => T | Promise<T>, ops: LockOps = REAL_OPS): Promise<T> {
+// Waits up to LOCK_WAIT (10 ms steps), then warns and runs onTimeout (a gate's fail-closed answer) or, without one, fn
+// unlocked: its writes go through writeMerged, so they never overwrite another hook's update. Stop events skip the lock
+// (long-running; they write only the attempt counters and the decision, tool-missing and notice fields, merged too).
+export async function withSessionLock<T>(root: string, session: string, fn: () => T | Promise<T>, ops: LockOps = REAL_OPS, onTimeout?: () => T | Promise<T>): Promise<T> {
   const lock = `${statePath(root, session).slice(0, -'.json'.length)}.lock`;
   const nonce = randomBytes(8).toString('hex');
   let held = false;
@@ -158,7 +205,7 @@ export async function withSessionLock<T>(root: string, session: string, fn: () =
     } catch {
       usable = false; // unwritable state dir: run unlocked, the dispatcher's own write warnings cover it
     }
-    for (const deadline = Date.now() + 2000; usable && !held; ) {
+    for (const deadline = Date.now() + LOCK_WAIT.ms; usable && !held; ) {
       try {
         ops.mkdir(lock);
         held = true;
@@ -181,7 +228,10 @@ export async function withSessionLock<T>(root: string, session: string, fn: () =
         await new Promise((r) => setTimeout(r, 10));
       }
     }
-    if (usable && !held) process.stderr.write('harness: state lock timeout\n');
+    if (usable && !held) {
+      process.stderr.write('harness: state lock timeout\n');
+      if (onTimeout) return await onTimeout();
+    }
     return await fn();
   } finally {
     // Rename first, so the lock name is free at once; on Windows removing the dir fails while a waiter has `owner`

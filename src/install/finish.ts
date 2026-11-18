@@ -1,4 +1,4 @@
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Change, Manifest } from './apply.js';
 import { dirtyPaths } from './git-status.js';
@@ -22,7 +22,8 @@ export function pruneStale(m: Manifest, changes: Change[], dropped: string[]): n
 /** The files `changes` would write that have uncommitted changes. */
 export function dirtyTouched(root: string, changes: { rel: string }[]): string[] {
   const dirty = dirtyPaths(root);
-  return changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d))));
+  // An untracked folder (`d/`) holds only the files that exist: one a change would create has nothing to lose (S1).
+  return changes.map((c) => c.rel).filter((rel) => dirty.some((d) => d === rel || (d.endsWith('/') && rel.startsWith(d) && existsSync(join(root, rel)))));
 }
 
 /** The original is back in place: delete its backup. The path comes from the manifest, so only inside .harness/backup/. */

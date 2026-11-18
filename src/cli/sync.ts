@@ -14,7 +14,7 @@ import { pluginList } from '../install/plugin-install.js';
 import { selectedIds } from '../install/plan.js';
 import { reconcile } from '../install/reconcile.js';
 import { refuseOutsideClaude } from './claude-only.js';
-import { budgetGate, installSelected, isDenied, sandboxLine } from './init.js';
+import { budgetGate, deniedWrite, installSelected, sandboxLine } from './init.js';
 import { recordedExtra } from './install-selection.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall, readCatalog, readConfig } from './preamble.js';
@@ -48,7 +48,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   const { root, m: man } = opened;
   const config = readConfig(root, out);
   if (typeof config === 'number') return config;
-  if (!config.items.length) return out('This install predates the item catalog. Run /harness:update with recommendations first.'), 1;
+  if (!config.items.length) return out('This install has no catalog items yet. Run /harness:update with recommendations first.'), 1;
   const cat = readCatalog(cli.catalog, out);
   if (typeof cat === 'number') return cat;
   if (cli.version && cli.version !== man.version) return out(`Harness files are ${man.version} but this is ${cli.version}. Run /harness:update first; sync does not change the version.`), 1;
@@ -99,7 +99,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
       rehashManifest(root, ['.claude/settings.json']);
     } catch (e) {
       if (!(e instanceof ApplyError)) throw e;
-      return out(isDenied(e) ? sandboxLine('sync', args, root) : e.message), 1;
+      return out(deniedWrite(e, root) ? sandboxLine('sync', args, root) : e.message), 1;
     }
     if (readFileSync(join(root, MANIFEST_REL), 'utf8') !== before) out('Recorded the plugin install in the manifest.');
     return null;
@@ -144,7 +144,7 @@ export async function sync(args: string[], cli: SyncEnv): Promise<number> {
   try {
     applyChanges(root, changes, man.version, () => at, cli.fs, { manifest: { ...man, files }, manifestBefore: rawOf(man) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('sync', args, root) : e.message), 1;
+    if (e instanceof ApplyError) return out(deniedWrite(e, root) ? sandboxLine('sync', args, root) : e.message), 1;
     throw e;
   }
   removeEmptyDirs(root, changes);

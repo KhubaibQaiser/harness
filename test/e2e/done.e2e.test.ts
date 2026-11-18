@@ -6,11 +6,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, test } from 'vitest';
 import { type Contract, type Criterion, setActiveTask, TASKS_DIR, writeContract } from '../../src/done/contract.js';
-import { appendRow } from '../../src/done/ledger.js';
+import { appendRow, readLedger } from '../../src/done/ledger.js';
 import { treeHash } from '../../src/done/tree.js';
 import { git } from '../review/repo.js';
 import { SRT_ON } from '../srt-real.js';
-import { build, cleanup, npmVitest, PREFIX } from './fixtures.js';
+import { build, cleanup, DISPATCH, npmVitest, PREFIX } from './fixtures.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'cli.mjs');
 const env: NodeJS.ProcessEnv = { ...process.env, HARNESS_PLAIN_INIT: '1' };
@@ -31,7 +31,7 @@ function task(o: { lint?: string; result?: string; criteria?: Criterion[] } = {}
   const steps = [{ name: 'lint', run: ['node', o.lint ?? 'pass.js'] }, { name: 'test', run: ['node', 'res.js', o.result ?? 'passed'] }];
   const root = build({
     name: 'verify', first: 'src/a.ts', steps: false,
-    files: { '.harness/config.yaml': `checks:\n  done: true\nsandbox: off\nstop:\n  steps: ${JSON.stringify(steps)}\n`, 'pass.js': 'process.exit(0)\n', 'fail.js': 'process.exit(1)\n', 'res.js': RES, 'test/a.test.ts': TEST, 'src/a.ts': 'export const a = 1;\n' },
+    files: { '.harness/manifest.json': '{"files":[]}\n', '.harness/config.yaml': `checks:\n  done: true\nsandbox: off\nstop:\n  steps: ${JSON.stringify(steps)}\n`, 'pass.js': 'process.exit(0)\n', 'fail.js': 'process.exit(1)\n', 'res.js': RES, 'test/a.test.ts': TEST, 'src/a.ts': 'export const a = 1;\n' },
   });
   made.push(root);
   const c = writeContract(root, {
@@ -104,6 +104,34 @@ test('blocked exits 3 and says why', () => {
   const r = verify(root);
   expect(r.code, r.out).toBe(3);
   expect(r.out).toContain('Blocked: the API key is missing');
+});
+
+// M4 (ship audit 2026-11-18): a real init's .gitignore ignores .harness/state, logs, backup and results, and the tree hash
+// failed on them (git 2.46+ refuses an exclude pathspec naming an ignored path), so verify read not-done and the ledger wrote nothing.
+test("after a real init, with its .gitignore, verify is done and the ledger hook writes its row", () => {
+  const root = build(npmVitest());
+  made.push(root);
+  const cfgDir = mkdtempSync(join(tmpdir(), PREFIX));
+  made.push(cfgDir);
+  const cfg = join(cfgDir, 'answers.yaml');
+  writeFileSync(cfg, `checks:\n  done: true\nsandbox: off\nstop:\n  steps:\n    - name: ok\n      run: ["node", "pass.js"]\n`);
+  const i = spawnSync('node', [CLI, 'init', '--config', cfg, '--yes'], { cwd: root, encoding: 'utf8', env });
+  expect(i.status, i.stdout + i.stderr).toBe(0);
+  expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.harness/state/');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-q', '-m', 'install');
+  writeFileSync(join(root, 'pass.js'), 'process.exit(0)\n');
+  const c = writeContract(root, { id: 'add-login', title: 'Add login', base: git(root, 'rev-parse', 'HEAD').trim(), approved_by: 'person', approved_at: '2026-11-14T00:00:00Z', closed_at: null, criteria: [CRITERIA[0]!], checks: ['ok'], review: { model: 'sonnet' }, sha256: null });
+  setActiveTask(root, c.id);
+  // The ledger path: the installed dispatcher records a matched Bash run, stamped with the tree hash.
+  const h = spawnSync('node', [join(root, DISPATCH)], { cwd: root, env, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', cwd: root, tool_name: 'Bash', tool_input: { command: 'node pass.js' }, tool_response: { stdout: '', stderr: '', interrupted: false } }) });
+  expect(h.status, h.stdout + h.stderr).toBe(0);
+  expect(h.stdout + h.stderr).not.toContain('tree hash');
+  expect(readLedger(root).filter((r) => r.kind === 'run')).toMatchObject([{ command: 'node pass.js', exit: 0, tree: treeHash(root), criteria: ['C1'] }]);
+  const r = verify(root);
+  expect(r.code, r.out).toBe(0);
+  expect(r.out).not.toContain('tree hash');
+  expect(r.out).toMatch(/Verdict: done at [0-9a-f]{40} \(tree [0-9a-f]{40}\)/);
 });
 
 describe.skipIf(!SRT_ON)('harness verify inside real srt', () => {

@@ -216,7 +216,7 @@ test('add refuses outside Claude Code; remove, why and explain do not', async ()
 });
 
 const MCP = '.mcp.json';
-const denied = { ...realFs, renameSync: (a: string, b: string) => { if (b.endsWith('settings.json') || b.endsWith('manifest.json')) throw Object.assign(new Error('EPERM: nope'), { code: 'EPERM' }); return realFs.renameSync(a, b); } } as unknown as FsLike;
+const denied = { ...realFs, renameSync: (a: string, b: string) => { if (b.endsWith('settings.json') || b.endsWith('manifest.json')) throw Object.assign(new Error('EPERM: nope'), { code: 'EPERM', path: a, dest: b }); return realFs.renameSync(a, b); } } as unknown as FsLike;
 
 test('a sandbox-denied write prints the add or remove command, not update', async () => {
   const root = installed();

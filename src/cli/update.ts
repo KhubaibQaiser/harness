@@ -4,7 +4,7 @@ import { parse as parseYaml } from 'yaml';
 import { LEGACY_RESULTS_DIR } from '../core/config.js';
 import { migrateResultsDir, validateConfig } from '../core/config-io.js';
 import { answersToConfig, configToAnswers } from '../ai/answers.js';
-import { latestVersion } from '../core/registry.js';
+import { latestVersion, newer } from '../core/registry.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { ApplyError, type Change, type FsLike, ManifestError, applyChanges, removeEmptyDirs, readManifest, type Manifest } from '../install/apply.js';
@@ -25,7 +25,7 @@ import { approvedIds } from '../install/approved.js';
 import { dirtyTouched, dropRestoredBackups, pruneStale } from '../install/finish.js';
 import { presetContext, previewLines } from '../catalog/presets.js';
 import { updatePreset } from './preset-inputs.js';
-import { AI_USAGE, isDenied, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
+import { AI_USAGE, deniedWrite, loadAiInputs, missingAi, sandboxLine, takeAiFlags, type AiInputs } from './init.js';
 import { budgetGate, installSelected, recordedExtra } from './install-selection.js';
 import { hasAiFlags, insideClaude, refuseOutsideClaude } from './claude-only.js';
 import { NO_TTY, type Prompt } from './prompt.js';
@@ -109,7 +109,8 @@ async function checkLatest(cli: UpdateEnv): Promise<number> {
   const { out, version } = cli;
   const latest = await latestVersion(PKG, cli.fetchImpl);
   if (latest === null) return out('Could not reach npm to check for a newer version. Try again later.'), 1;
-  out(latest === version ? `Harness ${version} is the latest.` : `Harness ${latest} is available (you have ${version}). Plugin users: update the plugin, then run /harness:update. CLI users: npx ${PKG}@latest update.`);
+  // Only a newer version is news: npm's `latest` tag can lag behind the running beta, and that must never read as an update.
+  out(newer(latest, version) ? `Harness ${latest} is available (you have ${version}). Plugin users: update the plugin, then run /harness:update. CLI users: npx ${PKG}@${latest} update.` : `Harness ${version} is the latest.`);
   return 0;
 }
 
@@ -204,7 +205,7 @@ function commit(r: Run, cs: Change[], manifest: Manifest): string | null {
     applyChanges(r.root, cs, r.cli.version, () => r.at, r.cli.fs, { manifest, manifestBefore: rawOf(r.m) });
     return null;
   } catch (e) {
-    if (e instanceof ApplyError) return isDenied(e) ? sandboxLine('update', r.args, r.root) : e.message;
+    if (e instanceof ApplyError) return deniedWrite(e, r.root) ? sandboxLine('update', r.args, r.root) : e.message;
     throw e;
   }
 }

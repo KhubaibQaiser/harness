@@ -8,6 +8,7 @@ import { loadCatalog } from '../../src/catalog/load.js';
 import { measureSelection } from '../../src/budget/measure.js';
 import { footprint } from '../../src/install/footprint.js';
 import { parse } from 'yaml';
+import { subdirs } from '../../src/budget/measure.js';
 
 const json = (f: string) => JSON.parse(readFileSync(f, 'utf8'));
 const pkg = json('package.json');
@@ -73,7 +74,7 @@ test('packed files: the plugin and CLI ship, sources and tests do not', () => {
 }, NPM_TIMEOUT);
 
 test('every skill runs the bundled CLI, never npx, and stays under 60 lines', () => {
-  for (const s of readdirSync('skills')) {
+  for (const s of subdirs('skills')) {
     const text = readFileSync(`skills/${s}/SKILL.md`, 'utf8');
     expect(text, s).toMatch(/^---\nname: \S+\ndescription: .+\n(disable-model-invocation: true\n)?---\n/);
     expect(text, s).toContain('node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs"');
@@ -164,7 +165,7 @@ test('the default install footprint stays within HARNESS_FOOTPRINT', () => {
 });
 
 test('every skill and agent frontmatter parses as YAML', () => {
-  const files = [...readdirSync('skills').map((s) => `skills/${s}/SKILL.md`), ...readdirSync('templates/agents').map((a) => `templates/agents/${a}`)];
+  const files = [...subdirs('skills').map((s) => `skills/${s}/SKILL.md`), ...readdirSync('templates/agents').filter((a) => a.endsWith('.md')).map((a) => `templates/agents/${a}`)];
   for (const f of files) {
     const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(f, 'utf8'))?.[1];
     expect(fm, f).toBeDefined();

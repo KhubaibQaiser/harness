@@ -6,6 +6,31 @@ docs/release-notes/<version>.md: the release workflow's check-tag step needs tha
 ## What changed since 0.2.0-beta.2
 
 Run `/harness:update` in each repo after upgrading: this release changes `.claude/settings.json` (the sandbox's `denyWrite` list, new deny rules, the evidence-ledger hook and the pinned marketplace's name). Three changes need you to act: the Stop gate now needs `srt` (and ripgrep) on macOS and Linux, and a timed-out Stop step now blocks (both under Breaking); and if your scripts copy the documented unattended launch command, replace it with the new one (under Unattended launch).
+Not yet listed here: changes merged before this file existed (the pr-body check, the review judge agent).
+
+### Secrets scanning
+
+- New catalog item `gitleaks-ci` (kind `ci`): a GitHub workflow that scans the full git history with gitleaks 8.30.1, checksum-verified, with `--redact`. `/harness:init` recommends it for `api` and `infra` repos.
+- New catalog item `gitleaks-commit`: a new check, `checks.secretScan`, scans what an agent `git commit` or `git stash` could take (staged changes, and unstaged and untracked files that are not ignored) and blocks on a finding, naming the rule, file and line, never the value. The commit must be the only, plain command on its line. Merges, rebases and similar commands ask. Editing `.gitleaks.toml` or `.gitleaksignore` asks. It needs gitleaks on PATH and git 2.40 or newer; without them every agent commit is blocked until you install them or remove the item.
+- Both items scan with harness's own rules, so a repo's `.gitleaks.toml`, `gitleaks:allow` comments, `.gitattributes` and NUL bytes can't hide a finding. A `.gitleaksignore`, which gitleaks always reads, blocks agent commits and fails the CI job.
+- Any executable hook (not a `.sample`), or git config that names a program git may run (by key pattern: `*.program`, `*.command`, `*.cmd`, `*.editor`, `*.helper`, fsmonitor, filters other than git-lfs's, textconv, `diff.external`; credential and diff/merge tool namespaces left out; the editor only when the commit opens it, gpg programs only when it signs, textconv and `diff.external` only for the verbose diff in the editor; `interactive.diffFilter` too), makes an agent commit or stash ask, since git runs them after the scan; unattended, that is a deny. Writing a hook or `.git/config`, or changing `core.hooksPath`, `core.fsmonitor` or a filter, asks.
+- The commit check is a seatbelt against honest mistakes and casual bypasses; `gitleaks-ci` and the done-contract CI verdict are the backstops.
+- This repo's own CI gitleaks job is hardened the same way, and its catalog-pin allowlist is anchored to whole pin lines.
+
+### Unattended launch
+
+- An unattended `bypassPermissions` or plan-mode run whose sandbox is confirmed from settings files (including every `sandbox: always` repo run with `--dangerously-skip-permissions`) now has its shell commands denied unless your user or managed settings set `sandbox.network.strictAllowlist: true`. Without it, the sandbox lets such a run reach any host.
+- The documented launch command now carries `strictAllowlist`, its own `allowedDomains` (empty) and `credentials` deny entries. A run that installs packages or pushes fails until you list the hosts it needs, and `gh`, cloud CLIs and `npm publish` can't sign in from the shell. The README says how to allow pushing.
+- If your scripts copy the old command, replace it: `HARNESS_SANDBOX=1` now stands for the full one.
+- The launch also sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, which strips credential-looking variables from Bash, the hooks and the Stop gate's test commands, and on Linux blocks reading other processes' env through `/proc`. Tests that need such a variable must get it another way. The scrub also strips `CLAUDE_CONFIG_DIR`: if you use it, add `HARNESS_CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"` to the launch. Harness now reads the user config dir from `CLAUDE_CONFIG_DIR`, else `HARNESS_CLAUDE_CONFIG_DIR`, else `~/.claude`, and blocks a mid-session user-settings change that Claude Code reports in a file it doesn't watch.
+- The scrub forces the permission mode to `default` (checked live on Claude Code 2.1.322), so `bypassPermissions` is ignored and `claude -p` refuses every tool that needs approval. The launch now passes `--allowedTools "Bash,Edit,Write"` (add what your run needs) and `HARNESS_UNATTENDED=1`, which keeps the run unattended when the scrub is off.
+- `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` set to anything but empty, `0`, `false`, `no` or `off` now makes a run unattended in the hooks and the CLI refusals, so a scrubbed `claude -p` run is no longer judged attended in `default` mode. When it is the only cause, SessionStart shows a note that says so. If you export it in a shell profile, every interactive session turns asks into denies: unset it for interactive work. The SessionStart hook now runs at every session start (it ran only on `compact`); run `/harness:update` to pick up the new group.
+
+### Changed
+
+- `harness verify` and the evidence ledger work after a real `init` (ship audit M4). The tree hash used exclude pathspecs for harness's folders, and `git add` exits 1 when those name folders that init's `.gitignore` ignores, so every verify read not-done and the ledger wrote no rows. It now adds everything to its throwaway index, then drops harness's folders from that index; the real index is still never read or written. Files committed under those folders no longer count either.
+- Because the tree hash changed, a verdict or evidence-ledger row written by 0.2.0-beta.2 may not match the new hash after you upgrade, so it counts as stale and those checks run once more.
+- Test files no longer count toward the PR size limit by default (owner ruling 2026-11-16, reversing the pr-size spec's D3): `*.test.*`, `*.spec.*`, `__tests__/`, `test/` and `tests/` folders, Python `test_*.py` and `*_test.py`, Go `*_test.go` and `conftest.py` join the default `pr_size.exclude`. They are still named in the size warning's "Not counted" list, and the PR reviewer still reads them. A `pr_size.exclude` you set replaces the whole default, so tests count again unless you list them.
 
 ### Breaking
 
@@ -189,3 +214,35 @@ New since 0.2.0-beta.0, unchanged in this release:
 - The agent asks before item changes.
 - MCP servers aren't measured before install, and only the person installing is asked about the budget. Plugins and external skills now count the number the catalog records (see Context budget above).
 - Under `sandbox: always`, item commands may need the `!` prefix. Unverified, pending the live check.
+
+### Stop gate on Ubuntu 26.04
+
+- The message no longer tells you to install `srt` when `srt` is installed and failed a check (`srt exit`, `srt warning`, preflight checks and the like): it points at `harness doctor` and `srt`'s own error. `harness doctor` now detects Ubuntu's loaded `bwrap-userns-restrict` AppArmor profile (the cause of `srt exit (apply-seccomp: write /proc/self/setgroups)` on 25.04 and newer) and prints the fix and its cost; it never applies it. CI now also runs the real-`srt` job on `ubuntu-26.04`.
+
+### Claude Code compatibility
+
+- The `ConfigChange` hook now holds a mid-session settings change only when it weakens harness: a harness hook entry or deny rule removed or changed, `disableAllHooks` turned on, a sandbox key or `denyWrite` path harness wrote loosened, a looser value winning across the settings files for `sandbox.enabled`, `allowUnsandboxedCommands` or `strictAllowlist`, whichever file changed, or a hook-steering `env` key (`PATH`, `NODE_OPTIONS`, `CI`, `HARNESS_*`, `GIT_*` and the like) changed. Your own hooks, deny rules, other `env` keys (an MCP token, a model) and `/sandbox` network domains apply at once. Claude Code shows nothing for a held change, so the notice at your next prompt names the weakened parts and says the whole file change was held.
+- What harness wrote is read from the manifest as it was at the session start. A manifest that becomes unreadable or loses a record mid-session holds every settings change. Until a follow-up lands, an allowed `sandbox` or `env` edit in the project or local settings still gets one change notice and one blocked Stop.
+- Also held mid-session (owner answers, 2026-11-16): a hook added to any settings file (it takes effect next session; editing a hook's `timeout` or `statusMessage`, or removing your own hook, still applies), an entry added to `sandbox.excludedCommands` in any file (removals apply), and `HOME`, `USERPROFILE`, `TMPDIR`, `TEMP`, `TMP` or `ComSpec` in settings `env`.
+- Also held mid-session: a proxy port (`network.httpProxyPort`, `socksProxyPort`) set or moved, `network.allowAllUnixSockets` or `enableWeakerNestedSandbox` turned on, and a new `network.allowUnixSockets` path, judged on the value that wins across the settings files. Tightening them applies. Enabling a plugin still applies; its own hooks aren't covered by the new-hook block.
+- Also held mid-session: `network.allowLocalBinding` turned on and a new `network.allowMachLookup` service, judged across the settings files. A guarded sandbox key whose value isn't the documented type (such as `"true"` for a Boolean) counts as loosening.
+- `harness review` no longer refuses when the project's `staff-reviewer` differs from the plugin's copy (the project agent takes priority); it now stops only when the CLI version differs from the base install's recorded version.
+- The PR size question clears the pause only on a documented `answers` entry; the undocumented `response` text no longer clears it alone. An unknown key in the question's call or result logs `ask-shape-unknown` once per session.
+- `harness remember add` now says "harness couldn't check whether this text quotes tool output" when the transcript can't be read, or shows tool calls but no recognised tool result. It was already a deny without `--quoted`.
+
+### CLI version and messages
+
+- Every `npx @khubaibqaiser/harness …` command harness prints now names the running version (`npx @khubaibqaiser/harness@<version> …`). A bare `npx` runs npm's `latest` tag, which can be older and lack the command.
+- `harness update --check` reports an update only when npm has a newer version (semver, prerelease tags included), reading both the `latest` and `beta` tags. It never offers a downgrade, and it names the exact version to run.
+- `harness --version` (or `-v`) prints the version and exits 0.
+- Message fixes: `harness eval` usage drops the stale "(gates: not yet)"; a bad `stats` or `tdd` argument prints that command's own usage line; `doctor` labels a missing `claude` as a note, not "ok"; `verify` names an invalid `.harness/config.yaml` in a plain sentence; `uninstall`, `update` and the other commands no longer give init's `--config` hint without a terminal; `sync` and `add` no longer call an install with no catalog items old; Stop no longer prints a pr-size line to stderr in a repo with no base branch yet; with no Vitest config, init prints a whole `vitest.config.ts` to create, not a fragment.
+### Writes and scans
+
+- `harness verify` and `harness report` in a repo or folder where harness isn't installed (no `.harness/manifest.json`) now say so, exit 1 and write nothing. Before, they left `.harness/state/` or `.harness/reports/` behind, and `init` then refused (ship audit S1). The CLI also records its own path in `.harness/state/` only where a manifest exists.
+- `init`, `update`, `sync`, `add`, `remove`, `context apply` and `rules --apply` no longer name a file they would create as uncommitted just because it sits in an untracked folder; only files that exist there count.
+- A write the OS refuses for a reason other than Claude Code's sandbox, such as a read-only folder (`EACCES`), now prints the real error ("apply failed and was rolled back: EACCES: permission denied …"), not "Claude Code's sandbox blocks harness's own files". The sandbox line needs `EPERM` or `EROFS` on one of harness's denyWrite paths, as the reference already said (ship audit S6).
+- `update` and `sync` keep a `checks.done: true` you set by hand. No catalog item owns that check, so it no longer reverts to `false`, and `doctor` no longer calls it a difference from the selected items (ship audit S7).
+- A file in the plugin's `skills/` folder, such as Finder's `.DS_Store`, is no longer listed or measured as a skill by `harness context`, `doctor` and the context budget (ship audit S9).
+### CI
+
+- Main is green again on macOS and Windows (ship audit M2). protect's check of a `git checkout` or `git switch` to a branch, tag or hash now looks up the ref and its hooks in one git call, not two, so the hook is faster; every decision is unchanged. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows.

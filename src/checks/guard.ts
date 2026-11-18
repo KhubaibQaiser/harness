@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defaultLookup, type VerifyOpts, verifyPackages } from './dep-verify.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
+import { NPX } from '../core/version.js';
 import { globRegex, plainHeads } from '../core/command-head.js';
 import { type OptTable, type Parsed, readOptions, valuesOf, withoutRedirects } from '../core/options.js';
 import { commandName, cPayloads, pieces, remember, SHELLS, stdinPrograms, unquote as shellUnquote, withWorkBudget, words as shellWords } from '../core/shell-words.js';
@@ -130,7 +131,7 @@ function terminalCommand(tok: string, sub: string, w: Where): string {
   }
   const recorded = readCliPath(w.root);
   if (recorded) return `\`node "${recorded}" ${sub}\``;
-  return `\`harness ${sub}\` (if harness is not on your PATH: \`npx @khubaibqaiser/harness ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
+  return `\`harness ${sub}\` (if harness is not on your PATH: \`${NPX} ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
 }
 
 /**

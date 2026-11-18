@@ -618,7 +618,7 @@ To build your own, run `/harness:preset` in Claude Code. It interviews you (id, 
 
 - The always-loaded table is the same offline count as `harness context`: one row per source, summing to its total. The HTML page names each row; `--export` sums rows by owner class (`harness`, `preset`, `repo`, a known catalog id or `catalog`), never by file name.
 - Start Claude Code inside the repo for the report to see it. Sessions started in a parent folder are not counted.
-- The page is `.harness/reports/<date>.html`, gitignored. It quotes your sessions, so don't share it. `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose.
+- The page is `.harness/reports/<date>.html`, gitignored. It quotes your sessions, so don't share it. `--export` also writes counts only (no paths, quotes or names) as `<date>-export.json`, for you to send if you choose. A skill the report couldn't measure gets its own row with `unmeasured` set to `time budget` or `pattern too complex`, and only its listing counts.
 - `harness eval` tests whether skills, rules and gates work in real sessions. It costs money, so it asks you to type `yes` every run, stops at a cost ceiling (default $2, set with `--max-cost-usd`), defaults to a Haiku model, and runs only in your own terminal.
 
 ## Vetting a plugin or skill

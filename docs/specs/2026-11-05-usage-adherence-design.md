@@ -399,6 +399,7 @@ At most 50 windows per rule and top-10 session tables keep the page small. Targe
 
 - JSON, schema `{ schema: 1, harness, window_days, generated_on (date only), claude_versions[], models[], sessions: { scanned, skipped, unknown }, skills[], rules[], tokens, gates, latency, weekly[] }`.
 - Counts and rates only (U11). No paths, no quotes, no repo name, no branch names, no session ids, no timestamps finer than the ISO week.
+- A skill the report could not measure is its own `skills[]` row with `unmeasured: "time budget"` or `"pattern too complex"` and only its listing counts (`listedIn`, `sessionsWithListing`, `typedOrCarried`). It is never folded into the measured sums.
 - Skill and rule ids: harness's own ids and catalog ids only. Any other skill name is counted under `other`, because a personal skill's name can be private (O9).
 - **Allowlist check.** Before writing, a walker checks every string value against a fixed allowlist: known ids, versions (`^\d+\.\d+\.\d+`), model ids (`^claude-[a-z0-9.-]+$`), ISO weeks and the schema's enum values. Any other string stops the export with an error. The check runs in code, not only in tests.
 - The person sends the file themselves. Harness never uploads it.

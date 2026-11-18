@@ -119,12 +119,14 @@ test('report: a skill cut off by the budget feeds no counts, so it stays out of 
   const use = { k: 'assistant', side: false, ts: 0, tools: [{ name: 'Skill', skill: 'a' }] } as never;
   for (let i = 0; i < 3; i++) {
     const s = { id: `s${i}`, turns: 1, compactions: 0, edited: ['/r/src/a.ts'] };
+    acc.rec!(s, { k: 'listing', side: false, names: ['a'] } as never);
     acc.rec!(s, use);
     acc.endSession!(s);
   }
   const [row] = acc.result();
   expect(row!.label).toBe(OVER_BUDGET);
   expect([row!.relevantIn, row!.invokedRelevant, row!.invokedOther]).toEqual([0, 0, 0]); // the first session's counts are dropped too
+  expect([row!.sessions, row!.sessionsWithListing, row!.listedIn]).toEqual([3, 3, 3]); // listing counts keep going after the cut-off, so "Listed in" is complete
 });
 
 test('report: a normal paths glob is matched as before', () => {

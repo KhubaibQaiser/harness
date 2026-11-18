@@ -188,7 +188,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     for (const rel of runtime) out(`Would remove \`${rel}\``);
     const gone = new Set([...runtime, ...changes.filter((c) => c.kind === 'delete').map((c) => c.rel), ...kept, ...imported]);
     const stays = ownFiles(root, gone);
-    if (stays.length) out(`Would keep ${list(stays)}: harness did not create them.`);
+    if (stays.length) out(`Would keep ${list(stays)}: harness did not create ${stays.length === 1 ? 'it' : 'them'}.`);
     return out('Dry run: nothing was written.'), 0;
   }
 
@@ -199,9 +199,10 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     notes.push('Kept the `.harness/` lines in `.gitignore`, so its logs, state and backups stay out of git.');
   }
   const listed = deleteHarness ? new Set(runtimeFiles(root)) : new Set<string>(); // what the dry run named
+  let written: Manifest | undefined;
   if (changes.length) {
     try {
-      applyChanges(root, changes, m.version, undefined, cli.fs, { writeManifest: false });
+      written = applyChanges(root, changes, m.version, undefined, cli.fs, { writeManifest: false });
     } catch (e) {
       if (e instanceof ApplyError) return out(e.message), 1;
       throw e;
@@ -213,8 +214,11 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
   for (const d of dirs.reverse()) try { rmdirSync(join(root, d)); } catch {} // only an emptied folder
   removeEmptyDirs(root, [...changes, ...runtime.map((rel): Change => ({ kind: 'delete', rel, before: '' }))]);
   for (const c of changes) out(`${c.kind === 'delete' ? 'Removed' : 'Restored'} \`${c.rel}\``);
-  for (const rel of runtime) if (listed.has(rel)) out(`Removed \`${rel}\``);
-  if (runtime.some((rel) => !listed.has(rel))) out('Removed the backup this uninstall made while it ran.');
+  // Only this run's own backup folder is summed up; anything else that appeared mid-run (a session's log) is named.
+  const madeNow = new Set((written?.files ?? []).flatMap((f) => (f.backup ? [f.backup.split('/').slice(0, 3).join('/')] : [])));
+  const ownBackup = (rel: string) => madeNow.has(rel.split('/').slice(0, 3).join('/'));
+  for (const rel of runtime) if (listed.has(rel) || !ownBackup(rel)) out(`Removed \`${rel}\``);
+  if (runtime.some((rel) => !listed.has(rel) && ownBackup(rel))) out('Removed the backup this uninstall made while it ran.');
   for (const n of notes) out(`Note: ${n}`);
 
   // Edited files are kept like any other user edit, but harness is fully uninstalled either way: the manifest always
@@ -223,7 +227,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     // What harness did not create stays: .harness/presets/, .harness/tasks/ (approved task contracts) and any other file of the person's.
     const stays = ownFiles(root, new Set([...kept, ...imported]));
     out(existsSync(join(root, '.harness'))
-      ? `Removed harness's files from \`.harness/\`.${stays.length ? ` Kept ${list(stays)}: harness did not create them, so they are your own files.` : ''}`
+      ? `Removed harness's files from \`.harness/\`.${stays.length ? ` Kept ${list(stays)}: harness did not create ${stays.length === 1 ? 'it, so it is your own file' : 'them, so they are your own files'}.` : ''}`
       : 'Removed `.harness/`.');
     const blocking = initBlockers(root); // what init would refuse (no manifest, no snapshot)
     if (blocking.length) out(`To reinstall later, move ${list(blocking)} aside first.`);

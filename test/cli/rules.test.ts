@@ -277,6 +277,10 @@ describe('init after an uninstall that kept harness ESLint files', () => {
     git(root, 'commit', '-qm', 'before init');
     let out = '';
     const code = await init(['--yes'], { ...base, root, out: (s) => (out += s + '\n'), prompt: prompt() });
+    if (code !== 0) { // refused before any write
+      expect(git(root, 'status', '--porcelain')).toBe('');
+      expect(existsSync(join(root, '.harness/manifest.json'))).toBe(false);
+    }
     return { code, out };
   };
 
@@ -286,6 +290,7 @@ describe('init after an uninstall that kept harness ESLint files', () => {
     const r = await reinit(root);
     expect(r.code).toBe(1);
     expect(r.out).toContain('`.harness/eslint`');
+    expect(r.out).toContain('Your ESLint config imports `.harness/eslint/`: remove that import from it first');
   });
 
   test("a known name with content harness would not write is refused", async () => {

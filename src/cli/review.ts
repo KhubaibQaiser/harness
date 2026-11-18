@@ -6,6 +6,7 @@ import { judgeInput, readFindings, verifyFindings } from '../review/verify.js';
 import { finish } from '../review/finish.js';
 import { readRecord } from '../review/record.js';
 import { appendEvent } from '../core/events.js';
+import { MANIFEST_REL, NOT_INSTALLED } from '../install/manifest.js';
 import type { CliEnv } from './index.js';
 
 export const REVIEW_USAGE = 'harness review <pr> --out <dir>   (gathers a PR for review; nothing is posted yet)\n       harness review --judge-input <dir> --findings <file>\n       harness review --finish <dir> --findings <file> --judge <file>\n       harness review --keep <pr>';
@@ -13,6 +14,8 @@ export const REVIEW_USAGE = 'harness review <pr> --out <dir>   (gathers a PR for
 /** `harness review <pr> --out <dir>`. `<dir>` is an empty `harness workdir` folder: directly under .harness/tmp, as `workdir --clean` requires. */
 export function review(args: string[], cli: CliEnv, deps: GatherDeps = {}): number {
   const { root, out } = cli;
+  // Before any write: every subcommand writes under .harness/ (state, reviews, logs), which would then stop init (review A, F2).
+  if (!existsSync(join(root, MANIFEST_REL))) return out(NOT_INSTALLED), 1;
   if (args[0] === '--judge-input') return judge(args, cli, deps.exec ?? defaultExec);
   if (args[0] === '--finish') {
     const [, dir, f1, findings, f2, judgeFile] = args;

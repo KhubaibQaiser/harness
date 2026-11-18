@@ -16,7 +16,7 @@ const GH = 'https://github.com/o/r.git';
 const TOKEN = 'ghp_' + 'x'.repeat(36);
 const AGENT = readFileSync(join(packageDir('templates'), 'agents/staff-reviewer.md'), 'utf8'); // the plugin's copy, as an up-to-date install has it
 const BASE: Files = {
-  '.harness/config.yaml': 'version: 1\n', '.claude/agents/staff-reviewer.md': AGENT, '.claude/agents/review-judge.md': 'judge\n', '.claude/skills/review-rubric/SKILL.md': 'RUBRIC TEXT\n', 'AGENTS.md': 'AGENTS TEXT\n',
+  '.harness/config.yaml': 'version: 1\n', '.harness/manifest.json': '{}\n', '.claude/agents/staff-reviewer.md': AGENT, '.claude/agents/review-judge.md': 'judge\n', '.claude/skills/review-rubric/SKILL.md': 'RUBRIC TEXT\n', 'AGENTS.md': 'AGENTS TEXT\n',
   '.harness/hooks/dispatch.mjs': 'd\n', 'src/a.ts': 'a\n', 'docs/spec.md': 'old spec\n',
 };
 const HEAD: Files = { 'src/a.ts': `a\nconst t = '${TOKEN}';\n`, 'docs/spec.md': 'SPEC TEXT\n', 'pnpm-lock.yaml': 'lock\n' };
@@ -305,4 +305,14 @@ describe('gather: other cases', () => {
     expect(run(s, fakeGh(s).exec, { CI: 'true' }).code).toBe(0);
     expect(existsSync(join(s.root, s.dir, 'gather.json'))).toBe(true);
   });
+});
+
+test('review writes nothing in a repo where harness is not installed (review A, F2)', () => {
+  const { root } = repoWith({ 'a.txt': 'a\n' }, { 'a.txt': 'b\n' });
+  for (const args of [['7', '--out', join(root, '.harness/tmp/w-1')], ['--keep', '7'], ['--judge-input', 'd', '--findings', 'f']]) {
+    const lines: string[] = [];
+    expect(review(args, { root, env: {}, out: (l) => lines.push(l) })).toBe(1);
+    expect(lines.join('\n')).toContain('Harness is not installed here');
+  }
+  expect(existsSync(join(root, '.harness'))).toBe(false);
 });

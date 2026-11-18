@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { initBlockers } from './rules.js';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { overlay } from '../core/config.js';
 import { validateConfig } from '../core/config-io.js';
@@ -9,7 +8,7 @@ import { answersToConfig } from '../ai/answers.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { claudeVersion as realClaudeVersion } from '../core/min-claude.js';
 import { approvedIds } from '../install/approved.js';
-import { ApplyError, type FsLike, ManifestError, applyChanges, readManifest } from '../install/apply.js';
+import { ApplyError, type FsLike, LOCK_RECOVERY, LOCK_REL, ManifestError, applyChanges, readManifest } from '../install/apply.js';
 import { type Facts } from '../install/detect.js';
 import { dirtyTouched } from '../install/finish.js';
 import { toSelected } from '../install/select.js';
@@ -17,7 +16,7 @@ import { detect } from '../install/detect.js';
 import { unifiedDiff } from '../install/diff.js';
 import { MANIFEST_REL } from '../install/manifest.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
-import { planChanges } from '../install/plan.js';
+import { ESLINT, planChanges } from '../install/plan.js';
 import { coverageSkipped, coverageWhy, preset, type Preset, unsafeWhy } from '../install/preset.js';
 import { presetContext, previewLines } from '../catalog/presets.js';
 import { findOnPath } from '../checks/stop/runner.js';
@@ -28,6 +27,7 @@ import { deniedWrite, sandboxLine } from './own-command.js';
 import { NO_TTY_INIT, type Prompt } from './prompt.js';
 import { presetConfig } from './preset-inputs.js';
 import { gitRoot } from '../core/repo-root.js';
+import { initBlockers } from './rules.js';
 import type { CliEnv } from './index.js';
 
 export type { Prompt };
@@ -94,8 +94,13 @@ function preflight(cli: InitEnv): string | number {
     if (e instanceof ManifestError) return out(e.message), 1;
     throw e;
   }
+  // An interrupted run leaves the lock and the only copy of the originals in .harness/backup/: recover, never delete (review A, F1).
+  if (existsSync(join(root, LOCK_REL))) return out(LOCK_RECOVERY), 1;
   const unknown = initBlockers(root);
-  if (unknown.length) return out(`\`.harness/\` already holds files harness did not install: ${unknown.map((e) => `\`${e}\``).join(', ')}. Move them out of \`.harness/\`, or delete them yourself, then run init again. Nothing was changed.`), 1;
+  if (unknown.length) {
+    const lint = unknown.includes('.harness/eslint') && ESLINT.some((f) => existsSync(join(root, f)) && readFileSync(join(root, f), 'utf8').includes('.harness/eslint/'));
+    return out(`\`.harness/\` already holds files harness can't tell are its own: ${unknown.map((e) => `\`${e}\``).join(', ')}. Move them out of \`.harness/\`, or delete them yourself, then run init again.${lint ? ' Your ESLint config imports `.harness/eslint/`: remove that import from it first, or your lint stops loading.' : ''} Nothing was changed.`), 1;
+  }
   return root;
 }
 

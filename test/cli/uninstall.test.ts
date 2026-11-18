@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -437,7 +437,7 @@ describe('uninstall keeps files harness did not create', () => {
     expect(await init(['--yes'], { ...base, root, out: (s) => (out += s + '\n'), prompt: fake() })).toBe(1);
     expect(out).toContain('`.harness/logs`, `.harness/notes.md`');
     expect(out).not.toContain('presets');
-    expect(out).toMatch(/Move them out of `\.harness\/`, or delete them yourself, then run init again\. Nothing was changed\./);
+    expect(out).toMatch(/files harness can't tell are its own: .*Move them out of `\.harness\/`, or delete them yourself, then run init again\. Nothing was changed\./);
     expect(git(root, 'status', '--porcelain')).toBe('');
     expect(existsSync(join(root, '.claude'))).toBe(false);
   });
@@ -456,6 +456,30 @@ describe('uninstall keeps files harness did not create', () => {
     expect(await init(['--yes'], { ...base, root: kept, out: (s) => (o += s + '\n'), prompt: fake() }), o).toBe(0);
   });
 
+  test('an interrupted install gets the recovery steps, never "delete them yourself"', async () => {
+    const root = makeRepo({ ...REPO, '.harness/apply.lock': '.gitignore\n', '.harness/backup/t/.gitignore': 'node_modules\n' });
+    let out = '';
+    expect(await init(['--yes'], { ...base, root, out: (s) => (out += s + '\n'), prompt: fake() })).toBe(1);
+    expect(out).toContain('.harness/backup/');
+    expect(out).toContain('delete `.harness/apply.lock`');
+    expect(out).not.toContain('delete them yourself');
+    expect(git(root, 'status', '--porcelain')).toBe('');
+  });
+
+  test('a planted or linked snapshot does not make a foreign .harness/ count as kept', async () => {
+    const planted = makeRepo({ ...REPO, '.harness/state/files-snapshot.json': '{}', '.harness/logs/mine.txt': 'mine\n' });
+    let out = '';
+    expect(await init(['--yes'], { ...base, root: planted, out: (s) => (out += s + '\n'), prompt: fake() })).toBe(1);
+    expect(out).toContain('`.harness/logs`');
+    const real = await installed();
+    writeFileSync(join(real, '.harness/logs.txt'), 'log');
+    await un(real, [], fake([false])); // a real "keep" snapshot, then linked in from elsewhere
+    const linked = makeRepo({ ...REPO, '.harness/logs/mine.txt': 'mine\n' });
+    symlinkSync(join(real, '.harness/state'), join(linked, '.harness/state'), 'junction');
+    expect(await init(['--yes'], { ...base, root: linked, out: () => {}, prompt: fake() })).toBe(1);
+    expect(existsSync(join(linked, '.harness/manifest.json'))).toBe(false);
+  });
+
   test('a committed .harness/notes.md from before harness survives uninstall --yes, and is named', async () => {
     const root = makeRepo({ ...REPO, '.harness/notes.md': 'my own notes\n' });
     expect(await init(['--yes'], { ...base, root, out: () => {}, prompt: fake() })).toBe(1); // refused: not harness's folder
@@ -467,7 +491,7 @@ describe('uninstall keeps files harness did not create', () => {
     expect(r.code).toBe(0);
     expect(readFileSync(join(root, '.harness/notes.md'), 'utf8')).toBe('my own notes\n');
     expect(files(root)).toEqual(['.harness/notes.md']);
-    expect(r.out).toContain('`.harness/notes.md`');
+    expect(r.out).toContain('Kept `.harness/notes.md`: harness did not create it, so it is your own file.');
     expect(git(root, 'status', '--porcelain')).toBe('');
   });
 
@@ -514,7 +538,7 @@ describe('uninstall keeps files harness did not create', () => {
     const outside = mkdtempSync(join(tmpdir(), 'h-un-out-'));
     writeFileSync(join(outside, 'keep.txt'), 'keep');
     rmSync(join(root, '.harness/state'), { recursive: true, force: true });
-    execFileSync('ln', ['-s', outside, join(root, '.harness/state')]);
+    symlinkSync(outside, join(root, '.harness/state'), 'junction'); // a junction on Windows, a plain link elsewhere
     expect((await un(root, ['--yes'])).code).toBe(0);
     expect(readFileSync(join(outside, 'keep.txt'), 'utf8')).toBe('keep');
     expect(existsSync(join(root, '.harness'))).toBe(false);

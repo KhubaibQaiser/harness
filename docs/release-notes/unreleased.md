@@ -27,6 +27,8 @@ Not yet listed here: changes merged before this file existed (the pr-body check,
 
 ### Changed
 
+- `harness verify` and the evidence ledger work after a real `init` (ship audit M4). The tree hash used exclude pathspecs for harness's folders, and `git add` exits 1 when those name folders that init's `.gitignore` ignores, so every verify read not-done and the ledger wrote no rows. It now adds everything to its throwaway index, then drops harness's folders from that index; the real index is still never read or written. Files committed under those folders no longer count either.
+- Because the tree hash changed, a verdict or evidence-ledger row written by 0.2.0-beta.2 may not match the new hash after you upgrade, so it counts as stale and those checks run once more.
 - Test files no longer count toward the PR size limit by default (owner ruling 2026-11-16, reversing the pr-size spec's D3): `*.test.*`, `*.spec.*`, `__tests__/`, `test/` and `tests/` folders, Python `test_*.py` and `*_test.py`, Go `*_test.go` and `conftest.py` join the default `pr_size.exclude`. They are still named in the size warning's "Not counted" list, and the PR reviewer still reads them. A `pr_size.exclude` you set replaces the whole default, so tests count again unless you list them.
 
 ### Breaking
@@ -137,3 +139,6 @@ New since 0.2.0-beta.0, unchanged in this release:
 - A write the OS refuses for a reason other than Claude Code's sandbox, such as a read-only folder (`EACCES`), now prints the real error ("apply failed and was rolled back: EACCES: permission denied …"), not "Claude Code's sandbox blocks harness's own files". The sandbox line needs `EPERM` or `EROFS` on one of harness's denyWrite paths, as the reference already said (ship audit S6).
 - `update` and `sync` keep a `checks.done: true` you set by hand. No catalog item owns that check, so it no longer reverts to `false`, and `doctor` no longer calls it a difference from the selected items (ship audit S7).
 - A file in the plugin's `skills/` folder, such as Finder's `.DS_Store`, is no longer listed or measured as a skill by `harness context`, `doctor` and the context budget (ship audit S9).
+### CI
+
+- Main is green again on macOS and Windows (ship audit M2). protect's check of a `git checkout` or `git switch` to a branch, tag or hash now looks up the ref and its hooks in one git call, not two, so the hook is faster; every decision is unchanged. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows.

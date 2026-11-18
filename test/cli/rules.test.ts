@@ -248,15 +248,10 @@ test('uninstall after an edit inside a harness block removes none of its blocks 
   // init again, then uninstall again: the config still imports the file, so it stays
   git(root, 'add', '-A');
   git(root, 'commit', '-qm', 'uninstalled');
-  // With no manifest, init refuses the kept harness file (owner, 2026-11-18), and uninstall said so up front.
-  expect(r.out).toContain('To reinstall later, move `.harness/eslint` aside first.');
-  let refused = '';
-  expect(await init(['--yes'], { ...base, root, out: (s) => (refused += s + '\n'), prompt: prompt() })).toBe(1);
-  expect(refused).toContain('`.harness/eslint`');
-  git(root, 'mv', '.harness/eslint', 'eslint-aside');
-  git(root, 'commit', '-qm', 'aside');
-  await init(['--yes'], { ...base, root, out: () => {}, prompt: prompt() });
-  git(root, 'mv', 'eslint-aside', '.harness/eslint'); // and back, so the config's import loads again
+  // The kept folder holds exactly harness's own file, which the config imports: init accepts it (owner, 2026-11-18).
+  expect(r.out).not.toContain('To reinstall later');
+  let o = '';
+  expect(await init(['--yes'], { ...base, root, out: (s) => (o += s + '\n'), prompt: prompt() }), o).toBe(0);
   expect(existsSync(join(root, '.harness/manifest.json'))).toBe(true);
   git(root, 'add', '-A');
   git(root, 'commit', '-qm', 'again');
@@ -265,6 +260,49 @@ test('uninstall after an edit inside a harness block removes none of its blocks 
   expect(readFileSync(cfg, 'utf8')).toContain('harnessRules');
   expect(existsSync(join(root, HARNESS_FILE))).toBe(true);
   expect(again.out).toContain('kept because your edited eslint config still imports them');
+});
+
+describe('init after an uninstall that kept harness ESLint files', () => {
+  const kept = async () => {
+    const { root } = await applied({ 'eslint.config.mjs': ESLINT_CFG });
+    const cfg = join(root, 'eslint.config.mjs');
+    writeFileSync(cfg, readFileSync(cfg, 'utf8').replace('  ...harnessRules,\n', '  ...harnessRules, // mine\n'));
+    git(root, 'commit', '-qam', 'mine');
+    expect((await unOut(root)).code).toBe(0);
+    expect(existsSync(join(root, HARNESS_FILE))).toBe(true);
+    return root;
+  };
+  const reinit = async (root: string) => {
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'before init');
+    let out = '';
+    const code = await init(['--yes'], { ...base, root, out: (s) => (out += s + '\n'), prompt: prompt() });
+    return { code, out };
+  };
+
+  test('a third file in .harness/eslint/ is refused', async () => {
+    const root = await kept();
+    writeFileSync(join(root, '.harness/eslint/mine.mjs'), 'export default [];\n');
+    const r = await reinit(root);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('`.harness/eslint`');
+  });
+
+  test("a known name with content harness would not write is refused", async () => {
+    const root = await kept();
+    writeFileSync(join(root, HARNESS_FILE), readFileSync(join(root, HARNESS_FILE), 'utf8') + '// mine\n');
+    const r = await reinit(root);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('`.harness/eslint`');
+  });
+
+  test('harness files no config imports are refused', async () => {
+    const root = await kept();
+    writeFileSync(join(root, 'eslint.config.mjs'), 'export default [];\n');
+    const r = await reinit(root);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('`.harness/eslint`');
+  });
 });
 
 const TS_CFG = "import js from '@eslint/js';\n\nexport default [\n  js.configs.recommended,\n];\n";

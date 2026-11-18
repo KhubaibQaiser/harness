@@ -10,7 +10,8 @@ import { matchesHash, eolOf, withEol } from '../install/text.js';
 import { MANIFEST_REL, ManifestError, REPO_STATE, backupText, readManifest, type Manifest, type StatePaths } from '../install/manifest.js';
 import { ESLINT } from '../install/plan.js';
 import { stampHarnessFiles } from '../core/harness-files.js';
-import { HARNESS_LOCAL, unknownHarnessEntries } from '../core/paths.js';
+import { HARNESS_LOCAL } from '../core/paths.js';
+import { initBlockers } from './rules.js';
 import { NO_TTY, type Prompt } from './prompt.js';
 import { openInstall } from './preamble.js';
 import { GLOBAL_LOCK_RECOVERY, GLOBAL_STATE } from './preset.js';
@@ -224,7 +225,7 @@ export async function uninstall(args: string[], cli: UninstallEnv): Promise<numb
     out(existsSync(join(root, '.harness'))
       ? `Removed harness's files from \`.harness/\`.${stays.length ? ` Kept ${list(stays)}: harness did not create them, so they are your own files.` : ''}`
       : 'Removed `.harness/`.');
-    const blocking = unknownHarnessEntries(root); // what init would refuse (no manifest, no snapshot)
+    const blocking = initBlockers(root); // what init would refuse (no manifest, no snapshot)
     if (blocking.length) out(`To reinstall later, move ${list(blocking)} aside first.`);
   } else {
     // Keep the logs but mark harness as uninstalled so init can run again.

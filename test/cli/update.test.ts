@@ -11,7 +11,7 @@ import { parse as parseYaml, parseDocument } from 'yaml';
 import { init, type Prompt } from '../../src/cli/init.js';
 import { update } from '../../src/cli/update.js';
 import { uninstall } from '../../src/cli/uninstall.js';
-import { latestVersion } from '../../src/core/registry.js';
+import { latestVersion, newer } from '../../src/core/registry.js';
 import { applyChanges, readManifest } from '../../src/install/apply.js';
 import { loadCatalog } from '../../src/catalog/load.js';
 import { detect } from '../../src/install/detect.js';
@@ -183,22 +183,43 @@ test('refuses when not installed, bad flag, or invalid config', async () => {
 const reply = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
 test('--check with a fake fetch: newer, same, unreachable', async () => {
   const root = await installed();
-  const n = await up(root, ['--check'], { version: '1.0.0', fetchImpl: reply(200, { version: '2.0.0' }) });
-  expect(n.out).toContain('Harness 2.0.0 is available (you have 1.0.0). Plugin users: update the plugin, then run /harness:update. CLI users: npx @khubaibqaiser/harness@latest update.');
-  const s = await up(root, ['--check'], { version: '2.0.0', fetchImpl: reply(200, { version: '2.0.0' }) });
+  const n = await up(root, ['--check'], { version: '1.0.0', fetchImpl: reply(200, { latest: '2.0.0' }) });
+  expect(n.out).toContain('Harness 2.0.0 is available (you have 1.0.0). Plugin users: update the plugin, then run /harness:update. CLI users: npx @khubaibqaiser/harness@2.0.0 update.');
+  const s = await up(root, ['--check'], { version: '2.0.0', fetchImpl: reply(200, { latest: '2.0.0' }) });
   expect(s.out).toContain('Harness 2.0.0 is the latest.');
   const u = await up(root, ['--check'], { fetchImpl: (async () => { throw new Error('down'); }) as unknown as typeof fetch });
   expect(u.out).toContain('Could not reach npm');
   expect(u.code).toBe(1);
 });
 
-test('latestVersion: URL-encoded scope, null on bad status or body', async () => {
+test('--check never offers an older version, and offers a newer beta over an older latest', async () => {
+  const root = await installed();
+  const down = await up(root, ['--check'], { version: '0.2.0-beta.2', fetchImpl: reply(200, { latest: '0.1.0-beta.0', beta: '0.2.0-beta.2' }) });
+  expect(down.out).toContain('Harness 0.2.0-beta.2 is the latest.');
+  expect(down.out).not.toContain('available');
+  const beta = await up(root, ['--check'], { version: '0.2.0-beta.2', fetchImpl: reply(200, { latest: '0.1.0-beta.0', beta: '0.2.0-beta.10' }) });
+  expect(beta.out).toContain('Harness 0.2.0-beta.10 is available (you have 0.2.0-beta.2).');
+  expect(beta.out).toContain('npx @khubaibqaiser/harness@0.2.0-beta.10 update.');
+  const ahead = await up(root, ['--check'], { version: '0.2.0', fetchImpl: reply(200, { latest: '0.2.0-beta.3' }) });
+  expect(ahead.out).not.toContain('available');
+});
+
+test('newer: semver precedence with prerelease tags', () => {
+  for (const [a, b] of [['2.0.0', '1.9.9'], ['0.2.0-beta.10', '0.2.0-beta.2'], ['0.2.0', '0.2.0-beta.3'], ['0.2.0-beta.0', '0.1.0'], ['1.0.0-beta', '1.0.0-alpha.1'], ['1.0.0-alpha.1', '1.0.0-alpha'], ['1.0.0-alpha.beta', '1.0.0-alpha.1'], ['1.10.0', '1.9.0']])
+    expect([newer(a, b), newer(b, a)], `${a} vs ${b}`).toEqual([true, false]);
+  for (const [a, b] of [['1.0.0', '1.0.0'], ['1.0.0-beta.1', '1.0.0-beta.1'], ['1.0.0+build', '1.0.0'], ['junk', '1.0.0'], ['1.0.0', 'junk']]) expect(newer(a, b), `${a} vs ${b}`).toBe(false);
+});
+
+test('latestVersion: the newest of the latest and beta tags, URL-encoded scope, null on bad status or body', async () => {
   let url = '';
-  const f = (async (u: string) => ((url = u), new Response('{"version":"3.1.0"}'))) as unknown as typeof fetch;
-  expect(await latestVersion('@khubaibqaiser/harness', f)).toBe('3.1.0');
-  expect(url).toBe('https://registry.npmjs.org/@khubaibqaiser%2fharness/latest');
+  const f = (async (u: string) => ((url = u), new Response('{"latest":"3.1.0","beta":"3.2.0-beta.1","next":"9.0.0"}'))) as unknown as typeof fetch;
+  expect(await latestVersion('@khubaibqaiser/harness', f)).toBe('3.2.0-beta.1');
+  expect(url).toBe('https://registry.npmjs.org/-/package/@khubaibqaiser%2fharness/dist-tags');
+  expect(await latestVersion('x', reply(200, { latest: '3.1.0', beta: '3.0.0-beta.5' }))).toBe('3.1.0');
+  expect(await latestVersion('x', reply(200, { latest: '3.1.0', beta: 7 }))).toBe('3.1.0');
+  expect(await latestVersion('x', reply(200, { beta: '3.0.0-beta.1' }))).toBe('3.0.0-beta.1'); // a beta tag alone is an answer, not "could not reach npm"
   expect(await latestVersion('x', reply(404, {}))).toBeNull();
-  expect(await latestVersion('x', reply(200, { version: 3 }))).toBeNull();
+  expect(await latestVersion('x', reply(200, { latest: 3 }))).toBeNull();
   expect(await latestVersion('x', (async () => new Response('not json')) as unknown as typeof fetch)).toBeNull();
 });
 

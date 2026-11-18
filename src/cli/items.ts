@@ -114,7 +114,7 @@ export async function items(cmd: 'add' | 'remove' | 'why' | 'explain', allArgs: 
   }
 
   // add and remove: the selection changes, planChanges does the rest (the same path as update).
-  if (!config.items.length) return out('This install predates the item catalog. Run /harness:update with recommendations first.'), 1;
+  if (!config.items.length) return out('This install has no catalog items yet. Run /harness:update with recommendations first.'), 1;
   if (!it) return out(`Unknown item "${esc(id)}". Run harness catalog to list the ids.`), 1;
   let next: Selected[];
   let after: string[];

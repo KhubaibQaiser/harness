@@ -2,6 +2,7 @@ import { relative, resolve } from 'node:path';
 import { denyWritePaths } from '../checks/protect.js';
 import { readCliPath, trustedCli } from '../core/cli-path.js';
 import { esc } from '../core/config.js';
+import { NPX } from '../core/version.js';
 
 /** The person's own command line, for a step Claude Code's sandbox blocks. */
 export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove' | 'sync' | 'context', args: string[], root: string): string {
@@ -13,7 +14,7 @@ export function sandboxLine(cmd: 'init' | 'update' | 'git' | 'add' | 'remove' | 
  */
 export function ownCommand(cmd: string, args: string[], root: string): string {
   const cli = readCliPath(root) ?? trustedCli(process.argv[1] ?? '', root);
-  const self = cli ? `node "${cli}"` : 'npx @khubaibqaiser/harness';
+  const self = cli ? `node "${cli}"` : NPX;
   return `Run this yourself with Claude Code's \`!\` prefix (a \`!\` command runs outside the sandbox): ${self} ${cmd} ${args.map(shq).join(' ')}`;
 }
 /** One shell word: bare when plain, else single-quoted (embedded quotes the POSIX way); control characters are escaped first so they never reach the terminal. */

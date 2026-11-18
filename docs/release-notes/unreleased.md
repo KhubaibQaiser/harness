@@ -138,3 +138,6 @@ New since 0.2.0-beta.0, unchanged in this release:
 - `harness update --check` reports an update only when npm has a newer version (semver, prerelease tags included), reading both the `latest` and `beta` tags. It never offers a downgrade, and it names the exact version to run.
 - `harness --version` (or `-v`) prints the version and exits 0.
 - Message fixes: `harness eval` usage drops the stale "(gates: not yet)"; a bad `stats` or `tdd` argument prints that command's own usage line; `doctor` labels a missing `claude` as a note, not "ok"; `verify` names an invalid `.harness/config.yaml` in a plain sentence; `uninstall`, `update` and the other commands no longer give init's `--config` hint without a terminal; `sync` and `add` no longer call an install with no catalog items old; Stop no longer prints a pr-size line to stderr in a repo with no base branch yet; with no Vitest config, init prints a whole `vitest.config.ts` to create, not a fragment.
+### CI
+
+- Main is green again on macOS and Windows (ship audit M2). protect's check of a `git checkout` or `git switch` to a branch, tag or hash now looks up the ref and its hooks in one git call, not two, so the hook is faster; every decision is unchanged. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows.

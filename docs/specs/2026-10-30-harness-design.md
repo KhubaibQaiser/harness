@@ -39,7 +39,7 @@ Everything is repo-level, so every developer who clones the repo gets the same w
 | Token use | Deterministic first; the model sees only failures, the diff and compact inputs (section 5a) |
 | Persona | `staff-reviewer` agent + `review-rubric` skill for repo audit and PR review, measured by evals (section 9a) |
 | Build approach | Walking skeleton in milestones (section 13) |
-| Repo home | `~/Documents/khubaib-personal/harness`; private GitHub repo `khubaibqaiser/harness` later (ask before creating) |
+| Repo home | a local checkout; private GitHub repo `khubaibqaiser/harness` later (ask before creating) |
 
 ## 3. Non-goals for v1
 

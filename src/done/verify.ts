@@ -1,5 +1,5 @@
 // `harness verify` (spec §4.4), attended and without the review: a verdict bound to HEAD and the working tree, every step failing closed.
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, posix } from 'node:path';
 import { defaultExec as stopExec } from '../checks/stop/gate.js';
@@ -12,6 +12,7 @@ import { appendEvent } from '../core/events.js';
 import { defaultExec, type Exec, type ExecOpts } from '../core/exec.js';
 import { SAFE_GIT } from '../core/git-safe.js';
 import { tokenBase } from '../core/token-base.js';
+import { MANIFEST_REL, NOT_INSTALLED } from '../install/manifest.js';
 import type { CliEnv } from '../cli/index.js';
 import { checkArgvs, plainArgv } from './commands.js';
 import { activeTaskId, type Contract, contractHash, loadContract, TASK_ID, TASKS_DIR, validateContract } from './contract.js';
@@ -33,6 +34,7 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   const { root, out } = cli;
   const git = deps.git ?? defaultExec, now = deps.now ?? Date.now, tree = deps.tree ?? ((r: string) => treeHash(r));
   const platform = cli.platform ?? process.platform;
+  if (!existsSync(join(root, MANIFEST_REL))) return out(NOT_INSTALLED), 1; // before any write: a repo without harness gets no .harness/ (S1)
   const g = (a: string[], o: ExecOpts = {}): string => {
     const r = git('git', [...SAFE_GIT, ...a], { cwd: root, env: { ...process.env, ...GIT_ENV }, ...o });
     if (r.status !== 0 || r.missing || r.timedOut) throw new Error(`git ${a[0]} failed (${r.status}): ${esc((r.stderr ?? '').trim().split('\n')[0] ?? '')}`);
@@ -56,7 +58,7 @@ export async function verify(args: string[], cli: CliEnv, deps: VerifyDeps = {})
   }
   if (!(args.length === 0 || (args.length === 2 && args[0] === '--task' && TASK_ID.test(args[1]!)))) return out(`Usage: ${VERIFY_USAGE}`), 2;
   const { config, errors } = loadConfig(root);
-  if (errors.length) return out(`harness verify: .harness/config.yaml ${errors.join('; ')}`), 1;
+  if (errors.length) return out(`harness verify: \`.harness/config.yaml\` is invalid: ${errors.join('; ')}`), 1;
   if (!config.checks.done) return out('The done contract is off (checks.done); there is nothing to verify.'), 1;
   try {
     id = args[1] ?? activeTaskId(root, cli.env);

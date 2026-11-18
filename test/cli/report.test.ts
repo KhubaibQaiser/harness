@@ -19,7 +19,8 @@ const SECRET = 'SECRET-PROMPT-TEXT-xyzzy';
 let k = 0;
 function world(n: number) {
   const dir = join(base, `w${++k}`), root = join(dir, 'repo'), home = join(dir, 'home');
-  mkdirSync(root, { recursive: true });
+  mkdirSync(join(root, '.harness'), { recursive: true });
+  writeFileSync(join(root, '.harness/manifest.json'), '{"files":[]}\n'); // installed
   const proj = join(home, '.claude', 'projects', encodeProjectDir(realpathSync(root)));
   mkdirSync(proj, { recursive: true });
   for (let i = 0; i < n; i++) writeSession(proj, `s${i}`, [prompt(SECRET, { cwd: realpathSync(root) }), assistant()]);
@@ -33,6 +34,14 @@ const go = async (w: { root: string; home: string }, args: string[], extra: Reco
 const htmlPath = (w: { root: string }) => join(w.root, '.harness/reports/2026-11-05.html');
 
 describe('harness report', () => {
+  it('a repo or folder without harness: says so and writes nothing (ship audit S1)', async () => {
+    const w = world(1);
+    rmSync(join(w.root, '.harness'), { recursive: true, force: true });
+    const r = await go(w, []);
+    expect(r.code).toBe(1);
+    expect(r.lines).toEqual(['Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.']);
+    expect(existsSync(join(w.root, '.harness'))).toBe(false);
+  });
   it('writes the html and the self-ignoring folder, and prints counts only', async () => {
     const w = world(2);
     const r = await go(w, []);

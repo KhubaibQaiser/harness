@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
@@ -212,7 +212,7 @@ test('npm/pnpm/yarn/bun run <script>: a script that runs harness is judged with 
   for (const c of ['npm run rm -- --yes', 'pnpm rm']) expect(k(c), c).toBe('ask');
   for (const c of ['npm run h -- tdd status', 'npm run rm -- --dry-run', 'npm run t', 'pnpm t -- --watch']) expect(k(c), c).toBe('allow');
 });
-const HINT = (sub: string) => `\`harness ${sub}\` (if harness is not on your PATH: \`npx @khubaibqaiser/harness ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
+const HINT = (sub: string) => `\`harness ${sub}\` (if harness is not on your PATH: \`npx @khubaibqaiser/harness@0.0.0-dev ${sub}\`, or from a source checkout \`node /path/to/harness/dist/cli.mjs ${sub}\`)`;
 const fakeCli = (root: string, rel: string) => {
   const p = join(root, ...rel.split('/'));
   mkdirSync(dirname(p), { recursive: true });
@@ -259,6 +259,10 @@ test('P1: only the repo\'s node_modules CLI is recorded, it is re-checked when p
   recordCliPath(root, nm);
   expect(readCliPath(root)).toBeNull(); // only the skills' work folders: still not installed
   rmSync(join(root, '.harness/tmp'), { recursive: true });
+  writeFileSync(join(root, '.harness/notes.md'), 'mine\n');
+  recordCliPath(root, nm);
+  expect(existsSync(join(root, '.harness/state'))).toBe(false); // a .harness/ of the person's, no manifest: nothing written (S1)
+  writeFileSync(join(root, '.harness/manifest.json'), '{"files":[]}\n');
   for (const bad of [fakeCli(root, 'tmp/evil/dist/cli.mjs'), fakeCli(root, 'plug/dist/cli.mjs'), fakeCli(realpathSync.native(mkdtempSync(join(tmpdir(), 'h-guard-p1o-'))), 'node_modules/@khubaibqaiser/harness/dist/cli.mjs')]) {
     recordCliPath(root, bad);
     expect(readCliPath(root), bad).toBeNull();
@@ -702,7 +706,7 @@ test('rereview2 M2: --prefix=, --dir= and -C= are read', () => {
   for (const c of ['npm --prefix=sub run s', 'pnpm --dir=sub s']) expect(decideCommand(c, { ...ctx(), root }).kind, c).toBe('ask');
 });
 test('rereview2: harness inside a path is not a command word', () => {
-  all(['cd /x/harness && git add -A', 'cd /x/harness && git push origin feat', 'git -C /x/harness push origin feat', 'cd ~/Documents/khubaib-personal/harness && git add -A', 'git -C /x/harness add -A', 'rg "update" ~/harness/src', 'grep -rn init src/harness', 'pnpm -C /x/harness test'], 'allow');
+  all(['cd /x/harness && git add -A', 'cd /x/harness && git push origin feat', 'git -C /x/harness push origin feat', 'cd ~/code/harness && git add -A', 'git -C /x/harness add -A', 'rg "update" ~/harness/src', 'grep -rn init src/harness', 'pnpm -C /x/harness test'], 'allow');
   for (const c of ['/x/harness/bin/harness init', 'node /x/harness/dist/cli.mjs init']) expect(kind(c), c).toBe('ask');
 });
 describe('IFS: unquoted $IFS splits words, $9 $@ $* are empty in a fresh shell', () => {

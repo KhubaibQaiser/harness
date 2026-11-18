@@ -17,6 +17,12 @@ afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, f
 
 type Step = { name: string; run: string[] };
 const NESTED = "harness verify can't run its checks inside another sandbox. Ask the person to run harness verify in their own terminal, or ! harness verify (outside the sandbox on macOS, and on Linux without the env scrub).";
+test('a config that is not valid YAML names the file and the problem in one plain sentence', async () => {
+  const v = await runVerify({ files: { '.harness/config.yaml': 'checks: [\n' } });
+  expect(v.code).toBe(1);
+  expect(v.text).toMatch(/^harness verify: `\.harness\/config\.yaml` is invalid: it is not valid YAML \(/);
+});
+
 const RES = "const fs=require('fs'),p=require('path');fs.mkdirSync('.harness/results',{recursive:true});fs.writeFileSync('.harness/results/r.json',JSON.stringify({testResults:[{name:p.resolve(process.argv[3]||'test/a.test.ts'),status:'passed',assertionResults:[{fullName:'a works',status:process.argv[2]}]}]}))\n";
 const T = (body: string) => `test('a', () => {\n${body}\n});\n`;
 const run = (id: string, cmd: string, expect_exit = 0): Criterion => ({ id, text: `${id} holds`, check: { run: cmd, expect_exit } });
@@ -28,7 +34,7 @@ interface Opts {
 async function runVerify(o: Opts = {}): Promise<Verdict & { code: number; text: string; root: string }> {
   const steps = o.steps ?? [];
   const cfg = `checks:\n  done: true\nsandbox: off\nstop:\n  steps: ${JSON.stringify(steps)}\n`;
-  const { root, head } = repoWith({ '.harness/config.yaml': cfg, 'pass.js': 'process.exit(0)\n', 'fail.js': 'process.exit(1)\n', 'res.js': RES, 'src/a.ts': 'export const a = 1;\n', 'test/a.test.ts': "test('a works', () => {});\n", ...o.files }, {});
+  const { root, head } = repoWith({ '.harness/config.yaml': cfg, '.harness/manifest.json': '{"files":[]}\n', 'pass.js': 'process.exit(0)\n', 'fail.js': 'process.exit(1)\n', 'res.js': RES, 'src/a.ts': 'export const a = 1;\n', 'test/a.test.ts': "test('a works', () => {});\n", ...o.files }, {});
   dirs.push(root);
   const c = writeContract(root, {
     id: 'add-login', title: 'Add login', base: o.base ?? head, approved_by: 'person', approved_at: '2026-11-14T00:00:00Z', closed_at: null,
@@ -330,4 +336,16 @@ test('a verdicts folder swapped for a link during the run is refused before the 
 test('a results file written by the step just before the test step does not count', async () => {
   const v = await runVerify({ steps: [{ name: 'lint', run: ['node', 'forge.js'] }, { name: 'test', run: ['node', 'pass.js'] }], checks: ['lint'], criteria: TEST_C1, files: { 'forge.js': FORGE } });
   expect([v.outcome, v.criteria[0]!.evidence?.status]).toEqual(['not-done', 'fail']);
+});
+
+test('a repo or folder without harness: verify says so and writes nothing (ship audit S1)', async () => {
+  const { root } = repoWith({ 'src/a.ts': 'a\n' }, {});
+  const plain = mkdtempSync(join(tmpdir(), 'h-nongit-'));
+  dirs.push(root, plain);
+  for (const r of [root, plain]) {
+    const lines: string[] = [];
+    expect(await verify([], { root: r, cwd: r, env: {}, out: (l) => lines.push(l) })).toBe(1);
+    expect(lines).toEqual(['Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.']);
+    expect(existsSync(join(r, '.harness'))).toBe(false);
+  }
 });

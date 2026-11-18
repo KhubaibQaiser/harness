@@ -20,14 +20,18 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
 
 ## Each release
 
-1. Merge the version bump to main. The same PR adds `docs/release-notes/<version>.md` and updates the README status line.
-2. Tag that commit `vX.Y.Z` (a version with `-` publishes under the `beta` tag, and also moves `latest` while there is no stable version; otherwise `latest`) and push the tag. A tag that is not on main fails in the first job, before the approval step.
-3. When the run reaches `publish`, approve it in the Actions tab.
+1. Before the bump, run `pnpm audit` with devDependencies included (not `--omit=dev`): esbuild bundles them into `dist/`, so a devDependency advisory ships.
+2. Merge the version bump to main. It changes `package.json` and `.claude-plugin/plugin.json`, adds `docs/release-notes/<version>.md` and updates the README status line. It leaves `.claude-plugin/marketplace.json` on the previous version: the plugin marketplace reads main, so a pin npm doesn't have yet would make `claude plugin install harness@harness` fail. A test allows the pin to be this version or exactly one release behind, never ahead.
+3. Tag that commit `vX.Y.Z` (a version with `-` publishes under the `beta` tag, and also moves `latest` while there is no stable version; otherwise `latest`) and push the tag. A tag that is not on main fails in the first job, before the approval step.
+4. When the run reaches `publish`, approve it in the Actions tab.
+5. After npm has the version (`npm view @khubaibqaiser/harness@<version> version` prints it), open a small follow-up PR that moves the version in `.claude-plugin/marketplace.json`, and merge it. Plugin installs get the new version from then on.
+6. Check `npm view @khubaibqaiser/harness dist-tags`: while there is no stable version, `latest` must name this release. If the job couldn't move it, run `npm dist-tag add @khubaibqaiser/harness@<version> latest` yourself.
 
 ## If publish fails
 
 - **`npm error 404 Not Found - PUT https://registry.npmjs.org/@khubaibqaiser%2fharness`.** npm rejected the trusted publisher. Usually the npmjs.com config expired (step 6 above) or a name doesn't match: the repository, `release.yml` or `npm-release`. Redo steps 4–6, then push a new tag for the next version. npm never accepts the same version twice.
 - **Re-running the release.** A re-run is safe. The publish step first asks npm whether this version exists. If it was published from this same commit, it skips `npm publish` and succeeds, so the GitHub Packages and GitHub release jobs still run. Each of those two jobs also skips itself when its package version or release already exists, so you can re-run the whole workflow, or just a failed job, from the Actions tab.
+- **A failed publish blocks the next bump.** The versions test allows the marketplace pin to be exactly one release behind, and it reads "the release before" from `docs/release-notes/`. So once a version's notes are on main, retry that same version (re-run the workflow, or fix the cause and re-run) until npm has it, before you bump again. Skipping it would leave the next bump needing a pin npm doesn't have.
 - **Version clash.** If the version is already on npm from a different commit (or npm has no commit for it), the publish step fails with "version X is already on npm from commit Y; bump the version". Bump `package.json`, add its release notes, merge to main, then tag the new version.
 
 Installing from GitHub Packages needs a GitHub token even for a public package, so the README points users to npm. The GitHub copy is a mirror that shows the package on the repo page.

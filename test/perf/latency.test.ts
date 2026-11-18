@@ -17,9 +17,10 @@ const WARN_OVERHEAD_MS = { win32: 1350, darwin: 1100 }[process.platform as strin
 // 40 result files to read: macOS median 101 ms, slowest 220 (87ab33e); it failed 150 in 10 runs from 9 to 15 Nov, and its
 // daily medians did not move (89-106). Windows: median 193, slowest 243.
 const GATED_OVERHEAD_MS = { win32: 450, darwin: 300 }[process.platform as string] ?? 100;
-// Not raised: protect's ref-move diff (e82410a, 15 Nov) is new git work, a median of 116 ms on macOS against 71 for
-// `git status`, and it reached 154 against 150 in 2 of 14 runs. That's a cost to decide on, not runner noise.
-const CHECKOUT_OVERHEAD_MS = { win32: 450, darwin: 150 }[process.platform as string] ?? 100;
+// protect's ref-move check (e82410a) spawned git four times; a switch's two lookups are now one cat-file (owner, 2026-11-18:
+// speed up, then set the ceiling from CI). macOS over 32 runs at four spawns (16-17 Nov): median 120 ms, slowest 210, which
+// failed 150 in 3 runs on slow runners; 1.25x 210 rounded up to 50 is 300. Windows: median about 295, slowest 331.
+const CHECKOUT_OVERHEAD_MS = { win32: 450, darwin: 300 }[process.platform as string] ?? 100;
 // The warning run's total holds its own overhead plus the bare spawn, so it can't share the 1000 ms ceiling where that overhead may reach 1350.
 const WARN_CEILING_MS = Math.max(CEILING_MS, WARN_OVERHEAD_MS + 300);
 

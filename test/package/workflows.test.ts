@@ -278,7 +278,7 @@ test('the CI catalog-pin allowlist is anchored, matches .gitleaks.toml, and cove
   expect(ci).toHaveLength(2);
   expect(ci).toEqual(res(readFileSync('.gitleaks.toml', 'utf8')));
   const sg = /\b[a-fA-F0-9]{40}\b(?:[`'"\s;]|$)/; // the shape the sourcegraph-access-token rule flags
-  for (const f of readdirSync('catalog/items')) for (const line of readFileSync(`catalog/items/${f}`, 'utf8').split('\n'))
+  for (const f of readdirSync('catalog/items').filter((n) => n.endsWith('.yaml'))) for (const line of readFileSync(`catalog/items/${f}`, 'utf8').split('\n'))
     if (/(^|\W)"?sha"?\s*:/.test(line) && sg.test(line)) expect(ci.some((r) => new RegExp(r).test(line)), `${f}: ${line}`).toBe(true);
   expect(ci.some((r) => new RegExp(r).test(`sha: ${'a'.repeat(40)} token=x`))).toBe(false);
 });

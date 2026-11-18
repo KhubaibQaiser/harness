@@ -14,7 +14,7 @@ import { dirtyTouched } from '../install/finish.js';
 import { mergeManifestFiles, rawOf, type Manifest } from '../install/manifest.js';
 import { MergeError, mergePresetSettings } from '../install/merge.js';
 import { items, type ItemsEnv } from './items.js';
-import { isDenied, sandboxLine } from './own-command.js';
+import { deniedWrite, sandboxLine } from './own-command.js';
 import { openInstall, readConfig } from './preamble.js';
 import { NO_TTY } from './prompt.js';
 
@@ -95,7 +95,7 @@ async function applyNameOnly(root: string, m: Manifest, names: string[], f: { ye
   try {
     applyChanges(root, [change], m.version, () => at, cli.fs, { manifest: { ...m, files }, manifestBefore: rawOf(m) });
   } catch (e) {
-    if (e instanceof ApplyError) return out(isDenied(e) ? sandboxLine('context', ['apply', ...f.args], root) : e.message), 1;
+    if (e instanceof ApplyError) return out(deniedWrite(e, root) ? sandboxLine('context', ['apply', ...f.args], root) : e.message), 1;
     throw e;
   }
   stampHarnessFiles(root); // change detection: this write is harness's own

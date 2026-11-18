@@ -48,6 +48,7 @@ export interface StatePaths { dir: string; manifest: string; backup: string; loc
 export const statePaths = (dir = '.harness'): StatePaths => ({ dir, manifest: `${dir}/manifest.json`, backup: `${dir}/backup`, lock: `${dir}/apply.lock` });
 export const REPO_STATE = statePaths();
 export const MANIFEST_REL = REPO_STATE.manifest;
+export const NOT_INSTALLED = 'Harness is not installed here (no `.harness/manifest.json`). Run /harness:init to install it.';
 
 export class ManifestError extends Error {
   constructor(options?: { cause?: unknown; message?: string }) {

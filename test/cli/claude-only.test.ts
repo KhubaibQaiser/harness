@@ -45,7 +45,7 @@ test('HARNESS_PLAIN_INIT takes the plain path with no AI flags, whatever CLAUDEC
 test('update --check works without CLAUDECODE', async () => {
   const root = makeRepo({ 'package.json': '{}\n' });
   let out = '';
-  const fetchImpl = (async () => new Response(JSON.stringify({ version: '1.2.3' }))) as unknown as typeof fetch;
+  const fetchImpl = (async () => new Response(JSON.stringify({ latest: '1.2.3' }))) as unknown as typeof fetch;
   expect(await update(['--check'], { ...base, env: {}, root, out: (s) => (out += s), prompt, fetchImpl })).toBe(0);
   expect(out).not.toContain('inside Claude Code');
 });

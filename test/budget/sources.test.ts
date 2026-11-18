@@ -331,3 +331,10 @@ test('a .mcp.json that parses but is not an object says so', () => {
   const r = measure({ '.mcp.json': '[]', '.claude/settings.json': '"x"' });
   expect(r.notes).toEqual(expect.arrayContaining(['.mcp.json: not a JSON object, not read', '.claude/settings.json: not a JSON object, not read']));
 });
+
+test('a file in .claude/skills (.DS_Store) is not a skill: no row, no unmeasured line (ship audit S9)', () => {
+  const r = measure({ '.claude/skills/review-rubric/SKILL.md': SKILL, '.claude/skills/.DS_Store': 'Bud1\0\0' });
+  expect(labels(r)).toEqual(['skill review-rubric']);
+  expect(r.unmeasured).toEqual([]);
+  expect(r.notes.join('\n')).not.toContain('DS_Store');
+});

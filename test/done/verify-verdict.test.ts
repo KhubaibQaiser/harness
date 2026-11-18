@@ -15,19 +15,32 @@ const TEST_C1 = [{ id: 'C1', text: 'works', check: { test: 'test/a.test.ts::a wo
 
 const FORGE = "const fs=require('fs');fs.mkdirSync('.harness/results',{recursive:true});fs.writeFileSync('.harness/results/forged.json',JSON.stringify({testResults:[{name:require('path').resolve('test/a.test.ts'),status:'passed',assertionResults:[{fullName:'a works',status:'passed'}]}]}))\n";
 
-test('verify records the hash of the verdict it wrote; a record that fails is reported, and an unrecorded done exits 1', async () => {
+const blockRecord = (root: string) => mkdirSync(join(root, '.harness/state/verdict-hashes.json'), { recursive: true }); // the write throws
+
+test('verify records the hash of the verdict it wrote; a record that fails is reported, and an unrecorded done exits 1: the hash is recorded', async () => {
   const ok = await runVerify();
   expect(readVerdict(ok.root, head(ok.root))?.outcome).toBe('done');
   expect(ok.text).not.toContain(NOT_RECORDED);
-  const blockRecord = (root: string) => mkdirSync(join(root, '.harness/state/verdict-hashes.json'), { recursive: true }); // the write throws
+});
+
+test('verify records the hash of the verdict it wrote; a record that fails is reported, and an unrecorded done exits 1: unrecorded done', async () => {
   const unrecorded = await runVerify({ setup: blockRecord });
   expect([unrecorded.code, unrecorded.outcome]).toEqual([1, 'done']); // the verdict is still written and printed
   expect(unrecorded.text).toContain(NOT_RECORDED);
   expect(readVerdict(unrecorded.root, head(unrecorded.root))).toBeNull();
+});
+
+test('verify records the hash of the verdict it wrote; a record that fails is reported, and an unrecorded done exits 1: unrecorded not-done', async () => {
   const notDone = await runVerify({ criteria: [run('C1', 'node fail.js')], setup: blockRecord });
   expect([notDone.code, notDone.text.includes(NOT_RECORDED)]).toEqual([1, true]);
+});
+
+test('verify records the hash of the verdict it wrote; a record that fails is reported, and an unrecorded done exits 1: unrecorded blocked', async () => {
   expect((await runVerify({ setup: (root, c) => { blockRecord(root); blockedRow(root, c); } })).code).toBe(3);
-  const filesOnly = await runVerify({ filesOnly: true, setup: blockRecord }); // an unrecorded harness-files-only is not trusted either
+});
+
+test('verify records the hash of the verdict it wrote; a record that fails is reported, and an unrecorded done exits 1: unrecorded harness-files-only', async () => {
+  const filesOnly = await runVerify({ filesOnly: true, setup: blockRecord });
   expect([filesOnly.code, filesOnly.outcome]).toEqual([1, 'harness-files-only']);
 });
 

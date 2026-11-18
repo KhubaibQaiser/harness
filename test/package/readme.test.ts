@@ -105,7 +105,7 @@ const pkgVersion = JSON.parse(readFileSync('package.json', 'utf8')).version as s
 // The notes of the release being prepared: unreleased.md until the version bump renames it to <version>.md (the
 // release workflow needs that name at tag time); a tagged version's notes describe what shipped and are never edited.
 const notes = readFileSync(existsSync('docs/release-notes/unreleased.md') ? 'docs/release-notes/unreleased.md' : `docs/release-notes/${pkgVersion}.md`, 'utf8');
-const catalogItems = readdirSync('catalog/items').map((f) => parseYaml(readFileSync(`catalog/items/${f}`, 'utf8')) as { id: string; source: { type: string }; plugin_version?: string });
+const catalogItems = readdirSync('catalog/items').filter((f) => f.endsWith('.yaml')).map((f) => parseYaml(readFileSync(`catalog/items/${f}`, 'utf8')) as { id: string; source: { type: string }; plugin_version?: string });
 
 test('README carries neither test variable and names the budget key', () => {
   expect(readme).not.toContain('HARNESS_PLAIN_INIT');
@@ -167,4 +167,33 @@ test('the reference carries every team-decisions known limit (spec section 12) a
     '`--dry-run` and a word holding a glob',
   ]) expect(limits, s).toContain(s);
   expect(reference.match(/^## Team decisions$/gm)).toHaveLength(1);
+});
+
+test('README names every Stop gate requirement and what teammates need (ship audit S4)', () => {
+  expect(readme).toContain('ripgrep');
+  expect(readme).toContain('@anthropic-ai/sandbox-runtime@0.0.83');
+  expect(readme).toMatch(/\*\*Teammates\*\* need Node 22\.11 or newer/);
+});
+
+test('README stays user-first: no paragraph over 800 characters (ship audit S4)', () => {
+  const long = readme.split('\n').filter((l) => !l.startsWith('|') && !l.startsWith('  ') && l.length > 800);
+  expect(long).toEqual([]);
+});
+
+test('the release notes list no gaps of their own (ship audit S2)', () => {
+  expect(notes).not.toContain('Not yet listed');
+  for (const s of ['### Done contract', '### PR review', 'harness eval --kind gates', 'checks.prBody']) expect(notes, s).toContain(s);
+});
+
+test('no tracked text file carries the owner\'s machine paths or work folders (ship audit S13)', () => {
+  // Built from pieces so this file doesn't match itself.
+  const bad = ['/Users/' + 'khubaib', '-Users-' + 'khubaib', 'khubaib' + '-personal', 'claude' + '-502', 'harness' + '-wt'];
+  const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+  const hits = files.flatMap((f) => {
+    let t: string;
+    try { t = readFileSync(f, 'utf8'); } catch { return []; } // a tracked file missing from the checkout
+    if (t.includes('\0')) return []; // binary
+    return bad.filter((b) => t.includes(b)).map((b) => `${f}: ${b}`);
+  });
+  expect(hits).toEqual([]);
 });

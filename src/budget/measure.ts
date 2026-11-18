@@ -1,6 +1,6 @@
 // Offline estimate of the context harness always loads. No network, no API key, no env or dotenv reads: the
 // exact count (CountTokens, see count-api.ts) is opt-in through measureSelection's `count`.
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import type { Catalog, CatalogItem } from '../catalog/schema.js';
@@ -68,9 +68,13 @@ export function itemContext(item: CatalogItem, dirs: { templates: string }): Con
   }
 }
 
+/** The folders in `dir` (links followed), so a stray file such as Finder's .DS_Store is never read as a skill. */
+export const subdirs = (dir: string): string[] =>
+  existsSync(dir) ? readdirSync(dir).filter((n) => { try { return statSync(join(dir, n)).isDirectory(); } catch { return false; } }) : [];
+
 export function pluginEntry(plugin: string): ContextEntry {
   const root = join(plugin, 'skills');
-  const names = existsSync(root) ? readdirSync(root) : [];
+  const names = subdirs(root);
   // The agents plugin.json registers load their name and description too.
   let agents: string[] = [];
   try {

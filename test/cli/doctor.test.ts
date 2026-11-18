@@ -98,7 +98,7 @@ test('claude too old or missing', async () => {
   const old = run(root, { claude: '2.0.0', path: bin('npm') });
   expect(old.out).toMatch(/^fix Claude Code 2\.0\.0 .*update Claude Code/m);
   const none = run(root, { claude: null, path: bin('npm') });
-  expect(none.out).toMatch(/^ok Claude Code not found \(or `claude --version` did not answer\): hooks still run when Claude Code is installed/m);
+  expect(none.out).toMatch(/^note Claude Code not found \(or `claude --version` did not answer\): hooks still run when Claude Code is installed/m);
 });
 
 test('bad config and unwired event named', async () => {
@@ -779,6 +779,17 @@ test('items: config checks that differ from the selected items are a note', () =
   expect(runItems(root, []).out).not.toContain('checks differ');
   setConfig(root, (s) => s.replace(/(\n\s+tdd: )true/, '$1false'));
   expect(runItems(root, []).out).toContain('note config.yaml checks differ from the selected items (tdd); the items win on the next update. Use /harness:add or harness remove to change gates.\n');
+});
+
+test('items: a hand-set check no catalog item owns (checks.done) is kept by the plan, so update leaves it on (ship audit S7)', () => {
+  const root = itemsRepo([]);
+  setConfig(root, (s) => s.replace(/(\n\s+done: )false/, '$1true'));
+  expect(runItems(root, []).out).not.toContain('checks differ');
+  const config = loadConfig(root).config;
+  expect(config.checks.done).toBe(true);
+  const planned = planChanges(root, config, detect(root), { version: '1.0.0', distDir: join(pkgDir, 'dist'), templatesDir: join(pkgDir, 'templates'), catalog: loadCatalog().catalog });
+  expect(planned.config.checks.done).toBe(true);
+  expect(planned.changes.find((c) => c.rel === '.harness/config.yaml')).toBeUndefined();
 });
 
 test('items: a missing or unreadable claude prints one note and skips the plugin checks', () => {

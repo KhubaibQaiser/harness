@@ -6,12 +6,6 @@ A line in `CLAUDE.md` saying "write the test first" or "never read `.env`" is a 
 
 Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, and in every session with `sandbox: always`. Elsewhere, and on native Windows always, the guard and protect checks are a seatbelt.
 
-**Safety model, in two layers.** The first is Claude Code's sandbox, at the OS level. Init turns it on for every session on macOS, and on Linux and WSL2 when the machine can run it (`sandbox: always`). Harness also lists its own protected files in the sandbox's `denyWrite`. With the sandbox on, any Bash write to them fails, however it is spelled (`echo >`, `tee`, `/bin/cp`, `sh -c`, Python). The second layer is harness's text checks, guard and protect, which read every command and edit. They cover the Edit and Write tools, which the sandbox doesn't, and every platform. On native Windows there is no sandbox, so the text checks are the only layer: a seatbelt that catches mistakes and can be bypassed. See [Sandbox](docs/reference.md#sandbox).
-
-**A machine that can't run the sandbox.** The strict sandbox settings are committed for everyone, so on a machine that can't run the sandbox, Claude Code won't run Bash at all. That means native Windows, WSL1, Linux and WSL2 without `bwrap` and `socat`, and Ubuntu with its AppArmor user-namespace restriction on. `harness doctor` tells you so on that machine, with the fix. Fix the machine, or set `sandbox.failIfUnavailable: false` in your own `.claude/settings.local.json`; Bash then runs without the sandbox there, guarded only by harness's text checks.
-
-**Stop steps run inside `srt`.** Your tests, lint and build run in Anthropic's sandbox-runtime, with no network and writes limited to the repo and temp folders. Install it once, globally and outside the repo, with npm: `@anthropic-ai/sandbox-runtime@0.0.83`. Until it is installed, Stop blocks and says what to do. `sandbox: off` in `.harness/config.yaml` runs them unsandboxed instead (logged). On native Windows the steps run unwrapped, and an unattended Stop there blocks. See [Stop gate](docs/reference.md#stop-gate-any-repo).
-
 **Status:** beta, version `0.2.0-beta.2`, on npm under the `beta` tag: `npm i -g @khubaibqaiser/harness@beta`. Release notes: [docs/release-notes/0.2.0-beta.2.md](docs/release-notes/0.2.0-beta.2.md).
 
 ## Who it's for
@@ -22,7 +16,7 @@ Enforced by Claude Code's sandbox in unattended runs on macOS, Linux and WSL2, a
 
 ## Quick start
 
-You need Node 22.11 or newer, git, and Claude Code 2.1.295 or newer.
+You need Node 22.11 or newer, git, and Claude Code 2.1.295 or newer. The Stop gate runs your checks inside Anthropic's sandbox-runtime (`srt`), so on macOS and Linux also install ripgrep, and `srt` globally with npm, outside the repo: `npm i -g @anthropic-ai/sandbox-runtime@0.0.83`. Linux also needs bubblewrap 0.8 or newer and socat.
 
 1. **Install the plugin:**
    ```bash
@@ -30,11 +24,19 @@ You need Node 22.11 or newer, git, and Claude Code 2.1.295 or newer.
    claude plugin install harness@harness
    ```
    To build from source instead, see [docs/reference.md](docs/reference.md#development).
-2. **Run `/harness:init` inside Claude Code**, in the repo you want to protect. It scans the repo and asks you one question at a time. It recommends tools from a pinned catalog, each with a reason and its context cost. Nothing is written until you say yes. A terminal `npx @khubaibqaiser/harness init` doesn't install; it tells you to use `/harness:init`.
+2. **Run `/harness:init` inside Claude Code**, in the repo you want to protect. It scans the repo, asks one question at a time, and recommends tools from a pinned catalog, each with a reason and its context cost. Nothing is written until you say yes. A terminal `npx @khubaibqaiser/harness init` doesn't install; it tells you to use `/harness:init`.
 3. **Commit the files it lists.** Branch, commit, push and PR are each a separate question.
-4. **Run `harness doctor`.** It checks the install and prints the fix for each problem.
+4. **Run `/harness:doctor`.** It checks the install and prints the fix for each problem.
 
-**Teammates** need nothing for the hooks. For picked plugins, each runs `/harness:sync --install-plugins` once.
+**Teammates** need Node 22.11 or newer and Claude Code for the hooks, which are committed, and `srt` and ripgrep for the Stop gate. For picked plugins, each runs `/harness:sync --install-plugins` once.
+
+## How it keeps you safe
+
+- **Claude Code's sandbox is the first layer.** Init turns it on for every session on macOS, and on Linux and WSL2 when the machine can run it (`sandbox: always`). Harness lists its own files in the sandbox's `denyWrite`, so any Bash write to them fails, however it is spelled.
+- **Harness's text checks are the second.** Guard and protect read every command and edit, including the Edit and Write tools the sandbox doesn't cover. On native Windows there is no sandbox, so they are the only layer: a seatbelt that catches mistakes and can be bypassed. See [Sandbox](docs/reference.md#sandbox).
+- **A machine that can't run the sandbox runs no Bash**, because the strict settings are committed for everyone. That means native Windows, WSL1, Linux and WSL2 without `bwrap` and `socat`, and Ubuntu with its AppArmor user-namespace restriction on. `harness doctor` prints the fix. Or set `sandbox.failIfUnavailable: false` in your own `.claude/settings.local.json`, so Bash there runs guarded only by the text checks.
+- **Stop steps run inside `srt`**, with no network, and writes are limited to the repo and temp folders. Until `srt` is installed, Stop blocks and says what to do. `sandbox: off` in `.harness/config.yaml` runs the steps unsandboxed instead (logged). On native Windows the steps run unwrapped, and an unattended Stop there blocks. See [Stop gate](docs/reference.md#stop-gate-any-repo).
+- **The hooks call no model.** They decide from the tool call, your test results, coverage and `git diff`. If the hook dispatcher can't run, Claude Code blocks the call; the Stop gate is the one exception.
 
 ## What it changes in your repo
 
@@ -61,17 +63,13 @@ You need Node 22.11 or newer, git, and Claude Code 2.1.295 or newer.
 | Changed-line coverage | no | yes |
 | PR size: warns as a branch passes 200 and 400 changed lines, suggests a split, and asks at PR time | yes | yes |
 
-`/pr-ship` writes each PR body from a template for human reviewers (changes and why, alternatives, how to review and verify, screenshots, performance, security, human steps before merge, limits). Every agent `gh pr create` must use it, through `--body-file`: the pr-body check (`checks.prBody`) denies a missing or empty section, a body it can't read, human steps without the `needs-human` label, and `gh pr merge --auto` or `--admin`. To make GitHub itself refuse a merge without a person, turn on branch protection with required reviews.
-
-The done contract is being built: it will make an agent's "done" a verdict harness computes from evidence against criteria a person approved. It is off by default and not usable yet. New configs carry `checks.done: false` and a `done:` section, `init` lists it under the gates that are off, and `harness status` lists `done` as off. The first commands are in: the agent drafts a task contract with `harness task draft`, and only you approve, edit or close one (`! harness task approve <file> --yes`; the guard denies the agent). Contracts live in `.harness/tasks/`, which is locked: the agent can read a contract but not write one, with any tool or in the sandbox. With `checks.done` on, the task gate denies the agent's first edit outside a `harness workdir` folder until you have approved a contract and it is the active task; an unattended run names its contract with `HARNESS_TASK=<id>`, and that contract must be on the base branch. The guard asks before commands that could repoint `refs/remotes/*` (which vouch for a merged contract), and denies them in unattended runs; protect denies direct writes to git's refs and config. A hook records each exact check run in a protected evidence ledger, and an agent that can't finish runs `harness done --blocked "<reason>"` (one plain line of at most 500 characters, from the repo root) so the hook records why (it exits 1 when the hook isn't wired in the managed, user, project or local settings, or a settings file can't be read, and the hook records nothing for a background or PowerShell call: confirm with `harness verify`). At Stop, a message that claims it is done ("all tests pass", "fixed") is blocked while a required check or non-person criterion has no passing row for the current tree (up to `stop.max_attempts` times, then it lets the Stop through); it never decides done itself. `harness verify` (or `/harness:verify`) decides: it reuses fresh passing rows, re-runs the rest (in srt, unless `sandbox: off` or native Windows), runs the tamper check over the diff, and writes a verdict for this commit and tree to `.harness/verdicts/`. Only a verify run in your own terminal records it as trusted. Keys: [docs/reference.md](docs/reference.md#configuration-keys).
-
-Secrets scanning comes as two catalog items, recommended together: `gitleaks-ci` adds a GitHub workflow that scans the full history with a checksum-pinned gitleaks 8.30.1, and `gitleaks-commit` scans each agent `git commit` first and blocks it on a finding (`checks.secretScan`). Harness installs nothing: the commit scan needs gitleaks on PATH (and git 2.40 or newer), and without it every agent commit is blocked until you install gitleaks or remove the item. Both scans use harness's own rules, so the repo's `.gitleaks.toml`, `gitleaks:allow` comments and `.gitattributes` can't hide a finding, and a `.gitleaksignore` (which gitleaks always reads) blocks agent commits and fails the CI job. Findings name the rule, file and line, never the value. Merges, rebases and other commands that bring in commits ask instead, and so does a commit in a repo with git hooks or git config that names a program git may run, such as `gpg.program` when the commit signs, `core.editor` when it opens the editor, or a non-lfs filter (git runs them after the scan; unattended, that is a deny). The commit check is a seatbelt against honest mistakes; `gitleaks-ci` is the backstop, and so will the done-contract CI verdict be once it ships. The full list of what is and isn't scanned is in [docs/reference.md](docs/reference.md#secrets-scanning-any-repo). `/harness:init` recommends `gitleaks-ci` for API and infra repos.
-
-The hooks call no model. They decide from the tool call, your test results, coverage and `git diff`. If the hook dispatcher can't run, Claude Code blocks the call. The Stop gate is the one exception. The exact rules for each gate are in [docs/reference.md](docs/reference.md).
+- **PR descriptions.** `/pr-ship` writes each PR body from a template for human reviewers. Every agent `gh pr create` must use it (`checks.prBody`). Steps a person must do need the `needs-human` label, and `gh pr merge --auto` and `--admin` are denied. Branch protection with required reviews is what makes GitHub refuse a merge without a person.
+- **Secrets scanning.** Two catalog items, recommended for API and infra repos: `gitleaks-ci` scans the full history in CI, and `gitleaks-commit` blocks an agent `git commit` on a finding. The commit check needs gitleaks on PATH, and without it every agent commit is blocked. Details: [secrets scanning](docs/reference.md#secrets-scanning-any-repo).
+- **Done contract (preview, off by default).** It turns an agent's "done" into a verdict harness computes from evidence, against criteria you approved. How it works and how to turn it on: [done contract](docs/reference.md#done-contract-preview).
 
 ## Commands
 
-Run them as `harness <command>`. From a source build, use `node /path/to/harness/dist/cli.mjs` instead. `init`, `update`, `add` and `sync` work only inside Claude Code, as `/harness:<command>`. Every command and flag is in [docs/reference.md](docs/reference.md#commands-in-full).
+Inside Claude Code, the `/harness:<command>` skills run them for you; `init`, `update`, `add` and `sync` work only there. In a terminal, install the CLI with `npm i -g @khubaibqaiser/harness@beta` and run `harness <command>`. Every command and flag is in [docs/reference.md](docs/reference.md#commands-in-full).
 
 | Command | What it does |
 |---|---|
@@ -81,35 +79,25 @@ Run them as `harness <command>`. From a source build, use `node /path/to/harness
 | `sync` (`/harness:sync`) | Fixes drift between `config.yaml`, the manifest and the files. |
 | `status` | Shows each gate as on or off, and why. |
 | `doctor` | Checks the install and prints a fix for each problem. |
-| `/harness:preset` | Builds your own named preset through an interview, checks it, then installs it for this repo or globally. Global writes each get their own yes. |
-| `/harness:context-optimize` | Measures what loads into context, proposes trims, and applies harness's own after a yes. Your own files change only after you approve each diff. |
-| `context [--json] [--offline]` | Shows what loads into context and what it costs against the budget. Writes nothing. |
-| `context apply <n>[,<n>…]` | Applies harness's own recommendations, such as a skill by name only. `uninstall` undoes it. |
+| `context [--json] [--offline]` | What loads into context and its cost against the budget. `context apply <n>` applies harness's own trims; `/harness:context-optimize` proposes and applies them. |
 | `why <id>` / `explain` | Why an item is installed, and what every item loads into context. |
 | `stats [--days N]` | Counts harness events (default: the last 7 days). |
 | `report [--days N] [--open] [--export]` | Writes the usage and adherence report to `.harness/reports/`. Local only. |
-| `rules [--apply]` | Shows today's violation count for each proposed ESLint rule and stricter TS option first. The rules are errors from day one, so `--apply` asks you to type `yes`. |
-| `eval [--kind skills\|rules\|gates] [--runs N] [--max-cost-usd X]` | Paid checks that your skills and rules change what the agent does, and that the gates fire in a real session. Costs money and asks every run. |
-| `remember add\|confirm\|retire\|sync\|list\|check` | Saves a team decision to `docs/decisions/` and loads it as a rule when its paths are touched. Asks first, commits nothing. |
+| `rules [--apply]` | Proposes ESLint rules and stricter TS options, with today's violation count for each. `--apply` asks you to type `yes`. |
+| `eval [--kind skills\|rules\|gates] [--runs N] [--max-cost-usd X]` | Paid checks that your skills, rules and gates change what the agent does in a real session. Costs money and asks every run. |
+| `remember add\|confirm\|retire\|sync\|list\|check` | Saves a team rule for some paths to `docs/decisions/` and loads it when those paths are touched. Asks first, commits nothing; expires after 90 days unless confirmed. Also `/harness:remember`. [Details](docs/reference.md#team-decisions). |
 | `tdd off\|on\|status` | Pauses or resumes TDD for your next session. |
 | `vet <target>` | Scans a plugin or skill before you install it. Needs `gh`. Installs nothing. |
-| `/harness:review <pr>` | A code-only review of a PR that you read locally: gathered without running the PR's code, checked by a reviewer agent, verified, and checked by a small-model judge. Posting comes next. Needs the harness plugin and `gh`; run it from the base branch, in a fresh session. The steps are also CLI commands (`review <pr> --out`, `review --finish`, `review --keep`). |
-| `verify` (`/harness:verify`) | Done contract: the verdict for the active task at this commit and tree. Exit 0 done or harness files only, 1 not done, 3 blocked, 2 usage. |
-| `guide <name>` / `workdir` | Helpers the skills call: print a bundled doc, and make a git-ignored work folder in `.harness/tmp/`, so no skill touches a file outside the repo. |
-| `uninstall [--dry-run]` | Removes what harness added and restores your files. `--global` does the same for a preset installed under `~/.claude`. |
+| `/harness:review <pr>` | A code-only PR review you read locally. Needs `gh`; run it from the base branch, in a fresh session. |
+| `/harness:preset` | Builds your own named preset through an interview, then installs it for this repo or globally. |
+| `uninstall [--dry-run]` | Removes what harness added and restores your files. `--global` does the same for a global preset. |
 
-- **Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted.
-- The report quotes your sessions, so don't share it. It sends nothing anywhere.
-
-## Team decisions
-
-When the team agrees on a rule for some paths, ask Claude to remember it (`/harness:remember`) or run `harness remember add` yourself. It writes `docs/decisions/<id>.md` and a rule in `.claude/rules/` that Claude Code loads when those paths are touched. Each write asks you first, and nothing is committed: open a PR so the team reviews it. A decision expires after 90 days unless someone runs `harness remember confirm`, and `doctor`, `status` and the Stop gate say when one is stale or out of sync. `uninstall` keeps `docs/decisions/`. Details and limits: [docs/reference.md](docs/reference.md#team-decisions).
+**Rule: start Claude Code inside the repo for the report to see it.** Sessions started in a parent folder are not counted. The report quotes your sessions, so don't share it; it sends nothing anywhere.
 
 ## What it costs
 
-- **Context.** Always-loaded text has a budget of 2000 tokens by default (`context.budget_tokens`). `harness explain` shows what each item loads. The budget counts your repo's own `CLAUDE.md`, rules and skills too. `init`, `update`, `add` and `sync` ask before going past it. With `--yes`, they stop unless you also pass `--over-budget`. An unattended run over the budget is refused, even with `--over-budget`. `doctor` and `status` show the total and never call the API. Counts are estimates (characters ÷ 4). `harness context` uses Anthropic's token-counting API only when `ANTHROPIC_API_KEY` is set (never stored); that sends the measured text to Anthropic under your key's account. `--offline` skips it.
-- **Money, for `harness eval`.** It tests skills, rules and gates in real sessions, so it costs money. It asks you to type `yes` every run. It stops at a cost ceiling (default $2, set with `--max-cost-usd`). It defaults to a Haiku model and runs only in your own terminal.
-- **The hooks call no model.** They add no token cost of their own.
+- **Context.** Always-loaded text, your repo's own `CLAUDE.md`, rules and skills included, has a budget of 2000 tokens by default (`context.budget_tokens`). `init`, `update`, `add` and `sync` ask before going past it; with `--yes` they stop unless you also pass `--over-budget`, and an unattended run over it is refused. Counts are estimates (characters ÷ 4). Only `harness context`, and only when `ANTHROPIC_API_KEY` is set, sends the measured text to Anthropic's token-counting API; `--offline` skips it.
+- **Money, for `harness eval` only.** It runs real sessions, so it costs money. It asks you to type `yes` every run, stops at a cost ceiling (default $2, `--max-cost-usd`), defaults to a Haiku model and runs only in your own terminal. The hooks call no model.
 
 ## Unattended runs and CI
 
@@ -133,9 +121,8 @@ HARNESS_SANDBOX=1 HARNESS_UNATTENDED=1 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 claude
 ```
 
 - **Allowed tools.** `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` forces the permission mode to `default`, so `bypassPermissions` is ignored, and `-p` refuses any tool that needs approval. `--allowedTools` lets the run use Bash, Edit and Write (reads need no approval); add the tools your run needs, such as `WebFetch` or an MCP tool. `HARNESS_UNATTENDED=1` keeps harness treating the run as unattended outside CI.
-- **List the hosts your run needs** in `allowedDomains`, for example `"registry.npmjs.org"`. Every other host is refused unless your own user or managed settings allow it; the repo's list doesn't count with these settings.
+- **Hosts and credentials.** List the hosts your run needs in `allowedDomains`, for example `"registry.npmjs.org"`; the repo's list doesn't count with these settings. The shell can't read the listed files or see the listed variables, so `gh`, `aws`, `npm publish` and HTTPS `git push` can't sign in. For a run that must push, remove the `GH_TOKEN` and `GITHUB_TOKEN` entries (and `~/.config/gh`), and add `github.com` and `api.github.com` to `allowedDomains`. That also gives data a way out.
 - **`CLAUDE_CONFIG_DIR`.** `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` strips credential-looking variables from Bash, the hooks and the Stop gate's test commands, and `CLAUDE_CONFIG_DIR` too. If you use it, add `HARNESS_CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"` to the same launch.
-- **Credentials.** The shell can't read the listed files or see the listed variables, so `gh`, `aws`, `npm publish` and HTTPS `git push` can't sign in. For a run that must push, remove the `GH_TOKEN` and `GITHUB_TOKEN` entries (and `~/.config/gh` if `gh` keeps its token there), and add `github.com` and `api.github.com` to `allowedDomains`. That also gives data a way out.
 
 Native Windows has no sandbox and keeps the text checks. More: [docs/reference.md](docs/reference.md#unattended-runs-and-ci).
 
@@ -143,23 +130,18 @@ Native Windows has no sandbox and keeps the text checks. More: [docs/reference.m
 
 - The guard is a speed bump for mistakes and prompt injection, not a security sandbox. Claude Code's permission rules and its sandbox are the real boundary.
 - Hooks run with your permissions. Turn on branch protection: it is the real stop for force-pushes.
-- TDD and coverage gates are for JS/TS only. Other repos get every other gate.
-- Windows: unit tests run in CI, but live Claude Code use is untested.
-- Mid-session, a settings change that weakens harness (its hooks, deny rules or sandbox keys, `disableAllHooks`, a new `excludedCommands` entry, a hook-steering `env` key such as `NODE_OPTIONS` or `HOME`, or any hook added to any settings file) is held for the session; other settings changes apply at once, though a project or local `sandbox` or `env` edit still gets one change notice and one blocked Stop for now. Claude Code shows nothing when it holds a change, so harness tells you at your next prompt.
-- Plugin pins live in a marketplace named after its content, so the name changes with the pins; teammates run `/harness:sync --install-plugins` after a pin change. Don't hand-edit that entry: its name would stop matching its pins. Installs from before this share the name `harness-pins`, so another repo can replace their pins: run `/harness:update` (`harness doctor` flags it).
-- The skills read and write only inside the repo, so `blockReadsOutsideWorkingDirectories` doesn't stop them. `/harness:vet`'s reviewer is the exception: it reads the fetched plugin from the OS temp folder.
+- TDD and coverage gates are for JS/TS only. On Windows, unit tests run in CI, but live Claude Code use is untested.
+- Mid-session, a settings change that weakens harness is held for the session, and harness tells you at your next prompt. Other settings changes apply at once.
+- After a plugin pin change, teammates run `/harness:sync --install-plugins`.
 
 The full list: [docs/reference.md](docs/reference.md#known-limits).
 
 ## More
 
-[docs/reference.md](docs/reference.md) has the details:
-- [configuration keys](docs/reference.md#configuration-keys), including Stop steps for non-JS repos;
-- [named presets](docs/reference.md#named-presets), [vetting](docs/reference.md#vetting-a-plugin-or-skill) and the [usage and adherence report](docs/reference.md#usage-and-adherence-report);
-- [tips for daily use](docs/reference.md#using-it-well), [troubleshooting](docs/reference.md#troubleshooting), [development](docs/reference.md#development) and the [roadmap](docs/reference.md#roadmap).
+[docs/reference.md](docs/reference.md) has the details: [configuration keys](docs/reference.md#configuration-keys) (including Stop steps for non-JS repos), [named presets](docs/reference.md#named-presets), [vetting](docs/reference.md#vetting-a-plugin-or-skill), the [usage and adherence report](docs/reference.md#usage-and-adherence-report), [tips for daily use](docs/reference.md#using-it-well), [troubleshooting](docs/reference.md#troubleshooting), [development](docs/reference.md#development) and the [roadmap](docs/reference.md#roadmap).
 
 ## Feedback and license
 
-Open an issue in `KhubaibQaiser/harness`. Say what you ran and what happened, and paste the output of `harness doctor` and `harness status`.
+Open an issue in `KhubaibQaiser/harness`. Say what you ran and what happened, and paste the output of `harness --version`, `harness doctor` and `harness status`.
 
 Apache License 2.0. See [LICENSE](LICENSE).

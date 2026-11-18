@@ -76,6 +76,7 @@ test('applyChanges retries a transient rename of a file it writes', () => {
 test('recording the CLI path never throws, even when every write fails', () => {
   const root = mkdtempSync(join(tmpdir(), 'h-atomic-cli-'));
   realFs.mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness/manifest.json'), '{"files":[]}\n'); // installed, so the write is attempted
   const cli = join(root, 'node_modules/@khubaibqaiser/harness/dist/cli.mjs');
   realFs.mkdirSync(join(cli, '..'), { recursive: true });
   writeFileSync(cli, '');

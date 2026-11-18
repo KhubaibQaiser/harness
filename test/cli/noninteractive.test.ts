@@ -36,7 +36,7 @@ test('non-TTY without --yes exits 2 with the message (init, uninstall, update)',
   ] as const) {
     lines = [];
     expect(await run(), name).toBe(2);
-    expect(lines, name).toEqual([MSG]);
+    expect(lines, name).toEqual([name === 'init' ? MSG : 'No terminal to answer prompts. Run with --yes, or use --dry-run to preview.']); // --config is init's flag only
   }
 });
 

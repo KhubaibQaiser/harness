@@ -62,8 +62,10 @@ const hasJson = (arr: any) => arr.elements.some((e: any) => strVal(e) === 'json'
 
 const covText = (enable: boolean, reporter = true) => [...(enable ? ['enabled: true'] : []), ...(reporter ? ["reporter: ['text', 'json']"] : [])].join(', ');
 
-function vitestManual(header: string, path: string, enable: boolean): string[] {
-  return [header, 'test: {', "  reporters: ['default', 'json'],", `  outputFile: { json: '${path}' },`, `  coverage: { ${covText(enable)} },`, '},'];
+/** `whole`: no config file yet, so the lines are a whole file to create, not a block to add. */
+function vitestManual(header: string, path: string, enable: boolean, whole: boolean): string[] {
+  const test = ['test: {', "  reporters: ['default', 'json'],", `  outputFile: { json: '${path}' },`, `  coverage: { ${covText(enable)} },`, '},'];
+  return whole ? [header, "import { defineConfig } from 'vitest/config';", '', 'export default defineConfig({', ...test.map((l) => `  ${l}`), '});'] : [header, ...test];
 }
 
 /** Several inserts at one offset (new properties of one empty object) become one comma-joined insert. */
@@ -115,7 +117,7 @@ function vitestChange(pkg: PackageFacts, root: string, path: string): TestConfig
   // and only with a provider installed: without one Vitest exits with MISSING DEPENDENCY
   const enable = !/(^|\s)--coverage(\s|$)/.test(pkg.scripts.test ?? '') && !pkg.noCoverageProvider;
   const header = pkg.testConfig ? `${rel}:` : `Create \`${pkg.dir === '.' ? '' : pkg.dir + '/'}vitest.config.ts\` with:`;
-  const manual: TestConfigResult = { manual: vitestManual(header, path, enable) };
+  const manual: TestConfigResult = { manual: vitestManual(header, path, enable, !pkg.testConfig) };
   if (!pkg.testConfig) return manual;
   let before: string;
   let lf = '';

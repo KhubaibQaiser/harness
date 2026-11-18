@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { type HarnessConfig, loadConfig } from '../core/config.js';
 import { writeHookEnv } from '../core/hook-env.js';
 import { bindPause, clearPause } from '../core/pause.js';
-import { type SessionState, readState, stateExists, writeState } from '../core/state.js';
+import { type SessionState, readState, stateExists, writeMerged } from '../core/state.js';
 import { repoRoot } from '../core/repo-root.js';
 import { isUnattended } from '../core/unattended.js';
 import { warn } from './event-log.js';
@@ -68,8 +68,8 @@ export function setupSession(input: HookInput, event: HookEvent, env: NodeJS.Pro
     // Fix startedAt at the session's first hook.
     try {
       if (!fallback && !stateExists(root, input.session_id)) {
-        state.baseHead = detectBaseHead(root);
-        writeState(root, input.session_id, state);
+        // Merged: a hook that ran meanwhile may have written the first state already.
+        Object.assign(state, writeMerged(root, input.session_id, { ...state }, { ...state, baseHead: detectBaseHead(root) }));
       }
     } catch (e) {
       warn('state write', e);

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { multiFile } from '../../src/checks/multi-file.js';
 import { readEvents } from '../../src/core/events.js';
-import { readState, writeState } from '../../src/core/state.js';
+import { readState, writeMerged, writeState } from '../../src/core/state.js';
 import { dispatch, registry } from '../../src/hooks/dispatch.js';
 
 const setup = (mode = 'block', extra = '') => {
@@ -468,7 +468,7 @@ test('require_reason: an entry is searched once; no reason by then logs reason-n
   expect(readState(t.root, 's').lateReasons ?? []).toEqual([]);
 });
 
-test('require_reason: Stop clears the handled late reasons under the lock, keeping what other hooks wrote meanwhile', async () => {
+test('require_reason: Stop clears the handled late reasons with a merged save, keeping what other hooks wrote meanwhile', async () => {
   const { loadConfig } = await import('../../src/core/config.js');
   const t = reasonSetup([rec('user', Date.now() - 60_000, 'task')]);
   const A = { ts: new Date(Date.now() - 5000).toISOString(), rel: 'a.ts' };
@@ -478,7 +478,7 @@ test('require_reason: Stop clears the handled late reasons under the lock, keepi
   const ctx: any = {
     input: { session_id: 's', cwd: t.root, hook_event_name: 'Stop', transcript_path: join(t.root, 't.jsonl') },
     root: t.root, config: loadConfig(t.root).config, state: stale, unattended: true, env: {},
-    save(s: any) { writeState(t.root, 's', s); ctx.state = s; },
+    save(s: any) { ctx.state = writeMerged(t.root, 's', stale, s); }, // as the dispatcher's ctx.save
   };
   expect(await multiFile.run(ctx)).toEqual({ kind: 'allow' });
   expect(readState(t.root, 's')).toMatchObject({ files: ['x.ts'], lateReasons: [B] });

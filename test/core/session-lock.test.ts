@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, onTestFinished, test } from 'vitest';
 import { RETRY } from '../../src/core/atomic.js';
-import { readState, withSessionLock, writeState } from '../../src/core/state.js';
+import { LOCK_WAIT, readState, withSessionLock, writeState } from '../../src/core/state.js';
+import type { Check } from '../../src/hooks/check.js';
 import { dispatch } from '../../src/hooks/dispatch.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'h-lock-'));
@@ -38,7 +39,24 @@ const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
   }
 };
 
+const shortWait = (ms = 300) => {
+  const saved = LOCK_WAIT.ms;
+  LOCK_WAIT.ms = ms;
+  onTestFinished(() => void (LOCK_WAIT.ms = saved));
+};
+const captureErr = async <T>(f: () => Promise<T>): Promise<{ v: T; err: string }> => {
+  let err = '';
+  const orig = process.stderr.write;
+  process.stderr.write = ((s: string) => ((err += s), true)) as typeof process.stderr.write;
+  try {
+    return { v: await f(), err };
+  } finally {
+    process.stderr.write = orig;
+  }
+};
+
 test('a live holder\'s lock is never removed by a waiter, however old', async () => {
+  shortWait(); // waits the live lock out
   const root = tmp();
   mkLock(root, { pid: process.pid, nonce: 'live' }, 60000);
   expect(await quiet(() => withSessionLock(root, 's', () => 'ran'))).toBe('ran');
@@ -77,21 +95,165 @@ test('Stop dispatch does not wait on a held lock', async () => {
   expect(Date.now() - t).toBeLessThan(500);
 });
 
-test('a fresh held lock times out after ~2 s, runs fn anyway and warns', async () => {
+test('a fresh held lock times out after the bounded wait, warns, and runs fn (no onTimeout) or onTimeout instead', async () => {
+  shortWait();
   const root = tmp();
   mkdirSync(join(root, '.harness/state/s.lock'), { recursive: true });
-  const w: string[] = [];
-  const orig = process.stderr.write;
-  process.stderr.write = ((s: string) => (w.push(String(s)), true)) as typeof process.stderr.write;
-  try {
-    const t = Date.now();
-    expect(await withSessionLock(root, 's', () => 'ran')).toBe('ran');
-    expect(Date.now() - t).toBeGreaterThanOrEqual(1900);
-  } finally {
-    process.stderr.write = orig;
+  const t = Date.now();
+  const a = await captureErr(() => withSessionLock(root, 's', () => 'ran'));
+  expect(Date.now() - t).toBeGreaterThanOrEqual(250);
+  expect(a).toEqual({ v: 'ran', err: 'harness: state lock timeout\n' });
+  let ran = false;
+  const b = await captureErr(() => withSessionLock(root, 's', () => ((ran = true), 'ran'), undefined, () => 'closed'));
+  expect(b.v).toBe('closed');
+  expect(ran).toBe(false);
+});
+
+test('the default wait is 5 s: bounded (no hangs), and long enough for a burst of hooks under load', () => {
+  expect(LOCK_WAIT.ms).toBe(5000);
+});
+
+const gated = (root: string, yaml = 'checks:\n  multiFile: true\n') => {
+  mkdirSync(join(root, '.harness'), { recursive: true });
+  writeFileSync(join(root, '.harness/config.yaml'), yaml);
+};
+const pre = (root: string, extra: object = {}) => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', cwd: root, tool_name: 'Edit', tool_input: { file_path: 'a.ts' }, ...extra });
+
+test.each(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'PowerShell', 'Monitor', 'mcp__github__create_issue', 'mcp__x__frobnicate'])('forced lock timeout: %s fails closed (a write, shell or unclassified MCP tool)', async (tool) => {
+  shortWait();
+  const root = tmp();
+  gated(root);
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  const out = JSON.parse((await captureErr(() => dispatch(pre(root, { tool_name: tool, tool_input: { command: 'ls', file_path: 'a.ts' } }), [], {}))).v);
+  expect(out.hookSpecificOutput.permissionDecision).toBe('ask');
+});
+
+test.each(['Read', 'Grep', 'Glob', 'mcp__github__get_issue', 'mcp__notion__search'])('forced lock timeout: read-only %s runs its checks (merged writes)', async (tool) => {
+  shortWait();
+  const root = tmp();
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  let ran = false;
+  const spy: Check = { name: 'spy', events: ['PreToolUse'], run: () => ((ran = true), { kind: 'allow' }) };
+  const { v, err } = await captureErr(() => dispatch(pre(root, { tool_name: tool, tool_input: { file_path: 'a.ts' } }), [spy], {}));
+  expect(err).toContain('state lock timeout');
+  expect(v).toBe('');
+  expect(ran).toBe(true);
+});
+
+test('forced lock timeout: a PreToolUse gate fails closed (ask attended, deny unattended) and never runs its checks', async () => {
+  shortWait();
+  const root = tmp();
+  gated(root);
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  let ran = false;
+  const spy: Check = { name: 'spy', events: ['PreToolUse'], run: () => ((ran = true), { kind: 'allow' }) };
+  const ask = JSON.parse((await captureErr(() => dispatch(pre(root), [spy], {}))).v);
+  expect(ask.hookSpecificOutput).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'ask' });
+  expect(ask.hookSpecificOutput.permissionDecisionReason).toContain('busy');
+  const deny = JSON.parse((await captureErr(() => dispatch(pre(root), [spy], { CI: 'true' }))).v);
+  expect(deny.hookSpecificOutput.permissionDecision).toBe('deny');
+  const bypass = JSON.parse((await captureErr(() => dispatch(pre(root, { permission_mode: 'bypassPermissions' }), [spy], {}))).v);
+  expect(bypass.hookSpecificOutput.permissionDecision).toBe('deny');
+  expect(ran).toBe(false);
+});
+
+test.each([
+  ['no state gate on', 'checks:\n  multiFile: false\n'],
+  ['TDD paused', 'checks:\n  tdd: true\n'],
+])('forced lock timeout: an Edit runs its checks when %s (config read without the lock)', async (_n, yaml) => {
+  shortWait();
+  const root = tmp();
+  gated(root, yaml);
+  if (yaml.includes('tdd')) {
+    mkdirSync(join(root, '.harness/state'), { recursive: true });
+    writeFileSync(join(root, '.harness/state/tdd-pause.json'), JSON.stringify({ createdAt: new Date().toISOString(), session: 's' }));
   }
-  expect(w.join('')).toContain('harness: state lock timeout');
-}, 10000);
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  let ran = false;
+  const spy: Check = { name: 'spy', events: ['PreToolUse'], run: () => ((ran = true), { kind: 'allow' }) };
+  expect((await captureErr(() => dispatch(pre(root), [spy], {}))).v).toBe('');
+  expect(ran).toBe(true);
+});
+
+test('forced lock timeout: a pending TDD pause (not yet bound to this session) still fails closed', async () => {
+  shortWait();
+  const root = tmp();
+  gated(root, 'checks:\n  tdd: true\n');
+  mkdirSync(join(root, '.harness/state'), { recursive: true });
+  writeFileSync(join(root, '.harness/state/tdd-pause.json'), JSON.stringify({ createdAt: new Date().toISOString() })); // pending
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  expect(JSON.parse((await captureErr(() => dispatch(pre(root), [], {}))).v).hookSpecificOutput.permissionDecision).toBe('ask');
+  writeFileSync(join(root, '.harness/state/tdd-pause.json'), JSON.stringify({ createdAt: new Date().toISOString(), session: 'other' }));
+  expect(JSON.parse((await captureErr(() => dispatch(pre(root), [], {}))).v).hookSpecificOutput.permissionDecision).toBe('ask');
+});
+
+test('forced lock timeout: an invalid config still fails closed', async () => {
+  shortWait();
+  const root = tmp();
+  gated(root, 'checks: [not, a, map]\n');
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  expect(JSON.parse((await captureErr(() => dispatch(pre(root), [], {}))).v).hookSpecificOutput.permissionDecision).toBe('ask');
+});
+
+test('the write lock busy past its bound: a write gate fails closed after its checks ran', async () => {
+  const { WRITE_WAIT } = await import('../../src/core/state.js');
+  const saved = WRITE_WAIT.ms;
+  WRITE_WAIT.ms = 50;
+  onTestFinished(() => void (WRITE_WAIT.ms = saved));
+  const root = tmp();
+  gated(root);
+  writeState(root, 's', readState(root, 's'));
+  const rec: Check = {
+    name: 'rec', events: ['PreToolUse'],
+    run(ctx) {
+      mkdirSync(join(root, '.harness/state/s.wlock'));
+      writeFileSync(join(root, '.harness/state/s.wlock/owner'), JSON.stringify({ pid: process.pid, nonce: 'stuck' }));
+      ctx.save({ ...ctx.state, files: ['x.ts'] });
+      return { kind: 'allow' };
+    },
+  };
+  const out = JSON.parse((await captureErr(() => dispatch(pre(root), [rec], {}))).v);
+  expect(out.hookSpecificOutput.permissionDecision).toBe('ask');
+  expect(readFileSync(join(root, '.harness/logs/events.jsonl'), 'utf8')).toContain('state-write-lost');
+});
+
+test('a stuck session-lock holder and 20 parallel PostToolUse Edits: every file and every red test is kept', async () => {
+  const repo = tmp();
+  gated(repo, "checks:\n  multiFile: true\n  tdd: true\ntdd:\n  paths: ['**']\n");
+  mkLock(repo, { pid: process.pid, nonce: 'stuck' }); // live, never released: every hook times out and runs unlocked
+  const run = (file: string) =>
+    new Promise<string>((res) => {
+      const p = spawn(process.execPath, [join(process.cwd(), 'dist/hooks/dispatch.mjs')], { env: { ...process.env, CI: '' } });
+      let err = '';
+      p.stderr.on('data', (d) => (err += d));
+      p.on('close', () => res(err));
+      p.stdin.end(JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', cwd: repo, tool_name: 'Edit', tool_input: { file_path: join(repo, file) } }));
+    });
+  const src = Array.from({ length: 10 }, (_, i) => `src/f${i}.ts`), tests = Array.from({ length: 10 }, (_, i) => `test/f${i}.test.ts`);
+  const errs = await Promise.all([...src, ...tests].map(run));
+  expect(errs.filter((e) => e.includes('state lock timeout'))).toHaveLength(20);
+  const st = readState(repo, 's');
+  expect([...st.files].sort()).toEqual([...src].sort());
+  expect([...st.redTests].sort()).toEqual([...tests].sort());
+}, 60000);
+
+test('forced lock timeout: a non-gate hook still runs, and its save merges with what another hook wrote meanwhile', async () => {
+  shortWait();
+  const root = tmp();
+  mkLock(root, { pid: process.pid, nonce: 'live' });
+  const rec: Check = {
+    name: 'rec', events: ['PostToolUse'],
+    run(ctx) {
+      writeState(root, 's', { ...readState(root, 's'), files: ['other.ts'] }); // another process, after this hook read the state
+      ctx.save({ ...ctx.state, files: [...ctx.state.files, 'mine.ts'] });
+      return { kind: 'allow' };
+    },
+  };
+  const post = JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', cwd: root, tool_name: 'Edit', tool_input: { file_path: 'mine.ts' } });
+  const { err } = await captureErr(() => dispatch(post, [rec], {}));
+  expect(err).toContain('state lock timeout');
+  expect(readState(root, 's').files).toEqual(['other.ts', 'mine.ts']);
+});
 
 test('10 parallel dispatcher processes for one session: no lost state updates', async () => {
   const repo = tmp();
@@ -154,6 +316,7 @@ const swapToFreshLock = (root: string) => {
 };
 
 test('stale owner-less lock: a new holder that has not written its owner file yet is never robbed', async () => {
+  shortWait(); // waits the live lock out
   const root = tmp();
   mkLock(root, undefined, 31000);
   const swap = swapToFreshLock(root);
@@ -167,6 +330,7 @@ test('stale owner-less lock: a new holder that has not written its owner file ye
 }, 10000);
 
 test('stale dead-owner lock: a new live lock made in the race window is never renamed away', async () => {
+  shortWait(); // waits the live lock out
   const root = tmp();
   mkLock(root, { pid: await deadPid(), nonce: 'dead' });
   let swapped = false;

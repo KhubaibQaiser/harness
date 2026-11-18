@@ -4,7 +4,7 @@ import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { basename } from 'node:path';
 import { appendEventSafe } from '../core/events.js';
 import { isAnyTestFile, matches, pairKey, toRepoPath } from '../core/paths.js';
-import { clearTurn, readState, withSessionLock, writeState } from '../core/state.js';
+import { clearTurn } from '../core/state.js';
 import type { Check, Ctx } from '../hooks/dispatch.js';
 import { editTarget } from '../hooks/edit-target.js';
 import { shown } from '../hooks/io.js';
@@ -108,7 +108,7 @@ const ALLOW = { kind: 'allow' } as const;
 
 // The reason is often written in the same message as the edit, which is on disk only after PreToolUse. At the next
 // Stop or prompt the transcript is flushed: look once for each "no reason given" this session recorded, and log the result.
-async function reasonsFoundLate(ctx: Ctx, locked: boolean): Promise<void> {
+async function reasonsFoundLate(ctx: Ctx): Promise<void> {
   const { root, input } = ctx;
   const pending = ctx.state.lateReasons ?? [];
   if (!pending.length) return;
@@ -120,17 +120,9 @@ async function reasonsFoundLate(ctx: Ctx, locked: boolean): Promise<void> {
       ...(line ? { decision: 'reason-found-late', reason: `${p.rel}: ${line}` } : { decision: 'reason-not-found', reason: `${p.rel}: ${recs ? NO_REASON : 'transcript unreadable'}` }),
     });
   }
-  // Remove only the entries handled here, from the state on disk: Stop runs unlocked, and its snapshot may predate a
-  // hook that ran since (a subagent's edit). UserPromptSubmit already holds the lock; Stop takes it for this one write.
-  const handled = new Set(pending.map((p) => p.ts));
-  const clear = () => {
-    const cur = readState(root, input.session_id);
-    const next = { ...cur, lateReasons: (cur.lateReasons ?? []).filter((p) => !handled.has(p.ts)) };
-    writeState(root, input.session_id, next);
-    ctx.state = next;
-  };
-  if (locked) clear();
-  else await withSessionLock(root, input.session_id, clear);
+  // Remove only the entries handled here: ctx.save merges onto the state on disk, so a hook that ran since this
+  // snapshot (a subagent's edit, while Stop runs unlocked) keeps its entries.
+  ctx.save({ ...ctx.state, lateReasons: [] });
 }
 
 export const multiFile: Check = {
@@ -145,9 +137,9 @@ export const multiFile: Check = {
   run(ctx) {
     const { hook_event_name: event, session_id: session } = ctx.input;
     // The audit trail is best effort; it never changes a decision.
-    if (event === 'Stop') return reasonsFoundLate(ctx, false).then(() => ALLOW, () => ALLOW);
+    if (event === 'Stop') return reasonsFoundLate(ctx).then(() => ALLOW, () => ALLOW);
     if (event === 'UserPromptSubmit') {
-      return reasonsFoundLate(ctx, true).catch(() => {}).then(() => {
+      return reasonsFoundLate(ctx).catch(() => {}).then(() => {
         clearTurn(ctx.root, session); // also resets stopAttempts, so it runs with the gate off too
         return ALLOW;
       });

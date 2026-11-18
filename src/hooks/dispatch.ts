@@ -8,7 +8,7 @@ import { prSize } from '../checks/pr-size/check.js';
 import { prSizeEntry } from '../checks/pr-size/entry.js';
 import { prBody } from '../checks/pr-body.js';
 import { secretScan } from '../checks/secret-scan.js';
-import { mcpWrites } from '../checks/mcp-writes.js';
+import { mcpIsRead, mcpWrites } from '../checks/mcp-writes.js';
 import { workdir } from '../cli/guide.js';
 import { multiFile } from '../checks/multi-file.js';
 import { protect } from '../checks/protect.js';
@@ -23,7 +23,10 @@ import { stopGate } from '../checks/stop/gate.js';
 import { runPlanEntry } from '../checks/stop/step-runner.js';
 import { evidenceLedger } from '../done/ledger-hook.js';
 import { testLock } from '../checks/tdd/test-lock.js';
-import { type SessionState, isSafeSessionId, withSessionLock, writeState } from '../core/state.js';
+import { type SessionState, isSafeSessionId, StateBusyError, WAIT_CAP, withSessionLock, writeMerged } from '../core/state.js';
+import { loadConfig } from '../core/config.js';
+import { pauseStatus } from '../core/pause.js';
+import { isUnattended } from '../core/unattended.js';
 import { repoRoot } from '../core/repo-root.js';
 import { appendTiming, type TimingLine } from '../core/timing.js';
 import { managedSettingsPath, withoutRepoMirror } from '../core/settings-layers.js';
@@ -35,7 +38,8 @@ import { capMessage, emit, MAX_CONTEXT, parseInput } from './io.js';
 import { mergeContext, winner } from './notice.js';
 import { runAfterAllow, runChecks } from './run-checks.js';
 import { setupSession } from './session-setup.js';
-import type { HookEvent } from './types.js';
+import { isEdit, isShell } from './edit-target.js';
+import type { HookEvent, HookInput } from './types.js';
 
 export type { Check, Ctx } from './check.js';
 export { configInvalidWhy } from './config-gate.js';
@@ -62,25 +66,57 @@ export async function dispatch(raw: string, checks: Check[], env: NodeJS.Process
   const input = parseInput(raw);
   if (!input || !EVENTS.includes(input.hook_event_name) || !isSafeSessionId(input.session_id)) return '';
   if (!input.cwd || input.hook_event_name === 'Stop') return dispatchLocked(raw, checks, env, opts);
-  // One hook at a time per session, so parallel tool calls cannot race on the state file.
-  return withSessionLock(repoRoot(input.cwd), input.session_id, () => dispatchLocked(raw, checks, env, opts));
+  // One hook at a time per session, so parallel tool calls cannot race on the state file. Past the wait a write or shell
+  // call fails closed when a gate that decides on session state is on (another hook may be changing that state). Reads,
+  // other events and calls no such gate covers run unlocked; their writes still take the short write lock and merge.
+  const gate = input.hook_event_name === 'PreToolUse' && writes(input.tool_name) && !foreign(input);
+  const root = repoRoot(input.cwd);
+  const run = () => dispatchLocked(raw, checks, env, opts, gate);
+  return withSessionLock(root, input.session_id, run, undefined, gate ? () => (stateGated(root, input.session_id) ? busyOut(input, env) : run()) : undefined);
 }
 
-async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessEnv, opts: DispatchOpts): Promise<string> {
+// The PreToolUse gates that decide on per-turn session state: multi-file and TDD (not while a TDD pause is bound to this session). Config is
+// read without the lock; an unreadable or invalid config counts as gated.
+function stateGated(root: string, session: string): boolean {
+  try {
+    const { config, errors } = loadConfig(root);
+    const pause = pauseStatus(root);
+    const paused = typeof pause === 'object' && pause.session === session; // a pending pause may bind to another session
+    return errors.length > 0 || config.checks.multiFile || (config.checks.tdd && !paused);
+  } catch {
+    return true;
+  }
+}
+
+const busyOut = (input: HookInput, env: NodeJS.ProcessEnv): string =>
+  emit('PreToolUse', { kind: isUnattended(input, env) ? 'deny' : 'ask', reason: 'harness: the session state is busy (another hook held its lock too long), so this call could not be checked. Retry it.', check: 'state-lock' });
+
+// Write tools and shell tools; an MCP tool unless mcp-writes reads it as a read (unclassified counts as a write).
+const writes = (tool = ''): boolean => isEdit(tool) || isShell(tool) || (tool.startsWith('mcp__') && !mcpIsRead(tool));
+const foreign = (input: { tool_name?: string }): boolean => CURSOR_KEYS.some((k) => k in input) || input.tool_name === 'Shell';
+
+async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessEnv, opts: DispatchOpts, gate = false): Promise<string> {
   const input = parseInput(raw);
   if (!input) return '';
-  const rec = input as unknown as Record<string, unknown>;
-  if (CURSOR_KEYS.some((k) => k in rec) || input.tool_name === 'Shell') return '';
+  if (foreign(input)) return '';
 
   const event = input.hook_event_name as HookEvent;
   const { root, config, state, unattended, configErrors, fallback, degraded } = setupSession(input, event, env);
   const platform = opts.platform ?? process.platform;
   const hookEnv = withoutRepoMirror(root, env); // only the launcher's HARNESS_CLAUDE_CONFIG_DIR counts
+  let lost = false;
+  let base = structuredClone(state); // what this hook last read or wrote: its saves are merged onto the state on disk
   const ctx = {
     input, root, config, state, unattended, env: hookEnv, configErrors, startedAt: PROCESS_START,
     home: opts.home ?? homedir(), platform, managed: opts.managed ?? managedSettingsPath(platform),
     save(s: SessionState) {
-      if (!fallback) writeState(root, input.session_id, s);
+      try {
+        if (!fallback && base) s = writeMerged(root, input.session_id, base, s);
+        base = structuredClone(s);
+      } catch (e) {
+        if (!(e instanceof StateBusyError)) throw e;
+        lost = true; // even the write lock stayed busy (updateState logged it): a write gate fails closed below
+      }
       ctx.state = s;
     },
   } as Ctx;
@@ -114,6 +150,7 @@ async function dispatchLocked(raw: string, checks: Check[], env: NodeJS.ProcessE
 
   const out = mergeContext(event, decisions, winner(decisions));
   const all = [pending, notice].filter(Boolean).join('\n');
+  if (lost && gate) return done(busyOut(input, env));
   return done(all ? withNotice(event, out, all) : out);
 }
 
@@ -167,6 +204,7 @@ async function main(): Promise<void> {
     process.exitCode = workdir(process.argv.slice(wd + 1), { root: repoRoot(process.cwd()), env: process.env, out: (l) => process.stdout.write(l + '\n') });
     return;
   }
+  WAIT_CAP.from = PROCESS_START; // this process is one hook: cap its lock waits from its start (set here, not on import)
   let raw = '';
   try {
     raw = readFileSync(0, 'utf8');

@@ -101,6 +101,16 @@ test('checks.depVerify false skips the registry lookup: plain ask when installs 
   expect(lookup).not.toHaveBeenCalled();
 });
 
+test('dep-verify\'s 9 s budget counts from the hook process start the guard is given (a long session-lock wait included)', () => {
+  const lookup = vi.fn(() => 'error' as const);
+  const env = { AGENT_GUARD_ALLOW_INSTALL: '1' };
+  const d = decideCommand('npm install left-pad', { ...ctx({ env }), lookup, startedAt: Date.now() - 9500 });
+  expect(reason(d)).toBe('"left-pad": could not verify on the registry');
+  expect(lookup).not.toHaveBeenCalled(); // no time left: not looked up, so the hook can't pass its 10 s timeout
+  decideCommand('npm install left-pad', { ...ctx({ env }), lookup, startedAt: Date.now() - 6000 });
+  expect((lookup.mock.calls[0] as unknown[])[1]).toBeLessThanOrEqual(3000);
+});
+
 test('python installs are not looked up on the npm registry', () => {
   const lookup = vi.fn(() => 'error' as const);
   const env = { AGENT_GUARD_ALLOW_INSTALL: '1' };

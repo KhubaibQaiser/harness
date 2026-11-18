@@ -15,6 +15,22 @@ const GIT_HOST = /github|gitlab|gitea|bitbucket|forgejo|codeberg/;
 const GIT_OBJECT = /(?:^|_)(?:pull_?requests?|merge_?requests?|pr|prs|gists?)(?:_|$)/;
 const OPAQUE = /^[0-9a-f]{8}-[0-9a-f]{4}-|^[0-9a-f-]{16,}$/i; // a uuid or hex id instead of a name
 
+const toolWords = (name: string): { server: string; joined: string; w: string[] } => {
+  const [, server = '', ...rest] = name.split('__');
+  // `pull_request`/`merge_request` is an object, not the verb "request": one word `pr` before the verbs are read.
+  const joined = wordsOf(rest.join('_')).join('_');
+  return { server, joined, w: joined.replace(/(?:pull|merge)_?requests?/g, 'pr').split('_') };
+};
+// Write words that are nouns after a leading read verb: `get_workflow_run`, `list_releases`, `get_review_comments`.
+const NOUNS = new Set(['run', 'release', 'review', 'comment', 'label', 'request']); // plurals are no write words anyway
+// A read verb first or last, and no write verb anywhere (a noun after a leading read verb is not one): `get_or_create_drive` is a write.
+const readOf = (w: string[]): boolean => {
+  const first = READ.has(w[0] ?? '');
+  return (first || READ.has(w.at(-1) ?? '')) && !w.some((x) => WRITE.has(x) && !(first && NOUNS.has(x)));
+};
+/** An MCP tool that only reads, by its verbs; one that can't be classified counts as a write. */
+export const mcpIsRead = (name: string): boolean => readOf(toolWords(name).w);
+
 const AUTO_MERGE_WHY = 'An MCP tool that turns on auto-merge lets the PR merge with no person at the moment of merge, so harness never lets the agent use it. Ask the person to merge, or to turn on auto-merge themselves.';
 
 export const mcpWrites: Check = {
@@ -25,13 +41,11 @@ export const mcpWrites: Check = {
   run(ctx) {
     const name = ctx.input.tool_name ?? '';
     if (!name.startsWith('mcp__') || ctx.config?.checks.guard === false) return { kind: 'allow' };
-    const [, server = '', ...rest] = name.split('__'), sw = wordsOf(server);
-    // `pull_request`/`merge_request` is an object, not the verb "request": one word `pr` before the verbs are read.
-    const joined = wordsOf(rest.join('_')).join('_'), w = joined.replace(/(?:pull|merge)_?requests?/g, 'pr').split('_');
+    const { server, joined, w } = toolWords(name), sw = wordsOf(server);
     // Auto-merge is denied with a write verb, or alone (`autoMerge`); only a read verb first lets it pass (`get_automerge_config`).
     const autoMerge = /automerge|auto_merge/.test(joined), verbs = w.filter((x) => WRITE.has(x) && !(autoMerge && (x === 'merge')));
     if (autoMerge && (verbs.length || !READ.has(w[0] ?? ''))) return { kind: 'deny', reason: AUTO_MERGE_WHY, check: 'mcp-writes' };
-    const firstRead = READ.has(w[0] ?? ''), read = firstRead || (READ.has(w.at(-1) ?? '') && !w.some((x) => WRITE.has(x)));
+    const read = readOf(w);
     // A host server: its name (GitHub, claude_ai_GitHub), a `gh` word, or a pr server (the desktop's ccd_pr); or a tool naming a host object.
     const host = GIT_HOST.test(server.toLowerCase()) || sw.includes('gh') || sw.at(-1) === 'pr' || GIT_OBJECT.test(joined);
     if (host ? !read : OPAQUE.test(server) && w.some((x) => WRITE.has(x)))

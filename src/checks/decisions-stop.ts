@@ -1,6 +1,7 @@
 // Stop nudge to save a team decision (team-decisions spec §8.1, D5, D8): plain-text regex signals, no model call, a note
 // and never a block. English phrases only; the patterns are tuned here.
 import { appendEvent } from '../core/events.js';
+import { MAX_HITS } from '../core/state.js';
 import { redactSecrets } from '../core/secrets.js';
 import type { Check, Ctx } from '../hooks/check.js';
 import type { Decision } from '../hooks/types.js';
@@ -22,7 +23,7 @@ export const ASSISTANT_SIGNALS: Signals = [
   ['A1', /\bI('ll| will)\s+(remember|keep (this|that) in mind)\b/i],
   ['A2', /\b(from now on|going forward),?\s+I('ll| will)\b/i],
 ];
-export const MAX_HITS = 3;
+export { MAX_HITS };
 export const PROMPT_SCAN = 4000;
 export const EXCERPT = 120;
 

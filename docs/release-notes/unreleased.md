@@ -131,3 +131,7 @@ New since 0.2.0-beta.0, unchanged in this release:
 - `harness review` no longer refuses when the project's `staff-reviewer` differs from the plugin's copy (the project agent takes priority); it now stops only when the CLI version differs from the base install's recorded version.
 - The PR size question clears the pause only on a documented `answers` entry; the undocumented `response` text no longer clears it alone. An unknown key in the question's call or result logs `ask-shape-unknown` once per session.
 - `harness remember add` now says "harness couldn't check whether this text quotes tool output" when the transcript can't be read, or shows tool calls but no recognised tool result. It was already a deny without `--quoted`.
+
+### CI
+
+- Main is green again on macOS and Windows (ship audit M2). protect's check of a `git checkout` or `git switch` to a branch, tag or hash now looks up the ref and its hooks in one git call, not two, so the hook is faster; every decision is unchanged. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows.

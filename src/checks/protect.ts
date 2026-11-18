@@ -324,7 +324,7 @@ function moveSegs(line: string, out: Seg[] = []): Seg[] {
   return out;
 }
 
-const git = (dir: string, args: string[]) => spawnSync('git', [...SAFE_GIT, ...args], { cwd: dir, encoding: 'utf8', timeout: 1500 });
+const git = (dir: string, args: string[], input?: string) => spawnSync('git', [...SAFE_GIT, ...args], { cwd: dir, encoding: 'utf8', timeout: 1500, input });
 // protect's table as git pathspecs from the repo top, case-insensitive (macOS and Windows checkouts ignore case).
 const PROTECTED_SPECS = [...new Set(PROTECTED.map((g) => g.replace(/\/\*\*$/, '')))].map((p) => `:(top,icase)${p}`);
 /** The protected files a diff changes, or null when git fails, times out or a ref doesn't resolve. */
@@ -340,6 +340,24 @@ function protectedChanges(dir: string, d: Diff): string[] | null {
     r = git(dir, ['-c', 'diff.relative=false', 'diff', ...SAFE_DIFF, '--no-renames', '--name-only', '-z', ...revs, '--', ...(d.paths ?? PROTECTED_SPECS)]);
   }
   return r.status === 0 && !r.error ? r.stdout.split('\0').filter((n) => n && matches(n.toLowerCase(), PROTECTED)) : null;
+}
+
+// A branch, tag or hash: rev-parse and cat-file read it the same way. `^x`, `@{…}`, `:/…`, `-` and ranges don't qualify.
+const PLAIN_REF = /^(?!.*\.\.)[A-Za-z0-9][\w./-]*$/;
+/**
+ * The two lookups a switch needs, `ref^{commit}` (rev-parse --verify) and the dispatcher in it (cat-file -e), in one
+ * cat-file --batch-check: one git spawn, not two, on every checkout (ship audit M2). null unless both answers are a clean
+ * hit or miss for a plain name, and then the caller runs the two calls as before.
+ */
+function quickLookup(dir: string, ref: string): { commit: boolean; hooks: boolean } | null {
+  if (!PLAIN_REF.test(ref)) return null;
+  const c = `${ref}^{commit}`, h = `${ref}:.harness/hooks/dispatch.mjs`;
+  const r = git(dir, ['cat-file', '--batch-check=%(objecttype)'], `${c}\n${h}\n`);
+  if (r.status !== 0 || r.error) return null;
+  const [one, two, rest] = r.stdout.split('\n');
+  const commit = one === 'commit' ? true : one === `${c} missing` ? false : null;
+  const hooks = /^(blob|tree|commit|tag)$/.test(two ?? '') ? true : two === `${h} missing` ? false : null;
+  return commit === null || hooks === null || rest !== '' ? null : { commit, hooks };
 }
 
 const UNATTENDED_GIT = "Unattended runs can't change harness's protected files through git; the person runs it.";
@@ -382,12 +400,14 @@ function refMoveAsk(cmds: string[], cwd: string, unattended: boolean, env: NodeJ
     if (m.sw) {
       const { ref, sw, paths } = m.sw;
       const failed = ask(`Could not check that ${ref} has the harness hooks. Confirm the switch.`);
-      const rp = git(m.dir, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
+      // A plain name takes one cat-file for both lookups; any other form, or an answer that isn't a clean hit or miss, takes these two.
+      const fast = quickLookup(m.dir, ref);
+      const rp = fast ? { status: fast.commit ? 0 : 1 } : git(m.dir, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
       if (rp.status === 1 && !sw) diffs = [...diffs, { paths: [ref, ...paths] }]; // not a ref: checkout of files from the index
       else if (rp.status !== 0) return failed;
       else if (paths.length) diffs = [{ from: ref, paths }];
       else {
-        const cf = git(m.dir, ['cat-file', '-e', `${ref}:.harness/hooks/dispatch.mjs`]);
+        const cf = fast ? { status: fast.hooks ? 0 : 1, error: undefined } : git(m.dir, ['cat-file', '-e', `${ref}:.harness/hooks/dispatch.mjs`]);
         if (cf.status === null || cf.error) return failed;
         if (cf.status !== 0) return ask(`Switching to ${ref} removes the harness hooks (no .harness/hooks/dispatch.mjs there). Confirm the switch.`);
         diffs = [...diffs, { from: ref }];

@@ -1,6 +1,7 @@
 // Extra readings of a Bash command for the guard's text rules: what the shell can turn a word into before it runs.
 // Imported by guard.ts, which this module imports back: use guard.ts names only inside functions, never at load time.
 import picomatch from 'picomatch';
+import { riskyGlob } from '../core/paths.js';
 import { commandStart, lexText, quoteFree, SEGMENTS, SPANS_LINES } from './guard.js';
 import { Groups, quotedAt, type Quoted, Scan, ScanBudget } from './guard-scan.js';
 import { remember } from '../core/shell-words.js';
@@ -293,6 +294,7 @@ function segmentReadings(seg: string, out: string[]): boolean {
   // ponytail: quotes are dropped, so a quoted 'g?t' (literal to the shell) is read as a glob too; stricter, never looser.
   const base = last.replace(/['"]/g, '').replace(/\[!/g, '[^'); // picomatch reads only [^x] as a negated class
   if (!GLOB.test(base)) return false;
+  if (riskyGlob(base)) return true; // never compiled: read as capped, so the guard asks
   for (const n of ruledMatches(base)) {
     const t = [...ws.slice(0, j), tok.slice(0, tok.length - last.length) + n, ...ws.slice(j + 1)].join('');
     if (out.length >= MAX_SEGMENT_READINGS || out.length * t.length > MAX_READING_CHARS) return true;

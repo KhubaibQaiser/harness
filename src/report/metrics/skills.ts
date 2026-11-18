@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { isAnyTestFile } from '../../core/paths.js';
 import { bucketOf, type Acc, type Bucket, type SessionCtx } from '../acc.js';
 
-export interface SkillSpec { name: string; relevant: ((paths: string[]) => boolean) | null; label: 'paths' | 'proxy' | 'stack' | 'none'; stackUnknown?: true }
+export interface SkillSpec { name: string; relevant: ((paths: string[], stop?: () => boolean) => boolean) | null; label: 'paths' | 'proxy' | 'stack' | 'none' | typeof TOO_COMPLEX | typeof OVER_BUDGET; stackUnknown?: true }
 /** Texts the page shows beside the splits. */
 export const SKILL_NOTES = {
   compact: 'Proxy: relevance is judged over the whole session, so a session counts as relevant before and after its first compaction alike.',
@@ -19,6 +19,27 @@ export interface SkillRow {
   byBucket: Record<Bucket, { r: number; i: number }>; byCompact: { pre: { r: number; i: number }; post: { r: number; i: number } };
 }
 
+export const TOO_COMPLEX = 'unmeasured (pattern too complex)';
+/** Stricter than the hooks' riskyGlob: here the agent shapes both the glob (SKILL.md) and the paths (files it edits).
+ *  Timed on picomatch 4.0.7: against a 4096-character one-letter path, any extglob, or 3 `*` runs in one segment
+ *  (`*a*a*ab`), ran past 20 s, while 2 runs (`a*a*b`, `[a]*[a]*b`) took 44 ms or less. Against `a/` x 255, globstars
+ *  stack too: 2 took 57 ms, 3 took 3.6 s and 4 hung. So more than 2 `**` anywhere in the glob (in any segment, such as
+ *  `a**`, and counted in the raw text, so a brace like `{**\/a,**\/b}` can't hide them) is too complex. A segment that is
+ *  exactly `**` doesn't count toward that segment's run limit. Runs also multiply across segments (against
+ *  ('a' x 50 + '/') x 10, `*a*\/` x 4 + `b` took 601 ms and x 5 hung; `{a,*}/` x 40 hung against a/ x 255), so more than
+ *  4 `*` runs in the whole raw glob, braces included and exact `**` segments left out, is too complex as well.
+ *  `?` matches one character, so it adds no backtracking. */
+export const tooComplex = (g: string): boolean =>
+  /[+*?@!]\(/.test(g) || g.length > 256 || (g.match(/\*\*/g)?.length ?? 0) > 2 ||
+  g.split('/').some((seg) => seg !== '**' && runs(seg) > 2) ||
+  g.split('/').filter((seg) => seg !== '**').reduce((n, seg) => n + runs(seg), 0) > 4;
+const runs = (seg: string): number => seg.match(/\*+/g)?.length ?? 0;
+export const OVER_BUDGET = 'unmeasured (time budget)';
+// ponytail: one hung match can't be interrupted (picomatch is synchronous); this only bounds the sum of many slow ones.
+const MATCH_BUDGET_MS = 2000;
+const MAX_GLOBS = 16; // per skill, so one path against one skill's globs stays bounded (about 16 x 25 ms at worst)
+const OVER = new Error('skill matching over budget');
+const MAX_PATH = 512; // a longer edited path is never matched, so a long crafted path can't slow a 2-run glob either
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const EDIT_CAP = 1000; // turns.ts caps the edited list here
 const MAX_SKILLS = 500, MAX_SKILL_MD = 64 * 1024;
@@ -48,7 +69,8 @@ export function skillSpecs(root: string, installed: { name: string; paths?: stri
   // edited paths come absolute; one outside the repo is never relevant
   const rel = (p: string) => (isAbsolute(p) ? relative(root, p) : p).replace(/\\/g, '/');
   const inRepo = (ps: string[]) => ps.map(rel).filter((p) => !p.startsWith('../') && p !== '..');
-  const any = (f: (p: string) => boolean) => (ps: string[]) => inRepo(ps).some(f);
+  // `stop` is checked before each path, so a skill's matching overruns the report's budget by one path at most
+  const any = (f: (p: string) => boolean) => (ps: string[], stop?: () => boolean) => inRepo(ps).some((p) => { if (stop?.()) throw OVER; return f(p); });
   const inPkg = (fws: string[], sub: RegExp) => any((p) => packages.some((k) => {
     const d = k.dir === '.' ? '' : k.dir;
     return k.frameworks.some((f) => fws.includes(f)) && (d === '' || p.startsWith(`${d}/`)) && sub.test(d === '' ? p : p.slice(d.length + 1));
@@ -61,8 +83,10 @@ export function skillSpecs(root: string, installed: { name: string; paths?: stri
   };
   return installed.map(({ name, paths }): SkillSpec => {
     if (paths !== undefined && paths.length > 0) {
+      // SKILL.md is agent-writable: a glob that could hang is never compiled, and the skill is not measured
+      if (paths.length > MAX_GLOBS || paths.some(tooComplex)) return { name, label: TOO_COMPLEX, relevant: null };
       const m = picomatch(paths, { dot: true });
-      return { name, label: 'paths', relevant: any((p) => m(p)) };
+      return { name, label: 'paths', relevant: any((p) => p.length <= MAX_PATH && m(p)) };
     }
     const unk = (fws: string[]): { stackUnknown?: true } => (packages.some((k) => k.frameworks.some((f) => fws.includes(f))) ? {} : { stackUnknown: true });
     if (name === 'frontend-nextjs') return { name, label: 'proxy', relevant: proxies[name]!, ...unk(['next']) };
@@ -80,7 +104,9 @@ const row = (s: SkillSpec): SkillRow => ({
   byBucket: { '1-10': rc(), '11-30': rc(), '31-100': rc(), '100+': rc() }, byCompact: { pre: rc(), post: rc() },
 });
 
-export function skillsAcc(specs: SkillSpec[]): Acc<SkillRow[]> {
+export function skillsAcc(specs: SkillSpec[], o: { budgetMs?: number; now?: () => number } = {}): Acc<SkillRow[]> {
+  const budget = o.budgetMs ?? MATCH_BUDGET_MS, now = o.now ?? Date.now;
+  let spent = 0;
   // two skills with one name: keep the first, count the rest
   const seen = new Set<string>(), dups = new Map<string, number>();
   const uniq = specs.filter((x) => (seen.has(x.name) ? (dups.set(x.name, (dups.get(x.name) ?? 0) + 1), false) : (seen.add(x.name), true)));
@@ -114,13 +140,23 @@ export function skillsAcc(specs: SkillSpec[]): Acc<SkillRow[]> {
     endSession(s) {
       const b = bucketOf(s.turns);
       uniq.forEach((sp, k) => {
-        const o = rows[k]!, t = tool.get(sp.name), rel = sp.relevant?.(s.edited) === true;
+        const o = rows[k]!, t = tool.get(sp.name);
+        // past the budget, matching stops and the skill is labelled unmeasured; result() drops its relevance counts
+        if (sp.relevant !== null && spent > budget) o.label = OVER_BUDGET;
+        let rel = false;
+        if (o.label !== OVER_BUDGET) {
+          const t0 = now(), over = () => spent + now() - t0 > budget;
+          try { rel = sp.relevant?.(s.edited, over) === true; } catch (e) { if (e !== OVER) throw e; }
+          spent += now() - t0;
+          if (sp.relevant !== null && spent > budget) o.label = OVER_BUDGET;
+        }
         o.sessions++;
         if (listed !== undefined) o.sessionsWithListing++;
         if (listed?.has(sp.name)) o.listedIn++;
         else if (listed !== undefined) o.dropped = true;
         if (sp.relevant !== null && (subEdit || s.edited.length >= EDIT_CAP)) o.undercounted = true;
         if (t === undefined && carried.has(sp.name)) o.typedOrCarried++;
+        if (o.label === OVER_BUDGET) return; // a use after the cut-off is unmeasured, not "invoked otherwise"
         if (!rel) return void (t && o.invokedOther++);
         o.relevantIn++; o.byBucket[b].r++; o.byCompact.pre.r++;
         if (s.compactions > 0) o.byCompact.post.r++;
@@ -132,6 +168,7 @@ export function skillsAcc(specs: SkillSpec[]): Acc<SkillRow[]> {
       });
       reset();
     },
-    result: () => rows,
+    // a row cut off by the budget keeps no relevance counts, so the chart and the totals leave it out
+    result: () => rows.map((o) => (o.label === OVER_BUDGET ? { ...row({ name: o.name, label: OVER_BUDGET, relevant: null }), listedIn: o.listedIn, sessionsWithListing: o.sessionsWithListing, sessions: o.sessions, dropped: o.dropped, typedOrCarried: o.typedOrCarried, duplicates: o.duplicates, undercounted: o.undercounted, ...(o.stackUnknown ? { stackUnknown: true as const } : {}) } : o)),
   };
 }

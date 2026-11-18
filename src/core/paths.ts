@@ -70,11 +70,6 @@ export function hasHarnessDir(root: string): boolean {
 
 /** Folders the skills and commands make in `.harness/` before any install: repo presets, work folders, vet reports. */
 const PRE_INSTALL = new Set(['presets', 'tmp', 'vet']);
-/**
- * With no manifest, the `.harness/` entries that keep init from installing (owner, 2026-11-18): the folder is harness's
- * only when a "keep" uninstall left its snapshot there, or it holds just the pre-install folders. Anything else may be
- * the person's, and uninstall would treat a runtime-folder name as harness's.
- */
 /** A "keep" uninstall's snapshot: a plain file in a real `state/` folder, with the shape stampHarnessFiles writes. */
 function keepSnapshot(root: string): boolean {
   try {
@@ -87,6 +82,11 @@ function keepSnapshot(root: string): boolean {
   }
 }
 
+/**
+ * With no manifest, the `.harness/` entries that keep init from installing (owner, 2026-11-18): the folder is harness's
+ * only when a "keep" uninstall left its snapshot there, or it holds just the pre-install folders. Anything else may be
+ * the person's, and uninstall would treat a runtime-folder name as harness's.
+ */
 export function unknownHarnessEntries(root: string): string[] {
   let names: string[];
   try {

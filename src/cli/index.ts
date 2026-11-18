@@ -1,7 +1,8 @@
-import { realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { appendEvent, readEvents } from '../core/events.js';
+import { MANIFEST_REL, NOT_INSTALLED } from '../install/manifest.js';
 import { packageDir } from '../core/package-dir.js';
 import { repoRoot } from '../core/repo-root.js';
 import { recordCliPath } from '../core/cli-path.js';
@@ -64,6 +65,7 @@ const log = (root: string, decision: string) => appendEvent(root, { ts: new Date
 
 function tdd(sub: string | undefined, { root, env, out }: CliEnv): number {
   if (sub === 'status') return out(tddStatus(root)), 0;
+  if ((sub === 'on' || sub === 'off') && !existsSync(join(root, MANIFEST_REL))) return out(NOT_INSTALLED), 1; // its pause file is state (R2-1)
   if (sub === 'on') return resumeTdd(root), log(root, 'resumed'), out(tddStatus(root)), 0;
   if (sub !== 'off') return out('Usage: harness tdd off|on|status'), 2;
   if (insideClaude(env)) {

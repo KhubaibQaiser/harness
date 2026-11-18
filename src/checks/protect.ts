@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync } from 'node:fs';
 import nodePath, { resolve } from 'node:path';
 import picomatch from 'picomatch';
-import { matches, TASKS_DIR, toRepoPath } from '../core/paths.js';
+import { matches, riskyGlob, TASKS_DIR, toRepoPath } from '../core/paths.js';
 import type { Check } from '../hooks/dispatch.js';
 import { editTarget, isShell } from '../hooks/edit-target.js';
 import { becomesDecision, codeNames, decisionRoutes, decisionsDeny, editorAsk, editorFiles, globHits } from './decisions-protect.js';
@@ -667,6 +667,7 @@ const GLOB = /[*?[{]/;
 function globNamesProtected(ws: string[]): boolean {
   return ws.map(unquote).some((w) => {
     if (!/[*?[]/.test(w)) return false;
+    if (riskyGlob(w)) return true; // never compiled; counts as naming a protected path
     const m = (p: string) => picomatch(p, { nocase: true }); // macOS and Windows ignore case
     return w.split(/[\\/]/).some((c) => /[*?[]/.test(c) && ['.harness', '.claude'].some((n) => m(c)(n))) || PROTECTED_CONCRETE.some((p) => m(w.replace(/^\.\//, ''))(p));
   });

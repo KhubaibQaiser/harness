@@ -52,6 +52,19 @@ describe('buildExport', () => {
     expect(skills.map((x) => x.id).sort()).toEqual(['other', 'tdd-skill']);
     expect(skills.find((x) => x.id === 'other')!.listedIn).toBe(10);
   });
+  it('marks unmeasured skills with a reason and keeps them out of the measured sums', () => {
+    const d = hostile();
+    d.skills = [skill('tdd-skill'), { ...skill('my-secret-skill'), label: 'unmeasured (time budget)' }, { ...skill('other-secret'), label: 'unmeasured (pattern too complex)' }, skill('third-secret')];
+    const out = buildExport(d, known);
+    expect(exportProblems(out, known)).toEqual([]);
+    const rows = out.skills as Record<string, unknown>[];
+    // measured `other` sums only third-secret; each unmeasured row carries its reason and no relevance counts
+    expect(rows.find((r) => r.id === 'other' && r.unmeasured === undefined)).toMatchObject({ listedIn: 5, relevantIn: 8 });
+    const budget = rows.find((r) => r.unmeasured === 'time budget')!, complex = rows.find((r) => r.unmeasured === 'pattern too complex')!;
+    expect(budget).toEqual({ id: 'other', unmeasured: 'time budget', listedIn: 5, sessionsWithListing: 5, typedOrCarried: 0 });
+    expect(complex).toEqual({ id: 'other', unmeasured: 'pattern too complex', listedIn: 5, sessionsWithListing: 5, typedOrCarried: 0 });
+    expect(rows.find((r) => r.id === 'tdd-skill')!.unmeasured).toBeUndefined();
+  });
   it('exports always-loaded tokens by owner class, never by label', () => {
     const out = buildExport(hostile(), known);
     const rows = (out.tokens as { always: { id: string; tokens: number }[] }).always;

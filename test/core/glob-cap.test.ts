@@ -5,7 +5,7 @@ import { riskyGlob } from '../../src/core/paths.js';
 import '../../src/checks/guard.js'; // load order: guard-readings and guard import each other
 import { globReadings } from '../../src/checks/guard-readings.js';
 import { globHits } from '../../src/checks/decisions-protect.js';
-import { skillSpecs, TOO_COMPLEX } from '../../src/report/metrics/skills.js';
+import { OVER_BUDGET, skillSpecs, skillsAcc, TOO_COMPLEX } from '../../src/report/metrics/skills.js';
 
 const SLOW = ['+(a)'.repeat(12), '+(*)'.repeat(10), `${'+(*)'.repeat(12)}.json`, 'a'.repeat(257) + '*'];
 const fast = <T>(f: () => T): T => {
@@ -60,6 +60,34 @@ test('report: more than 2 globstars (anywhere, braces included) is unmeasured, a
     expect(ok!.label, g).toBe('paths');
     expect(fast(() => ok!.relevant!(deep)), g).toBe(false);
   }
+});
+
+test('report: more than 4 star runs across the whole glob (braces included) is unmeasured; real globs stay measured and fast', () => {
+  const deep = ['/r/' + ('a'.repeat(50) + '/').repeat(10), '/r/' + 'a/'.repeat(255)];
+  for (const g of ['*a*/'.repeat(5) + 'b', '{a,*}/'.repeat(40), 'src/*a*/*a*/*a*/*a*/*.ts']) {
+    const [spec] = skillSpecs('/r', [{ name: 's', paths: [g] }], [], []);
+    expect(spec!.label, g).toBe(TOO_COMPLEX);
+    expect(spec!.relevant, g).toBeNull();
+  }
+  for (const g of ['src/**/*.test.*', '**/*.{ts,tsx}', '*a*/**/*a*/**/b', '**/*a*a/**/*a*a/b']) {
+    const [ok] = skillSpecs('/r', [{ name: 's', paths: [g] }], [], []);
+    expect(ok!.label, g).toBe('paths');
+    fast(() => ok!.relevant!(deep));
+  }
+});
+
+test('report: skill matching stops after its time budget and labels the rest unmeasured', () => {
+  let t = 0;
+  const clock = () => t;
+  const specs = skillSpecs('/r', [{ name: 'slow', paths: ['src/**'] }, { name: 'later', paths: ['src/**'] }], [], []);
+  specs[0]!.relevant = () => ((t += 2500), true); // one match that spends the whole budget
+  const acc = skillsAcc(specs, { budgetMs: 2000, now: clock });
+  acc.endSession!({ id: 's1', turns: 1, compactions: 0, edited: ['/r/src/a.ts'] });
+  acc.endSession!({ id: 's2', turns: 1, compactions: 0, edited: ['/r/src/a.ts'] });
+  const rows = Object.fromEntries(acc.result().map((r) => [r.name, r]));
+  expect(rows.slow!.label).toBe(OVER_BUDGET);
+  expect(rows.later!.label).toBe(OVER_BUDGET);
+  expect(rows.later!.relevantIn).toBe(0); // never matched once the budget ran out
 });
 
 test('report: a normal paths glob is matched as before', () => {

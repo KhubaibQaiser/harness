@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { isAnyTestFile } from '../../core/paths.js';
 import { bucketOf, type Acc, type Bucket, type SessionCtx } from '../acc.js';
 
-export interface SkillSpec { name: string; relevant: ((paths: string[]) => boolean) | null; label: 'paths' | 'proxy' | 'stack' | 'none' | typeof TOO_COMPLEX; stackUnknown?: true }
+export interface SkillSpec { name: string; relevant: ((paths: string[]) => boolean) | null; label: 'paths' | 'proxy' | 'stack' | 'none' | typeof TOO_COMPLEX | typeof OVER_BUDGET; stackUnknown?: true }
 /** Texts the page shows beside the splits. */
 export const SKILL_NOTES = {
   compact: 'Proxy: relevance is judged over the whole session, so a session counts as relevant before and after its first compaction alike.',
@@ -25,10 +25,18 @@ export const TOO_COMPLEX = 'unmeasured (pattern too complex)';
  *  (`*a*a*ab`), ran past 20 s, while 2 runs (`a*a*b`, `[a]*[a]*b`) took 44 ms or less. Against `a/` x 255, globstars
  *  stack too: 2 took 57 ms, 3 took 3.6 s and 4 hung. So more than 2 `**` anywhere in the glob (in any segment, such as
  *  `a**`, and counted in the raw text, so a brace like `{**\/a,**\/b}` can't hide them) is too complex. A segment that is
- *  exactly `**` doesn't count toward that segment's run limit. `?` matches one character, so it adds no backtracking. */
+ *  exactly `**` doesn't count toward that segment's run limit. Runs also multiply across segments (against
+ *  ('a' x 50 + '/') x 10, `*a*\/` x 4 + `b` took 601 ms and x 5 hung; `{a,*}/` x 40 hung against a/ x 255), so more than
+ *  4 `*` runs in the whole raw glob, braces included and exact `**` segments left out, is too complex as well.
+ *  `?` matches one character, so it adds no backtracking. */
 export const tooComplex = (g: string): boolean =>
   /[+*?@!]\(/.test(g) || g.length > 256 || (g.match(/\*\*/g)?.length ?? 0) > 2 ||
-  g.split('/').some((seg) => seg !== '**' && (seg.match(/\*+/g)?.length ?? 0) > 2);
+  g.split('/').some((seg) => seg !== '**' && runs(seg) > 2) ||
+  g.split('/').filter((seg) => seg !== '**').reduce((n, seg) => n + runs(seg), 0) > 4;
+const runs = (seg: string): number => seg.match(/\*+/g)?.length ?? 0;
+export const OVER_BUDGET = 'unmeasured (time budget)';
+// ponytail: one hung match can't be interrupted (picomatch is synchronous); this only bounds the sum of many slow ones.
+const MATCH_BUDGET_MS = 2000;
 const MAX_PATH = 512; // a longer edited path is never matched, so a long crafted path can't slow a 2-run glob either
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const EDIT_CAP = 1000; // turns.ts caps the edited list here
@@ -93,7 +101,9 @@ const row = (s: SkillSpec): SkillRow => ({
   byBucket: { '1-10': rc(), '11-30': rc(), '31-100': rc(), '100+': rc() }, byCompact: { pre: rc(), post: rc() },
 });
 
-export function skillsAcc(specs: SkillSpec[]): Acc<SkillRow[]> {
+export function skillsAcc(specs: SkillSpec[], o: { budgetMs?: number; now?: () => number } = {}): Acc<SkillRow[]> {
+  const budget = o.budgetMs ?? MATCH_BUDGET_MS, now = o.now ?? Date.now;
+  let spent = 0;
   // two skills with one name: keep the first, count the rest
   const seen = new Set<string>(), dups = new Map<string, number>();
   const uniq = specs.filter((x) => (seen.has(x.name) ? (dups.set(x.name, (dups.get(x.name) ?? 0) + 1), false) : (seen.add(x.name), true)));
@@ -127,7 +137,13 @@ export function skillsAcc(specs: SkillSpec[]): Acc<SkillRow[]> {
     endSession(s) {
       const b = bucketOf(s.turns);
       uniq.forEach((sp, k) => {
-        const o = rows[k]!, t = tool.get(sp.name), rel = sp.relevant?.(s.edited) === true;
+        const o = rows[k]!, t = tool.get(sp.name);
+        // past the budget, matching stops and the skill is labelled unmeasured instead
+        if (sp.relevant !== null && spent > budget) o.label = OVER_BUDGET;
+        const t0 = now();
+        const rel = o.label !== OVER_BUDGET && sp.relevant?.(s.edited) === true;
+        spent += now() - t0;
+        if (sp.relevant !== null && spent > budget) o.label = OVER_BUDGET;
         o.sessions++;
         if (listed !== undefined) o.sessionsWithListing++;
         if (listed?.has(sp.name)) o.listedIn++;

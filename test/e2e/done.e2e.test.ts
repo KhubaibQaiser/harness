@@ -31,7 +31,7 @@ function task(o: { lint?: string; result?: string; criteria?: Criterion[] } = {}
   const steps = [{ name: 'lint', run: ['node', o.lint ?? 'pass.js'] }, { name: 'test', run: ['node', 'res.js', o.result ?? 'passed'] }];
   const root = build({
     name: 'verify', first: 'src/a.ts', steps: false,
-    files: { '.harness/config.yaml': `checks:\n  done: true\nsandbox: off\nstop:\n  steps: ${JSON.stringify(steps)}\n`, 'pass.js': 'process.exit(0)\n', 'fail.js': 'process.exit(1)\n', 'res.js': RES, 'test/a.test.ts': TEST, 'src/a.ts': 'export const a = 1;\n' },
+    files: { '.harness/manifest.json': '{"files":[]}\n', '.harness/config.yaml': `checks:\n  done: true\nsandbox: off\nstop:\n  steps: ${JSON.stringify(steps)}\n`, 'pass.js': 'process.exit(0)\n', 'fail.js': 'process.exit(1)\n', 'res.js': RES, 'test/a.test.ts': TEST, 'src/a.ts': 'export const a = 1;\n' },
   });
   made.push(root);
   const c = writeContract(root, {

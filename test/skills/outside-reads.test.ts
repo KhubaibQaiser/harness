@@ -1,8 +1,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
+import { subdirs } from '../../src/budget/measure.js';
 
-const skills = readdirSync('skills').flatMap((d) => readdirSync(join('skills', d)).map((f) => join('skills', d, f)));
+const skills = subdirs('skills').flatMap((d) => readdirSync(join('skills', d)).map((f) => join('skills', d, f)));
 
 test('no skill reads or writes outside the repo: plugin files come from `guide`, work files from `workdir`', () => {
   for (const f of skills) {

@@ -20,6 +20,8 @@ it('never reads the real home: only the injected one, and nothing under HOME', a
   writeFileSync(join(poison, '.claude', 'CLAUDE.md'), 'x');
   mkdirSync(join(root, '.claude', 'skills', 'a'), { recursive: true });
   writeFileSync(join(root, '.claude', 'skills', 'a', 'SKILL.md'), '---\nname: a\n---\n');
+  mkdirSync(join(root, '.harness'));
+  writeFileSync(join(root, '.harness', 'manifest.json'), '{"files":[]}\n'); // installed
   mkdirSync(home, { recursive: true });
   const old = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   process.env.HOME = poison; process.env.USERPROFILE = poison;

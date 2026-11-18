@@ -304,3 +304,22 @@ test('an excluded folder that is committed still does not count, and the real in
   expect(readFileSync(join(root, '.git', 'index')).equals(index)).toBe(true);
   expect(execFileSync('git', ['ls-files', '.harness/state'], { cwd: root, encoding: 'utf8' })).toBe('.harness/state/x.json\n');
 });
+
+// Review of M4: a harness write landing between the add and the rm left the temp index differing from both HEAD and
+// the file, and `git rm --cached` without -f exits 1 on that, so verify read not-done.
+test.skipIf(process.platform === 'win32')('a committed excluded file rewritten between the add and the rm still hashes', () => {
+  const root = mk({ 'a.txt': 'a\n', '.harness/state/x.json': '{}' });
+  put(root, '.harness/state/x.json', '{"v":1}');
+  const shim = mkdtempSync(join(tmpdir(), 'h-git-shim-'));
+  dirs.push(shim);
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  // After the add, the hook writes the file again: the race, made certain.
+  writeFileSync(join(shim, 'git'), `#!/bin/sh\n"${real}" "$@"; s=$?\nfor a in "$@"; do [ "$a" = add ] && printf '{"v":2}' > "${join(root, '.harness/state/x.json')}"; done\nexit $s\n`, { mode: 0o755 });
+  const path = process.env.PATH;
+  process.env.PATH = shim + delimiter + path;
+  try {
+    expect(treeHash(root)).toMatch(/^[0-9a-f]{40,64}$/);
+  } finally {
+    process.env.PATH = path;
+  }
+});

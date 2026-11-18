@@ -41,22 +41,35 @@ test('a fresh row whose command has a Windows path (\\ or an 8.3 ~) is re-run, n
   expect(readFileSync(join(v.root, mark), 'utf8')).toBe('C:\\Users\\x\nRUNNER~1\n');
 });
 
-test('exit codes: done 0, failing criterion 1, blocked 3, bad flag 2', async () => {
+test('exit codes: done 0', async () => {
   const done = await runVerify();
   expect([done.code, done.outcome]).toEqual([0, 'done']);
+});
+
+test('exit codes: failing criterion 1', async () => {
   const failing = await runVerify({ criteria: [run('C1', 'node fail.js')] });
   expect([failing.code, failing.outcome]).toEqual([1, 'not-done']);
   expect(failing.criteria[0]!.evidence).toMatchObject({ exit: 1, status: 'fail' });
-  // expect_exit is what passes: a criterion that must exit 1 passes on 1.
+});
+
+test('exit codes: expect_exit is what passes', async () => {
+  // A criterion that must exit 1 passes on 1.
   expect((await runVerify({ criteria: [run('C1', 'node fail.js', 1)] })).outcome).toBe('done');
+});
+
+test('exit codes: blocked 3', async () => {
   const blocked = await runVerify({ setup: blockedRow });
   expect([blocked.code, blocked.outcome, blocked.blocked]).toEqual([3, 'blocked', { reason: 'the API key is missing', failing_criteria: ['C1'] }]);
   expect(blocked.text).toContain('Blocked: the API key is missing');
-  for (const args of [['--nope'], ['--task'], ['--task', 'add-login', 'x'], ['--ci']]) {
-    const bad = await runVerify({ args });
-    expect(bad.code, JSON.stringify(args)).toBe(2);
-    expect(bad.text).toContain(VERIFY_USAGE);
-  }
+});
+
+test.each([['--nope'], ['--task'], ['--task', 'add-login', 'x'], ['--ci']].map((args) => [args.join(' '), args] as const))('exit codes: bad flag 2 (%s)', async (_n, args) => {
+  const bad = await runVerify({ args: [...args] });
+  expect(bad.code, JSON.stringify(args)).toBe(2);
+  expect(bad.text).toContain(VERIFY_USAGE);
+});
+
+test('exit codes: --task with the contract id is done 0', async () => {
   expect((await runVerify({ args: ['--task', 'add-login'] })).code).toBe(0);
 });
 
@@ -66,23 +79,20 @@ test('a check that edits a tracked file is not done', async () => {
   expect(v.reasons, v.text).toContain('the checks changed the working tree');
 });
 
-test('fail closed: unreadable contract, hash mismatch, missing tool, timeout, git error, unknown base', async () => {
-  const file = (root: string) => join(root, TASKS_DIR, 'add-login.json');
-  const cases: [string, Opts, RegExp][] = [
-    ['unreadable contract', { setup: (root) => writeFileSync(file(root), 'nope') }, /not valid JSON/],
-    ['hash mismatch', { setup: (root) => writeFileSync(file(root), readFileSync(file(root), 'utf8').replace('Add login', 'Add logins')) }, /changed since it was approved/],
-    ['missing tool', { steps: [{ name: 'lint', run: ['no-such-tool-h11'] }] }, /lint: no-such-tool-h11 is not on PATH/],
-    ['timeout', { deps: fake({ kind: 'timeout' }) }, /timed out after 1800s \(done\.timeout_s\)/],
-    ['git error', { deps: { git: ((c, a, x) => (a.includes('diff') ? { status: 128, stdout: '', stderr: 'fatal: boom' } : defaultExec(c, a, x))) as Exec } }, /tamper check: git listing changes failed \(128\): fatal: boom/],
-    ['unknown base', { base: 'b'.repeat(40) }, /contract base bbbbbbb is not in this repo's history/],
-    ['runner throw', { deps: fake(() => { throw new Error('spawn EACCES'); }) }, /the check runner failed: spawn EACCES/],
-    ['result mismatch', { deps: fake({ kind: 'ran', results: [{ label: 'other', status: 0, timedOut: false, ms: 1, output: '' }] }) }, /the check runner's results don't match the plan/],
-  ];
-  for (const [name, o, rx] of cases) {
-    const v = await runVerify(o);
-    expect([v.code, v.outcome], name).toEqual([1, 'not-done']);
-    expect(v.reasons.join('\n'), name).toMatch(rx);
-  }
-  const missing = await runVerify({ steps: [{ name: 'lint', run: ['no-such-tool-h11'] }] });
-  expect(missing.checks[0]!.evidence).toMatchObject({ status: 'missing', exit: null });
+const file = (root: string) => join(root, TASKS_DIR, 'add-login.json');
+const failClosed: [string, Opts, RegExp][] = [
+  ['unreadable contract', { setup: (root) => writeFileSync(file(root), 'nope') }, /not valid JSON/],
+  ['hash mismatch', { setup: (root) => writeFileSync(file(root), readFileSync(file(root), 'utf8').replace('Add login', 'Add logins')) }, /changed since it was approved/],
+  ['missing tool', { steps: [{ name: 'lint', run: ['no-such-tool-h11'] }] }, /lint: no-such-tool-h11 is not on PATH/],
+  ['timeout', { deps: fake({ kind: 'timeout' }) }, /timed out after 1800s \(done\.timeout_s\)/],
+  ['git error', { deps: { git: ((c, a, x) => (a.includes('diff') ? { status: 128, stdout: '', stderr: 'fatal: boom' } : defaultExec(c, a, x))) as Exec } }, /tamper check: git listing changes failed \(128\): fatal: boom/],
+  ['unknown base', { base: 'b'.repeat(40) }, /contract base bbbbbbb is not in this repo's history/],
+  ['runner throw', { deps: fake(() => { throw new Error('spawn EACCES'); }) }, /the check runner failed: spawn EACCES/],
+  ['result mismatch', { deps: fake({ kind: 'ran', results: [{ label: 'other', status: 0, timedOut: false, ms: 1, output: '' }] }) }, /the check runner's results don't match the plan/],
+];
+test.each(failClosed)('fail closed: %s', async (name, o, rx) => {
+  const v = await runVerify(o);
+  expect([v.code, v.outcome], name).toEqual([1, 'not-done']);
+  expect(v.reasons.join('\n'), name).toMatch(rx);
+  if (name === 'missing tool') expect(v.checks[0]!.evidence).toMatchObject({ status: 'missing', exit: null });
 });

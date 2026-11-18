@@ -132,7 +132,7 @@ New since 0.2.0-beta.0, unchanged in this release:
 
 ### Writes and scans
 
-- `harness verify` and `harness report` in a repo or folder where harness isn't installed (no `.harness/manifest.json`) now say so, exit 1 and write nothing. Before, they left `.harness/state/` or `.harness/reports/` behind, and `init` then refused (ship audit S1).
+- `harness verify` and `harness report` in a repo or folder where harness isn't installed (no `.harness/manifest.json`) now say so, exit 1 and write nothing. Before, they left `.harness/state/` or `.harness/reports/` behind, and `init` then refused (ship audit S1). The CLI also records its own path in `.harness/state/` only where a manifest exists.
 - `init`, `update`, `sync`, `add`, `remove`, `context apply` and `rules --apply` no longer name a file they would create as uncommitted just because it sits in an untracked folder; only files that exist there count.
 - A write the OS refuses for a reason other than Claude Code's sandbox, such as a read-only folder (`EACCES`), now prints the real error ("apply failed and was rolled back: EACCES: permission denied …"), not "Claude Code's sandbox blocks harness's own files". The sandbox line needs `EPERM` or `EROFS` on one of harness's denyWrite paths, as the reference already said (ship audit S6).
 - `update` and `sync` keep a `checks.done: true` you set by hand. No catalog item owns that check, so it no longer reverts to `false`, and `doctor` no longer calls it a difference from the selected items (ship audit S7).

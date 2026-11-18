@@ -138,6 +138,7 @@ The done contract makes an agent's "done" a verdict harness computes from eviden
 ### CI
 
 - Main is green again on macOS and Windows (ship audit M2). protect's check of a `git checkout` or `git switch` to a branch, tag or hash now looks up the ref and its hooks in one git call, not two, so the hook is faster; every decision is unchanged. The `review` gather test for matching CLI versions runs each case as its own test, so it no longer passes its 30 s timeout on Windows.
+- The hook latency tests compare the harness overhead with a bare node spawn timed in the same run, as a ratio, instead of a fixed number of ms, so a slow CI runner no longer fails them while a slower hook still does. Contributors only: nothing changes for users.
 - CI is faster: the Windows suite runs in 3 shards, and the timing tests run in their own `perf` job on a fresh runner, in parallel with the suite. A `test-floor` job checks the passed-test floor over all shards together, so no shard passes it alone. Contributors only: nothing changes for users.
 - The in-process guard perf tests also log their time against a fixed reference workload measured in the same run, so their ceilings can become ratios once there is CI data. Contributors only.
 

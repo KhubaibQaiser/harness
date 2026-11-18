@@ -8,7 +8,7 @@ import { type Contract, contractHash, setActiveTask, writeContract } from '../..
 import { readLedger } from '../../src/done/ledger.js';
 import { treeHash } from '../../src/done/tree.js';
 import { commit, git } from '../review/repo.js';
-import { CEILING_MS, COUNTED_EDIT_OVERHEAD_MS, DISPATCH, measure, medianOf, OVERHEAD_MS, report as reportOverhead } from './overhead.js';
+import { CEILING_MS, DISPATCH, LEDGER_CHECK_RATIO, measure, medianOf, OVERHEAD_RATIO, report as reportOverhead } from './overhead.js';
 
 const PERF_CONTRACT: Contract = {
   id: 'perf', title: 'Perf', base: 'a'.repeat(40), approved_by: 'person', approved_at: '2026-11-14T00:00:00Z', closed_at: null,
@@ -45,11 +45,10 @@ test('a non-check Bash PostToolUse with an active contract stays within the plai
   const m = measure(bashPost(root, 'ls'), (r) => expect([r.status, r.stdout]).toEqual([0, '']));
   expect(readLedger(root)).toEqual([]); // control: nothing matched, so no tree hash ran
   reportOverhead('ledger-non-check-bash', m);
-  expect(m.overhead, `non-check overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.ratio, `non-check overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(OVERHEAD_RATIO);
   expect(m.total, `non-check total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 
-// Provisional ceiling: the counted-edit one, until the CI log gives this case its own numbers (as latency.test.ts recalibrates).
 test('a matched check PostToolUse on a 500-file repo: tree hash plus ledger row', () => {
   const root = repo500(true);
   const m = measure(bashPost(root, 'pnpm run test'), (r) => expect([r.status, r.stdout]).toEqual([0, '']));
@@ -57,7 +56,7 @@ test('a matched check PostToolUse on a 500-file repo: tree hash plus ledger row'
   expect(rows).toHaveLength(21); // control: every spawn recorded the run
   expect(rows[0]).toMatchObject({ command: 'pnpm run test', exit: 0, tree: treeHash(root) });
   reportOverhead('ledger-matched-check-500', m);
-  expect(m.overhead, `matched check overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(COUNTED_EDIT_OVERHEAD_MS);
+  expect(m.ratio, `matched check overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(LEDGER_CHECK_RATIO);
   expect(m.total, `matched check total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);
 
@@ -75,6 +74,6 @@ test('a non-check Bash PostToolUse with no local approval record (origin/HEAD vo
   // Control: the contract is trusted through origin/HEAD, so a matched call records.
   expect(spawnSync(process.execPath, [DISPATCH], { input: bashPost(root, 'node build.mjs'), encoding: 'utf8' }).status).toBe(0);
   expect(readLedger(root)[0]).toMatchObject({ command: 'node build.mjs', exit: 0, criteria: ['C1'] });
-  expect(m.overhead, `no-record overhead median ${m.overhead.toFixed(1)} ms`).toBeLessThan(OVERHEAD_MS);
+  expect(m.ratio, `no-record overhead ${m.overhead.toFixed(1)} ms, ${m.ratio.toFixed(2)}x the bare spawn`).toBeLessThan(OVERHEAD_RATIO);
   expect(m.total, `no-record total median ${m.total.toFixed(1)} ms`).toBeLessThan(CEILING_MS);
 }, 60000);

@@ -1,9 +1,10 @@
 // `harness rules [--apply]`: the stack's ESLint rules and TS options with today's violation counts, then on a typed yes writes them (spec 5.2).
 // Harness writes its own `.harness/eslint/harness.config.mjs`, adds one import and one spread to the repo's flat config, and sets the
 // missing `compilerOptions` in `tsconfig.json`, all recorded in the manifest so uninstall takes them out. It never creates a config the repo didn't have.
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stampHarnessFiles } from '../core/harness-files.js';
+import { unknownHarnessEntries } from '../core/paths.js';
 import { defaultExec, type Exec } from '../core/exec.js';
 import { ApplyError, applyChanges, linkedPath, type Change } from '../install/apply.js';
 import { detect } from '../install/detect.js';
@@ -49,6 +50,31 @@ function fileText(p: Proposal, dropped: string[]): string {
 export default proposal.map((b) => (b.rules ? { ...b, rules: Object.fromEntries(Object.entries(b.rules).filter(([k]) => !drop.has(k))) } : b));
 `;
 }
+
+/**
+ * `.harness/eslint/` as an uninstall keeps it (owner, 2026-11-18): only harness's two file names, plain files, the .mjs byte
+ * for byte what `harness rules` writes for this repo today (its dropped list read back from the file), the .d.mts the fixed
+ * text, and a repo ESLint config that still imports it. `harness rules` first ships in 0.2.0-beta.3, so today's text is every version's.
+ */
+export function keptEslintIsHarness(root: string): boolean {
+  try {
+    const names = readdirSync(join(root, '.harness/eslint'));
+    if (!names.includes('harness.config.mjs') || names.some((n) => !['harness.config.mjs', 'harness.config.d.mts'].includes(n))) return false;
+    if (names.some((n) => !lstatSync(join(root, '.harness/eslint', n)).isFile())) return false;
+    if (names.includes('harness.config.d.mts') && readFileSync(join(root, DTS), 'utf8') !== DTS_TEXT) return false;
+    if (!ESLINT.some((f) => existsSync(join(root, f)) && readFileSync(join(root, f), 'utf8').includes(HARNESS_RULES_IMPORT))) return false;
+    const text = readFileSync(join(root, FILE), 'utf8');
+    const p = proposalFor(root);
+    const drop = /\nconst drop = new Set\((\[.*\])\);\n/.exec(text);
+    return text === (drop ? fileText(p, JSON.parse(drop[1]!)) : p.configText);
+  } catch {
+    return false; // unreadable or malformed: not provably harness's
+  }
+}
+
+/** The `.harness/` entries that stop init with no manifest: unknownHarnessEntries, less a kept ESLint folder that is harness's. */
+export const initBlockers = (root: string): string[] =>
+  unknownHarnessEntries(root).filter((e) => e !== '.harness/eslint' || !keptEslintIsHarness(root));
 
 /** Why counting failed on `eslint.config.ts`: Node below 22.18 can't import it (the preview imports the repo config). */
 export function oldNodeHint(cfg: string | undefined, node: string): string | null {

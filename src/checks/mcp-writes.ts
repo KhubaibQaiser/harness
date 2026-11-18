@@ -21,8 +21,13 @@ const toolWords = (name: string): { server: string; joined: string; w: string[] 
   const joined = wordsOf(rest.join('_')).join('_');
   return { server, joined, w: joined.replace(/(?:pull|merge)_?requests?/g, 'pr').split('_') };
 };
-// A read verb first or last, and no write verb anywhere: `get_or_create_drive` is a write.
-const readOf = (w: string[]): boolean => (READ.has(w[0] ?? '') || READ.has(w.at(-1) ?? '')) && !w.some((x) => WRITE.has(x));
+// Write words that are nouns after a leading read verb: `get_workflow_run`, `list_releases`, `get_review_comments`.
+const NOUNS = new Set(['run', 'release', 'review', 'comment', 'label', 'request']); // plurals are no write words anyway
+// A read verb first or last, and no write verb anywhere (a noun after a leading read verb is not one): `get_or_create_drive` is a write.
+const readOf = (w: string[]): boolean => {
+  const first = READ.has(w[0] ?? '');
+  return (first || READ.has(w.at(-1) ?? '')) && !w.some((x) => WRITE.has(x) && !(first && NOUNS.has(x)));
+};
 /** An MCP tool that only reads, by its verbs; one that can't be classified counts as a write. */
 export const mcpIsRead = (name: string): boolean => readOf(toolWords(name).w);
 

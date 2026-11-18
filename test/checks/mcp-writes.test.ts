@@ -25,9 +25,10 @@ test('on a git-host server everything but a read tool asks', () => {
     'mcp__GitHub__MergePullRequest', 'mcp__github__mergePullRequest', 'mcp__github__merge-pull-request', 'mcp__github__pulls.merge', 'mcp__claude_ai_GitHub__merge_pull_request',
     'mcp__gitea__create_issue', 'mcp__bitbucket__merge', 'mcp__forgejo__merge_pull_request', 'mcp__codeberg__add_comment', 'mcp__gitlab__accept_mr', 'mcp__gh__write_file',
     'mcp__ccd_pr__merge', 'mcp__ccd_pr__bind_pr', 'mcp__octo__create_pull_request',
-    'mcp__github__download_workflow_run_artifact', 'mcp__github__get_or_create_branch'], 'ask'); // a write verb anywhere wins over a read verb (owner ruling)
+    'mcp__github__get_or_create_branch', 'mcp__github__get_and_merge_pr', 'mcp__github__run_get'], 'ask'); // an action verb anywhere wins over a read verb (owner ruling)
   all(['mcp__github__get_pull_request', 'mcp__github__list_issues', 'mcp__github__search_code', 'mcp__github__pull_request_read', 'mcp__github__issue_read', 'mcp__github__get_file_contents',
-    'mcp__github__getPullRequest', 'mcp__gitlab__describe_project', 'mcp__ccd_pr__get_status', 'mcp__gh_docs__search'], 'allow');
+    'mcp__github__getPullRequest', 'mcp__github__download_workflow_run_artifact', 'mcp__github__get_latest_release', 'mcp__github__get_workflow_run',
+    'mcp__github__get_pull_request_review_comments', 'mcp__github__list_labels', 'mcp__github__get_label', 'mcp__gitlab__describe_project', 'mcp__ccd_pr__get_status', 'mcp__gh_docs__search'], 'allow');
 });
 
 test('an opaque (uuid) server asks on any write verb; other named servers pass', () => {
@@ -53,6 +54,6 @@ test('registered for PreToolUse, fail-closed, and the settings fragment routes m
 });
 
 test('mcpIsRead: the same verb rules as the check; a tool with no known verb counts as a write', () => {
-  for (const t of ['mcp__github__get_pull_request', 'mcp__notion__notion-search', 'mcp__x__list_items', 'mcp__x__file_get']) expect(mcpIsRead(t)).toBe(true);
-  for (const t of ['mcp__github__create_issue', 'mcp__x__frobnicate', 'mcp__x__update_get', 'mcp__x__', 'mcp__x__get_or_create_drive', 'mcp__x__list_and_delete']) expect(mcpIsRead(t)).toBe(false);
+  for (const t of ['mcp__github__get_pull_request', 'mcp__notion__notion-search', 'mcp__x__list_items', 'mcp__x__file_get', 'mcp__x__get_workflow_run', 'mcp__x__get_review_comment']) expect(mcpIsRead(t)).toBe(true); // nouns after a leading read verb
+  for (const t of ['mcp__github__create_issue', 'mcp__x__frobnicate', 'mcp__x__update_get', 'mcp__x__', 'mcp__x__get_or_create_drive', 'mcp__x__list_and_delete', 'mcp__x__comment_get', 'mcp__x__get_run_and_rerun']) expect(mcpIsRead(t)).toBe(false);
 });

@@ -4,6 +4,8 @@ import { describe, expect, test } from 'vitest';
 import { type GatherJson } from '../../src/review/gather.js';
 import { LIMITS } from '../../src/vet/fetch.js';
 import { setup, fakeGh, run } from './gather-helpers.js';
+import { repoWith } from './repo.js';
+import { review } from '../../src/cli/review.js';
 
 const N = '0123456789abcdef'.repeat(2);
 
@@ -75,4 +77,14 @@ describe('gather: other cases', () => {
     expect(run(s, fakeGh(s).exec, { CI: 'true' }).code).toBe(0);
     expect(existsSync(join(s.root, s.dir, 'gather.json'))).toBe(true);
   });
+});
+
+test('review writes nothing in a repo where harness is not installed (review A, F2)', () => {
+  const { root } = repoWith({ 'a.txt': 'a\n' }, { 'a.txt': 'b\n' });
+  for (const args of [['7', '--out', join(root, '.harness/tmp/w-1')], ['--keep', '7'], ['--judge-input', 'd', '--findings', 'f'], ['--finish', 'd', '--findings', 'f', '--judge', 'j']]) {
+    const lines: string[] = [];
+    expect(review(args, { root, env: {}, out: (l) => lines.push(l) })).toBe(1);
+    expect(lines.join('\n')).toContain('Harness is not installed here');
+  }
+  expect(existsSync(join(root, '.harness'))).toBe(false);
 });

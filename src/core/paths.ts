@@ -1,4 +1,4 @@
-import { readdirSync, realpathSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
 import picomatch from 'picomatch';
 
@@ -66,6 +66,36 @@ export function hasHarnessDir(root: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Folders the skills and commands make in `.harness/` before any install: repo presets, work folders, vet reports. */
+const PRE_INSTALL = new Set(['presets', 'tmp', 'vet']);
+/** A "keep" uninstall's snapshot: a plain file in a real `state/` folder, with the shape stampHarnessFiles writes. */
+function keepSnapshot(root: string): boolean {
+  try {
+    if (lstatSync(join(root, '.harness/state')).isSymbolicLink() || !lstatSync(join(root, '.harness/state/files-snapshot.json')).isFile()) return false;
+    const v = JSON.parse(readFileSync(join(root, '.harness/state/files-snapshot.json'), 'utf8'));
+    const files = (x: unknown) => !!x && typeof x === 'object' && !Array.isArray(x) && Object.values(x).every((h) => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h));
+    return typeof v?.cli?.id === 'string' && files(v.cli.files) && files(v.lastSeen?.files);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * With no manifest, the `.harness/` entries that keep init from installing (owner, 2026-11-18): the folder is harness's
+ * only when a "keep" uninstall left its snapshot there, or it holds just the pre-install folders. Anything else may be
+ * the person's, and uninstall would treat a runtime-folder name as harness's.
+ */
+export function unknownHarnessEntries(root: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(join(root, '.harness'));
+  } catch {
+    return [];
+  }
+  if (keepSnapshot(root)) return [];
+  return names.filter((n) => !PRE_INSTALL.has(n)).sort().map((n) => `.harness/${n}`);
 }
 
 /** `p` is `dir` or inside it, on a path boundary; case-blind on darwin and win32 like trustedCli. */

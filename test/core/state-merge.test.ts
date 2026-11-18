@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSync } from 'esbuild';
 import { expect, onTestFinished, test } from 'vitest';
-import { type SessionState, clearTurn, mergeState, readState, StateBusyError, updateState, WRITE_WAIT, writeMerged, writeState } from '../../src/core/state.js';
+import { type SessionState, WAIT_CAP, clearTurn, mergeState, readState, StateBusyError, updateState, WRITE_WAIT, withSessionLock, writeMerged, writeState } from '../../src/core/state.js';
 import { RETRY } from '../../src/core/atomic.js';
 
 const s = (o: Partial<SessionState> = {}): SessionState => ({ startedAt: 1, files: [], approved: false, redTests: [], lockedTests: [], stopAttempts: 0, ...o });
@@ -175,4 +175,33 @@ test('on Windows the write-lock wait also covers a holder\'s transient-error ret
   RETRY.platform = 'win32';
   expect(updateState(root, 's', (c) => ({ ...c, files: ['w.ts'] })).files).toEqual(['w.ts']);
   await exited;
+});
+
+test('a claimed reset whose file can\'t be removed after the write is not put back, and the write still succeeds', () => {
+  const root = mkdtempSync(join(tmpdir(), 'h-claim-'));
+  writeState(root, 's', s({ files: ['a.ts'], stopAttempts: 2 }));
+  writeFileSync(join(root, '.harness/state/s.reset'), ''); // a pending turn reset
+  const ops = { rename: renameSync, mkdir: mkdirSync, rm: (p: string, o?: object) => { if (p.includes('.reset.')) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); rmSync(p, o); } };
+  const out = updateState(root, 's', (c) => ({ ...c, files: [...c.files, 'new.ts'] }), ops);
+  expect(out).toMatchObject({ files: ['new.ts'], stopAttempts: 0 });
+  expect(existsSync(join(root, '.harness/state/s.reset'))).toBe(false); // the applied reset never comes back
+  expect(readState(root, 's').files).toEqual(['new.ts']);
+});
+
+test('the combined lock wait is capped from the hook process start', async () => {
+  const saved = { ...WAIT_CAP };
+  onTestFinished(() => void Object.assign(WAIT_CAP, saved));
+  const root = mkdtempSync(join(tmpdir(), 'h-cap-'));
+  holdWlock(root);
+  Object.assign(WAIT_CAP, { from: Date.now() - 6900, ms: 7000 }); // 100 ms of the 7 s left, though WRITE_WAIT is 1 s
+  let t = Date.now();
+  expect(() => silent(() => updateState(root, 's', (c) => c))).toThrow(StateBusyError);
+  expect(Date.now() - t).toBeLessThan(600);
+  const lock = join(root, '.harness/state/s.lock');
+  mkdirSync(lock);
+  writeFileSync(join(lock, 'owner'), JSON.stringify({ pid: process.pid, nonce: 'live' }));
+  Object.assign(WAIT_CAP, { from: Date.now() - 6900 });
+  t = Date.now();
+  expect(await silent(() => withSessionLock(root, 's', () => 'ran', undefined, () => 'closed'))).toBe('closed'); // write gates fail closed as before
+  expect(Date.now() - t).toBeLessThan(600); // not the 5 s LOCK_WAIT
 });

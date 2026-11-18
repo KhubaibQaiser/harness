@@ -255,6 +255,9 @@ function release(lock: string, nonce: string, ops: LockOps): void {
 
 const lockOf = (root: string, session: string, ext: string) => `${statePath(root, session).slice(0, -'.json'.length)}.${ext}`;
 
+/** Hook processes set `from` (their start): both lock waits together then end by `from + ms`, well inside the 10 s hook timeout. */
+export const WAIT_CAP: { from?: number; ms: number } = { ms: 7000 };
+const capped = (deadline: number): number => (WAIT_CAP.from === undefined ? deadline : Math.min(deadline, WAIT_CAP.from + WAIT_CAP.ms));
 export const WRITE_WAIT = { ms: 1000 }; // the write lock is held for milliseconds: a bounded synchronous spin (tests shorten it)
 export class StateBusyError extends Error {
   constructor() {
@@ -274,7 +277,7 @@ export function updateState(root: string, session: string, change: (cur: Session
   let got: 'held' | 'busy' | 'unusable';
   // A holder's reads and writes may retry transient Windows errors for up to RETRY_BUDGET_MS: the wait covers that too.
   const bound = WRITE_WAIT.ms + (RETRY.platform === 'win32' ? RETRY_BUDGET_MS : 0);
-  for (const deadline = Date.now() + bound; (got = tryTake(lock, nonce, ops)) === 'busy'; pause(1 + Math.random() * 3)) { // jittered, so no waiter starves
+  for (const deadline = capped(Date.now() + bound); (got = tryTake(lock, nonce, ops)) === 'busy'; pause(1 + Math.random() * 3)) { // jittered, so no waiter starves
     if (Date.now() < deadline) continue;
     // The update is lost: say so on stderr and in the event log, never silently.
     process.stderr.write('harness: state write lock timeout, an update was not saved\n');
@@ -294,7 +297,14 @@ export function updateState(root: string, session: string, change: (cur: Session
     const cur = readFile(root, session, readFileSync);
     const next = change(reset ? turnReset(cur) : cur);
     writeState(root, session, next);
-    if (reset) rmSync(claimed, { force: true });
+    if (reset) {
+      reset = false; // applied: whatever happens to the claimed file now, it is never put back
+      try {
+        ops.rm(claimed, { force: true });
+      } catch {
+        // a scanner holds it: a leftover .reset.<nonce> file is never read
+      }
+    }
     return next;
   } catch (e) {
     try {
@@ -320,7 +330,7 @@ export async function withSessionLock<T>(root: string, session: string, fn: () =
   try {
     try {
       mkdirSync(join(root, '.harness/state'), { recursive: true });
-      for (const deadline = Date.now() + LOCK_WAIT.ms; (got = tryTake(lock, nonce, ops)) === 'busy' && Date.now() < deadline; ) await new Promise((r) => setTimeout(r, 10));
+      for (const deadline = capped(Date.now() + LOCK_WAIT.ms); (got = tryTake(lock, nonce, ops)) === 'busy' && Date.now() < deadline; ) await new Promise((r) => setTimeout(r, 10));
     } catch {
       got = 'unusable'; // unwritable state dir: run unlocked, the dispatcher's own write warnings cover it
     }

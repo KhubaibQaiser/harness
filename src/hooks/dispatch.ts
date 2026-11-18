@@ -23,7 +23,7 @@ import { stopGate } from '../checks/stop/gate.js';
 import { runPlanEntry } from '../checks/stop/step-runner.js';
 import { evidenceLedger } from '../done/ledger-hook.js';
 import { testLock } from '../checks/tdd/test-lock.js';
-import { type SessionState, isSafeSessionId, StateBusyError, withSessionLock, writeMerged } from '../core/state.js';
+import { type SessionState, isSafeSessionId, StateBusyError, WAIT_CAP, withSessionLock, writeMerged } from '../core/state.js';
 import { loadConfig } from '../core/config.js';
 import { pauseStatus } from '../core/pause.js';
 import { isUnattended } from '../core/unattended.js';
@@ -204,6 +204,7 @@ async function main(): Promise<void> {
     process.exitCode = workdir(process.argv.slice(wd + 1), { root: repoRoot(process.cwd()), env: process.env, out: (l) => process.stdout.write(l + '\n') });
     return;
   }
+  WAIT_CAP.from = PROCESS_START; // this process is one hook: cap its lock waits from its start (set here, not on import)
   let raw = '';
   try {
     raw = readFileSync(0, 'utf8');
